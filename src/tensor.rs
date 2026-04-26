@@ -71,7 +71,7 @@ pub fn get(&self, indices: &[usize]) -> f32 {
 }
 
 // reshape w/o data changing
-pub fn reshape(&self, new_shape: [usize]) -> Self {
+pub fn reshape(&self, new_shape: &[usize]) -> Self {
     let new_len: usize = new_shape.iter().product();
     assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
     Self::from_data(new_shape.into(), self.data.clone())
