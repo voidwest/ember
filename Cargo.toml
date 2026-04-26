@@ -3,6 +3,11 @@ name = "ember"
 version = "0.1.0"
 edition = "2021"
 
+# [features]
+#default = []
+#server = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
+#rag = ["dep:fastembed-rs", "dep:instant-distance"]
+
 [dependencies]
 safetensors = "0.4"
 tokenizers = "0.20"
