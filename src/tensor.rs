@@ -115,3 +115,31 @@ pub fn matmul(&self, other: &Self) -> Self {
     }
     out
 }
+
+//softmax along the last dimension
+
+pub fn softmax(&self) -> Self {
+    assert!(!self.shape.is_empty(), "softmax needs 1 dim min");
+    let last_dim = self.shape[self.shape.len() - 1];
+    let batch: usize = self.shape[..self.shape.len() - 1].iter().product();
+
+    let mut out_data = vec![0.0f32; self.len()];
+
+    for b in 0..batch {
+        let offset = b * last_dim;
+        let slice = &self.data[offset..offset + last_dim];
+
+        //stable softmax: stubtract max
+        let max = slice.iter().fold(f32::NEG_INFINITY, |a: f32, &b| a.max(b));
+        let mut sum = 0.0;
+        for i in 0..last_dim {
+            let e = (slice[i] - max).exp();
+            out_data[offset + i] = e;
+            sum += e;
+        }
+        for i in 0..last_dim {
+            out_data[offset + i] /= sum;
+        }
+    }
+    Self::from_data(self.shape.clone(), out_data)
+}
