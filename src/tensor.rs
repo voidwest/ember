@@ -143,3 +143,12 @@ pub fn softmax(&self) -> Self {
     }
     Self::from_data(self.shape.clone(), out_data)
 }
+
+pub fn gelu(&self) -> Self {
+    let data: Vec<f32> = self
+        .data
+        .iter()
+        .map(|&x| 0.5 * x * (1.0 + libm::erf(x / f32::sqrt(2.0))))
+        .collect();
+    Self::from_data(self.shape.clone(), data)
+}
