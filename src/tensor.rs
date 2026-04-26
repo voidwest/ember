@@ -37,3 +37,22 @@ pub fn from_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
 pub fn shape(&self) -> &[usize] {
     &self.shape
 }
+
+pub fn data(&self) -> &[f32] {
+    &self.data
+}
+
+pub fn data_mut(&mut self) -> &mut [f32] {
+    &mut self.data
+}
+
+pub fn ndim(&self) -> usize {
+    self.shape.len()
+}
+pub fn len(&self) -> usize {
+    self.data.len()
+}
+
+pub fn is_empty(&self) -> bool {
+    self.data.is_empty()
+}
