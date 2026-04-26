@@ -91,3 +91,27 @@ pub fn add(&self, other: &Self) -> Self {
         .collect();
     Self::from_data(self.shape.clone(), data)
 }
+
+// matrix mult, 2d tensors
+
+pub fn matmul(&self, other: &Self) -> Self {
+    assert_eq!(self.ndim(), 2, "matmul: lhs must be 2d");
+    assert_eq!(other.ndim(), 2, "matmul: rhs must be 2d");
+    let (m, k1) = (self.shape[0], self.shape[1]);
+    let (k2, n) = (other.shape[0], other.shape[1]);
+    assert_eq!(k1, k2, "matmul: inner dims must match");
+
+    let mut out = Self::zeroes(&[m, n]);
+
+    // bad impl, replacing later
+    for i in 0..m {
+        for j in 0..n {
+            let mut sum = 0.0;
+            for k in 0..k1 {
+                sum += self.get(&[i, k]) * other.get(&[k, j]);
+            }
+            out.data[i * n + j] = sum;
+        }
+    }
+    out
+}
