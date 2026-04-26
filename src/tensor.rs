@@ -16,141 +16,171 @@ impl CpuTensor {
             data: vec![0.0; len],
         }
     }
-}
-pub fn from_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
-    let expected = shape.iter().product::<usize>();
-    assert_eq!(
-        expected,
-        data.len(),
-        "shape product ({}) != data len ({})",
-        expected,
-        data.len()
-    );
-    let strides = Self::compute_strides(&shape);
-    Self {
-        shape,
-        strides,
-        data,
+
+    pub fn from_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
+        let expected = shape.iter().product::<usize>();
+        assert_eq!(
+            expected,
+            data.len(),
+            "shape product ({}) != data len ({})",
+            expected,
+            data.len()
+        );
+        let strides = Self::compute_strides(&shape);
+        Self {
+            shape,
+            strides,
+            data,
+        }
     }
-}
 
-pub fn shape(&self) -> &[usize] {
-    &self.shape
-}
-
-pub fn data(&self) -> &[f32] {
-    &self.data
-}
-
-pub fn data_mut(&mut self) -> &mut [f32] {
-    &mut self.data
-}
-
-pub fn ndim(&self) -> usize {
-    self.shape.len()
-}
-pub fn len(&self) -> usize {
-    self.data.len()
-}
-
-pub fn is_empty(&self) -> bool {
-    self.data.is_empty()
-}
-
-// get 1 element w/ n-dim indices
-// very slow, in the SIMD kernel i'll itr through flat data slice directly
-pub fn get(&self, indices: &[usize]) -> f32 {
-    assert_eq!(indices.len(), self.shape.len());
-
-    let mut idx = 0;
-    for (i, &dim_idx) in indices.iter().enumerate() {
-        assert!(dim_idx < self.shape[i]);
-        idx += dim_idx * self.strides[i];
+    pub fn shape(&self) -> &[usize] {
+        &self.shape
     }
-    self.data[idx]
-}
 
-// reshape w/o data changing
-pub fn reshape(&self, new_shape: &[usize]) -> Self {
-    let new_len: usize = new_shape.iter().product();
-    assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
-    Self::from_data(new_shape.into(), self.data.clone())
-}
+    pub fn data(&self) -> &[f32] {
+        &self.data
+    }
 
-pub fn add(&self, other: &Self) -> Self {
-    assert_eq!(
-        self.shape, other.shape,
-        "addition: shapes must match (for now)"
-    );
+    pub fn data_mut(&mut self) -> &mut [f32] {
+        &mut self.data
+    }
 
-    let data: Vec<f32> = self
-        .data
-        .iter()
-        .zip(&other.data)
-        .map(|(a, b)| a + b)
-        .collect();
-    Self::from_data(self.shape.clone(), data)
-}
+    pub fn ndim(&self) -> usize {
+        self.shape.len()
+    }
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
 
-// matrix mult, 2d tensors
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 
-pub fn matmul(&self, other: &Self) -> Self {
-    assert_eq!(self.ndim(), 2, "matmul: lhs must be 2d");
-    assert_eq!(other.ndim(), 2, "matmul: rhs must be 2d");
-    let (m, k1) = (self.shape[0], self.shape[1]);
-    let (k2, n) = (other.shape[0], other.shape[1]);
-    assert_eq!(k1, k2, "matmul: inner dims must match");
+    // get 1 element w/ n-dim indices
+    // very slow, in the SIMD kernel i'll itr through flat data slice directly
+    pub fn get(&self, indices: &[usize]) -> f32 {
+        assert_eq!(indices.len(), self.shape.len());
 
-    let mut out = Self::zeroes(&[m, n]);
+        let mut idx = 0;
+        for (i, &dim_idx) in indices.iter().enumerate() {
+            assert!(dim_idx < self.shape[i]);
+            idx += dim_idx * self.strides[i];
+        }
+        self.data[idx]
+    }
 
-    // bad impl, replacing later
-    for i in 0..m {
-        for j in 0..n {
-            let mut sum = 0.0;
-            for k in 0..k1 {
-                sum += self.get(&[i, k]) * other.get(&[k, j]);
+    // reshape w/o data changing
+    pub fn reshape(&self, new_shape: &[usize]) -> Self {
+        let new_len: usize = new_shape.iter().product();
+        assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
+        Self::from_data(new_shape.into(), self.data.clone())
+    }
+
+    pub fn add(&self, other: &Self) -> Self {
+        assert_eq!(
+            self.shape, other.shape,
+            "addition: shapes must match (for now)"
+        );
+
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a + b)
+            .collect();
+        Self::from_data(self.shape.clone(), data)
+    }
+
+    // matrix mult, 2d tensors
+
+    pub fn matmul(&self, other: &Self) -> Self {
+        assert_eq!(self.ndim(), 2, "matmul: lhs must be 2d");
+        assert_eq!(other.ndim(), 2, "matmul: rhs must be 2d");
+        let (m, k1) = (self.shape[0], self.shape[1]);
+        let (k2, n) = (other.shape[0], other.shape[1]);
+        assert_eq!(k1, k2, "matmul: inner dims must match");
+
+        let mut out = Self::zeroes(&[m, n]);
+
+        // bad impl, replacing later
+        for i in 0..m {
+            for j in 0..n {
+                let mut sum = 0.0;
+                for k in 0..k1 {
+                    sum += self.get(&[i, k]) * other.get(&[k, j]);
+                }
+                out.data[i * n + j] = sum;
             }
-            out.data[i * n + j] = sum;
         }
+        out
     }
-    out
-}
 
-//softmax along the last dimension
+    //softmax along the last dimension
 
-pub fn softmax(&self) -> Self {
-    assert!(!self.shape.is_empty(), "softmax needs 1 dim min");
-    let last_dim = self.shape[self.shape.len() - 1];
-    let batch: usize = self.shape[..self.shape.len() - 1].iter().product();
+    pub fn softmax(&self) -> Self {
+        assert!(!self.shape.is_empty(), "softmax needs 1 dim min");
+        let last_dim = self.shape[self.shape.len() - 1];
+        let batch: usize = self.shape[..self.shape.len() - 1].iter().product();
 
-    let mut out_data = vec![0.0f32; self.len()];
+        let mut out_data = vec![0.0f32; self.len()];
 
-    for b in 0..batch {
-        let offset = b * last_dim;
-        let slice = &self.data[offset..offset + last_dim];
+        for b in 0..batch {
+            let offset = b * last_dim;
+            let slice = &self.data[offset..offset + last_dim];
 
-        //stable softmax: stubtract max
-        let max = slice.iter().fold(f32::NEG_INFINITY, |a: f32, &b| a.max(b));
-        let mut sum = 0.0;
-        for i in 0..last_dim {
-            let e = (slice[i] - max).exp();
-            out_data[offset + i] = e;
-            sum += e;
+            //stable softmax: stubtract max
+            let max = slice.iter().fold(f32::NEG_INFINITY, |a: f32, &b| a.max(b));
+            let mut sum = 0.0;
+            for i in 0..last_dim {
+                let e = (slice[i] - max).exp();
+                out_data[offset + i] = e;
+                sum += e;
+            }
+            for i in 0..last_dim {
+                out_data[offset + i] /= sum;
+            }
         }
-        for i in 0..last_dim {
-            out_data[offset + i] /= sum;
-        }
+        Self::from_data(self.shape.clone(), out_data)
     }
-    Self::from_data(self.shape.clone(), out_data)
-}
 
-pub fn gelu(&self) -> Self {
-    let data: Vec<f32> = self
-        .data
-        .iter()
-        .map(|&x| 0.5 * x * (1.0 + libm::erf(x / f32::sqrt(2.0))))
-        .collect();
-    Self::from_data(self.shape.clone(), data)
-}
+    pub fn gelu(&self) -> Self {
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .map(|&x| 0.5 * x * (1.0 + libm::erff(x / f32::sqrt(2.0))))
+            .collect();
+        Self::from_data(self.shape.clone(), data)
+    }
 
-pub fn layer_norm(&self, weight: &Self, bias: &Self, eps: f32) -> Self {}
+    pub fn layer_norm(&self, weight: &Self, bias: &Self, eps: f32) -> Self {
+        assert_eq!(self.ndim(), 2, "layer_norm expects 2d [batch, features]");
+        let (batch, features) = (self.shape[0], self.shape[1]);
+        assert_eq!(weight.len(), features);
+        assert_eq!(bias.len(), features);
+
+        let mut out = vec![0.0f32; self.len()];
+        for b in 0..batch {
+            let offset = b * features;
+            let slice = &self.data[offset..offset + features];
+
+            let mean = slice.iter().sum::<f32>() / features as f32;
+            let var = slice.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / features as f32;
+            let std = (var + eps).sqrt();
+
+            for i in 0..features {
+                let normalized = (slice[i] - mean) / std;
+                out[offset + i] = normalized * weight.data[i] + bias.data[i];
+            }
+        }
+        Self::from_data(self.shape.clone(), out)
+    }
+
+    fn compute_strides(shape: &[usize]) -> Vec<usize> {
+        let mut strides = vec![1usize; shape.len()];
+        for i in (0..shape.len().saturating_sub(1)).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+        strides
+    }
+}
