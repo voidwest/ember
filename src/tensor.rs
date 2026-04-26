@@ -76,3 +76,18 @@ pub fn reshape(&self, new_shape: &[usize]) -> Self {
     assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
     Self::from_data(new_shape.into(), self.data.clone())
 }
+
+pub fn add(&self, other: &Self) -> Self {
+    assert_eq!(
+        self.shape, other.shape,
+        "addition: shapes must match (for now)"
+    );
+
+    let data: Vec<f32> = self
+        .data
+        .iter()
+        .zip(&other.data)
+        .map(|(a, b)| a + b)
+        .collect();
+    Self::from_data(self.shape.clone(), data)
+}
