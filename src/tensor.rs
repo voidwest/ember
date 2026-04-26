@@ -152,3 +152,5 @@ pub fn gelu(&self) -> Self {
         .collect();
     Self::from_data(self.shape.clone(), data)
 }
+
+pub fn layer_norm(&self, weight: &Self, bias: &Self, eps: f32) -> Self {}
