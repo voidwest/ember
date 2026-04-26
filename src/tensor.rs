@@ -1,7 +1,4 @@
-use std::num::NonZeroUsize;
-
 use alloc::vec::Vec;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct CpuTensor {
     shape: Vec<usize>,
@@ -20,7 +17,6 @@ impl CpuTensor {
         }
     }
 }
-
 pub fn from_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
     let expected = shape.iter().product::<usize>();
     assert_eq!(
@@ -36,4 +32,8 @@ pub fn from_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
         strides,
         data,
     }
+}
+
+pub fn shape(&self) -> &[usize] {
+    &self.shape
 }
