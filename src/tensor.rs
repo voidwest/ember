@@ -56,3 +56,16 @@ pub fn len(&self) -> usize {
 pub fn is_empty(&self) -> bool {
     self.data.is_empty()
 }
+
+// get 1 element w/ n-dim indices
+// very slow, in the SIMD kernel i'll itr through flat data slice directly
+pub fn get(&self, indices: &[usize]) -> f32 {
+    assert_eq!(indices.len(), self.shape.len());
+
+    let mut idx = 0;
+    for (i, &dim_idx) in indices.iter().enumerate() {
+        assert!(dim_idx < self.shape[i]);
+        idx += dim_idx * self.strides[i];
+    }
+    self.data[idx]
+}
