@@ -15,6 +15,8 @@ impl EmberTokenizer {
         let encoding = self.inner.encode(text, true).context("encode failed")?;
         Ok(encoding.get_idts().to_vec())
     }
-    
-    
+
+    pub fn decode(&self, ids: &[u32]) -> Result<String> {
+        self.inner.decode(ids, true).context("decode failed")
+    }
 }
