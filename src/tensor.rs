@@ -184,3 +184,41 @@ impl CpuTensor {
         strides
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_zeros() {
+        let t = CpuTensor::zeroes(&[2, 3]);
+        assert_eq!(t.shape(), &[2, 3]);
+        assert!(t.data().iter().all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn test_add() {
+        let a = CpuTensor::from_data(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]);
+        let b = CpuTensor::from_data(vec![2, 2], vec![1.0, 1.0, 1.0, 1.0]);
+        let c = a.add(&b);
+        assert_eq!(c.data(), &[2.0, 3.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn test_matmul() {
+        let a = CpuTensor::from_data(vec![2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let b = CpuTensor::from_data(vec![3, 2], vec![1.0, 0.0, 0.0, 1.0, 1.0, 0.0]);
+        let c = a.matmul(&b);
+        assert_eq!(c.shape(), &[2, 2]);
+        // r0: [1+0+3, 0+2+0] = [4, 2]
+        // r1: [4+0+6, 0+5+0] = [10, 5]
+        assert_eq!(c.data(), &[4.0, 2.0, 10.0, 5.0]);
+    }
+    #[test]
+    fn test_softmax() {
+        let t = CpuTensor::from_data(vec![1, 3], vec![1.0, 2.0, 3.0]);
+        let s = t.softmax();
+        let sum: f32 = s.data().iter().sum();
+        assert!((sum - 1.0).abs() < 1e-5);
+    }
+}
