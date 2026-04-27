@@ -5,4 +5,6 @@ pub struct EmberTokenizer {
     inner: Tokenizer,
 }
 
-impl EmberTokenizer {}
+impl EmberTokenizer {
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {}
+}
