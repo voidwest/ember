@@ -19,4 +19,8 @@ impl EmberTokenizer {
     pub fn decode(&self, ids: &[u32]) -> Result<String> {
         self.inner.decode(ids, true).context("decode failed")
     }
+
+    pub fn vocab_size(&self) -> usize {
+        self.inner.get_vocab_size(true)
+    }
 }
