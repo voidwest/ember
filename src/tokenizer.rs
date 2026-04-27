@@ -6,5 +6,8 @@ pub struct EmberTokenizer {
 }
 
 impl EmberTokenizer {
-    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {}
+    pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
+        let inner = Tokenizer::from_file(path).context("failed to load tokenizer")?;
+        Ok(Self { inner })
+    }
 }
