@@ -13,7 +13,7 @@ impl EmberTokenizer {
 
     pub fn encode(&self, text: &str) -> Result<Vec<u32>> {
         let encoding = self.inner.encode(text, true).context("encode failed")?;
-        Ok(encoding.get_idts().to_vec())
+        Ok(encoding.get_ids().to_vec())
     }
 
     pub fn decode(&self, ids: &[u32]) -> Result<String> {
