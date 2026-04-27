@@ -24,3 +24,9 @@ impl EmberTokenizer {
         self.inner.get_vocab_size(true)
     }
 }
+
+pub fn download_gpt2_tokenizer() -> Result<EmberTokenizer> {
+    anyhow::bail!(
+        "auto-download not implemented — download tokenizer.json manually from HuggingFace"
+    );
+}
