@@ -25,8 +25,3 @@ pub mod loader;
 pub mod model;
 pub mod tensor;
 pub mod tokenizer;
-
-// Re-exports for convenience
-pub use backend::{Backend, CpuBackend};
-pub use model::Gpt2;
-pub use tensor::CpuTensor;
