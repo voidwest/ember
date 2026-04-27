@@ -34,8 +34,8 @@ impl EmberTokenizer {
     }
 }
 
-pub fn download_gpt2_tokenizer() -> Result<EmberTokenizer> {
-    anyhow::bail!(
-        "auto-download not implemented — download tokenizer.json manually from HuggingFace"
-    );
+pub fn download_gpt2_tokenizer_blocking() -> Result<EmberTokenizer> {
+    let url = "https://huggingface.co/openai-community/gpt2/resolve/main/tokenizer.json";
+    let response = reqwest::blocking::get(url)?.bytes()?;
+    EmberTokenizer::from_file("tokenizer.json")
 }
