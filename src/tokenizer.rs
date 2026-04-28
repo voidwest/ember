@@ -37,5 +37,6 @@ impl EmberTokenizer {
 pub fn download_gpt2_tokenizer_blocking() -> Result<EmberTokenizer> {
     let url = "https://huggingface.co/openai-community/gpt2/resolve/main/tokenizer.json";
     let response = reqwest::blocking::get(url)?.bytes()?;
+    std::fs::write("tokenizer.json", &response)?;
     EmberTokenizer::from_file("tokenizer.json")
 }
