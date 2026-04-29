@@ -33,3 +33,10 @@ pub fn load_safetensors<P: AsRef<Path>>(path: P) -> Result<HashMap<String, CpuTe
 
     Ok(map)
 }
+
+pub fn build_gpt2_weights(weights: HashMap<String, CpuTensor>) -> Result<CpuTensor> {
+    let wte = weights
+        .get("transformer.wte.weight")
+        .context("missing wte weight")?;
+    Ok(wte.clone())
+}
