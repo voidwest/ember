@@ -38,13 +38,12 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     let tensor_count = read_u64(&mut f)?;
     let metadata_kv_count = read_u64(&mut f)?;
 
-    // TODO(you): implement read_metadata_kv for all value types
-    let metadata = HashMap::new();
+    let mut metadata = HashMap::new();
     for _ in 0..metadata_kv_count {
-        // stub - read and discard for now
-        let _key = read_gguf_string(&mut f)?;
-        let _val_type = read_u32(&mut f)?;
-        // TODO: read value based on type
+        let key = read_gguf_string(&mut f)?;
+        let val_type = read_u32(&mut f)?;
+        let value = read_gguf_value(&mut f, val_type)?;
+        metadata.insert(key, value);
     }
 
     // TODO(you): read tensor name, n_dims, dims, type, offset
@@ -57,6 +56,12 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     Ok(GgufLoader { metadata, tensors })
 }
 
+fn read_u8(f: &mut File) -> Result<u8> {
+    let mut buf = [0u8; 1];
+    f.read_exact(&mut buf)?;
+    Ok(u8::from_le_bytes(buf))
+}
+
 fn read_u32(f: &mut File) -> Result<u32> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf).context("read_u32 failed")?;
@@ -67,6 +72,21 @@ fn read_u64(f: &mut File) -> Result<u64> {
     let mut buf = [0u8; 8];
     f.read_exact(&mut buf).context("read_u64 failed")?;
     Ok(u64::from_le_bytes(buf))
+}
+fn read_i8(f: &mut File) -> Result<i8> {
+    let mut buf = [0u8; 1];
+    f.read_exact(&mut buf)?;
+    Ok(i8::from_le_bytes(buf))
+}
+fn read_i32(f: &mut File) -> Result<i32> {
+    let mut buf = [0u8; 4];
+    f.read_exact(&mut buf)?;
+    Ok(i32::from_le_bytes(buf))
+}
+fn read_i64(f: &mut File) -> Result<i64> {
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf)?;
+    Ok(i64::from_le_bytes(buf))
 }
 
 fn read_gguf_string(f: &mut File) -> Result<String> {
