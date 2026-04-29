@@ -46,6 +46,12 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
         let value = read_gguf_value(&mut f, val_type)?;
         metadata.insert(key, value);
     }
+    struct TensorInfo {
+        name: String,
+        dims: Vec<usize>,
+        dtype: u32,
+        offset: u64,
+    }
 
     let tensors = HashMap::new();
     for _ in 0..tensor_count {
