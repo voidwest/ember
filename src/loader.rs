@@ -1,5 +1,5 @@
 use crate::tensor::CpuTensor;
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context, Ok, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -14,6 +14,7 @@ pub struct GgufLoader {
 }
 
 pub enum GgufValue {
+    U8(u8),
     U32(u32),
     U64(u64),
     I32(i32),
@@ -94,5 +95,14 @@ fn read_gguf_string(f: &mut File) -> Result<String> {
 }
 
 fn read_gguf_value(f: &mut File, val_type: u32) -> Result<GgufValue> {
-    match val_type {}
+    match val_type {
+        0 => Ok(GgufValue::U8(read_u8(f)?)),
+        4 => Ok(GgufValue::I32(read_i32(f)?)),
+        6 => Ok(GgufValue::U32(read_u32(f)?)),
+        7 => Ok(GgufValue::F32(read_f32(f)?)),
+        8 => Ok(GgufValue::Bool(read_u8(f)? != 0)),
+        9 => Ok(GgufValue::Str(read_gguf_string(f)?)),
+        11 => Ok(GgufValue::U64(read_u64(f)?)),
+        _ => bail!("unsupported GGUF value type: {}", val_type),
+    }
 }
