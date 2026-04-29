@@ -32,3 +32,30 @@ pub enum CpuError {
     #[error("unsupported operation: {0}")]
     Unsupported(String),
 }
+
+impl Backend for CpuBackend {
+    type Tensor = CpuTensor;
+    type Error = CpuError;
+
+    fn zeroes(&self, shape: &[usize]) -> Result<CpuTensor, CpuError> {
+        Ok(CpuTensor::zeroes(shape))
+    }
+
+    fn matmul(&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError> {
+        Ok(a.matmul(b))
+    }
+
+    fn add (&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError>{
+        Ok(a.add(b))
+    }
+
+    fn softmax(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError>{
+        Ok(x.softmax())
+    }
+    fn gelu(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError>{
+        Ok(x.gelu())
+    }
+    
+    
+}
+}
