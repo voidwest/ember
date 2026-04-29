@@ -73,11 +73,7 @@ fn read_u64(f: &mut File) -> Result<u64> {
     f.read_exact(&mut buf).context("read_u64 failed")?;
     Ok(u64::from_le_bytes(buf))
 }
-fn read_i8(f: &mut File) -> Result<i8> {
-    let mut buf = [0u8; 1];
-    f.read_exact(&mut buf)?;
-    Ok(i8::from_le_bytes(buf))
-}
+
 fn read_i32(f: &mut File) -> Result<i32> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
@@ -94,4 +90,8 @@ fn read_gguf_string(f: &mut File) -> Result<String> {
     let mut buf = vec![0u8; len];
     f.read_exact(&mut buf).context("read string failed")?;
     String::from_utf8(buf).context("invalid utf8 in string")
+}
+
+fn read_gguf_value(f: &mut File, val_type: u32) -> Result<GgufValue> {
+    match val_type {}
 }
