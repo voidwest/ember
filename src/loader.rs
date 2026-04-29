@@ -7,6 +7,7 @@ use std::path::Path;
 
 const GGUF_MAGIC: u32 = 0x46554747;
 const GGUF_VERSION: u32 = 3;
+const DEFAULT_ALIGNMENT: u64 = 32;
 
 pub struct GgufLoader {
     pub metadata: HashMap<String, GgufValue>,
@@ -70,6 +71,13 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
             offset,
         });
     }
+
+    let current_pos = f.stream_position()?;
+    let alignment = match metadata.get("general.alignment") {
+        Some(GgufValue::U32(a)) => *a as u64,
+        Some(GgufValue::U64(a)) => *a,
+        _ => DEFAULT_ALIGNMENT,
+    };
 
     Ok(GgufLoader { metadata, tensors })
 }
