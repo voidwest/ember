@@ -21,3 +21,7 @@ pub trait Backend {
 pub trait Module<B: Backend> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error>;
 }
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CpuBackend;
+
