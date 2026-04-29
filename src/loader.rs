@@ -53,9 +53,22 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
         offset: u64,
     }
 
-    let tensors = HashMap::new();
+    let mut tensor_info = Vec::with_capacity(tensor_count as usize);
     for _ in 0..tensor_count {
-        let _name = read_gguf_string(&mut f)?;
+        let name = read_gguf_string(&mut f)?;
+        let n_dims = read_u32(&mut f)?;
+        let mut dims = Vec::with_capacity(n_dims as usize);
+        for _ in 0..n_dims {
+            dims.push(read_u64(&mut f)? as usize);
+        }
+        let dtype = read_u32(&mut f)?;
+        let offset = read_u64(&mut f)?;
+        tensor_info.push(TensorInfo {
+            name,
+            dims,
+            dtype,
+            offset,
+        });
     }
 
     Ok(GgufLoader { metadata, tensors })
