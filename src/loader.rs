@@ -79,10 +79,11 @@ fn read_i32(f: &mut File) -> Result<i32> {
     f.read_exact(&mut buf)?;
     Ok(i32::from_le_bytes(buf))
 }
-fn read_i64(f: &mut File) -> Result<i64> {
-    let mut buf = [0u8; 8];
+
+fn read_f32(f: &mut File) -> Result<f32> {
+    let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
-    Ok(i64::from_le_bytes(buf))
+    Ok(f32::from_le_bytes(buf))
 }
 
 fn read_gguf_string(f: &mut File) -> Result<String> {
