@@ -17,3 +17,7 @@ pub trait Backend {
         eps: f32,
     ) -> Result<Self::Tensor, Self::Error>;
 }
+
+pub trait Module<B: Backend> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error>;
+}
