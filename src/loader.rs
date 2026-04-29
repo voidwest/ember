@@ -4,4 +4,10 @@ use safetensors::SafeTensors;
 use std::collections::HashMap;
 use std::path::Path;
 
-pub fn load_safetensors<P: AsRef<Path>>(path: P) -> Result<HashMap<String, CpuTensor>> {}
+pub fn load_safetensors<P: AsRef<Path>>(path: P) -> Result<HashMap<String, CpuTensor>> {
+    let data =
+        std::fs::read(&path).with_context(|| format!("failed to read {:?}", path.as_ref()))?;
+    let tensors = SafeTensors::deserialize(&data).context("invalid safetensors file")?;
+    let mut map = HashMap::new();
+    
+}
