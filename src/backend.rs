@@ -45,17 +45,24 @@ impl Backend for CpuBackend {
         Ok(a.matmul(b))
     }
 
-    fn add (&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError>{
+    fn add(&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(a.add(b))
     }
 
-    fn softmax(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError>{
+    fn softmax(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.softmax())
     }
-    fn gelu(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError>{
+    fn gelu(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.gelu())
     }
-    
-    
-}
+
+    fn layer_norm(
+        &self,
+        x: &CpuTensor,
+        weight: &CpuTensor,
+        bias: &CpuTensor,
+        eps: f32,
+    ) -> Result<CpuTensor, CpuError> {
+        Ok(x.layer_norm(weight, bias, eps))
+    }
 }
