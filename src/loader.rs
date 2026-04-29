@@ -47,11 +47,9 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
         metadata.insert(key, value);
     }
 
-    // TODO(you): read tensor name, n_dims, dims, type, offset
     let tensors = HashMap::new();
     for _ in 0..tensor_count {
         let _name = read_gguf_string(&mut f)?;
-        // TODO: read shape, dtype, offset -> load into CpuTensor
     }
 
     Ok(GgufLoader { metadata, tensors })
