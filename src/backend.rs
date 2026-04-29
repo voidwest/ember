@@ -25,3 +25,10 @@ pub trait Module<B: Backend> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CpuBackend;
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum CpuError {
+    #[error("shape mismatch: {0}")]
+    ShapeMisatch(String),
+    #[error("unsupported operation: {0}")]
+    Unsupported(String),
+}
