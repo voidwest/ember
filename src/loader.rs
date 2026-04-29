@@ -78,6 +78,9 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
         Some(GgufValue::U64(a)) => *a,
         _ => DEFAULT_ALIGNMENT,
     };
+    let data_start = (current_pos + alignment - 1) & !(alignment - 1);
+    
+    
 
     Ok(GgufLoader { metadata, tensors })
 }
