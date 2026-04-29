@@ -25,13 +25,11 @@ pub enum GgufValue {
 pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     let mut f = File::open(&path).with_context(|| format!("failed to open {:?}", path.as_ref()))?;
 
-    // 1. verify magic
     let magic = read_u32(&mut f)?;
     if magic != GGUF_MAGIC {
         bail!("not a GGUF file (bad magic: {:#x})", magic);
     }
 
-    // 2. version check
     let version = read_u32(&mut f)?;
     if version != GGUF_VERSION {
         bail!("unsupported GGUF version: {}", version);
