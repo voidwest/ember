@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-const GGUF_MAGIC: u32 = 0x46554747; // "GGUF" in little-endian
+const GGUF_MAGIC: u32 = 0x46554747;
 const GGUF_VERSION: u32 = 3;
 
 pub struct GgufLoader {
@@ -37,11 +37,9 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
         bail!("unsupported GGUF version: {}", version);
     }
 
-    // 3. counts from header
     let tensor_count = read_u64(&mut f)?;
     let metadata_kv_count = read_u64(&mut f)?;
 
-    // 4. metadata k/v pairs
     // TODO(you): implement read_metadata_kv for all value types
     let metadata = HashMap::new();
     for _ in 0..metadata_kv_count {
@@ -51,7 +49,6 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
         // TODO: read value based on type
     }
 
-    // 5. tensor info
     // TODO(you): read tensor name, n_dims, dims, type, offset
     let tensors = HashMap::new();
     for _ in 0..tensor_count {
@@ -61,8 +58,6 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
 
     Ok(GgufLoader { metadata, tensors })
 }
-
-// --- low level readers ---
 
 fn read_u32(f: &mut File) -> Result<u32> {
     let mut buf = [0u8; 4];
