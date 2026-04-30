@@ -18,3 +18,10 @@ impl<B: Backend> Linear<B> {
         Ok(out)
     }
 }
+
+pub struct Mlp<B: Backend> {
+    c_fc: Linear<B>,
+    c_proj: Linear<B>,
+}
+
+
