@@ -11,6 +11,10 @@ impl<B: Backend> Linear<B> {
         Self { weight, bias }
     }
     pub fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        
+        let mut out = backend.matmul(x, &self.weight)?;
+        if let Some(ref b) = self.bias {
+            out = backend.add(&out, b)?;
+        }
+        Ok(out)
     }
 }
