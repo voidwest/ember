@@ -6,4 +6,8 @@ pub struct Linear<B: Backend> {
     bias: Option<B::Tensor>,
 }
 
-impl<B: Backend> Linear<B> {}
+impl<B: Backend> Linear<B> {
+    pub fn new(weight: B::Tensor, bias: Option<B::Tensor>) -> Self {
+        Self { weight, bias }
+    }
+}
