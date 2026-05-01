@@ -53,3 +53,9 @@ impl<B: Backend> Attention<B> {
         }
     }
 }
+
+impl<B: Backend> Module<B> for Attention<B> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        self.c_proj.forward(backend, x)
+    }
+}
