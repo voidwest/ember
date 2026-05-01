@@ -67,3 +67,16 @@ impl<B: Backend> Module<B> for Attention<B> {
                                         // output projection
     }
 }
+
+pub struct Block<B: Backend> {
+    ln_1: LayerNorm<B>,
+    attn: Attention<B>,
+    ln_2: LayerNorm<B>,
+    mlp: Mlp<B>,
+}
+
+pub struct LayerNorm<B: Backend> {
+    weight: B::Tensor,
+    bias: B::Tensor,
+    eps: f32,
+}
