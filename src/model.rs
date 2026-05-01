@@ -56,6 +56,14 @@ impl<B: Backend> Attention<B> {
 
 impl<B: Backend> Module<B> for Attention<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        self.c_proj.forward(backend, x)
+        self.c_proj.forward(backend, x) // simple attention
+                                        // 1. project x to q, k, v
+                                        // 2. split to heads
+                                        // 3. scaled dot products (q@ k^t / sqrt(head_dim))
+                                        // apply casual mask
+                                        // softmax
+                                        // attention @ v
+                                        // concat heads
+                                        // output projection
     }
 }
