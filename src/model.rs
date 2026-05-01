@@ -75,6 +75,17 @@ pub struct Block<B: Backend> {
     mlp: Mlp<B>,
 }
 
+impl<B: Backend> Block<B> {
+    pub fn new(ln_1: LayerNorm<B>, attn: Attention<B>, ln_2: LayerNorm<B>, mlp: Mlp<B>) -> Self {
+        Self {
+            ln_1,
+            attn,
+            ln_2,
+            mlp,
+        }
+    }
+}
+
 pub struct LayerNorm<B: Backend> {
     weight: B::Tensor,
     bias: B::Tensor,
