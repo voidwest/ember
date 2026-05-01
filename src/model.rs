@@ -29,3 +29,11 @@ impl<B: Backend> Mlp<B> {
         Self { c_fc, c_proj }
     }
 }
+
+impl<B: Backend> Module<B> for Mlp<B> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        let x = self.c_fc.forward(backend, x)?;
+        let x = backend.gelu(&x)?;
+        self.c_proj.forward(backend, &x)
+    }
+}
