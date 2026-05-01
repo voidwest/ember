@@ -44,8 +44,12 @@ pub struct Attention<B: Backend> {
     n_heads: usize,
 }
 
-impl <B: Backend> for Attention<B>{
-    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error>{
-
+impl<B: Backend> Attention<B> {
+    pub fn new(c_attn: Linear<B>, c_proj: Linear<B>, n_heads: usize) -> Self {
+        Self {
+            c_attn,
+            c_proj,
+            n_heads,
+        }
     }
 }
