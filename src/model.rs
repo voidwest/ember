@@ -114,3 +114,10 @@ impl<B: Backend> Module<B> for LayerNorm<B> {
         backend.layer_norm(x, &self.weight, &self.bias, self.eps)
     }
 }
+
+pub struct Gpt2<B: Backend> {
+    wte: B::Tensor,
+    wpe: B::Tensor,
+    blocks: Vec<Block<B>>,
+    ln_f: LayerNorm<B>,
+}
