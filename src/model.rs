@@ -24,4 +24,8 @@ pub struct Mlp<B: Backend> {
     c_proj: Linear<B>,
 }
 
-
+impl<B: Backend> Mlp<B> {
+    pub fn new(c_fc: Linear<B>, c_proj: Linear<B>) -> Self {
+        Self { c_fc, c_proj }
+    }
+}
