@@ -121,3 +121,19 @@ pub struct Gpt2<B: Backend> {
     blocks: Vec<Block<B>>,
     ln_f: LayerNorm<B>,
 }
+
+impl<B: Backend> Gpt2<B> {
+    pub fn new(wte: B::Tensor, wpe: B::Tensor, blocks: Vec<Block<B>>, ln_f: LayerNorm<B>) -> Self {
+        Self {
+            wte,
+            wpe,
+            blocks,
+            ln_f,
+        }
+    }
+
+    pub fn forward(&self, backend: &B, token_ids: &[usize]) -> Result<B::Tensor, B::Error> {
+        let vocab_size = 50257;
+        backend.zeroes(&[token_ids.len(), vocab_size])
+    }
+}
