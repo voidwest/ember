@@ -86,6 +86,18 @@ impl<B: Backend> Block<B> {
     }
 }
 
+impl<B: Backend> Module<B> for Block<B> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        let normed = self.ln_1.forward(backend, x)?;
+        let attn_out = self.attn.forward(backend, &normed)?;
+        let x = backend.add(x, &attn_out)?;
+
+        let normed = self.ln_2.forward(backend, &x)?;
+        let mlp_out = self.mlp.forward(backend, &normed)?;
+        backend.add(&x, &mlp_out)
+    }
+}
+
 pub struct LayerNorm<B: Backend> {
     weight: B::Tensor,
     bias: B::Tensor,
