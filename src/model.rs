@@ -103,3 +103,14 @@ pub struct LayerNorm<B: Backend> {
     bias: B::Tensor,
     eps: f32,
 }
+impl<B: Backend> LayerNorm<B> {
+    pub fn new(weight: B::Tensor, bias: B::Tensor, eps: f32) -> Self {
+        Self { weight, bias, eps }
+    }
+}
+
+impl<B: Backend> Module<B> for LayerNorm<B> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        backend.layer_norm(x, &self.weight, &self.bias, self.eps)
+    }
+}
