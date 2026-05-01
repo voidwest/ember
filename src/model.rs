@@ -37,3 +37,9 @@ impl<B: Backend> Module<B> for Mlp<B> {
         self.c_proj.forward(backend, &x)
     }
 }
+
+pub struct Attention<B: Backend> {
+    c_attn: Linear<B>,
+    c_proj: Linear<B>,
+    n_heads: usize,
+}
