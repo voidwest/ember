@@ -1,5 +1,6 @@
 use crate::backend::{Backend, CpuBackend, Module};
 use alloc::vec::Vec;
+use reqwest::get;
 
 pub struct Linear<B: Backend> {
     weight: B::Tensor,
@@ -123,7 +124,79 @@ pub struct Gpt2<B: Backend> {
     pub head: Linear<B>,
 }
 
-impl Gpt2<CpuBackend> {}
+impl Gpt2<CpuBackend> {
+    pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
+        let get_t = |name: &str| {
+            loader
+                .tensors
+                .get(name)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Missing tensor: {}", name))
+        };
+
+        // metadata
+        let n_layers = match loader.metadata.get("gpt2.block_count") {
+            Some(crate::loader::GgufValue::U32(n)) => *n as usize,
+            _ => 12,
+        };
+        let n_heads = 12; // default val
+
+        // blocks
+        let mut blocks = Vec::with_capacity(n_layers);
+        for i in 0..n_layers {
+            // attention mapping
+            let attn = Attention::new(
+                Linear::new(
+                    get_t(&format!("blk.{}.attn_qkv.weight", i))?,
+                    Some(get_t(&format!("blk.{}.attn_qkv.bias", i))?),
+                ),
+                Linear::new(
+                    get_t(&format!("blk.{}.attn_output.weight", i))?,
+                    Some(get_t(&format!("blk.{}.attn_output.bias", i))?),
+                ),
+                n_heads,
+            );
+
+            let mlp = Mlp::new(
+                Linear::new(
+                    get_t(&format!("blk.{}.ffn_up.weight", i))?,
+                    Some(get_t(&format!("blk.{}.ffn_up.bias", i))?),
+                ),
+                Linear::new(
+                    get_t(&format!("blk.{}.ffn_down.weight", i))?,
+                    Some(get_t(&format!("blk.{}.ffn_down.bias", i))?),
+                ),
+            );
+
+            blocks.push(Block::new(
+                LayerNorm::new(
+                    get_t(&format!("blk.{}.attn_norm.weight", i))?,
+                    get_t(&format!("blk.{}.attn_norm.bias", i))?,
+                    1e-5,
+                ),
+                attn,
+                LayerNorm::new(
+                    get_t(&format!("blk.{}.ffn_norm.weight", i))?,
+                    get_t(&format!("blk.{}.ffn_norm.bias", i))?,
+                    1e-5,
+                ),
+                mlp,
+            ));
+        }
+
+        Ok(Self {
+            wte: get_t("token_embd.weight")?,
+            wpe: get_t("position_embd.weight")?,
+            blocks,
+            ln_f: LayerNorm::new(
+                get_t("output_norm.weight")?,
+                get_t("output_norm.bias")?,
+                1e-5,
+            ),
+            head: Linear::new(get_t("output.weight")?, None),
+        })
+    }
+}
 
 impl<B: Backend> Gpt2<B> {
     pub fn new(
@@ -141,7 +214,6 @@ impl<B: Backend> Gpt2<B> {
             head,
         }
     }
-
     pub fn forward(&self, backend: &B, token_ids: &[usize]) -> Result<B::Tensor, B::Error> {
         let vocab_size = 50257;
         backend.zeroes(&[token_ids.len(), vocab_size])
