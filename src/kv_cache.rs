@@ -40,6 +40,8 @@ impl KVCache {
             let head_offset = h * self.max_seq_len * self.head_dim;
             let dst = layer_offset + head_offset + seq_offset;
             let src = h * self.head_dim;
+
+            self.k[dst..dst + self.head_dim].copy_from_slice(&k_new[src..src + self.head_dim]);
         }
     }
 }
