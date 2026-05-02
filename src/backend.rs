@@ -71,8 +71,6 @@ impl Backend for CpuBackend {
         Ok(x.layer_norm(weight, bias, eps))
     }
     fn index_select(&self, x: &CpuTensor, index: usize) -> Result<CpuTensor, Self::Error> {
-        Ok((x
-            .index_select(index)
-            .map_err(|e| Self::Error::BackendError(e.to_string()))))
+        Ok((x.index_select(index)))
     }
 }
