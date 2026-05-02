@@ -45,4 +45,5 @@ impl KVCache {
             self.v[dst..dst + self.head_dim].copy_from_slice(&v_new[src..src + self.head_dim]);
         }
     }
+    pub fn get(&self, layer: usize) -> (&[f32], &[f32]) {}
 }
