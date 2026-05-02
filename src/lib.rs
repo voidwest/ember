@@ -23,5 +23,6 @@ pub mod backend;
 pub mod kv_cache;
 pub mod loader;
 pub mod model;
+pub mod quant;
 pub mod tensor;
 pub mod tokenizer;
