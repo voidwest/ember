@@ -1,4 +1,4 @@
-use crate::backend::{Backend, Module};
+use crate::backend::{Backend, CpuBackend, Module};
 use alloc::vec::Vec;
 
 pub struct Linear<B: Backend> {
@@ -122,6 +122,8 @@ pub struct Gpt2<B: Backend> {
     pub ln_f: LayerNorm<B>,
     pub head: Linear<B>,
 }
+
+impl Gpt2<CpuBackend> {}
 
 impl<B: Backend> Gpt2<B> {
     pub fn new(
