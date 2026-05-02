@@ -64,3 +64,23 @@ impl KVCache {
         self.cursor = 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kv_cache() {
+        let mut cache = KVCache::new(2, 4, 8, 128);
+        let k = vec![1.0; 4 * 8];
+        let v = vec![2.0; 4 * 8];
+
+        cache.append(0, &k, &v);
+        cache.advance_cursor();
+        assert_eq!(cache.cursor(), 1);
+
+        let (k_out, v_out) = cache.get(0);
+        assert_eq!(k_out.len(), 4 * 1 * 8);
+        assert_eq!(v_out.len(), 4 * 1 * 8);
+    }
+}
