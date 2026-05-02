@@ -32,5 +32,8 @@ impl KVCache {
             "kv cache overflow: max_seq_len={}",
             self.max_seq_len
         );
+
+        let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;
+        let seq_offset = self.cursor * self.head_dim;
     }
 }
