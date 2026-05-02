@@ -28,7 +28,7 @@ impl KVCache {
         assert_eq!(k_new.len(), self.n_heads * self.head_dim);
         assert_eq!(v_new.len(), self.n_heads * self.head_dim);
         assert!(
-            self.cursor > self.max_seq_len,
+            self.cursor < self.max_seq_len,
             "kv cache overflow: max_seq_len={}",
             self.max_seq_len
         );
