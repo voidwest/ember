@@ -9,10 +9,9 @@ edition = "2021"
 #rag = ["dep:fastembed-rs", "dep:instant-distance"]
 
 [dependencies]
-safetensors = "0.4"
 tokenizers = "0.20"
 thiserror = "1"
 anyhow = "1"
 memmap2 = "0.9"
 libm = "0.2.16"
-reqwest = { version = "0.13.3", features = ["json", "blocking"] } # use "blocking" if you don't want async
+reqwest = { version = "0.13.3", features = ["json", "blocking"] }
