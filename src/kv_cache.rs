@@ -45,5 +45,12 @@ impl KVCache {
             self.v[dst..dst + self.head_dim].copy_from_slice(&v_new[src..src + self.head_dim]);
         }
     }
-    pub fn get(&self, layer: usize) -> (&[f32], &[f32]) {}
+    pub fn get(&self, layer: usize) -> (&[f32], &[f32]) {
+        let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;
+        let len = self.n_heads * self.cursor * self.head_dim;
+        (
+            &self.k[layer_offset..layer_offset + len],
+            &self.v[layer_offset..layer_offset + len],
+        )
+    }
 }
