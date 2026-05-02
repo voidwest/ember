@@ -219,8 +219,16 @@ impl<B: Backend> Gpt2<B> {
         let mut x = backend.zeroes(&[seq_len, 768])?;
         for (i, &token_id) in tokens.iter().enumerate() {
             let word_vec = backend.index_select(&self.wte, token_id as usize)?;
+
+            let pos_vec = backend.index_select(&self.wpe, i)?;
+
+            let combined = backend.add(&word_vec, &pos_vec)?;
+
+            backend.assign_row(&mut x, i, &combined)?;
         }
+        Ok(x)
     }
+}
 
     pub fn forward(&self, backend: &B, token_ids: &[usize]) -> Result<B::Tensor, B::Error> {
         let vocab_size = 50257;
