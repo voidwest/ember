@@ -60,4 +60,7 @@ impl KVCache {
     pub fn advance_cursor(&mut self) {
         self.cursor += 1;
     }
+    pub fn reset(&mut self) {
+        self.cursor = 0;
+    }
 }
