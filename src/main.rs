@@ -1,7 +1,7 @@
 use ember::loader::load_gguf;
 
 fn main() {
-    let loader = load_gguf("gpt2.gguf").expect("failed to load");
+    let loader = load_gguf("gpt2.Q8_0.gguf").expect("failed to load");
 
     println!("=== metadata ===");
     for key in loader.metadata.keys() {

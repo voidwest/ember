@@ -40,10 +40,16 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     let tensor_count = read_u64(&mut f)?;
     let metadata_kv_count = read_u64(&mut f)?;
 
+    eprintln!("version: {}", version);
+    eprintln!("tensor_count: {}", tensor_count);
+    eprintln!("metadata_kv_count: {}", metadata_kv_count);
     let mut metadata = HashMap::new();
-    for _ in 0..metadata_kv_count {
+    for i in 0..metadata_kv_count {
+        eprintln!("reading metadata key {}", i);
         let key = read_gguf_string(&mut f)?;
+        eprintln!("key: {}", key);
         let val_type = read_u32(&mut f)?;
+        eprintln!("val_type: {}", val_type);
         let value = read_gguf_value(&mut f, val_type)?;
         metadata.insert(key, value);
     }
@@ -146,12 +152,20 @@ fn read_gguf_string(f: &mut File) -> Result<String> {
 fn read_gguf_value(f: &mut File, val_type: u32) -> Result<GgufValue> {
     match val_type {
         0 => Ok(GgufValue::U8(read_u8(f)?)),
-        4 => Ok(GgufValue::I32(read_i32(f)?)),
-        6 => Ok(GgufValue::U32(read_u32(f)?)),
-        7 => Ok(GgufValue::F32(read_f32(f)?)),
-        8 => Ok(GgufValue::Bool(read_u8(f)? != 0)),
-        9 => Ok(GgufValue::Str(read_gguf_string(f)?)),
-        11 => Ok(GgufValue::U64(read_u64(f)?)),
+        5 => Ok(GgufValue::I32(read_i32(f)?)),
+        4 => Ok(GgufValue::U32(read_u32(f)?)),
+        6 => Ok(GgufValue::F32(read_f32(f)?)),
+        7 => Ok(GgufValue::Bool(read_u8(f)? != 0)),
+        8 => Ok(GgufValue::Str(read_gguf_string(f)?)),
+        10 => Ok(GgufValue::U64(read_u64(f)?)),
+        9 => {
+            let element_type = read_u32(f)?;
+            let count = read_u64(f)?;
+            for _ in 0..count {
+                read_gguf_value(f, element_type)?; // recursive, discard for now
+            }
+            Ok(GgufValue::U8(0)) // placeholder, we're just consuming the bytes
+        }
         _ => bail!("unsupported GGUF value type: {}", val_type),
     }
 }
