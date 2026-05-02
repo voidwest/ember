@@ -57,4 +57,7 @@ impl KVCache {
     pub fn cursor(&self) -> usize {
         self.cursor
     }
+    pub fn advance_cursor(&mut self) {
+        self.cursor += 1;
+    }
 }
