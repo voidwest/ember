@@ -6,6 +6,20 @@ pub struct Linear<B: Backend> {
     bias: Option<B::Tensor>,
 }
 
+pub struct Attention<B: Backend> {
+    pub w_qkve: Linear<B>,
+    pub w_out: Linear<B>,
+    pub n_heads: usize,
+}
+
+pub struct Gpt2<B: Backend> {
+    pub wte: B::Tensor,
+    pub wpe: B::Tensor,
+    pub blocks: Vec<Block<B>>,
+    pub ln_f: LayerNorm<B>,
+    pub head: Linear<B>,
+}
+
 impl<B: Backend> Linear<B> {
     pub fn new(weight: B::Tensor, bias: Option<B::Tensor>) -> Self {
         Self { weight, bias }
