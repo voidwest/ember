@@ -21,6 +21,7 @@ pub trait Backend {
         tensor: &Self::Tensor,
         index: usize,
     ) -> Result<Self::Tensor, Self::Error>;
+    fn assign_row(&self, dst: &mut Self::Tensor, index: usize, src: &Self::Tensor);
 }
 
 pub trait Module<B: Backend> {
@@ -72,5 +73,8 @@ impl Backend for CpuBackend {
     }
     fn index_select(&self, x: &CpuTensor, index: usize) -> Result<CpuTensor, Self::Error> {
         Ok((x.index_select(index)))
+    }
+    fn assign_row(&self, dst: &mut CpuTensor, index: usize, src: &CpuTensor) {
+        dst.assign_row(index, src);
     }
 }
