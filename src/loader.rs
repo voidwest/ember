@@ -92,10 +92,7 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
 
         let element_count: usize = info.dims.iter().product();
 
-        if info.dtype != 0 {
-            eprintln!("skipping tensor {} (dtype {})", info.name, info.dtype);
-            continue;
-        }
+        
 
         let mut data = vec![0.0f32; element_count];
         let mut buf = vec![0u8; element_count * 4];
