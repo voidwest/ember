@@ -35,5 +35,11 @@ impl KVCache {
 
         let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;
         let seq_offset = self.cursor * self.head_dim;
+
+        for h in 0..self.n_heads {
+            let head_offset = h * self.max_seq_len * self.head_dim;
+            let dst = layer_offset + head_offset + seq_offset;
+            let src = h * self.head_dim;
+        }
     }
 }
