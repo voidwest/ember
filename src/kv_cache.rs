@@ -23,4 +23,6 @@ impl KVCache {
             cursor: 0,
         }
     }
+
+    pub fn append(&mut self, layer: usize, k_new: &[f32], v_new: &[f32]) {}
 }
