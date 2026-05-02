@@ -224,7 +224,7 @@ impl<B: Backend> Gpt2<B> {
 
             let combined = backend.add(&word_vec, &pos_vec)?;
 
-            backend.assign_row(&mut x, i, &combined)?;
+            backend.assign_row(&mut x, i, &combined);
         }
         Ok(x)
     }
