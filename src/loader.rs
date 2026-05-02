@@ -90,21 +90,40 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     let mut tensors = HashMap::new();
     for info in tensor_info {
         f.seek(SeekFrom::Start(data_start + info.offset))?;
-
         let element_count: usize = info.dims.iter().product();
 
-        let mut data = vec![0.0f32; element_count];
-        let mut buf = vec![0u8; element_count * 4];
-        f.read_exact(&mut buf)?;
+        let data = match info.dtype {
+            0 => {
+                let mut data = vec![0.0f32; element_count];
+                let mut buf = vec![0u8; element_count * 4];
+                f.read_exact(&mut buf)?;
+                for i in 0..element_count {
+                    let start = i * 4;
+                    data[i] = f32::from_le_bytes(buf[start..start + 4].try_into().unwrap());
+                }
+                data
+            }
+            8 => {
+                let n_blocks = element_count / 32;
+                let mut buf = vec![0u8; n_blocks * Q8_0_TYPE_SIZE];
+                f.read_exact(&mut buf)?;
 
-        for i in 0..element_count {
-            let start = i * 4;
-            data[i] = f32::from_le_bytes(buf[start..start + 4].try_into().unwrap());
-        }
+                let mut f32_data = vec![0.0f32; element_count];
+                dequantize_q8_0(&buf, &mut f32_data)?;
+                f32_data
+            }
+            _ => {
+                eprintln!(
+                    "skipping tensor {} (unsupported dtype {})",
+                    info.name, info.dtype
+                );
+                continue;
+            }
+        };
+
         let tensor = CpuTensor::from_data(info.dims, data);
         tensors.insert(info.name, tensor);
     }
-
     Ok(GgufLoader { metadata, tensors })
 }
 
