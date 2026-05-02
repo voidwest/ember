@@ -53,4 +53,8 @@ impl KVCache {
             &self.v[layer_offset..layer_offset + len],
         )
     }
+
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
 }
