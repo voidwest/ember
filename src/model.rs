@@ -228,7 +228,6 @@ impl<B: Backend> Gpt2<B> {
         }
         Ok(x)
     }
-}
 
     pub fn forward(&self, backend: &B, token_ids: &[usize]) -> Result<B::Tensor, B::Error> {
         let vocab_size = 50257;

@@ -211,6 +211,21 @@ impl CpuTensor {
             strides: new_strides,
         }
     }
+    pub fn assign_row(&mut self, index: usize, src: &CpuTensor) {
+        let row_size = self.shape[1];
+        let start = index * row_size;
+        let end = start + row_size;
+
+        if src.data.len() != row_size {
+            panic!(
+                "source tensor size {} does not match destination row size {}",
+                src.data.len(),
+                row_size
+            );
+        }
+
+        self.data[start..end].copy_from_slice(&src.data);
+    }
 }
 
 #[cfg(test)]
