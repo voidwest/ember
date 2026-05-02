@@ -24,5 +24,13 @@ impl KVCache {
         }
     }
 
-    pub fn append(&mut self, layer: usize, k_new: &[f32], v_new: &[f32]) {}
+    pub fn append(&mut self, layer: usize, k_new: &[f32], v_new: &[f32]) {
+        assert_eq!(k_new.len(), self.n_heads * self.head_dim);
+        assert_eq!(v_new.len(), self.n_heads * self.head_dim);
+        assert!(
+            self.cursor > self.max_seq_len,
+            "kv cache overflow: max_seq_len={}",
+            self.max_seq_len
+        );
+    }
 }
