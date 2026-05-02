@@ -183,6 +183,34 @@ impl CpuTensor {
         }
         strides
     }
+    pub fn index_select(&self, index: usize) -> Self {
+        if self.shape.len() < 2 {
+            eprintln!("cannot index_select a tensor with less than 2 dimensions")
+        }
+
+        let row_size = self.shape[1];
+        let start = index * row_size;
+        let end = start + row_size;
+
+        if end > self.data.len() {
+            eprintln!(
+                "index {} out of bounds (max index: {})",
+                index,
+                self.data.len() / row_size - 1
+            );
+        }
+
+        let row_data = self.data[start..end].to_vec();
+
+        let new_shape = vec![row_size];
+        let new_strides = vec![1];
+
+        CpuTensor {
+            shape: new_shape,
+            data: row_data,
+            strides: new_strides,
+        }
+    }
 }
 
 #[cfg(test)]

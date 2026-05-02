@@ -214,6 +214,14 @@ impl<B: Backend> Gpt2<B> {
             head,
         }
     }
+    fn embed(&self, backend: &B, tokens: &[u32]) -> Result<B::Tensor, B::Error> {
+        let seq_len = tokens.len();
+        let mut x = backend.zeroes(&[seq_len, 768])?;
+        for (i, &token_id) in tokens.iter().enumerate() {
+            let word_vec = backend.index_select(&self.wte, token_id as usize)?;
+        }
+    }
+
     pub fn forward(&self, backend: &B, token_ids: &[usize]) -> Result<B::Tensor, B::Error> {
         let vocab_size = 50257;
         backend.zeroes(&[token_ids.len(), vocab_size])

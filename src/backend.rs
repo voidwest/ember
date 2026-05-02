@@ -16,6 +16,11 @@ pub trait Backend {
         bias: &Self::Tensor,
         eps: f32,
     ) -> Result<Self::Tensor, Self::Error>;
+    fn index_select(
+        &self,
+        tensor: &Self::Tensor,
+        index: usize,
+    ) -> Result<Self::Tensor, Self::Error>;
 }
 
 pub trait Module<B: Backend> {
@@ -64,5 +69,10 @@ impl Backend for CpuBackend {
         eps: f32,
     ) -> Result<CpuTensor, CpuError> {
         Ok(x.layer_norm(weight, bias, eps))
+    }
+    fn index_select(&self, x: &CpuTensor, index: usize) -> Result<CpuTensor, Self::Error> {
+        Ok((x
+            .index_select(index)
+            .map_err(|e| Self::Error::BackendError(e.to_string()))))
     }
 }
