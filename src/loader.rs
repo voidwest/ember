@@ -1,3 +1,4 @@
+use crate::quant::{dequantize_q8_0, Q8_0_TYPE_SIZE};
 use crate::tensor::CpuTensor;
 use anyhow::{bail, Context, Ok, Result};
 use std::collections::HashMap;
@@ -91,8 +92,6 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
         f.seek(SeekFrom::Start(data_start + info.offset))?;
 
         let element_count: usize = info.dims.iter().product();
-
-        
 
         let mut data = vec![0.0f32; element_count];
         let mut buf = vec![0u8; element_count * 4];
