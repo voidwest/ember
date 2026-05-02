@@ -42,6 +42,7 @@ impl KVCache {
             let src = h * self.head_dim;
 
             self.k[dst..dst + self.head_dim].copy_from_slice(&k_new[src..src + self.head_dim]);
+            self.v[dst..dst + self.head_dim].copy_from_slice(&v_new[src..src + self.head_dim]);
         }
     }
 }
