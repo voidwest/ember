@@ -41,16 +41,10 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     let tensor_count = read_u64(&mut f)?;
     let metadata_kv_count = read_u64(&mut f)?;
 
-    eprintln!("version: {}", version);
-    eprintln!("tensor_count: {}", tensor_count);
-    eprintln!("metadata_kv_count: {}", metadata_kv_count);
     let mut metadata = HashMap::new();
     for i in 0..metadata_kv_count {
-        eprintln!("reading metadata key {}", i);
         let key = read_gguf_string(&mut f)?;
-        eprintln!("key: {}", key);
         let val_type = read_u32(&mut f)?;
-        eprintln!("val_type: {}", val_type);
         let value = read_gguf_value(&mut f, val_type)?;
         metadata.insert(key, value);
     }
@@ -113,10 +107,6 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
                 f32_data
             }
             _ => {
-                eprintln!(
-                    "skipping tensor {} (unsupported dtype {})",
-                    info.name, info.dtype
-                );
                 continue;
             }
         };

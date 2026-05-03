@@ -93,7 +93,6 @@ impl<B: Backend> Module<B> for Attention<B> {
                     }
                 }
 
-                // --- Step B: Softmax the row i ---
                 let row_start = i * seq_len;
                 let row = &mut head_scores[row_start..row_start + seq_len];
 
@@ -198,7 +197,10 @@ impl Gpt2<CpuBackend> {
             Some(crate::loader::GgufValue::U32(n)) => *n as usize,
             _ => 12,
         };
-        let n_heads = 12; // default val
+        let n_heads = match loader.metadata.get("gpt2.attention.head_count") {
+            Some(crate::loader::GgufValue::U32(n)) => *n as usize,
+            _ => 12,
+        }; // default val
 
         // blocks
         let mut blocks = Vec::with_capacity(n_layers);
@@ -275,7 +277,8 @@ impl<B: Backend> Gpt2<B> {
     }
     fn embed(&self, backend: &B, tokens: &[u32]) -> Result<B::Tensor, B::Error> {
         let seq_len = tokens.len();
-        let mut x = backend.zeroes(&[seq_len, 768])?;
+        let embed_dim = backend.shape(&self.wte)[1];
+        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &token_id) in tokens.iter().enumerate() {
             let word_vec = backend.index_select(&self.wte, token_id as usize)?;
 
