@@ -16,6 +16,33 @@ impl CpuTensor {
             data: vec![0.0; len],
         }
     }
+    pub fn add_broadcast(&self, bias: &Self) -> Self {
+        assert_eq!(self.ndim(), 2, "add_broadcast: lhs must be 2D");
+        assert_eq!(bias.ndim(), 1, "add_broadcast: rhs must be 1D");
+        let (rows, cols) = (self.shape[0], self.shape[1]);
+        assert_eq!(
+            bias.shape[0], cols,
+            "add_broadcast: bias size must match cols"
+        );
+        let mut new_data = self.data.clone();
+        for r in 0..rows {
+            for c in 0..cols {
+                new_data[r * cols + c] += bias.data[c];
+            }
+        }
+        CpuTensor::from_data(self.shape.clone(), new_data)
+    }
+    pub fn transpose(&self) -> Self {
+        assert_eq!(self.ndim(), 2, "transpose only supports 2D tensors");
+        let (rows, cols) = (self.shape[0], self.shape[1]);
+        let mut new_data = vec![0.0f32; rows * cols];
+        for r in 0..rows {
+            for c in 0..cols {
+                new_data[c * rows + r] = self.data[r * cols + c];
+            }
+        }
+        CpuTensor::from_data(vec![cols, rows], new_data)
+    }
 
     pub fn from_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
         let expected = shape.iter().product::<usize>();

@@ -245,8 +245,8 @@ impl Gpt2<CpuBackend> {
         }
 
         Ok(Self {
-            wte: get_t("token_embd.weight")?,
-            wpe: get_t("position_embd.weight")?,
+            wte: get_t("token_embd.weight")?.transpose(),
+            wpe: get_t("position_embd.weight")?.transpose(),
             blocks,
             ln_f: LayerNorm::new(
                 get_t("output_norm.weight")?,
@@ -289,8 +289,16 @@ impl<B: Backend> Gpt2<B> {
         Ok(x)
     }
 
-    pub fn forward(&self, backend: &B, token_ids: &[usize]) -> Result<B::Tensor, B::Error> {
-        let vocab_size = 50257;
-        backend.zeroes(&[token_ids.len(), vocab_size])
+    pub fn forward(&self, backend: &B, token_ids: &[u32]) -> Result<B::Tensor, B::Error> {
+        let mut x = self.embed(backend, token_ids)?;
+
+        for block in &self.blocks {
+            x = block.forward(backend, &x)?;
+        }
+        let x = self.ln_f.forward(backend, &x)?;
+
+        let logits = self.head.forward(backend, &x)?;
+
+        Ok(logits)
     }
 }

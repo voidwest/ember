@@ -11,7 +11,9 @@ fn main() {
     println!("model built");
 
     let backend = CpuBackend;
-    let tokens = &[15496usize]; // "Hello" in gpt2
+    println!("wte shape: {:?}", backend.shape(&model.wte));
+
+    let tokens = &[15496u32]; // "Hello" in gpt2
     let logits = model
         .forward(&backend, tokens)
         .expect("forward pass failed");
