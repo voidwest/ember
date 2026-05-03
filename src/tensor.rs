@@ -226,6 +226,35 @@ impl CpuTensor {
 
         self.data[start..end].copy_from_slice(&src.data);
     }
+    pub fn slice_cols(&self, start_col: usize, end_col: usize) -> Self {
+        if self.shape.len() < 2 {
+            panic!("slice_cols requires a 2D tensor [rows, cols]");
+        }
+
+        let rows = self.shape[0];
+        let old_cols = self.shape[1];
+        let new_cols = end_col - start_col;
+
+        if end_col > old_cols {
+            panic!("column slice out of bounds: {} > {}", end_col, old_cols);
+        }
+
+        let mut new_data = Vec::with_capacity(rows * new_cols);
+
+        for r in 0..rows {
+            let row_start = r * old_cols;
+            let slice_start = row_start + start_col;
+            let slice_end = row_start + end_col;
+
+            new_data.extend_from_slice(&self.data[slice_start..slice_end]);
+        }
+
+        CpuTensor {
+            shape: vec![rows, new_cols],
+            data: new_data,
+            strides: vec![new_cols, 1],
+        }
+    }
 }
 
 #[cfg(test)]
