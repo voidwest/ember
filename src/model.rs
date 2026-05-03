@@ -57,7 +57,11 @@ impl<B: Backend> Attention<B> {
 
 impl<B: Backend> Module<B> for Attention<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        let qkv = self.c_attn.forward(backend, &x)?;
+        let qkv = self.c_attn.forward(backend, x)?;
+        let embed_dim = qkv.shape()[1] / 3;
+        let q = backend.slice_cols(&qkv, 0, embed_dim)?;
+        let k = backend.slice_cols(&qkv, embed_dim, 2 * embed_dim)?;
+        let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim)?;
     }
 }
 

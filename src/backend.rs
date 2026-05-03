@@ -23,6 +23,7 @@ pub trait Backend {
     ) -> Result<Self::Tensor, Self::Error>;
     fn assign_row(&self, dst: &mut Self::Tensor, index: usize, src: &Self::Tensor);
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor;
+    fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
 }
 
 pub trait Module<B: Backend> {
@@ -80,5 +81,8 @@ impl Backend for CpuBackend {
     }
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor {
         x.slice_cols(start, end)
+    }
+    fn shape<'a>(&self, x: &'a CpuTensor) -> &'a [usize] {
+        x.shape()
     }
 }
