@@ -54,18 +54,25 @@ impl<B: Backend> Attention<B> {
         }
     }
 }
-
 impl<B: Backend> Module<B> for Attention<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         let qkv = self.c_attn.forward(backend, x)?;
         let embed_dim = backend.shape(&qkv)[1] / 3;
+
         let q = backend.slice_cols(&qkv, 0, embed_dim);
         let k = backend.slice_cols(&qkv, embed_dim, 2 * embed_dim);
         let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim);
+
         let head_dim = embed_dim / self.n_heads;
         let scale = 1.0 / (head_dim as f32).sqrt();
         let x_shape = backend.shape(x);
         let seq_len = x_shape[0];
+
+        let q_data = backend.data(&q);
+        let k_data = backend.data(&k);
+        let v_data = backend.data(&v);
+
+        let mut output_data = vec![0.0; seq_len * embed_dim];
 
         for h in 0..self.n_heads {
             let mut head_scores = vec![0.0; seq_len * seq_len];
@@ -74,14 +81,54 @@ impl<B: Backend> Module<B> for Attention<B> {
                 for j in 0..seq_len {
                     if j > i {
                         head_scores[i * seq_len + j] = f32::NEG_INFINITY;
+                    } else {
+                        let q_idx = i * embed_dim + h * head_dim;
+                        let k_idx = j * embed_dim + h * head_dim;
+
+                        let q_slice = &q_data[q_idx..q_idx + head_dim];
+                        let k_slice = &k_data[k_idx..k_idx + head_dim];
+
+                        let score: f32 =
+                            q_slice.iter().zip(k_slice.iter()).map(|(a, b)| a * b).sum();
+                        head_scores[i * seq_len + j] = score * scale;
+                    }
+                }
+
+                // --- Step B: Softmax the row i ---
+                let row_start = i * seq_len;
+                let row = &mut head_scores[row_start..row_start + seq_len];
+
+                let max_score = row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                let mut row_sum = 0.0;
+                for s in row.iter_mut() {
+                    *s = (*s - max_score).exp();
+                    row_sum += *s;
+                }
+                let inv_sum = if row_sum != 0.0 { 1.0 / row_sum } else { 0.0 };
+                for s in row.iter_mut() {
+                    *s *= inv_sum;
+                }
+
+                for j in 0..seq_len {
+                    let weight = row[j];
+                    if weight == 0.0 {
                         continue;
-                    } else{
-                        q_data[i * embed_dim + h * head_dim .. i * embed_dim + (h+1) * head_dim]
                     }
 
+                    let v_offset = j * embed_dim + h * head_dim;
+                    let out_offset = i * embed_dim + h * head_dim;
+
+                    for d in 0..head_dim {
+                        output_data[out_offset + d] += weight * v_data[v_offset + d];
+                    }
+                }
+            }
+        }
+
+        let result_tensor = backend.from_cpu(output_data, &[seq_len, embed_dim])?;
+        self.c_proj.forward(backend, &result_tensor)
     }
 }
-
 pub struct Block<B: Backend> {
     ln_1: LayerNorm<B>,
     attn: Attention<B>,

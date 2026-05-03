@@ -25,6 +25,7 @@ pub trait Backend {
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor;
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
+    fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
 }
 
 pub trait Module<B: Backend> {
@@ -88,5 +89,12 @@ impl Backend for CpuBackend {
     }
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32] {
         x.data()
+    }
+    fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<CpuTensor, Self::Error> {
+        Ok(CpuTensor {
+            data,
+            shape: shape.to_vec(),
+            strides: vec![shape[1], 1],
+        })
     }
 }

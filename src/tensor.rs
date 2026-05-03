@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
 #[derive(Clone, Debug, PartialEq)]
 pub struct CpuTensor {
-    shape: Vec<usize>,
-    strides: Vec<usize>,
-    data: Vec<f32>,
+    pub shape: Vec<usize>,
+    pub strides: Vec<usize>,
+    pub data: Vec<f32>,
 }
 
 impl CpuTensor {
