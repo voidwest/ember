@@ -27,4 +27,10 @@ fn main() {
         .map(|(i, _)| i)
         .unwrap();
     println!("predicted next token: {}", next_token);
+    let tokenizer = ember::tokenizer::EmberTokenizer::from_file("tokenizer.json")
+        .expect("failed to load tokenizer");
+    let decoded = tokenizer
+        .decode(&[next_token as u32])
+        .expect("decode failed");
+    println!("predicted next word: {}", decoded);
 }
