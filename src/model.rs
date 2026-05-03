@@ -58,10 +58,27 @@ impl<B: Backend> Attention<B> {
 impl<B: Backend> Module<B> for Attention<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         let qkv = self.c_attn.forward(backend, x)?;
-        let embed_dim = qkv.shape()[1] / 3;
-        let q = backend.slice_cols(&qkv, 0, embed_dim)?;
-        let k = backend.slice_cols(&qkv, embed_dim, 2 * embed_dim)?;
-        let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim)?;
+        let embed_dim = backend.shape(&qkv)[1] / 3;
+        let q = backend.slice_cols(&qkv, 0, embed_dim);
+        let k = backend.slice_cols(&qkv, embed_dim, 2 * embed_dim);
+        let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim);
+        let head_dim = embed_dim / self.n_heads;
+        let scale = 1.0 / (head_dim as f32).sqrt();
+        let x_shape = backend.shape(x);
+        let seq_len = x_shape[0];
+
+        for h in 0..self.n_heads {
+            let mut head_scores = vec![0.0; seq_len * seq_len];
+
+            for i in 0..seq_len {
+                for j in 0..seq_len {
+                    if j > i {
+                        head_scores[i * seq_len + j] = f32::NEG_INFINITY;
+                        continue;
+                    } else{
+                        q_data[i * embed_dim + h * head_dim .. i * embed_dim + (h+1) * head_dim]
+                    }
+
     }
 }
 
