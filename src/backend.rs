@@ -26,6 +26,11 @@ pub trait Backend {
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
     fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
+    fn add_broadcast(
+        &self,
+        x: &Self::Tensor,
+        bias: &Self::Tensor,
+    ) -> Result<Self::Tensor, Self::Error>;
 }
 
 pub trait Module<B: Backend> {
@@ -96,5 +101,8 @@ impl Backend for CpuBackend {
             shape: shape.to_vec(),
             strides: vec![shape[1], 1],
         })
+    }
+    fn add_broadcast(&self, x: &CpuTensor, bias: &CpuTensor) -> Result<CpuTensor, CpuError> {
+        Ok(x.add_broadcast(bias))
     }
 }
