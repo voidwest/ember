@@ -1,6 +1,5 @@
 use crate::backend::{Backend, CpuBackend, Module};
 use alloc::vec::Vec;
-use reqwest::get;
 
 pub struct Linear<B: Backend> {
     weight: B::Tensor,
