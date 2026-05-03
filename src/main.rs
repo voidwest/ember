@@ -19,4 +19,12 @@ fn main() {
         .expect("forward pass failed");
 
     println!("output shape: {:?}", backend.shape(&logits));
+    let logit_data = backend.data(&logits);
+    let next_token = logit_data
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(i, _)| i)
+        .unwrap();
+    println!("predicted next token: {}", next_token);
 }
