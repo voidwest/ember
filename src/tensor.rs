@@ -128,19 +128,29 @@ impl CpuTensor {
         let (k2, n) = (other.shape[0], other.shape[1]);
         assert_eq!(k1, k2, "matmul: inner dims must match");
 
-        let mut out = Self::zeroes(&[m, n]);
+        let mut out = vec![0.0f32; m * n];
 
-        // bad impl, replacing later
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0.0;
-                for k in 0..k1 {
-                    sum += self.get(&[i, k]) * other.get(&[k, j]);
-                }
-                out.data[i * n + j] = sum;
-            }
+        // using matrix multiply for a simple SIMD implementation -- will replace with custom instructions down the line but this is good for now
+        // better than triple loop
+        unsafe {
+            matrixmultiply::sgemm(
+                m,
+                k1,
+                n,
+                1.0,
+                self.data().as_ptr(),
+                k1 as isize,
+                1,
+                other.data().as_ptr(),
+                n as isize,
+                1,
+                0.0,
+                out.as_mut_ptr(),
+                n as isize,
+                1,
+            );
         }
-        out
+        Self::from_data(vec![m, n], out)
     }
 
     //softmax along the last dimension
