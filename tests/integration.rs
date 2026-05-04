@@ -28,7 +28,7 @@ fn test_softmax_logic() {
     let sum: f32 = s.data().iter().sum();
     assert!((sum - 1.0).abs() < 1e-5, "softmax rows must sum to 1.0");
 
-    // Values should be in increasing order because inputs were [1, 2, 3]
+    // values should be in increasing order because inputs were [1, 2, 3]
     assert!(s.data()[0] < s.data()[1]);
     assert!(s.data()[1] < s.data()[2]);
 }
