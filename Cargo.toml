@@ -16,3 +16,4 @@ memmap2 = "0.9"
 libm = "0.2.16"
 reqwest = { version = "0.13.3", features = ["json", "blocking"] }
 half = "2.7.1"
+matrixmultiply = "0.3.10"
