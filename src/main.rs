@@ -3,34 +3,30 @@ use ember::backend::CpuBackend;
 use ember::loader::load_gguf;
 use ember::model::Gpt2;
 
-fn main() {
-    let loader = load_gguf("gpt2.Q8_0.gguf").expect("failed to load");
+fn main() -> anyhow::Result<()> {
+    let loader = load_gguf("gpt2.Q8_0.gguf")?;
     println!("loaded {} tensors", loader.tensors.len());
 
-    let model = Gpt2::from_loader(loader).expect("failed to build model");
+    let model = Gpt2::from_loader(loader)?;
     println!("model built");
 
     let backend = CpuBackend;
     println!("wte shape: {:?}", backend.shape(&model.wte));
 
-    let tokens = &[15496u32]; // "Hello" in gpt2
-    let logits = model
-        .forward(&backend, tokens)
-        .expect("forward pass failed");
+    let tokens = &[15496u32];
+    let logits = model.forward(&backend, tokens)?;
 
     println!("output shape: {:?}", backend.shape(&logits));
     let logit_data = backend.data(&logits);
     let next_token = logit_data
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).expect("logits should not be empty"))
         .map(|(i, _)| i)
-        .unwrap();
+        .expect("logits should not be empty");
     println!("predicted next token: {}", next_token);
-    let tokenizer = ember::tokenizer::EmberTokenizer::from_file("tokenizer.json")
-        .expect("failed to load tokenizer");
-    let decoded = tokenizer
-        .decode(&[next_token as u32])
-        .expect("decode failed");
+    let tokenizer = ember::tokenizer::EmberTokenizer::from_file("tokenizer.json")?;
+    let decoded = tokenizer.decode(&[next_token as u32])?;
     println!("predicted next word: {}", decoded);
+    Ok(())
 }

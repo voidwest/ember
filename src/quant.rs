@@ -2,8 +2,9 @@ use anyhow::Result;
 use half::f16;
 
 pub const Q8_0_BLOCK_SIZE: usize = 32;
-pub const Q8_0_TYPE_SIZE: usize = 34; // 2 (f16) + 32 (i8)
+pub const Q8_0_TYPE_SIZE: usize = 34;
 
+#[inline]
 pub fn dequantize_q8_0(src: &[u8], dst: &mut [f32]) -> Result<()> {
     let n_blocks = src.len() / Q8_0_TYPE_SIZE;
 

@@ -63,7 +63,7 @@ impl<B: Backend> Module<B> for Attention<B> {
         let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim);
 
         let head_dim = embed_dim / self.n_heads;
-        let scale = 1.0 / (head_dim as f32).sqrt();
+        let scale = (head_dim as f32).sqrt().recip();
         let x_shape = backend.shape(x);
         let seq_len = x_shape[0];
 
@@ -71,59 +71,82 @@ impl<B: Backend> Module<B> for Attention<B> {
         let k_data = backend.data(&k);
         let v_data = backend.data(&v);
 
-        let mut output_data = vec![0.0; seq_len * embed_dim];
+        let mut attn_buf = vec![0.0; seq_len * embed_dim];
 
         for h in 0..self.n_heads {
-            let mut head_scores = vec![0.0; seq_len * seq_len];
+            let q_head_offset = h * head_dim;
+            let k_head_offset = h * head_dim;
+            let v_head_offset = h * head_dim;
+
+            let mut qk = vec![f32::NEG_INFINITY; seq_len * seq_len];
 
             for i in 0..seq_len {
-                for j in 0..seq_len {
-                    if j > i {
-                        head_scores[i * seq_len + j] = f32::NEG_INFINITY;
-                    } else {
-                        let q_idx = i * embed_dim + h * head_dim;
-                        let k_idx = j * embed_dim + h * head_dim;
-
-                        let q_slice = &q_data[q_idx..q_idx + head_dim];
-                        let k_slice = &k_data[k_idx..k_idx + head_dim];
-
-                        let score: f32 =
-                            q_slice.iter().zip(k_slice.iter()).map(|(a, b)| a * b).sum();
-                        head_scores[i * seq_len + j] = score * scale;
-                    }
+                for j in 0..=i {
+                    let q_idx = i * embed_dim + q_head_offset;
+                    let k_idx = j * embed_dim + k_head_offset;
+                    let dot: f32 = q_data[q_idx..q_idx + head_dim]
+                        .iter()
+                        .zip(k_data[k_idx..k_idx + head_dim].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    qk[i * seq_len + j] = dot * scale;
                 }
+            }
 
+            let max_per_row: Vec<f32> = qk
+                .chunks(seq_len)
+                .map(|row| row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)))
+                .collect();
+
+            let mut row_sums = vec![0.0; seq_len];
+            for i in 0..seq_len {
                 let row_start = i * seq_len;
-                let row = &mut head_scores[row_start..row_start + seq_len];
-
-                let max_score = row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-                let mut row_sum = 0.0;
-                for s in row.iter_mut() {
-                    *s = (*s - max_score).exp();
-                    row_sum += *s;
+                let row = &mut qk[row_start..row_start + seq_len];
+                let max = max_per_row[i];
+                if max == f32::NEG_INFINITY {
+                    let uniform = 1.0 / (seq_len as f32);
+                    for s in row.iter_mut() {
+                        *s = uniform;
+                    }
+                    row_sums[i] = 1.0;
+                    continue;
                 }
-                let inv_sum = if row_sum != 0.0 { 1.0 / row_sum } else { 0.0 };
+                let mut sum = 0.0;
+                for s in row.iter_mut() {
+                    *s = (*s - max).exp();
+                    sum += *s;
+                }
+                row_sums[i] = sum;
+            }
+
+            for i in 0..seq_len {
+                let row_start = i * seq_len;
+                let inv_sum = row_sums[i].recip();
+                let row = &mut qk[row_start..row_start + seq_len];
                 for s in row.iter_mut() {
                     *s *= inv_sum;
                 }
+            }
 
-                for j in 0..seq_len {
-                    let weight = row[j];
+            for i in 0..seq_len {
+                for j in 0..=i {
+                    let weight = qk[i * seq_len + j];
                     if weight == 0.0 {
                         continue;
                     }
 
-                    let v_offset = j * embed_dim + h * head_dim;
-                    let out_offset = i * embed_dim + h * head_dim;
+                    let v_offset = j * embed_dim + v_head_offset;
+                    let out_offset = i * embed_dim + q_head_offset;
 
+                    let dst = &mut attn_buf[out_offset..out_offset + head_dim];
                     for d in 0..head_dim {
-                        output_data[out_offset + d] += weight * v_data[v_offset + d];
+                        dst[d] += weight * v_data[v_offset + d];
                     }
                 }
             }
         }
 
-        let result_tensor = backend.from_cpu(output_data, &[seq_len, embed_dim])?;
+        let result_tensor = backend.from_cpu(attn_buf, &[seq_len, embed_dim])?;
         self.c_proj.forward(backend, &result_tensor)
     }
 }

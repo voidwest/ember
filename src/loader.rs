@@ -3,7 +3,7 @@ use crate::tensor::CpuTensor;
 use anyhow::{bail, Context, Ok, Result};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 const GGUF_MAGIC: u32 = 0x46554747;
@@ -26,7 +26,8 @@ pub enum GgufValue {
 }
 
 pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
-    let mut f = File::open(&path).with_context(|| format!("failed to open {:?}", path.as_ref()))?;
+    let f = File::open(&path).with_context(|| format!("failed to open {:?}", path.as_ref()))?;
+    let mut f = BufReader::with_capacity(64 * 1024, f);
 
     let magic = read_u32(&mut f)?;
     if magic != GGUF_MAGIC {
@@ -93,7 +94,9 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
                 f.read_exact(&mut buf)?;
                 for i in 0..element_count {
                     let start = i * 4;
-                    data[i] = f32::from_le_bytes(buf[start..start + 4].try_into().unwrap());
+                    let bytes: [u8; 4] = buf[start..start + 4].try_into()
+                        .map_err(|_| anyhow::anyhow!("failed to read f32 at index {}", i))?;
+                    data[i] = f32::from_le_bytes(bytes);
                 }
                 data
             }
@@ -117,44 +120,44 @@ pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     Ok(GgufLoader { metadata, tensors })
 }
 
-fn read_u8(f: &mut File) -> Result<u8> {
+fn read_u8<R: Read>(f: &mut R) -> Result<u8> {
     let mut buf = [0u8; 1];
     f.read_exact(&mut buf)?;
     Ok(u8::from_le_bytes(buf))
 }
 
-fn read_u32(f: &mut File) -> Result<u32> {
+fn read_u32<R: Read>(f: &mut R) -> Result<u32> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf).context("read_u32 failed")?;
     Ok(u32::from_le_bytes(buf))
 }
 
-fn read_u64(f: &mut File) -> Result<u64> {
+fn read_u64<R: Read>(f: &mut R) -> Result<u64> {
     let mut buf = [0u8; 8];
     f.read_exact(&mut buf).context("read_u64 failed")?;
     Ok(u64::from_le_bytes(buf))
 }
 
-fn read_i32(f: &mut File) -> Result<i32> {
+fn read_i32<R: Read>(f: &mut R) -> Result<i32> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
     Ok(i32::from_le_bytes(buf))
 }
 
-fn read_f32(f: &mut File) -> Result<f32> {
+fn read_f32<R: Read>(f: &mut R) -> Result<f32> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
     Ok(f32::from_le_bytes(buf))
 }
 
-fn read_gguf_string(f: &mut File) -> Result<String> {
+fn read_gguf_string<R: Read>(f: &mut R) -> Result<String> {
     let len = read_u64(f)? as usize;
     let mut buf = vec![0u8; len];
     f.read_exact(&mut buf).context("read string failed")?;
     String::from_utf8(buf).context("invalid utf8 in string")
 }
 
-fn read_gguf_value(f: &mut File, val_type: u32) -> Result<GgufValue> {
+fn read_gguf_value<R: Read>(f: &mut R, val_type: u32) -> Result<GgufValue> {
     match val_type {
         0 => Ok(GgufValue::U8(read_u8(f)?)),
         5 => Ok(GgufValue::I32(read_i32(f)?)),
@@ -167,9 +170,9 @@ fn read_gguf_value(f: &mut File, val_type: u32) -> Result<GgufValue> {
             let element_type = read_u32(f)?;
             let count = read_u64(f)?;
             for _ in 0..count {
-                read_gguf_value(f, element_type)?; // recursive, discard for now
+                read_gguf_value(f, element_type)?;
             }
-            Ok(GgufValue::U8(0)) // placeholder, we're just consuming the bytes
+            Ok(GgufValue::U8(0))
         }
         _ => bail!("unsupported GGUF value type: {}", val_type),
     }

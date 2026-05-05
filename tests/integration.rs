@@ -95,6 +95,20 @@ fn test_extreme_values() {
 }
 
 #[test]
+fn test_all_masked() {
+    let t = CpuTensor::from_data(
+        vec![1, 4],
+        vec![f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY],
+    );
+    let s = t.softmax();
+    let sum: f32 = s.data().iter().sum();
+    assert!((sum - 1.0).abs() < 1e-5, "all masked should sum to 1");
+    for v in s.data().iter() {
+        assert!((v - 0.25).abs() < 1e-5, "all masked should be uniform distribution");
+    }
+}
+
+#[test]
 fn test_transpose() {
     let t = CpuTensor::from_data(vec![2, 3], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
     let tt = t.transpose();
@@ -214,7 +228,7 @@ fn test_layer_norm() {
 #[test]
 fn test_index_select() {
     let t = CpuTensor::from_data(vec![3, 4], vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]);
-    let row1 = t.index_select(1);
+    let row1 = t.index_select(1).unwrap();
     assert_eq!(row1.shape(), &[4]);
     assert_eq!(row1.data(), &[5.0, 6.0, 7.0, 8.0]);
 }

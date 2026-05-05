@@ -1,4 +1,6 @@
+use alloc::string::String;
 use alloc::vec::Vec;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CpuTensor {
     pub shape: Vec<usize>,
@@ -6,7 +8,16 @@ pub struct CpuTensor {
     pub data: Vec<f32>,
 }
 
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum TensorError {
+    #[error("index {index} out of bounds for shape {shape:?}")]
+    IndexOutOfBounds { index: usize, shape: Vec<usize> },
+    #[error("shape mismatch: {0}")]
+    ShapeMismatch(String),
+}
+
 impl CpuTensor {
+    #[inline]
     pub fn zeroes(shape: &[usize]) -> Self {
         let len = shape.iter().product();
         let strides = Self::compute_strides(shape);
@@ -16,6 +27,7 @@ impl CpuTensor {
             data: vec![0.0; len],
         }
     }
+    #[inline]
     pub fn add_broadcast(&self, bias: &Self) -> Self {
         assert_eq!(self.ndim(), 2, "add_broadcast: lhs must be 2D");
         assert_eq!(bias.ndim(), 1, "add_broadcast: rhs must be 1D");
@@ -32,6 +44,7 @@ impl CpuTensor {
         }
         CpuTensor::from_data(self.shape.clone(), new_data)
     }
+    #[inline]
     pub fn transpose(&self) -> Self {
         assert_eq!(self.ndim(), 2, "transpose only supports 2D tensors");
         let (rows, cols) = (self.shape[0], self.shape[1]);
@@ -61,6 +74,7 @@ impl CpuTensor {
         }
     }
 
+    #[inline]
     pub fn shape(&self) -> &[usize] {
         &self.shape
     }
@@ -76,6 +90,7 @@ impl CpuTensor {
     pub fn ndim(&self) -> usize {
         self.shape.len()
     }
+    #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -84,8 +99,7 @@ impl CpuTensor {
         self.data.is_empty()
     }
 
-    // get 1 element w/ n-dim indices
-    // very slow, in the SIMD kernel i'll itr through flat data slice directly
+    #[inline]
     pub fn get(&self, indices: &[usize]) -> f32 {
         assert_eq!(indices.len(), self.shape.len());
 
@@ -104,6 +118,7 @@ impl CpuTensor {
         Self::from_data(new_shape.into(), self.data.clone())
     }
 
+    #[inline]
     pub fn add(&self, other: &Self) -> Self {
         assert_eq!(
             self.shape, other.shape,
@@ -119,8 +134,7 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), data)
     }
 
-    // matrix mult, 2d tensors
-
+    #[inline]
     pub fn matmul(&self, other: &Self) -> Self {
         assert_eq!(self.ndim(), 2, "matmul: lhs must be 2d");
         assert_eq!(other.ndim(), 2, "matmul: rhs must be 2d");
@@ -130,18 +144,16 @@ impl CpuTensor {
 
         let mut out = vec![0.0f32; m * n];
 
-        // using matrix multiply for a simple SIMD implementation -- will replace with custom instructions down the line but this is good for now
-        // better than triple loop
         unsafe {
             matrixmultiply::sgemm(
                 m,
                 k1,
                 n,
                 1.0,
-                self.data().as_ptr(),
+                self.data.as_ptr(),
                 k1 as isize,
                 1,
-                other.data().as_ptr(),
+                other.data.as_ptr(),
                 n as isize,
                 1,
                 0.0,
@@ -153,8 +165,7 @@ impl CpuTensor {
         Self::from_data(vec![m, n], out)
     }
 
-    //softmax along the last dimension
-
+    #[inline]
     pub fn softmax(&self) -> Self {
         assert!(!self.shape.is_empty(), "softmax needs 1 dim min");
         let last_dim = self.shape[self.shape.len() - 1];
@@ -166,26 +177,38 @@ impl CpuTensor {
             let offset = b * last_dim;
             let slice = &self.data[offset..offset + last_dim];
 
-            //stable softmax: stubtract max
             let max = slice.iter().fold(f32::NEG_INFINITY, |a: f32, &b| a.max(b));
+            if max == f32::NEG_INFINITY {
+                let uniform = 1.0 / (last_dim as f32);
+                for i in 0..last_dim {
+                    out_data[offset + i] = uniform;
+                }
+                continue;
+            }
             let mut sum = 0.0;
             for i in 0..last_dim {
                 let e = (slice[i] - max).exp();
                 out_data[offset + i] = e;
                 sum += e;
             }
+            let inv_sum = sum.recip();
             for i in 0..last_dim {
-                out_data[offset + i] /= sum;
+                out_data[offset + i] *= inv_sum;
             }
         }
         Self::from_data(self.shape.clone(), out_data)
     }
 
+    #[inline]
     pub fn gelu(&self) -> Self {
+        let inv_sqrt_2 = 0.707106769084930419921875f32;
         let data: Vec<f32> = self
             .data
             .iter()
-            .map(|&x| 0.5 * x * (1.0 + libm::erff(x / f32::sqrt(2.0))))
+            .map(|&x| {
+                let z = x * inv_sqrt_2;
+                0.5 * x * (1.0 + libm::erff(z))
+            })
             .collect();
         Self::from_data(self.shape.clone(), data)
     }
@@ -213,6 +236,7 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), out)
     }
 
+    #[inline]
     fn compute_strides(shape: &[usize]) -> Vec<usize> {
         let mut strides = vec![1usize; shape.len()];
         for i in (0..shape.len().saturating_sub(1)).rev() {
@@ -220,34 +244,36 @@ impl CpuTensor {
         }
         strides
     }
-    pub fn index_select(&self, index: usize) -> Self {
+
+    pub fn index_select(&self, index: usize) -> Result<Self, TensorError> {
         if self.shape.len() < 2 {
-            eprintln!("cannot index_select a tensor with less than 2 dimensions")
+            return Err(TensorError::ShapeMismatch(
+                "cannot index_select a tensor with less than 2 dimensions".into(),
+            ));
         }
 
         let row_size = self.shape[1];
+        let max_index = self.data.len() / row_size;
+        if index >= max_index {
+            return Err(TensorError::IndexOutOfBounds {
+                index,
+                shape: self.shape.clone(),
+            });
+        }
+
         let start = index * row_size;
         let end = start + row_size;
 
-        if end > self.data.len() {
-            eprintln!(
-                "index {} out of bounds (max index: {})",
-                index,
-                self.data.len() / row_size - 1
-            );
-        }
-
         let row_data = self.data[start..end].to_vec();
 
-        let new_shape = vec![row_size];
-        let new_strides = vec![1];
-
-        CpuTensor {
-            shape: new_shape,
+        Ok(CpuTensor {
+            shape: vec![row_size],
             data: row_data,
-            strides: new_strides,
-        }
+            strides: vec![1],
+        })
     }
+
+    #[inline]
     pub fn assign_row(&mut self, index: usize, src: &CpuTensor) {
         let row_size = self.shape[1];
         let start = index * row_size;

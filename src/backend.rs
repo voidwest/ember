@@ -1,4 +1,4 @@
-use crate::tensor::CpuTensor;
+use crate::tensor::{CpuTensor, TensorError};
 
 pub trait Backend {
     type Tensor: Clone + Send + Sync;
@@ -42,6 +42,8 @@ pub struct CpuBackend;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum CpuError {
+    #[error("tensor error: {0}")]
+    Tensor(#[from] TensorError),
     #[error("shape mismatch: {0}")]
     ShapeMisatch(String),
     #[error("unsupported operation: {0}")]
@@ -81,7 +83,7 @@ impl Backend for CpuBackend {
         Ok(x.layer_norm(weight, bias, eps))
     }
     fn index_select(&self, x: &CpuTensor, index: usize) -> Result<CpuTensor, Self::Error> {
-        Ok((x.index_select(index)))
+        Ok(x.index_select(index)?)
     }
     fn assign_row(&self, dst: &mut CpuTensor, index: usize, src: &CpuTensor) {
         dst.assign_row(index, src);
