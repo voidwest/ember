@@ -96,11 +96,7 @@ impl Backend for CpuBackend {
         x.data()
     }
     fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<CpuTensor, Self::Error> {
-        Ok(CpuTensor {
-            data,
-            shape: shape.to_vec(),
-            strides: vec![shape[1], 1],
-        })
+        Ok(CpuTensor::from_data(shape.to_vec(), data))
     }
     fn add_broadcast(&self, x: &CpuTensor, bias: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.add_broadcast(bias))
