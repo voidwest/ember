@@ -3,11 +3,6 @@ name = "ember"
 version = "0.1.0"
 edition = "2021"
 
-# [features]
-#default = []
-#server = ["dep:axum", "dep:tokio", "dep:tokio-stream"]
-#rag = ["dep:fastembed-rs", "dep:instant-distance"]
-
 [dependencies]
 tokenizers = "0.20"
 thiserror = "1"
@@ -17,3 +12,7 @@ libm = "0.2.16"
 reqwest = { version = "0.13.3", features = ["json", "blocking"] }
 half = "2.7.1"
 matrixmultiply = "0.3.10"
+clap = { version = "4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+rand = "0.8"
