@@ -1,6 +1,8 @@
 use crate::backend::{Backend, CpuBackend, Module};
 use alloc::vec::Vec;
 
+/// a linear (fully-connected) layer: `y = xW + b`.
+/// weight must be `[in_features, out_features]`.
 pub struct Linear<B: Backend> {
     weight: B::Tensor,
     bias: Option<B::Tensor>,
@@ -19,6 +21,7 @@ impl<B: Backend> Linear<B> {
     }
 }
 
+/// gpt-2's two-layer feed-forward network: `c_fc` → gelu → `c_proj`.
 pub struct Mlp<B: Backend> {
     c_fc: Linear<B>,
     c_proj: Linear<B>,
@@ -38,6 +41,12 @@ impl<B: Backend> Module<B> for Mlp<B> {
     }
 }
 
+/// causal multi-head self-attention.
+///
+/// splits a combined qkv projection into query, key, and value,
+/// applies scaled dot-product attention with a causal mask
+/// (token `i` can only attend to tokens `0..=i`), then projects
+/// the output through `c_proj`.
 pub struct Attention<B: Backend> {
     c_attn: Linear<B>,
     c_proj: Linear<B>,
@@ -81,6 +90,7 @@ impl<B: Backend> Module<B> for Attention<B> {
             let mut qk = vec![f32::NEG_INFINITY; seq_len * seq_len];
 
             for i in 0..seq_len {
+                // causal mask: token i can only attend to tokens 0..i (including itself)
                 for j in 0..=i {
                     let q_idx = i * embed_dim + q_head_offset;
                     let k_idx = j * embed_dim + k_head_offset;
@@ -119,10 +129,8 @@ impl<B: Backend> Module<B> for Attention<B> {
                 row_sums[i] = sum;
             }
 
-            for i in 0..seq_len {
-                let row_start = i * seq_len;
-                let inv_sum = row_sums[i].recip();
-                let row = &mut qk[row_start..row_start + seq_len];
+            for (row, sum) in qk.chunks_mut(seq_len).zip(row_sums.iter()) {
+                let inv_sum = sum.recip();
                 for s in row.iter_mut() {
                     *s *= inv_sum;
                 }
@@ -150,6 +158,8 @@ impl<B: Backend> Module<B> for Attention<B> {
         self.c_proj.forward(backend, &result_tensor)
     }
 }
+/// a single transformer block: layer_norm → attention → residual add
+/// → layer_norm → mlp → residual add.
 pub struct Block<B: Backend> {
     ln_1: LayerNorm<B>,
     attn: Attention<B>,
@@ -180,6 +190,7 @@ impl<B: Backend> Module<B> for Block<B> {
     }
 }
 
+/// gpt-2's pre-norm layer normalization with learned scale and bias.
 pub struct LayerNorm<B: Backend> {
     weight: B::Tensor,
     bias: B::Tensor,
@@ -197,6 +208,11 @@ impl<B: Backend> Module<B> for LayerNorm<B> {
     }
 }
 
+/// the full gpt-2 transformer model.
+///
+/// `wte` and `wpe` are transposed on load so that `index_select`
+/// picks a row directly (original layout is `[vocab, embed]`; we store
+/// `[vocab, embed]` and use `transpose()` for matmuls where needed).
 pub struct Gpt2<B: Backend> {
     pub wte: B::Tensor,
     pub wpe: B::Tensor,
