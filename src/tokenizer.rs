@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use tokenizers::Tokenizer;
 
+/// wraps the huggingface `tokenizers` crate for text ↔ token id conversion.
+/// currently hardcoded for gpt-2's tokenizer (vocab size 50257).
 pub struct EmberTokenizer {
     inner: Tokenizer,
 }
