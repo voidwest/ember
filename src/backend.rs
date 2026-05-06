@@ -1,5 +1,10 @@
 use crate::tensor::{CpuTensor, TensorError};
 
+/// the core abstraction over compute hardware.
+///
+/// model code is generic over the backend, so the same transformer
+/// implementation works on `CpuBackend`, or any future gpu/accelerator
+/// backend, without modification.
 pub trait Backend {
     type Tensor: Clone + Send + Sync;
     type Error: core::error::Error;
@@ -25,6 +30,7 @@ pub trait Backend {
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor;
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
+    #[allow(clippy::wrong_self_convention)]
     fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
     fn add_broadcast(
         &self,
@@ -33,10 +39,15 @@ pub trait Backend {
     ) -> Result<Self::Tensor, Self::Error>;
 }
 
+/// a composable unit that runs a forward pass.
+///
+/// see `Block`, `Mlp`, `Attention`, `LayerNorm` for gpt-2 implementations.
 pub trait Module<B: Backend> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error>;
 }
 
+/// the default cpu backend. a zero-sized struct that delegates
+/// every operation to `CpuTensor` methods.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CpuBackend;
 
@@ -45,9 +56,7 @@ pub enum CpuError {
     #[error("tensor error: {0}")]
     Tensor(#[from] TensorError),
     #[error("shape mismatch: {0}")]
-    ShapeMisatch(String),
-    #[error("unsupported operation: {0}")]
-    Unsupported(String),
+    ShapeMismatch(String),
 }
 
 impl Backend for CpuBackend {
