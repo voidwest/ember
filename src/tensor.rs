@@ -1,6 +1,12 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// a row-major f32 tensor backed by a flat vec.
+///
+/// shape is [d0, d1, d2, ...] with strides computed for efficient
+/// indexing. the data is always contiguous — strides are used only
+/// for bounds-aware access, not for views into other storage.
+/// all pure operations return a new allocation; nothing mutates in place.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CpuTensor {
     pub shape: Vec<usize>,
@@ -17,6 +23,8 @@ pub enum TensorError {
 }
 
 impl CpuTensor {
+    /// allocate a zero-filled tensor with the given shape
+    #[must_use]
     #[inline]
     pub fn zeroes(shape: &[usize]) -> Self {
         let len = shape.iter().product();
@@ -27,6 +35,9 @@ impl CpuTensor {
             data: vec![0.0; len],
         }
     }
+    /// add a 1d bias to every row of a 2d tensor (broadcast).
+    /// panics if self is not 2d or bias length doesn't match columns.
+    #[must_use]
     #[inline]
     pub fn add_broadcast(&self, bias: &Self) -> Self {
         assert_eq!(self.ndim(), 2, "add_broadcast: lhs must be 2D");
@@ -44,6 +55,8 @@ impl CpuTensor {
         }
         CpuTensor::from_data(self.shape.clone(), new_data)
     }
+    /// 2d matrix transpose. panics if not 2d.
+    #[must_use]
     #[inline]
     pub fn transpose(&self) -> Self {
         assert_eq!(self.ndim(), 2, "transpose only supports 2D tensors");
@@ -111,13 +124,17 @@ impl CpuTensor {
         self.data[idx]
     }
 
-    // reshape w/o data changing
+    /// reshape a tensor without copying data.
+    /// panics if the new shape has a different total element count.
+    #[must_use]
     pub fn reshape(&self, new_shape: &[usize]) -> Self {
         let new_len: usize = new_shape.iter().product();
         assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
         Self::from_data(new_shape.into(), self.data.clone())
     }
 
+    /// element-wise addition. panics if shapes differ.
+    #[must_use]
     #[inline]
     pub fn add(&self, other: &Self) -> Self {
         assert_eq!(
@@ -134,6 +151,9 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), data)
     }
 
+    /// matrix multiplication via `matrixmultiply::sgemm`.
+    /// both tensors must be 2d with matching inner dimensions.
+    #[must_use]
     #[inline]
     pub fn matmul(&self, other: &Self) -> Self {
         assert_eq!(self.ndim(), 2, "matmul: lhs must be 2d");
@@ -165,6 +185,10 @@ impl CpuTensor {
         Self::from_data(vec![m, n], out)
     }
 
+    /// softmax along the last dimension, numerically stable with max
+    /// subtraction. if every logit in a row is -infinity (fully masked),
+    /// returns a uniform distribution over that row.
+    #[must_use]
     #[inline]
     pub fn softmax(&self) -> Self {
         assert!(!self.shape.is_empty(), "softmax needs 1 dim min");
@@ -199,9 +223,12 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), out_data)
     }
 
+    /// gaussian error linear unit: `0.5 * x * (1 + erf(x / sqrt(2)))`.
+    /// uses `libm::erff` for portable float math.
+    #[must_use]
     #[inline]
     pub fn gelu(&self) -> Self {
-        let inv_sqrt_2 = 0.707106769084930419921875f32;
+        let inv_sqrt_2 = 0.707_106_77_f32;
         let data: Vec<f32> = self
             .data
             .iter()
@@ -213,6 +240,10 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), data)
     }
 
+    /// layer normalization over the last dimension of a 2d `[batch, features]`
+    /// tensor. normalizes each row independently: `(x - mean) / sqrt(var + eps)
+    /// * weight + bias`.
+    #[must_use]
     pub fn layer_norm(&self, weight: &Self, bias: &Self, eps: f32) -> Self {
         assert_eq!(self.ndim(), 2, "layer_norm expects 2d [batch, features]");
         let (batch, features) = (self.shape[0], self.shape[1]);
