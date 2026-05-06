@@ -1,9 +1,15 @@
 use alloc::vec::Vec;
 
+/// a flat, pre-allocated key/value cache for transformer attention.
+///
+/// memory layout: `[layer][head][seq_position][head_dim]`.
+/// the cache is implemented but not yet wired into `Attention::forward`
+/// — attention currently recomputes the full sequence every pass.
+#[allow(dead_code)]
 pub struct KVCache {
     k: Vec<f32>,
     v: Vec<f32>,
-    n_layers: usize,
+    n_layers: usize, // reserved for future use (kv cache not yet wired into attention)
     n_heads: usize,
     head_dim: usize,
     max_seq_len: usize,
