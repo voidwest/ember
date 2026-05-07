@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 ///
 /// memory layout: `[layer][head][seq_position][head_dim]`.
 /// wired into `Attention::forward_with_cache` — during prefill the full
-/// K/V projection is cached; subsequent decode steps read from the cache
+/// k/v projection is cached; subsequent decode steps read from the cache
 /// instead of recomputing against the full sequence each pass.
 pub struct KVCache {
     k: Vec<f32>,

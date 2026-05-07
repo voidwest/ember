@@ -37,7 +37,7 @@ pub enum GgufValue {
 /// dropped when the function returns; tensors are copied out.
 pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     let f = File::open(&path).with_context(|| format!("failed to open {:?}", path.as_ref()))?;
-    // SAFETY: the backing file is our own model file; no external writers.
+    // safety: the backing file is our own model file; no external writers.
     // if the file is modified while mapped, behavior is undefined.
     // for a local inference engine, this is acceptable.
     let mmap = unsafe { memmap2::Mmap::map(&f)? };

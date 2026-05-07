@@ -1,10 +1,10 @@
 //! # Ember
 //!
-//! A lightweight, CPU-first LLM inference engine.
+//! a lightweight, cpu-first llm inference engine.
 //!
 //! ## Architecture
 //!
-//! The core abstraction is the [`Backend`] trait. Model code is generic over
+//! the core abstraction is the [`Backend`] trait. model code is generic over
 //! the backend, so you can start with [`CpuBackend`] and swap in Candle/GPU
 //! later without rewriting your model.
 //!
@@ -14,9 +14,9 @@
 //! - **no_std friendly**: Core types avoid `std` where possible.
 //! - **Quantization first**: Design for Q4_0/Q8_0 from day one.
 
-// RESEARCH: `no_std` environments. We're not fully no_std yet (we use Vec),
+// research: `no_std` environments. we're not fully no_std yet (we use vec),
 // but keeping `alloc` separate from `std` makes a future port easier.
-// Try to avoid `std::` types in core modules; use `alloc::` instead.
+// try to avoid `std::` types in core modules; use `alloc::` instead.
 extern crate alloc;
 
 pub mod backend;

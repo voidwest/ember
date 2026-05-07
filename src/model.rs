@@ -62,16 +62,16 @@ impl<B: Backend> Attention<B> {
         }
     }
 
-    /// Forward with KV cache.
+    /// forward with kv cache.
     ///
-    /// During the **prefill** pass (`seq_len > 1`) the full attention is
-    /// computed and K/V projections for every position are stored in the
-    /// cache. During **decode** (`seq_len == 1`) only the new token's Q
-    /// is computed; cached K/V from all prior positions are reused, turning
+    /// during the **prefill** pass (`seq_len > 1`) the full attention is
+    /// computed and k/v projections for every position are stored in the
+    /// cache. during **decode** (`seq_len == 1`) only the new token's q
+    /// is computed; cached k/v from all prior positions are reused, turning
     /// the O(n²·d) full-sequence attention into O(n·d) per step.
     ///
-    /// The cache uses a `[layer][head][seq_position][head_dim]` layout.
-    /// This method appends the current step's K/V to the cache before
+    /// the cache uses a `[layer][head][seq_position][head_dim]` layout.
+    /// this method appends the current step's k/v to the cache before
     /// computing attention so the causal masking is always correct.
     pub fn forward_with_cache(
         &self,
@@ -94,8 +94,8 @@ impl<B: Backend> Attention<B> {
         let k_data = backend.data(&k);
         let v_data = backend.data(&v);
 
-        // ── 1. Store K/V for the current step(s) into the cache ──────
-        //      (cursor advances after all layers have stored, in Gpt2::forward_with_cache)
+        // ── 1. store k/v for the current step(s) into the cache ──────
+        //      (cursor advances after all layers have stored, in gpt2::forward_with_cache)
         for pos in 0..seq_len {
             let offset = pos * embed_dim;
             cache.append(
@@ -105,9 +105,9 @@ impl<B: Backend> Attention<B> {
             );
         }
 
-        // ── 2. Compute attention against the *full* cached K/V ───────
+        // ── 2. compute attention against the *full* cached k/v ───────
         //      (cursor hasn't advanced yet — it advances after all layers
-        //      finish, in Gpt2::forward_with_cache)
+        //      finish, in gpt2::forward_with_cache)
         let total_seq_len = cache.cursor() + seq_len;
         let (cached_k, cached_v) = cache.get(layer);
         let cache_head_stride = cache.max_seq_len() * head_dim;
@@ -289,7 +289,7 @@ impl<B: Backend> Block<B> {
 }
 
 impl<B: Backend> Block<B> {
-    /// Forward with KV cache. Layer index is required for cache lookups.
+    /// forward with kv cache. layer index is required for cache lookups.
     pub fn forward_with_cache(
         &self,
         backend: &B,
@@ -451,7 +451,7 @@ impl<B: Backend> Gpt2<B> {
         }
     }
 
-    /// Look up token + position embeddings for a batch of token ids.
+    /// look up token + position embeddings for a batch of token ids.
     ///
     /// `start_pos` is the absolute position offset for the position embeddings
     /// (0 for a new sequence, `prompt_len + step` during incremental decode).
@@ -477,14 +477,14 @@ impl<B: Backend> Gpt2<B> {
         self.embed_with_offset(backend, tokens, 0)
     }
 
-    /// Create a KV cache sized for this model's parameters.
+    /// create a kv cache sized for this model's parameters.
     pub fn create_cache(&self, backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
         let embed_dim = backend.shape(&self.wte)[1];
         let head_dim = embed_dim / self.n_heads;
         crate::kv_cache::KVCache::new(self.blocks.len(), self.n_heads, head_dim, max_seq_len)
     }
 
-    /// Forward pass with incremental KV caching.
+    /// forward pass with incremental kv caching.
     ///
     /// `start_pos` is the absolute position offset for position embeddings
     /// (0 during prefill, `prompt_len + step` for decode steps).
@@ -500,8 +500,8 @@ impl<B: Backend> Gpt2<B> {
         for (layer, block) in self.blocks.iter().enumerate() {
             x = block.forward_with_cache(backend, &x, cache, layer)?;
         }
-        // Advance the cache cursor by seq_len after all layers have
-        // stored their K/V for these positions.
+        // advance the cache cursor by seq_len after all layers have
+        // stored their k/v for these positions.
         for _ in 0..seq_len {
             cache.advance_cursor();
         }

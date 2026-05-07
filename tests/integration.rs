@@ -52,7 +52,7 @@ fn test_layer_norm_stability() {
 #[should_panic(expected = "inner dims must match")]
 fn test_matmul_dimension_mismatch() {
     let a = CpuTensor::zeroes(&[2, 2]);
-    let b = CpuTensor::zeroes(&[3, 2]); // Invalid: 2 != 3
+    let b = CpuTensor::zeroes(&[3, 2]); // invalid: 2 != 3
     let _ = a.matmul(&b);
 }
 
