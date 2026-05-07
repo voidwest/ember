@@ -16,7 +16,7 @@ struct Args {
     model: String,
 
     /// path to tokenizer.json
-    #[arg(short, long, default_value = "tokenizer.json")]
+    #[arg(long, default_value = "tokenizer.json")]
     tokenizer: String,
 
     /// text prompt to complete
