@@ -31,6 +31,7 @@ pub trait Backend {
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
     #[allow(clippy::wrong_self_convention)]
+    // from_cpu reads serialized data into a tensor — not a self->other conversion
     fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
     fn add_broadcast(
         &self,

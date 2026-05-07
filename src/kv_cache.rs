@@ -7,13 +7,20 @@ use alloc::vec::Vec;
 /// k/v projection is cached; subsequent decode steps read from the cache
 /// instead of recomputing against the full sequence each pass.
 pub struct KVCache {
+    /// key cache, flat layout: [layer][head][pos][head_dim]
     k: Vec<f32>,
+    /// value cache, flat layout: [layer][head][pos][head_dim]
     v: Vec<f32>,
-    #[allow(dead_code)] // stored for allocation size, not read back
+    /// stored for allocation size, not read back
+    #[allow(dead_code)]
     n_layers: usize,
+    /// number of attention heads
     n_heads: usize,
+    /// size per head
     head_dim: usize,
+    /// maximum sequence length the cache was allocated for
     max_seq_len: usize,
+    /// write position in the sequence dimension
     cursor: usize,
 }
 

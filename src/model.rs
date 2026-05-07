@@ -4,7 +4,9 @@ use alloc::vec::Vec;
 /// a linear (fully-connected) layer: `y = xW + b`.
 /// weight must be `[in_features, out_features]`.
 pub struct Linear<B: Backend> {
+    /// weight matrix, shape [in_features, out_features]
     weight: B::Tensor,
+    /// optional bias vector, shape [out_features]
     bias: Option<B::Tensor>,
 }
 
@@ -23,7 +25,9 @@ impl<B: Backend> Linear<B> {
 
 /// gpt-2's two-layer feed-forward network: `c_fc` → gelu → `c_proj`.
 pub struct Mlp<B: Backend> {
+    /// hidden layer (in_features -> 4*in_features in gpt-2)
     c_fc: Linear<B>,
+    /// projection layer (4*in_features -> in_features)
     c_proj: Linear<B>,
 }
 
@@ -48,8 +52,11 @@ impl<B: Backend> Module<B> for Mlp<B> {
 /// (token `i` can only attend to tokens `0..=i`), then projects
 /// the output through `c_proj`.
 pub struct Attention<B: Backend> {
+    /// combined q, k, v projection
     c_attn: Linear<B>,
+    /// attention output projection
     c_proj: Linear<B>,
+    /// number of attention heads
     n_heads: usize,
 }
 
@@ -271,9 +278,13 @@ impl<B: Backend> Module<B> for Attention<B> {
 /// a single transformer block: layer_norm → attention → residual add
 /// → layer_norm → mlp → residual add.
 pub struct Block<B: Backend> {
+    /// pre-attention layer norm
     ln_1: LayerNorm<B>,
+    /// multi-head self-attention
     attn: Attention<B>,
+    /// pre-mlp layer norm
     ln_2: LayerNorm<B>,
+    /// feed-forward network (c_fc -> gelu -> c_proj)
     mlp: Mlp<B>,
 }
 
@@ -323,8 +334,11 @@ impl<B: Backend> Module<B> for Block<B> {
 
 /// gpt-2's pre-norm layer normalization with learned scale and bias.
 pub struct LayerNorm<B: Backend> {
+    /// learned scale parameter
     weight: B::Tensor,
+    /// learned bias parameter
     bias: B::Tensor,
+    /// epsilon for numerical stability in division
     eps: f32,
 }
 impl<B: Backend> LayerNorm<B> {
@@ -345,16 +359,37 @@ impl<B: Backend> Module<B> for LayerNorm<B> {
 /// picks a row directly (original layout is `[vocab, embed]`; we store
 /// `[vocab, embed]` and use `transpose()` for matmuls where needed).
 pub struct Gpt2<B: Backend> {
+    /// word token embeddings, transposed so index_select picks a row directly
     pub wte: B::Tensor,
+    /// word position embeddings, transposed
     pub wpe: B::Tensor,
+    /// transformer decoder blocks
     pub blocks: Vec<Block<B>>,
+    /// final layer norm
     pub ln_f: LayerNorm<B>,
+    /// lm head: projects hidden states to vocab logits
     pub head: Linear<B>,
-    /// number of attention heads (used to construct the KV cache)
+    /// number of attention heads (used to construct the kv cache)
     pub n_heads: usize,
 }
 
 impl Gpt2<CpuBackend> {
+    /// build a gpt-2 model from a gguf loader.
+    ///
+    /// expects the following gguf tensor names:
+    /// - `token_embd.weight`, `position_embd.weight`
+    /// - `blk.{i}.attn_qkv.weight`, `blk.{i}.attn_qkv.bias`
+    /// - `blk.{i}.attn_output.weight`, `blk.{i}.attn_output.bias`
+    /// - `blk.{i}.ffn_up.weight`, `blk.{i}.ffn_up.bias`
+    /// - `blk.{i}.ffn_down.weight`, `blk.{i}.ffn_down.bias`
+    /// - `blk.{i}.attn_norm.weight`, `blk.{i}.attn_norm.bias`
+    /// - `blk.{i}.ffn_norm.weight`, `blk.{i}.ffn_norm.bias`
+    /// - `output_norm.weight`, `output_norm.bias`
+    /// - `output.weight`
+    ///
+    /// wte and wpe are transposed on load so index_select picks a row directly.
+    /// metadata keys `gpt2.block_count` and `gpt2.attention.head_count` control
+    /// the number of layers and heads (default 12 each if missing).
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
         let get_t = |name: &str| {
             loader

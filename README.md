@@ -1,100 +1,89 @@
 # ember
 
-A lightweight, CPU-first LLM inference engine written in Rust. Designed for efficiency and portability, ember provides a modular architecture for running quantized models without the overhead of heavy deep-learning frameworks.
+a lightweight, cpu-first llm inference engine in rust. designed for running
+quantized models without heavy framework dependencies.
 
 ## features
 
-- **gguf support**: native loader for GGUF model files (v3).
-- **quantization**: built-in support for Q8_0 dequantization for reduced memory footprint.
-- **backend agnostic**: core logic is generic over a `Backend` trait, allowing easy swaps between CPU and future GPU implementations.
-- **explicit memory**: no hidden allocations during inference to ensure predictable performance.
-- **no_std friendly**: core types avoid `std` where possible to facilitate future embedded ports.
+- **gguf v3 loader**: reads gguf model files, supports f32 and q8_0 dtypes.
+- **backend trait**: model code is generic over a `Backend` trait — swap cpu
+  for gpu later without rewriting the transformer.
+- **explicit memory**: no hidden allocations in the inference hot path.
+- **no_std ready**: core types avoid `std` where possible. uses `alloc` only.
 
-## tech stack
-
-- **rust 2021**
-- **tokenizers** (huggingface)
-- **half** (f16 support)
-- **memmap2**
-- **anyhow/thiserror** (robust error handling)
-
-## getting started
-
-### prerequisites
-
-- rust toolchain (latest stable)
-- a GGUF model file (e.g., `gpt2.Q8_0.gguf`)
-- a corresponding `tokenizer.json`
-
-### setup
-
-1. clone the repository into your workspace.
-2. place your `.gguf` and `tokenizer.json` in the project root.
-
-### usage
-
-the engine currently supports GPT-2 style architectures. to run a basic inference:
+## usage
 
 ```bash
-cargo run --release
-````
+cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
+```
 
-the current main.rs demonstrates loading a model, encoding a prompt, and predicting the next token using the CpuBackend.
+### flags
+
+| flag | default | description |
+|------|---------|-------------|
+| `-m`, `--model` | `gpt2.Q8_0.gguf` | path to gguf model file |
+| `--tokenizer` | `tokenizer.json` | path to tokenizer.json |
+| `-p`, `--prompt` | `The` | text prompt to complete |
+| `-n`, `--max-tokens` | `20` | tokens to generate |
+| `-t`, `--temperature` | `0.8` | sampling temp (0 = greedy) |
+| `--top-k` | (none) | top-k sampling |
+| `--top-p` | (none) | nucleus sampling |
+| `-i`, `--interactive` | (none) | repl mode after first prompt |
+
+### interactive mode
+
+```bash
+cargo run --release -i
+```
+
+commands inside the repl: `/quit`, `/help`, `/stats`.
 
 ## architecture
 
+the entry point is `main.rs` → `generate()`, which runs a two-phase loop:
+
+1. **prefill** — forward pass on the full prompt, populating the kv cache.
+2. **decode** — one token at a time, reading from the cache.
+
+model components live in `src/model.rs` as generic `Block<B>`, `Attention<B>`,
+`Mlp<B>`, `LayerNorm<B>`, and `Gpt2<B>`. tensors are `CpuTensor` in
+`src/tensor.rs`. the gguf parser is `src/loader.rs`.
+
 ```text
-┌────────────────┐
-│   GGUF Model   │
-└────────┬───────┘
-         │
-┌────────▼───────┐      ┌──────────────┐
-│  GgufLoader    ├──────┤ Tokenizer    │
-└────────┬───────┘      └──────┬───────┘
-         │                     │
-┌────────▼───────┐      ┌──────▼───────┐
-│  CpuBackend    │◄─────┤ Tensor Ops   │
-└────────┬───────┘      └──────┬───────┘
-         │                     │
-┌────────▼───────┐      ┌──────▼───────┐
-│  Transformer   │      │ KV Cache     │
-│    Blocks      │◄─────┤ (Context)    │
-└────────┬───────┘      └──────────────┘
-         │
-┌────────▼──────────┐
-│  Logits / Token   │
-└───────────────────┘
+main.rs              entry point, cli args, generation loop
+├─ loader.rs         gguf v3 parser, tensor loading + dequant
+├─ model.rs          gpt-2 transformer blocks
+│  ├─ backend.rs     backend trait + cpu backend impl
+│  ├─ tensor.rs      row-major f32 tensor with basic ops
+│  └─ kv_cache.rs    flat key/value cache for incremental decode
+├─ sampler.rs        temperature, top-k, top-p sampling
+├─ tokenizer.rs      huggingface tokenizer wrapper
+└─ quant.rs          q8_0 block dequantization
 ```
 
-## design decisions
+## design notes
 
-### why a custom backend trait?
+- **backend trait**: the transformer is generic — `CpuBackend` is the default,
+  but any type implementing `Backend` works. this means the model code is
+  written once and reused across hardware targets.
+- **q8_0 quantization**: 8-bit block quantization (fp16 scale + 32 int8 values
+  per block). reduces model size ~4× with minimal perplexity loss.
+- **kv cache**: flat `[layer][head][seq_position][head_dim]` layout. prefill
+  stores k/v for all prompt tokens; decode reads from cache and appends one
+  token at a time.
 
-to decouple the model logic from the hardware. by using the Backend trait, the transformer implementation remains identical whether running on a single-threaded CPU or a high-performance SIMD/GPU backend.
+## prerequisites
 
-### why explicit memory?
+- rust stable toolchain
+- a gguf model file (e.g. gpt2 in q8_0)
+- tokenizer.json for the model
 
-inference engines often suffer from "allocation churn." ember prioritizes explicit memory management and avoids hidden Vec allocations in the hot path to keep execution deterministic.
+## current limitations
 
-### why Q8_0 quantization?
-
-Q8_0 offers a significant reduction in model size with minimal perplexity loss. it is the "gold standard" for balanced local CPU inference.
-
-## known limitations
-
-* naive matmul: the current matrix multiplication is a basic implementation and needs SIMD optimization.
-* GPT-2 specific: the model loader is currently tuned for GPT-2 architecture patterns.
-* incomplete no_std: while designed for it, the project still relies on alloc and some std file I/O for loading.
-
-## roadmap
-
-* [ ] SIMD-accelerated CPU kernels (AVX/NEON)
-* [ ] Q4_0 and Q4_K quantization support
-* [ ] llama/mistral architecture support
-* [ ] full no_std certification for embedded targets
-* [ ] interactive CLI chat mode
-* [ ] full developer blog writeup
+- matmul is scalar — no simd optimization yet.
+- model loader is gpt-2 specific (gguf tensor names are hardcoded).
+- not fully no_std — file i/o and mmap require std.
 
 ## license
-MIT
 
+mit

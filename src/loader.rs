@@ -13,7 +13,9 @@ const DEFAULT_ALIGNMENT: u64 = 32;
 /// holds the parsed contents of a GGUF v3 file:
 /// metadata key-value pairs and named tensors.
 pub struct GgufLoader {
+    /// metadata key-value pairs from the gguf header
     pub metadata: HashMap<String, GgufValue>,
+    /// named tensors, dequantized to f32
     pub tensors: HashMap<String, CpuTensor>,
 }
 

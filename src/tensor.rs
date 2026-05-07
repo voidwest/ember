@@ -9,8 +9,11 @@ use alloc::vec::Vec;
 /// all pure operations return a new allocation; nothing mutates in place.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CpuTensor {
+    /// dimensions of the tensor
     pub shape: Vec<usize>,
+    /// strides for each dimension (contiguous row-major)
     pub strides: Vec<usize>,
+    /// flat f32 data buffer
     pub data: Vec<f32>,
 }
 
