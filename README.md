@@ -92,6 +92,38 @@ main.rs              entry point, cli args, generation loop
   stores k/v for all prompt tokens; decode reads from cache and appends one
   token at a time.
 
+## design justifications
+
+these are the non-obvious trade-offs made in this codebase.
+
+**transposed embeddings on load.** gguf stores token/position embeddings as
+`[vocab, embed]`. the loader transposes them so `index_select` picks a row
+directly — one contiguous slice per token — instead of gathering strided
+elements at inference time. the cost is one transpose at load; the benefit
+is simpler, faster embedding lookups in the hot loop.
+
+**`from_cpu` violates clippy convention by design.** the method is named
+`from_cpu` (not `from_slice` or `new`) to signal that it reads serialized
+data from the host into a backend tensor. it's not a `self→Other` conversion,
+so `#[allow(clippy::wrong_self_convention)]` is correct.
+
+**`n_layers` is stored but never read.** the kv cache allocates per-layer
+storage using `n_layers` in `new()`, then never reads the field again. it
+exists only to size the flat buffer. removing it would require threading
+the layer count through every cache method or hardcoding it. storing it is
+the simpler, more explicit path.
+
+**`matrixmultiply` as a placeholder.** the matmul delegates to
+`matrixmultiply::sgemm` — pure rust, correct, no blas linking. it's not
+optimal (no simd), but the `Backend` trait means simd kernels can be
+swapped in under a new backend type without touching model code. the
+crates.io crate is a deliberate stepping stone, not a final choice.
+
+**softmax returns uniform for all-masked input.** when every logit is -inf
+(fully masked row), softmax normally produces NaN. this code detects that
+case and returns `1/n` per position. it costs one extra branch per row and
+prevents the entire generation loop from poisoning on degenerate input.
+
 ## prerequisites
 
 - rust stable toolchain
