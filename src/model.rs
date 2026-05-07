@@ -61,6 +61,113 @@ impl<B: Backend> Attention<B> {
             n_heads,
         }
     }
+
+    /// Forward with KV cache.
+    ///
+    /// During the **prefill** pass (`seq_len > 1`) the full attention is
+    /// computed and K/V projections for every position are stored in the
+    /// cache. During **decode** (`seq_len == 1`) only the new token's Q
+    /// is computed; cached K/V from all prior positions are reused, turning
+    /// the O(n²·d) full-sequence attention into O(n·d) per step.
+    ///
+    /// The cache uses a `[layer][head][seq_position][head_dim]` layout.
+    /// This method appends the current step's K/V to the cache before
+    /// computing attention so the causal masking is always correct.
+    pub fn forward_with_cache(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        layer: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let qkv = self.c_attn.forward(backend, x)?;
+        let embed_dim = backend.shape(&qkv)[1] / 3;
+        let seq_len = backend.shape(x)[0];
+        let head_dim = embed_dim / self.n_heads;
+        let scale = (head_dim as f32).sqrt().recip();
+
+        let q = backend.slice_cols(&qkv, 0, embed_dim);
+        let k = backend.slice_cols(&qkv, embed_dim, 2 * embed_dim);
+        let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim);
+
+        let q_data = backend.data(&q);
+        let k_data = backend.data(&k);
+        let v_data = backend.data(&v);
+
+        // ── 1. Store K/V for the current step(s) into the cache ──────
+        //      (cursor advances after all layers have stored, in Gpt2::forward_with_cache)
+        for pos in 0..seq_len {
+            let offset = pos * embed_dim;
+            cache.append(layer, &k_data[offset..offset + embed_dim], &v_data[offset..offset + embed_dim]);
+        }
+
+        // ── 2. Compute attention against the *full* cached K/V ───────
+        //      (cursor hasn't advanced yet — it advances after all layers
+        //      finish, in Gpt2::forward_with_cache)
+        let total_seq_len = cache.cursor() + seq_len;
+        let (cached_k, cached_v) = cache.get(layer);
+        let cache_head_stride = cache.max_seq_len() * head_dim;
+
+        let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
+
+        for h in 0..self.n_heads {
+            let q_head_offset = h * head_dim;
+
+            for i in 0..seq_len {
+                // causal mask: position i (in the current batch) attends to
+                // positions 0..=total_seq_len - seq_len + i in the cache.
+                let max_j = total_seq_len - seq_len + i;
+
+                let mut qk_row = vec![f32::NEG_INFINITY; total_seq_len];
+                let q_idx_abs = i * embed_dim + q_head_offset;
+
+                for j in 0..=max_j {
+                    let k_cache_abs = h * cache_head_stride + j * head_dim;
+                    let dot: f32 = q_data[q_idx_abs..q_idx_abs + head_dim]
+                        .iter()
+                        .zip(cached_k[k_cache_abs..k_cache_abs + head_dim].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    qk_row[j] = dot * scale;
+                }
+
+                // softmax
+                let max_val = qk_row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                if max_val == f32::NEG_INFINITY {
+                    let uniform = 1.0 / (total_seq_len as f32);
+                    for j in 0..total_seq_len {
+                        qk_row[j] = uniform;
+                    }
+                } else {
+                    let mut sum = 0.0;
+                    for s in qk_row.iter_mut() {
+                        *s = (*s - max_val).exp();
+                        sum += *s;
+                    }
+                    let inv_sum = sum.recip();
+                    for s in qk_row.iter_mut() {
+                        *s *= inv_sum;
+                    }
+                }
+
+                // weighted sum of values
+                for j in 0..=max_j {
+                    let weight = qk_row[j];
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let v_cache_abs = h * cache_head_stride + j * head_dim;
+                    let out_offset = i * embed_dim + q_head_offset;
+                    for d in 0..head_dim {
+                        attn_buf[out_offset + d] += weight * cached_v[v_cache_abs + d];
+                    }
+                }
+            }
+        }
+
+        let result = backend.from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        self.c_proj.forward(backend, &result)
+    }
 }
 impl<B: Backend> Module<B> for Attention<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
@@ -178,6 +285,25 @@ impl<B: Backend> Block<B> {
     }
 }
 
+impl<B: Backend> Block<B> {
+    /// Forward with KV cache. Layer index is required for cache lookups.
+    pub fn forward_with_cache(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        layer: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let normed = self.ln_1.forward(backend, x)?;
+        let attn_out = self.attn.forward_with_cache(backend, &normed, cache, layer)?;
+        let x = backend.add(x, &attn_out)?;
+
+        let normed = self.ln_2.forward(backend, &x)?;
+        let mlp_out = self.mlp.forward(backend, &normed)?;
+        backend.add(&x, &mlp_out)
+    }
+}
+
 impl<B: Backend> Module<B> for Block<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         let normed = self.ln_1.forward(backend, x)?;
@@ -219,6 +345,8 @@ pub struct Gpt2<B: Backend> {
     pub blocks: Vec<Block<B>>,
     pub ln_f: LayerNorm<B>,
     pub head: Linear<B>,
+    /// number of attention heads (used to construct the KV cache)
+    pub n_heads: usize,
 }
 
 impl Gpt2<CpuBackend> {
@@ -294,6 +422,7 @@ impl Gpt2<CpuBackend> {
                 1e-5,
             ),
             head: Linear::new(get_t("output.weight")?, None),
+            n_heads,
         })
     }
 }
@@ -305,6 +434,7 @@ impl<B: Backend> Gpt2<B> {
         blocks: Vec<Block<B>>,
         ln_f: LayerNorm<B>,
         head: Linear<B>,
+        n_heads: usize,
     ) -> Self {
         Self {
             wte,
@@ -312,22 +442,66 @@ impl<B: Backend> Gpt2<B> {
             blocks,
             ln_f,
             head,
+            n_heads,
         }
     }
-    fn embed(&self, backend: &B, tokens: &[u32]) -> Result<B::Tensor, B::Error> {
+
+    /// Look up token + position embeddings for a batch of token ids.
+    ///
+    /// `start_pos` is the absolute position offset for the position embeddings
+    /// (0 for a new sequence, `prompt_len + step` during incremental decode).
+    fn embed_with_offset(
+        &self,
+        backend: &B,
+        tokens: &[u32],
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
         let seq_len = tokens.len();
         let embed_dim = backend.shape(&self.wte)[1];
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &token_id) in tokens.iter().enumerate() {
             let word_vec = backend.index_select(&self.wte, token_id as usize)?;
-
-            let pos_vec = backend.index_select(&self.wpe, i)?;
-
+            let pos_vec = backend.index_select(&self.wpe, start_pos + i)?;
             let combined = backend.add(&word_vec, &pos_vec)?;
-
             backend.assign_row(&mut x, i, &combined);
         }
         Ok(x)
+    }
+
+    fn embed(&self, backend: &B, tokens: &[u32]) -> Result<B::Tensor, B::Error> {
+        self.embed_with_offset(backend, tokens, 0)
+    }
+
+    /// Create a KV cache sized for this model's parameters.
+    pub fn create_cache(&self, backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
+        let embed_dim = backend.shape(&self.wte)[1];
+        let head_dim = embed_dim / self.n_heads;
+        crate::kv_cache::KVCache::new(self.blocks.len(), self.n_heads, head_dim, max_seq_len)
+    }
+
+    /// Forward pass with incremental KV caching.
+    ///
+    /// `start_pos` is the absolute position offset for position embeddings
+    /// (0 during prefill, `prompt_len + step` for decode steps).
+    pub fn forward_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let seq_len = token_ids.len();
+        let mut x = self.embed_with_offset(backend, token_ids, start_pos)?;
+        for (layer, block) in self.blocks.iter().enumerate() {
+            x = block.forward_with_cache(backend, &x, cache, layer)?;
+        }
+        // Advance the cache cursor by seq_len after all layers have
+        // stored their K/V for these positions.
+        for _ in 0..seq_len {
+            cache.advance_cursor();
+        }
+        let x = self.ln_f.forward(backend, &x)?;
+        self.head.forward(backend, &x)
     }
 
     pub fn forward(&self, backend: &B, token_ids: &[u32]) -> Result<B::Tensor, B::Error> {

@@ -111,17 +111,30 @@ where
     log::info!("prompt has {} tokens", all_tokens.len());
 
     let prompt_len = all_tokens.len();
+    let max_seq_len = prompt_len + max_tokens;
+
+    // ── 1. Prefill: run full forward pass on the prompt and fill KV cache ──
+    log::info!("prefilling KV cache for {} tokens", prompt_len);
+    let mut cache = model.create_cache(backend, max_seq_len);
+    let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
+    let embed_dim = backend.shape(&logits)[1];
+
+    // ── 2. Decode loop: one new token at a time ──────────────────────────
     let mut generated = Vec::with_capacity(max_tokens);
+    let mut next_token: usize;
 
-    for _step in 0..max_tokens {
-        let logits = model.forward(backend, &all_tokens)?;
+    for step in 0..max_tokens {
         let logit_data = backend.data(&logits);
-        let embed_dim = backend.shape(&logits)[1];
+        let last_logits = if step == 0 {
+            // prefill step: pick the last position's logits
+            let last_offset = (all_tokens.len() - 1) * embed_dim;
+            &logit_data[last_offset..last_offset + embed_dim]
+        } else {
+            // decode step: only one token in the input, logits[0] is the output
+            &logit_data[..embed_dim]
+        };
 
-        let last_offset = (all_tokens.len() - 1) * embed_dim;
-        let last_logits = &logit_data[last_offset..last_offset + embed_dim];
-
-        let next_token = if temperature == 0.0 {
+        next_token = if temperature == 0.0 {
             last_logits
                 .iter()
                 .enumerate()
@@ -134,15 +147,23 @@ where
             sample_token(last_logits, temperature, top_k, top_p, &mut rng)
         };
 
-        log::debug!("step {}: predicted token {}", _step, next_token);
+        log::debug!("step {}: predicted token {}", step, next_token);
 
         if next_token == 50256 {
-            log::info!("eos token reached");
+            log::info!("eos token reached after {} generated tokens", step);
             break;
         }
 
         all_tokens.push(next_token as u32);
         generated.push(next_token as u32);
+
+        // decode step: forward with just the new token, using cached K/V
+        logits = model.forward_with_cache(
+            backend,
+            &[next_token as u32],
+            &mut cache,
+            prompt_len + step + 1, // absolute position offset
+        )?;
     }
 
     let output = tokenizer.decode(&generated)?;

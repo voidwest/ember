@@ -3,13 +3,14 @@ use alloc::vec::Vec;
 /// a flat, pre-allocated key/value cache for transformer attention.
 ///
 /// memory layout: `[layer][head][seq_position][head_dim]`.
-/// the cache is implemented but not yet wired into `Attention::forward`
-/// — attention currently recomputes the full sequence every pass.
-#[allow(dead_code)]
+/// wired into `Attention::forward_with_cache` — during prefill the full
+/// K/V projection is cached; subsequent decode steps read from the cache
+/// instead of recomputing against the full sequence each pass.
 pub struct KVCache {
     k: Vec<f32>,
     v: Vec<f32>,
-    n_layers: usize, // reserved for future use (kv cache not yet wired into attention)
+    #[allow(dead_code)] // stored for allocation size, not read back
+    n_layers: usize,
     n_heads: usize,
     head_dim: usize,
     max_seq_len: usize,
@@ -53,7 +54,7 @@ impl KVCache {
     }
     pub fn get(&self, layer: usize) -> (&[f32], &[f32]) {
         let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;
-        let len = self.n_heads * self.cursor * self.head_dim;
+        let len = self.n_heads * self.max_seq_len * self.head_dim;
         (
             &self.k[layer_offset..layer_offset + len],
             &self.v[layer_offset..layer_offset + len],
@@ -62,6 +63,10 @@ impl KVCache {
 
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+    /// maximum sequence length the cache was allocated for
+    pub fn max_seq_len(&self) -> usize {
+        self.max_seq_len
     }
     pub fn advance_cursor(&mut self) {
         self.cursor += 1;
