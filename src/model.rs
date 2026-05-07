@@ -98,7 +98,11 @@ impl<B: Backend> Attention<B> {
         //      (cursor advances after all layers have stored, in Gpt2::forward_with_cache)
         for pos in 0..seq_len {
             let offset = pos * embed_dim;
-            cache.append(layer, &k_data[offset..offset + embed_dim], &v_data[offset..offset + embed_dim]);
+            cache.append(
+                layer,
+                &k_data[offset..offset + embed_dim],
+                &v_data[offset..offset + embed_dim],
+            );
         }
 
         // ── 2. Compute attention against the *full* cached K/V ───────
@@ -121,22 +125,22 @@ impl<B: Backend> Attention<B> {
                 let mut qk_row = vec![f32::NEG_INFINITY; total_seq_len];
                 let q_idx_abs = i * embed_dim + q_head_offset;
 
-                for j in 0..=max_j {
+                for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
                     let k_cache_abs = h * cache_head_stride + j * head_dim;
                     let dot: f32 = q_data[q_idx_abs..q_idx_abs + head_dim]
                         .iter()
                         .zip(cached_k[k_cache_abs..k_cache_abs + head_dim].iter())
                         .map(|(a, b)| a * b)
                         .sum();
-                    qk_row[j] = dot * scale;
+                    *slot = dot * scale;
                 }
 
                 // softmax
                 let max_val = qk_row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
                 if max_val == f32::NEG_INFINITY {
                     let uniform = 1.0 / (total_seq_len as f32);
-                    for j in 0..total_seq_len {
-                        qk_row[j] = uniform;
+                    for slot in qk_row.iter_mut().take(total_seq_len) {
+                        *slot = uniform;
                     }
                 } else {
                     let mut sum = 0.0;
@@ -151,8 +155,7 @@ impl<B: Backend> Attention<B> {
                 }
 
                 // weighted sum of values
-                for j in 0..=max_j {
-                    let weight = qk_row[j];
+                for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
                     if weight == 0.0 {
                         continue;
                     }
@@ -295,7 +298,9 @@ impl<B: Backend> Block<B> {
         layer: usize,
     ) -> Result<B::Tensor, B::Error> {
         let normed = self.ln_1.forward(backend, x)?;
-        let attn_out = self.attn.forward_with_cache(backend, &normed, cache, layer)?;
+        let attn_out = self
+            .attn
+            .forward_with_cache(backend, &normed, cache, layer)?;
         let x = backend.add(x, &attn_out)?;
 
         let normed = self.ln_2.forward(backend, &x)?;

@@ -91,7 +91,7 @@ mod tests {
         assert_eq!(cache.cursor(), 1);
 
         let (k_out, v_out) = cache.get(0);
-        assert_eq!(k_out.len(), 4 * 1 * 8);
-        assert_eq!(v_out.len(), 4 * 1 * 8);
+        assert_eq!(k_out.len(), 4 * 128 * 8);
+        assert_eq!(v_out.len(), 4 * 128 * 8);
     }
 }
