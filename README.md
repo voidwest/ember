@@ -1,5 +1,9 @@
 # ember
 
+[![rust](https://img.shields.io/badge/rust-1.85-blue)](https://www.rust-lang.org)
+[![ci](https://github.com/voidwest/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/voidwest/ember/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 a lightweight, cpu-first llm inference engine in rust. designed for running
 quantized models without heavy framework dependencies.
 
@@ -10,6 +14,22 @@ quantized models without heavy framework dependencies.
   for gpu later without rewriting the transformer.
 - **explicit memory**: no hidden allocations in the inference hot path.
 - **no_std ready**: core types avoid `std` where possible. uses `alloc` only.
+
+## what this demonstrates
+
+- **systems programming in rust**: manual memory layout for the kv cache
+  (`[layer][head][pos][head_dim]`), explicit stride math for tensor indexing,
+  no hidden allocations in the hot path.
+- **generic backend architecture**: the transformer is written against a
+  `Backend` trait — the same model code works on cpu today and could run
+  on gpu tomorrow without modification.
+- **ml fundamentals**: causal multi-head attention with kv caching,
+  numerically stable softmax (handles all-masked rows), layer norm,
+  gelu activation, top-k/top-p sampling.
+- **file format parsing**: gguf v3 loader with f32 and q8_0 quantization
+  support, including fp16 scale dequantization.
+- **edge case handling**: uniform fallback when every logit is -inf,
+  categorical sampling with inverse cdf, nucleus cutoff logic.
 
 ## usage
 
