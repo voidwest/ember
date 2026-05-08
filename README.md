@@ -49,8 +49,21 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 | `--top-k` | (none) | top-k sampling |
 | `--top-p` | (none) | nucleus sampling |
 | `-i`, `--interactive` | (none) | repl mode after first prompt |
-| `-benchmark` | (none) | benchmarks performance in tokens/s|
+| `--demo` | (none) | curated showcase with timing and deterministic output |
+| `--benchmark` | (none) | print prefill/decode timing to stderr |
 
+### demo mode
+
+```bash
+cargo run --release -- --demo
+```
+
+runs through a fixed set of prompts using greedy sampling (temperature 0)
+for deterministic, repeatable output. ideal for screen recordings
+(`asciinema`, `script`, terminal capture) and benchmarking.
+
+each prompt reports its completion, token counts, and per-phase timing.
+a summary table at the end shows aggregate throughput across all prompts.
 
 ### interactive mode
 

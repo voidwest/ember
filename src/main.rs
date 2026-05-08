@@ -44,6 +44,10 @@ struct Args {
     #[arg(short, long)]
     interactive: bool,
 
+    /// run a curated demo that showcases the project with deterministic output and timing
+    #[arg(long, conflicts_with = "interactive")]
+    demo: bool,
+
     /// print prefill/decode timing stats to stderr
     #[arg(long)]
     benchmark: bool,
@@ -53,20 +57,33 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
     let args = Args::parse();
 
-    log::info!("loading model from {}", args.model);
-    let loader = load_gguf(&args.model)?;
-    log::info!("loaded {} tensors", loader.tensors.len());
+    // demo mode: suppress log noise for clean recordable output
+    if args.demo {
+        log::set_max_level(log::LevelFilter::Off);
+    }
 
+    let loader = load_gguf(&args.model)?;
+    let n_tensors = loader.tensors.len();
     let model = Gpt2::from_loader(loader)?;
-    log::info!("model built");
 
     let backend = CpuBackend;
-    log::debug!("wte shape: {:?}", backend.shape(&model.wte));
 
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&args.tokenizer)?;
-    log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
 
-    if args.interactive {
+    if args.demo {
+        demo_mode(
+            &backend,
+            &model,
+            &tokenizer,
+            args.max_tokens,
+            &args.model,
+        )?;
+    } else if args.interactive {
+        log::info!("loading model from {}", args.model);
+        log::info!("loaded {} tensors", n_tensors);
+        log::info!("model built");
+        log::debug!("wte shape: {:?}", backend.shape(&model.wte));
+        log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
         interactive_mode(
             &backend,
             &model,
@@ -78,6 +95,12 @@ fn main() -> anyhow::Result<()> {
             args.top_p,
         )?;
     } else {
+        log::info!("loading model from {}", args.model);
+        log::info!("loaded {} tensors", n_tensors);
+        log::info!("model built");
+        log::debug!("wte shape: {:?}", backend.shape(&model.wte));
+        log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
+
         let output = generate(
             &backend,
             &model,
@@ -91,6 +114,168 @@ fn main() -> anyhow::Result<()> {
         )?;
         println!("{}", output);
     }
+
+    Ok(())
+}
+
+/// run a curated demo showcasing the project.
+///
+/// uses greedy sampling (temperature 0) for deterministic, repeatable output —
+/// ideal for screen recordings, benchmarks, and project demonstrations.
+/// runs through a fixed set of prompts, printing each one with its completion
+/// and per-prompt timing, then a summary table.
+fn demo_mode<B: Backend>(
+    backend: &B,
+    model: &Gpt2<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    max_tokens: usize,
+    model_path: &str,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let embed_dim = backend.shape(&model.wte)[1];
+    let head_dim = embed_dim / model.n_heads;
+
+    // ── header ──────────────────────────────────────────────────────
+    println!("╔══════════════════════════════════════════════════╗");
+    println!("║              ember  ·  llm inference              ║");
+    println!("╠══════════════════════════════════════════════════╣");
+    println!("║ model     {:>38} ║", model_path);
+    println!("║ layers    {:>38} ║", model.blocks.len());
+    println!("║ heads     {:>38} ║", model.n_heads);
+    println!("║ embed_dim {:>38} ║", embed_dim);
+    println!("║ head_dim  {:>38} ║", head_dim);
+    println!("║ vocab     {:>38} ║", tokenizer.vocab_size());
+    println!("║ sampling  {:>38} ║", "greedy (temp=0)");
+    println!("╚══════════════════════════════════════════════════╝");
+    println!();
+
+    let prompts: &[(&str, &str)] = &[
+        ("Once upon a time, in a land far away,", "story generation"),
+        (
+            "The three primary colors of light are",
+            "factual completion",
+        ),
+        (
+            "// fibonacci sequence in python\ndef fib(n):",
+            "code generation",
+        ),
+        ("The meaning of life is", "open-ended reasoning"),
+    ];
+
+    let mut total_prefill_ms = 0.0;
+    let mut total_decode_ms = 0.0;
+    let mut total_prompt_tokens = 0usize;
+    let mut total_generated = 0usize;
+
+    for (i, (prompt, category)) in prompts.iter().enumerate() {
+        let prompt_tokens = tokenizer.encode(prompt)?;
+        let prompt_len = prompt_tokens.len();
+        let max_seq_len = prompt_len + max_tokens;
+
+        // prefill
+        let prefill_start = std::time::Instant::now();
+        let mut cache = model.create_cache(backend, max_seq_len);
+        let mut logits =
+            model.forward_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
+        let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
+
+        // decode
+        let decode_start = std::time::Instant::now();
+        let mut all_tokens = prompt_tokens.clone();
+        let mut generated = Vec::with_capacity(max_tokens);
+
+        for step in 0..max_tokens {
+            let logit_data = backend.data(&logits);
+            let last_logits = if step == 0 {
+                let last_offset = (all_tokens.len() - 1) * embed_dim;
+                &logit_data[last_offset..last_offset + embed_dim]
+            } else {
+                &logit_data[..embed_dim]
+            };
+
+            let next = argmax_token(last_logits);
+
+            if next == 50256 {
+                break;
+            }
+
+            all_tokens.push(next as u32);
+            generated.push(next as u32);
+
+            logits = model.forward_with_cache(
+                backend,
+                &[next as u32],
+                &mut cache,
+                prompt_len + step + 1,
+            )?;
+        }
+        let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
+        let completion = tokenizer.decode(&generated)?;
+
+        // ── per-prompt output ─────────────────────────────────────
+        println!(
+            "┌─ prompt {} ─ {} ───────────────────────┐",
+            i + 1,
+            category
+        );
+        println!("│");
+        println!("│ prompt:    {}", prompt);
+        println!("│ completion:{}", completion);
+        println!("│");
+        println!(
+            "│ tokens:    {} prompt + {} generated = {} total",
+            prompt_len,
+            generated.len(),
+            prompt_len + generated.len()
+        );
+        println!(
+            "│ prefill:   {:.1} ms ({:.0} tok/s)",
+            prefill_ms,
+            prompt_len as f64 / (prefill_ms / 1000.0)
+        );
+        println!(
+            "│ decode:    {:.1} ms ({:.0} tok/s)",
+            decode_ms,
+            generated.len() as f64 / (decode_ms / 1000.0)
+        );
+        println!("└────────────────────────────────────────────────┘");
+        println!();
+
+        total_prefill_ms += prefill_ms;
+        total_decode_ms += decode_ms;
+        total_prompt_tokens += prompt_len;
+        total_generated += generated.len();
+    }
+
+    // ── summary ────────────────────────────────────────────────────
+    let total_ms = total_prefill_ms + total_decode_ms;
+    let total_tokens = total_prompt_tokens + total_generated;
+    println!("══════════════════════════ summary ══════════════════════════");
+    println!();
+    println!("  prompts:       {}", prompts.len());
+    println!(
+        "  total tokens:  {} ({} prompt + {} generated)",
+        total_tokens, total_prompt_tokens, total_generated
+    );
+    println!("  total time:    {:.1} ms", total_ms);
+    println!(
+        "  throughput:    {:.0} tok/s",
+        total_tokens as f64 / (total_ms / 1000.0)
+    );
+    println!(
+        "  prefill avg:   {:.1} ms · {:.0} tok/s",
+        total_prefill_ms / prompts.len() as f64,
+        total_prompt_tokens as f64 / (total_prefill_ms / 1000.0)
+    );
+    println!(
+        "  decode avg:    {:.1} ms · {:.0} tok/s",
+        total_decode_ms / prompts.len() as f64,
+        total_generated as f64 / (total_decode_ms / 1000.0)
+    );
+    println!();
+    println!("══════════════════════════════════════════════════════════════");
 
     Ok(())
 }
