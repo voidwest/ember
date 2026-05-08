@@ -44,7 +44,8 @@ impl KVCache {
         assert!(
             pos < self.max_seq_len,
             "kv cache overflow: pos={}, max_seq_len={}",
-            pos, self.max_seq_len
+            pos,
+            self.max_seq_len
         );
 
         let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;

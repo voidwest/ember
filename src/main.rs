@@ -133,7 +133,11 @@ where
     let max_seq_len = prompt_len + max_tokens;
 
     // ── 1. prefill: run full forward pass on the prompt and fill kv cache ──
-    let prefill_start = if benchmark { Some(Instant::now()) } else { None };
+    let prefill_start = if benchmark {
+        Some(Instant::now())
+    } else {
+        None
+    };
     log::info!("prefilling KV cache for {} tokens", prompt_len);
     let mut cache = model.create_cache(backend, max_seq_len);
     let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
@@ -141,7 +145,11 @@ where
     let embed_dim = backend.shape(&logits)[1];
 
     // ── 2. decode loop: one new token at a time ──────────────────────────
-    let decode_start = if benchmark { Some(Instant::now()) } else { None };
+    let decode_start = if benchmark {
+        Some(Instant::now())
+    } else {
+        None
+    };
     let mut generated = Vec::with_capacity(max_tokens);
     let mut next_token: usize;
 
