@@ -1,8 +1,20 @@
 use alloc::vec::Vec;
 use rand::Rng;
 
-/// apply temperature scaling and sampling filters, then sample a token
-/// from the resulting categorical distribution
+/// sample a token from logits with temperature scaling, top-k, and top-p filtering.
+///
+/// the standard sampling pipeline:
+/// 1. **temperature scaling** — divides logits by `temperature` to sharpen or flatten
+///    the distribution. `0.0` means greedy argmax.
+/// 2. **top-k filtering** — keeps only the `k` highest logits, sets the rest to `-inf`.
+/// 3. **top-p (nucleus) filtering** — keeps the smallest set of tokens whose cumulative
+///    softmax probability exceeds `p`, sets the rest to `-inf`.
+/// 4. **softmax** — converts filtered logits to a probability distribution.
+///    if every logit is `-inf` (fully masked), returns a uniform distribution.
+/// 5. **inverse cdf sampling** — draws a token from the categorical distribution.
+///
+/// this is the same sampling pipeline used by llama.cpp, huggingface transformers,
+/// and the openai api (holtzman et al. 2020).
 pub fn sample_token(
     logits: &[f32],
     temperature: f32,
@@ -31,7 +43,11 @@ pub fn sample_token(
     categorical_sample(&dist, rng)
 }
 
-/// set all values below the k-th largest logit to -infinity
+/// set all values below the k-th largest logit to `-inf`.
+///
+/// sorts a copy of the logits in descending order, finds the k-th largest value
+/// (0-indexed, so `indexed[k - 1]`), and masks every logit below that threshold.
+/// a no-op when `k >= len` or `k == 0`.
 fn top_k_filter(probs: &mut [f32], k: usize) {
     if k >= probs.len() || k == 0 {
         return;
@@ -49,8 +65,12 @@ fn top_k_filter(probs: &mut [f32], k: usize) {
     }
 }
 
-/// after softmax, keep only the smallest set of tokens whose cumulative
-/// probability exceeds `p`, setting the rest to -infinity
+/// nucleus sampling: keep only the tokens in the smallest set whose
+/// cumulative softmax probability exceeds `p`.
+///
+/// computes softmax first, then sorts probabilities descending and finds
+/// the cutoff threshold via `nucleus_cutoff`. masks every token whose
+/// softmax probability falls below that threshold.
 fn top_p_filter(probs: &mut [f32], p: f32) {
     let soft = softmax_1d(probs);
     let cutoff = nucleus_cutoff(&soft, p);
@@ -61,9 +81,12 @@ fn top_p_filter(probs: &mut [f32], p: f32) {
     }
 }
 
-/// softmax a 1d slice, returning a probability distribution.
-/// handles the all-masked (-inf everywhere) edge case by returning
-/// a uniform distribution.
+/// numerically stable softmax over a 1d slice of logits.
+///
+/// subtracts the maximum logit before exponentiating to avoid overflow (the "max trick").
+/// for all-masked input (every value is `f32::NEG_INFINITY`), returns a uniform
+/// distribution — this matches the behavior of `CpuTensor::softmax` and prevents
+/// NaN propagation from `(-inf - -inf).exp()` per ieee 754.
 pub fn softmax_1d(logits: &[f32]) -> Vec<f32> {
     let max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     if max == f32::NEG_INFINITY {
@@ -75,9 +98,12 @@ pub fn softmax_1d(logits: &[f32]) -> Vec<f32> {
     exps.iter().map(|x| x / sum).collect()
 }
 
-/// find the probability threshold for nucleus sampling:
-/// sort probabilities descending, then return the smallest
-/// probability in the set whose cumulative sum exceeds `p`
+/// find the probability threshold for nucleus sampling.
+///
+/// sorts probabilities descending, accumulates from the top, and returns
+/// the smallest probability value in the set whose cumulative sum reaches `p`.
+/// returns `0.0` if the cumulative sum never reaches `p` (shouldn't happen
+/// for a valid probability distribution).
 fn nucleus_cutoff(sorted_probs: &[f32], p: f32) -> f32 {
     let mut indexed: Vec<(f32, usize)> = sorted_probs
         .iter()
@@ -95,7 +121,11 @@ fn nucleus_cutoff(sorted_probs: &[f32], p: f32) -> f32 {
     0.0
 }
 
-/// sample from a categorical distribution using inverse cdf sampling
+/// sample from a categorical distribution using inverse cdf sampling.
+///
+/// draws a random float in `[0, 1)`, walks the cumulative sum of probabilities,
+/// and returns the index where the random value first falls below the running sum.
+/// falls back to argmax if floating-point rounding causes the cdf to not reach 1.0.
 fn categorical_sample(dist: &[f32], rng: &mut impl Rng) -> usize {
     let r: f32 = rng.gen();
     let mut cum = 0.0;

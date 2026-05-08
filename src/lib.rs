@@ -11,7 +11,7 @@
 //! ## Design Philosophy
 //!
 //! - **Explicit memory**: No hidden allocations during inference.
-//! - **no_std friendly**: Core types avoid `std` where possible.
+//! - **alloc-first**: Core tensor types avoid `std` where practical.
 //! - **Quantization first**: Design for Q4_0/Q8_0 from day one.
 
 // research: `no_std` environments. we're not fully no_std yet (we use vec),

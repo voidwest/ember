@@ -130,6 +130,7 @@ impl CpuTensor {
     /// reshape a tensor without copying data.
     /// panics if the new shape has a different total element count.
     #[must_use]
+    #[inline]
     pub fn reshape(&self, new_shape: &[usize]) -> Self {
         let new_len: usize = new_shape.iter().product();
         assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
@@ -247,6 +248,7 @@ impl CpuTensor {
     /// tensor. normalizes each row independently: `(x - mean) / sqrt(var + eps)
     /// * weight + bias`.
     #[must_use]
+    #[inline]
     pub fn layer_norm(&self, weight: &Self, bias: &Self, eps: f32) -> Self {
         assert_eq!(self.ndim(), 2, "layer_norm expects 2d [batch, features]");
         let (batch, features) = (self.shape[0], self.shape[1]);
@@ -323,6 +325,8 @@ impl CpuTensor {
 
         self.data[start..end].copy_from_slice(&src.data);
     }
+    #[must_use]
+    #[inline]
     pub fn slice_cols(&self, start_col: usize, end_col: usize) -> Self {
         if self.shape.len() < 2 {
             panic!("slice_cols requires a 2D tensor [rows, cols]");

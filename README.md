@@ -13,7 +13,7 @@ quantized models without heavy framework dependencies.
 - **backend trait**: model code is generic over a `Backend` trait — swap cpu
   for gpu later without rewriting the transformer.
 - **explicit memory**: no hidden allocations in the inference hot path.
-- **no_std ready**: core types avoid `std` where possible. uses `alloc` only.
+- **alloc-first design**: core tensor types and model code avoid `std` where practical, using `alloc` for vec-backed storage.
 
 ## what this demonstrates
 
@@ -128,7 +128,7 @@ prevents the entire generation loop from poisoning on degenerate input.
 
 - rust stable toolchain
 - a gguf model file (e.g. gpt2 in q8_0)
-- tokenizer.json for the model
+- tokenizer.json for the model (gpt-2's is included in the repo; for other models, point `--tokenizer` at their tokenizer file or use `download_gpt2_tokenizer_blocking()` from the library)
 
 ## current limitations
 

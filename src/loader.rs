@@ -86,7 +86,7 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
         reader.seek(SeekFrom::Start(data_start + info.offset))?;
         let element_count: usize = info.dims.iter().product();
 
-        let data = match info.dtype {
+        let (data, dims) = match info.dtype {
             0 => {
                 let mut data = vec![0.0f32; element_count];
                 let mut buf = vec![0u8; element_count * 4];
@@ -98,7 +98,27 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                         .map_err(|_| anyhow::anyhow!("failed to read f32 at index {}", i))?;
                     *dst = f32::from_le_bytes(bytes);
                 }
-                data
+                (data, info.dims)
+            }
+            1 => {
+                use half::f16;
+                let mut buf = vec![0u8; element_count * 2];
+                reader.read_exact(&mut buf)?;
+                let mut data = vec![0.0f32; element_count];
+                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
+                    let start = i * 2;
+                    let bits = u16::from_le_bytes(
+                        buf[start..start + 2]
+                            .try_into()
+                            .map_err(|_| anyhow::anyhow!("failed to read f16 at index {}", i))?,
+                    );
+                    *dst = f16::from_bits(bits).to_f32();
+                }
+                // F16 tensors may be stored column-major for quantized models.
+                // Reverse the dimension order so the reshape matches the storage layout.
+                let mut dims = info.dims;
+                dims.reverse();
+                (data, dims)
             }
             8 => {
                 let n_blocks = element_count / 32;
@@ -107,7 +127,14 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
 
                 let mut f32_data = vec![0.0f32; element_count];
                 dequantize_q8_0(&buf, &mut f32_data)?;
-                f32_data
+                // Q8_0 blocks are stored along the innermost dimension, which
+                // must be a multiple of 32. the gguf tensor info reports the
+                // logical shape (e.g. [embed, vocab]), but the data is laid out
+                // column-major so that the innermost dimension (vocab) becomes
+                // the outer dimension for blocking. reverse the dims here.
+                let mut dims = info.dims;
+                dims.reverse();
+                (f32_data, dims)
             }
             _ => {
                 log::warn!(
@@ -119,7 +146,7 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
             }
         };
 
-        let tensor = CpuTensor::from_data(info.dims, data);
+        let tensor = CpuTensor::from_data(dims, data);
         tensors.insert(info.name, tensor);
     }
     Ok(GgufLoader { metadata, tensors })

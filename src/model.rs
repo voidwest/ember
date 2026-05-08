@@ -387,7 +387,6 @@ impl Gpt2<CpuBackend> {
     /// - `output_norm.weight`, `output_norm.bias`
     /// - `output.weight`
     ///
-    /// wte and wpe are transposed on load so index_select picks a row directly.
     /// metadata keys `gpt2.block_count` and `gpt2.attention.head_count` control
     /// the number of layers and heads (default 12 each if missing).
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
@@ -407,19 +406,20 @@ impl Gpt2<CpuBackend> {
         let n_heads = match loader.metadata.get("gpt2.attention.head_count") {
             Some(crate::loader::GgufValue::U32(n)) => *n as usize,
             _ => 12,
-        }; // default val
+        };
 
         // blocks
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
-            // attention mapping
+            // attention mapping — quantized linear weights need transpose
+            // because the loader reverses dims for column-major q8_0 storage.
             let attn = Attention::new(
                 Linear::new(
-                    get_t(&format!("blk.{}.attn_qkv.weight", i))?,
+                    get_t(&format!("blk.{}.attn_qkv.weight", i))?.transpose(),
                     Some(get_t(&format!("blk.{}.attn_qkv.bias", i))?),
                 ),
                 Linear::new(
-                    get_t(&format!("blk.{}.attn_output.weight", i))?,
+                    get_t(&format!("blk.{}.attn_output.weight", i))?.transpose(),
                     Some(get_t(&format!("blk.{}.attn_output.bias", i))?),
                 ),
                 n_heads,
@@ -427,11 +427,11 @@ impl Gpt2<CpuBackend> {
 
             let mlp = Mlp::new(
                 Linear::new(
-                    get_t(&format!("blk.{}.ffn_up.weight", i))?,
+                    get_t(&format!("blk.{}.ffn_up.weight", i))?.transpose(),
                     Some(get_t(&format!("blk.{}.ffn_up.bias", i))?),
                 ),
                 Linear::new(
-                    get_t(&format!("blk.{}.ffn_down.weight", i))?,
+                    get_t(&format!("blk.{}.ffn_down.weight", i))?.transpose(),
                     Some(get_t(&format!("blk.{}.ffn_down.bias", i))?),
                 ),
             );
@@ -453,15 +453,18 @@ impl Gpt2<CpuBackend> {
         }
 
         Ok(Self {
-            wte: get_t("token_embd.weight")?.transpose(),
-            wpe: get_t("position_embd.weight")?.transpose(),
+            // embeddings are loaded with dims reversed by the loader
+            // (column-major q8_0 → [vocab, embed]), so no manual
+            // transpose needed — index_select already picks rows directly.
+            wte: get_t("token_embd.weight")?,
+            wpe: get_t("position_embd.weight")?,
             blocks,
             ln_f: LayerNorm::new(
                 get_t("output_norm.weight")?,
                 get_t("output_norm.bias")?,
                 1e-5,
             ),
-            head: Linear::new(get_t("output.weight")?, None),
+            head: Linear::new(get_t("output.weight")?.transpose(), None),
             n_heads,
         })
     }

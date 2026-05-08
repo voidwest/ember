@@ -9,7 +9,7 @@ use std::io::{self, Write};
 
 /// a lightweight, cpu-first llm inference engine.
 #[derive(Parser)]
-#[command(name = "ember")]
+#[command(name = "ember", version)]
 struct Args {
     /// path to gguf model file
     #[arg(short, long, default_value = "gpt2.Q8_0.gguf")]
@@ -89,6 +89,18 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// run the full autoregressive generation loop.
+///
+/// operates in two phases:
+/// 1. **prefill** — feeds the entire prompt through the model in one forward pass,
+///    populating the kv cache with key/value projections for all prompt tokens.
+/// 2. **decode** — generates one token at a time: samples from the last position's
+///    logits, appends it, and runs a single-token forward pass reusing the cached
+///    k/v from all previous positions. stops when `max_tokens` is reached or the
+///    eos token (50256) is predicted.
+///
+/// temperature 0.0 uses greedy argmax; any positive value enables temperature
+/// scaling with optional top-k and top-p filtering via [`sample_token`].
 #[allow(clippy::too_many_arguments)]
 fn generate<B: Backend>(
     backend: &B,
@@ -135,14 +147,7 @@ where
         };
 
         next_token = if temperature == 0.0 {
-            last_logits
-                .iter()
-                .enumerate()
-                .max_by(|(_i1, a): &(usize, &f32), (_i2, b): &(usize, &f32)| {
-                    a.partial_cmp(b).unwrap()
-                })
-                .map(|(i, _)| i)
-                .unwrap_or(0)
+            argmax_token(last_logits)
         } else {
             sample_token(last_logits, temperature, top_k, top_p, &mut rng)
         };
@@ -175,6 +180,17 @@ where
     }
 
     Ok(output)
+}
+
+/// greedy argmax: return the index of the largest logit value.
+#[inline]
+fn argmax_token(logits: &[f32]) -> usize {
+    logits
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .map(|(i, _)| i)
+        .unwrap_or(0)
 }
 
 #[allow(clippy::too_many_arguments)]
