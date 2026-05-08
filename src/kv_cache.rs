@@ -38,17 +38,17 @@ impl KVCache {
         }
     }
 
-    pub fn append(&mut self, layer: usize, k_new: &[f32], v_new: &[f32]) {
+    pub fn append(&mut self, layer: usize, pos: usize, k_new: &[f32], v_new: &[f32]) {
         assert_eq!(k_new.len(), self.n_heads * self.head_dim);
         assert_eq!(v_new.len(), self.n_heads * self.head_dim);
         assert!(
-            self.cursor < self.max_seq_len,
-            "kv cache overflow: max_seq_len={}",
-            self.max_seq_len
+            pos < self.max_seq_len,
+            "kv cache overflow: pos={}, max_seq_len={}",
+            pos, self.max_seq_len
         );
 
         let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;
-        let seq_offset = self.cursor * self.head_dim;
+        let seq_offset = pos * self.head_dim;
 
         for h in 0..self.n_heads {
             let head_offset = h * self.max_seq_len * self.head_dim;
@@ -93,7 +93,7 @@ mod tests {
         let k = vec![1.0; 4 * 8];
         let v = vec![2.0; 4 * 8];
 
-        cache.append(0, &k, &v);
+        cache.append(0, 0, &k, &v);
         cache.advance_cursor();
         assert_eq!(cache.cursor(), 1);
 

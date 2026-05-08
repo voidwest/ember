@@ -103,10 +103,12 @@ impl<B: Backend> Attention<B> {
 
         // ── 1. store k/v for the current step(s) into the cache ──────
         //      (cursor advances after all layers have stored, in gpt2::forward_with_cache)
+        let cursor = cache.cursor();
         for pos in 0..seq_len {
             let offset = pos * embed_dim;
             cache.append(
                 layer,
+                cursor + pos,
                 &k_data[offset..offset + embed_dim],
                 &v_data[offset..offset + embed_dim],
             );
