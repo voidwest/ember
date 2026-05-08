@@ -49,6 +49,8 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 | `--top-k` | (none) | top-k sampling |
 | `--top-p` | (none) | nucleus sampling |
 | `-i`, `--interactive` | (none) | repl mode after first prompt |
+| `-benchmark` | (none) | benchmarks performance in tokens/s|
+
 
 ### interactive mode
 
