@@ -10,8 +10,9 @@ without heavy framework dependencies.
 ## features
 
 - **gguf v3 loader**: reads gguf model files, supports f32 and q8_0 dtypes.
-- **backend trait**: model code is generic over a `Backend` trait - swap cpu
-  for gpu later without rewriting the transformer.
+- **backend trait**: model code is generic over a `Backend` trait for linear ops,
+  embeddings, and element-wise math — swap cpu for gpu later without rewriting
+  those paths. (attention is cpu-scalar for now; see design notes.)
 - **explicit memory**: no hidden allocations in the inference hot path.
 - **alloc-first design**: core tensor types and model code avoid `std` where practical, using `alloc` for vec-backed storage.
 
@@ -98,9 +99,13 @@ main.rs              entry point, cli args, generation loop
 
 ## design notes
 
-- **backend trait**: the transformer is generic - `CpuBackend` is the default,
-  but any type implementing `Backend` works. this means the model code is
-  written once and reused across hardware targets.
+- **backend trait**: the transformer is generic — `CpuBackend` is the default,
+  but any type implementing `Backend` works. the trait abstracts linear ops,
+  element-wise math, layer norm, and tensor lifecycle. **attention is a known
+  exception**: the forward methods extract raw f32 slices via `data()` and run
+  the attention math in scalar cpu loops, bypassing the backend abstraction.
+  adding `fn attention(...)` to the trait is planned; for now the trait is
+  honest about what it covers.
 - **q8_0 quantization**: 8-bit block quantization (fp16 scale + 32 int8 values
   per block). reduces model size ~4× with minimal perplexity loss.
 - **kv cache**: flat `[layer][head][seq_position][head_dim]` layout. prefill
@@ -117,10 +122,12 @@ directly - one contiguous slice per token - instead of gathering strided
 elements at inference time. the cost is one transpose at load; the benefit
 is simpler and faster lookups in the hot loop.
 
-**`from_cpu` violates clippy convention by design.** the method is named
-`from_cpu` (not `from_slice` or `new`) to signal that it reads serialized
-data from the host into a backend tensor. it's not a `self→Other` conversion,
-so `#[allow(clippy::wrong_self_convention)]` is correct.
+**`load_from_cpu` on the backend trait.** the method loads host-side f32
+data into a backend tensor. for `CpuBackend` this is a thin wrapper around
+`CpuTensor::from_data`; a future gpu backend would copy the data to device
+memory here. the name was chosen over `from_cpu` to avoid tripping
+`clippy::wrong_self_convention` (which expects `from_*` to be a constructor
+without `&self`).
 
 **`n_layers` is stored but never read.** the kv cache allocates per-layer
 storage using `n_layers` in `new()`, then never reads the field again. it
@@ -150,6 +157,8 @@ prevents the generation loop from producing NaNs on degenerate input.
 - matmul is scalar - no simd optimization yet.
 - model loader is gpt-2 specific (gguf tensor names are hardcoded).
 - not fully no_std - file i/o and mmap require std.
+- attention math runs in cpu scalar loops even when a future gpu backend is
+  plugged in — the `Backend` trait doesn't yet include `fn attention(...)`.
 
 ## license
 

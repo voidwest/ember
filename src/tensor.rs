@@ -39,7 +39,11 @@ impl CpuTensor {
         }
     }
     /// add a 1d bias to every row of a 2d tensor (broadcast).
-    /// panics if self is not 2d or bias length doesn't match columns.
+    ///
+    /// ## panics
+    /// - if `self` is not 2d.
+    /// - if `bias` is not 1d.
+    /// - if `bias.shape[0]` does not match `self.shape[1]`.
     #[must_use]
     #[inline]
     pub fn add_broadcast(&self, bias: &Self) -> Self {
@@ -281,6 +285,10 @@ impl CpuTensor {
         strides
     }
 
+    /// select the `index`-th row from a 2d tensor.
+    ///
+    /// returns a **1d** tensor of shape `[row_size]` — the row is flattened.
+    /// if you need a 2d `[1, row_size]` result, reshape the output.
     pub fn index_select(&self, index: usize) -> Result<Self, TensorError> {
         if self.shape.len() < 2 {
             return Err(TensorError::ShapeMismatch(

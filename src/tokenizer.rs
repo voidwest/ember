@@ -37,9 +37,15 @@ impl EmberTokenizer {
     }
 }
 
+/// download the gpt-2 tokenizer from huggingface and save it to `tokenizer.json`
+/// in the current working directory. if the file already exists, the download is
+/// skipped — callers who need a fresh copy should delete the file first.
 pub fn download_gpt2_tokenizer_blocking() -> Result<EmberTokenizer> {
-    let url = "https://huggingface.co/openai-community/gpt2/resolve/main/tokenizer.json";
-    let response = reqwest::blocking::get(url)?.bytes()?;
-    std::fs::write("tokenizer.json", &response)?;
-    EmberTokenizer::from_file("tokenizer.json")
+    let path = "tokenizer.json";
+    if !std::path::Path::new(path).exists() {
+        let url = "https://huggingface.co/openai-community/gpt2/resolve/main/tokenizer.json";
+        let response = reqwest::blocking::get(url)?.bytes()?;
+        std::fs::write(path, &response)?;
+    }
+    EmberTokenizer::from_file(path)
 }

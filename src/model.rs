@@ -123,6 +123,10 @@ impl<B: Backend> Attention<B> {
 
         let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
 
+        // pre-allocate scratch buffer once per call (not per head, not per token).
+        // resizing never re-allocates because capacity == cache.max_seq_len() ≥ total_seq_len.
+        let mut qk_scratch = Vec::with_capacity(cache.max_seq_len());
+
         for h in 0..self.n_heads {
             let q_head_offset = h * head_dim;
 
@@ -131,7 +135,9 @@ impl<B: Backend> Attention<B> {
                 // positions 0..=total_seq_len - seq_len + i in the cache.
                 let max_j = total_seq_len - seq_len + i;
 
-                let mut qk_row = vec![f32::NEG_INFINITY; total_seq_len];
+                qk_scratch.clear();
+                qk_scratch.resize(total_seq_len, f32::NEG_INFINITY);
+                let qk_row = qk_scratch.as_mut_slice();
                 let q_idx_abs = i * embed_dim + q_head_offset;
 
                 for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
@@ -177,7 +183,7 @@ impl<B: Backend> Attention<B> {
             }
         }
 
-        let result = backend.from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        let result = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
         self.c_proj.forward(backend, &result)
     }
 }
@@ -273,7 +279,7 @@ impl<B: Backend> Module<B> for Attention<B> {
             }
         }
 
-        let result_tensor = backend.from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        let result_tensor = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
         self.c_proj.forward(backend, &result_tensor)
     }
 }

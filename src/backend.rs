@@ -5,6 +5,19 @@ use crate::tensor::{CpuTensor, TensorError};
 /// model code is generic over the backend, so the same transformer
 /// implementation works on `CpuBackend`, or any future gpu/accelerator
 /// backend, without modification.
+///
+/// ## scope
+///
+/// the trait currently abstracts element-wise ops (`add`, `gelu`, `softmax`),
+/// linear algebra (`matmul`, `add_broadcast`), normalisation (`layer_norm`),
+/// shape manipulation (`slice_cols`, `index_select`, `reshape`), and tensor
+/// lifecycle (`zeroes`, `load_from_cpu`, `data`, `shape`).
+///
+/// **attention is not yet abstracted** — the model's `Attention::forward*`
+/// methods call `data()` to extract raw f32 slices and run the attention
+/// math in scalar cpu loops. a gpu backend would still execute attention
+/// on the cpu through this path. adding `fn attention(...)` to the trait
+/// is the next step; for now the abstraction is honest about what it covers.
 pub trait Backend {
     type Tensor: Clone + Send + Sync;
     type Error: core::error::Error;
@@ -30,9 +43,12 @@ pub trait Backend {
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor;
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
-    #[allow(clippy::wrong_self_convention)]
-    // from_cpu reads serialized data into a tensor — not a self->other conversion
-    fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
+    /// load host-side f32 data into a backend tensor.
+    fn load_from_cpu(
+        &self,
+        data: Vec<f32>,
+        shape: &[usize],
+    ) -> Result<Self::Tensor, Self::Error>;
     fn add_broadcast(
         &self,
         x: &Self::Tensor,
@@ -107,7 +123,7 @@ impl Backend for CpuBackend {
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32] {
         x.data()
     }
-    fn from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<CpuTensor, Self::Error> {
+    fn load_from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<CpuTensor, Self::Error> {
         Ok(CpuTensor::from_data(shape.to_vec(), data))
     }
     fn add_broadcast(&self, x: &CpuTensor, bias: &CpuTensor) -> Result<CpuTensor, CpuError> {

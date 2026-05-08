@@ -14,6 +14,10 @@ pub struct KVCache {
     /// stored for allocation size, not read back
     #[allow(dead_code)]
     n_layers: usize,
+    /// pre-allocated scratch buffer for attention score rows.
+    /// reused across all heads and tokens during a decode step
+    /// so the hot path never allocates.
+    qk_scratch: Vec<f32>,
     /// number of attention heads
     n_heads: usize,
     /// size per head
@@ -32,6 +36,7 @@ impl KVCache {
             v: vec![0.0; len],
             n_layers,
             n_heads,
+            qk_scratch: vec![0.0; max_seq_len],
             head_dim,
             max_seq_len,
             cursor: 0,
@@ -72,6 +77,17 @@ impl KVCache {
     pub fn cursor(&self) -> usize {
         self.cursor
     }
+
+    /// return a mutable reference to the pre-allocated `qk_scratch` buffer.
+    ///
+    /// the caller should `clear()` and then `resize(total_seq_len, f32::NEG_INFINITY)`
+    /// before use. because the buffer was allocated to `max_seq_len`,
+    /// `resize` will never reallocate as long as `total_seq_len ≤ max_seq_len`.
+    #[inline]
+    pub fn qk_scratch_mut(&mut self) -> &mut Vec<f32> {
+        &mut self.qk_scratch
+    }
+
     /// maximum sequence length the cache was allocated for
     pub fn max_seq_len(&self) -> usize {
         self.max_seq_len

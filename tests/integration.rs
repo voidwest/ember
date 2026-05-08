@@ -62,7 +62,7 @@ fn test_cpu_backend_abstraction() {
     let data = vec![1.0, 2.0, 3.0, 4.0];
     let shape = [2, 2];
 
-    let tensor = backend.from_cpu(data.clone(), &shape).unwrap();
+    let tensor = backend.load_from_cpu(data.clone(), &shape).unwrap();
 
     assert_eq!(backend.shape(&tensor), &shape);
     assert_eq!(backend.data(&tensor), &data);

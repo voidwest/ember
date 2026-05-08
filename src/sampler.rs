@@ -22,23 +22,25 @@ pub fn sample_token(
     top_p: Option<f32>,
     rng: &mut impl Rng,
 ) -> usize {
-    let mut probs: Vec<f32> = logits.to_vec();
+    let mut logits: Vec<f32> = logits.to_vec();
 
     if temperature > 0.0 {
-        for p in &mut probs {
-            *p /= temperature;
+        for l in &mut logits {
+            *l /= temperature;
         }
     }
 
     if let Some(k) = top_k {
-        top_k_filter(&mut probs, k);
+        top_k_filter(&mut logits, k);
     }
 
     if let Some(p) = top_p {
-        top_p_filter(&mut probs, p);
+        top_p_filter(&mut logits, p);
     }
 
-    let dist = softmax_1d(&probs);
+    // single softmax at the end — top_p_filter uses its own internal softmax
+    // to find the nucleus cutoff; the final distribution is computed once here.
+    let dist = softmax_1d(&logits);
 
     categorical_sample(&dist, rng)
 }
@@ -48,19 +50,19 @@ pub fn sample_token(
 /// sorts a copy of the logits in descending order, finds the k-th largest value
 /// (0-indexed, so `indexed[k - 1]`), and masks every logit below that threshold.
 /// a no-op when `k >= len` or `k == 0`.
-fn top_k_filter(probs: &mut [f32], k: usize) {
-    if k >= probs.len() || k == 0 {
+fn top_k_filter(logits: &mut [f32], k: usize) {
+    if k >= logits.len() || k == 0 {
         return;
     }
 
-    let mut indexed: Vec<(usize, f32)> = probs.iter().cloned().enumerate().collect();
+    let mut indexed: Vec<(usize, f32)> = logits.iter().cloned().enumerate().collect();
     indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(core::cmp::Ordering::Equal));
 
     // zero out everything below the k-th largest logit (0-indexed, so k-1)
     let threshold = indexed[k - 1].1;
-    for p in probs.iter_mut() {
-        if *p < threshold {
-            *p = f32::NEG_INFINITY;
+    for l in logits.iter_mut() {
+        if *l < threshold {
+            *l = f32::NEG_INFINITY;
         }
     }
 }
@@ -68,15 +70,16 @@ fn top_k_filter(probs: &mut [f32], k: usize) {
 /// nucleus sampling: keep only the tokens in the smallest set whose
 /// cumulative softmax probability exceeds `p`.
 ///
-/// computes softmax first, then sorts probabilities descending and finds
-/// the cutoff threshold via `nucleus_cutoff`. masks every token whose
-/// softmax probability falls below that threshold.
-fn top_p_filter(probs: &mut [f32], p: f32) {
-    let soft = softmax_1d(probs);
+/// computes softmax on the current logits to find the cutoff threshold,
+/// then masks logits whose softmax probability falls below that threshold.
+/// the caller is responsible for computing the final softmax on the
+/// filtered logits — this avoids computing softmax twice.
+fn top_p_filter(logits: &mut [f32], p: f32) {
+    let soft = softmax_1d(logits);
     let cutoff = nucleus_cutoff(&soft, p);
     for (i, s) in soft.iter().enumerate() {
         if *s < cutoff {
-            probs[i] = f32::NEG_INFINITY;
+            logits[i] = f32::NEG_INFINITY;
         }
     }
 }

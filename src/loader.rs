@@ -20,9 +20,6 @@ pub struct GgufLoader {
 }
 
 /// a typed value from GGUF metadata.
-///
-/// array types (val_type 9) are read and discarded, returning `U8(0)`
-/// as a placeholder until full array support is added.
 pub enum GgufValue {
     U8(u8),
     U32(u32),
@@ -31,6 +28,8 @@ pub enum GgufValue {
     F32(f32),
     Bool(bool),
     Str(String),
+    /// nested array of gguf values (val_type 9)
+    Array(Vec<GgufValue>),
 }
 
 /// load a GGUF file from disk using memory-mapped i/o.
@@ -229,10 +228,11 @@ fn read_gguf_value<R: Read>(f: &mut R, val_type: u32) -> Result<GgufValue> {
         9 => {
             let element_type = read_u32(f)?;
             let count = read_u64(f)?;
+            let mut elements = Vec::with_capacity(count as usize);
             for _ in 0..count {
-                read_gguf_value(f, element_type)?;
+                elements.push(read_gguf_value(f, element_type)?);
             }
-            Ok(GgufValue::U8(0))
+            Ok(GgufValue::Array(elements))
         }
         _ => bail!("unsupported GGUF value type: {}", val_type),
     }
