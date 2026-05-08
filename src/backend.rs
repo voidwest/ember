@@ -44,11 +44,7 @@ pub trait Backend {
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
     /// load host-side f32 data into a backend tensor.
-    fn load_from_cpu(
-        &self,
-        data: Vec<f32>,
-        shape: &[usize],
-    ) -> Result<Self::Tensor, Self::Error>;
+    fn load_from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
     fn add_broadcast(
         &self,
         x: &Self::Tensor,
