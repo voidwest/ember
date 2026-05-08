@@ -6,6 +6,7 @@ use ember::loader::load_gguf;
 use ember::model::Gpt2;
 use ember::sampler::sample_token;
 use std::io::{self, Write};
+use std::time::Instant;
 
 /// a lightweight, cpu-first llm inference engine.
 #[derive(Parser)]
@@ -42,6 +43,10 @@ struct Args {
     /// stay in an interactive read-eval-print loop after the first prompt
     #[arg(short, long)]
     interactive: bool,
+
+    /// print prefill/decode timing stats to stderr
+    #[arg(long)]
+    benchmark: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -82,6 +87,7 @@ fn main() -> anyhow::Result<()> {
             args.temperature,
             args.top_k,
             args.top_p,
+            args.benchmark,
         )?;
         println!("{}", output);
     }
@@ -111,6 +117,7 @@ fn generate<B: Backend>(
     temperature: f32,
     top_k: Option<usize>,
     top_p: Option<f32>,
+    benchmark: bool,
 ) -> anyhow::Result<String>
 where
     B::Error: Send + Sync + 'static,
@@ -126,12 +133,15 @@ where
     let max_seq_len = prompt_len + max_tokens;
 
     // ── 1. prefill: run full forward pass on the prompt and fill kv cache ──
+    let prefill_start = if benchmark { Some(Instant::now()) } else { None };
     log::info!("prefilling KV cache for {} tokens", prompt_len);
     let mut cache = model.create_cache(backend, max_seq_len);
     let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
+    let prefill_elapsed = prefill_start.map(|s| s.elapsed());
     let embed_dim = backend.shape(&logits)[1];
 
     // ── 2. decode loop: one new token at a time ──────────────────────────
+    let decode_start = if benchmark { Some(Instant::now()) } else { None };
     let mut generated = Vec::with_capacity(max_tokens);
     let mut next_token: usize;
 
@@ -172,6 +182,24 @@ where
     }
 
     let output = tokenizer.decode(&generated)?;
+
+    if benchmark {
+        let prefill_ms = prefill_elapsed.unwrap().as_secs_f64() * 1000.0;
+        let decode_ms = decode_start.unwrap().elapsed().as_secs_f64() * 1000.0;
+        eprintln!("--- benchmark ---");
+        eprintln!(
+            "prefill: {} tokens in {:.1}ms → {:.0} tok/s",
+            prompt_len,
+            prefill_ms,
+            prompt_len as f64 / prefill_elapsed.unwrap().as_secs_f64()
+        );
+        eprintln!(
+            "decode:  {} tokens in {:.1}ms → {:.0} tok/s",
+            generated.len(),
+            decode_ms,
+            generated.len() as f64 / decode_start.unwrap().elapsed().as_secs_f64()
+        );
+    }
 
     if log::log_enabled!(log::Level::Debug) {
         let decoded_prompt = tokenizer.decode(&all_tokens[..prompt_len])?;
@@ -256,6 +284,7 @@ where
                     temperature,
                     top_k,
                     top_p,
+                    false, // benchmark not meaningful in interactive mode
                 )?;
                 println!("{}", output);
                 print!("> ");
