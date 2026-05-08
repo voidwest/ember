@@ -71,13 +71,7 @@ fn main() -> anyhow::Result<()> {
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&args.tokenizer)?;
 
     if args.demo {
-        demo_mode(
-            &backend,
-            &model,
-            &tokenizer,
-            args.max_tokens,
-            &args.model,
-        )?;
+        demo_mode(&backend, &model, &tokenizer, args.max_tokens, &args.model)?;
     } else if args.interactive {
         log::info!("loading model from {}", args.model);
         log::info!("loaded {} tensors", n_tensors);
@@ -177,8 +171,7 @@ where
         // prefill
         let prefill_start = std::time::Instant::now();
         let mut cache = model.create_cache(backend, max_seq_len);
-        let mut logits =
-            model.forward_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
+        let mut logits = model.forward_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
         let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
 
         // decode
