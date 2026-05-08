@@ -1,5 +1,6 @@
 /target
 *.gguf
+BUGS.md
 ADDITIONS.md
 CHANGES.md
 .zed/
