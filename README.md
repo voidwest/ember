@@ -7,6 +7,8 @@
 a lightweight cpu-first llm inference engine in rust. runs quantized models
 without heavy framework dependencies.
 
+write-up: https://voidwest.github.io/ember/
+
 ## features
 
 - **gguf v3 loader**: reads gguf model files, supports f32 and q8_0 dtypes.
