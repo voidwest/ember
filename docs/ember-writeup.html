@@ -1,0 +1,828 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>ember, a cpu-first llm inference engine in rust</title>
+        <style>
+            :root {
+                --bg: #0d1117;
+                --surface: #161b22;
+                --border: #30363d;
+                --text: #c9d1d9;
+                --text-dim: #8b949e;
+                --accent: #f78166;
+                --accent2: #d2a8ff;
+                --green: #7ee787;
+                --blue: #79c0ff;
+                --red: #ff7b72;
+                --yellow: #d29922;
+            }
+
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+
+            body {
+                font-family:
+                    "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono",
+                    monospace;
+                background: var(--bg);
+                color: var(--text);
+                line-height: 1.7;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 3rem 1.5rem 6rem;
+            }
+
+            .hero {
+                text-align: center;
+                padding: 3rem 0 2.5rem;
+                border-bottom: 1px solid var(--border);
+                margin-bottom: 2.5rem;
+            }
+            .hero .logo {
+                font-size: 2.8rem;
+                font-weight: 700;
+                color: var(--accent);
+                letter-spacing: -0.03em;
+            }
+            .hero .tagline {
+                font-size: 1rem;
+                color: var(--text-dim);
+                margin-top: 0.5rem;
+            }
+            .hero .meta {
+                display: flex;
+                justify-content: center;
+                gap: 1.2rem;
+                margin-top: 1.2rem;
+                font-size: 0.78rem;
+                color: var(--text-dim);
+            }
+            .hero .meta span {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.3rem;
+            }
+
+            h2 {
+                font-size: 1.3rem;
+                color: var(--accent);
+                margin: 2.8rem 0 0.9rem;
+                padding-bottom: 0.35rem;
+                border-bottom: 1px solid var(--border);
+            }
+            h3 {
+                font-size: 1.05rem;
+                color: var(--accent2);
+                margin: 1.6rem 0 0.5rem;
+            }
+            p {
+                margin: 0.75rem 0;
+                color: var(--text);
+            }
+            a {
+                color: var(--blue);
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+
+            code {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 0.12em 0.3em;
+                font-size: 0.87em;
+                color: var(--accent);
+            }
+
+            pre {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 1rem 1.2rem;
+                overflow-x: auto;
+                font-size: 0.8rem;
+                line-height: 1.5;
+                margin: 0.9rem 0;
+            }
+            pre code {
+                background: none;
+                border: none;
+                padding: 0;
+                color: var(--text);
+                font-size: inherit;
+            }
+
+            .ascii-diagram {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 1rem 1.2rem;
+                margin: 0.9rem 0;
+                font-size: 0.78rem;
+                line-height: 1.5;
+                white-space: pre;
+                overflow-x: auto;
+                color: var(--text-dim);
+            }
+
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 0.9rem 0;
+                font-size: 0.83rem;
+            }
+            th,
+            td {
+                border: 1px solid var(--border);
+                padding: 0.45rem 0.7rem;
+                text-align: left;
+            }
+            th {
+                background: var(--surface);
+                color: var(--accent2);
+            }
+            td {
+                color: var(--text);
+            }
+
+            .callout {
+                background: var(--surface);
+                border-left: 3px solid var(--accent);
+                border-radius: 0 4px 4px 0;
+                padding: 0.9rem 1.1rem;
+                margin: 1rem 0;
+                font-size: 0.86rem;
+            }
+            .callout .label {
+                color: var(--accent);
+                font-weight: 600;
+                margin-bottom: 0.25rem;
+            }
+
+            .bug-card {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 1rem 1.2rem;
+                margin: 0.8rem 0;
+            }
+            .bug-card .title {
+                color: var(--red);
+                font-weight: 600;
+                margin-bottom: 0.3rem;
+            }
+            .bug-card .symptom {
+                color: var(--yellow);
+                font-size: 0.84rem;
+            }
+            .bug-card .cause {
+                color: var(--text-dim);
+                font-size: 0.84rem;
+                margin-top: 0.3rem;
+            }
+            .bug-card .fix {
+                color: var(--green);
+                font-size: 0.84rem;
+                margin-top: 0.3rem;
+            }
+
+            .quote-block {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 1.2rem 1.5rem;
+                margin: 1.2rem 0;
+                text-align: center;
+            }
+            .quote-block .text {
+                font-size: 1.05rem;
+                color: var(--accent2);
+                font-style: italic;
+                letter-spacing: 0.02em;
+            }
+            .quote-block .caption {
+                font-size: 0.76rem;
+                color: var(--text-dim);
+                margin-top: 0.5rem;
+            }
+
+            footer {
+                margin-top: 3.5rem;
+                padding-top: 1.8rem;
+                border-top: 1px solid var(--border);
+                text-align: center;
+                color: var(--text-dim);
+                font-size: 0.76rem;
+            }
+
+            ul,
+            ol {
+                margin: 0.6rem 0 0.6rem 1.4rem;
+            }
+            li {
+                margin: 0.3rem 0;
+            }
+        </style>
+    </head>
+    <body>
+        <!-- ═══════════════════════════════ HERO ═══════════════════════════════ -->
+        <div class="hero">
+            <div class="logo">ember</div>
+            <div class="tagline">
+                a cpu-first llm inference engine in rust. no frameworks. no
+                cuda. just tensors.
+            </div>
+            <div class="meta">
+                <span>rust 1.92</span>
+                <span>&#9679;</span>
+                <span>mit</span>
+                <span>&#9679;</span>
+                <span>~2,200 lines</span>
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════ 1. WHAT THIS IS ═══════════════════════════ -->
+        <h2>1. what this is</h2>
+
+        <p>
+            ember is a gpt-2 inference engine that runs quantized models on cpu,
+            in pure rust, with zero framework dependencies. it loads gguf files,
+            runs token-by-token generation with temperature / top-k / top-p
+            sampling, and produces coherent text from a 124m-parameter model,
+            all in roughly 2,200 lines.
+        </p>
+
+        <p>
+            rust was chosen for two reasons. first, memory safety: juggling 12
+            layers of attention weights, a flat kv cache, and a row-major tensor
+            library with no garbage collector is where rust's ownership model
+            pays for itself. second, the <code>Backend</code> trait, a zero-cost
+            abstraction that means the same transformer code runs on cpu now and
+            will run on a gpu later without touching model logic.
+        </p>
+
+        <p>
+            the end target is embedded inference, small language models on
+            devices without a gpu. a cortex-m isn't going to run gpt-2 at 12
+            tok/s, but the architecture here (explicit memory, no hidden
+            allocations, alloc-first design) is the architecture that gets
+            there. start on x86, target arm later.
+        </p>
+
+        <!-- ═══════════════════════════ 2. ARCHITECTURE ═══════════════════════════ -->
+        <h2>2. architecture</h2>
+
+        <div class="ascii-diagram">
+            main.rs entry point, generation loop, demo mode, repl ├─ loader.rs
+            gguf v3 parser, mmap i/o, tensor dequantization ├─ model.rs gpt-2:
+            attention, mlp, block, layer norm, gpt2&lt;B&gt; │ ├─ backend.rs
+            backend trait + cpu backend (zero-sized struct) │ ├─ tensor.rs
+            row-major f32 tensor: matmul, softmax, gelu, layer_norm │ └─
+            kv_cache.rs flat [layer][head][pos][head_dim] cache + scratch buffer
+            ├─ sampler.rs temperature, top-k, top-p, inverse cdf sampling ├─
+            tokenizer.rs huggingface tokenizer wrapper └─ quant.rs q8_0 block
+            dequantization (34 bytes → 32 f32s)
+        </div>
+
+        <p>
+            the central idea is the <code>Backend</code> trait. every
+            transformer component, attention, mlp, layer norm, is generic over
+            <code>B: Backend</code>. there is one implementation:
+            <code>CpuBackend</code>, a zero-sized struct that delegates to
+            <code>CpuTensor</code> methods running in scalar cpu loops. the
+            trait abstracts linear ops (<code>matmul</code>,
+            <code>add_broadcast</code>), element-wise math (<code>gelu</code>,
+            <code>softmax</code>), normalization (<code>layer_norm</code>), and
+            tensor lifecycle (<code>zeroes</code>, <code>from_cpu</code>,
+            <code>data</code>, <code>shape</code>).
+        </p>
+
+        <div class="callout">
+            <div class="label">honest abstraction</div>
+            attention is a <strong>documented exception</strong>. the forward
+            methods call <code>data()</code> to extract raw f32 slices and run
+            the attention math in scalar cpu loops, bypassing the backend
+            entirely. a gpu backend would still execute attention on the cpu
+            through this path. the trait docs and readme both say this
+            explicitly. adding <code>fn attention(...)</code> to the trait is
+            planned, until then, the abstraction is honest about what it covers.
+        </div>
+
+        <p>
+            <code>CpuTensor</code> is row-major, backed by a flat
+            <code>Vec&lt;f32&gt;</code>. every operation allocates a new tensor.
+            no views, no mutation in place. the cost is extra allocations; the
+            benefit is that every op is trivially correct and the compiler can
+            reason about ownership without fighting, which mattered during
+            debugging (see section 7).
+        </p>
+
+        <!-- ═══════════════════════════ 3. THE GGUF FORMAT ═══════════════════════ -->
+        <h2>3. the gguf format</h2>
+
+        <p>
+            gguf, the binary format that replaced ggml in the llama.cpp
+            ecosystem, is a flat, self-describing file. a 4-byte magic number
+            (<code>0x46554747</code>, "gguf" in ascii), a 4-byte version (3),
+            then a count of tensors and metadata key-value pairs. the metadata
+            comes next, strings like
+            <code>"gpt2.block_count"</code> mapped to typed values. after that,
+            a tensor info table gives each tensor's name, dimensions, data type,
+            and byte offset. read the header, seek to each offset, read the
+            bytes.
+        </p>
+
+        <p>two things went wrong.</p>
+
+        <p>
+            <strong>magic number confusion.</strong> interpreting a single ascii
+            <code>'g'</code> byte (0x67) as a big-endian u64 produces
+            <strong>7,421,932,185,906,577,408</strong>. that number is not the
+            gguf magic and not the ggml magic, it's a misaligned read. binary
+            formats are sensitive to endianness, alignment, and interpretation.
+            get one wrong and the file doesn't fail gracefully; it produces a
+            number like 7.4 quintillion and waits. this happened when i misread
+            a hex dump at 2 am, thinking the first byte was a u64 instead of the
+            start of a 4-byte magic.
+        </p>
+
+        <p>
+            <strong>the column-major trap.</strong> gguf stores q8_0 quantized
+            tensors (and, by convention, f16 tensors) in column-major order.
+            q8_0 works in blocks of 32 values, and the innermost dimension must
+            be a multiple of 32. for a weight matrix of shape
+            <code>[768, 50257]</code>, the column dimension (50257) is the block
+            axis, it's larger and can be padded to a multiple of 32. so the data
+            on disk is laid out column-by-column: all 768 rows of column 0, then
+            all 768 rows of column 1, and so on.
+        </p>
+
+        <p>
+            the tensor info header reports the <em>logical</em> shape,
+            <code>[768, 50257]</code>, but says nothing about storage order. the
+            loader dequantized the flat buffer into a
+            <code>Vec&lt;f32&gt;</code> and called
+            <code>reshape(&amp;[768, 50257])</code>, which assumes row-major.
+            every weight matrix in the model was scrambled. the fix: reverse the
+            dims in the loader before reshaping. one line. correlation with
+            pytorch reference went from 0.004 to 0.999975.
+        </p>
+
+        <!-- ═══════════════════════════ 4. TENSOR OPS ═══════════════════════════ -->
+        <h2>4. tensor primitives</h2>
+
+        <p>
+            three operations carry the model. everything else is scaffolding
+            around them.
+        </p>
+
+        <h3>softmax</h3>
+        <p>
+            softmax turns a vector of arbitrary numbers into a probability
+            distribution:
+            <code>exp(x_i) / sum(exp(x))</code>. implemented naively,
+            <code>exp(88)</code> overflows f32. the standard fix subtracts the
+            maximum value from every element first, the exponent becomes
+            <code>exp(x_i - max)</code>, which never exceeds 1.0, and the math
+            is identical because <code>exp(a)/exp(b) = exp(a-b)</code>.
+        </p>
+        <p>
+            one edge case: a causal mask sets future positions to
+            <code>-inf</code>. during early decode, when only one token has been
+            generated, every row after the first is entirely masked, every
+            element is <code>-inf</code>. under standard softmax,
+            <code>max = -inf</code>, so
+            <code>(-inf - -inf).exp()</code> evaluates to <code>NaN</code> per
+            ieee 754. that NaN propagates through 12 transformer layers and into
+            the output logits. the fix is one branch: if max is
+            <code>-inf</code>, return a uniform distribution of
+            <code>1/n</code> per position.
+        </p>
+
+        <h3>gelu</h3>
+        <p>
+            gelu, the gaussian error linear unit, is gpt-2's activation
+            function. it's a smoother version of relu: instead of hard-clipping
+            negative values to zero, it squashes them toward zero
+            probabilistically, weighted by the gaussian cdf. the formula:
+            <code>0.5 * x * (1 + erf(x / √2))</code>.
+        </p>
+        <p>
+            it lives in the mlp block: the hidden layer projects from 768 to
+            3072, gelu fires on every element, then the output layer projects
+            back to 768. every token passes through this bottleneck 12 times
+            (once per transformer block). the implementation uses
+            <code>libm::erff</code>, pure rust, no libm linking, portable across
+            targets.
+        </p>
+
+        <h3>layer norm</h3>
+        <p>
+            layer normalization keeps activations from drifting into numerically
+            useless ranges as they pass through 12 blocks of attention and mlp.
+            for each row of a <code>[batch, features]</code> tensor, it computes
+            the mean and variance across that row, normalizes every element to
+            <code>(x - mean) / √(var + ε)</code>, then scales by a learned
+            weight and shifts by a learned bias. epsilon (1e-5) prevents
+            division by zero.
+        </p>
+        <p>
+            it's four lines of arithmetic per row. but get it wrong, forget to
+            apply the weight, skip the bias, or forget to assign the result back
+            to <code>x</code> in the block loop, and the model's output degrades
+            silently. no panic. no NaN. just progressively worse text.
+        </p>
+
+        <!-- ═══════════════════════════ 5. ATTENTION ═══════════════════════════ -->
+        <h2>5. attention</h2>
+
+        <p>
+            attention is the core mechanism that makes transformers work. here
+            is what happens in the code.
+        </p>
+
+        <p>
+            <strong>q, k, v.</strong> every token's embedding (a vector of 768
+            numbers) passes through a single linear layer called
+            <code>c_attn</code>, which maps 768 → 2304. that 2304-element output
+            is three 768-element vectors packed together: query, key, and value.
+            for each attention head (gpt-2 small has 12), you take a 64-element
+            slice of q, k, and v. the query asks "what am i looking for?", the
+            key advertises "here's what i contain", and the value is the actual
+            content. the dot product of q and k gives similarity scores. those
+            scores become weights, and you sum the values according to those
+            weights.
+        </p>
+
+        <p>
+            <strong>the causal mask.</strong> during training, a token can cheat
+            by looking at future tokens, the model would learn to copy the
+            answer instead of predicting it. at inference time, future tokens
+            don't exist yet; they're generated one at a time. the solution is a
+            triangular mask: token at position <code>i</code> can attend to
+            positions <code>0..=i</code>, and everything beyond
+            <code>i</code> is set to <code>-inf</code> before softmax. the
+            <code>-inf</code> becomes 0.0 after exponentiation, so those
+            positions contribute nothing.
+        </p>
+
+        <p>
+            <strong>why <code>sqrt(head_dim)</code>?</strong> the dot product of
+            two random 64-element vectors has variance proportional to 64. after
+            softmax, that means one attention score dominates and the rest are
+            near zero, the model can't blend information from multiple
+            positions. dividing by <code>√64 = 8</code> brings the variance back
+            to 1.0, keeping the softmax in a regime where multiple tokens get
+            meaningful weight. the <code>recip()</code> call (<code
+                >1.0 / sqrt(head_dim)</code
+            >) is computed once at the top of the attention forward pass and
+            reused for every row.
+        </p>
+
+        <!-- ═══════════════════════════ 6. KV CACHE ═══════════════════════════ -->
+        <h2>6. the kv cache</h2>
+
+        <p>
+            without a cache, every generated token requires recomputing
+            attention over the entire sequence from scratch. generate 20 tokens
+            with a 50-token prompt, and you run 71 full attention passes, each
+            doing o(n²) dot products over a growing sequence. the kv cache
+            changes this from o(n²) per step to o(n) per step.
+        </p>
+
+        <p>
+            the key and value projections for every token at every layer are
+            deterministic given the model weights, once computed, there's no
+            reason to recompute them. during prefill, you run the full prompt
+            through all 12 layers and store every position's k and v. during
+            decode, you compute k and v only for the single new token, append it
+            to the cache, and run attention against the entire cached history.
+            the query is the only thing that changes per token, it encodes "what
+            should the next token pay attention to?", so it's always computed
+            fresh.
+        </p>
+
+        <p>
+            <strong>pre-allocation.</strong> the cache is a flat
+            <code>[layer][head][pos][head_dim]</code> array: 12 layers × 12
+            heads × 2048 positions × 64 dimensions × 4 bytes × 2 (k and v) = ~72
+            mb. allocated once, upfront, in <code>KVCache::new()</code>. the
+            append path is a <code>copy_from_slice</code> into a pre-computed
+            offset. there's a scratch buffer for attention score rows
+            (<code>qk_scratch</code>), also pre-allocated to
+            <code>max_seq_len</code>, reused across all heads and tokens in a
+            decode step via <code>clear()</code> + <code>resize()</code>. the
+            resize never re-allocates because capacity was set at construction
+            time. zero heap allocations in the inference hot path.
+        </p>
+
+        <!-- ═══════════════════════════ 7. THE BUGS ═══════════════════════════ -->
+        <h2>7. bugs (this is 60% of the story)</h2>
+
+        <p>
+            six bugs total. four were standard off-by-one and
+            format-misunderstanding fare. two were the kind where the model
+            produces output that looks almost correct but is systematically
+            wrong.
+        </p>
+
+        <div class="bug-card">
+            <div class="title">bug #4, the layout that broke everything</div>
+            <div class="symptom">
+                symptom: every prompt produced complete gibberish. temperature
+                0, deterministic argmax, should produce the same output every
+                time, produced a different random string on each run. llama.cpp
+                with the same gguf file produced coherent text. the model was
+                reading scrambled weights.
+            </div>
+            <div class="cause">
+                root cause: gguf stores q8_0 and f16 tensors in column-major
+                order so the innermost dimension is a multiple of 32 (the q8_0
+                block size). the tensor info header reports the logical shape
+                (e.g. <code>[768, 50257]</code> for the embedding matrix), but
+                the dequantized flat buffer is laid out column-major, the data
+                for <code>tensor[i][j]</code> is at offset
+                <code>j * rows + i</code>, not <code>i * cols + j</code>. the
+                loader reshaped with the logical dims in row-major order,
+                scrambling every weight matrix.
+            </div>
+            <div class="fix">
+                fix: after dequantizing q8_0 or converting f16, reverse the
+                <code>dims</code> vec so the reshape matches the column-major
+                storage. then adjust the transposes in
+                <code>Gpt2::from_loader</code>: embeddings need no manual
+                transpose (loader already reversed dims, so
+                <code>index_select</code> picks rows directly), while linear
+                weights get a <code>.transpose()</code> to restore
+                <code>[in_features, out_features]</code> for matmul.
+            </div>
+            <div
+                class="symptom"
+                style="margin-top: 0.6rem; color: var(--accent2)"
+            >
+                verified fix: correlation with pytorch reference output went
+                from
+                <strong>0.004</strong> (effectively noise) to
+                <strong>0.999975</strong>. one commit.
+            </div>
+        </div>
+
+        <div class="bug-card">
+            <div class="title">bug #5, kv cache prefill overwrite</div>
+            <div class="symptom">
+                symptom: <code>"1, 2, 3, 4, 5"</code> →
+                <code>"/5/5/5/5/5/5/5/"</code>. the model could attend to at
+                most one prompt token. it saw the last token ("5") and nothing
+                else.
+            </div>
+            <div class="cause">
+                root cause: <code>KVCache::append</code> wrote every entry at
+                <code>self.cursor</code>. but <code>cursor</code> is
+                deliberately <em>not</em> advanced until
+                <code>Gpt2::forward_with_cache</code> finishes all 12 layers.
+                during prefill, when
+                <code>Attention::forward_with_cache</code> looped over prompt
+                tokens calling <code>append</code>, every call landed at
+                <code>cursor = 0</code>, each overwriting the last. only the
+                final prompt token's k/v projection survived; all other
+                positions stayed zero.
+            </div>
+            <div class="fix">
+                fix: <code>append</code> now takes an explicit
+                <code>pos: usize</code> parameter.
+                <code>Attention::forward_with_cache</code> snapshots
+                <code>cache.cursor()</code> before the loop and passes
+                <code>cursor + pos</code>, so each token lands at its correct
+                absolute cache slot. the cursor is still batch-advanced
+                afterward in <code>Gpt2::forward_with_cache</code>, that part
+                was already correct.
+            </div>
+            <div
+                class="symptom"
+                style="margin-top: 0.6rem; color: var(--accent2)"
+            >
+                after fix: <code>"1, 2, 3, 4, 5"</code> →
+                <code>", 6, 7, 8, 9, 10, 11, 12,"</code>.
+            </div>
+        </div>
+
+        <!-- ═══════════════════════════ 8. WHAT WORKED FIRST TRY ═══════════════ -->
+        <h2>8. what worked first try</h2>
+
+        <p>three design decisions that paid off immediately:</p>
+
+        <ul>
+            <li>
+                <strong>transposed embeddings on load.</strong> gguf stores
+                token/position embeddings as <code>[vocab, embed]</code>. the
+                loader transposes them so <code>index_select</code> picks a row
+                with one contiguous slice instead of gathering strided elements.
+                cost: one transpose at startup. benefit: every inference step
+                memcpys instead of gathering.
+            </li>
+            <li>
+                <strong>uniform softmax for all-masked rows.</strong> a fully
+                masked row (all <code>-inf</code>) produces NaN under standard
+                softmax. one branch, if max == <code>-inf</code>, return
+                <code>1/n</code> per position, prevents NaN from propagating
+                through 12 transformer layers.
+            </li>
+            <li>
+                <strong
+                    ><code>#[must_use]</code> on all pure tensor ops.</strong
+                >
+                tensor operations allocate new storage, they never mutate in
+                place. calling <code>x.softmax()</code> without binding the
+                result silently drops the allocation.
+                <code>#[must_use]</code> caught the bug of forgetting to assign
+                the layer norm output back to <code>x</code> in the transformer
+                block loop at compile time. that bug produces silently wrong
+                logits with no panic.
+            </li>
+        </ul>
+
+        <!-- ═══════════════════════════ 9. NUMBERS ═══════════════════════════ -->
+        <h2>9. numbers: before and after the kv cache</h2>
+
+        <p>
+            the kv cache was the single largest performance change. before it,
+            every generation step recomputed attention over the full growing
+            sequence, 71 forward passes for a 50-token prompt with 20 generated
+            tokens, each doing o(n²) attention. after wiring the cache into
+            <code>Attention::forward_with_cache</code>, the generation loop does
+            one prefill pass (populating the cache) plus one o(n) decode step
+            per generated token.
+        </p>
+
+        <table>
+            <tr>
+                <th>metric</th>
+                <th>before</th>
+                <th>after</th>
+            </tr>
+            <tr>
+                <td>forward passes (50-token prompt + 20 gen)</td>
+                <td>71 (o(n²) each)</td>
+                <td>1 prefill + 20 decode (o(n) each)</td>
+            </tr>
+            <tr>
+                <td>decode throughput</td>
+                <td>~2 tok/s</td>
+                <td>~12 tok/s</td>
+            </tr>
+            <tr>
+                <td>attention hot-path allocations</td>
+                <td>144 per token (12 layers × 12 heads)</td>
+                <td>0 (scratch buffer pre-allocated in kv cache)</td>
+            </tr>
+            <tr>
+                <td>
+                    kv cache memory (2048-context, 12 layers, 12 heads, 64
+                    head_dim)
+                </td>
+                <td>n/a</td>
+                <td>~72 mb (k + v combined)</td>
+            </tr>
+        </table>
+
+        <p>
+            the scratch buffer eliminated 144 small heap allocations per
+            generated token for a 12-layer, 12-head model. the buffer is
+            pre-allocated in <code>KVCache::new()</code>; the attention loop
+            calls <code>clear()</code> + <code>resize()</code> on it, and the
+            resize never re-allocates because capacity equals
+            <code>max_seq_len</code>.
+        </p>
+
+        <!-- ═══════════════════════════ 10. FIRST LIGHT ═══════════════════════════ -->
+        <h2>10. first light</h2>
+
+        <p>
+            after five bugs and a column-major revelation, the model ran on the
+            prompt "the" with greedy sampling, temperature zero, deterministic
+            argmax, no randomness. if every tensor op was correct, the output
+            would be the same every time. it was:
+        </p>
+
+        <div class="quote-block">
+            <div class="text">
+                The cheese snowball Cheese Cheese Cheese Cheese Cheese Cheese
+                Cheese Cheese Cheese Cheese Cheese Cheese Cheese Cheese Cheese
+                Cheese
+            </div>
+            <div class="caption">
+                ember v0.1, first coherent output after fixing the column-major
+                layout bug
+            </div>
+        </div>
+
+        <p>
+            it's not good prose. it's a 124m-parameter model from 2019 with a
+            one-word prompt. but every word is a real english word, capitalized
+            correctly, in grammatical order. no invalid utf-8, no NaN tokens, no
+            random integers. every tensor op, softmax, gelu, layer norm, matmul,
+            the qkv split, the causal mask, the kv cache append-and-read, worked
+            together, and what came out the other end was text.
+        </p>
+
+        <p>
+            the repetition is also informative. gpt-2 is not chatgpt. it's a
+            next-token predictor trained on internet text. given "the", its most
+            likely continuation involved cheese, and it repeated "cheese" 17
+            times because once it entered that loop, the attention pattern
+            reinforced itself. that's not a bug in ember, it's the model doing
+            what it was trained to do. the fact that ember faithfully reproduces
+            that behavior is the proof that the pipeline is correct.
+        </p>
+
+        <!-- ═══════════════════════════ 11. WHAT'S NEXT ═══════════════════════════ -->
+        <h2>11. what's next</h2>
+
+        <p>
+            ember runs gpt-2. the path forward is llama-family support, which
+            requires four new primitives:
+        </p>
+
+        <ul>
+            <li>
+                <strong>rmsnorm</strong> replaces layer norm. same idea,
+                normalize activations so they don't drift, but it drops the
+                mean-centering step and only scales by the root-mean-square. the
+                mean is zero anyway after enough layers; dropping it saves a
+                subtraction per element. the implementation is a three-line
+                variant of the existing <code>layer_norm</code> method.
+            </li>
+            <li>
+                <strong>silu</strong> (sigmoid linear unit, also called swish)
+                replaces gelu as the activation: <code>x * sigmoid(x)</code>,
+                self-gating, smooth. the gated ffn in llama uses it in a
+                <code>gate_proj * up_proj</code> element-wise product before the
+                down projection.
+            </li>
+            <li>
+                <strong>rope</strong> (rotary position embeddings) replaces the
+                learned <code>wpe</code> lookup table. instead of storing a
+                vector for each absolute position, rope encodes position by
+                rotating pairs of dimensions in the query and key vectors by an
+                angle proportional to the position. the attention score between
+                positions i and j depends only on their relative distance (j −
+                i), not their absolute positions, so the model generalizes to
+                sequence lengths it wasn't trained on.
+            </li>
+            <li>
+                <strong>grouped-query attention</strong> (gqa) reduces the kv
+                head count relative to q heads. llama 3 8b uses 32 q heads but
+                only 8 kv heads, so four q heads share each kv pair. less memory
+                for the cache means longer context for the same ram budget. the
+                attention loop barely changes, kv heads cycle every
+                <code>n_q_heads / n_kv_heads</code> q heads.
+            </li>
+        </ul>
+
+        <p>
+            each primitive is specified with starter code and tests in the repo.
+            the <code>Backend</code>
+            trait was designed for exactly this, adding a new op to the trait
+            makes it available to every future backend automatically.
+        </p>
+
+        <p>
+            <strong>simd.</strong> the current matmul delegates to
+            <code>matrixmultiply::sgemm</code>, a pure rust implementation that
+            is correct but scalar. the next performance jump comes from
+            vectorized kernels, avx2 on x86, neon on arm. the
+            <code>Backend</code> trait is the insertion point: a
+            <code>SimdBackend</code> implementing the same trait with
+            architecture-specific intrinsics. same model code. 4× to 8×
+            throughput.
+        </p>
+
+        <p>
+            after that: gpu support (the <code>Backend</code> trait means same
+            transformer code on cuda or metal), then embedded targets, arm
+            cortex-m, no_std, models in the 10m–100m parameter range running on
+            microcontrollers.
+        </p>
+
+        <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
+        <footer>
+            <p>
+                ember ·
+                <a href="https://github.com/voidwest/ember"
+                    >github.com/voidwest/ember</a
+                >
+                · mit license
+            </p>
+            <p style="margin-top: 0.35rem">
+                written in rust. runs on cpu. no cuda. no pytorch. just tensors.
+            </p>
+        </footer>
+    </body>
+</html>

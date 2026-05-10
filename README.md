@@ -1,6 +1,6 @@
 # ember
 
-[![rust](https://img.shields.io/badge/rust-1.85-blue)](https://www.rust-lang.org)
+[![rust](https://img.shields.io/badge/rust-1.92-blue)](https://www.rust-lang.org)
 [![ci](https://github.com/voidwest/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/voidwest/ember/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 

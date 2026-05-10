@@ -248,6 +248,44 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), data)
     }
 
+    /// rms normalization over the last dimension of a 2d `[batch, features]`
+    /// tensor. normalizes each row independently: `x * weight / sqrt(mean(x²) + eps)`.
+    /// lLaMA-family models use this instead of layer_norm — no mean subtraction, no bias.
+    #[must_use]
+    #[inline]
+    pub fn rms_norm(&self, weight: &Self, eps: f32) -> Self {
+        assert_eq!(self.ndim(), 2, "rms_norm expects 2d [batch, features]");
+        let (batch, features) = (self.shape[0], self.shape[1]);
+        assert_eq!(weight.len(), features);
+
+        let mut out = vec![0.0f32; self.len()];
+        for b in 0..batch {
+            let offset = b * features;
+            let slice = &self.data[offset..offset + features];
+
+            let mean_sq = slice.iter().map(|x| x * x).sum::<f32>() / features as f32;
+            let rstd = (mean_sq + eps).sqrt().recip();
+
+            for i in 0..features {
+                out[offset + i] = slice[i] * rstd * weight.data[i];
+            }
+        }
+        Self::from_data(self.shape.clone(), out)
+    }
+
+    /// sigmoid linear unit: `x * sigmoid(x)` = `x / (1 + exp(-x))`.
+    /// lLaMA-family mlp uses this in the swiGLU gate path.
+    #[must_use]
+    #[inline]
+    pub fn silu(&self) -> Self {
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .map(|&x| x / (1.0 + (-x).exp()))
+            .collect();
+        Self::from_data(self.shape.clone(), data)
+    }
+
     /// layer normalization over the last dimension of a 2d `[batch, features]`
     /// tensor. normalizes each row independently: `(x - mean) / sqrt(var + eps)
     /// * weight + bias`.
