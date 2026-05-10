@@ -278,11 +278,7 @@ impl CpuTensor {
     #[must_use]
     #[inline]
     pub fn silu(&self) -> Self {
-        let data: Vec<f32> = self
-            .data
-            .iter()
-            .map(|&x| x / (1.0 + (-x).exp()))
-            .collect();
+        let data: Vec<f32> = self.data.iter().map(|&x| x / (1.0 + (-x).exp())).collect();
         Self::from_data(self.shape.clone(), data)
     }
 
