@@ -34,7 +34,7 @@
                 line-height: 1.7;
                 max-width: 800px;
                 margin: 0 auto;
-                padding: 3rem 1.5rem 6rem;
+                padding: 2rem 1rem 4rem;
             }
 
             .hero {
@@ -60,6 +60,7 @@
                 gap: 1.2rem;
                 margin-top: 1.2rem;
                 font-size: 0.78rem;
+                flex-wrap: wrap;
                 color: var(--text-dim);
             }
             .hero .meta span {
@@ -136,6 +137,9 @@
                 width: 100%;
                 border-collapse: collapse;
                 margin: 0.9rem 0;
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
                 font-size: 0.83rem;
             }
             th,
@@ -228,6 +232,85 @@
             }
             li {
                 margin: 0.3rem 0;
+            }
+
+            /* ── mobile ── */
+            @media (max-width: 600px) {
+                body {
+                    padding: 1.2rem 0.9rem 3rem;
+                    font-size: 0.9rem;
+                    line-height: 1.6;
+                }
+
+                .hero {
+                    padding: 1.5rem 0 1.5rem;
+                    margin-bottom: 1.5rem;
+                }
+                .hero .logo {
+                    font-size: 2rem;
+                }
+                .hero .tagline {
+                    font-size: 0.87rem;
+                }
+                .hero .meta {
+                    font-size: 0.72rem;
+                    gap: 0.7rem;
+                }
+
+                h2 {
+                    font-size: 1.15rem;
+                    margin: 2rem 0 0.7rem;
+                }
+                h3 {
+                    font-size: 0.95rem;
+                }
+
+                pre {
+                    padding: 0.7rem 0.8rem;
+                    font-size: 0.7rem;
+                }
+
+                .ascii-diagram {
+                    padding: 0.7rem 0.8rem;
+                    font-size: 0.6rem;
+                }
+
+                table {
+                    font-size: 0.73rem;
+                }
+                th, td {
+                    padding: 0.35rem 0.5rem;
+                }
+
+                .callout {
+                    padding: 0.7rem 0.85rem;
+                    font-size: 0.8rem;
+                }
+
+                .bug-card {
+                    padding: 0.8rem 0.9rem;
+                }
+                .bug-card .symptom,
+                .bug-card .cause,
+                .bug-card .fix {
+                    font-size: 0.78rem;
+                }
+
+                .quote-block {
+                    padding: 1rem 1rem;
+                }
+                .quote-block .text {
+                    font-size: 0.9rem;
+                }
+                .quote-block .caption {
+                    font-size: 0.7rem;
+                }
+
+                footer {
+                    margin-top: 2rem;
+                    padding-top: 1.2rem;
+                    font-size: 0.7rem;
+                }
             }
         </style>
     </head>
