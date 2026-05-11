@@ -7,7 +7,7 @@
 a lightweight cpu-first llm inference engine in rust. runs quantized models
 without heavy framework dependencies.
 
-write-up: https://voidwest.github.io/ember/
+write-up: https://voidwest.dev/ember
 
 ## features
 
