@@ -363,15 +363,15 @@
         <h2>2. architecture</h2>
 
         <div class="ascii-diagram">
-            main.rs entry point, generation loop, demo mode, repl ├─ loader.rs
-            gguf v3 parser, mmap i/o, tensor dequantization ├─ model.rs gpt-2:
-            attention, mlp, block, layer norm, gpt2&lt;B&gt; │ ├─ backend.rs
-            backend trait + cpu backend (zero-sized struct) │ ├─ tensor.rs
-            row-major f32 tensor: matmul, softmax, gelu, layer_norm │ └─
-            kv_cache.rs flat [layer][head][pos][head_dim] cache + scratch buffer
-            ├─ sampler.rs temperature, top-k, top-p, inverse cdf sampling ├─
-            tokenizer.rs huggingface tokenizer wrapper └─ quant.rs q8_0 block
-            dequantization (34 bytes → 32 f32s)
+main.rs            entry point, generation loop, demo mode, repl
+├─ loader.rs       gguf v3 parser, mmap i/o, tensor dequantization
+├─ model.rs        gpt-2: attention, mlp, block, layer norm, gpt2&lt;B&gt;
+│  ├─ backend.rs   backend trait + cpu backend (zero-sized struct)
+│  ├─ tensor.rs    row-major f32 tensor: matmul, softmax, gelu, layer_norm
+│  └─ kv_cache.rs  flat [layer][head][pos][head_dim] cache + scratch buffer
+├─ sampler.rs      temperature, top-k, top-p, inverse cdf sampling
+├─ tokenizer.rs    huggingface tokenizer wrapper
+└─ quant.rs        q8_0 block dequantization (34 bytes → 32 f32s)
         </div>
 
         <p>
