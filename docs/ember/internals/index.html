@@ -183,7 +183,7 @@
             <code>matmul()</code> returns a new <code>CpuTensor</code>. the
             allocator sees a stream of identical-sized allocations during decode
             (token count is constant), so <code>jemalloc</code> or the system
-            allocator reuses the same slab. this is not accidental -- it's the
+            allocator reuses the same slab. this is not accidental, it's the
             reason the hot path can get away with per-op allocations without
             profiling as a malloc storm.
         </p>
@@ -194,7 +194,7 @@
             the allocation drops silently and the model runs on stale data.
             the attribute makes that a compile error. it caught the bug of
             forgetting to assign layer norm output back to <code>x</code> in
-            the transformer block loop -- a bug that produces no panic, no NaN,
+            the transformer block loop, a bug that produces no panic, no NaN,
             just progressively degraded text.
         </p>
 
@@ -276,7 +276,7 @@ let data: Vec&lt;f32&gt; = self.data.iter()
             no libm linking, no target-specific intrinsics. the constant
             <code>1/√2</code> is precomputed as <code>0.70710677</code>, saving
             a division per element. gelu fires on 3072 elements per token per
-            layer in the mlp hidden dimension -- 36,864 calls per forward pass.
+            layer in the mlp hidden dimension, 36,864 calls per forward pass.
         </p>
 
         <h3>layer norm</h3>
@@ -298,7 +298,7 @@ let data: Vec&lt;f32&gt; = self.data.iter()
             three passes per row: one for mean, one for variance, one for the
             normalization. epsilon is <code>1e-5</code>, the standard value
             from ba et al. (2016). the weight and bias are learned per-feature
-            vectors loaded from the gguf file -- identical to the pytorch
+            vectors loaded from the gguf file, identical to the pytorch
             <code>nn.LayerNorm(768)</code> parameters.
         </p>
 
@@ -338,7 +338,7 @@ layer 1 ──┐
 
         <p>
             the caller supplies k and v as flat <code>[n_heads * head_dim]</code>
-            slices -- the concatenated per-head projections for a single token
+            slices, the concatenated per-head projections for a single token
             at a single layer. <code>append</code> scatters them into the cache:
         </p>
 
@@ -357,7 +357,7 @@ layer 1 ──┐
             <code>cursor</code> is deliberately not advanced until
             <code>Gpt2::forward_with_cache</code> finishes all 12 layers.
             during prefill, the attention loop called <code>append</code> for
-            each prompt token -- every call landed at <code>cursor = 0</code>,
+            each prompt token, every call landed at <code>cursor = 0</code>,
             overwriting the previous. only the final token's k/v survived.
             the fix passes an explicit <code>pos</code> to <code>append</code>,
             computed as <code>cache.cursor() + token_index</code> in the
@@ -466,7 +466,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
             gguf stores q8_0 and f16 tensors in column-major order. the q8_0
             block size is 32, and the innermost dimension must be a multiple
             of 32. for a weight matrix shaped <code>[768, 50257]</code>, the
-            column dimension (50257) is the block axis -- it's padded to a
+            column dimension (50257) is the block axis, it's padded to a
             multiple of 32 on disk. the raw bytes are laid out: all 768 rows
             of column 0, then all 768 rows of column 1, etc.
         </p>
@@ -508,7 +508,7 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
 }</code></pre>
 
         <p>
-            temperature = 0 means greedy argmax -- the pipeline skips
+            temperature = 0 means greedy argmax, the pipeline skips
             temperature scaling and goes straight to argmax in
             <code>categorical_sample</code>. any positive value divides
             logits: t &lt; 1.0 sharpens (peaks get higher relative weight),
@@ -632,7 +632,7 @@ dist.iter().enumerate()
             transformer component implements <code>Module&lt;B: Backend&gt;</code>
             with a single method <code>forward(&amp;self, backend: &amp;B, x:
             &amp;B::Tensor) -> Result&lt;B::Tensor, B::Error&gt;</code>. the
-            backend reference flows through every layer -- it's the object that
+            backend reference flows through every layer, it's the object that
             knows how to allocate, compute, and move data. swapping backends
             is a one-line change at the top of <code>Gpt2::new</code>.
         </p>
@@ -669,7 +669,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
 
         <p>
             matmul dominates. the <code>c_fc</code> and output projection are
-            the two heaviest matmuls -- 768×3072 and 3072×768 respectively,
+            the two heaviest matmuls, 768×3072 and 3072×768 respectively,
             each 2.36 million multiply-adds. simd would drop this to
             roughly 8-10 ms, pushing throughput toward 40-50 tok/s.
         </p>
@@ -702,7 +702,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
             <strong>scratch buffer resize.</strong> the qk_scratch buffer is
             allocated to <code>max_seq_len</code> (2048). during decode at
             position 47, the caller resizes it to 48. because 48 ≤ 2048, the
-            resize is a no-op -- capacity was set at construction time. this
+            resize is a no-op, capacity was set at construction time. this
             is a deliberate invariant: the hot path never calls the global
             allocator.
         </p>
