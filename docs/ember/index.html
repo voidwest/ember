@@ -120,18 +120,31 @@
                 font-size: inherit;
             }
 
-            .ascii-diagram {
+            .arch-tree {
                 background: var(--surface);
                 border: 1px solid var(--border);
                 border-radius: 6px;
                 padding: 1rem 1.2rem;
                 margin: 0.9rem 0;
+                font-family: inherit;
                 font-size: 0.78rem;
-                line-height: 1.5;
-                white-space: pre;
+                line-height: 1.75;
                 overflow-x: auto;
-                color: var(--text-dim);
             }
+            .arch-row {
+                display: grid;
+                grid-template-columns: 22ch 1fr;
+                gap: 0 1ch;
+                white-space: pre;
+            }
+            .arch-row.root {
+                border-bottom: 1px solid var(--border);
+                padding-bottom: 0.5rem;
+                margin-bottom: 0.45rem;
+            }
+            .arch-branch { color: var(--text-dim); }
+            .arch-file { color: var(--accent2); font-weight: 600; }
+            .arch-desc { color: var(--text-dim); }
 
             table {
                 width: 100%;
@@ -270,10 +283,11 @@
                     font-size: 0.7rem;
                 }
 
-                .ascii-diagram {
+                .arch-tree {
                     padding: 0.7rem 0.8rem;
                     font-size: 0.6rem;
                 }
+                .arch-row { grid-template-columns: 20ch 1fr; }
 
                 table {
                     font-size: 0.73rem;
@@ -362,16 +376,16 @@
         <!-- ═══════════════════════════ 2. ARCHITECTURE ═══════════════════════════ -->
         <h2>2. architecture</h2>
 
-        <div class="ascii-diagram">
-main.rs            entry point, generation loop, demo mode, repl
-├─ loader.rs       gguf v3 parser, mmap i/o, tensor dequantization
-├─ model.rs        gpt-2: attention, mlp, block, layer norm, gpt2&lt;B&gt;
-│  ├─ backend.rs   backend trait + cpu backend (zero-sized struct)
-│  ├─ tensor.rs    row-major f32 tensor: matmul, softmax, gelu, layer_norm
-│  └─ kv_cache.rs  flat [layer][head][pos][head_dim] cache + scratch buffer
-├─ sampler.rs      temperature, top-k, top-p, inverse cdf sampling
-├─ tokenizer.rs    huggingface tokenizer wrapper
-└─ quant.rs        q8_0 block dequantization (34 bytes → 32 f32s)
+        <div class="arch-tree">
+          <div class="arch-row root"><span class="arch-file">main.rs</span><span class="arch-desc">entry point, cli args, generation loop</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">loader.rs</span><span class="arch-desc">gguf v3 parser, tensor loading + dequant</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">model.rs</span><span class="arch-desc">gpt-2 transformer blocks</span></div>
+          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">backend.rs</span><span class="arch-desc">backend trait + cpu backend impl</span></div>
+          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">tensor.rs</span><span class="arch-desc">row-major f32 tensor with basic ops</span></div>
+          <div class="arch-row"><span class="arch-branch">│  └─ </span><span class="arch-file">kv_cache.rs</span><span class="arch-desc">flat key/value cache for incremental decode</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">sampler.rs</span><span class="arch-desc">temperature, top-k, top-p sampling</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">tokenizer.rs</span><span class="arch-desc">huggingface tokenizer wrapper</span></div>
+          <div class="arch-row"><span class="arch-branch">└─ </span><span class="arch-file">quant.rs</span><span class="arch-desc">q8_0 block dequantization</span></div>
         </div>
 
         <p>
