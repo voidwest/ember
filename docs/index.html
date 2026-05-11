@@ -120,6 +120,25 @@
                 border-left: 3px solid var(--accent);
             }
 
+            .project-links {
+                margin-top: 0.6rem;
+                display: flex;
+                gap: 0.8rem;
+                font-size: 0.78rem;
+            }
+            .project-links a {
+                color: var(--accent2);
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 0.2em 0.6em;
+                text-decoration: none;
+            }
+            .project-links a:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
             footer {
                 margin-top: 3.5rem;
                 padding-top: 1.8rem;
@@ -177,6 +196,10 @@
                 </div>
                 <div class="tags">
                     <span>rust</span><span>inference</span><span>gguf</span><span>cpu</span>
+                </div>
+                <div class="project-links">
+                    <a href="/ember/">writeup</a>
+                    <a href="/ember/academic/">academic</a>
                 </div>
             </div>
 
