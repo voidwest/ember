@@ -48,6 +48,10 @@ struct Args {
     #[arg(long, conflicts_with = "interactive")]
     demo: bool,
 
+    /// milliseconds to delay between each token in demo mode (0 = instant)
+    #[arg(long, default_value_t = 0)]
+    delay_ms: u64,
+
     /// print prefill/decode timing stats to stderr
     #[arg(long)]
     benchmark: bool,
@@ -71,7 +75,7 @@ fn main() -> anyhow::Result<()> {
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&args.tokenizer)?;
 
     if args.demo {
-        demo_mode(&backend, &model, &tokenizer, args.max_tokens, &args.model)?;
+        demo_mode(&backend, &model, &tokenizer, args.max_tokens, &args.model, args.delay_ms)?;
     } else if args.interactive {
         log::info!("loading model from {}", args.model);
         log::info!("loaded {} tensors", n_tensors);
@@ -118,31 +122,87 @@ fn main() -> anyhow::Result<()> {
 /// ideal for screen recordings, benchmarks, and project demonstrations.
 /// runs through a fixed set of prompts, printing each one with its completion
 /// and per-prompt timing, then a summary table.
+///
+/// when `delay_ms > 0`, tokens are streamed one at a time with a typewriter
+/// effect. ansi colors are used for visual distinction (`--color` cli flag or
+/// terminal detection can be added to toggle).
 fn demo_mode<B: Backend>(
     backend: &B,
     model: &Gpt2<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
     max_tokens: usize,
     model_path: &str,
+    delay_ms: u64,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
 {
+    // ── ansi style helpers ──────────────────────────────────────────────
+    // simple string concatenation to avoid macro complexity.
+    // each "style" builder returns a formatted string with escape codes.
+    const RST: &str = "\x1b[0m";
+    const BLD: &str = "\x1b[1m";
+    const DIM: &str = "\x1b[2m";
+    const CYN: &str = "\x1b[36m";
+    const GRN: &str = "\x1b[32m";
+    const YLW: &str = "\x1b[33m";
+
+    fn s(ansi: &str, text: &dyn std::fmt::Display) -> String {
+        format!("{ansi}{text}{RST}")
+    }
+    fn s2(a: &str, b: &str, text: &dyn std::fmt::Display) -> String {
+        format!("{a}{b}{text}{RST}")
+    }
+
+    // eprintln / print without newline helpers so we don't forget io::stdout().flush()
+    macro_rules! eprint_flush { ($($arg:tt)*) => {{
+        eprint!($($arg)*);
+        let _ = io::stderr().flush();
+    }}; }
+    macro_rules! print_flush { ($($arg:tt)*) => {{
+        print!($($arg)*);
+        let _ = io::stdout().flush();
+    }}; }
+
     let embed_dim = backend.shape(&model.wte)[1];
     let head_dim = embed_dim / model.n_heads;
 
     // ── header ──────────────────────────────────────────────────────
-    println!("╔══════════════════════════════════════════════════╗");
-    println!("║              ember  ·  llm inference              ║");
-    println!("╠══════════════════════════════════════════════════╣");
-    println!("║ model     {:>38} ║", model_path);
-    println!("║ layers    {:>38} ║", model.blocks.len());
-    println!("║ heads     {:>38} ║", model.n_heads);
-    println!("║ embed_dim {:>38} ║", embed_dim);
-    println!("║ head_dim  {:>38} ║", head_dim);
-    println!("║ vocab     {:>38} ║", tokenizer.vocab_size());
-    println!("║ sampling  {:>38} ║", "greedy (temp=0)");
-    println!("╚══════════════════════════════════════════════════╝");
+    let header_border = s2(DIM, CYN, &"╔══════════════════════════════════════════════════╗");
+    let header_line   = s2(BLD, CYN, &"║              ember  ·  llm inference              ║");
+    let header_sep    = s2(DIM, CYN, &"╠══════════════════════════════════════════════════╣");
+
+    println!("{header_border}");
+    println!("{header_line}");
+    println!("{header_sep}");
+
+    let kv = |k: &str, v: &dyn std::fmt::Display| {
+        println!(
+            "{} {} {:>37} {}",
+            s2(DIM, CYN, &"║"),
+            s(DIM, &k),
+            s(BLD, &v),
+            s2(DIM, CYN, &"║"),
+        );
+    };
+    kv("model     ", &model_path);
+    kv("layers    ", &model.blocks.len());
+    kv("heads     ", &model.n_heads);
+    kv("embed_dim ", &embed_dim);
+    kv("head_dim  ", &head_dim);
+    kv("vocab     ", &tokenizer.vocab_size());
+    kv("sampling  ", &"greedy (temp=0)");
+
+    let header_foot = s2(DIM, CYN, &"╚══════════════════════════════════════════════════╝");
+    println!("{header_foot}");
+
+    if delay_ms > 0 {
+        println!();
+        println!(
+            "{}",
+            s(DIM, &format!("  typewriter delay: {delay_ms} ms/token · press ctrl-c to exit")),
+        );
+    }
     println!();
 
     let prompts: &[(&str, &str)] = &[
@@ -158,6 +218,8 @@ where
         ("The meaning of life is", "open-ended reasoning"),
     ];
 
+    let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
     let mut total_prefill_ms = 0.0;
     let mut total_decode_ms = 0.0;
     let mut total_prompt_tokens = 0usize;
@@ -168,16 +230,48 @@ where
         let prompt_len = prompt_tokens.len();
         let max_seq_len = prompt_len + max_tokens;
 
-        // prefill
+        // ── prefill with spinner ──────────────────────────────────
         let prefill_start = std::time::Instant::now();
+        eprint_flush!(
+            "{}  {}{}",
+            s(CYN, &"▒"),
+            s(DIM, &"prefilling... "),
+            spinner_chars[0],
+        );
+
         let mut cache = model.create_cache(backend, max_seq_len);
         let mut logits = model.forward_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
-        let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
 
-        // decode
+        let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
+        eprint_flush!("\r{}\n", s(GRN, &"✓ prefill complete"));
+
+        // ── decode with typewriter streaming ──────────────────────
         let decode_start = std::time::Instant::now();
         let mut all_tokens = prompt_tokens.clone();
         let mut generated = Vec::with_capacity(max_tokens);
+
+        // print prompt card
+        println!();
+        let pn = i + 1;
+        let card_width: usize = 50;
+        let top_prefix = format!("┌─ prompt {pn} ─ {category} ─ ");
+        let pad_len = card_width.saturating_sub(top_prefix.chars().count() + 1);
+        let dashes = "─".repeat(pad_len);
+        println!(
+            "{}",
+            s2(BLD, CYN, &format!("{top_prefix}{dashes}┐")),
+        );
+        println!("{}", s(DIM, &"│"));
+        println!(
+            "{} {}",
+            s(DIM, &"│ prompt:    "),
+            s(YLW, &prompt),
+        );
+        print_flush!(
+            "{} {}",
+            s(DIM, &"│ completion:"),
+            GRN,  // start completion on a new line, green
+        );
 
         for step in 0..max_tokens {
             let logit_data = backend.data(&logits);
@@ -197,6 +291,20 @@ where
             all_tokens.push(next as u32);
             generated.push(next as u32);
 
+            // stream this single token now, before computing the next.
+            // individual subword tokens may decode to replacement characters
+            // (U+FFFD �) when they're part of a multi-token UTF-8 sequence;
+            // filter those out so the typewriter effect stays clean.
+            let token_text = tokenizer.decode(&[next as u32])?;
+            let cleaned: String = token_text.chars().filter(|c| *c != '\u{FFFD}').collect();
+            if !cleaned.is_empty() {
+                print_flush!("{}", cleaned);
+            }
+
+            if delay_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            }
+
             logits = model.forward_with_cache(
                 backend,
                 &[next as u32],
@@ -204,48 +312,53 @@ where
                 prompt_len + step + 1,
             )?;
         }
+        // reset color after completion
+        println!("{RST}");
         let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
-        let completion = tokenizer.decode(&generated)?;
 
-        // ── per-prompt output ─────────────────────────────────────
+        // ── per-prompt stats ─────────────────────────────────────
+        println!("{}", s(DIM, &"│"));
         println!(
-            "┌─ prompt {} ─ {} ───────────────────────┐",
-            i + 1,
-            category
-        );
-        println!("│");
-        println!("│ prompt:    {}", prompt);
-        println!("│ completion:{}", completion);
-        println!("│");
-        println!(
-            "│ tokens:    {} prompt + {} generated = {} total",
+            "{} {} prompt + {} generated = {} total",
+            s(DIM, &"│ tokens:    "),
             prompt_len,
             generated.len(),
-            prompt_len + generated.len()
+            prompt_len + generated.len(),
         );
         println!(
-            "│ prefill:   {:.1} ms ({:.0} tok/s)",
+            "{} {:.1} ms ({:.0} tok/s)",
+            s(DIM, &"│ prefill:   "),
             prefill_ms,
             prompt_len as f64 / (prefill_ms / 1000.0)
         );
         println!(
-            "│ decode:    {:.1} ms ({:.0} tok/s)",
+            "{} {:.1} ms ({:.0} tok/s)",
+            s(DIM, &"│ decode:    "),
             decode_ms,
             generated.len() as f64 / (decode_ms / 1000.0)
         );
-        println!("└────────────────────────────────────────────────┘");
+        println!("{}", s2(DIM, CYN, &"└────────────────────────────────────────────────┘"));
         println!();
 
         total_prefill_ms += prefill_ms;
         total_decode_ms += decode_ms;
         total_prompt_tokens += prompt_len;
         total_generated += generated.len();
+
+        // brief pause between prompts so the viewer can absorb
+        if delay_ms > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms * 5));
+        }
     }
 
     // ── summary ────────────────────────────────────────────────────
     let total_ms = total_prefill_ms + total_decode_ms;
     let total_tokens = total_prompt_tokens + total_generated;
-    println!("══════════════════════════ summary ══════════════════════════");
+
+    println!(
+        "{}",
+        s2(BLD, YLW, &"═══════════════════════════ summary ══════════════════════════"),
+    );
     println!();
     println!("  prompts:       {}", prompts.len());
     println!(
@@ -268,7 +381,33 @@ where
         total_generated as f64 / (total_decode_ms / 1000.0)
     );
     println!();
-    println!("══════════════════════════════════════════════════════════════");
+    println!(
+        "{}",
+        s2(DIM, YLW, &"══════════════════════════════════════════════════════════════"),
+    );
+    println!();
+
+    // ── end-of-demo flicker ────────────────────────────────────
+    // prints a blinking cursor effect that persists for ~2 seconds
+    // so the viewer knows the demo is complete and the terminal is
+    // still live.
+    if delay_ms > 0 {
+        print_flush!("{}", s(DIM, &"demo complete. "));
+        let cursor_chars = ['▌', ' '];
+        let flicker_start = std::time::Instant::now();
+        let mut flicker_idx = 0usize;
+        while flicker_start.elapsed().as_secs() < 2 {
+            print_flush!(
+                "\r{} {}",
+                s(DIM, &"demo complete. "),
+                cursor_chars[flicker_idx % 2],
+            );
+            flicker_idx += 1;
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        // clear the cursor line
+        print_flush!("\r{}\r", s(DIM, &"demo complete."));
+    }
 
     Ok(())
 }
