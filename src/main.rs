@@ -169,7 +169,7 @@ where
 
     // ── header ──────────────────────────────────────────────────────
     let header_border = s2(DIM, CYN, &"╔══════════════════════════════════════════════════╗");
-    let header_line   = s2(BLD, CYN, &"║              ember  ·  llm inference              ║");
+    let header_line   = s2(BLD, CYN, &"║              ember  ·  llm inference             ║");
     let header_sep    = s2(DIM, CYN, &"╠══════════════════════════════════════════════════╣");
 
     println!("{header_border}");
