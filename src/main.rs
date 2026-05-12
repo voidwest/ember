@@ -75,7 +75,14 @@ fn main() -> anyhow::Result<()> {
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&args.tokenizer)?;
 
     if args.demo {
-        demo_mode(&backend, &model, &tokenizer, args.max_tokens, &args.model, args.delay_ms)?;
+        demo_mode(
+            &backend,
+            &model,
+            &tokenizer,
+            args.max_tokens,
+            &args.model,
+            args.delay_ms,
+        )?;
     } else if args.interactive {
         log::info!("loading model from {}", args.model);
         log::info!("loaded {} tensors", n_tensors);
@@ -168,9 +175,21 @@ where
     let head_dim = embed_dim / model.n_heads;
 
     // ── header ──────────────────────────────────────────────────────
-    let header_border = s2(DIM, CYN, &"╔══════════════════════════════════════════════════╗");
-    let header_line   = s2(BLD, CYN, &"║              ember  ·  llm inference             ║");
-    let header_sep    = s2(DIM, CYN, &"╠══════════════════════════════════════════════════╣");
+    let header_border = s2(
+        DIM,
+        CYN,
+        &"╔══════════════════════════════════════════════════╗",
+    );
+    let header_line = s2(
+        BLD,
+        CYN,
+        &"║              ember  ·  llm inference             ║",
+    );
+    let header_sep = s2(
+        DIM,
+        CYN,
+        &"╠══════════════════════════════════════════════════╣",
+    );
 
     println!("{header_border}");
     println!("{header_line}");
@@ -193,14 +212,21 @@ where
     kv("vocab     ", &tokenizer.vocab_size());
     kv("sampling  ", &"greedy (temp=0)");
 
-    let header_foot = s2(DIM, CYN, &"╚══════════════════════════════════════════════════╝");
+    let header_foot = s2(
+        DIM,
+        CYN,
+        &"╚══════════════════════════════════════════════════╝",
+    );
     println!("{header_foot}");
 
     if delay_ms > 0 {
         println!();
         println!(
             "{}",
-            s(DIM, &format!("  typewriter delay: {delay_ms} ms/token · press ctrl-c to exit")),
+            s(
+                DIM,
+                &format!("  typewriter delay: {delay_ms} ms/token · press ctrl-c to exit")
+            ),
         );
     }
     println!();
@@ -257,20 +283,13 @@ where
         let top_prefix = format!("┌─ prompt {pn} ─ {category} ─ ");
         let pad_len = card_width.saturating_sub(top_prefix.chars().count() + 1);
         let dashes = "─".repeat(pad_len);
-        println!(
-            "{}",
-            s2(BLD, CYN, &format!("{top_prefix}{dashes}┐")),
-        );
+        println!("{}", s2(BLD, CYN, &format!("{top_prefix}{dashes}┐")),);
         println!("{}", s(DIM, &"│"));
-        println!(
-            "{} {}",
-            s(DIM, &"│ prompt:    "),
-            s(YLW, &prompt),
-        );
+        println!("{} {}", s(DIM, &"│ prompt:    "), s(YLW, &prompt),);
         print_flush!(
             "{} {}",
             s(DIM, &"│ completion:"),
-            GRN,  // start completion on a new line, green
+            GRN, // start completion on a new line, green
         );
 
         for step in 0..max_tokens {
@@ -337,7 +356,14 @@ where
             decode_ms,
             generated.len() as f64 / (decode_ms / 1000.0)
         );
-        println!("{}", s2(DIM, CYN, &"└────────────────────────────────────────────────┘"));
+        println!(
+            "{}",
+            s2(
+                DIM,
+                CYN,
+                &"└────────────────────────────────────────────────┘"
+            )
+        );
         println!();
 
         total_prefill_ms += prefill_ms;
@@ -357,7 +383,11 @@ where
 
     println!(
         "{}",
-        s2(BLD, YLW, &"═══════════════════════════ summary ══════════════════════════"),
+        s2(
+            BLD,
+            YLW,
+            &"═══════════════════════════ summary ══════════════════════════"
+        ),
     );
     println!();
     println!("  prompts:       {}", prompts.len());
@@ -383,7 +413,11 @@ where
     println!();
     println!(
         "{}",
-        s2(DIM, YLW, &"══════════════════════════════════════════════════════════════"),
+        s2(
+            DIM,
+            YLW,
+            &"══════════════════════════════════════════════════════════════"
+        ),
     );
     println!();
 
