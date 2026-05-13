@@ -50,6 +50,25 @@ pub trait Backend {
         x: &Self::Tensor,
         bias: &Self::Tensor,
     ) -> Result<Self::Tensor, Self::Error>;
+
+    // ── llama-family primitives ─────────────────────────────────
+    // rms norm and silu are needed by llama model code.
+    // `CpuTensor` already implements both; these trait methods
+    // expose them through the abstraction so `Llama<CpuBackend>`
+    // works today, and a future gpu backend must provide them too.
+
+    /// rms normalization: `x * weight / sqrt(mean(x²) + eps)`.
+    /// llama-family models use this instead of layer norm (no mean subtraction, no bias).
+    fn rms_norm(
+        &self,
+        x: &Self::Tensor,
+        weight: &Self::Tensor,
+        eps: f32,
+    ) -> Result<Self::Tensor, Self::Error>;
+
+    /// sigmoid linear unit: `x * sigmoid(x)` = `x / (1 + exp(-x))`.
+    /// used in llama's swiglu mlp gate: `silu(gate_proj(x)) * up_proj(x)`.
+    fn silu(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
 }
 
 /// a composable unit that runs a forward pass.
@@ -124,5 +143,18 @@ impl Backend for CpuBackend {
     }
     fn add_broadcast(&self, x: &CpuTensor, bias: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.add_broadcast(bias))
+    }
+
+    fn rms_norm(
+        &self,
+        x: &CpuTensor,
+        weight: &CpuTensor,
+        eps: f32,
+    ) -> Result<CpuTensor, CpuError> {
+        Ok(x.rms_norm(weight, eps))
+    }
+
+    fn silu(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
+        Ok(x.silu())
     }
 }
