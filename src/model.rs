@@ -568,3 +568,374 @@ impl<B: Backend> Gpt2<B> {
         Ok(logits)
     }
 }
+
+// ── llama support ────────────────────────────────────────────
+// (work in progress; see LLAMA.md for the full plan)
+// ─────────────────────────────────────────────────────────────
+
+/// architectural parameters for a llama-family model.
+///
+/// read from gguf metadata during `Llama::from_loader`.
+/// the key names here mirror meta's gguf convention
+/// (`llama.block_count`, `llama.attention.head_count`, etc.).
+pub struct LlamaConfig {
+    /// number of transformer layers
+    pub n_layers: usize,
+    /// number of query heads
+    pub n_heads: usize,
+    /// number of key/value heads (gqa: may be < n_heads)
+    pub n_kv_heads: usize,
+    /// hidden dimension per token
+    pub embed_dim: usize,
+    /// dimension per attention head (embed_dim / n_heads, often 128)
+    pub head_dim: usize,
+    /// maximum sequence length the model was trained for
+    pub max_seq_len: usize,
+    /// base frequency for rotary position embeddings
+    /// (10000.0 for llama-2, 500000.0 for llama-3)
+    pub rope_theta: f32,
+    /// epsilon for rms normalization (typically 1e-5)
+    pub norm_eps: f32,
+    /// token vocabulary size
+    pub vocab_size: usize,
+}
+
+impl LlamaConfig {
+    /// read llama config from gguf metadata.
+    ///
+    /// ## todo
+    /// map these gguf metadata keys:
+    ///   `llama.block_count`              → n_layers
+    ///   `llama.attention.head_count`     → n_heads
+    ///   `llama.attention.head_count_kv`  → n_kv_heads
+    ///   `llama.rope.freq_base`           → rope_theta (default 10000.0)
+    ///   `llama.context_length`           → max_seq_len
+    ///   `general.architecture`           → "llama" sanity check
+    ///
+    /// fall back to sensible defaults when metadata is missing
+    /// (e.g. n_kv_heads defaults to n_heads for non-gqa models).
+    ///
+    /// reference: llama.cpp reads the same keys in `llama-arch.cpp`.
+    pub fn from_gguf_metadata(metadata: &crate::loader::GgufLoader) -> Self {
+        let _ = metadata;
+        todo!("LlamaConfig::from_gguf_metadata: read llama.* metadata keys")
+    }
+}
+
+/// llama's swiglu feed-forward network.
+///
+/// three linear projections (no bias):
+///   `silu(gate_proj(x)) * up_proj(x) → down_proj`
+///
+/// this replaces gpt-2's `Mlp` (which uses `c_fc` → gelu → `c_proj`).
+/// gguf tensor names: `blk.{i}.ffn_gate.weight`, `blk.{i}.ffn_up.weight`,
+/// `blk.{i}.ffn_down.weight`.
+///
+/// reference: llama paper (touvron et al. 2023) §3.3, the PaLM paper's
+/// swiglu variant (shazeer 2020).
+pub struct LlamaMlp<B: Backend> {
+    /// gate projection (input → 8/3 * input for standard llama)
+    gate_proj: Linear<B>,
+    /// up projection (input → 8/3 * input, multiplied after gate)
+    up_proj: Linear<B>,
+    /// down projection (back to embed_dim)
+    down_proj: Linear<B>,
+}
+
+impl<B: Backend> LlamaMlp<B> {
+    pub fn new(gate_proj: Linear<B>, up_proj: Linear<B>, down_proj: Linear<B>) -> Self {
+        Self {
+            gate_proj,
+            up_proj,
+            down_proj,
+        }
+    }
+}
+
+impl<B: Backend> Module<B> for LlamaMlp<B> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        // swiglu: silu(gate(x)) * up(x), then down-project
+        //
+        // ## todo
+        // 1. gate = self.gate_proj.forward(backend, x)?
+        // 2. gate = backend.silu(&gate)?
+        // 3. up   = self.up_proj.forward(backend, x)?
+        // 4. gated = element-wise multiply: backend.add(?) — need a mul op
+        //    or do it manually via data().
+        //    *actually*: the Backend trait doesn't have a mul() yet.
+        //    options: (a) add mul to the trait, (b) do the multiply
+        //    via data()/load_from_cpu like gpt-2's attention does,
+        //    (c) add a higher-level fused swiglu to the backend.
+        //    option (b) matches the gpt-2 pattern and keeps the trait
+        //    surface small. for now this is todo.
+        // 5. out = self.down_proj.forward(backend, &gated)?
+        let _ = (backend, x);
+        todo!("LlamaMlp::forward: implement swiglu")
+    }
+}
+
+/// llama's multi-head self-attention with rotary position embeddings and gqa.
+///
+/// unlike gpt-2's combined qkv projection, llama uses three separate
+/// linear layers (q_proj, k_proj, v_proj) with **no bias terms**.
+/// rotary position embeddings are applied to q and k before attention.
+/// grouped query attention (gqa) repeats k/v heads when `n_kv_heads < n_heads`.
+///
+/// gguf tensor names: `blk.{i}.attn_q.weight`, `blk.{i}.attn_k.weight`,
+/// `blk.{i}.attn_v.weight`, `blk.{i}.attn_output.weight`.
+///
+/// reference material:
+///   • llama paper (touvron et al. 2023)
+///   • gqa paper (ainslie et al. 2023)
+///   • rope paper (su et al. 2021)
+///   • llama.cpp's attention in `llama-arch.cpp` — the gold standard
+///     for a working reference that handles all the edge cases
+///   • huggingface `LlamaAttention` for the pure-python reference
+pub struct LlamaAttention<B: Backend> {
+    /// query projection (no bias)
+    q_proj: Linear<B>,
+    /// key projection (no bias)
+    k_proj: Linear<B>,
+    /// value projection (no bias)
+    v_proj: Linear<B>,
+    /// attention output projection (no bias)
+    o_proj: Linear<B>,
+    /// number of query heads
+    n_heads: usize,
+    /// number of kv heads (< n_heads when using gqa)
+    n_kv_heads: usize,
+    /// dimension per head
+    head_dim: usize,
+    /// rope frequency base
+    rope_theta: f32,
+}
+
+impl<B: Backend> LlamaAttention<B> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        q_proj: Linear<B>,
+        k_proj: Linear<B>,
+        v_proj: Linear<B>,
+        o_proj: Linear<B>,
+        n_heads: usize,
+        n_kv_heads: usize,
+        head_dim: usize,
+        rope_theta: f32,
+    ) -> Self {
+        Self {
+            q_proj,
+            k_proj,
+            v_proj,
+            o_proj,
+            n_heads,
+            n_kv_heads,
+            head_dim,
+            rope_theta,
+        }
+    }
+}
+
+impl<B: Backend> Module<B> for LlamaAttention<B> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        let _ = (backend, x);
+        todo!("LlamaAttention::forward: separate q/k/v proj, rope, gqa, causal attention")
+    }
+}
+
+impl<B: Backend> LlamaAttention<B> {
+    /// forward with kv cache.
+    ///
+    /// the cache is allocated for `n_kv_heads` (not `n_heads`).
+    /// during decode, cached k/v values are repeated via gqa to
+    /// match the number of query heads before computing attention.
+    ///
+    /// ## todo
+    /// follow the same prefill→cache→decode pattern as
+    /// `Attention::forward_with_cache`, but:
+    ///   • project q, k, v separately (no bias)
+    ///   • apply rotary embeddings to q and k via `CpuTensor::apply_rotary_emb`
+    ///     (or the backend equivalent once it's plumbed through)
+    ///   • repeat k/v heads for gqa: `n_repeat = n_heads / n_kv_heads`
+    ///     the standard llama.cpp approach repeats interleaved:
+    ///       for h in 0..n_heads:
+    ///         kv_h = h / n_repeat
+    ///         k[.., h, ..] = cached_k[.., kv_h, ..]
+    ///   • scaled dot-product attention with causal mask
+    ///   • project through o_proj
+    pub fn forward_with_cache(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        layer: usize,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let _ = (backend, x, cache, layer, start_pos);
+        todo!("LlamaAttention::forward_with_cache: rope + gqa + causal + cache append")
+    }
+}
+
+/// a single llama decoder block.
+///
+/// ```text
+/// x → rms_norm → self_attention → residual add
+///   → rms_norm → swiglu_mlp → residual add
+/// ```
+///
+/// note the order: pre-norm (rms), then attention/mlp, then add.
+/// this is the same pre-norm layout as gpt-2, but gpt-2 uses
+/// layer norm (mean+var, bias) while llama uses rms norm
+/// (no mean, no bias).
+///
+/// gguf tensor names:
+///   `blk.{i}.attn_norm.weight` → rms_norm weight for attention
+///   `blk.{i}.ffn_norm.weight`  → rms_norm weight for mlp
+///   (no bias tensors — rms norm has no bias parameter)
+pub struct LlamaBlock<B: Backend> {
+    /// pre-attention rms normalization weight
+    input_layernorm: B::Tensor,
+    /// multi-head self-attention
+    self_attn: LlamaAttention<B>,
+    /// pre-mlp rms normalization weight
+    post_attention_layernorm: B::Tensor,
+    /// swiglu feed-forward network
+    mlp: LlamaMlp<B>,
+}
+
+impl<B: Backend> LlamaBlock<B> {
+    pub fn new(
+        input_layernorm: B::Tensor,
+        self_attn: LlamaAttention<B>,
+        post_attention_layernorm: B::Tensor,
+        mlp: LlamaMlp<B>,
+    ) -> Self {
+        Self {
+            input_layernorm,
+            self_attn,
+            post_attention_layernorm,
+            mlp,
+        }
+    }
+}
+
+impl<B: Backend> LlamaBlock<B> {
+    pub fn forward_with_cache(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        layer: usize,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let _ = (backend, x, cache, layer, start_pos);
+        todo!("LlamaBlock::forward_with_cache: rms_norm → attn (cached) → add → rms_norm → mlp → add")
+    }
+}
+
+impl<B: Backend> Module<B> for LlamaBlock<B> {
+    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        let _ = (backend, x);
+        todo!("LlamaBlock::forward: rms_norm → attn → add → rms_norm → mlp → add")
+    }
+}
+
+/// the full llama transformer model.
+///
+/// fields match the gguf tensor names in comments:
+///   `token_embd.weight`      → embed_tokens
+///   `blk.{i}.*`              → blocks
+///   `output_norm.weight`     → norm  (rms, no bias)
+///   `output.weight`          → head  (linear, no bias)
+///
+/// embedding lookup replaces gpt-2's `wte + wpe` with a single
+/// token embedding (no learned position embeddings — rope handles
+/// position). the `from_loader` builder reads llama-specific gguf
+/// metadata keys.
+pub struct Llama<B: Backend> {
+    /// token embedding table, shape [vocab_size, embed_dim]
+    pub embed_tokens: B::Tensor,
+    /// transformer decoder blocks
+    pub blocks: Vec<LlamaBlock<B>>,
+    /// final rms normalization weight
+    pub norm: B::Tensor,
+    /// lm head: projects hidden states to vocab logits (no bias)
+    pub head: Linear<B>,
+    /// model configuration
+    pub config: LlamaConfig,
+}
+
+impl Llama<CpuBackend> {
+    /// build a llama model from a gguf loader.
+    ///
+    /// reads metadata keys under the `llama.*` namespace (as written
+    /// by llama.cpp's `llama-arch.cpp`) and maps gguf tensor names
+    /// from the llama naming convention.
+    ///
+    /// expected gguf tensor names per layer:
+    ///   `blk.{i}.attn_q.weight`       → q_proj
+    ///   `blk.{i}.attn_k.weight`       → k_proj
+    ///   `blk.{i}.attn_v.weight`       → v_proj
+    ///   `blk.{i}.attn_output.weight`  → o_proj
+    ///   `blk.{i}.ffn_gate.weight`     → gate_proj
+    ///   `blk.{i}.ffn_up.weight`       → up_proj
+    ///   `blk.{i}.ffn_down.weight`     → down_proj
+    ///   `blk.{i}.attn_norm.weight`    → input_layernorm (rms, no bias)
+    ///   `blk.{i}.ffn_norm.weight`     → post_attention_layernorm (rms, no bias)
+    ///
+    /// global tensors:
+    ///   `token_embd.weight`           → embed_tokens
+    ///   `output_norm.weight`          → final rms norm (no bias)
+    ///   `output.weight`               → lm_head (linear, no bias)
+    ///
+    /// design note: quantized llama models from llama.cpp use the same
+    /// column-major storage as quantized gpt-2 models. as with `Gpt2::from_loader`,
+    /// quantized linear weights need `.transpose()` after loading.
+    /// f32 weights should not be transposed (the loader leaves them
+    /// in natural row-major order).
+    ///
+    /// ## todo
+    ///   • read config via `LlamaConfig::from_gguf_metadata`
+    ///   • allocate kv cache sizes based on n_kv_heads instead of n_heads
+    ///   • precompute rope frequency tables
+    ///   • build all layers in a loop
+    ///   • test with an actual llama gguf file from llama.cpp
+    pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
+        let _ = loader;
+        todo!("Llama::from_loader: read metadata, build blocks, return model")
+    }
+}
+
+impl<B: Backend> Llama<B> {
+    /// create a kv cache sized for this model's parameters.
+    ///
+    /// important difference from gpt-2: the cache allocates for
+    /// `n_kv_heads` kv heads, not `n_heads` query heads.
+    /// gqa repeats k/v during attention rather than storing duplicates.
+    pub fn create_cache(&self, _backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
+        let _ = max_seq_len;
+        todo!("Llama::create_cache: allocate cache for n_kv_heads * max_seq_len * head_dim")
+    }
+
+    /// forward pass with incremental kv caching.
+    ///
+    /// mirrors `Gpt2::forward_with_cache` but:
+    ///   • uses `LlamaBlock::forward_with_cache` which passes start_pos for rope
+    ///   • normalizes with rms norm (via `backend.rms_norm`)
+    ///   • no position embedding lookup (rope is in the attention layer)
+    pub fn forward_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let _ = (backend, token_ids, cache, start_pos);
+        todo!("Llama::forward_with_cache: embed → blocks → norm → head")
+    }
+
+    /// forward pass without caching (full sequence).
+    pub fn forward(&self, backend: &B, token_ids: &[u32]) -> Result<B::Tensor, B::Error> {
+        let _ = (backend, token_ids);
+        todo!("Llama::forward: embed → blocks → norm → head")
+    }
+}
