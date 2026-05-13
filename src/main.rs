@@ -44,6 +44,10 @@ struct Args {
     #[arg(short, long)]
     interactive: bool,
 
+    /// model architecture: gpt2 or llama (llama dispatches to `Llama::from_loader`)
+    #[arg(long, default_value = "gpt2")]
+    arch: String,
+
     /// run a curated demo that showcases the project with deterministic output and timing
     #[arg(long, conflicts_with = "interactive")]
     demo: bool,
@@ -64,6 +68,25 @@ fn main() -> anyhow::Result<()> {
     // demo mode: suppress log noise for clean recordable output
     if args.demo {
         log::set_max_level(log::LevelFilter::Off);
+    }
+
+    // dispatch to the selected architecture.
+    // when `--arch llama` is requested, this early-exits until
+    // `Llama::from_loader` is implemented (see LLAMA.md for the full plan).
+    //
+    // future pattern (once both architectures exist):
+    //
+    //   let model = match args.arch.as_str() {
+    //       "gpt2"  => Gpt2::from_loader(loader)?,
+    //       "llama" => Llama::from_loader(loader)?,
+    //       _       => anyhow::bail!("unknown architecture: {}", args.arch),
+    //   };
+    //
+    // because Gpt2 and Llama are separate concrete types, the caller
+    // (generate, demo_mode, interactive_mode) would need to be generic
+    // over the model or accept a trait object. see LLAMA.md §main.rs for options.
+    if args.arch == "llama" {
+        todo!("Llama::from_loader — dispatch to `Llama::from_loader(loader)` when implemented")
     }
 
     let loader = load_gguf(&args.model)?;
