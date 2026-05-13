@@ -274,12 +274,69 @@ impl CpuTensor {
     }
 
     /// sigmoid linear unit: `x * sigmoid(x)` = `x / (1 + exp(-x))`.
-    /// lLaMA-family mlp uses this in the swiGLU gate path.
+    /// llama-family mlp uses this in the swiGLU gate path.
     #[must_use]
     #[inline]
     pub fn silu(&self) -> Self {
         let data: Vec<f32> = self.data.iter().map(|&x| x / (1.0 + (-x).exp())).collect();
         Self::from_data(self.shape.clone(), data)
+    }
+
+    // ── rotary position embeddings (rope) ──────────────────────
+    // llama models encode position by rotating q/k vectors in 2d
+    // subspaces of the head dimension. the rotation angle depends
+    // on the absolute position and a per-dimension frequency.
+    //
+    // reference material:
+    //   • the original rope paper (su et al. 2021)
+    //   • llama.cpp's `llama_rope` in `llama-arch.cpp`
+    //     and `ggml_rope_ext_inplace`
+    //   • huggingface transformers `LlamaRotaryEmbedding` class
+    //
+    // the typical approach is two functions:
+    //
+    //   compute_rope_freqs(max_seq_len, head_dim, theta_base)
+    //     → cos_table: [max_seq_len, head_dim]
+    //     → sin_table: [max_seq_len, head_dim]
+    //
+    //   apply_rotary_emb(q_or_k: [batch, seq_len, head_dim],
+    //                    cos_table, sin_table, start_pos)
+    //     → rotated tensor, same shape
+    //
+    // frequencies follow a geometric series:
+    //   freq[i] = theta_base^(-i * 2 / head_dim)
+    //   for each position p and pair (d, d+1):
+    //     cos = cos(p * freq[d])
+    //     sin = sin(p * freq[d])
+    //
+    // llama-2 uses theta_base = 10000.0; llama-3 uses 500000.0.
+    // the sequence of 2d rotations halves the number of actual
+    // frequencies computed (head_dim / 2 pairs).
+    //
+    // precomputing all freqs up to max_seq_len is the standard
+    // practice; calling this once at load time and reusing across
+    // all forward passes saves recomputation on every decode step.
+
+    /// apply rotary position embeddings to a q or k tensor.
+    ///
+    /// rotates each pair of values in the last dimension by an angle
+    /// determined by the position index and a per-dimension frequency.
+    /// the rotation is applied in-place on a copy and the new tensor
+    /// is returned.
+    ///
+    /// input expectations:
+    ///   `x` — a 3d `[batch, seq_len, head_dim]` or a 2d `[seq_len, head_dim]`
+    ///   `cos` — precomputed cos table, `[max_seq_len, head_dim]`
+    ///   `sin` — precomputed sin table, `[max_seq_len, head_dim]`
+    ///   `start_pos` — absolute position offset for the first element of `x`
+    ///
+    /// ## todo
+    /// implement the half-pair rotation described above.
+    /// the cos/sin lookup for position `p` is `cos[start_pos + p]`.
+    #[must_use]
+    pub fn apply_rotary_emb(&self, cos: &Self, sin: &Self, start_pos: usize) -> Self {
+        let _ = (cos, sin, start_pos);
+        todo!("apply_rotary_emb: implement 2d-subspace rotation of q/k")
     }
 
     /// layer normalization over the last dimension of a 2d `[batch, features]`
