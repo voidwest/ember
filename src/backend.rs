@@ -145,12 +145,7 @@ impl Backend for CpuBackend {
         Ok(x.add_broadcast(bias))
     }
 
-    fn rms_norm(
-        &self,
-        x: &CpuTensor,
-        weight: &CpuTensor,
-        eps: f32,
-    ) -> Result<CpuTensor, CpuError> {
+    fn rms_norm(&self, x: &CpuTensor, weight: &CpuTensor, eps: f32) -> Result<CpuTensor, CpuError> {
         Ok(x.rms_norm(weight, eps))
     }
 
