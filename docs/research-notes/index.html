@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>wip — voidwest</title>
+        <style>
+            :root {
+                --bg: #0d1117;
+                --surface: #161b22;
+                --border: #30363d;
+                --text: #c9d1d9;
+                --text-dim: #8b949e;
+                --accent: #f78166;
+                --accent2: #d2a8ff;
+                --green: #7ee787;
+                --blue: #79c0ff;
+            }
+
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+
+            body {
+                font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+                background: var(--bg);
+                color: var(--text);
+                line-height: 1.7;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 2rem 1rem 4rem;
+            }
+
+            a { color: var(--blue); text-decoration: none; }
+            a:hover { text-decoration: underline; }
+
+            .wip-box {
+                text-align: center;
+                padding: 4rem 2rem;
+                margin-top: 4rem;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+            }
+
+            .wip-box .icon {
+                font-size: 2.5rem;
+                margin-bottom: 0.8rem;
+            }
+
+            .wip-box .label {
+                font-size: 1.4rem;
+                font-weight: 600;
+                color: var(--text);
+            }
+
+            .wip-box .note {
+                font-size: 0.85rem;
+                color: var(--text-dim);
+                margin-top: 0.6rem;
+            }
+
+            .wip-box .back {
+                display: inline-block;
+                margin-top: 1.8rem;
+                font-size: 0.82rem;
+                color: var(--blue);
+                background: var(--bg);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                padding: 0.35em 0.8em;
+                text-decoration: none;
+            }
+
+            .wip-box .back:hover {
+                border-color: var(--accent);
+                color: var(--accent);
+            }
+
+            @media (max-width: 600px) {
+                body { padding: 1.2rem 0.9rem 3rem; font-size: 0.9rem; }
+                .wip-box { padding: 2.5rem 1rem; margin-top: 2rem; }
+                .wip-box .icon { font-size: 2rem; }
+                .wip-box .label { font-size: 1.1rem; }
+            }
+        </style>
+    </head>
+    <body>
+
+        <div class="wip-box">
+            <div class="icon">&#x1F6A7;</div>
+            <div class="label">work in progress</div>
+            <div class="note">
+                nothing here yet &mdash; I&rsquo;ll fill this in as notes accumulate.
+            </div>
+            <a class="back" href="/">&larr; back</a>
+        </div>
+
+    </body>
+</html>
