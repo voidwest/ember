@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>wip — voidwest</title>
+        <title>morphemes without borders — research notes</title>
         <style>
             :root {
                 --bg: #0d1117;
@@ -15,6 +15,8 @@
                 --accent2: #d2a8ff;
                 --green: #7ee787;
                 --blue: #79c0ff;
+                --red: #ff7b72;
+                --yellow: #d29922;
             }
 
             * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -32,67 +34,228 @@
             a { color: var(--blue); text-decoration: none; }
             a:hover { text-decoration: underline; }
 
-            .wip-box {
-                text-align: center;
-                padding: 4rem 2rem;
-                margin-top: 4rem;
+            code {
                 background: var(--surface);
                 border: 1px solid var(--border);
-                border-radius: 6px;
-            }
-
-            .wip-box .icon {
-                font-size: 2.5rem;
-                margin-bottom: 0.8rem;
-            }
-
-            .wip-box .label {
-                font-size: 1.4rem;
-                font-weight: 600;
-                color: var(--text);
-            }
-
-            .wip-box .note {
-                font-size: 0.85rem;
-                color: var(--text-dim);
-                margin-top: 0.6rem;
-            }
-
-            .wip-box .back {
-                display: inline-block;
-                margin-top: 1.8rem;
-                font-size: 0.82rem;
-                color: var(--blue);
-                background: var(--bg);
-                border: 1px solid var(--border);
                 border-radius: 4px;
-                padding: 0.35em 0.8em;
-                text-decoration: none;
-            }
-
-            .wip-box .back:hover {
-                border-color: var(--accent);
+                padding: 0.12em 0.3em;
+                font-size: 0.87em;
                 color: var(--accent);
             }
 
+            .back { font-size: 0.82rem; margin-bottom: 2rem; }
+            .back a { color: var(--text-dim); }
+
+            h1 {
+                font-size: 1.3rem;
+                color: var(--accent);
+                margin: 1.5rem 0 1rem;
+                padding-bottom: 0.35rem;
+                border-bottom: 1px solid var(--border);
+            }
+            h2 {
+                font-size: 1.1rem;
+                color: var(--accent);
+                margin: 2.2rem 0 0.7rem;
+                padding-bottom: 0.3rem;
+                border-bottom: 1px solid var(--border);
+            }
+            h3 {
+                font-size: 0.95rem;
+                color: var(--accent2);
+                margin: 1.4rem 0 0.4rem;
+            }
+
+            p { margin: 0.7rem 0; }
+
+            ul, ol {
+                padding-left: 1.4rem;
+                margin: 0.5rem 0 0.8rem;
+            }
+            li { margin-bottom: 0.2rem; }
+
+            .meta {
+                font-size: 0.8rem;
+                color: var(--text-dim);
+                margin-bottom: 1.2rem;
+                line-height: 1.5;
+            }
+
+            .paper-title {
+                font-size: 1rem;
+                color: var(--accent);
+                font-weight: 600;
+                margin-bottom: 0.2rem;
+            }
+
+            .tag {
+                display: inline-block;
+                font-size: 0.72rem;
+                padding: 0.1em 0.5em;
+                margin: 0.2em 0.2em 0 0;
+                border-radius: 3px;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                color: var(--text-dim);
+            }
+            .tag.key { border-color: var(--accent); color: var(--accent); }
+            .tag.model { border-color: var(--blue); color: var(--blue); }
+            .tag.metric { border-color: var(--green); color: var(--green); }
+
+            .callout {
+                background: var(--surface);
+                border-left: 3px solid var(--accent);
+                border-radius: 0 4px 4px 0;
+                padding: 0.9rem 1.1rem;
+                margin: 1rem 0;
+                font-size: 0.86rem;
+            }
+            .callout .label {
+                color: var(--accent);
+                font-weight: 600;
+                margin-bottom: 0.25rem;
+            }
+
+            hr {
+                border: none;
+                border-top: 1px solid var(--border);
+                margin: 1.5rem 0;
+            }
+
+            footer {
+                margin-top: 3.5rem;
+                padding-top: 1.8rem;
+                border-top: 1px solid var(--border);
+                text-align: center;
+                color: var(--text-dim);
+                font-size: 0.76rem;
+            }
+
             @media (max-width: 600px) {
-                body { padding: 1.2rem 0.9rem 3rem; font-size: 0.9rem; }
-                .wip-box { padding: 2.5rem 1rem; margin-top: 2rem; }
-                .wip-box .icon { font-size: 2rem; }
-                .wip-box .label { font-size: 1.1rem; }
+                body { padding: 1.2rem 0.9rem 3rem; font-size: 0.88rem; line-height: 1.6; }
+                h1 { font-size: 1.1rem; }
+                h2 { font-size: 1rem; margin: 1.6rem 0 0.5rem; }
+                h3 { font-size: 0.87rem; }
+                footer { margin-top: 2rem; padding-top: 1.2rem; font-size: 0.7rem; }
             }
         </style>
     </head>
     <body>
 
-        <div class="wip-box">
-            <div class="icon">&#x1F6A7;</div>
-            <div class="label">work in progress</div>
-            <div class="note">
-                nothing here yet &mdash; I&rsquo;ll fill this in as notes accumulate.
-            </div>
-            <a class="back" href="/">&larr; back</a>
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
         </div>
+
+        <h1>morphemes without borders</h1>
+
+        <div class="meta">
+            <div class="paper-title">Morphemes Without Borders: Evaluating Root–Pattern Morphology in Arabic Tokenizers and LLMs</div>
+            Alakeel, Qwaider, Aldarmaki, Alqahtani — LREC 2026<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">tokenization</span>
+            <span class="tag key">LLM evaluation</span>
+            <span class="tag">arXiv:2603.15773</span>
+        </div>
+
+        <h2>the core claim</h2>
+        <p>token-morpheme alignment is neither necessary nor sufficient for productive morphological generation in LLMs. a tokenizer that cleanly segments Arabic morphemes doesn't guarantee the model can generate correct root-pattern forms — and one that aggressively over-segments (GPT-4) doesn't prevent it.</p>
+
+        <h2>why Arabic morphology matters here</h2>
+        <p>Arabic uses a <strong>root-and-pattern</strong> (non-concatenative) system where consonantal roots combine with templatic vowel patterns to form words. example: the root <em>ktb</em> (write) + pattern <em>maf&#x16B;l</em> produces <em>makt&#x16B;b</em> (written). the root and its pattern interleave — they aren't concatenated like prefix+stem+suffix in English. this makes Arabic an ideal stress test for subword tokenizers (BPE, Unigram, WordPiece) that were designed for concatenative morphology.</p>
+
+        <h2>experimental design</h2>
+
+        <h3>part 1: tokenizer morphological alignment</h3>
+        <p>measured how well each tokenizer's segments align with gold-standard morpheme boundaries from CAMEL and Farasa analyzers, on MSA (ATB3) and dialectal (BOLT) Arabic. metrics:</p>
+        <ul>
+            <li><strong>fertility</strong> — tokens per word</li>
+            <li><strong>morpheme F<sub>1</sub></strong> — exact morpheme match</li>
+            <li><strong>boundary F<sub>1</sub></strong> — boundary detection precision/recall</li>
+            <li><strong>MCR</strong> — morpheme coverage rate (avoids internal splits)</li>
+        </ul>
+
+        <h3>part 2: morphological generation</h3>
+        <p>three probing tasks using both real roots and nonce (invented) roots:</p>
+        <ul>
+            <li><strong>root-pattern real</strong> — apply a pattern to a real triliteral root</li>
+            <li><strong>root-pattern nonce</strong> — same task with made-up roots (tests generalization, not memorization)</li>
+            <li><strong>affix-build</strong> — concatenative affix ordering on a base word</li>
+        </ul>
+
+        <h3>models evaluated</h3>
+        <p>ALLAM, FANAR, GPT-4, GPT-4o, LLaMA-3, Qwen-3, Cohere. FANAR uses MorphBPE (morphologically-informed tokenization); the rest use standard BPE/Unigram/WordPiece. zero-shot and one-shot prompts, tested in both English and Arabic.</p>
+
+        <hr>
+
+        <h2>key findings</h2>
+
+        <div class="callout">
+            <div class="label">finding 1</div>
+            <p><strong>no correlation between tokenizer alignment and generation performance.</strong> GPT-4o achieved the highest scores across all tasks (97% nonce accuracy) despite having one of the <em>lowest</em> morpheme alignment scores (17% boundary precision). ALLAM had the highest MCR (83-86%) but dropped to 20% on nonce words.</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">finding 2</div>
+            <p><strong>Arabic-centric models fail on nonce words.</strong> ALLAM and FANAR, despite being Arabic-centric, show steep accuracy drops on nonce roots — suggesting reliance on memorized lexemes rather than productive rule application. FANAR's morphological tokenization didn't help it generalize to unseen forms.</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">finding 3</div>
+            <p><strong>English prompts outperform Arabic prompts.</strong> most models performed substantially better with English instructions than Arabic, likely reflecting the dominance of English in instruction-tuning data and the greater morphological complexity of Arabic.</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">finding 4</div>
+            <p><strong>one-shot prompting helps — but only for weaker models.</strong> GPT-4 and GPT-4o showed minimal differences between zero-shot and one-shot. weaker models (LLaMA-3, Qwen-3, Cohere) improved noticeably with an example, suggesting they need in-context scaffolding to infer the morphological transformation.</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">finding 5</div>
+            <p><strong>five common error modes.</strong> qualitative analysis revealed: pattern misapplication (root correct, template wrong), root deformation (consonants altered), real-word substitution (outputting a valid word instead of applying the pattern), incorrect affix ordering, and partial truncation.</p>
+        </div>
+
+        <hr>
+
+        <h2>what this means for Arabic NLP research</h2>
+
+        <h3>1. morphology-aware tokenizers may not be worth the complexity</h3>
+        <p>developing language-specific tokenizers (MorphBPE, Splinter, etc.) is expensive. the results suggest that large-scale pretraining and instruction tuning can compensate for — or even outperform — linguistically-informed tokenization. GPT-4o's tokenizer aggressively over-segments Arabic (fertility &gt; 3, boundary precision 17%) yet generates correct forms 97% of the time on nonce patterns.</p>
+
+        <h3>2. the bottleneck has shifted from tokenization to instruction-following</h3>
+        <p>the paper argues that compositional reasoning + instruction-following capacity serves as a functional substitute for explicit morphological parsing. models that follow instructions well apply morphological rules consistently; models that don't, fail regardless of tokenizer quality. this suggests future Arabic NLP work should prioritize instruction-tuning quality and compositional reasoning over tokenizer engineering.</p>
+
+        <h3>3. Arabic-centric models have room to grow</h3>
+        <p>ALLAM and FANAR — the two Arabic-centric models — underperformed GPT-4 and GPT-4o on every task, especially nonce generalization. this is surprising given their larger Arabic training data share. it suggests that scale, architecture quality, and tuning methodology outweigh language-specific data advantages in current LLM paradigms.</p>
+
+        <h3>4. evaluation methodology matters: real words alone hide failure modes</h3>
+        <p>ALLAM scored 67% on real roots but only 20% on nonce roots — a 47-point gap. the nonce condition is essential for distinguishing memorization from genuine morphological productivity. any Arabic NLP benchmark that doesn't include nonce probes is giving an incomplete picture of model capability.</p>
+
+        <h3>5. future directions</h3>
+        <ul>
+            <li><strong>tokenization-agnostic morphology learning</strong> — teach LLMs to handle morphology through data and tuning, not through custom tokenizers</li>
+            <li><strong>adaptive/hybrid tokenization</strong> — fine-grained character-level processing only when morphologically necessary</li>
+            <li><strong>controlled experiments</strong> — isolate the causal effect of tokenizer design from architecture, data, and tuning confounders</li>
+        </ul>
+
+        <hr>
+
+        <h2>limitations worth noting</h2>
+        <ul>
+            <li>the generation task conflates morphological knowledge with instruction-following ability — models that can't follow format instructions score lower regardless of morphological competence</li>
+            <li>correlation analysis can't establish causality: different architectures, training data, and optimization schemes are confounded</li>
+            <li>only 7 models, 13 derivational patterns — broader sampling would strengthen the conclusions</li>
+            <li>dialectal Arabic (BOLT) tested for tokenizer alignment but not for generation</li>
+        </ul>
+
+        <footer>
+            <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/YaraAlakeel/morphems_without_borders">dataset & code</a>
+            &nbsp;·&nbsp; read 2026-05-15
+        </footer>
 
     </body>
 </html>
