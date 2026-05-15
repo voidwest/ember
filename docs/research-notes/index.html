@@ -257,5 +257,66 @@
             &nbsp;·&nbsp; read 2026-05-15
         </footer>
 
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Arabic Tokenization System (Attia)          -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <h1>arabic tokenization system</h1>
+
+        <div class="meta">
+            <div class="paper-title">Arabic Tokenization System</div>
+            Mohammed A. Attia · University of Manchester, ~2007<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">tokenization</span>
+            <span class="tag key">finite state</span>
+            <span class="tag key">morphology</span>
+        </div>
+
+        <h2>the problem</h2>
+        <p>Arabic tokenization isn't whitespace splitting. a single word can pack up to four independent tokens—proclitics, stem, enclitics—concatenated without demarcation. deciding where morpheme boundaries fall requires morphological knowledge, and existing tokenizers treated it as an afterthought inside a larger pipeline. this paper builds a standalone rule-based tokenizer using finite state technology, handling the full pipeline: normalization, clitic boundary detection, multiword expression identification, and ambiguity filtering.</p>
+
+        <h2>three models, increasing linguistic depth</h2>
+
+        <h3>model 1: tokenization within the morphological transducer</h3>
+        <p>clitic boundaries are baked directly into the morphological analyzer's lexicon. when the analyzer finds a word, it returns tokenized output. simple to implement, but violates modularity—the morphological analyzer must be rewritten from scratch for every new tokenization scheme, and it can't handle words outside its lexicon.</p>
+
+        <h3>model 2: tokenization guesser (recommended)</h3>
+        <p>a separate clitics guesser (built on the standard finite-state guesser approach from Beesley &amp; Karttunen 2003) runs before the morphological analyzer. it assumes stems are arbitrary sequences of Arabic letters and enumerates all possible prefix/suffix clitic combinations. a separate small-scale lexc transducer handles the detached clitic forms. this is <strong>robust</strong>—works on any word regardless of dictionary coverage—and <strong>modular</strong>—tokenization and morphology are independent components. the tradeoff: the guesser is non-deterministic, producing combinatorial ambiguity (a three-word sentence can yield 8 tokenization paths).</p>
+
+        <h3>model 3: tokenization dependent on the morphological analyzer</h3>
+        <p>the stem is constrained to actual entries in the morphological analyzer's lexicon rather than guessed. reduces ambiguity but loses robustness—unknown words can't be tokenized.</p>
+
+        <h2>key engineering details</h2>
+
+        <h3>preprocessing: whitespace normalization</h3>
+        <p>Arabic text uses multiple whitespace characters (spaces, newlines, Arabic-specific space variants) inconsistently, especially around punctuation and clitics. a finite-state normalizer collapses whitespace to a canonical form before tokenization runs.</p>
+
+        <h3>clitic demarcation with the cashida</h3>
+        <p>the Arabic elongation line (<em>cashida</em>, <code>ـ</code>) is repurposed as a disambiguation marker. when the tokenizer splits enclitics, it inserts a cashida between the stem and the clitic. this resolves ambiguity between proclitics and homographic enclitics, and between morphologically-attached clitics and free-standing homographs. example: <em>kitabuhum</em> (their book) becomes <em>kitab@ـhum</em>, where the cashida signals the pronoun is attached, not a separate word. clever use of existing typographic infrastructure.</p>
+
+        <h3>post-processing: token filter</h3>
+        <p>a finite-state transducer composed on top of the core tokenizer marks undesired tokenizations with a <code>+undesired</code> tag. it imports lists from the MWE transducer (curfew → forbidden + walking) and a hand-curated set of improbable splits (e.g., <em>ba'd</em> (after) being split as <em>bi</em> + <em>'add</em>). the filter doesn't query for morpho-syntactic information—it matches surface forms against known undesirable patterns.</p>
+
+        <h3>multiword expressions</h3>
+        <p>MWEs like <em>hazr al-tajawwul</em> (curfew, lit. "forbidding of walking") are handled by keeping internal spaces intact—the tokenizer outputs them as single tokens. a dedicated MWE transducer supplies the list of expressions, and the token filter blocks the compositional analyses that a non-deterministic tokenizer would otherwise produce.</p>
+
+        <div class="callout">
+            <div class="label">key insight</div>
+            <p><strong>tokenization can be modular.</strong> by separating clitic detection (guesser) from morphological analysis (lexicon), the system gains robustness and maintainability. the guesser handles unknown words; the filter cleans up the noise. this is the opposite of "tokenization baked into the model" approaches and prefigures the modular NLP pipeline debates still active today.</p>
+        </div>
+
+        <h2>relevance today</h2>
+
+        <h3>finite-state approaches are alive in constrained settings</h3>
+        <p>neural tokenizers have largely replaced hand-written finite-state systems for Arabic. but the structural problems haven't changed: Arabic's clitic stacking still over-segments BPE tokenizers (GPT-4o's boundary precision was 17%), and the guess-and-filter architecture anticipates modern two-stage pipelines (over-generate + rerank). the cashida trick is still used in Arabic NLP preprocessing pipelines.</p>
+
+        <h3>the modularity lesson</h3>
+        <p>Attia's model 2 separates tokenization from morphology, prioritizing robustness and maintainability over raw accuracy. this tradeoff mirrors the debate between end-to-end neural systems and modular pipelines—do you want a system that handles everything but is opaque, or one that degrades gracefully and exposes debugging hooks?</p>
+
+        <footer>
+            <a href="https://www.mohammed-attia.com/Publications/ArabicTokenizer.pdf">PDF</a>
+            &nbsp;·&nbsp; read 2026-05-16
+        </footer>
+
     </body>
 </html>
