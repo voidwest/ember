@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>morphemes without borders — research notes</title>
+        <title>morphemes without borders · research notes</title>
         <style>
             :root {
                 --bg: #0d1117;
@@ -152,7 +152,7 @@
 
         <div class="meta">
             <div class="paper-title">Morphemes Without Borders: Evaluating Root–Pattern Morphology in Arabic Tokenizers and LLMs</div>
-            Alakeel, Qwaider, Aldarmaki, Alqahtani — LREC 2026<br>
+            Alakeel, Qwaider, Aldarmaki, Alqahtani · LREC 2026<br>
             <span class="tag key">Arabic NLP</span>
             <span class="tag key">morphology</span>
             <span class="tag key">tokenization</span>
@@ -161,28 +161,28 @@
         </div>
 
         <h2>the core claim</h2>
-        <p>token-morpheme alignment doesn't predict whether a model can generate Arabic root-pattern forms. a tokenizer that segments morphemes cleanly doesn't guarantee good generation — and one that over-segments badly (GPT-4) doesn't prevent it.</p>
+        <p>token-morpheme alignment doesn't predict whether a model can generate Arabic root-pattern forms. a tokenizer that segments morphemes cleanly doesn't guarantee good generation, and one that over-segments badly (GPT-4) doesn't prevent it.</p>
 
         <h2>why Arabic morphology is a good test</h2>
-        <p>Arabic uses a <strong>root-and-pattern</strong> (non-concatenative) system. consonantal roots combine with templatic vowel patterns to form words. example: root <em>ktb</em> (write) + pattern <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (written). the root and pattern interleave — they aren't concatenated like prefix+stem+suffix in English. this makes Arabic a stress test for subword tokenizers (BPE, Unigram, WordPiece) built for concatenative morphology.</p>
+        <p>Arabic uses a <strong>root-and-pattern</strong> (non-concatenative) system. consonantal roots combine with templatic vowel patterns to form words. example: root <em>ktb</em> (write) + pattern <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (written). the root and pattern interleave; they aren't concatenated like prefix+stem+suffix in English, which makes Arabic a stress test for subword tokenizers (BPE, Unigram, WordPiece) built for concatenative morphology.</p>
 
         <h2>experimental design</h2>
 
         <h3>part 1: tokenizer morphological alignment</h3>
         <p>measured how well each tokenizer's segments match gold-standard morpheme boundaries from CAMEL and Farasa analyzers, on MSA (ATB3) and dialectal (BOLT) Arabic. metrics:</p>
         <ul>
-            <li><strong>fertility</strong> — tokens per word</li>
-            <li><strong>morpheme F<sub>1</sub></strong> — exact morpheme match</li>
-            <li><strong>boundary F<sub>1</sub></strong> — boundary detection precision/recall</li>
-            <li><strong>MCR</strong> — morpheme coverage rate (avoids internal splits)</li>
+            <li><strong>fertility</strong>: tokens per word</li>
+            <li><strong>morpheme F<sub>1</sub></strong>: exact morpheme match</li>
+            <li><strong>boundary F<sub>1</sub></strong>: boundary detection precision/recall</li>
+            <li><strong>MCR</strong>: morpheme coverage rate (avoids internal splits)</li>
         </ul>
 
         <h3>part 2: morphological generation</h3>
         <p>three probing tasks using real roots and nonce (invented) roots:</p>
         <ul>
-            <li><strong>root-pattern real</strong> — apply a pattern to a real triliteral root</li>
-            <li><strong>root-pattern nonce</strong> — same task with made-up roots (tests generalization, not memorization)</li>
-            <li><strong>affix-build</strong> — concatenative affix ordering on a base word</li>
+            <li><strong>root-pattern real</strong>: apply a pattern to a real triliteral root</li>
+            <li><strong>root-pattern nonce</strong>: same task with made-up roots (tests generalization, not memorization)</li>
+            <li><strong>affix-build</strong>: concatenative affix ordering on a base word</li>
         </ul>
 
         <h3>models evaluated</h3>
@@ -199,7 +199,7 @@
 
         <div class="callout">
             <div class="label">finding 2</div>
-            <p><strong>Arabic-centric models can't handle nonce words.</strong> ALLAM and FANAR drop sharply on nonce roots — memorized lexemes, not productive rules. FANAR's morphological tokenizer didn't help it generalize.</p>
+            <p><strong>Arabic-centric models can't handle nonce words.</strong> ALLAM and FANAR drop sharply on nonce roots. memorized lexemes, not productive rules. FANAR's morphological tokenizer didn't help it generalize.</p>
         </div>
 
         <div class="callout">
@@ -209,7 +209,7 @@
 
         <div class="callout">
             <div class="label">finding 4</div>
-            <p><strong>one-shot prompting helps weak models, not strong ones.</strong> GPT-4 and GPT-4o were flat across zero-shot and one-shot. LLaMA-3, Qwen-3, and Cohere improved with an example — they need in-context scaffolding to figure out the transformation.</p>
+            <p><strong>one-shot prompting helps weak models, not strong ones.</strong> GPT-4 and GPT-4o were flat across zero-shot and one-shot. LLaMA-3, Qwen-3, and Cohere improved with an example. they need in-context scaffolding to figure out the transformation.</p>
         </div>
 
         <div class="callout">
@@ -222,7 +222,7 @@
         <h2>what this means for Arabic NLP research</h2>
 
         <h3>1. morphology-aware tokenizers may not be worth the complexity</h3>
-        <p>language-specific tokenizers (MorphBPE, Splinter, etc.) are expensive to build. large-scale pretraining and instruction tuning seem to compensate — or even outperform them. GPT-4o's tokenizer over-segments Arabic (fertility &gt; 3, boundary precision 17%) yet nails nonce patterns 97% of the time.</p>
+        <p>language-specific tokenizers (MorphBPE, Splinter, etc.) are expensive to build. large-scale pretraining and instruction tuning seem to compensate, or even outperform them. GPT-4o's tokenizer over-segments Arabic (fertility &gt; 3, boundary precision 17%) yet nails nonce patterns 97% of the time.</p>
 
         <h3>2. instruction-following matters more than tokenizer design</h3>
         <p>compositional reasoning + instruction-following replaces explicit morphological parsing. models that follow instructions apply morphological rules consistently. models that can't follow instructions fail regardless of tokenizer quality.</p>
@@ -231,22 +231,22 @@
         <p>ALLAM and FANAR underperformed GPT-4 and GPT-4o on every task despite more Arabic training data. scale and tuning methodology seem to outweigh language-specific data advantages in current LLMs.</p>
 
         <h3>4. real-word-only benchmarks hide failure modes</h3>
-        <p>ALLAM scored 67% on real roots, 20% on nonce — a 47-point gap. nonce probes are the only way to tell memorization from genuine productivity. benchmarks without nonce conditions give an incomplete picture.</p>
+        <p>ALLAM scored 67% on real roots, 20% on nonce. a 47-point gap. nonce probes are the only way to tell memorization from genuine productivity. benchmarks without nonce conditions give an incomplete picture.</p>
 
         <h3>5. future directions</h3>
         <ul>
-            <li><strong>tokenization-agnostic morphology learning</strong> — teach LLMs morphology through data and tuning, not custom tokenizers</li>
-            <li><strong>adaptive/hybrid tokenization</strong> — character-level processing only when morphologically needed</li>
-            <li><strong>controlled experiments</strong> — isolate tokenizer design from architecture, data, and tuning</li>
+            <li><strong>tokenization-agnostic morphology learning</strong>: teach LLMs morphology through data and tuning, not custom tokenizers</li>
+            <li><strong>adaptive/hybrid tokenization</strong>: character-level processing only when morphologically needed</li>
+            <li><strong>controlled experiments</strong>: isolate tokenizer design from architecture, data, and tuning</li>
         </ul>
 
         <hr>
 
         <h2>limitations</h2>
         <ul>
-            <li>generation task conflates morphology with instruction-following — models that can't follow format instructions score lower regardless of morphological competence</li>
+            <li>generation task conflates morphology with instruction-following; models that can't follow format instructions score lower regardless of morphological competence</li>
             <li>correlation can't prove causation: architectures, data, and tuning are confounded</li>
-            <li>only 7 models, 13 patterns — more data would help</li>
+            <li>only 7 models, 13 patterns; more data would help</li>
             <li>dialectal Arabic (BOLT) tested for alignment but not generation</li>
         </ul>
 
