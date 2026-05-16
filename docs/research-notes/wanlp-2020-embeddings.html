@@ -30,13 +30,13 @@
 
         <h2>results</h2>
         <ul>
-            <li><strong>60% smaller vocab</strong> — morphology-aware tokenization collapsed surface forms into their constituent morphemes</li>
-            <li><strong>better OOV handling</strong> — unseen words composed from known morphemes were representable</li>
-            <li><strong>SOTA without retraining</strong> — the modified BERT achieved SOTA on two Arabic datasets despite using a frozen pretrained model</li>
+            <li><strong>60% smaller vocab</strong>, morphology-aware tokenization collapsed surface forms into their constituent morphemes</li>
+            <li><strong>better OOV handling</strong>, unseen words composed from known morphemes were representable</li>
+            <li><strong>SOTA without retraining</strong>, the modified BERT achieved SOTA on two Arabic datasets despite using a frozen pretrained model</li>
         </ul>
 
         <h2>context</h2>
-        <p>this worked because Arabic's morphological system has a finite (and relatively small) set of roots, patterns, and affixes. a morphology-aware tokenizer maps surface forms to these primitives, reducing the effective vocabulary from ~1M surface forms to ~20K morphemes — and since the embedding layer accounts for a large fraction of parameter count in smaller models, shrinking the embedding table while keeping semantic compositionality intact produces gains.</p>
+        <p>this worked because Arabic's morphological system has a finite (and relatively small) set of roots, patterns, and affixes. a morphology-aware tokenizer maps surface forms to these primitives, reducing the effective vocabulary from ~1M surface forms to ~20K morphemes, and since the embedding layer accounts for a large fraction of parameter count in smaller models, shrinking the embedding table while keeping semantic compositionality intact produces gains.</p>
 
         <div class="callout">
             <div class="label">why this matters alongside the 2026 results</div>

@@ -185,7 +185,7 @@ offset math:
             <strong>why this layout.</strong> <code>cache.get(layer)</code> returns
             a contiguous <code>&amp;[f32]</code> slice of all heads and positions
             for that layer. the attention loop indexes into it with fixed-stride
-            math — no pointer chasing, no nested vecs, single allocation. for
+            math, no pointer chasing, no nested vecs, single allocation. for
             gpt-2 small at 2048 context: 12 × 12 × 2048 × 64 × 4 × 2 = ~72 MB.
         </p>
 
@@ -202,7 +202,7 @@ offset math:
         <pre><code>for (layer, block) in self.blocks.iter().enumerate() {
     x = block.forward_with_cache(backend, &amp;x, cache, layer)?;
 }
-// cursor advances here — after all 12 layers have stored.
+// cursor advances here, after all 12 layers have stored.
 for _ in 0..seq_len {
     cache.advance_cursor();
 }</code></pre>

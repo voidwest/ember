@@ -171,9 +171,9 @@
             <code>matmul</code>, <code>add</code>, <code>softmax</code>,
             <code>gelu</code>, <code>layer_norm</code>, <code>index_select</code>,
             <code>slice_cols</code>, <code>load_from_cpu</code>, and shape/data
-            accessors. attention is not yet abstracted through the trait — the
+            accessors. attention is not yet abstracted through the trait, the
             model's attention methods call <code>data()</code> and run scalar cpu
-            loops — but the trait is designed so a <code>fn attention(...)</code>
+            loops, but the trait is designed so a <code>fn attention(...)</code>
             method can be added later.
         </p>
 
@@ -231,12 +231,12 @@
         </p>
         <p>
             the less-discussed edge case: what happens when every logit in a row
-            is <code>-inf</code>? this occurs in the causal attention mask — the
+            is <code>-inf</code>? this occurs in the causal attention mask, the
             first token has no prior tokens to attend to. running
             <code>softmax([-inf, -inf, ...])</code> produces
             <code>(-inf) - (-inf) = NaN</code> before exponentiation. ember
-            detects this with a single branch —
-            <code>if max == f32::NEG_INFINITY { return uniform; }</code> — and
+            detects this with a single branch, 
+            <code>if max == f32::NEG_INFINITY { return uniform; }</code>, and
             returns a uniform distribution, one line that prevents NaN from
             propagating through 12 transformer layers.
         </p>

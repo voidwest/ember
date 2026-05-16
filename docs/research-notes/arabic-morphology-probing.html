@@ -33,7 +33,7 @@
         <!-- ════════════════════════════════════════════════ -->
         <h2>motivation</h2>
 
-        <p>the 2026 paper leaves an open question: morphological competence in LLMs is defined by productive generalization, not tokenizer alignment — but we don't know <em>how</em> the model achieves it. the authors suggest "compositional reasoning + instruction-following" as the mechanism, but that's a behavioral description, not a mechanistic one.</p>
+        <p>the 2026 paper leaves an open question: morphological competence in LLMs is defined by productive generalization, not tokenizer alignment, but we don't know <em>how</em> the model achieves it. the authors suggest "compositional reasoning + instruction-following" as the mechanism, but that's a behavioral description, not a mechanistic one.</p>
 
         <p>three facts make this tractable right now:</p>
 
@@ -63,7 +63,7 @@
 
         <ol>
             <li><strong>run forward pass</strong> through the model with caching disabled (we want all hidden states, not just the final logit)</li>
-            <li><strong>extract hidden states</strong> after each transformer block — specifically after the attention residual add and after the MLP residual add (two snapshots per layer)</li>
+            <li><strong>extract hidden states</strong> after each transformer block, specifically after the attention residual add and after the MLP residual add (two snapshots per layer)</li>
             <li><strong>extract the output embedding</strong> (logits) for the final token position</li>
             <li><strong>record correctness</strong>: does the argmax token match the expected surface form?</li>
         </ol>
@@ -87,7 +87,7 @@
 
         <div class="callout">
             <div class="label">Q4: where does the model "figure it out"?</div>
-            <p>compare the hidden states of correct vs incorrect predictions within the same model. at which layer do the representations for correct and incorrect outputs diverge? this tells us where the computation succeeds or fails — is the failure early (bad encoding of root/pattern) or late (good encoding but bad output projection)?</p>
+            <p>compare the hidden states of correct vs incorrect predictions within the same model. at which layer do the representations for correct and incorrect outputs diverge? this tells us where the computation succeeds or fails, is the failure early (bad encoding of root/pattern) or late (good encoding but bad output projection)?</p>
         </div>
 
         <div class="callout">
@@ -103,8 +103,8 @@
         <p>ember already has everything needed for the base inference. the probing pipeline needs two additions:</p>
 
         <ol>
-            <li><strong>activation capture mode</strong> — a flag or separate function that runs the forward pass but saves the hidden state after each block instead of discarding it. currently <code>Gpt2::forward_with_cache</code> overwrites <code>x</code> at each layer. a variant that pushes <code>x.clone()</code> to a <code>Vec&lt;B::Tensor&gt;</code> before the next block is ~5 lines.</li>
-            <li><strong>probe training harness</strong> — a small Rust module or Python script that takes the saved activations, fits logistic regression probes (via <code>linfa</code> or numpy), and reports accuracy per layer. this doesn't need to be fast — we're running ~200 stimuli, not 200K.</li>
+            <li><strong>activation capture mode</strong>, a flag or separate function that runs the forward pass but saves the hidden state after each block instead of discarding it. currently <code>Gpt2::forward_with_cache</code> overwrites <code>x</code> at each layer. a variant that pushes <code>x.clone()</code> to a <code>Vec&lt;B::Tensor&gt;</code> before the next block is ~5 lines.</li>
+            <li><strong>probe training harness</strong>, a small Rust module or Python script that takes the saved activations, fits logistic regression probes (via <code>linfa</code> or numpy), and reports accuracy per layer. this doesn't need to be fast, we're running ~200 stimuli, not 200K.</li>
         </ol>
 
         <h3>models to test</h3>
@@ -113,13 +113,13 @@
             <tr><th>model</th><th>params</th><th>why</th></tr>
             <tr><td>GPT-2 small</td><td>124M</td><td>baseline; english-centric, bad Arabic tokenizer. tested in 2026 paper indirectly</td></tr>
             <tr><td>LLaMA 3 1B / 3B</td><td>1B / 3B</td><td>middle of the pack in 2026 paper. likely has some Arabic in pretraining</td></tr>
-            <tr><td>AraBERT / CAMeLBERT</td><td>~110M</td><td>Arabic-specific BERT. good tokenizer alignment. should behave like ALLAM — good on real, bad on nonce?</td></tr>
+            <tr><td>AraBERT / CAMeLBERT</td><td>~110M</td><td>Arabic-specific BERT. good tokenizer alignment. should behave like ALLAM, good on real, bad on nonce?</td></tr>
             <tr><td>LLaMA 3 8B</td><td>8B</td><td>largest feasible on consumer CPU. where does the inflection happen?</td></tr>
         </table>
 
         <h3>compute requirements</h3>
 
-        <p>this is CPU-friendly by design. a single forward pass on GPT-2 (124M params) takes ~50ms on modern x86. 200 stimuli × 12 layers × 2 snapshots = 4,800 activation vectors per model. probe training on 4,800 samples is seconds in numpy. the whole pipeline for GPT-2 runs in under a minute. LLaMA 3 8B with Q4_K quantization fits in ~5 GB RAM — feasible on a laptop.</p>
+        <p>this is CPU-friendly by design. a single forward pass on GPT-2 (124M params) takes ~50ms on modern x86. 200 stimuli × 12 layers × 2 snapshots = 4,800 activation vectors per model. probe training on 4,800 samples is seconds in numpy. the whole pipeline for GPT-2 runs in under a minute. LLaMA 3 8B with Q4_K quantization fits in ~5 GB RAM, feasible on a laptop.</p>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2>expected results & interpretation</h2>
@@ -130,11 +130,11 @@
 
         <h3>if probes are near chance everywhere</h3>
 
-        <p>this means morphological information isn't linearly decodable from individual layer activations — it may be distributed across layers, or non-linear. follow-up: non-linear probes (MLP), or inter-layer representational similarity analysis (CKA).</p>
+        <p>this means morphological information isn't linearly decodable from individual layer activations, it may be distributed across layers, or non-linear. follow-up: non-linear probes (MLP), or inter-layer representational similarity analysis (CKA).</p>
 
         <h3>if root and pattern are in the same subspace</h3>
 
-        <p>the model might be encoding the <em>combined</em> root+pattern as a single fused representation rather than disentangling them. this would mean the model learned a lookup table rather than a compositional rule — which is consistent with ALLAM's behavior (good on real roots, collapses on nonce).</p>
+        <p>the model might be encoding the <em>combined</em> root+pattern as a single fused representation rather than disentangling them. this would mean the model learned a lookup table rather than a compositional rule, which is consistent with ALLAM's behavior (good on real roots, collapses on nonce).</p>
 
         <h3>if the inflection point is between 1B and 3B</h3>
 
@@ -144,23 +144,23 @@
         <h2>related work to cite</h2>
 
         <ul>
-            <li>alakeel et al. (2026) — the paper that frames the question</li>
-            <li>alkaoud & syed (2020) — showing morphological injection helps at small scale</li>
-            <li>conneau et al. (2018) — "what you can cram into a single vector": probing sentence representations</li>
-            <li>hewitt & manning (2019) — structural probe for syntax trees in BERT</li>
-            <li>tenney et al. (2019) — BERT rediscovers the classical NLP pipeline (layer-wise probing)</li>
-            <li>alain & bengio (2017) — linear classifier probes for understanding intermediate layers</li>
+            <li>alakeel et al. (2026), the paper that frames the question</li>
+            <li>alkaoud & syed (2020), showing morphological injection helps at small scale</li>
+            <li>conneau et al. (2018), "what you can cram into a single vector": probing sentence representations</li>
+            <li>hewitt & manning (2019), structural probe for syntax trees in BERT</li>
+            <li>tenney et al. (2019), BERT rediscovers the classical NLP pipeline (layer-wise probing)</li>
+            <li>alain & bengio (2017), linear classifier probes for understanding intermediate layers</li>
         </ul>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2>next steps</h2>
 
         <ol>
-            <li><strong>add activation capture to ember</strong> — ~30 lines in <code>model.rs</code>. a new method <code>forward_with_activations</code> that returns hidden states alongside logits.</li>
-            <li><strong>build stimulus set</strong> — start with the public dataset from Alakeel et al., filter to nonce roots only, expand to ~200 stimuli with 10+ patterns.</li>
-            <li><strong>run GPT-2 probes</strong> — baseline. GPT-2's Arabic is probably poor, but the probe structure works regardless.</li>
-            <li><strong>run LLaMA 3 1B/3B probes</strong> — the interesting comparison. where's the inflection?</li>
-            <li><strong>write up</strong> — if the scaling curve is clear, this is a short paper (findings or workshop). 6 pages, clean story: "here's what the 2026 paper showed at the behavioral level; here's what's happening inside the model to explain it."</li>
+            <li><strong>add activation capture to ember</strong>, ~30 lines in <code>model.rs</code>. a new method <code>forward_with_activations</code> that returns hidden states alongside logits.</li>
+            <li><strong>build stimulus set</strong>, start with the public dataset from Alakeel et al., filter to nonce roots only, expand to ~200 stimuli with 10+ patterns.</li>
+            <li><strong>run GPT-2 probes</strong>, baseline. GPT-2's Arabic is probably poor, but the probe structure works regardless.</li>
+            <li><strong>run LLaMA 3 1B/3B probes</strong>, the interesting comparison. where's the inflection?</li>
+            <li><strong>write up</strong>, if the scaling curve is clear, this is a short paper (findings or workshop). 6 pages, clean story: "here's what the 2026 paper showed at the behavioral level; here's what's happening inside the model to explain it."</li>
         </ol>
 
         <footer>
