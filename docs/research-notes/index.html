@@ -318,5 +318,73 @@
             &nbsp;·&nbsp; read 2026-05-16
         </footer>
 
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Alkaoud & Syed (2020) — UC Davis             -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <h1>on the importance of tokenization in arabic embedding models</h1>
+
+        <div class="meta">
+            <div class="paper-title">On the Importance of Tokenization in Arabic Embedding Models</div>
+            Alkaoud, Syed · WANLP 2020, ACL Anthology<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">tokenization</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">embeddings</span>
+        </div>
+
+        <h2>the claim</h2>
+        <p>morphology-aware tokenization at the embedding layer improves Arabic NLP performance without retraining. the authors modified Word2Vec and BERT to use morpheme-level tokens instead of surface-word or BPE tokens, then evaluated on NER, sentiment, and POS tagging.</p>
+
+        <h2>results</h2>
+        <ul>
+            <li><strong>60% smaller vocab</strong> — morphology-aware tokenization collapsed surface forms into their constituent morphemes</li>
+            <li><strong>better OOV handling</strong> — unseen words composed from known morphemes were representable</li>
+            <li><strong>SOTA without retraining</strong> — the modified BERT achieved SOTA on two Arabic datasets despite using a frozen pretrained model</li>
+        </ul>
+
+        <h2>context</h2>
+        <p>this worked because Arabic's morphological system has a finite (and relatively small) set of roots, patterns, and affixes. a morphology-aware tokenizer maps surface forms to these primitives, reducing the effective vocabulary from ~1M surface forms to ~20K morphemes—and since the embedding layer accounts for a large fraction of parameter count in smaller models, shrinking the embedding table while keeping semantic compositionality intact produces gains.</p>
+
+        <div class="callout">
+            <div class="label">why this matters alongside the 2026 results</div>
+            <p>the 2020 result (morphological injection helps) and the 2026 result (tokenizer alignment doesn't predict generation quality) are consistent if the key variable is <strong>model scale</strong>. at Word2Vec/mBERT scale, explicit morphological structure at the embedding layer compensates for the model's limited capacity to learn it implicitly. at GPT-4 scale, compositional reasoning and instruction-following substitute for explicit morphological parsing. the question that remains: where is the inflection point, and can you reach it without GPT-4's compute?</p>
+        </div>
+
+        <footer>
+            <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a>
+            &nbsp;·&nbsp; read 2026-05-16
+        </footer>
+
+        <!-- ════════════════════════════════════════════ -->
+        <!-- Alrefaie et al. (2024)                       -->
+        <!-- ════════════════════════════════════════════ -->
+
+        <h1>exploring tokenization strategies and vocabulary sizes for arabic language models</h1>
+
+        <div class="meta">
+            <div class="paper-title">Exploring Tokenization Strategies and Vocabulary Sizes for Enhanced Arabic Language Models</div>
+            Alrefaie et al. · arXiv:2403.11130, 2024<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">tokenization</span>
+            <span class="tag key">vocabulary</span>
+        </div>
+
+        <h2>the question</h2>
+        <p>what combination of tokenization algorithm (BPE, Unigram, WordPiece) and vocabulary size produces the best Arabic language model performance? prior work had tested tokenizer choices on classification tasks; this paper runs controlled experiments training Arabic LMs from scratch with different tokenization configurations.</p>
+
+        <h2>finding</h2>
+        <p>it depends—on task, dataset, and model size. larger vocabularies help on some tasks but hurt on others. the paper adds to the growing evidence that tokenizer design decisions interact with downstream performance in non-obvious ways, and there's no universal optimum for Arabic.</p>
+
+        <div class="callout">
+            <div class="label">takeaway</div>
+            <p>the search for a single "best" Arabic tokenizer is probably misguided. tokenization choices interact with training data, model architecture, and evaluation tasks in complex, non-linear ways. the field's shift from "which tokenizer wins on classification?" to "does tokenizer quality even matter for generation?" (Alakeel et al., 2026) is a natural progression.</p>
+        </div>
+
+        <footer>
+            <a href="https://arxiv.org/abs/2403.11130">arXiv:2403.11130</a>
+            &nbsp;·&nbsp; read 2026-05-16
+        </footer>
+
     </body>
 </html>
