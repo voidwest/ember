@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>the tokenizer isn't the problem · research notes</title>
+        <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>the tokenizer isn't the problem</h1>
+
+        <div class="meta">
+            what i learned reading arabic nlp papers for a week<br>
+            mohammed al-thobaiti · 2026-05-16
+        </div>
+
+        <p>i built an inference engine in rust, shipped it, then said in a linkedin post i wanted to look into Arabic tokenization. so i actually did. what follows is what i found — and it wasn't what i expected.</p>
+
+        <h2>why Arabic is a real stress test for tokenizers</h2>
+
+        <p>Arabic uses a <strong>root-and-pattern (non-concatenative) morphological system</strong>. a 3-consonant root like <em>k-t-b</em> (write) combines with templatic vowel patterns to produce: <em>kataba</em> (he wrote), <em>kitaab</em> (book), <em>maktab</em> (office), <em>maktūb</em> (written), <em>yaktubu</em> (he writes). the root never appears as a standalone word — it's always embedded inside a surface form.</p>
+
+        <p>a single Arabic word can encode what would be 4 separate tokens in English. <em>fasayaktubūnahā</em> (فسيكتبونها) = "and they will write it" — one word with proclitics, stem, and enclitic fused together.</p>
+
+        <p>BPE was designed for frequency-based merging of contiguous character sequences. Arabic's meaning lives in non-contiguous root-pattern interleaving. these are structurally incompatible. add optional diacritics, no consistent spacing, and diglossia (MSA vs Egyptian vs Gulf vs Levantine), and you have a genuinely hard problem.</p>
+
+        <h2>the obvious hypothesis: fix the tokenizer</h2>
+
+        <p>the field tried this. a lot:</p>
+
+        <ul>
+            <li><strong>CAMeL Tools and Farasa</strong>: morphological analyzers that produce near-perfect morpheme segmentation (Farasa gets ~99% morpheme F1 on MSA)</li>
+            <li><strong>MorphBPE</strong>: BPE extended with morphological supervision</li>
+            <li><strong>Alkaoud & Syed (WANLP 2020)</strong>: modified Word2Vec and BERT to use morphology-aware tokenization at the embedding layer. result: 60% smaller vocab, better OOV handling, SOTA on two Arabic datasets <em>without retraining</em>. this seemed promising.</li>
+        </ul>
+
+        <p>reasonable assumption: if you segment morphemes correctly before the model sees them, it should learn morphological structure better.</p>
+
+        <h2>then a 2026 paper broke the assumption</h2>
+
+        <div class="meta">
+            <div class="paper-title">Morphemes Without Borders: Evaluating Root–Pattern Morphology in Arabic Tokenizers and LLMs</div>
+            alakeel, qwaider, aldarmaki, alqahtani · LREC 2026, arXiv:2603.15773<br>
+            from SDAIA, MBZUAI, and PNU
+        </div>
+
+        <p>they evaluated 7 Arabic LLMs (ALLAM, FANAR, GPT-4, GPT-4o, LLaMA-3, Qwen-3, Cohere) on two dimensions: (1) how well their tokenizers align with gold-standard morpheme boundaries, and (2) how well the models can <em>productively generate</em> Arabic root-pattern forms — including <strong>nonce (invented) roots</strong>, which tests real generalization, not memorization.</p>
+
+        <div class="callout">
+            <div class="label">finding: alignment doesn't predict competence</div>
+            <p><strong>ALLAM</strong> had the best tokenizer morphological alignment (MCR 83–86%) but collapsed on nonce words: 20% accuracy. it's memorizing, not generalizing.</p>
+            <p><strong>GPT-4</strong> had the <em>worst</em> tokenizer alignment (fertility 4× higher than ideal, boundary precision 17%) but scored 92% on nonce root-pattern generation. second best overall.</p>
+            <p><strong>GPT-4o</strong> scored 97% on nonce words despite similarly bad tokenizer alignment.</p>
+            <p><strong>no correlation</strong> between tokenizer alignment metrics and morphological generation performance. morpheme F1 and MCR have zero or weak negative correlation with generation accuracy.</p>
+        </div>
+
+        <p>FANAR, which has a morphologically-informed tokenizer (MorphBPE), performed consistently but didn't dominate. its steadier performance might be instruction-following, not tokenizer quality.</p>
+
+        <p>English prompts outperformed Arabic prompts on most models — instruction-tuning data is overwhelmingly English.</p>
+
+        <p>the paper's conclusion: <strong>morphological competence should be defined by productive generalization, not surface segmentation alignment.</strong> compositional reasoning + instruction-following substitutes for explicit morphological parsing.</p>
+
+        <h2>what this means</h2>
+
+        <p>the 2020 result (morphology-aware tokenization helps) and the 2026 result (tokenizer alignment doesn't predict generation) aren't fully contradictory. they're scale-dependent:</p>
+
+        <ul>
+            <li>at <strong>Word2Vec/mBERT scale</strong> (~100M params), explicit morphological injection at the embedding layer compensates for limited capacity to learn it implicitly</li>
+            <li>at <strong>GPT-4 scale</strong>, compositional reasoning + instruction-following compensates for terrible tokenizer alignment</li>
+            <li>the open question: <strong>where is the inflection point?</strong> at what scale does explicit morphological structure stop mattering as an input? and can you reach that capability for Arabic without needing GPT-4's compute?</li>
+        </ul>
+
+        <p>the field has been asking "which tokenizer wins on classification tasks" for years. multiple papers (2023, 2024) kept landing on "it depends on the task and dataset." the 2026 paper reframes the question entirely: stop asking about surface segmentation and start asking about productive generalization.</p>
+
+        <p>the real gap might not be at the tokenizer or even the embedding layer — it might be in the <strong>internal representations</strong> the model builds. GPT-4 and GPT-4o are doing something ALLAM isn't, despite ALLAM having more Arabic training data and a better tokenizer. what is it?</p>
+
+        <h2>what's next</h2>
+
+        <p>i'm going to look at the internal activation angle — <a href="/research-notes/arabic-morphology-probing.html">what do the representations actually look like</a> inside models that succeed vs fail on nonce Arabic words?</p>
+
+        <p>colab + small Arabic models is feasible on CPU hardware. behavioral probing (logit-level) doesn't require loading full weights. and i built an inference engine that gives me direct access to hidden states at every layer.</p>
+
+        <p>other threads i'm tracking:</p>
+
+        <ul>
+            <li><strong>the dialect problem</strong> (MSA vs colloquial) keeps appearing across every paper as unsolved. morphological analyzers are MSA-biased. dialectal data is underrepresented.</li>
+            <li><strong>arabizi</strong> (romanized Arabic with numbers, like "3arabi" for عربي) is completely unaddressed in the tokenization literature i've seen.</li>
+            <li><strong>the scaling question</strong>: can we find the crossover point where implicit morphology learning overtakes explicit morphological injection? that's a specific, answerable research question.</li>
+        </ul>
+
+        <p>this started as a curiosity from a linkedin post. now i have actual research questions and a direction that doesn't seem fully explored. more updates as i go.</p>
+
+        <hr>
+
+        <h2>papers referenced</h2>
+        <ol>
+            <li>alakeel, qwaider, aldarmaki, alqahtani — "morphemes without borders" — LREC 2026, <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
+            <li>alkaoud & syed — "on the importance of tokenization in Arabic embedding models" — WANLP 2020, <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a></li>
+            <li>attia — "Arabic tokenization system" — ~2007 (rule-based, finite-state)</li>
+            <li>alrefaie et al. — "exploring tokenization strategies and vocabulary sizes for enhanced Arabic language models" — <a href="https://arxiv.org/abs/2403.11130">arXiv:2403.11130</a>, 2024</li>
+        </ol>
+
+        <footer>
+            <a href="/research-notes/arabic-morphology-probing.html">probing plan →</a>
+        </footer>
+
+    </body>
+</html>

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>probing Arabic morphology inside LLMs · research notes</title>
+        <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>probing Arabic morphology inside LLMs</h1>
+
+        <div class="meta">
+            a research plan · 2026-05-16<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">ember</span>
+            <span class="tag key">morphology</span>
+            <span class="tag">research plan</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">the question</div>
+            <p>the <em>morphemes without borders</em> paper showed GPT-4o gets 97% on nonce Arabic root-pattern generation despite having terrible tokenizer alignment, while ALLAM drops to 20% despite better alignment and more Arabic training data. GPT-4o is learning morphology <em>somewhere inside the model</em>, and ALLAM isn't. where, and what do the representations look like?</p>
+        </div>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>motivation</h2>
+
+        <p>the 2026 paper leaves an open question: morphological competence in LLMs is defined by productive generalization, not tokenizer alignment — but we don't know <em>how</em> the model achieves it. the authors suggest "compositional reasoning + instruction-following" as the mechanism, but that's a behavioral description, not a mechanistic one.</p>
+
+        <p>three facts make this tractable right now:</p>
+
+        <ol>
+            <li><strong>ember gives direct access to hidden states.</strong> after every transformer block, i can call <code>backend.data(&amp;x)</code> and read the activations. no hooks, no CUDA synchronization, no framework overhead.</li>
+            <li><strong>behavioral probing is cheap.</strong> i don't need to train probes on 100K examples. the nonce root-pattern task from the 2026 paper gives a clean ground-truth signal: feed a root + pattern, check if the output is correct. probe at every layer.</li>
+            <li><strong>the comparison writes itself.</strong> run the same probe on GPT-2 (terrible tokenizer alignment, unknown Arabic performance), LLaMA 3 (tested in the 2026 paper, middle of the pack), and a dedicated Arabic model (ALLAM if accessible, otherwise AraBERT). layer-by-layer, same stimuli.</li>
+        </ol>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>experimental design</h2>
+
+        <h3>stimuli: root-pattern nonce pairs</h3>
+
+        <p>build a stimulus set of ~200 nonce triliteral roots (consonant triplets that don't exist in Arabic, filtered against a lexicon) crossed with ~10 common patterns (<em>fa3ala</em>, <em>maf3ūl</em>, <em>yaf3alu</em>, <em>fā3il</em>, etc.). each stimulus is: "apply pattern X to root Y" → expected surface form. example:</p>
+
+        <ul>
+            <li>root = {q-l-z}, pattern = <em>fa3ala</em> → expected <em>qalaza</em></li>
+            <li>root = {q-l-z}, pattern = <em>maf3ūl</em> → expected <em>maqlūz</em></li>
+        </ul>
+
+        <p>the gold-standard dataset from Alakeel et al. is public (<a href="https://github.com/YaraAlakeel/morphems_without_borders">github</a>). start there, extend with more patterns if needed.</p>
+
+        <h3>probing setup</h3>
+
+        <p>for each stimulus:</p>
+
+        <ol>
+            <li><strong>run forward pass</strong> through the model with caching disabled (we want all hidden states, not just the final logit)</li>
+            <li><strong>extract hidden states</strong> after each transformer block — specifically after the attention residual add and after the MLP residual add (two snapshots per layer)</li>
+            <li><strong>extract the output embedding</strong> (logits) for the final token position</li>
+            <li><strong>record correctness</strong>: does the argmax token match the expected surface form?</li>
+        </ol>
+
+        <h3>analysis questions</h3>
+
+        <div class="callout">
+            <div class="label">Q1: where does root identity live?</div>
+            <p>train linear probes on the hidden states at each layer to classify the root (which of the 200 nonce roots produced this activation?). a high-accuracy probe at a given layer means root identity is linearly decodable there. compare across models.</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">Q2: where does pattern identity live?</div>
+            <p>same probe, different target: classify which pattern was applied. does pattern information appear at the same layers as root information? does it appear earlier or later?</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">Q3: are root and pattern disentangled?</div>
+            <p>for a model that <em>succeeds</em> at the task (e.g., GPT-4-class), are the root and pattern representations in orthogonal subspaces of the hidden state? compute the cosine similarity between root-probe weight vectors and pattern-probe weight vectors at each layer. low similarity = disentangled.</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">Q4: where does the model "figure it out"?</div>
+            <p>compare the hidden states of correct vs incorrect predictions within the same model. at which layer do the representations for correct and incorrect outputs diverge? this tells us where the computation succeeds or fails — is the failure early (bad encoding of root/pattern) or late (good encoding but bad output projection)?</p>
+        </div>
+
+        <div class="callout">
+            <div class="label">Q5: the scaling question</div>
+            <p>if possible, run the same probes on GPT-2 small → medium → large (or LLaMA 3 1B → 3B → 8B). at what parameter count does the model transition from memorization (ALLAM-like, real roots only) to productive generalization (GPT-4o-like, nonce roots)? this answers the inflection-point question from the tokenizer writeup.</p>
+        </div>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>implementation in ember</h2>
+
+        <h3>what needs to change</h3>
+
+        <p>ember already has everything needed for the base inference. the probing pipeline needs two additions:</p>
+
+        <ol>
+            <li><strong>activation capture mode</strong> — a flag or separate function that runs the forward pass but saves the hidden state after each block instead of discarding it. currently <code>Gpt2::forward_with_cache</code> overwrites <code>x</code> at each layer. a variant that pushes <code>x.clone()</code> to a <code>Vec&lt;B::Tensor&gt;</code> before the next block is ~5 lines.</li>
+            <li><strong>probe training harness</strong> — a small Rust module or Python script that takes the saved activations, fits logistic regression probes (via <code>linfa</code> or numpy), and reports accuracy per layer. this doesn't need to be fast — we're running ~200 stimuli, not 200K.</li>
+        </ol>
+
+        <h3>models to test</h3>
+
+        <table>
+            <tr><th>model</th><th>params</th><th>why</th></tr>
+            <tr><td>GPT-2 small</td><td>124M</td><td>baseline; english-centric, bad Arabic tokenizer. tested in 2026 paper indirectly</td></tr>
+            <tr><td>LLaMA 3 1B / 3B</td><td>1B / 3B</td><td>middle of the pack in 2026 paper. likely has some Arabic in pretraining</td></tr>
+            <tr><td>AraBERT / CAMeLBERT</td><td>~110M</td><td>Arabic-specific BERT. good tokenizer alignment. should behave like ALLAM — good on real, bad on nonce?</td></tr>
+            <tr><td>LLaMA 3 8B</td><td>8B</td><td>largest feasible on consumer CPU. where does the inflection happen?</td></tr>
+        </table>
+
+        <h3>compute requirements</h3>
+
+        <p>this is CPU-friendly by design. a single forward pass on GPT-2 (124M params) takes ~50ms on modern x86. 200 stimuli × 12 layers × 2 snapshots = 4,800 activation vectors per model. probe training on 4,800 samples is seconds in numpy. the whole pipeline for GPT-2 runs in under a minute. LLaMA 3 8B with Q4_K quantization fits in ~5 GB RAM — feasible on a laptop.</p>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>expected results & interpretation</h2>
+
+        <h3>if GPT-4 succeeds but we can't probe it</h3>
+
+        <p>GPT-4's weights aren't accessible. the probing plan as written works on <em>open-weight models</em>. the 2026 paper's result (GPT-4o 97% nonce accuracy) provides the ceiling. the probing experiment asks: do open-weight models at various scales show the same internal organization that presumably enables GPT-4o's performance? we're looking for the <em>emergence</em> of the right representations, not replicating GPT-4o.</p>
+
+        <h3>if probes are near chance everywhere</h3>
+
+        <p>this means morphological information isn't linearly decodable from individual layer activations — it may be distributed across layers, or non-linear. follow-up: non-linear probes (MLP), or inter-layer representational similarity analysis (CKA).</p>
+
+        <h3>if root and pattern are in the same subspace</h3>
+
+        <p>the model might be encoding the <em>combined</em> root+pattern as a single fused representation rather than disentangling them. this would mean the model learned a lookup table rather than a compositional rule — which is consistent with ALLAM's behavior (good on real roots, collapses on nonce).</p>
+
+        <h3>if the inflection point is between 1B and 3B</h3>
+
+        <p>this is the most actionable result. it means explicit morphological injection (tokenizer-side, embedding-side) might only help below ~1B parameters. above that, the model learns it. this quantifies the tradeoff and tells researchers when to invest in language-specific tokenization vs when to scale.</p>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>related work to cite</h2>
+
+        <ul>
+            <li>alakeel et al. (2026) — the paper that frames the question</li>
+            <li>alkaoud & syed (2020) — showing morphological injection helps at small scale</li>
+            <li>conneau et al. (2018) — "what you can cram into a single vector": probing sentence representations</li>
+            <li>hewitt & manning (2019) — structural probe for syntax trees in BERT</li>
+            <li>tenney et al. (2019) — BERT rediscovers the classical NLP pipeline (layer-wise probing)</li>
+            <li>alain & bengio (2017) — linear classifier probes for understanding intermediate layers</li>
+        </ul>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>next steps</h2>
+
+        <ol>
+            <li><strong>add activation capture to ember</strong> — ~30 lines in <code>model.rs</code>. a new method <code>forward_with_activations</code> that returns hidden states alongside logits.</li>
+            <li><strong>build stimulus set</strong> — start with the public dataset from Alakeel et al., filter to nonce roots only, expand to ~200 stimuli with 10+ patterns.</li>
+            <li><strong>run GPT-2 probes</strong> — baseline. GPT-2's Arabic is probably poor, but the probe structure works regardless.</li>
+            <li><strong>run LLaMA 3 1B/3B probes</strong> — the interesting comparison. where's the inflection?</li>
+            <li><strong>write up</strong> — if the scaling curve is clear, this is a short paper (findings or workshop). 6 pages, clean story: "here's what the 2026 paper showed at the behavioral level; here's what's happening inside the model to explain it."</li>
+        </ol>
+
+        <footer>
+            <a href="/research-notes/the-tokenizer-isnt-the-problem.html">← tokenizer writeup</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/YaraAlakeel/morphems_without_borders">stimulus dataset</a>
+        </footer>
+
+    </body>
+</html>

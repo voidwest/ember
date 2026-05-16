@@ -3,387 +3,124 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>morphemes without borders · research notes</title>
+        <title>research notes · voidwest</title>
+        <link rel="stylesheet" href="/style.css" />
         <style>
-            :root {
-                --bg: #0d1117;
-                --surface: #161b22;
-                --border: #30363d;
-                --text: #c9d1d9;
-                --text-dim: #8b949e;
-                --accent: #f78166;
-                --accent2: #d2a8ff;
-                --green: #7ee787;
-                --blue: #79c0ff;
-                --red: #ff7b72;
-                --yellow: #d29922;
-            }
-
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-
-            body {
-                font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-                background: var(--bg);
-                color: var(--text);
-                line-height: 1.7;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 2rem 1rem 4rem;
-            }
-
-            a { color: var(--blue); text-decoration: none; }
-            a:hover { text-decoration: underline; }
-
-            code {
-                background: var(--surface);
-                border: 1px solid var(--border);
-                border-radius: 4px;
-                padding: 0.12em 0.3em;
-                font-size: 0.87em;
-                color: var(--accent);
-            }
-
-            .back { font-size: 0.82rem; margin-bottom: 2rem; }
-            .back a { color: var(--text-dim); }
-
-            h1 {
-                font-size: 1.3rem;
-                color: var(--accent);
-                margin: 1.5rem 0 1rem;
-                padding-bottom: 0.35rem;
-                border-bottom: 1px solid var(--border);
-            }
-            h2 {
-                font-size: 1.1rem;
-                color: var(--accent);
-                margin: 2.2rem 0 0.7rem;
-                padding-bottom: 0.3rem;
-                border-bottom: 1px solid var(--border);
-            }
-            h3 {
-                font-size: 0.95rem;
-                color: var(--accent2);
-                margin: 1.4rem 0 0.4rem;
-            }
-
-            p { margin: 0.7rem 0; }
-
-            ul, ol {
-                padding-left: 1.4rem;
-                margin: 0.5rem 0 0.8rem;
-            }
-            li { margin-bottom: 0.2rem; }
-
-            .meta {
-                font-size: 0.8rem;
-                color: var(--text-dim);
-                margin-bottom: 1.2rem;
-                line-height: 1.5;
-            }
-
-            .paper-title {
-                font-size: 1rem;
-                color: var(--accent);
-                font-weight: 600;
-                margin-bottom: 0.2rem;
-            }
-
-            .tag {
-                display: inline-block;
-                font-size: 0.72rem;
-                padding: 0.1em 0.5em;
-                margin: 0.2em 0.2em 0 0;
-                border-radius: 3px;
-                background: var(--surface);
-                border: 1px solid var(--border);
-                color: var(--text-dim);
-            }
-            .tag.key { border-color: var(--accent); color: var(--accent); }
-            .tag.model { border-color: var(--blue); color: var(--blue); }
-            .tag.metric { border-color: var(--green); color: var(--green); }
-
-            .callout {
-                background: var(--surface);
-                border-left: 3px solid var(--accent);
-                border-radius: 0 4px 4px 0;
-                padding: 0.9rem 1.1rem;
-                margin: 1rem 0;
-                font-size: 0.86rem;
-            }
-            .callout .label {
-                color: var(--accent);
-                font-weight: 600;
-                margin-bottom: 0.25rem;
-            }
-
-            hr {
-                border: none;
-                border-top: 1px solid var(--border);
-                margin: 1.5rem 0;
-            }
-
-            footer {
-                margin-top: 3.5rem;
-                padding-top: 1.8rem;
-                border-top: 1px solid var(--border);
-                text-align: center;
-                color: var(--text-dim);
-                font-size: 0.76rem;
-            }
-
-            @media (max-width: 600px) {
-                body { padding: 1.2rem 0.9rem 3rem; font-size: 0.88rem; line-height: 1.6; }
-                h1 { font-size: 1.1rem; }
-                h2 { font-size: 1rem; margin: 1.6rem 0 0.5rem; }
-                h3 { font-size: 0.87rem; }
-                footer { margin-top: 2rem; padding-top: 1.2rem; font-size: 0.7rem; }
-            }
+            .note-card .date { color: var(--text-dim); }
         </style>
     </head>
     <body>
 
         <div class="back">
             <a href="/">← voidwest</a>
-            &nbsp;&nbsp;
-            <a href="/research-notes/">research notes</a>
         </div>
 
-        <h1>morphemes without borders</h1>
+        <h1>research notes</h1>
 
-        <div class="meta">
-            <div class="paper-title">Morphemes Without Borders: Evaluating Root–Pattern Morphology in Arabic Tokenizers and LLMs</div>
-            Alakeel, Qwaider, Aldarmaki, Alqahtani · LREC 2026<br>
-            <span class="tag key">Arabic NLP</span>
-            <span class="tag key">morphology</span>
-            <span class="tag key">tokenization</span>
-            <span class="tag key">LLM evaluation</span>
-            <span class="tag">arXiv:2603.15773</span>
+        <p>running notes on papers, experiments, and ideas. updated when i learn something worth writing down.</p>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <h2>original research & direction</h2>
+
+        <div class="note-list">
+
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/the-tokenizer-isnt-the-problem.html">the tokenizer isn't the problem</a>
+                </div>
+                <div class="desc">
+                    what i learned reading arabic nlp papers for a week. the 2026 paper that broke the assumption, and why the real question is about internal representations, not tokenization.
+                </div>
+                <div class="meta-row">
+                    <span class="date">2026-05-16</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">morphology</span>
+                    <span class="tag key">tokenization</span>
+                    <span class="tag">writeup</span>
+                </div>
+            </div>
+
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/arabic-morphology-probing.html">probing Arabic morphology inside LLMs</a>
+                </div>
+                <div class="desc">
+                    research plan: use ember for activation probing to find where and how models learn Arabic root-pattern morphology internally. builds on the open question from Alakeel et al. (2026).
+                </div>
+                <div class="meta-row">
+                    <span class="date">2026-05-16</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">probing</span>
+                    <span class="tag key">ember</span>
+                    <span class="tag">research plan</span>
+                </div>
+            </div>
+
         </div>
 
-        <h2>the core claim</h2>
-        <p>token-morpheme alignment doesn't predict whether a model can generate Arabic root-pattern forms. a tokenizer that segments morphemes cleanly doesn't guarantee good generation, and one that over-segments badly (GPT-4) doesn't prevent it.</p>
+        <!-- ════════════════════════════════════════════════════════ -->
+        <h2>paper notes</h2>
 
-        <h2>why Arabic morphology is a good test</h2>
-        <p>Arabic uses a <strong>root-and-pattern</strong> (non-concatenative) system. consonantal roots combine with templatic vowel patterns to form words. example: root <em>ktb</em> (write) + pattern <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (written). the root and pattern interleave; they aren't concatenated like prefix+stem+suffix in English, which makes Arabic a stress test for subword tokenizers (BPE, Unigram, WordPiece) built for concatenative morphology.</p>
+        <div class="note-list">
 
-        <h2>experimental design</h2>
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/morphemes-without-borders.html">morphemes without borders</a>
+                </div>
+                <div class="desc">
+                    alakeel, qwaider, aldarmaki, alqahtani · LREC 2026. token-morpheme alignment doesn't predict morphological generation in Arabic LLMs. GPT-4o scores 97% on nonce roots with terrible tokenizer alignment.
+                </div>
+                <div class="meta-row">
+                    <span class="date">2026-05-15</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">morphology</span>
+                    <span class="tag key">tokenization</span>
+                    <span class="tag key">LLM evaluation</span>
+                </div>
+            </div>
 
-        <h3>part 1: tokenizer morphological alignment</h3>
-        <p>measured how well each tokenizer's segments match gold-standard morpheme boundaries from CAMEL and Farasa analyzers, on MSA (ATB3) and dialectal (BOLT) Arabic. metrics:</p>
-        <ul>
-            <li><strong>fertility</strong>: tokens per word</li>
-            <li><strong>morpheme F<sub>1</sub></strong>: exact morpheme match</li>
-            <li><strong>boundary F<sub>1</sub></strong>: boundary detection precision/recall</li>
-            <li><strong>MCR</strong>: morpheme coverage rate (avoids internal splits)</li>
-        </ul>
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/arabic-tokenization-system.html">arabic tokenization system</a>
+                </div>
+                <div class="desc">
+                    attia · ~2007. a finite-state, modular Arabic tokenizer with clitic guesser, morphological analyzer, and cashida-based disambiguation. the guess-and-filter architecture.
+                </div>
+                <div class="meta-row">
+                    <span class="date">2026-05-15</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">tokenization</span>
+                    <span class="tag key">finite-state</span>
+                </div>
+            </div>
 
-        <h3>part 2: morphological generation</h3>
-        <p>three probing tasks using real roots and nonce (invented) roots:</p>
-        <ul>
-            <li><strong>root-pattern real</strong>: apply a pattern to a real triliteral root</li>
-            <li><strong>root-pattern nonce</strong>: same task with made-up roots (tests generalization, not memorization)</li>
-            <li><strong>affix-build</strong>: concatenative affix ordering on a base word</li>
-        </ul>
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/wanlp-2020-embeddings.html">tokenization in Arabic embedding models</a>
+                </div>
+                <div class="desc">
+                    alkaoud & syed · WANLP 2020. morphology-aware tokenization at the embedding layer: 60% smaller vocab, better OOV handling, SOTA without retraining. worked at Word2Vec/mBERT scale.
+                </div>
+                <div class="meta-row">
+                    <span class="date">2026-05-16</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">embeddings</span>
+                    <span class="tag key">tokenization</span>
+                    <span class="tag key">morphology</span>
+                </div>
+            </div>
 
-        <h3>models evaluated</h3>
-        <p>ALLAM, FANAR, GPT-4, GPT-4o, LLaMA-3, Qwen-3, Cohere. FANAR uses MorphBPE (morphologically-informed tokenization); the rest use standard BPE/Unigram/WordPiece. zero-shot and one-shot prompts, tested in both English and Arabic.</p>
-
-        <hr>
-
-        <h2>key findings</h2>
-
-        <div class="callout">
-            <div class="label">finding 1</div>
-            <p><strong>no correlation between tokenizer alignment and generation performance.</strong> GPT-4o scored highest across all tasks (97% nonce accuracy) with one of the <em>worst</em> alignment scores (17% boundary precision). ALLAM had the best MCR (83-86%) but fell to 20% on nonce words.</p>
         </div>
-
-        <div class="callout">
-            <div class="label">finding 2</div>
-            <p><strong>Arabic-centric models can't handle nonce words.</strong> ALLAM and FANAR drop sharply on nonce roots. memorized lexemes, not productive rules. FANAR's morphological tokenizer didn't help it generalize.</p>
-        </div>
-
-        <div class="callout">
-            <div class="label">finding 3</div>
-            <p><strong>English prompts work better than Arabic prompts.</strong> most models did worse when prompted in Arabic. probably a side effect of English-heavy instruction-tuning data.</p>
-        </div>
-
-        <div class="callout">
-            <div class="label">finding 4</div>
-            <p><strong>one-shot prompting helps weak models, not strong ones.</strong> GPT-4 and GPT-4o were flat across zero-shot and one-shot. LLaMA-3, Qwen-3, and Cohere improved with an example. they need in-context scaffolding to figure out the transformation.</p>
-        </div>
-
-        <div class="callout">
-            <div class="label">finding 5</div>
-            <p><strong>five error modes.</strong> pattern misapplication (root right, template wrong), root deformation (consonants changed), real-word substitution (outputting a valid word instead of applying the pattern), incorrect affix ordering, and partial truncation.</p>
-        </div>
-
-        <hr>
-
-        <h2>what this means for Arabic NLP research</h2>
-
-        <h3>1. morphology-aware tokenizers may not be worth the complexity</h3>
-        <p>language-specific tokenizers (MorphBPE, Splinter, etc.) are expensive to build. large-scale pretraining and instruction tuning seem to compensate, or even outperform them. GPT-4o's tokenizer over-segments Arabic (fertility &gt; 3, boundary precision 17%) yet nails nonce patterns 97% of the time.</p>
-
-        <h3>2. instruction-following matters more than tokenizer design</h3>
-        <p>compositional reasoning + instruction-following replaces explicit morphological parsing. models that follow instructions apply morphological rules consistently. models that can't follow instructions fail regardless of tokenizer quality.</p>
-
-        <h3>3. Arabic-centric models have room to grow</h3>
-        <p>ALLAM and FANAR underperformed GPT-4 and GPT-4o on every task despite more Arabic training data. scale and tuning methodology seem to outweigh language-specific data advantages in current LLMs.</p>
-
-        <h3>4. real-word-only benchmarks hide failure modes</h3>
-        <p>ALLAM scored 67% on real roots, 20% on nonce. a 47-point gap. nonce probes are the only way to tell memorization from genuine productivity. benchmarks without nonce conditions give an incomplete picture.</p>
-
-        <h3>5. future directions</h3>
-        <ul>
-            <li><strong>tokenization-agnostic morphology learning</strong>: teach LLMs morphology through data and tuning, not custom tokenizers</li>
-            <li><strong>adaptive/hybrid tokenization</strong>: character-level processing only when morphologically needed</li>
-            <li><strong>controlled experiments</strong>: isolate tokenizer design from architecture, data, and tuning</li>
-        </ul>
-
-        <hr>
-
-        <h2>limitations</h2>
-        <ul>
-            <li>generation task conflates morphology with instruction-following; models that can't follow format instructions score lower regardless of morphological competence</li>
-            <li>correlation can't prove causation: architectures, data, and tuning are confounded</li>
-            <li>only 7 models, 13 patterns; more data would help</li>
-            <li>dialectal Arabic (BOLT) tested for alignment but not generation</li>
-        </ul>
 
         <footer>
-            <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a>
+            <a href="/">voidwest</a>
             &nbsp;·&nbsp;
-            <a href="https://github.com/YaraAlakeel/morphems_without_borders">dataset & code</a>
-            &nbsp;·&nbsp; read 2026-05-15
-        </footer>
-
-        <!-- ════════════════════════════════════════════ -->
-        <!-- Arabic Tokenization System (Attia)          -->
-        <!-- ════════════════════════════════════════════ -->
-
-        <h1>arabic tokenization system</h1>
-
-        <div class="meta">
-            <div class="paper-title">Arabic Tokenization System</div>
-            Mohammed A. Attia · University of Manchester, ~2007<br>
-            <span class="tag key">Arabic NLP</span>
-            <span class="tag key">tokenization</span>
-            <span class="tag key">finite state</span>
-            <span class="tag key">morphology</span>
-        </div>
-
-        <h2>the problem</h2>
-        <p>Arabic tokenization isn't whitespace splitting. a single word can pack up to four independent tokens—proclitics, stem, enclitics—concatenated without demarcation. deciding where morpheme boundaries fall requires morphological knowledge, and existing tokenizers treated it as an afterthought inside a larger pipeline. this paper builds a standalone rule-based tokenizer using finite state technology, handling the full pipeline: normalization, clitic boundary detection, multiword expression identification, and ambiguity filtering.</p>
-
-        <h2>three models, increasing linguistic depth</h2>
-
-        <h3>model 1: tokenization within the morphological transducer</h3>
-        <p>clitic boundaries are baked directly into the morphological analyzer's lexicon. when the analyzer finds a word, it returns tokenized output. simple to implement, but violates modularity—the morphological analyzer must be rewritten from scratch for every new tokenization scheme, and it can't handle words outside its lexicon.</p>
-
-        <h3>model 2: tokenization guesser (recommended)</h3>
-        <p>a separate clitics guesser (built on the standard finite-state guesser approach from Beesley &amp; Karttunen 2003) runs before the morphological analyzer. it assumes stems are arbitrary sequences of Arabic letters and enumerates all possible prefix/suffix clitic combinations. a separate small-scale lexc transducer handles the detached clitic forms. this is <strong>robust</strong>—works on any word regardless of dictionary coverage—and <strong>modular</strong>—tokenization and morphology are independent components. the tradeoff: the guesser is non-deterministic, producing combinatorial ambiguity (a three-word sentence can yield 8 tokenization paths).</p>
-
-        <h3>model 3: tokenization dependent on the morphological analyzer</h3>
-        <p>the stem is constrained to actual entries in the morphological analyzer's lexicon rather than guessed. reduces ambiguity but loses robustness—unknown words can't be tokenized.</p>
-
-        <h2>key engineering details</h2>
-
-        <h3>preprocessing: whitespace normalization</h3>
-        <p>Arabic text uses multiple whitespace characters (spaces, newlines, Arabic-specific space variants) inconsistently, especially around punctuation and clitics. a finite-state normalizer collapses whitespace to a canonical form before tokenization runs.</p>
-
-        <h3>clitic demarcation with the cashida</h3>
-        <p>the Arabic elongation line (<em>cashida</em>, <code>ـ</code>) is repurposed as a disambiguation marker. when the tokenizer splits enclitics, it inserts a cashida between the stem and the clitic. this resolves ambiguity between proclitics and homographic enclitics, and between morphologically-attached clitics and free-standing homographs. example: <em>kitabuhum</em> (their book) becomes <em>kitab@ـhum</em>, where the cashida signals the pronoun is attached, not a separate word. clever use of existing typographic infrastructure.</p>
-
-        <h3>post-processing: token filter</h3>
-        <p>a finite-state transducer composed on top of the core tokenizer marks undesired tokenizations with a <code>+undesired</code> tag. it imports lists from the MWE transducer (curfew → forbidden + walking) and a hand-curated set of improbable splits (e.g., <em>ba'd</em> (after) being split as <em>bi</em> + <em>'add</em>). the filter doesn't query for morpho-syntactic information—it matches surface forms against known undesirable patterns.</p>
-
-        <h3>multiword expressions</h3>
-        <p>MWEs like <em>hazr al-tajawwul</em> (curfew, lit. "forbidding of walking") are handled by keeping internal spaces intact—the tokenizer outputs them as single tokens. a dedicated MWE transducer supplies the list of expressions, and the token filter blocks the compositional analyses that a non-deterministic tokenizer would otherwise produce.</p>
-
-        <div class="callout">
-            <div class="label">key insight</div>
-            <p><strong>tokenization can be modular.</strong> by separating clitic detection (guesser) from morphological analysis (lexicon), the system gains robustness and maintainability. the guesser handles unknown words; the filter cleans up the noise. this is the opposite of "tokenization baked into the model" approaches and prefigures the modular NLP pipeline debates still active today.</p>
-        </div>
-
-        <h2>relevance today</h2>
-
-        <h3>finite-state approaches are alive in constrained settings</h3>
-        <p>neural tokenizers have largely replaced hand-written finite-state systems for Arabic. but the structural problems haven't changed: Arabic's clitic stacking still over-segments BPE tokenizers (GPT-4o's boundary precision was 17%), and the guess-and-filter architecture anticipates modern two-stage pipelines (over-generate + rerank). the cashida trick is still used in Arabic NLP preprocessing pipelines.</p>
-
-        <h3>the modularity lesson</h3>
-        <p>Attia's model 2 separates tokenization from morphology, prioritizing robustness and maintainability over raw accuracy. this tradeoff mirrors the debate between end-to-end neural systems and modular pipelines—do you want a system that handles everything but is opaque, or one that degrades gracefully and exposes debugging hooks?</p>
-
-        <footer>
-            <a href="https://www.mohammed-attia.com/Publications/ArabicTokenizer.pdf">PDF</a>
-            &nbsp;·&nbsp; read 2026-05-16
-        </footer>
-
-        <!-- ════════════════════════════════════════════ -->
-        <!-- Alkaoud & Syed (2020) — UC Davis             -->
-        <!-- ════════════════════════════════════════════ -->
-
-        <h1>on the importance of tokenization in arabic embedding models</h1>
-
-        <div class="meta">
-            <div class="paper-title">On the Importance of Tokenization in Arabic Embedding Models</div>
-            Alkaoud, Syed · WANLP 2020, ACL Anthology<br>
-            <span class="tag key">Arabic NLP</span>
-            <span class="tag key">tokenization</span>
-            <span class="tag key">morphology</span>
-            <span class="tag key">embeddings</span>
-        </div>
-
-        <h2>the claim</h2>
-        <p>morphology-aware tokenization at the embedding layer improves Arabic NLP performance without retraining. the authors modified Word2Vec and BERT to use morpheme-level tokens instead of surface-word or BPE tokens, then evaluated on NER, sentiment, and POS tagging.</p>
-
-        <h2>results</h2>
-        <ul>
-            <li><strong>60% smaller vocab</strong> — morphology-aware tokenization collapsed surface forms into their constituent morphemes</li>
-            <li><strong>better OOV handling</strong> — unseen words composed from known morphemes were representable</li>
-            <li><strong>SOTA without retraining</strong> — the modified BERT achieved SOTA on two Arabic datasets despite using a frozen pretrained model</li>
-        </ul>
-
-        <h2>context</h2>
-        <p>this worked because Arabic's morphological system has a finite (and relatively small) set of roots, patterns, and affixes. a morphology-aware tokenizer maps surface forms to these primitives, reducing the effective vocabulary from ~1M surface forms to ~20K morphemes—and since the embedding layer accounts for a large fraction of parameter count in smaller models, shrinking the embedding table while keeping semantic compositionality intact produces gains.</p>
-
-        <div class="callout">
-            <div class="label">why this matters alongside the 2026 results</div>
-            <p>the 2020 result (morphological injection helps) and the 2026 result (tokenizer alignment doesn't predict generation quality) are consistent if the key variable is <strong>model scale</strong>. at Word2Vec/mBERT scale, explicit morphological structure at the embedding layer compensates for the model's limited capacity to learn it implicitly. at GPT-4 scale, compositional reasoning and instruction-following substitute for explicit morphological parsing. the question that remains: where is the inflection point, and can you reach it without GPT-4's compute?</p>
-        </div>
-
-        <footer>
-            <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a>
-            &nbsp;·&nbsp; read 2026-05-16
-        </footer>
-
-        <!-- ════════════════════════════════════════════ -->
-        <!-- Alrefaie et al. (2024)                       -->
-        <!-- ════════════════════════════════════════════ -->
-
-        <h1>exploring tokenization strategies and vocabulary sizes for arabic language models</h1>
-
-        <div class="meta">
-            <div class="paper-title">Exploring Tokenization Strategies and Vocabulary Sizes for Enhanced Arabic Language Models</div>
-            Alrefaie et al. · arXiv:2403.11130, 2024<br>
-            <span class="tag key">Arabic NLP</span>
-            <span class="tag key">tokenization</span>
-            <span class="tag key">vocabulary</span>
-        </div>
-
-        <h2>the question</h2>
-        <p>what combination of tokenization algorithm (BPE, Unigram, WordPiece) and vocabulary size produces the best Arabic language model performance? prior work had tested tokenizer choices on classification tasks; this paper runs controlled experiments training Arabic LMs from scratch with different tokenization configurations.</p>
-
-        <h2>finding</h2>
-        <p>it depends—on task, dataset, and model size. larger vocabularies help on some tasks but hurt on others. the paper adds to the growing evidence that tokenizer design decisions interact with downstream performance in non-obvious ways, and there's no universal optimum for Arabic.</p>
-
-        <div class="callout">
-            <div class="label">takeaway</div>
-            <p>the search for a single "best" Arabic tokenizer is probably misguided. tokenization choices interact with training data, model architecture, and evaluation tasks in complex, non-linear ways. the field's shift from "which tokenizer wins on classification?" to "does tokenizer quality even matter for generation?" (Alakeel et al., 2026) is a natural progression.</p>
-        </div>
-
-        <footer>
-            <a href="https://arxiv.org/abs/2403.11130">arXiv:2403.11130</a>
-            &nbsp;·&nbsp; read 2026-05-16
+            <a href="https://github.com/voidwest/ember">ember</a>
         </footer>
 
     </body>

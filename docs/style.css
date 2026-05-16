@@ -1,0 +1,264 @@
+/* ═════════════════════════════════════════════════════════════════════
+   voidwest · shared styles
+   linked by all pages under docs/
+   ═════════════════════════════════════════════════════════════════════ */
+
+:root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --accent: #f78166;
+    --accent2: #d2a8ff;
+    --green: #7ee787;
+    --blue: #79c0ff;
+    --red: #ff7b72;
+    --yellow: #d29922;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.7;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 2rem 1rem 4rem;
+}
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1 {
+    font-size: 1.3rem;
+    color: var(--accent);
+    margin: 1.5rem 0 1rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid var(--border);
+}
+h2 {
+    font-size: 1.1rem;
+    color: var(--accent);
+    margin: 2.2rem 0 0.7rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+}
+h3 {
+    font-size: 0.95rem;
+    color: var(--accent2);
+    margin: 1.4rem 0 0.4rem;
+}
+
+p  { margin: 0.7rem 0; }
+ul, ol { padding-left: 1.4rem; margin: 0.5rem 0 0.8rem; }
+li { margin-bottom: 0.2rem; }
+
+code {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.12em 0.3em;
+    font-size: 0.87em;
+    color: var(--accent);
+}
+
+pre {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+    overflow-x: auto;
+    font-size: 0.8rem;
+    line-height: 1.5;
+    margin: 0.9rem 0;
+}
+pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text);
+    font-size: inherit;
+}
+
+hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1.5rem 0;
+}
+
+/* ── navigation ─────────────────────────────────────────── */
+.back {
+    font-size: 0.82rem;
+    margin-bottom: 1rem;
+}
+.back a { color: var(--text-dim); }
+
+/* ── metadata / tags ────────────────────────────────────── */
+.meta {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 1.2rem;
+    line-height: 1.5;
+}
+.paper-title {
+    font-size: 1rem;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 0.2rem;
+}
+.tag {
+    display: inline-block;
+    font-size: 0.72rem;
+    padding: 0.1em 0.5em;
+    margin: 0.2em 0.2em 0 0;
+    border-radius: 3px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+}
+.tag.key  { border-color: var(--accent); color: var(--accent); }
+.tag.model { border-color: var(--blue);   color: var(--blue); }
+.tag.metric { border-color: var(--green); color: var(--green); }
+
+/* ── callout block ──────────────────────────────────────── */
+.callout {
+    background: var(--surface);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+    padding: 0.9rem 1.1rem;
+    margin: 1rem 0;
+    font-size: 0.86rem;
+}
+.callout .label {
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+}
+
+/* ── project cards (root index) ─────────────────────────── */
+.project-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    margin: 1rem 0;
+}
+.project {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+}
+.project .name {
+    color: var(--accent2);
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+.project .name a { color: var(--accent2); }
+.project .desc {
+    color: var(--text-dim);
+    font-size: 0.83rem;
+    margin-top: 0.25rem;
+    line-height: 1.5;
+}
+.project .tags {
+    margin-top: 0.4rem;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+}
+.project .tags span {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.1em 0.4em;
+    margin-right: 0.35rem;
+    color: var(--text);
+}
+.project.featured { border-left: 3px solid var(--accent); }
+.project-links {
+    margin-top: 0.6rem;
+    display: flex;
+    gap: 0.8rem;
+    font-size: 0.78rem;
+}
+.project-links a {
+    color: var(--accent2);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.2em 0.6em;
+    text-decoration: none;
+}
+.project-links a:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* ── note cards (research-notes index) ──────────────────── */
+.note-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin: 1rem 0;
+}
+.note-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.9rem 1.1rem;
+}
+.note-card .title {
+    font-size: 0.95rem;
+    color: var(--accent2);
+    font-weight: 600;
+}
+.note-card .title a { color: var(--accent2); }
+.note-card .desc {
+    color: var(--text-dim);
+    font-size: 0.82rem;
+    margin-top: 0.2rem;
+    line-height: 1.5;
+}
+.note-card .meta-row {
+    margin-top: 0.4rem;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+}
+
+/* ── footer ─────────────────────────────────────────────── */
+footer {
+    margin-top: 3.5rem;
+    padding-top: 1.8rem;
+    border-top: 1px solid var(--border);
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.76rem;
+}
+
+/* ── mobile ─────────────────────────────────────────────── */
+@media (max-width: 600px) {
+    body {
+        padding: 1.2rem 0.9rem 3rem;
+        font-size: 0.88rem;
+        line-height: 1.6;
+    }
+    h1 { font-size: 1.1rem; }
+    h2 { font-size: 1rem; margin: 1.6rem 0 0.5rem; }
+    h3 { font-size: 0.87rem; }
+
+    pre { padding: 0.7rem 0.8rem; font-size: 0.7rem; }
+    .callout { padding: 0.7rem 0.85rem; font-size: 0.8rem; }
+    .project { padding: 0.8rem 0.9rem; }
+    .project .name { font-size: 0.87rem; }
+    .project .desc { font-size: 0.78rem; }
+    .project .tags { font-size: 0.68rem; }
+    .note-card { padding: 0.8rem 0.9rem; }
+
+    footer {
+        margin-top: 2rem;
+        padding-top: 1.2rem;
+        font-size: 0.7rem;
+    }
+}
