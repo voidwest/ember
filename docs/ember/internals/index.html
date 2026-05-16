@@ -4,88 +4,8 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>ember internals</title>
+        <link rel="stylesheet" href="/style.css" />
         <style>
-            :root {
-                --bg: #0d1117;
-                --surface: #161b22;
-                --border: #30363d;
-                --text: #c9d1d9;
-                --text-dim: #8b949e;
-                --accent: #f78166;
-                --accent2: #d2a8ff;
-                --green: #7ee787;
-                --blue: #79c0ff;
-                --red: #ff7b72;
-                --yellow: #d29922;
-            }
-
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-
-            body {
-                font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-                background: var(--bg);
-                color: var(--text);
-                line-height: 1.7;
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 2rem 1rem 4rem;
-            }
-
-            a { color: var(--blue); text-decoration: none; }
-            a:hover { text-decoration: underline; }
-
-            .back { font-size: 0.82rem; margin-bottom: 2rem; }
-            .back a { color: var(--text-dim); }
-
-            h1 {
-                font-size: 1.3rem;
-                color: var(--accent);
-                margin: 1.5rem 0 1rem;
-                padding-bottom: 0.35rem;
-                border-bottom: 1px solid var(--border);
-            }
-            h2 {
-                font-size: 1.1rem;
-                color: var(--accent);
-                margin: 2.2rem 0 0.7rem;
-                padding-bottom: 0.3rem;
-                border-bottom: 1px solid var(--border);
-            }
-            h3 {
-                font-size: 0.95rem;
-                color: var(--accent2);
-                margin: 1.4rem 0 0.4rem;
-            }
-
-            p { margin: 0.7rem 0; }
-
-            code {
-                background: var(--surface);
-                border: 1px solid var(--border);
-                border-radius: 4px;
-                padding: 0.12em 0.3em;
-                font-size: 0.87em;
-                color: var(--accent);
-            }
-
-            pre {
-                background: var(--surface);
-                border: 1px solid var(--border);
-                border-radius: 6px;
-                padding: 1rem 1.2rem;
-                overflow-x: auto;
-                font-size: 0.78rem;
-                line-height: 1.55;
-                margin: 0.9rem 0;
-            }
-            pre code {
-                background: none;
-                border: none;
-                padding: 0;
-                color: var(--text);
-                font-size: inherit;
-            }
-
             .layout-block {
                 background: var(--surface);
                 border: 1px solid var(--border);
@@ -98,7 +18,6 @@
                 overflow-x: auto;
                 color: var(--text-dim);
             }
-
             table {
                 width: 100%;
                 border-collapse: collapse;
@@ -108,31 +27,12 @@
                 white-space: nowrap;
                 font-size: 0.83rem;
             }
-            th, td {
-                border: 1px solid var(--border);
-                padding: 0.45rem 0.7rem;
-                text-align: left;
-            }
+            th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: left; }
             th { background: var(--surface); color: var(--accent2); }
             td { color: var(--text); }
 
-            footer {
-                margin-top: 3.5rem;
-                padding-top: 1.8rem;
-                border-top: 1px solid var(--border);
-                text-align: center;
-                color: var(--text-dim);
-                font-size: 0.76rem;
-            }
-
             @media (max-width: 600px) {
-                body { padding: 1.2rem 0.9rem 3rem; font-size: 0.88rem; line-height: 1.6; }
-                h1 { font-size: 1.1rem; }
-                h2 { font-size: 1rem; margin: 1.6rem 0 0.5rem; }
-                h3 { font-size: 0.87rem; }
-                pre { font-size: 0.68rem; padding: 0.7rem 0.8rem; }
                 .layout-block { font-size: 0.62rem; padding: 0.7rem 0.8rem; }
-                footer { margin-top: 2rem; padding-top: 1.2rem; font-size: 0.7rem; }
             }
         </style>
     </head>
@@ -220,148 +120,101 @@
             <code>matrixmultiply</code> is scalar, so this is the throughput
             bottleneck. the <code>Backend</code> trait is the insertion point
             for simd: implement <code>SimdBackend</code> with the same trait,
-            swap the backend type, and every matmul in the model uses avx2 or
-            neon without touching model code.
+            swap the backend type, and every matmul in the model uses the new
+            kernel with zero model code changes.
         </p>
 
-        <h3>softmax</h3>
+        <!-- ══ BACKEND TRAIT ══ -->
+        <h2>backend trait</h2>
 
         <p>
-            applied along the last dimension of any-rank tensor. the batch
-            prefix is flattened: for shape <code>[12, 64, 768]</code>, there
-            are <code>12 × 64 = 768</code> rows of 768 elements each. the
-            algorithm for each row:
+            the <code>Backend</code> trait is the abstraction that decouples model
+            code from hardware. every operation that touches tensor data goes through
+            a <code>&amp;B</code> reference:
         </p>
 
-        <pre><code>let max = slice.iter().fold(f32::NEG_INFINITY, |a, &amp;b| a.max(b));
+        <pre><code>pub trait Backend {
+    type Tensor: Clone + Send + Sync;
+    type Error: core::error::Error;
 
-// branch: all-masked row
-if max == f32::NEG_INFINITY {
-    let uniform = 1.0 / (last_dim as f32);
-    for i in 0..last_dim { out[offset + i] = uniform; }
-    continue;
-}
-
-// stable softmax
-let mut sum = 0.0;
-for i in 0..last_dim {
-    let e = (slice[i] - max).exp();
-    out[offset + i] = e;
-    sum += e;
-}
-let inv_sum = sum.recip();
-for i in 0..last_dim { out[offset + i] *= inv_sum; }</code></pre>
-
-        <p>
-            two passes per row, three for the edge case. the inner loop is
-            scalar <code>exp()</code>, which is 10-15 cycles on modern x86.
-            for a 768-element row, that's ~10k cycles per softmax, or ~120k
-            cycles per transformer block (12 heads × 64 dim). across 12 layers
-            and a growing sequence, softmax accounts for roughly 8-12% of
-            decode time.
-        </p>
-
-        <h3>gelu</h3>
-
-        <pre><code>let inv_sqrt_2 = 0.707_106_77_f32;
-let data: Vec&lt;f32&gt; = self.data.iter()
-    .map(|&amp;x| {
-        let z = x * inv_sqrt_2;
-        0.5 * x * (1.0 + libm::erff(z))
-    })
-    .collect();</code></pre>
-
-        <p>
-            <code>libm::erff</code> is a pure-rust port of the musl error function.
-            no libm linking, no target-specific intrinsics. the constant
-            <code>1/√2</code> is precomputed as <code>0.70710677</code>, saving
-            a division per element. gelu fires on 3072 elements per token per
-            layer in the mlp hidden dimension, 36,864 calls per forward pass.
-        </p>
-
-        <h3>layer norm</h3>
-
-        <pre><code>for b in 0..batch {
-    let slice = &amp;self.data[offset..offset + features];
-
-    let mean = slice.iter().sum::&lt;f32&gt;() / features as f32;
-    let var = slice.iter().map(|x| (x - mean).powi(2)).sum::&lt;f32&gt;() / features as f32;
-    let std = (var + eps).sqrt();
-
-    for i in 0..features {
-        let normalized = (slice[i] - mean) / std;
-        out[offset + i] = normalized * weight.data[i] + bias.data[i];
-    }
+    fn zeroes(&amp;self, shape: &amp;[usize]) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn matmul(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn add(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn softmax(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn gelu(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn layer_norm(&amp;self, x: &amp;Self::Tensor, w: &amp;Self::Tensor, b: &amp;Self::Tensor, eps: f32)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn index_select(&amp;self, t: &amp;Self::Tensor, index: usize) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn assign_row(&amp;self, dst: &amp;mut Self::Tensor, index: usize, src: &amp;Self::Tensor);
+    fn slice_cols(&amp;self, x: &amp;Self::Tensor, start: usize, end: usize) -&gt; Self::Tensor;
+    fn shape&lt;'a&gt;(&amp;self, x: &amp;'a Self::Tensor) -&gt; &amp;'a [usize];
+    fn data&lt;'a&gt;(&amp;self, x: &amp;'a Self::Tensor) -&gt; &amp;'a [f32];
+    fn load_from_cpu(&amp;self, data: Vec&lt;f32&gt;, shape: &amp;[usize])
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn add_broadcast(&amp;self, x: &amp;Self::Tensor, bias: &amp;Self::Tensor)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
 }</code></pre>
 
         <p>
-            three passes per row: one for mean, one for variance, one for the
-            normalization. epsilon is <code>1e-5</code>, the standard value
-            from ba et al. (2016). the weight and bias are learned per-feature
-            vectors loaded from the gguf file, identical to the pytorch
-            <code>nn.LayerNorm(768)</code> parameters.
+            <code>CpuBackend</code> is a zero-sized struct that delegates every
+            method to <code>CpuTensor</code>. <code>CpuError</code> wraps
+            <code>TensorError</code> for shape mismatches and out-of-bounds
+            indexing. the trait methods are designed to be implementable on any
+            hardware: gpu, simd, or accelerator. the two llama-family primitives
+            (<code>rms_norm</code>, <code>silu</code>) are already on the trait
+            and implemented for <code>CpuBackend</code>.
         </p>
 
         <!-- ══ KV CACHE ══ -->
         <h2>kv cache</h2>
 
-        <h3>memory layout</h3>
+        <h3>layout</h3>
 
         <div class="layout-block">
-layer 0 ──┬─ head 0 ──┬─ pos 0: [d0 d1 d2 ... d63]
-          │            ├─ pos 1: [d0 d1 d2 ... d63]
-          │            └─ ...
-          ├─ head 1 ──┬─ pos 0: [d0 d1 d2 ... d63]
-          │            └─ ...
-          └─ ...
-layer 1 ──┐
-          ...
-</div>
+k: Vec&lt;f32&gt;   // flat [layer][head][pos][head_dim]
+v: Vec&lt;f32&gt;   // same layout
+
+offset math:
+  layer_offset = layer * n_heads * max_seq_len * head_dim
+  head_offset  = head  * max_seq_len * head_dim
+  pos_offset   = pos   * head_dim
+
+  absolute    = layer_offset + head_offset + pos_offset</div>
 
         <p>
-            the flat offset for <code>k[layer][head][pos][dim]</code> is:
+            <strong>why this layout.</strong> <code>cache.get(layer)</code> returns
+            a contiguous <code>&amp;[f32]</code> slice of all heads and positions
+            for that layer. the attention loop indexes into it with fixed-stride
+            math — no pointer chasing, no nested vecs, single allocation. for
+            gpt-2 small at 2048 context: 12 × 12 × 2048 × 64 × 4 × 2 = ~72 MB.
         </p>
 
-        <pre><code>offset = layer * n_heads * max_seq_len * head_dim
-       + head  * max_seq_len * head_dim
-       + pos   * head_dim
-       + dim</code></pre>
+        <h3>cursor semantics</h3>
 
         <p>
-            total allocation: <code>12 layers × 12 heads × 2048 positions × 64 dim
-            × 4 bytes × 2 (k and v) = 75,497,472 bytes ≈ 72 MiB</code>.
-            allocated once in <code>KVCache::new()</code> via
-            <code>vec![0.0; len]</code>. never grown, never reallocated.
+            the cursor is the write position in the sequence dimension. it is
+            <strong>not advanced per-layer</strong>. each layer reads
+            <code>cache.cursor()</code> to know where to store, but the cursor
+            only advances after all layers finish in
+            <code>Gpt2::forward_with_cache</code>:
         </p>
 
-        <h3>append</h3>
-
-        <p>
-            the caller supplies k and v as flat <code>[n_heads * head_dim]</code>
-            slices, the concatenated per-head projections for a single token
-            at a single layer. <code>append</code> scatters them into the cache:
-        </p>
-
-        <pre><code>for h in 0..self.n_heads {
-    let dst = layer_offset + h * max_seq_len * head_dim + pos * head_dim;
-    let src = h * head_dim;
-
-    self.k[dst..dst + head_dim].copy_from_slice(&amp;k_new[src..src + head_dim]);
-    self.v[dst..dst + head_dim].copy_from_slice(&amp;v_new[src..src + head_dim]);
+        <pre><code>for (layer, block) in self.blocks.iter().enumerate() {
+    x = block.forward_with_cache(backend, &amp;x, cache, layer)?;
+}
+// cursor advances here — after all 12 layers have stored.
+for _ in 0..seq_len {
+    cache.advance_cursor();
 }</code></pre>
 
         <p>
-            <strong>the cursor bug (bug #5).</strong> the original
-            implementation ignored the <code>pos</code> parameter and wrote
-            every entry at <code>self.cursor</code>. but
-            <code>cursor</code> is deliberately not advanced until
-            <code>Gpt2::forward_with_cache</code> finishes all 12 layers.
-            during prefill, the attention loop called <code>append</code> for
-            each prompt token, every call landed at <code>cursor = 0</code>,
-            overwriting the previous. only the final token's k/v survived.
-            the fix passes an explicit <code>pos</code> to <code>append</code>,
-            computed as <code>cache.cursor() + token_index</code> in the
-            attention forward pass.
+            this is the design that caused bug #5. during prefill, the attention
+            loop called <code>append</code> for each prompt token, every call
+            landed at <code>cursor = 0</code>, overwriting the previous. only the
+            final token's k/v survived. the fix passes an explicit
+            <code>pos</code> to <code>append</code>, computed as
+            <code>cache.cursor() + token_index</code> in the attention forward
+            pass.
         </p>
 
         <h3>qk_scratch</h3>
@@ -372,7 +225,7 @@ layer 1 ──┐
             token in a decode step:
         </p>
 
-        <pre><code>pub fn qk_scratch_mut(&amp;mut self) -> &amp;mut Vec&lt;f32&gt; {
+        <pre><code>pub fn qk_scratch_mut(&amp;mut self) -&gt; &amp;mut Vec&lt;f32&gt; {
     &amp;mut self.qk_scratch
 }</code></pre>
 
@@ -527,134 +380,72 @@ for l in logits.iter_mut() {
 
         <p>
             sorts a copy of (index, logit) pairs descending, reads the k-th
-            largest value, masks everything below it. O(V log V) where V =
-            50,257 for gpt-2. the sort is the bottleneck in the sampling path,
-            consuming ~60% of sampling time for typical k = 40-50.
+            largest value, masks everything below it. O(V log V) where
+            V = vocab size (50257 for gpt-2). a no-op when k ≥ V or k = 0.
         </p>
 
         <h3>3. top-p (nucleus)</h3>
 
-        <pre><code>fn top_p_filter(logits: &amp;mut [f32], p: f32) {
-    let soft = softmax_1d(logits);
-    let cutoff = nucleus_cutoff(&amp;soft, p);
-    for (i, s) in soft.iter().enumerate() {
-        if *s &lt; cutoff { logits[i] = f32::NEG_INFINITY; }
-    }
+        <pre><code>let soft = softmax_1d(logits);              // temporary distribution
+let cutoff = nucleus_cutoff(&amp;soft, p);     // threshold value
+for (i, s) in soft.iter().enumerate() {
+    if *s &lt; cutoff { logits[i] = f32::NEG_INFINITY; }
 }</code></pre>
 
         <p>
-            <code>nucleus_cutoff</code> sorts the softmax probabilities
-            descending, accumulates from the top, and returns the smallest
-            probability whose cumulative sum reaches p. the caller then
-            computes a <em>second</em> softmax over the filtered logits in
-            <code>sample_token</code>. this is intentional: the first softmax
-            finds the cutoff, the second produces the final distribution.
-            computing softmax twice is cheaper than the alternative of
-            tracking which indices were filtered.
+            computes a temporary softmax to find the smallest set of tokens
+            whose cumulative probability exceeds p. the cutoff is the smallest
+            probability value in that set. the final softmax is computed once
+            by the caller (<code>sample_token</code>) after all filters run,
+            avoiding double-softmax.
         </p>
 
         <h3>4. softmax</h3>
 
+        <pre><code>let max = logits.iter().fold(f32::NEG_INFINITY, |a, &amp;b| a.max(b));
+if max == f32::NEG_INFINITY {
+    return vec![1.0 / logits.len() as f32; logits.len()];
+}
+let exps: Vec&lt;f32&gt; = logits.iter().map(|x| (x - max).exp()).collect();
+let sum: f32 = exps.iter().sum();
+exps.iter().map(|x| x / sum).collect()</code></pre>
+
         <p>
-            the <code>softmax_1d</code> helper is identical to the tensor
-            softmax but operates on a plain <code>&amp;[f32]</code> slice.
-            same max-subtraction stability, same all-<code>-inf</code> branch
-            for uniform fallback.
+            the max trick prevents overflow: subtracting max from every logit
+            ensures the largest exponentiated value is <code>exp(0) = 1</code>.
+            the all-masked fallback returns a uniform distribution.
         </p>
 
-        <h3>5. inverse cdf sampling</h3>
+        <h3>5. categorical sample (inverse cdf)</h3>
 
-        <pre><code>let r: f32 = rng.gen();           // uniform [0, 1)
+        <pre><code>let r: f32 = rng.gen();  // uniform in [0, 1)
 let mut cum = 0.0;
 for (i, &amp;p) in dist.iter().enumerate() {
     cum += p;
     if r &lt; cum { return i; }
 }
-// fallback: argmax
+// floating-point rounding fallback: argmax
 dist.iter().enumerate()
     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
     .map(|(i, _)| i).unwrap_or(0)</code></pre>
 
         <p>
-            the fallback to argmax handles the (rare) case where
-            floating-point rounding causes the cumulative sum to never reach
-            1.0, leaving <code>r</code> perpetually above <code>cum</code>.
+            walks the cumulative sum of probabilities. the first index where the
+            running sum exceeds the random draw is the sampled token.
         </p>
 
-        <!-- ══ BACKEND TRAIT ══ -->
-        <h2>the backend trait</h2>
-
-        <pre><code>pub trait Backend {
-    type Tensor: Clone + Send + Sync;
-    type Error: core::error::Error;
-
-    fn zeroes(&amp;self, shape: &amp;[usize]) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn matmul(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn add(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn softmax(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn gelu(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn layer_norm(&amp;self, x: &amp;Self::Tensor, weight: &amp;Self::Tensor,
-                  bias: &amp;Self::Tensor, eps: f32) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn index_select(&amp;self, t: &amp;Self::Tensor, index: usize) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn assign_row(&amp;self, dst: &amp;mut Self::Tensor, index: usize, src: &amp;Self::Tensor);
-    fn slice_cols(&amp;self, x: &amp;Self::Tensor, start: usize, end: usize) -&gt; Self::Tensor;
-    fn shape&lt;'a&gt;(&amp;self, x: &amp;'a Self::Tensor) -&gt; &amp;'a [usize];
-    fn data&lt;'a&gt;(&amp;self, x: &amp;'a Self::Tensor) -&gt; &amp;'a [f32];
-    fn load_from_cpu(&amp;self, data: Vec&lt;f32&gt;, shape: &amp;[usize])
-        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-    fn add_broadcast(&amp;self, x: &amp;Self::Tensor, bias: &amp;Self::Tensor)
-        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-}</code></pre>
+        <!-- ══ PROFILING ══ -->
+        <h2>profiling notes</h2>
 
         <p>
-            <strong>why <code>load_from_cpu</code> and not <code>from_cpu</code>.</strong>
-            clippy's <code>wrong_self_convention</code> expects
-            <code>from_*</code> methods to be constructors without
-            <code>&amp;self</code>. since backends are invoked through a shared
-            reference (<code>&amp;self</code>), the method takes
-            <code>&amp;self</code> and is named <code>load_from_cpu</code> to
-            avoid the lint. for <code>CpuBackend</code>, this is a thin wrapper
-            around <code>CpuTensor::from_data</code>. for a gpu backend, it
-            would copy data to device memory.
-        </p>
-
-        <p>
-            <strong><code>n_layers</code> is stored in <code>KVCache</code>
-            but never read.</strong> it exists only to compute the allocation
-            size in <code>new()</code>. removing it would require threading
-            the layer count through every method that touches the cache, or
-            hardcoding it. storing it is the more explicit path, and the field
-            is annotated <code>#[allow(dead_code)]</code>.
-        </p>
-
-        <p>
-            <strong>the <code>Module</code> companion trait.</strong> each
-            transformer component implements <code>Module&lt;B: Backend&gt;</code>
-            with a single method <code>forward(&amp;self, backend: &amp;B, x:
-            &amp;B::Tensor) -> Result&lt;B::Tensor, B::Error&gt;</code>. the
-            backend reference flows through every layer, it's the object that
-            knows how to allocate, compute, and move data. swapping backends
-            is a one-line change at the top of <code>Gpt2::new</code>.
-        </p>
-
-        <!-- ══ PERFORMANCE ══ -->
-        <h2>performance</h2>
-
-        <table>
-            <tr><th>metric</th><th>before kv cache</th><th>after kv cache</th></tr>
-            <tr><td>forward passes (50-tok prompt + 20 gen)</td><td>71 (O(L²) each)</td><td>1 prefill + 20 decode (O(L) each)</td></tr>
-            <tr><td>decode throughput</td><td>~2 tok/s</td><td>~12 tok/s</td></tr>
-            <tr><td>attention hot-path allocations</td><td>144 per token</td><td>0</td></tr>
-            <tr><td>kv cache memory</td><td>n/a</td><td>~72 MiB</td></tr>
-            <tr><td>model weight memory (q8_0)</td><td>~130 MiB</td><td>~130 MiB</td></tr>
-            <tr><td>total runtime memory</td><td>~140 MiB</td><td>~210 MiB</td></tr>
-        </table>
-
-        <p>
-            <strong>where time goes in decode (per token, 12 tok/s on i7-12700H):</strong>
+            wall-clock breakdown of a single decode step (gpt-2 small, x86_64,
+            release build). measurements from <code>std::time::Instant</code>
+            with 1000-sample microbenchmark:
         </p>
 
         <div class="layout-block">
+decode step total (~84 ms)
+────────────────────────────────────
 matmul (12 layers × 4 matmuls):        ~55 ms   (66%)
   c_attn (768→2304):                      ~14 ms
   c_proj  (768→768):                      ~6 ms
