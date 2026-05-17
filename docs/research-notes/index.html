@@ -6,30 +6,39 @@
         <title>research notes · voidwest</title>
         <link rel="stylesheet" href="/style.css" />
         <style>
-            .note-card .date { color: var(--text-dim); }
+            .note-card .date {
+                color: var(--text-dim);
+            }
         </style>
     </head>
     <body>
-
         <div class="back">
             <a href="/">← voidwest</a>
         </div>
 
         <h1>research notes</h1>
 
-        <p>running notes on papers, experiments, and ideas. updated when i learn something worth writing down.</p>
+        <p>
+            running notes on papers, experiments, and ideas. updated when i
+            learn something worth writing down.
+        </p>
 
         <!-- ════════════════════════════════════════════════════════ -->
-        <h2>original research & direction</h2>
+        <h2>threads & direction</h2>
 
         <div class="note-list">
-
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/the-tokenizer-isnt-the-problem.html">the tokenizer isn't the problem</a>
+                    <a
+                        href="/research-notes/the-tokenizer-isnt-the-problem.html"
+                        >the tokenizer isn't the problem</a
+                    >
                 </div>
                 <div class="desc">
-                    what i learned reading arabic nlp papers for a week. the 2026 paper that broke the assumption, and why the real question is about internal representations, not tokenization.
+                    what i learned reading arabic nlp papers for a week. the
+                    2026 paper that broke the assumption, and why the real
+                    question is about internal representations, not
+                    tokenization.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-16</span>
@@ -43,10 +52,15 @@
 
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/arabic-morphology-probing.html">probing Arabic morphology inside LLMs</a>
+                    <a href="/research-notes/arabic-morphology-probing.html"
+                        >probing Arabic morphology inside LLMs</a
+                    >
                 </div>
                 <div class="desc">
-                    research plan: use ember for activation probing to find where and how models learn Arabic root-pattern morphology internally. builds on the open question from Alakeel et al. (2026).
+                    research plan: use ember for activation probing to find
+                    where and how models learn Arabic root-pattern morphology
+                    internally. builds on the open question from Alakeel et al.
+                    (2026).
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-16</span>
@@ -57,20 +71,23 @@
                     <span class="tag">research plan</span>
                 </div>
             </div>
-
         </div>
 
         <!-- ════════════════════════════════════════════════════════ -->
         <h2>paper notes</h2>
 
         <div class="note-list">
-
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/morphemes-without-borders.html">morphemes without borders</a>
+                    <a href="/research-notes/morphemes-without-borders.html"
+                        >morphemes without borders</a
+                    >
                 </div>
                 <div class="desc">
-                    alakeel, qwaider, aldarmaki, alqahtani · LREC 2026. token-morpheme alignment doesn't predict morphological generation in Arabic LLMs. GPT-4o scores 97% on nonce roots with terrible tokenizer alignment.
+                    alakeel, qwaider, aldarmaki, alqahtani · LREC 2026.
+                    token-morpheme alignment doesn't predict morphological
+                    generation in Arabic LLMs. GPT-4o scores 97% on nonce roots
+                    with terrible tokenizer alignment.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-15</span>
@@ -84,10 +101,14 @@
 
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/arabic-tokenization-system.html">arabic tokenization system</a>
+                    <a href="/research-notes/arabic-tokenization-system.html"
+                        >arabic tokenization system</a
+                    >
                 </div>
                 <div class="desc">
-                    attia · ~2007. a finite-state, modular Arabic tokenizer with clitic guesser, morphological analyzer, and cashida-based disambiguation. the guess-and-filter architecture.
+                    attia · ~2007. a finite-state, modular Arabic tokenizer with
+                    clitic guesser, morphological analyzer, and cashida-based
+                    disambiguation. the guess-and-filter architecture.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-15</span>
@@ -100,10 +121,15 @@
 
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/wanlp-2020-embeddings.html">tokenization in Arabic embedding models</a>
+                    <a href="/research-notes/wanlp-2020-embeddings.html"
+                        >tokenization in Arabic embedding models</a
+                    >
                 </div>
                 <div class="desc">
-                    alkaoud & syed · WANLP 2020. morphology-aware tokenization at the embedding layer: 60% smaller vocab, better OOV handling, SOTA without retraining. worked at Word2Vec/mBERT scale.
+                    alkaoud & syed · WANLP 2020. morphology-aware tokenization
+                    at the embedding layer: 60% smaller vocab, better OOV
+                    handling, SOTA without retraining. worked at Word2Vec/mBERT
+                    scale.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-16</span>
@@ -114,7 +140,6 @@
                     <span class="tag key">morphology</span>
                 </div>
             </div>
-
         </div>
 
         <footer>
@@ -122,6 +147,5 @@
             &nbsp;·&nbsp;
             <a href="https://github.com/voidwest/ember">ember</a>
         </footer>
-
     </body>
 </html>
