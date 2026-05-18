@@ -43,6 +43,8 @@
             <li><strong>the comparison writes itself.</strong> run the same probe on GPT-2 (terrible tokenizer alignment, unknown Arabic performance), LLaMA 3 (tested in the 2026 paper, middle of the pack), and a dedicated Arabic model (ALLAM if accessible, otherwise AraBERT). layer-by-layer, same stimuli.</li>
         </ol>
 
+        <p><strong>one caveat on model selection.</strong> GPT-2, LLaMA 3, and ALLAM differ in architecture, training data composition, and scale simultaneously — any comparison across them confounds all three. within this set, the LLaMA 3 family (1B→3B→8B) provides the cleanest scaling curve: same architecture, same training distribution, different sizes. the GPT-2 and ALLAM comparisons are still informative for cross-family patterns (e.g. whether probe accuracy and layer geometry generalize), but claims about scaling effects specifically should be grounded in the LLaMA curve.</p>
+
         <!-- ════════════════════════════════════════════════ -->
         <h2>experimental design</h2>
 
