@@ -1078,9 +1078,9 @@ impl<B: Backend> LlamaBlock<B> {
     ) -> Result<B::Tensor, B::Error> {
         // rms_norm → attention (cached) → residual add
         let normed = backend.rms_norm(x, &self.input_layernorm, 1e-5)?;
-        let attn_out = self.self_attn.forward_with_cache(
-            backend, &normed, cache, layer, start_pos,
-        )?;
+        let attn_out = self
+            .self_attn
+            .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
         let x = backend.add(x, &attn_out)?;
 
         // rms_norm → swiglu mlp → residual add
@@ -1213,9 +1213,18 @@ impl Llama<CpuBackend> {
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
             let attn = LlamaAttention::new(
-                Linear::new(get_t(&format!("blk.{}.attn_q.weight", i))?.transpose(), None),
-                Linear::new(get_t(&format!("blk.{}.attn_k.weight", i))?.transpose(), None),
-                Linear::new(get_t(&format!("blk.{}.attn_v.weight", i))?.transpose(), None),
+                Linear::new(
+                    get_t(&format!("blk.{}.attn_q.weight", i))?.transpose(),
+                    None,
+                ),
+                Linear::new(
+                    get_t(&format!("blk.{}.attn_k.weight", i))?.transpose(),
+                    None,
+                ),
+                Linear::new(
+                    get_t(&format!("blk.{}.attn_v.weight", i))?.transpose(),
+                    None,
+                ),
                 Linear::new(
                     get_t(&format!("blk.{}.attn_output.weight", i))?.transpose(),
                     None,
@@ -1228,9 +1237,18 @@ impl Llama<CpuBackend> {
             );
 
             let mlp = LlamaMlp::new(
-                Linear::new(get_t(&format!("blk.{}.ffn_gate.weight", i))?.transpose(), None),
-                Linear::new(get_t(&format!("blk.{}.ffn_up.weight", i))?.transpose(), None),
-                Linear::new(get_t(&format!("blk.{}.ffn_down.weight", i))?.transpose(), None),
+                Linear::new(
+                    get_t(&format!("blk.{}.ffn_gate.weight", i))?.transpose(),
+                    None,
+                ),
+                Linear::new(
+                    get_t(&format!("blk.{}.ffn_up.weight", i))?.transpose(),
+                    None,
+                ),
+                Linear::new(
+                    get_t(&format!("blk.{}.ffn_down.weight", i))?.transpose(),
+                    None,
+                ),
             );
 
             blocks.push(LlamaBlock::new(

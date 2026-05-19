@@ -3,8 +3,8 @@ use clap::Parser;
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::loader::load_gguf;
-use ember::model::Gpt2;
 use ember::model::ForwardModel;
+use ember::model::Gpt2;
 use ember::sampler::sample_token;
 use std::io::{self, Write};
 use std::time::Instant;
@@ -101,11 +101,37 @@ fn main() -> anyhow::Result<()> {
             log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
 
             if args.demo {
-                demo_mode(&backend, &model, &tokenizer, args.max_tokens, &args.model, args.delay_ms)?;
+                demo_mode(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    args.max_tokens,
+                    &args.model,
+                    args.delay_ms,
+                )?;
             } else if args.interactive {
-                interactive_mode(&backend, &model, &tokenizer, &args.prompt, args.max_tokens, args.temperature, args.top_k, args.top_p)?;
+                interactive_mode(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    args.max_tokens,
+                    args.temperature,
+                    args.top_k,
+                    args.top_p,
+                )?;
             } else {
-                let output = generate(&backend, &model, &tokenizer, &args.prompt, args.max_tokens, args.temperature, args.top_k, args.top_p, args.benchmark)?;
+                let output = generate(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    args.max_tokens,
+                    args.temperature,
+                    args.top_k,
+                    args.top_p,
+                    args.benchmark,
+                )?;
                 println!("{}", output);
             }
         }
@@ -122,7 +148,17 @@ fn main() -> anyhow::Result<()> {
             } else if args.interactive {
                 anyhow::bail!("interactive mode not yet supported for llama");
             } else {
-                let output = generate_llama(&backend, &model, &tokenizer, &args.prompt, args.max_tokens, args.temperature, args.top_k, args.top_p, args.benchmark)?;
+                let output = generate_llama(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    args.max_tokens,
+                    args.temperature,
+                    args.top_k,
+                    args.top_p,
+                    args.benchmark,
+                )?;
                 println!("{}", output);
             }
         }

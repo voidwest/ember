@@ -286,10 +286,7 @@ impl CpuTensor {
     #[must_use]
     #[inline]
     pub fn elemul(&self, other: &Self) -> Self {
-        assert_eq!(
-            self.shape, other.shape,
-            "elemul: shapes must match"
-        );
+        assert_eq!(self.shape, other.shape, "elemul: shapes must match");
         let data: Vec<f32> = self
             .data
             .iter()
@@ -502,7 +499,7 @@ impl CpuTensor {
             data: new_data,
             strides: vec![new_cols, 1],
         }
-        }
+    }
 }
 
 /// precompute cosine and sine tables for rotary position embeddings.
@@ -513,7 +510,11 @@ impl CpuTensor {
 ///   sin_table[p][d] = sin(p * freq[d])
 ///
 /// returns `(cos, sin)` — two `[max_seq_len, head_dim]` tensors.
-pub fn compute_rope_freqs(max_seq_len: usize, head_dim: usize, theta_base: f32) -> (CpuTensor, CpuTensor) {
+pub fn compute_rope_freqs(
+    max_seq_len: usize,
+    head_dim: usize,
+    theta_base: f32,
+) -> (CpuTensor, CpuTensor) {
     let half = head_dim / 2;
     let mut cos = vec![0.0f32; max_seq_len * head_dim];
     let mut sin = vec![0.0f32; max_seq_len * head_dim];
@@ -527,8 +528,10 @@ pub fn compute_rope_freqs(max_seq_len: usize, head_dim: usize, theta_base: f32) 
         }
     }
 
-    (CpuTensor::from_data(vec![max_seq_len, head_dim], cos),
-     CpuTensor::from_data(vec![max_seq_len, head_dim], sin))
+    (
+        CpuTensor::from_data(vec![max_seq_len, head_dim], cos),
+        CpuTensor::from_data(vec![max_seq_len, head_dim], sin),
+    )
 }
 
 #[cfg(test)]
