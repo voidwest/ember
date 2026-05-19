@@ -85,10 +85,10 @@
         <div class="hero">
             <div class="logo">ember</div>
             <div class="tagline">
-                inference engine للـ LLM يعمل على المعالج أولاً، مكتوب بلغة Rust.
+                a lightweight cpu-first llm inference engine in rust.
             </div>
             <div class="meta">
-                <span>⏱ ~2,200 سطر</span>
+                <span>⏱ ~2,200 lines</span>
                 <span>🦀 pure Rust</span>
                 <span>🧠 GPT-2</span>
                 <span>💾 GGUF v3</span>
@@ -97,16 +97,18 @@
         </div>
 
         <p>
-            <strong>ember</strong> هو inference engine خفيف، المعالج أولاً، للـ transformer models.
-            يشغّل نماذج GGUF المضغوطة بدون CUDA، بدون PyTorch، وبدون أي frameworks خارجية.
-            حمّل ملف GGUF، اكتب prompt، يطلع text.
+            <strong>ember</strong> is a lightweight, cpu-first inference engine for
+            transformer models. it runs quantized GGUF models without CUDA, without
+            PyTorch, and without any external framework dependencies. point it at a
+            GGUF file, give it a prompt, it produces text.
         </p>
 
         <p>
-            الهدف مش أنافس llama.cpp على السرعة. الهدف إنه
-            <strong>يُقرأ</strong>. الشيفرة مباشرة، الهياكل ظاهرة،
-            والقرارات الهندسية موثقة في المكان. إذا تبغا تشوف كيف يشتغل
-            الـ inference من الداخل بدون ما تغوص في طبقات تجريد، هذا مكان جيد تبدأ منه.
+            the goal is not to compete with llama.cpp on speed. the goal is to
+            be <strong>readable</strong>. the code is direct, the structures are
+            visible, and the design decisions are documented in place. if you want
+            to understand how inference works under the hood without diving through
+            abstraction layers, this is a good place to start.
         </p>
 
         <!-- ═══════════════════════════ 1. MOTIVATION ═══════════════════════════ -->
