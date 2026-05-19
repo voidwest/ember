@@ -83,6 +83,16 @@ pre {
     font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
+[dir="rtl"] pre {
+    direction: ltr;
+    text-align: left;
+}
+
+[dir="rtl"] .mono {
+    direction: ltr;
+    unicode-bidi: embed;
+}
+
 hr {
     border: none;
     border-top: 1px solid var(--border);
