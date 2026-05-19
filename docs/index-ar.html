@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar-SA" dir="rtl">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -52,22 +52,22 @@
         </style>
     </head>
     <body>
-        <a class="lang-toggle" href="/index-ar.html" title="العربية">عربي</a>
+        <a class="lang-toggle" href="/" title="English">EN</a>
 
         <div class="hero">
             <div class="name">voidwest</div>
             <div class="tagline">
-                systems, ml, and the space where they overlap.
+                الأنظمة، تعلّم الآلة، والمساحة اللي بينهم.
             </div>
             <div class="links">
                 <a href="https://github.com/voidwest">github</a>
                 <a href="https://github.com/voidwest/ember">ember</a>
-                <a href="/ember/">writeup</a>
+                <a href="/ember/">الشرح</a>
             </div>
         </div>
 
-        <!-- ── SYSTEMS ── -->
-        <h2>systems & embedded</h2>
+        <!-- ── الأنظمة والأنظمة المدمجة ── -->
+        <h2>الأنظمة والأنظمة المدمجة</h2>
         <div class="project-list">
 
             <div class="project featured">
@@ -75,17 +75,17 @@
                     <a href="/ember/">ember</a>
                 </div>
                 <div class="desc">
-                    cpu-first llm inference engine in rust. gguf loader, gpt-2
-                    transformer with kv cache, zero framework dependencies.
-                    ~2,200 lines.
+                    محرّك استدلال للّغة يشتغل على المعالج بدون كروت شاشة.
+                    مكتوب بلغة رست، يدعم صيغة GGUF ونموذج GPT-2 مع ذاكرة
+                    KV المؤقتة، بدون أي مكتبات خارجية ثقيلة. حوالي ٢٢٠٠ سطر.
                 </div>
                 <div class="tags">
-                    <span>rust</span><span>inference</span><span>gguf</span><span>cpu</span>
+                    <span>رست</span><span>استدلال</span><span>GGUF</span><span>معالج</span>
                 </div>
                 <div class="project-links">
-                    <a href="https://github.com/voidwest/ember">source</a>
-                    <a href="/ember/">writeup</a>
-                    <a href="/ember/internals/">internals</a>
+                    <a href="https://github.com/voidwest/ember">الكود</a>
+                    <a href="/ember/">الشرح</a>
+                    <a href="/ember/internals/">التفاصيل الداخلية</a>
                 </div>
             </div>
 
@@ -94,19 +94,20 @@
                     <a href="https://github.com/voidwest/mini-os">mini-os</a>
                 </div>
                 <div class="desc">
-                    minimal x86_64 kernel in rust. gdt, idt, paging, heap with
-                    3 allocation strategies, cooperative async executor,
-                    ramdisk, and a shell with 10 commands. runs in qemu.
+                    نواة بسيطة لمعمارية x86_64 مكتوبة بلغة رست. فيها
+                    GDT و IDT و paging و heap بثلاث استراتيجيات تخصيص،
+                    ومشغّل async تعاوني، و ramdisk، و shell فيه ١٠ أوامر.
+                    تشتغل في qemu.
                 </div>
                 <div class="tags">
-                    <span>rust</span><span>kernel</span><span>x86_64</span><span>no_std</span>
+                    <span>رست</span><span>نواة</span><span>x86_64</span><span>no_std</span>
                 </div>
             </div>
 
         </div>
 
-        <!-- ── ML & INFERENCE ── -->
-        <h2>ml & inference</h2>
+        <!-- ── تعلّم الآلة والاستدلال ── -->
+        <h2>تعلّم الآلة والاستدلال</h2>
         <div class="project-list">
 
             <div class="project">
@@ -114,31 +115,34 @@
                     <a href="https://github.com/voidwest/devdocs-v2">devdocs-v2</a>
                 </div>
                 <div class="desc">
-                    local rag pipeline for querying pdf documents. sentence-transformers
-                    for embeddings, chromadb for vector storage, ollama for inference.
-                    fastapi backend with a vanilla html/css/js chat ui. fully local,
-                    no external apis.
+                    نظام استرجاع محلّي للبحث في ملفات PDF. يستخدم
+                    sentence-transformers للتمثيلات، و chromadb للتخزين،
+                    و ollama للاستدلال. الواجهة الخلفية بـ FastAPI
+                    والواجهة الأمامية بـ HTML/CSS/JS. كل شي محلّي،
+                    ما يستخدم أي API خارجية.
                 </div>
                 <div class="tags">
-                    <span>python</span><span>rag</span><span>chromadb</span><span>ollama</span><span>fastapi</span>
+                    <span>بايثون</span><span>RAG</span><span>chromadb</span><span>ollama</span><span>fastapi</span>
                 </div>
             </div>
 
         </div>
 
-        <!-- ── RESEARCH NOTES ── -->
-        <h2>research notes</h2>
+        <!-- ── ملاحظات بحثية ── -->
+        <h2>ملاحظات بحثية</h2>
         <div class="project-list">
 
             <div class="project">
                 <div class="name">
-                    <a href="/research-notes/">research notes</a>
+                    <a href="/research-notes/">ملاحظات بحثية</a>
                 </div>
                 <div class="desc">
-                    running notes on papers, experiments, and ideas. current focus: Arabic nlp, tokenization, and mechanistic interpretability.
+                    ملاحظات مستمرة على الأوراق العلمية والتجارب والأفكار.
+                    التركيز الحالي: معالجة اللغة العربية، التجزئة اللغوية،
+                    والتفسير الآلي.
                 </div>
                 <div class="tags">
-                    <span>papers</span><span>notes</span><span>arabic nlp</span><span>probing</span>
+                    <span>أوراق علمية</span><span>ملاحظات</span><span>عربي</span><span>فحص تنشيطي</span>
                 </div>
             </div>
 

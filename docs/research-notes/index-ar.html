@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="ar-SA" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>ملاحظات بحثية · voidwest</title>
+        <link rel="stylesheet" href="/style.css" />
+        <style>
+            .note-card .date {
+                color: var(--text-dim);
+            }
+        </style>
+    </head>
+    <body>
+        <a class="lang-toggle" href="/research-notes/" title="English">EN</a>
+
+        <div class="back">
+            <a href="/">voidwest →</a>
+        </div>
+
+        <h1>ملاحظات بحثية</h1>
+
+        <p>
+            ملاحظات مستمرة على الأوراق العلمية والتجارب والأفكار.
+            تتحدّث لمّا أتعلّم شي يستحق الكتابة عنه.
+        </p>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <h2>بحث وتوجّه</h2>
+
+        <div class="note-list">
+            <div class="note-card">
+                <div class="title">
+                    <a
+                        href="/research-notes/the-tokenizer-isnt-the-problem.html"
+                        >المشكلة مو في أداة التجزئة</a
+                    >
+                </div>
+                <div class="desc">
+                    اللي تعلّمته من قراءة أوراق معالجة اللغة العربية لمدة
+                    أسبوع. ورقة ٢٠٢٦ اللي كسرت الافتراض، وليش السؤال
+                    الحقيقي عن التمثيلات الداخلية، مو عن التجزئة.
+                </div>
+                <div class="meta-row">
+                    <span class="date">٢٠٢٦-٠٥-١٦</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">عربي</span>
+                    <span class="tag key">صرف</span>
+                    <span class="tag key">تجزئة</span>
+                    <span class="tag">كتابة</span>
+                </div>
+            </div>
+
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/arabic-morphology-probing.html"
+                        >فحص الصرف العربي داخل نماذج اللغة</a
+                    >
+                </div>
+                <div class="desc">
+                    خطّة بحثية: استخدام ember لفحص التمثيلات الداخلية
+                    ومعرفة أين وكيف تتعلّم النماذج صرف الجذور والأوزان
+                    في العربية. تبني على السؤال المفتوح من ورقة Alakeel
+                    وزملائه (٢٠٢٦).
+                </div>
+                <div class="meta-row">
+                    <span class="date">٢٠٢٦-٠٥-١٦</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">عربي</span>
+                    <span class="tag key">فحص تنشيطي</span>
+                    <span class="tag key">ember</span>
+                    <span class="tag">خطة بحثية</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════════════ -->
+        <h2>ملاحظات على أوراق</h2>
+
+        <div class="note-list">
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/morphemes-without-borders.html"
+                        >مورفيمات بلا حدود</a
+                    >
+                </div>
+                <div class="desc">
+                    Alakeel, Qwaider, Aldarmaki, Alqahtani · LREC 2026.
+                    تطابق المورفيمات مع التجزئة ما يتنبّأ بقدرة النموذج
+                    على توليد الصرف العربي. GPT-4o يحقّق ٩٧٪ على جذور
+                    مخترعة مع أسوأ تطابق تجزئة.
+                </div>
+                <div class="meta-row">
+                    <span class="date">٢٠٢٦-٠٥-١٥</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">عربي</span>
+                    <span class="tag key">صرف</span>
+                    <span class="tag key">تجزئة</span>
+                    <span class="tag key">تقييم نماذج</span>
+                </div>
+            </div>
+
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/arabic-tokenization-system.html"
+                        >نظام تجزئة عربي</a
+                    >
+                </div>
+                <div class="desc">
+                    Attia · ~2007. أداة تجزئة عربية مبنية على الحالات
+                    المحدودة وبتركيبة وحداتية. فيها مكوّن تخمين
+                    للواحق، ومحلّل صرفي، وتفكيك غموض باستخدام
+                    الكشيدة. تصميم "خمّن ثمّ صفّي".
+                </div>
+                <div class="meta-row">
+                    <span class="date">٢٠٢٦-٠٥-١٥</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">عربي</span>
+                    <span class="tag key">تجزئة</span>
+                    <span class="tag key">حالات محدودة</span>
+                </div>
+            </div>
+
+            <div class="note-card">
+                <div class="title">
+                    <a href="/research-notes/wanlp-2020-embeddings.html"
+                        >التجزئة في نماذج التضمين العربية</a
+                    >
+                </div>
+                <div class="desc">
+                    Alkaoud & Syed · WANLP 2020. تجزئة واعية بالصرف
+                    في طبقة التضمين: مفردات أصغر بـ ٦٠٪، معالجة أفضل
+                    للكلمات الجديدة، أداء متقدّم بدون إعادة تدريب.
+                    نجحت على مستوى Word2Vec/mBERT.
+                </div>
+                <div class="meta-row">
+                    <span class="date">٢٠٢٦-٠٥-١٦</span>
+                    &nbsp;·&nbsp;
+                    <span class="tag key">عربي</span>
+                    <span class="tag key">تضمين</span>
+                    <span class="tag key">تجزئة</span>
+                    <span class="tag key">صرف</span>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest/ember">ember</a>
+        </footer>
+    </body>
+</html>
