@@ -651,17 +651,17 @@ pub struct LlamaConfig {
 impl LlamaConfig {
     /// read llama config from gguf metadata.
     ///
-    /// ## todo
-    /// map these gguf metadata keys:
-    ///   `llama.block_count`              → n_layers
-    ///   `llama.attention.head_count`     → n_heads
-    ///   `llama.attention.head_count_kv`  → n_kv_heads
-    ///   `llama.rope.freq_base`           → rope_theta (default 10000.0)
-    ///   `llama.context_length`           → max_seq_len
-    ///   `general.architecture`           → "llama" sanity check
+    /// maps these gguf metadata keys (with sensible defaults
+    /// when a key is missing):
     ///
-    /// fall back to sensible defaults when metadata is missing
-    /// (e.g. n_kv_heads defaults to n_heads for non-gqa models).
+    ///   `llama.block_count`                       → n_layers (default 32)
+    ///   `llama.attention.head_count`              → n_heads (default 32)
+    ///   `llama.attention.head_count_kv`           → n_kv_heads (default n_heads)
+    ///   `llama.embedding_length`                  → embed_dim (default 4096)
+    ///   `llama.context_length`                    → max_seq_len (default 2048)
+    ///   `llama.rope.freq_base`                    → rope_theta (default 10000.0)
+    ///   `llama.attention.layer_norm_rms_epsilon`  → norm_eps (default 1e-5)
+    ///   `llama.vocab_size`                        → vocab_size (default 32000)
     ///
     /// reference: llama.cpp reads the same keys in `llama-arch.cpp`.
     pub fn from_gguf_metadata(metadata: &crate::loader::GgufLoader) -> Self {
@@ -1183,13 +1183,6 @@ impl Llama<CpuBackend> {
     /// quantized linear weights need `.transpose()` after loading.
     /// f32 weights should not be transposed (the loader leaves them
     /// in natural row-major order).
-    ///
-    /// ## todo
-    ///   • read config via `LlamaConfig::from_gguf_metadata`
-    ///   • allocate kv cache sizes based on n_kv_heads instead of n_heads
-    ///   • precompute rope frequency tables
-    ///   • build all layers in a loop
-    ///   • test with an actual llama gguf file from llama.cpp
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
         use crate::tensor::compute_rope_freqs;
 

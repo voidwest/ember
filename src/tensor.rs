@@ -343,10 +343,6 @@ impl CpuTensor {
     ///   `cos` — precomputed cos table, `[max_seq_len, head_dim]`
     ///   `sin` — precomputed sin table, `[max_seq_len, head_dim]`
     ///   `start_pos` — absolute position offset for the first element of `x`
-    ///
-    /// ## todo
-    /// implement the half-pair rotation described above.
-    /// the cos/sin lookup for position `p` is `cos[start_pos + p]`.
     #[must_use]
     pub fn apply_rotary_emb(&self, cos: &Self, sin: &Self, start_pos: usize) -> Self {
         // accepts 2d [seq_len, head_dim] or 3d [batch, seq_len, head_dim]
