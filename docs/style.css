@@ -315,34 +315,58 @@ footer {
 [dir="rtl"] h3 {
     direction: ltr;
     text-align: left;
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
 [dir="rtl"] .back {
     direction: ltr;
     text-align: left;
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
 [dir="rtl"] .meta {
     direction: ltr;
     text-align: left;
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
 [dir="rtl"] footer {
     direction: ltr;
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
 [dir="rtl"] .project .desc,
 [dir="rtl"] .note-card .desc {
     direction: ltr;
     text-align: left;
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
 [dir="rtl"] dt {
     text-align: left;
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
 [dir="rtl"] .hero .tagline {
     direction: ltr;
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+}
+
+[dir="rtl"] .lang-toggle {
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+}
+
+[dir="rtl"] .project .name,
+[dir="rtl"] .project-links {
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+}
+
+[dir="rtl"] .note-card .title {
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+}
+
+[dir="rtl"] .callout .label {
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
 @media (max-width: 600px) {
