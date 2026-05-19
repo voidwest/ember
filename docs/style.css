@@ -386,6 +386,43 @@ footer {
     }
 }
 
+/* ── syntax highlighting (highlight.js, custom theme) ──────── */
+pre code.hljs {
+    display: block;
+    overflow-x: auto;
+    padding: 0;
+    background: transparent;
+    color: var(--text);
+}
+
+.hljs-comment,
+.hljs-quote    { color: var(--text-dim); font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-type     { color: var(--red); }
+.hljs-string,
+.hljs-addition { color: var(--green); }
+.hljs-number,
+.hljs-literal  { color: var(--blue); }
+.hljs-title,
+.hljs-section,
+.hljs-name     { color: var(--accent2); }
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-params   { color: var(--accent); }
+.hljs-built_in,
+.hljs-function { color: var(--accent2); }
+.hljs-meta,
+.hljs-symbol,
+.hljs-bullet   { color: var(--yellow); }
+.hljs-regexp,
+.hljs-link     { color: var(--blue); }
+.hljs-deletion  { color: var(--red); }
+.hljs-emphasis  { font-style: italic; }
+.hljs-strong    { font-weight: 600; }
+
 /* ── mobile ─────────────────────────────────────────────── */
 @media (max-width: 600px) {
     body {
