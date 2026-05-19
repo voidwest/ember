@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>نظام tokenization عربي · ملاحظات بحثية</title>
+        <title>arabic tokenization system · research notes</title>
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
@@ -11,45 +11,45 @@
         <div class="back">
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
-            <a href="/research-notes/index.ar.html">ملاحظات بحثية</a>
+            <a href="/research-notes/">research notes</a>
         </div>
-        <h1>نظام tokenization عربي</h1>
+        <h1>arabic tokenization system</h1>
         <div class="meta">
             <div class="paper-title">Arabic Tokenization System</div>
             Mohammed Attia · ~2007<br>
-            <span class="tag key">NLP عربي</span>
+            <span class="tag key">Arabic NLP</span>
             <span class="tag key">tokenization</span>
             <span class="tag key">finite-state</span>
-            <span class="tag key">الصرف</span>
+            <span class="tag key">morphology</span>
         </div>
         <h2>the idea</h2>
         <p>a modular, finite-state tokenizer for Arabic built on top of the XFST platform (Beesley &amp; Karttunen, 2003). unlike statistical tokenizers that learn from data, this is a hand-engineered system with explicit rules for clitic detection, morphological analysis, and token disambiguation.</p>
-        <h2>المعمارية</h2>
-        <h3>ثلاث نماذج tokenization</h3>
+        <h2>architecture</h2>
+        <h3>three tokenization models</h3>
         <p><strong>النموذج 1: tokenization بدون محلل صرفي.</strong> يستخدم clitic guesser، وهو finite-state transducer بأنماط مكتوبة يدوياً للـ proclitic prefixes والـ enclitic suffixes. يجرّد كل تركيبات clitics الممكنة. محول lexc صغير منفصل يتعامل مع أشكال clitics المنفصلة. هذا <strong>متين</strong>، يشتغل على أي كلمة بغض النظر عن تغطية القاموس، و <strong>معياري</strong>، الـ tokenization والصرف مكونات مستقلة. المقايضة: الـ guesser غير حتمي، ينتج غموض توافقي (جملة من ثلاث كلمات تقدر تنتج 8 مسارات tokenization).</p>
         <p><strong>النموذج 2: tokenization مع تلميحات من المحلل الصرفي.</strong> الجذر مقيد بمدخلات المحلل الصرفي. ما تم تنفيذه في الورقة؛ وُصف كتحسين مستقبلي يقلل الغموض على حساب الحاجة لتغطية قاموسية.</p>
         <p><strong>النموذج 3: tokenization معتمد على المحلل الصرفي.</strong> الجذر مقيد بالمدخلات الفعلية في قاموس المحلل الصرفي بدل التخمين. يقلل الغموض لكن يفقد المتانة، لا يمكن tokenization الكلمات غير المعروفة.</p>
-        <h2>تفاصيل هندسية رئيسية</h2>
-        <h3>المعالجة المسبقة: تطبيع المسافات</h3>
+        <h2>key engineering details</h2>
+        <h3>preprocessing: whitespace normalization</h3>
         <p>النص العربي يستخدم محارف مسافات متعددة (مسافات، أسطر جديدة، متغيرات مسافات خاصة بالعربي) بشكل غير منتظم، خاصة حول الترقيم والـ clitics. مطبّع finite-state يدمج المسافات لشكل قانوني قبل ما يبدأ الـ tokenization.</p>
-        <h3>تحديد clitics بالشدة</h3>
+        <h3>clitic demarcation with the cashida</h3>
         <p>خط التطويل العربي (<em>الشدة</em>، <span class="mono">ـ</span>) يُعاد توظيفه كعلامة تفريق. لما يقطع الـ tokenizer الـ enclitics، يدخل شدة بين الجذر والـ clitic. هذا يحل الغموض بين proclitics والـ enclitics المتشابهة، وبين clitics متصلة صرفياً والكلمات المستقلة المتشابهة. مثال: <em>كتابهم</em> تصير <em>كتابـهم</em>، حيث الشدة تشير إلى إن الضمير متصل، مش كلمة منفصلة. استخدام ذكي لبنية تحتية مطبعية موجودة.</p>
-        <h3>المعالجة اللاحقة: مرشح tokens</h3>
+        <h3>post-processing: token filter</h3>
         <p>finite-state transducer مركب فوق الـ tokenizer الأساسي يعلّم الـ tokenizations غير المرغوبة بعلامة <span class="mono">+undesired</span>. يستورد قوايم من محول MWE (حظر التجول → forbidden + walking) ومجموعة منتقاة يدوياً من التقسيمات غير المحتملة (مثلاً، <em>بعد</em> تنقسم لـ <em>بـ</em> + <em>عد</em>). المرشح ما يستفسر عن معلومات morpho-syntactic، يطابق الأشكال السطحية ضد أنماط غير مرغوبة معروفة.</p>
-        <h3>التعبير متعدد الكلمات</h3>
+        <h3>multiword expressions</h3>
         <p>الـ MWEs مثل <em>حظر التجول</em> (curfew) تُعالج بإبقاء المسافات الداخلية كما هي، الـ tokenizer يخرجها كـ tokens مفردة. محول MWE مخصص يزود قايمة التعابير، ومرشح الـ token يحجب التحليلات التركيبية اللي كان بينتجها tokenizer غير حتمي.</p>
         <div class="callout">
-            <div class="label">فكرة أساسية</div>
+            <div class="label">key insight</div>
             <p><strong>الـ tokenization ممكن يكون معيارياً.</strong> بفصل كشف clitics (guesser) عن التحليل الصرفي (القاموس)، يكسب النظام متانة وقابلية للصيانة. الـ guesser يتعامل مع الكلمات غير المعروفة؛ المرشح ينظف التشويش. هذا عكس نهج "الـ tokenization مدمج في النموذج" ويستبق نقاشات pipeline الـ NLP المعيارية اللي لا تزال نشطة اليوم.</p>
         </div>
-        <h2>الأهمية اليوم</h2>
-        <h3>النهج finite-state حية في البيئات المقيدة</h3>
+        <h2>relevance today</h2>
+        <h3>finite-state approaches are alive in constrained settings</h3>
         <p>الـ tokenizers العصبية استبدلت بشكل كبير أنظمة finite-state اليدوية للعربي. لكن المشاكل الهيكلية ما تغيرت: تكديس clitics العربي لا يزال يفرط في تقطيع BPE tokenizers (boundary precision لـ GPT-4o كانت 17%)، ومعمارية guess-and-filter تستبق pipelines حديثة من مرحلتين (over-generate + rerank). خدعة الشدة لا تزال تستخدم في خطوط معالجة NLP العربي.</p>
-        <h3>درس المعيارية</h3>
+        <h3>the modularity lesson</h3>
         <p>أنظف فكرة من هالورقة مش أي خوارزمية محددة، هو الحجة بأن الـ tokenization لازم يكون قابلاً للفصل عن التحليل الصرفي. الـ guesser يتعامل مع مشكلة السلسلة السطحية (وين حدود الـ clitic؟)؛ المحلل يتعامل مع المشكلة اللغوية (وش معنى هالجذر؟). دمجهم ينتج أنظمة تفشل على الكلمات غير المعروفة. هالدرس ما وصل لـ NLP العصبي، حيث الـ tokenization مدمج في معماريات النماذج وما يتغير إلا بإعادة التدريب.</p>
         <footer>
-            <a href="/research-notes/morphemes-without-borders.ar.html">morphemes without borders ←</a>
-            &nbsp;·&nbsp; قُرئت 2026-05-15
+            <a href="/research-notes/morphemes-without-borders.ar.html">morphemes without borders →</a>
+            &nbsp;·&nbsp; read 2026-05-15
         </footer>
     </body>
 </html>

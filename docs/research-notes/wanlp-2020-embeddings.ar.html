@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>الـ tokenization في نماذج الـ embeddings العربية · ملاحظات بحثية</title>
+        <title>tokenization in Arabic embedding models · research notes</title>
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
@@ -12,43 +12,43 @@
         <div class="back">
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
-            <a href="/research-notes/index.ar.html">ملاحظات بحثية</a>
+            <a href="/research-notes/">research notes</a>
         </div>
 
-        <h1>الـ tokenization في نماذج الـ embeddings العربية</h1>
+        <h1>tokenization in Arabic embedding models</h1>
 
         <div class="meta">
             <div class="paper-title">On the Importance of Tokenization in Arabic Embedding Models</div>
             alkaoud & syed · WANLP 2020<br>
-            <span class="tag key">NLP عربي</span>
+            <span class="tag key">Arabic NLP</span>
             <span class="tag key">tokenization</span>
-            <span class="tag key">الصرف</span>
+            <span class="tag key">morphology</span>
             <span class="tag key">embeddings</span>
         </div>
 
         <h2>the claim</h2>
         <p>morphology-aware tokenization at the embedding layer improves Arabic NLP performance without retraining. the authors modified Word2Vec and BERT to use morpheme-level tokens instead of surface-word or BPE tokens, then evaluated on NER, sentiment, and POS tagging.</p>
 
-        <h2>النتائج</h2>
+        <h2>results</h2>
         <ul>
             <li><strong>مفردات أصغر بـ 60%</strong>، الـ tokenization الواعي بالصرف دمج الأشكال السطحية لمكوناتها المورفيمية</li>
             <li><strong>تعامل أفضل مع الكلمات الجديدة</strong>، الكلمات غير المرئية المكونة من مورفيمات معروفة صارت قابلة للتمثيل</li>
             <li><strong>SOTA بدون إعادة تدريب</strong>، BERT المعدل حقق SOTA على datasets عربية مع استخدام نموذج مُدرّب مسبقاً ومجمد</li>
         </ul>
 
-        <h2>السياق</h2>
+        <h2>context</h2>
         <p>هذا اشتغل لأن النظام الصرفي العربي فيه مجموعة محدودة (وصغيرة نسبياً) من الجذور والأوزان واللواصق. tokenizer واعي بالصرف يخطط الأشكال السطحية لهذه الأوليات، ويقلل المفردات الفعالة من حوالي مليون شكل سطحي إلى حوالي 20K مورفيم، وبما أن طبقة الـ embedding تشكل نسبة كبيرة من عدد المعاملات في النماذج الصغيرة، تقليص جدول الـ embedding مع الحفاظ على التركيب الدلالي ينتج مكاسب.</p>
 
         <div class="callout">
-            <div class="label">ليش هذا مهم جنب نتائج 2026</div>
+            <div class="label">why this matters alongside the 2026 results</div>
             <p>نتيجة 2020 (الحقن الصرفي يساعد) ونتيجة 2026 (محاذاة الـ tokenizer ما تتنبأ بجودة التوليد) متسقتين إذا المتغير الأساسي هو <strong>حجم النموذج</strong>. على مستوى Word2Vec/mBERT، التركيب الصرفي الصريح في طبقة الـ embedding يعوض عن قدرة النموذج المحدودة على تعلمه ضمنياً. على مستوى GPT-4، الاستدلال التركيبي واتباع التعليمات يستبدل التحليل الصرفي الصريح. السؤال الباقي: وين نقطة التحول، وهل نقدر نوصل لها بدون قوة GPT-4 الحاسوبية؟</p>
         </div>
 
         <footer>
             <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a>
             &nbsp;·&nbsp;
-            <a href="/research-notes/the-tokenizer-isnt-the-problem.ar.html">← مقال الـ tokenizer</a>
-            &nbsp;·&nbsp; قُرئت 2026-05-16
+            <a href="/research-notes/the-tokenizer-isnt-the-problem.ar.html">← tokenizer writeup</a>
+            &nbsp;·&nbsp; read 2026-05-16
         </footer>
 
     </body>

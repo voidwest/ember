@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>ember، inference engine للـ LLM على المعالج بلغة Rust</title>
+        <title>ember, a cpu-first llm inference engine in rust</title>
         <link rel="stylesheet" href="/style.css" />
         <style>
             /* ── ember-specific ──────────────────────────── */
@@ -112,7 +112,7 @@
         </p>
 
         <!-- ═══════════════════════════ 1. MOTIVATION ═══════════════════════════ -->
-        <h2>1. ليش بنيته</h2>
+        <h2>1. why i built it</h2>
 
         <p>
             كنت أقرا ورقة attention is all you need وورقة GPT-2 ومخطط الـ GGUF
@@ -136,7 +136,7 @@
         </ul>
 
         <!-- ═══════════════════════════ 2. ARCHITECTURE ═══════════════════════════ -->
-        <h2>2. المعمارية</h2>
+        <h2>2. architecture</h2>
 
         <p>نقطة الدخول <span class="mono">main.rs</span> → <span class="mono">generate()</span>، وتمشي حلقة من مرحلتين:</p>
 
@@ -164,7 +164,7 @@
         </p>
 
         <!-- ═══════════════════════════ 3. DESIGN DECISIONS ═══════════════════════════ -->
-        <h2>3. القرارات الهندسية</h2>
+        <h2>3. design decisions</h2>
 
         <p>
             أربع قرارات هندسية شكلت الشيفرة. كل واحد كان مهم بطريقة
@@ -187,7 +187,7 @@
             <span class="mono">fn attention(...)</span> لاحقاً.
         </p>
 
-        <h3>تخطيط row-major للـ tensor</h3>
+        <h3>row-major tensor layout</h3>
         <p>
             <span class="mono">CpuTensor</span> في <span class="mono">src/tensor.rs</span> هو
             <span class="mono">Vec&lt;f32&gt;</span> مسطح مع strides من النوع row-major.
@@ -199,7 +199,7 @@
             بكثير (embeddings، output projection) من slicing الأعمدة.
         </p>
 
-        <h3>محمل GGUF v3 مع memory mapping</h3>
+        <h3>gguf v3 loader with memory mapping</h3>
         <p>
             <span class="mono">loader.rs</span> يفتح ملف GGUF بـ
             <span class="mono">memmap2::Mmap</span>، متجنباً نسخ الملف لبفرات userspace.
@@ -223,7 +223,7 @@
         </p>
 
         <!-- ═══════════════════════════ 4. THE MATH ═══════════════════════════ -->
-        <h2>4. الرياضيات: gelu، softmax، layer norm</h2>
+        <h2>4. math: gelu, softmax, layer norm</h2>
 
         <p>
             ثلاث أوليات رياضية تحمل النموذج. كل وحدة فيها فخ
@@ -280,7 +280,7 @@
         </p>
 
         <!-- ═══════════════════════════ 5. MODEL STRUCTURE ═══════════════════════════ -->
-        <h2>5. هيكل النموذج</h2>
+        <h2>5. model structure</h2>
 
         <p>
             إعادة تنفيذ لـ GPT-2 small (124M):
@@ -346,7 +346,7 @@
         </p>
 
         <!-- ═══════════════════════════ 7. THE BUGS ═══════════════════════════ -->
-        <h2>7. bugs (هذا 60% من القصة)</h2>
+        <h2>7. bugs (this is 60% of the story)</h2>
 
         <p>
             ستة bugs بالإجمال. أربع كانت off-by-one عادية وأخطاء
@@ -434,7 +434,7 @@
         </div>
 
         <!-- ═══════════════════════════ 8. WHAT WORKED FIRST TRY ═══════════════════════════ -->
-        <h2>8. اللي اشتغل من أول مرة</h2>
+        <h2>8. what worked first try</h2>
 
         <p>ثلاث قرارات هندسية أثمرت فوراً:</p>
 
@@ -467,7 +467,7 @@
         </ul>
 
         <!-- ═══════════════════════════ 9. LESSONS ═══════════════════════════ -->
-        <h2>9. اللي تعلمته</h2>
+        <h2>9. what i learned</h2>
 
         <p>
             بناء inference engine من الصفر يعلّمك أشياء
@@ -509,7 +509,7 @@
         </div>
 
         <!-- ═══════════════════════════ 10. PERFORMANCE ═══════════════════════════ -->
-        <h2>10. الأداء</h2>
+        <h2>10. performance</h2>
 
         <p>
             GPT-2 small (124M) على CPU x86_64 واحد (Ryzen 5700G، release build):
@@ -538,7 +538,7 @@
         </table>
 
         <!-- ═══════════════════════════ 11. ROADMAP ═══════════════════════════ -->
-        <h2>11. خارطة الطريق</h2>
+        <h2>11. roadmap</h2>
 
         <p>
             الأولوية الحالية هي إضافة دعم llama، ليس تحسين

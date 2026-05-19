@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -42,7 +42,7 @@
         <div class="back">
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
-            <a href="/ember/index.ar.html">الشرح</a>
+            <a href="/ember/">writeup</a>
         </div>
 
         <h1>ember internals</h1>
@@ -190,7 +190,7 @@ offset math:
             GPT-2 small عند 2048 سياق: 12 × 12 × 2048 × 64 × 4 × 2 = ~72 MB.
         </p>
 
-        <h3>دلالات المؤشر</h3>
+        <h3>cursor semantics</h3>
 
         <p>
             المؤشر هو موقع الكتابة في بعد التسلسل. إنه
@@ -251,9 +251,9 @@ scratch.resize(total_seq_len, f32::NEG_INFINITY);
         </p>
 
         <!-- ══ GGUF & QUANTIZATION ══ -->
-        <h2>صيغة GGUF والضغط</h2>
+        <h2>GGUF format and quantization</h2>
 
-        <h3>هيكل الملف</h3>
+        <h3>file structure</h3>
 
         <div class="layout-block">
 offset  field
@@ -278,7 +278,7 @@ offset  field
             <span class="mono">"blk.{i}.attn.output.weight"</span>، إلخ).
         </p>
 
-        <h3>الضغط الكتلي q8_0</h3>
+        <h3>q8_0 block quantization</h3>
 
         <p>
             كل كتلة تشفّر 32 قيمة f32 في 34 بايت:
@@ -314,7 +314,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
             0.001-0.05، معطية تقريباً ±0.1 إلى ±6.4 لكل عنصر وزن.
         </p>
 
-        <h3>فخ الـ column-major</h3>
+        <h3>the column-major trap</h3>
 
         <p>
             GGUF يخزن tensors q8_0 و f16 بترتيب column-major. حجم كتلة q8_0
@@ -436,7 +436,7 @@ dist.iter().enumerate()
         </p>
 
         <!-- ══ PROFILING ══ -->
-        <h2>ملاحظات profiling</h2>
+        <h2>profiling notes</h2>
 
         <p>
             تحليل wall-clock لخطوة decode واحدة (GPT-2 small، x86_64،
@@ -467,7 +467,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
         </p>
 
         <!-- ══ EDGE CASES ══ -->
-        <h2>حالات طرفية تستحق المعرفة</h2>
+        <h2>edge cases worth knowing</h2>
 
         <p>
             <strong>صفوف softmax المقنّعة بالكامل.</strong> القناع السببي يضبط
@@ -515,7 +515,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
                 · MIT license
             </p>
             <p style="margin-top: 0.3rem">
-                <a href="/ember/index.ar.html">الشرح</a>
+                <a href="/ember/">writeup</a>
                 ·
                 <a href="/">voidwest</a>
             </p>
