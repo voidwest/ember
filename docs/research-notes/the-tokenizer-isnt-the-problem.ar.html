@@ -22,7 +22,7 @@
             mohammed al-thobaiti · 2026-05-16
         </div>
 
-        <p>i built an inference engine in rust, shipped it, then said in a linkedin post i wanted to look into Arabic tokenization. so i actually did. what follows is what i found, and it wasn't what i expected.</p>
+        <p>بنيت inference engine بلغة Rust، نشرته، وبعدها قلت في بوست على linkedin إني أبغا أتعمق في الـ Arabic tokenization. وفعلاً سويتها. اللي حصلته بعدها ما كان زي ما توقعت.</p>
 
         <h2>ليش العربي اختبار حقيقي للـ tokenizers</h2>
 
@@ -52,7 +52,7 @@
             من SDAIA، MBZUAI، و PNU
         </div>
 
-        <p>قيّموا 7 نماذج LLM عربية (ALLAM, FANAR, GPT-4, GPT-4o, LLaMA-3, Qwen-3, Cohere) على بعدين: (1) قد إيش محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) قد إيش النماذج تقدر <em>تولّد بشكل منتج</em> أشكال الجذر والوزن العربي، بما فيها <strong>جذور مبتكرة (nonce)</strong>، واللي تختبر التعميم الحقيقي، مش الحفظ.</p>
+        <p>قيّموا 7 نماذج LLM عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) قد إيش محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) قد إيش النماذج تقدر <em>تولّد بشكل منتج</em> أشكال الجذر والوزن العربي، بما فيها <strong>جذور مبتكرة (nonce)</strong>، واللي تختبر التعميم الحقيقي، مش الحفظ.</p>
 
         <div class="callout">
             <div class="label">النتيجة: المحاذاة ما تتنبأ بالكفاءة</div>
@@ -78,7 +78,7 @@
             <li>السؤال المفتوح: <strong>وين نقطة التحول؟</strong> عند أي حجم يتوقف التركيب الصرفي الصريح عن كونه مهماً كمدخل؟ وهل تقدر توصل لهذه القدرة للعربي بدون ما تحتاج قوة GPT-4 الحاسوبية؟</li>
         </ul>
 
-        <p>المجال سأل "أي tokenizer يفوز في مهام التصنيف" لسنين. أوراق متعددة (2023, 2024) استمرت توصل لـ "يعتمد على المهمة والـ dataset." ورقة 2026 تعيد صياغة السؤال بالكامل: وقف تسأل عن الـ surface segmentation وابدأ تسأل عن التعميم الإنتاجي.</p>
+        <p>المجال سأل "أي tokenizer يفوز في مهام التصنيف" لسنين. أوراق متعددة (2023، 2024) استمرت توصل لـ "يعتمد على المهمة والـ dataset." ورقة 2026 تعيد صياغة السؤال بالكامل: وقف تسأل عن الـ surface segmentation وابدأ تسأل عن التعميم الإنتاجي.</p>
 
         <p>الفجوة الحقيقية ممكن تكون مش في الـ tokenizer ولا حتى في طبقة الـ embedding، ممكن تكون في <strong>التمثيلات الداخلية</strong> اللي يبنيها النموذج. GPT-4 و GPT-4o يسوون شي ALLAM ما يسويه، مع إن ALLAM عنده بيانات تدريب عربية أكثر و tokenizer أفضل. وش هو هذا الشي؟</p>
 
@@ -104,7 +104,7 @@
         <ol>
             <li>alakeel, qwaider, aldarmaki, alqahtani, "morphemes without borders", LREC 2026, <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
             <li>alkaoud & syed, "on the importance of tokenization in Arabic embedding models", WANLP 2020, <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a></li>
-            <li>attia, "Arabic tokenization system", ~2007 (قواعدي، finite-state)</li>
+            <li>attia، "Arabic tokenization system"، ~2007 (قواعدي، finite-state)</li>
             <li>alrefaie et al., "exploring tokenization strategies and vocabulary sizes for enhanced Arabic language models", <a href="https://arxiv.org/abs/2403.11130">arXiv:2403.11130</a>, 2024</li>
         </ol>
 
