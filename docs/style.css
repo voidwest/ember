@@ -70,6 +70,19 @@ pre {
 }
 .mono { font-family: inherit; }
 
+/* ── Arabic font override ───────────────────────────────── */
+[dir="rtl"] body {
+    font-family: "Noto Naskh Arabic", "Scheherazade New", "Amiri",
+                 "SF Arabic", "Segoe UI", "Tahoma", sans-serif;
+}
+
+[dir="rtl"] pre,
+[dir="rtl"] .arch-tree,
+[dir="rtl"] .layout-block,
+[dir="rtl"] .mono {
+    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+}
+
 hr {
     border: none;
     border-top: 1px solid var(--border);
