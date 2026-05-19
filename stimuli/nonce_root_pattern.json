@@ -1,0 +1,502 @@
+[
+  {
+    "root": "q-l-z",
+    "pattern": "fa3ala",
+    "expected": "qazaza",
+    "root_consonants": [
+      "q",
+      "l",
+      "z"
+    ]
+  },
+  {
+    "root": "q-l-z",
+    "pattern": "yaf3alu",
+    "expected": "yaqzazu",
+    "root_consonants": [
+      "q",
+      "l",
+      "z"
+    ]
+  },
+  {
+    "root": "q-l-z",
+    "pattern": "fā3il",
+    "expected": "qāziz",
+    "root_consonants": [
+      "q",
+      "l",
+      "z"
+    ]
+  },
+  {
+    "root": "q-l-z",
+    "pattern": "maf3ūl",
+    "expected": "maqzūz",
+    "root_consonants": [
+      "q",
+      "l",
+      "z"
+    ]
+  },
+  {
+    "root": "q-l-z",
+    "pattern": "fa33āl",
+    "expected": "qazzāz",
+    "root_consonants": [
+      "q",
+      "l",
+      "z"
+    ]
+  },
+  {
+    "root": "b-r-sh",
+    "pattern": "fa3ala",
+    "expected": "barasha",
+    "root_consonants": [
+      "b",
+      "r",
+      "sh"
+    ]
+  },
+  {
+    "root": "b-r-sh",
+    "pattern": "yaf3alu",
+    "expected": "yabrashu",
+    "root_consonants": [
+      "b",
+      "r",
+      "sh"
+    ]
+  },
+  {
+    "root": "b-r-sh",
+    "pattern": "fā3il",
+    "expected": "bārish",
+    "root_consonants": [
+      "b",
+      "r",
+      "sh"
+    ]
+  },
+  {
+    "root": "b-r-sh",
+    "pattern": "maf3ūl",
+    "expected": "mabrūsh",
+    "root_consonants": [
+      "b",
+      "r",
+      "sh"
+    ]
+  },
+  {
+    "root": "b-r-sh",
+    "pattern": "fa33āl",
+    "expected": "barrāsh",
+    "root_consonants": [
+      "b",
+      "r",
+      "sh"
+    ]
+  },
+  {
+    "root": "k-m-d",
+    "pattern": "fa3ala",
+    "expected": "kamada",
+    "root_consonants": [
+      "k",
+      "m",
+      "d"
+    ]
+  },
+  {
+    "root": "k-m-d",
+    "pattern": "yaf3alu",
+    "expected": "yakmadu",
+    "root_consonants": [
+      "k",
+      "m",
+      "d"
+    ]
+  },
+  {
+    "root": "k-m-d",
+    "pattern": "fā3il",
+    "expected": "kāmid",
+    "root_consonants": [
+      "k",
+      "m",
+      "d"
+    ]
+  },
+  {
+    "root": "k-m-d",
+    "pattern": "maf3ūl",
+    "expected": "makmūd",
+    "root_consonants": [
+      "k",
+      "m",
+      "d"
+    ]
+  },
+  {
+    "root": "k-m-d",
+    "pattern": "fa33āl",
+    "expected": "kammād",
+    "root_consonants": [
+      "k",
+      "m",
+      "d"
+    ]
+  },
+  {
+    "root": "s-t-f",
+    "pattern": "fa3ala",
+    "expected": "satafa",
+    "root_consonants": [
+      "s",
+      "t",
+      "f"
+    ]
+  },
+  {
+    "root": "s-t-f",
+    "pattern": "yaf3alu",
+    "expected": "yastafu",
+    "root_consonants": [
+      "s",
+      "t",
+      "f"
+    ]
+  },
+  {
+    "root": "s-t-f",
+    "pattern": "fā3il",
+    "expected": "sātif",
+    "root_consonants": [
+      "s",
+      "t",
+      "f"
+    ]
+  },
+  {
+    "root": "s-t-f",
+    "pattern": "maf3ūl",
+    "expected": "mastūf",
+    "root_consonants": [
+      "s",
+      "t",
+      "f"
+    ]
+  },
+  {
+    "root": "s-t-f",
+    "pattern": "fa33āl",
+    "expected": "sattāf",
+    "root_consonants": [
+      "s",
+      "t",
+      "f"
+    ]
+  },
+  {
+    "root": "j-h-n",
+    "pattern": "fa3ala",
+    "expected": "jahana",
+    "root_consonants": [
+      "j",
+      "h",
+      "n"
+    ]
+  },
+  {
+    "root": "j-h-n",
+    "pattern": "yaf3alu",
+    "expected": "yajhanu",
+    "root_consonants": [
+      "j",
+      "h",
+      "n"
+    ]
+  },
+  {
+    "root": "j-h-n",
+    "pattern": "fā3il",
+    "expected": "jāhin",
+    "root_consonants": [
+      "j",
+      "h",
+      "n"
+    ]
+  },
+  {
+    "root": "j-h-n",
+    "pattern": "maf3ūl",
+    "expected": "majhūn",
+    "root_consonants": [
+      "j",
+      "h",
+      "n"
+    ]
+  },
+  {
+    "root": "j-h-n",
+    "pattern": "fa33āl",
+    "expected": "jahhān",
+    "root_consonants": [
+      "j",
+      "h",
+      "n"
+    ]
+  },
+  {
+    "root": "z-r-q",
+    "pattern": "fa3ala",
+    "expected": "zaraqa",
+    "root_consonants": [
+      "z",
+      "r",
+      "q"
+    ]
+  },
+  {
+    "root": "z-r-q",
+    "pattern": "yaf3alu",
+    "expected": "yazraqu",
+    "root_consonants": [
+      "z",
+      "r",
+      "q"
+    ]
+  },
+  {
+    "root": "z-r-q",
+    "pattern": "fā3il",
+    "expected": "zāriq",
+    "root_consonants": [
+      "z",
+      "r",
+      "q"
+    ]
+  },
+  {
+    "root": "z-r-q",
+    "pattern": "maf3ūl",
+    "expected": "mazrūq",
+    "root_consonants": [
+      "z",
+      "r",
+      "q"
+    ]
+  },
+  {
+    "root": "z-r-q",
+    "pattern": "fa33āl",
+    "expected": "zarrāq",
+    "root_consonants": [
+      "z",
+      "r",
+      "q"
+    ]
+  },
+  {
+    "root": "f-l-m",
+    "pattern": "fa3ala",
+    "expected": "famama",
+    "root_consonants": [
+      "f",
+      "l",
+      "m"
+    ]
+  },
+  {
+    "root": "f-l-m",
+    "pattern": "yaf3alu",
+    "expected": "yafmamu",
+    "root_consonants": [
+      "f",
+      "l",
+      "m"
+    ]
+  },
+  {
+    "root": "f-l-m",
+    "pattern": "fā3il",
+    "expected": "fāmim",
+    "root_consonants": [
+      "f",
+      "l",
+      "m"
+    ]
+  },
+  {
+    "root": "f-l-m",
+    "pattern": "maf3ūl",
+    "expected": "mafmūm",
+    "root_consonants": [
+      "f",
+      "l",
+      "m"
+    ]
+  },
+  {
+    "root": "f-l-m",
+    "pattern": "fa33āl",
+    "expected": "fammām",
+    "root_consonants": [
+      "f",
+      "l",
+      "m"
+    ]
+  },
+  {
+    "root": "d-r-s",
+    "pattern": "fa3ala",
+    "expected": "darasa",
+    "root_consonants": [
+      "d",
+      "r",
+      "s"
+    ]
+  },
+  {
+    "root": "d-r-s",
+    "pattern": "yaf3alu",
+    "expected": "yadrasu",
+    "root_consonants": [
+      "d",
+      "r",
+      "s"
+    ]
+  },
+  {
+    "root": "d-r-s",
+    "pattern": "fā3il",
+    "expected": "dāris",
+    "root_consonants": [
+      "d",
+      "r",
+      "s"
+    ]
+  },
+  {
+    "root": "d-r-s",
+    "pattern": "maf3ūl",
+    "expected": "madrūs",
+    "root_consonants": [
+      "d",
+      "r",
+      "s"
+    ]
+  },
+  {
+    "root": "d-r-s",
+    "pattern": "fa33āl",
+    "expected": "darrās",
+    "root_consonants": [
+      "d",
+      "r",
+      "s"
+    ]
+  },
+  {
+    "root": "m-l-k",
+    "pattern": "fa3ala",
+    "expected": "makaka",
+    "root_consonants": [
+      "m",
+      "l",
+      "k"
+    ]
+  },
+  {
+    "root": "m-l-k",
+    "pattern": "yaf3alu",
+    "expected": "yamkaku",
+    "root_consonants": [
+      "m",
+      "l",
+      "k"
+    ]
+  },
+  {
+    "root": "m-l-k",
+    "pattern": "fā3il",
+    "expected": "mākik",
+    "root_consonants": [
+      "m",
+      "l",
+      "k"
+    ]
+  },
+  {
+    "root": "m-l-k",
+    "pattern": "maf3ūl",
+    "expected": "mamkūk",
+    "root_consonants": [
+      "m",
+      "l",
+      "k"
+    ]
+  },
+  {
+    "root": "m-l-k",
+    "pattern": "fa33āl",
+    "expected": "makkāk",
+    "root_consonants": [
+      "m",
+      "l",
+      "k"
+    ]
+  },
+  {
+    "root": "n-b-t",
+    "pattern": "fa3ala",
+    "expected": "nabata",
+    "root_consonants": [
+      "n",
+      "b",
+      "t"
+    ]
+  },
+  {
+    "root": "n-b-t",
+    "pattern": "yaf3alu",
+    "expected": "yanbatu",
+    "root_consonants": [
+      "n",
+      "b",
+      "t"
+    ]
+  },
+  {
+    "root": "n-b-t",
+    "pattern": "fā3il",
+    "expected": "nābit",
+    "root_consonants": [
+      "n",
+      "b",
+      "t"
+    ]
+  },
+  {
+    "root": "n-b-t",
+    "pattern": "maf3ūl",
+    "expected": "manbūt",
+    "root_consonants": [
+      "n",
+      "b",
+      "t"
+    ]
+  },
+  {
+    "root": "n-b-t",
+    "pattern": "fa33āl",
+    "expected": "nabbāt",
+    "root_consonants": [
+      "n",
+      "b",
+      "t"
+    ]
+  }
+]

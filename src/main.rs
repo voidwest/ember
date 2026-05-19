@@ -4,6 +4,7 @@ use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::loader::load_gguf;
 use ember::model::Gpt2;
+use ember::model::ForwardModel;
 use ember::sampler::sample_token;
 use std::io::{self, Write};
 use std::time::Instant;
@@ -85,62 +86,47 @@ fn main() -> anyhow::Result<()> {
     // because Gpt2 and Llama are separate concrete types, the caller
     // (generate, demo_mode, interactive_mode) would need to be generic
     // over the model or accept a trait object. see LLAMA.md §main.rs for options.
-    if args.arch == "llama" {
-        todo!("Llama::from_loader — dispatch to `Llama::from_loader(loader)` when implemented")
-    }
-
     let loader = load_gguf(&args.model)?;
     let n_tensors = loader.tensors.len();
-    let model = Gpt2::from_loader(loader)?;
-
     let backend = CpuBackend;
-
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&args.tokenizer)?;
 
-    if args.demo {
-        demo_mode(
-            &backend,
-            &model,
-            &tokenizer,
-            args.max_tokens,
-            &args.model,
-            args.delay_ms,
-        )?;
-    } else if args.interactive {
-        log::info!("loading model from {}", args.model);
-        log::info!("loaded {} tensors", n_tensors);
-        log::info!("model built");
-        log::debug!("wte shape: {:?}", backend.shape(&model.wte));
-        log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
-        interactive_mode(
-            &backend,
-            &model,
-            &tokenizer,
-            &args.prompt,
-            args.max_tokens,
-            args.temperature,
-            args.top_k,
-            args.top_p,
-        )?;
-    } else {
-        log::info!("loading model from {}", args.model);
-        log::info!("loaded {} tensors", n_tensors);
-        log::info!("model built");
-        log::debug!("wte shape: {:?}", backend.shape(&model.wte));
-        log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
+    match args.arch.as_str() {
+        "gpt2" => {
+            let model = Gpt2::from_loader(loader)?;
+            log::info!("loading model from {}", args.model);
+            log::info!("loaded {} tensors", n_tensors);
+            log::info!("model built");
+            log::debug!("wte shape: {:?}", backend.shape(&model.wte));
+            log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
 
-        let output = generate(
-            &backend,
-            &model,
-            &tokenizer,
-            &args.prompt,
-            args.max_tokens,
-            args.temperature,
-            args.top_k,
-            args.top_p,
-            args.benchmark,
-        )?;
-        println!("{}", output);
+            if args.demo {
+                demo_mode(&backend, &model, &tokenizer, args.max_tokens, &args.model, args.delay_ms)?;
+            } else if args.interactive {
+                interactive_mode(&backend, &model, &tokenizer, &args.prompt, args.max_tokens, args.temperature, args.top_k, args.top_p)?;
+            } else {
+                let output = generate(&backend, &model, &tokenizer, &args.prompt, args.max_tokens, args.temperature, args.top_k, args.top_p, args.benchmark)?;
+                println!("{}", output);
+            }
+        }
+        "llama" => {
+            use ember::model::Llama;
+            let model = Llama::from_loader(loader)?;
+            log::info!("loading model from {}", args.model);
+            log::info!("loaded {} tensors", n_tensors);
+            log::info!("model built (llama)");
+            log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
+
+            if args.demo {
+                anyhow::bail!("demo mode not yet supported for llama");
+            } else if args.interactive {
+                anyhow::bail!("interactive mode not yet supported for llama");
+            } else {
+                let output = generate_llama(&backend, &model, &tokenizer, &args.prompt, args.max_tokens, args.temperature, args.top_k, args.top_p, args.benchmark)?;
+                println!("{}", output);
+            }
+        }
+        _ => anyhow::bail!("unknown architecture: {}", args.arch),
     }
 
     Ok(())
@@ -560,6 +546,117 @@ where
             &[next_token as u32],
             &mut cache,
             prompt_len + step + 1, // absolute position offset
+        )?;
+    }
+
+    let output = tokenizer.decode(&generated)?;
+
+    if benchmark {
+        let prefill_ms = prefill_elapsed.unwrap().as_secs_f64() * 1000.0;
+        let decode_ms = decode_start.unwrap().elapsed().as_secs_f64() * 1000.0;
+        eprintln!("--- benchmark ---");
+        eprintln!(
+            "prefill: {} tokens in {:.1}ms → {:.0} tok/s",
+            prompt_len,
+            prefill_ms,
+            prompt_len as f64 / prefill_elapsed.unwrap().as_secs_f64()
+        );
+        eprintln!(
+            "decode:  {} tokens in {:.1}ms → {:.0} tok/s",
+            generated.len(),
+            decode_ms,
+            generated.len() as f64 / decode_start.unwrap().elapsed().as_secs_f64()
+        );
+    }
+
+    if log::log_enabled!(log::Level::Debug) {
+        let decoded_prompt = tokenizer.decode(&all_tokens[..prompt_len])?;
+        log::debug!("prompt: {:?}", decoded_prompt);
+        log::debug!("generated: {:?}", output);
+    }
+
+    Ok(output)
+}
+
+/// generate function for llama-family models.
+/// mirrors `generate` but accepts `Llama<CpuBackend>` instead of `Gpt2<CpuBackend>`.
+#[allow(clippy::too_many_arguments)]
+fn generate_llama<B: Backend>(
+    backend: &B,
+    model: &ember::model::Llama<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    prompt: &str,
+    max_tokens: usize,
+    temperature: f32,
+    top_k: Option<usize>,
+    top_p: Option<f32>,
+    benchmark: bool,
+) -> anyhow::Result<String>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let mut rng = rand::thread_rng();
+
+    let mut all_tokens = tokenizer
+        .encode(prompt)
+        .context("failed to tokenize prompt")?;
+    log::info!("prompt has {} tokens", all_tokens.len());
+
+    let prompt_len = all_tokens.len();
+    let max_seq_len = prompt_len + max_tokens;
+
+    // ── 1. prefill: run full forward pass on the prompt and fill kv cache ──
+    let prefill_start = if benchmark {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    log::info!("prefilling KV cache for {} tokens", prompt_len);
+    let mut cache = model.create_cache(backend, max_seq_len);
+    let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
+    let prefill_elapsed = prefill_start.map(|s| s.elapsed());
+    let embed_dim = model.embed_dim();
+
+    // ── 2. decode loop: one new token at a time ──────────────────────────
+    let decode_start = if benchmark {
+        Some(Instant::now())
+    } else {
+        None
+    };
+    let mut generated = Vec::with_capacity(max_tokens);
+    let mut next_token: usize;
+
+    for step in 0..max_tokens {
+        let logit_data = backend.data(&logits);
+        let last_logits = if step == 0 {
+            let last_offset = (all_tokens.len() - 1) * embed_dim;
+            &logit_data[last_offset..last_offset + embed_dim]
+        } else {
+            &logit_data[..embed_dim]
+        };
+
+        next_token = if temperature == 0.0 {
+            argmax_token(last_logits)
+        } else {
+            sample_token(last_logits, temperature, top_k, top_p, &mut rng)
+        };
+
+        log::debug!("step {}: predicted token {}", step, next_token);
+
+        // llama has no fixed eos token id — check for 0-padding or stop token
+        if next_token == 0 {
+            log::info!("padding token reached after {} generated tokens", step);
+            break;
+        }
+
+        all_tokens.push(next_token as u32);
+        generated.push(next_token as u32);
+
+        logits = model.forward_with_cache(
+            backend,
+            &[next_token as u32],
+            &mut cache,
+            prompt_len + step + 1,
         )?;
     }
 

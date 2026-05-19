@@ -4,3 +4,4 @@ BUGS.md
 ADDITIONS.md
 CHANGES.md
 .zed/
+data/*.npz

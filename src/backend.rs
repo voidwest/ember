@@ -69,6 +69,21 @@ pub trait Backend {
     /// sigmoid linear unit: `x * sigmoid(x)` = `x / (1 + exp(-x))`.
     /// used in llama's swiglu mlp gate: `silu(gate_proj(x)) * up_proj(x)`.
     fn silu(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
+
+    /// element-wise multiplication. both tensors must have the same shape.
+    /// used in llama's swiglu gate: `silu(gate) * up`.
+    fn elemul(&self, a: &Self::Tensor, b: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
+
+    /// apply rotary position embeddings to a q or k tensor.
+    /// `cos` and `sin` are precomputed tables of shape `[max_seq_len, head_dim]`.
+    /// `start_pos` is the absolute position of the first token in this batch.
+    fn apply_rotary_emb(
+        &self,
+        x: &Self::Tensor,
+        cos: &Self::Tensor,
+        sin: &Self::Tensor,
+        start_pos: usize,
+    ) -> Result<Self::Tensor, Self::Error>;
 }
 
 /// a composable unit that runs a forward pass.
@@ -151,5 +166,19 @@ impl Backend for CpuBackend {
 
     fn silu(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.silu())
+    }
+
+    fn elemul(&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError> {
+        Ok(a.elemul(b))
+    }
+
+    fn apply_rotary_emb(
+        &self,
+        x: &CpuTensor,
+        cos: &CpuTensor,
+        sin: &CpuTensor,
+        start_pos: usize,
+    ) -> Result<CpuTensor, CpuError> {
+        Ok(x.apply_rotary_emb(cos, sin, start_pos))
     }
 }

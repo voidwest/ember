@@ -1,0 +1,4 @@
+# Activation data — gitignored due to size
+# Each model's activations stored as:
+#   data/{model_name}_activations.npz
+# Shape: (n_stimuli, n_layers, hidden_dim)

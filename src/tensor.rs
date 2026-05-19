@@ -282,6 +282,23 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), data)
     }
 
+    /// element-wise multiplication. panics if shapes differ.
+    #[must_use]
+    #[inline]
+    pub fn elemul(&self, other: &Self) -> Self {
+        assert_eq!(
+            self.shape, other.shape,
+            "elemul: shapes must match"
+        );
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .zip(&other.data)
+            .map(|(a, b)| a * b)
+            .collect();
+        Self::from_data(self.shape.clone(), data)
+    }
+
     // ── rotary position embeddings (rope) ──────────────────────
     // llama models encode position by rotating q/k vectors in 2d
     // subspaces of the head dimension. the rotation angle depends
@@ -335,8 +352,39 @@ impl CpuTensor {
     /// the cos/sin lookup for position `p` is `cos[start_pos + p]`.
     #[must_use]
     pub fn apply_rotary_emb(&self, cos: &Self, sin: &Self, start_pos: usize) -> Self {
-        let _ = (cos, sin, start_pos);
-        todo!("apply_rotary_emb: implement 2d-subspace rotation of q/k")
+        // accepts 2d [seq_len, head_dim] or 3d [batch, seq_len, head_dim]
+        let (batch, seq_len, head_dim) = match self.ndim() {
+            2 => (1, self.shape[0], self.shape[1]),
+            3 => (self.shape[0], self.shape[1], self.shape[2]),
+            _ => panic!("apply_rotary_emb expects 2d or 3d input"),
+        };
+        assert_eq!(cos.shape(), &[cos.shape[0], head_dim]);
+        assert_eq!(sin.shape(), &[sin.shape[0], head_dim]);
+
+        let cos_data = cos.data();
+        let sin_data = sin.data();
+        let half = head_dim / 2;
+        let mut out = self.data.clone();
+
+        for b in 0..batch {
+            for s in 0..seq_len {
+                let pos = start_pos + s;
+                let cos_row = &cos_data[pos * head_dim..(pos + 1) * head_dim];
+                let sin_row = &sin_data[pos * head_dim..(pos + 1) * head_dim];
+                let offset = (b * seq_len + s) * head_dim;
+
+                for d in 0..half {
+                    let x = out[offset + d];
+                    let y = out[offset + d + half];
+                    let c = cos_row[d];
+                    let si = sin_row[d];
+                    out[offset + d] = x * c - y * si;
+                    out[offset + d + half] = x * si + y * c;
+                }
+            }
+        }
+
+        Self::from_data(self.shape.clone(), out)
     }
 
     /// layer normalization over the last dimension of a 2d `[batch, features]`
@@ -454,7 +502,33 @@ impl CpuTensor {
             data: new_data,
             strides: vec![new_cols, 1],
         }
+        }
+}
+
+/// precompute cosine and sine tables for rotary position embeddings.
+///
+/// frequencies follow: `freq[i] = theta_base^(-i * 2 / head_dim)`
+/// for each position `p` and pair `(d, d+half)`:
+///   cos_table[p][d] = cos(p * freq[d])
+///   sin_table[p][d] = sin(p * freq[d])
+///
+/// returns `(cos, sin)` — two `[max_seq_len, head_dim]` tensors.
+pub fn compute_rope_freqs(max_seq_len: usize, head_dim: usize, theta_base: f32) -> (CpuTensor, CpuTensor) {
+    let half = head_dim / 2;
+    let mut cos = vec![0.0f32; max_seq_len * head_dim];
+    let mut sin = vec![0.0f32; max_seq_len * head_dim];
+
+    for i in 0..half {
+        let freq = theta_base.powf(-(2.0 * i as f32) / head_dim as f32);
+        for p in 0..max_seq_len {
+            let angle = p as f32 * freq;
+            cos[p * head_dim + i] = angle.cos();
+            sin[p * head_dim + i] = angle.sin();
+        }
     }
+
+    (CpuTensor::from_data(vec![max_seq_len, head_dim], cos),
+     CpuTensor::from_data(vec![max_seq_len, head_dim], sin))
 }
 
 #[cfg(test)]

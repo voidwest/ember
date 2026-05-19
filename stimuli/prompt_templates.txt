@@ -1,0 +1,19 @@
+# Prompt Templates for Ember
+
+# Format: template_name :: template_string
+# Variables: {root}, {pattern}, {example_input}, {example_output} (one-shot)
+
+# English zero-shot
+en_zero :: Apply the Arabic pattern "{pattern}" to the root "{root}". Output only the resulting Arabic word.
+
+# English one-shot
+en_one :: Apply the Arabic pattern "{pattern}" to the root "{root}". Example: applying "fa3ala" to "k-t-b" gives "kataba". Output only the resulting Arabic word.
+
+# Arabic zero-shot
+ar_zero :: طبق النمط "{pattern}" على الجذر "{root}". أخرج الكلمة العربية الناتجة فقط.
+
+# Arabic one-shot
+ar_one :: طبق النمط "{pattern}" على الجذر "{root}". مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". أخرج الكلمة العربية الناتجة فقط.
+
+# The Alakeel et al. 2026 paper found that English prompts work better
+# than Arabic prompts for most models. Default to en_zero for initial probes.

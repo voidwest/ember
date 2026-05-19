@@ -18,8 +18,9 @@ pub struct KVCache {
     /// reused across all heads and tokens during a decode step
     /// so the hot path never allocates.
     qk_scratch: Vec<f32>,
-    /// number of attention heads
-    n_heads: usize,
+    /// number of kv heads stored in the cache.
+    /// for gpt-2 this equals n_heads; for llama with gqa it may be less.
+    n_kv_heads: usize,
     /// size per head
     head_dim: usize,
     /// maximum sequence length the cache was allocated for
@@ -29,13 +30,13 @@ pub struct KVCache {
 }
 
 impl KVCache {
-    pub fn new(n_layers: usize, n_heads: usize, head_dim: usize, max_seq_len: usize) -> Self {
-        let len = n_layers * n_heads * max_seq_len * head_dim;
+    pub fn new(n_layers: usize, n_kv_heads: usize, head_dim: usize, max_seq_len: usize) -> Self {
+        let len = n_layers * n_kv_heads * max_seq_len * head_dim;
         Self {
             k: vec![0.0; len],
             v: vec![0.0; len],
             n_layers,
-            n_heads,
+            n_kv_heads,
             qk_scratch: vec![0.0; max_seq_len],
             head_dim,
             max_seq_len,
@@ -44,8 +45,8 @@ impl KVCache {
     }
 
     pub fn append(&mut self, layer: usize, pos: usize, k_new: &[f32], v_new: &[f32]) {
-        assert_eq!(k_new.len(), self.n_heads * self.head_dim);
-        assert_eq!(v_new.len(), self.n_heads * self.head_dim);
+        assert_eq!(k_new.len(), self.n_kv_heads * self.head_dim);
+        assert_eq!(v_new.len(), self.n_kv_heads * self.head_dim);
         assert!(
             pos < self.max_seq_len,
             "kv cache overflow: pos={}, max_seq_len={}",
@@ -53,10 +54,10 @@ impl KVCache {
             self.max_seq_len
         );
 
-        let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;
+        let layer_offset = layer * self.n_kv_heads * self.max_seq_len * self.head_dim;
         let seq_offset = pos * self.head_dim;
 
-        for h in 0..self.n_heads {
+        for h in 0..self.n_kv_heads {
             let head_offset = h * self.max_seq_len * self.head_dim;
             let dst = layer_offset + head_offset + seq_offset;
             let src = h * self.head_dim;
@@ -66,8 +67,8 @@ impl KVCache {
         }
     }
     pub fn get(&self, layer: usize) -> (&[f32], &[f32]) {
-        let layer_offset = layer * self.n_heads * self.max_seq_len * self.head_dim;
-        let len = self.n_heads * self.max_seq_len * self.head_dim;
+        let layer_offset = layer * self.n_kv_heads * self.max_seq_len * self.head_dim;
+        let len = self.n_kv_heads * self.max_seq_len * self.head_dim;
         (
             &self.k[layer_offset..layer_offset + len],
             &self.v[layer_offset..layer_offset + len],
@@ -97,6 +98,13 @@ impl KVCache {
     }
     pub fn reset(&mut self) {
         self.cursor = 0;
+    }
+
+    /// number of kv heads stored in the cache.
+    /// for gpt-2 this equals n_heads; for llama with gqa it may be less.
+    #[inline]
+    pub fn n_kv_heads(&self) -> usize {
+        self.n_kv_heads
     }
 }
 

@@ -1,6 +1,25 @@
 use crate::backend::{Backend, CpuBackend, Module};
 use alloc::vec::Vec;
 
+/// a model that can run inference with a kv cache.
+/// both `Gpt2` and `Llama` implement this trait so the
+/// `generate` / `demo_mode` / `interactive_mode` functions
+/// in `main.rs` are generic over architecture.
+pub trait ForwardModel<B: Backend> {
+    fn create_cache(&self, backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache;
+    fn forward_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error>;
+    /// number of transformer layers (for display/debug).
+    fn n_layers(&self) -> usize;
+    /// hidden dimension (for display/debug).
+    fn embed_dim(&self) -> usize;
+}
+
 /// a linear (fully-connected) layer: `y = xW + b`.
 /// weight must be `[in_features, out_features]`.
 pub struct Linear<B: Backend> {
@@ -379,6 +398,8 @@ pub struct Gpt2<B: Backend> {
     pub head: Linear<B>,
     /// number of attention heads (used to construct the kv cache)
     pub n_heads: usize,
+    /// hidden dimension (cached for display access)
+    pub embed_dim: usize,
 }
 
 impl Gpt2<CpuBackend> {
@@ -460,11 +481,14 @@ impl Gpt2<CpuBackend> {
             ));
         }
 
+        let wte = get_t("token_embd.weight")?;
+        let embed_dim = wte.shape[1];
+
         Ok(Self {
             // embeddings are loaded with dims reversed by the loader
             // (column-major q8_0 → [vocab, embed]), so no manual
             // transpose needed — index_select already picks rows directly.
-            wte: get_t("token_embd.weight")?,
+            wte,
             wpe: get_t("position_embd.weight")?,
             blocks,
             ln_f: LayerNorm::new(
@@ -474,7 +498,29 @@ impl Gpt2<CpuBackend> {
             ),
             head: Linear::new(get_t("output.weight")?.transpose(), None),
             n_heads,
+            embed_dim,
         })
+    }
+}
+
+impl<B: Backend> ForwardModel<B> for Gpt2<B> {
+    fn create_cache(&self, backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
+        Gpt2::create_cache(self, backend, max_seq_len)
+    }
+    fn forward_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        Gpt2::forward_with_cache(self, backend, token_ids, cache, start_pos)
+    }
+    fn n_layers(&self) -> usize {
+        self.blocks.len()
+    }
+    fn embed_dim(&self) -> usize {
+        self.embed_dim
     }
 }
 
@@ -486,6 +532,7 @@ impl<B: Backend> Gpt2<B> {
         ln_f: LayerNorm<B>,
         head: Linear<B>,
         n_heads: usize,
+        embed_dim: usize,
     ) -> Self {
         Self {
             wte,
@@ -494,6 +541,7 @@ impl<B: Backend> Gpt2<B> {
             ln_f,
             head,
             n_heads,
+            embed_dim,
         }
     }
 
@@ -617,8 +665,42 @@ impl LlamaConfig {
     ///
     /// reference: llama.cpp reads the same keys in `llama-arch.cpp`.
     pub fn from_gguf_metadata(metadata: &crate::loader::GgufLoader) -> Self {
-        let _ = metadata;
-        todo!("LlamaConfig::from_gguf_metadata: read llama.* metadata keys")
+        use crate::loader::GgufValue;
+
+        let get_u32 = |key: &str, default: u32| -> u32 {
+            match metadata.metadata.get(key) {
+                Some(GgufValue::U32(v)) => *v,
+                _ => default,
+            }
+        };
+        let get_f32 = |key: &str, default: f32| -> f32 {
+            match metadata.metadata.get(key) {
+                Some(GgufValue::F32(v)) => *v,
+                _ => default,
+            }
+        };
+
+        let n_layers = get_u32("llama.block_count", 32) as usize;
+        let n_heads = get_u32("llama.attention.head_count", 32) as usize;
+        let n_kv_heads = get_u32("llama.attention.head_count_kv", n_heads as u32) as usize;
+        let embed_dim = get_u32("llama.embedding_length", 4096) as usize;
+        let head_dim = embed_dim / n_heads;
+        let max_seq_len = get_u32("llama.context_length", 2048) as usize;
+        let rope_theta = get_f32("llama.rope.freq_base", 10000.0);
+        let norm_eps = get_f32("llama.attention.layer_norm_rms_epsilon", 1e-5);
+        let vocab_size = get_u32("llama.vocab_size", 32000) as usize;
+
+        Self {
+            n_layers,
+            n_heads,
+            n_kv_heads,
+            embed_dim,
+            head_dim,
+            max_seq_len,
+            rope_theta,
+            norm_eps,
+            vocab_size,
+        }
     }
 }
 
@@ -655,23 +737,11 @@ impl<B: Backend> LlamaMlp<B> {
 
 impl<B: Backend> Module<B> for LlamaMlp<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        // swiglu: silu(gate(x)) * up(x), then down-project
-        //
-        // ## todo
-        // 1. gate = self.gate_proj.forward(backend, x)?
-        // 2. gate = backend.silu(&gate)?
-        // 3. up   = self.up_proj.forward(backend, x)?
-        // 4. gated = element-wise multiply: backend.add(?) — need a mul op
-        //    or do it manually via data().
-        //    *actually*: the Backend trait doesn't have a mul() yet.
-        //    options: (a) add mul to the trait, (b) do the multiply
-        //    via data()/load_from_cpu like gpt-2's attention does,
-        //    (c) add a higher-level fused swiglu to the backend.
-        //    option (b) matches the gpt-2 pattern and keeps the trait
-        //    surface small. for now this is todo.
-        // 5. out = self.down_proj.forward(backend, &gated)?
-        let _ = (backend, x);
-        todo!("LlamaMlp::forward: implement swiglu")
+        let gate = self.gate_proj.forward(backend, x)?;
+        let gate = backend.silu(&gate)?;
+        let up = self.up_proj.forward(backend, x)?;
+        let gated = backend.elemul(&gate, &up)?;
+        self.down_proj.forward(backend, &gated)
     }
 }
 
@@ -708,8 +778,10 @@ pub struct LlamaAttention<B: Backend> {
     n_kv_heads: usize,
     /// dimension per head
     head_dim: usize,
-    /// rope frequency base
-    rope_theta: f32,
+    /// precomputed rope cos table, shape [max_seq_len, head_dim]
+    rope_cos: B::Tensor,
+    /// precomputed rope sin table, shape [max_seq_len, head_dim]
+    rope_sin: B::Tensor,
 }
 
 impl<B: Backend> LlamaAttention<B> {
@@ -719,28 +791,120 @@ impl<B: Backend> LlamaAttention<B> {
         k_proj: Linear<B>,
         v_proj: Linear<B>,
         o_proj: Linear<B>,
+        rope_cos: B::Tensor,
+        rope_sin: B::Tensor,
         n_heads: usize,
         n_kv_heads: usize,
         head_dim: usize,
-        rope_theta: f32,
     ) -> Self {
         Self {
             q_proj,
             k_proj,
             v_proj,
             o_proj,
+            rope_cos,
+            rope_sin,
             n_heads,
             n_kv_heads,
             head_dim,
-            rope_theta,
         }
     }
 }
 
 impl<B: Backend> Module<B> for LlamaAttention<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        let _ = (backend, x);
-        todo!("LlamaAttention::forward: separate q/k/v proj, rope, gqa, causal attention")
+        // project q, k, v separately (no bias)
+        let q = self.q_proj.forward(backend, x)?;
+        let k = self.k_proj.forward(backend, x)?;
+        let v = self.v_proj.forward(backend, x)?;
+
+        // apply rope to q and k
+        let q = backend.apply_rotary_emb(&q, &self.rope_cos, &self.rope_sin, 0)?;
+        let k = backend.apply_rotary_emb(&k, &self.rope_cos, &self.rope_sin, 0)?;
+
+        let seq_len = backend.shape(&q)[0];
+        let embed_dim = self.n_heads * self.head_dim;
+        let scale = (self.head_dim as f32).sqrt().recip();
+        let n_repeat = self.n_heads / self.n_kv_heads;
+
+        let q_data = backend.data(&q);
+        let k_data = backend.data(&k);
+        let v_data = backend.data(&v);
+
+        let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
+
+        for h in 0..self.n_heads {
+            let q_head_offset = h * self.head_dim;
+            let kv_h = h / n_repeat;
+            let k_head_offset = kv_h * self.head_dim;
+            let v_head_offset = kv_h * self.head_dim;
+
+            let mut qk = vec![f32::NEG_INFINITY; seq_len * seq_len];
+
+            for i in 0..seq_len {
+                for j in 0..=i {
+                    let q_idx = i * embed_dim + q_head_offset;
+                    let k_idx = j * embed_dim + k_head_offset;
+                    let dot: f32 = q_data[q_idx..q_idx + self.head_dim]
+                        .iter()
+                        .zip(k_data[k_idx..k_idx + self.head_dim].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    qk[i * seq_len + j] = dot * scale;
+                }
+            }
+
+            let max_per_row: Vec<f32> = qk
+                .chunks(seq_len)
+                .map(|row| row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)))
+                .collect();
+
+            let mut row_sums = vec![0.0; seq_len];
+            for i in 0..seq_len {
+                let row_start = i * seq_len;
+                let row = &mut qk[row_start..row_start + seq_len];
+                let max = max_per_row[i];
+                if max == f32::NEG_INFINITY {
+                    let uniform = 1.0 / (seq_len as f32);
+                    for s in row.iter_mut() {
+                        *s = uniform;
+                    }
+                    row_sums[i] = 1.0;
+                    continue;
+                }
+                let mut sum = 0.0;
+                for s in row.iter_mut() {
+                    *s = (*s - max).exp();
+                    sum += *s;
+                }
+                row_sums[i] = sum;
+            }
+
+            for (row, sum) in qk.chunks_mut(seq_len).zip(row_sums.iter()) {
+                let inv_sum = sum.recip();
+                for s in row.iter_mut() {
+                    *s *= inv_sum;
+                }
+            }
+
+            for i in 0..seq_len {
+                for j in 0..=i {
+                    let weight = qk[i * seq_len + j];
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let v_offset = j * embed_dim + v_head_offset;
+                    let out_offset = i * embed_dim + q_head_offset;
+                    let dst = &mut attn_buf[out_offset..out_offset + self.head_dim];
+                    for d in 0..self.head_dim {
+                        dst[d] += weight * v_data[v_offset + d];
+                    }
+                }
+            }
+        }
+
+        let result_tensor = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        self.o_proj.forward(backend, &result_tensor)
     }
 }
 
@@ -750,20 +914,6 @@ impl<B: Backend> LlamaAttention<B> {
     /// the cache is allocated for `n_kv_heads` (not `n_heads`).
     /// during decode, cached k/v values are repeated via gqa to
     /// match the number of query heads before computing attention.
-    ///
-    /// ## todo
-    /// follow the same prefill→cache→decode pattern as
-    /// `Attention::forward_with_cache`, but:
-    ///   • project q, k, v separately (no bias)
-    ///   • apply rotary embeddings to q and k via `CpuTensor::apply_rotary_emb`
-    ///     (or the backend equivalent once it's plumbed through)
-    ///   • repeat k/v heads for gqa: `n_repeat = n_heads / n_kv_heads`
-    ///     the standard llama.cpp approach repeats interleaved:
-    ///       for h in 0..n_heads:
-    ///         kv_h = h / n_repeat
-    ///         k[.., h, ..] = cached_k[.., kv_h, ..]
-    ///   • scaled dot-product attention with causal mask
-    ///   • project through o_proj
     pub fn forward_with_cache(
         &self,
         backend: &B,
@@ -772,8 +922,104 @@ impl<B: Backend> LlamaAttention<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        let _ = (backend, x, cache, layer, start_pos);
-        todo!("LlamaAttention::forward_with_cache: rope + gqa + causal + cache append")
+        let q = self.q_proj.forward(backend, x)?;
+        let k = self.k_proj.forward(backend, x)?;
+        let v = self.v_proj.forward(backend, x)?;
+
+        let q = backend.apply_rotary_emb(&q, &self.rope_cos, &self.rope_sin, start_pos)?;
+        let k = backend.apply_rotary_emb(&k, &self.rope_cos, &self.rope_sin, start_pos)?;
+
+        let seq_len = backend.shape(&q)[0];
+        let embed_dim = self.n_heads * self.head_dim;
+        let kv_dim = self.n_kv_heads * self.head_dim;
+        let head_dim = self.head_dim;
+        let scale = (head_dim as f32).sqrt().recip();
+        let n_repeat = self.n_heads / self.n_kv_heads;
+
+        let q_data = backend.data(&q);
+        let k_data = backend.data(&k);
+        let v_data = backend.data(&v);
+
+        // store k/v in cache (n_kv_heads per layer)
+        let cursor = cache.cursor();
+        for pos in 0..seq_len {
+            let offset = pos * kv_dim;
+            cache.append(
+                layer,
+                cursor + pos,
+                &k_data[offset..offset + kv_dim],
+                &v_data[offset..offset + kv_dim],
+            );
+        }
+
+        // compute attention against full cached k/v
+        let total_seq_len = cache.cursor() + seq_len;
+        let (cached_k, cached_v) = cache.get(layer);
+        let cache_head_stride = cache.max_seq_len() * head_dim;
+
+        let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
+
+        for h in 0..self.n_heads {
+            let q_head_offset = h * head_dim;
+            let kv_h = h / n_repeat;
+
+            for i in 0..seq_len {
+                let max_j = total_seq_len - seq_len + i;
+
+                let mut qk_row = vec![f32::NEG_INFINITY; total_seq_len];
+                let q_idx_abs = i * embed_dim + q_head_offset;
+
+                for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
+                    let k_cache_abs = kv_h * cache_head_stride + j * head_dim;
+                    let dot: f32 = q_data[q_idx_abs..q_idx_abs + head_dim]
+                        .iter()
+                        .zip(cached_k[k_cache_abs..k_cache_abs + head_dim].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    *slot = dot * scale;
+                }
+
+                // softmax
+                let max_val = qk_row[..=max_j]
+                    .iter()
+                    .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+                if max_val == f32::NEG_INFINITY {
+                    let uniform = 1.0 / (total_seq_len as f32);
+                    for slot in qk_row.iter_mut().take(total_seq_len) {
+                        *slot = uniform;
+                    }
+                } else {
+                    let mut sum = 0.0;
+                    for slot in qk_row.iter_mut().take(max_j + 1) {
+                        *slot = (*slot - max_val).exp();
+                        sum += *slot;
+                    }
+                    let inv_sum = sum.recip();
+                    for slot in qk_row.iter_mut().take(max_j + 1) {
+                        *slot *= inv_sum;
+                    }
+                    // zero out masked positions
+                    for slot in qk_row.iter_mut().skip(max_j + 1) {
+                        *slot = 0.0;
+                    }
+                }
+
+                // weighted sum of values
+                for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let v_cache_abs = kv_h * cache_head_stride + j * head_dim;
+                    let out_offset = i * embed_dim + q_head_offset;
+                    for d in 0..head_dim {
+                        attn_buf[out_offset + d] += weight * cached_v[v_cache_abs + d];
+                    }
+                }
+            }
+        }
+
+        let result = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        self.o_proj.forward(backend, &result)
     }
 }
 
@@ -830,17 +1076,31 @@ impl<B: Backend> LlamaBlock<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        let _ = (backend, x, cache, layer, start_pos);
-        todo!(
-            "LlamaBlock::forward_with_cache: rms_norm → attn (cached) → add → rms_norm → mlp → add"
-        )
+        // rms_norm → attention (cached) → residual add
+        let normed = backend.rms_norm(x, &self.input_layernorm, 1e-5)?;
+        let attn_out = self.self_attn.forward_with_cache(
+            backend, &normed, cache, layer, start_pos,
+        )?;
+        let x = backend.add(x, &attn_out)?;
+
+        // rms_norm → swiglu mlp → residual add
+        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, 1e-5)?;
+        let mlp_out = self.mlp.forward(backend, &normed)?;
+        backend.add(&x, &mlp_out)
     }
 }
 
 impl<B: Backend> Module<B> for LlamaBlock<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        let _ = (backend, x);
-        todo!("LlamaBlock::forward: rms_norm → attn → add → rms_norm → mlp → add")
+        // rms_norm → attention → residual add
+        let normed = backend.rms_norm(x, &self.input_layernorm, 1e-5)?;
+        let attn_out = self.self_attn.forward(backend, &normed)?;
+        let x = backend.add(x, &attn_out)?;
+
+        // rms_norm → swiglu mlp → residual add
+        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, 1e-5)?;
+        let mlp_out = self.mlp.forward(backend, &normed)?;
+        backend.add(&x, &mlp_out)
     }
 }
 
@@ -867,6 +1127,32 @@ pub struct Llama<B: Backend> {
     pub head: Linear<B>,
     /// model configuration
     pub config: LlamaConfig,
+}
+
+impl<B: Backend> ForwardModel<B> for Llama<B> {
+    fn create_cache(&self, _backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
+        crate::kv_cache::KVCache::new(
+            self.blocks.len(),
+            self.config.n_kv_heads,
+            self.config.head_dim,
+            max_seq_len,
+        )
+    }
+    fn forward_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        Llama::forward_with_cache(self, backend, token_ids, cache, start_pos)
+    }
+    fn n_layers(&self) -> usize {
+        self.blocks.len()
+    }
+    fn embed_dim(&self) -> usize {
+        self.config.embed_dim
+    }
 }
 
 impl Llama<CpuBackend> {
@@ -905,8 +1191,63 @@ impl Llama<CpuBackend> {
     ///   • build all layers in a loop
     ///   • test with an actual llama gguf file from llama.cpp
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
-        let _ = loader;
-        todo!("Llama::from_loader: read metadata, build blocks, return model")
+        use crate::tensor::compute_rope_freqs;
+
+        let config = LlamaConfig::from_gguf_metadata(&loader);
+        let n_layers = config.n_layers;
+
+        // precompute rope tables once, shared across all attention layers
+        let (rope_cos, rope_sin) =
+            compute_rope_freqs(config.max_seq_len, config.head_dim, config.rope_theta);
+
+        let get_t = |name: &str| {
+            loader
+                .tensors
+                .get(name)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Missing tensor: {}", name))
+        };
+
+        let embed_tokens = get_t("token_embd.weight")?;
+
+        let mut blocks = Vec::with_capacity(n_layers);
+        for i in 0..n_layers {
+            let attn = LlamaAttention::new(
+                Linear::new(get_t(&format!("blk.{}.attn_q.weight", i))?.transpose(), None),
+                Linear::new(get_t(&format!("blk.{}.attn_k.weight", i))?.transpose(), None),
+                Linear::new(get_t(&format!("blk.{}.attn_v.weight", i))?.transpose(), None),
+                Linear::new(
+                    get_t(&format!("blk.{}.attn_output.weight", i))?.transpose(),
+                    None,
+                ),
+                rope_cos.clone(),
+                rope_sin.clone(),
+                config.n_heads,
+                config.n_kv_heads,
+                config.head_dim,
+            );
+
+            let mlp = LlamaMlp::new(
+                Linear::new(get_t(&format!("blk.{}.ffn_gate.weight", i))?.transpose(), None),
+                Linear::new(get_t(&format!("blk.{}.ffn_up.weight", i))?.transpose(), None),
+                Linear::new(get_t(&format!("blk.{}.ffn_down.weight", i))?.transpose(), None),
+            );
+
+            blocks.push(LlamaBlock::new(
+                get_t(&format!("blk.{}.attn_norm.weight", i))?,
+                attn,
+                get_t(&format!("blk.{}.ffn_norm.weight", i))?,
+                mlp,
+            ));
+        }
+
+        Ok(Self {
+            embed_tokens,
+            blocks,
+            norm: get_t("output_norm.weight")?,
+            head: Linear::new(get_t("output.weight")?.transpose(), None),
+            config,
+        })
     }
 }
 
@@ -917,8 +1258,12 @@ impl<B: Backend> Llama<B> {
     /// `n_kv_heads` kv heads, not `n_heads` query heads.
     /// gqa repeats k/v during attention rather than storing duplicates.
     pub fn create_cache(&self, _backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
-        let _ = max_seq_len;
-        todo!("Llama::create_cache: allocate cache for n_kv_heads * max_seq_len * head_dim")
+        crate::kv_cache::KVCache::new(
+            self.blocks.len(),
+            self.config.n_kv_heads,
+            self.config.head_dim,
+            max_seq_len,
+        )
     }
 
     /// forward pass with incremental kv caching.
@@ -934,13 +1279,39 @@ impl<B: Backend> Llama<B> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        let _ = (backend, token_ids, cache, start_pos);
-        todo!("Llama::forward_with_cache: embed → blocks → norm → head")
+        let seq_len = token_ids.len();
+        let embed_dim = self.config.embed_dim;
+        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
+        for (i, &tok) in token_ids.iter().enumerate() {
+            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
+            backend.assign_row(&mut x, i, &word_vec);
+        }
+
+        for (layer, block) in self.blocks.iter().enumerate() {
+            x = block.forward_with_cache(backend, &x, cache, layer, start_pos)?;
+        }
+        // advance the cache cursor after all layers have stored k/v
+        for _ in 0..seq_len {
+            cache.advance_cursor();
+        }
+        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
+        self.head.forward(backend, &x)
     }
 
     /// forward pass without caching (full sequence).
     pub fn forward(&self, backend: &B, token_ids: &[u32]) -> Result<B::Tensor, B::Error> {
-        let _ = (backend, token_ids);
-        todo!("Llama::forward: embed → blocks → norm → head")
+        let seq_len = token_ids.len();
+        let embed_dim = self.config.embed_dim;
+        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
+        for (i, &tok) in token_ids.iter().enumerate() {
+            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
+            backend.assign_row(&mut x, i, &word_vec);
+        }
+
+        for block in &self.blocks {
+            x = block.forward(backend, &x)?;
+        }
+        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
+        self.head.forward(backend, &x)
     }
 }
