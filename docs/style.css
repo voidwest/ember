@@ -65,6 +65,8 @@ pre {
     font-size: 0.8rem;
     line-height: 1.5;
     margin: 0.9rem 0;
+    direction: ltr;
+    text-align: left;
 }
 .mono { font-family: inherit; }
 
@@ -250,6 +252,56 @@ footer {
     text-align: center;
     color: var(--text-dim);
     font-size: 0.76rem;
+}
+
+/* ── RTL (Arabic pages) ─────────────────────────────────── */
+[dir="rtl"] ul,
+[dir="rtl"] ol {
+    padding-left: 0;
+    padding-right: 1.4rem;
+}
+
+[dir="rtl"] .callout {
+    border-left: none;
+    border-right: 3px solid var(--accent);
+    border-radius: 4px 0 0 4px;
+}
+
+[dir="rtl"] .lang-toggle {
+    right: auto;
+    left: 1rem;
+}
+
+[dir="rtl"] .tag {
+    margin: 0.2em 0 0 0.2em;
+}
+
+[dir="rtl"] .project .tags span {
+    margin-right: 0;
+    margin-left: 0.35rem;
+}
+
+[dir="rtl"] .project.featured {
+    border-left: none;
+    border-right: 3px solid var(--accent);
+}
+
+[dir="rtl"] th,
+[dir="rtl"] td {
+    text-align: right;
+}
+
+[dir="rtl"] .arch-tree,
+[dir="rtl"] .layout-block {
+    direction: ltr;
+    text-align: left;
+}
+
+@media (max-width: 600px) {
+    [dir="rtl"] .lang-toggle {
+        right: auto;
+        left: 0.5rem;
+    }
 }
 
 /* ── mobile ─────────────────────────────────────────────── */
