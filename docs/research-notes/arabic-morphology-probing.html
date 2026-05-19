@@ -7,7 +7,7 @@
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
-        <button class="lang-toggle" disabled title="Arabic (coming soon)">عربي</button>
+        <a href="/research-notes/arabic-morphology-probing.ar.html" class="lang-toggle" title="العربية">عربي</a>
 
         <div class="back">
             <a href="/">← voidwest</a>
@@ -39,7 +39,7 @@
         <p>three facts make this tractable right now:</p>
 
         <ol>
-            <li><strong>ember gives direct access to hidden states.</strong> after every transformer block, i can call <code>backend.data(&amp;x)</code> and read the activations. no hooks, no CUDA synchronization, no framework overhead.</li>
+            <li><strong>ember gives direct access to hidden states.</strong> after every transformer block, i can call <span class="mono">backend.data(&amp;x)</span> and read the activations. no hooks, no CUDA synchronization, no framework overhead.</li>
             <li><strong>behavioral probing is cheap.</strong> i don't need to train probes on 100K examples. the nonce root-pattern task from the 2026 paper gives a clean ground-truth signal: feed a root + pattern, check if the output is correct. probe at every layer.</li>
             <li><strong>the comparison writes itself.</strong> run the same probe on GPT-2 (terrible tokenizer alignment, unknown Arabic performance), LLaMA 3 (tested in the 2026 paper, middle of the pack), and a dedicated Arabic model (ALLAM if accessible, otherwise AraBERT). layer-by-layer, same stimuli.</li>
         </ol>
@@ -106,8 +106,8 @@
         <p>ember already has everything needed for the base inference. the probing pipeline needs two additions:</p>
 
         <ol>
-            <li><strong>activation capture mode</strong>, a flag or separate function that runs the forward pass but saves the hidden state after each block instead of discarding it. currently <code>Gpt2::forward_with_cache</code> overwrites <code>x</code> at each layer. a variant that pushes <code>x.clone()</code> to a <code>Vec&lt;B::Tensor&gt;</code> before the next block is ~5 lines.</li>
-            <li><strong>probe training harness</strong>, a small Rust module or Python script that takes the saved activations, fits logistic regression probes (via <code>linfa</code> or numpy), and reports accuracy per layer. this doesn't need to be fast, we're running ~200 stimuli, not 200K.</li>
+            <li><strong>activation capture mode</strong>, a flag or separate function that runs the forward pass but saves the hidden state after each block instead of discarding it. currently <span class="mono">Gpt2::forward_with_cache</span> overwrites <span class="mono">x</span> at each layer. a variant that pushes <span class="mono">x.clone()</span> to a <span class="mono">Vec&lt;B::Tensor&gt;</span> before the next block is ~5 lines.</li>
+            <li><strong>probe training harness</strong>, a small Rust module or Python script that takes the saved activations, fits logistic regression probes (via <span class="mono">linfa</span> or numpy), and reports accuracy per layer. this doesn't need to be fast, we're running ~200 stimuli, not 200K.</li>
         </ol>
 
         <h3>models to test</h3>
@@ -159,7 +159,7 @@
         <h2>next steps</h2>
 
         <ol>
-            <li><strong>add activation capture to ember</strong>, ~30 lines in <code>model.rs</code>. a new method <code>forward_with_activations</code> that returns hidden states alongside logits.</li>
+            <li><strong>add activation capture to ember</strong>, ~30 lines in <span class="mono">model.rs</span>. a new method <span class="mono">forward_with_activations</span> that returns hidden states alongside logits.</li>
             <li><strong>build stimulus set</strong>, start with the public dataset from Alakeel et al., filter to nonce roots only, expand to ~200 stimuli with 10+ patterns.</li>
             <li><strong>run GPT-2 probes</strong>, baseline. GPT-2's Arabic is probably poor, but the probe structure works regardless.</li>
             <li><strong>run LLaMA 3 1B/3B probes</strong>, the interesting comparison. where's the inflection?</li>

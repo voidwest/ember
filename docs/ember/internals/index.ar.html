@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="ar">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>ember internals</title>
+        <link rel="stylesheet" href="/style.css" />
+        <style>
+            .layout-block {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 1rem 1.2rem;
+                margin: 0.9rem 0;
+                font-size: 0.8rem;
+                line-height: 1.65;
+                white-space: pre;
+                overflow-x: auto;
+                color: var(--text-dim);
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 0.9rem 0;
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+                font-size: 0.83rem;
+            }
+            th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: left; }
+            th { background: var(--surface); color: var(--accent2); }
+            td { color: var(--text); }
+
+            @media (max-width: 600px) {
+                .layout-block { font-size: 0.62rem; padding: 0.7rem 0.8rem; }
+            }
+        </style>
+    </head>
+    <body>
+        <a href="/ember/internals/" class="lang-toggle" title="English">en</a>
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/index.ar.html">الشرح</a>
+        </div>
+
+        <h1>ember internals</h1>
+
+        <p>
+            هذا شرح سطر بسطر لهياكل البيانات، الخوارزميات،
+            وتخطيطات الذاكرة اللي تشغّل ember. يفترض إنك قريت
+            <a href="/ember/index.ar.html">النظرة المعمارية العامة</a> وتبغا التفاصيل الخام.
+        </p>
+
+        <!-- ══ TENSOR ══ -->
+        <h2>tensor</h2>
+
+        <p>
+            <span class="mono">CpuTensor</span> هو هيكل البيانات الوحيد اللي يلمسه كل مكون
+            آخر. ثلاث حقول:
+        </p>
+
+        <pre><span class="mono">pub struct CpuTensor {
+    pub shape: Vec&lt;usize&gt;,      // e.g. [12, 64, 768]
+    pub strides: Vec&lt;usize&gt;,    // contiguous row-major strides
+    pub data: Vec&lt;f32&gt;,         // flat f32 buffer
+}</span></pre>
+
+        <p>
+            <strong>الـ strides تُحسب لكن لا تُستخدم أبداً للفهرسة.</strong>
+            دالة <span class="mono">compute_strides</span> تبني مصفوفة strides قياسية
+            row-major (مثال: <span class="mono">[768, 1]</span> للشكل
+            <span class="mono">[64, 768]</span>)، لكن كل وصول يمر عبر رياضيات
+            الإزاحة المباشرة مثل <span class="mono">r * cols + c</span>. الـ strides موجودة
+            فقط لأجل <span class="mono">get(&amp;[usize])</span>، المفهرس متعدد الأبعاد
+            المستخدم فقط في الاختبارات.
+        </p>
+
+        <p>
+            <strong>كل عملية تخصص.</strong> لا views، لا تغيير في المكان.
+            <span class="mono">add()</span> يرجع <span class="mono">CpuTensor</span> جديد.
+            <span class="mono">softmax()</span> يرجع <span class="mono">CpuTensor</span> جديد.
+            <span class="mono">matmul()</span> يرجع <span class="mono">CpuTensor</span> جديد. المخصص
+            يرى تياراً من تخصيصات متطابقة الحجم أثناء decode
+            (عدد الـ tokens ثابت)، فـ <span class="mono">jemalloc</span> أو مخصص
+            النظام يعيد استخدام نفس الـ slab. هذا ليس عرضياً، إنه
+            السبب اللي يخلي الـ hot path يفلت من التخصيصات المتكررة بدون
+            ما يظهر كعاصفة malloc في profiling.
+        </p>
+
+        <p>
+            <strong><span class="mono">#[must_use]</span> على كل عملية بحتة.</strong>
+            إذا كتبت <span class="mono">x.softmax();</span> بدون ربط النتيجة،
+            التخصيص يُسقط بصمت والنموذج يشتغل على بيانات قديمة.
+            الـ attribute يخلي هذا compile error. كشف bug
+            نسيان إسناد مخرج layer norm راجع لـ <span class="mono">x</span> في
+            حلقة كتلة transformer، bug لا ينتج panic ولا NaN،
+            فقط نص متدهور تدريجياً.
+        </p>
+
+        <h3>matmul: <span class="mono">matrixmultiply::sgemm</span></h3>
+
+        <p>
+            الـ matmul يفوض لـ crate <span class="mono">matrixmultiply</span> الخاص بـ bluss،
+            sgemm pure-rust بدون ربط blas. موقع الاستدعاء:
+        </p>
+
+        <pre><span class="mono">unsafe {
+    matrixmultiply::sgemm(
+        m, k, n,                // dimensions
+        1.0,                    // alpha
+        a.as_ptr(), k as isize, 1,   // A: m×k, col stride = k, row stride = 1
+        b.as_ptr(), n as isize, 1,   // B: k×n, col stride = n, row stride = 1
+        0.0,                    // beta
+        c.as_mut_ptr(), n as isize, 1, // C: m×n, row-major
+    );
+}</span></pre>
+
+        <p>
+            <span class="mono">matrixmultiply</span> هو scalar، فهذا هو عنق زجاجة
+            throughput. الـ <span class="mono">Backend</span> trait هو نقطة الإدخال
+            لـ SIMD: نفّذ <span class="mono">SimdBackend</span> بنفس الـ trait،
+            بدّل نوع الـ backend، وكل matmul في النموذج يستخدم الـ kernel
+            الجديد بدون أي تغيير في شفرة النموذج.
+        </p>
+
+        <!-- ══ BACKEND TRAIT ══ -->
+        <h2>backend trait</h2>
+
+        <p>
+            الـ <span class="mono">Backend</span> trait هو التجريد اللي يفصل شفرة النموذج
+            عن العتاد. كل عملية تلمس بيانات tensor تمر عبر
+            مرجع <span class="mono">&amp;B</span>:
+        </p>
+
+        <pre><span class="mono">pub trait Backend {
+    type Tensor: Clone + Send + Sync;
+    type Error: core::error::Error;
+
+    fn zeroes(&amp;self, shape: &amp;[usize]) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn matmul(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn add(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn softmax(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn gelu(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn layer_norm(&amp;self, x: &amp;Self::Tensor, w: &amp;Self::Tensor, b: &amp;Self::Tensor, eps: f32)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn index_select(&amp;self, t: &amp;Self::Tensor, index: usize) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn assign_row(&amp;self, dst: &amp;mut Self::Tensor, index: usize, src: &amp;Self::Tensor);
+    fn slice_cols(&amp;self, x: &amp;Self::Tensor, start: usize, end: usize) -&gt; Self::Tensor;
+    fn shape&lt;'a&gt;(&amp;self, x: &amp;'a Self::Tensor) -&gt; &amp;'a [usize];
+    fn data&lt;'a&gt;(&amp;self, x: &amp;'a Self::Tensor) -&gt; &amp;'a [f32];
+    fn load_from_cpu(&amp;self, data: Vec&lt;f32&gt;, shape: &amp;[usize])
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn add_broadcast(&amp;self, x: &amp;Self::Tensor, bias: &amp;Self::Tensor)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+}</span></pre>
+
+        <p>
+            <span class="mono">CpuBackend</span> هو struct بحجم صفري يفوض كل
+            دالة لـ <span class="mono">CpuTensor</span>. <span class="mono">CpuError</span> يغلّف
+            <span class="mono">TensorError</span> لعدم تطابق الأشكال والفهرسة خارج
+            الحدود. دوال الـ trait مصممة لتكون قابلة للتنفيذ على أي
+            عتاد: GPU، SIMD، أو accelerator. الأوليتان الخاصتان بعائلة llama
+            (<span class="mono">rms_norm</span>، <span class="mono">silu</span>) موجودتان بالفعل على الـ trait
+            ومنفذتان لـ <span class="mono">CpuBackend</span>.
+        </p>
+
+        <!-- ══ KV CACHE ══ -->
+        <h2>kv cache</h2>
+
+        <h3>layout</h3>
+
+        <div class="layout-block">
+k: Vec&lt;f32&gt;   // flat [layer][head][pos][head_dim]
+v: Vec&lt;f32&gt;   // same layout
+
+offset math:
+  layer_offset = layer * n_heads * max_seq_len * head_dim
+  head_offset  = head  * max_seq_len * head_dim
+  pos_offset   = pos   * head_dim
+
+  absolute    = layer_offset + head_offset + pos_offset</div>
+
+        <p>
+            <strong>ليش هذا الـ layout.</strong> <span class="mono">cache.get(layer)</span> يرجع
+            شريحة متجاورة <span class="mono">&amp;[f32]</span> من كل الرؤوس والمواضع
+            لتلك الطبقة. حلقة الـ attention تفهرس فيها برياضيات strides
+            ثابتة، لا pointer chasing، لا nested vecs، تخصيص واحد. لـ
+            GPT-2 small عند 2048 سياق: 12 × 12 × 2048 × 64 × 4 × 2 = ~72 MB.
+        </p>
+
+        <h3>دلالات المؤشر</h3>
+
+        <p>
+            المؤشر هو موقع الكتابة في بعد التسلسل. إنه
+            <strong>لا يتقدم لكل طبقة</strong>. كل طبقة تقرا
+            <span class="mono">cache.cursor()</span> لتعرف وين تخزن، لكن المؤشر
+            يتقدم فقط بعد ما تخلص كل الطبقات في
+            <span class="mono">Gpt2::forward_with_cache</span>:
+        </p>
+
+        <pre><span class="mono">for (layer, block) in self.blocks.iter().enumerate() {
+    x = block.forward_with_cache(backend, &amp;x, cache, layer)?;
+}
+// cursor advances here, after all 12 layers have stored.
+for _ in 0..seq_len {
+    cache.advance_cursor();
+}</span></pre>
+
+        <p>
+            هذا التصميم هو اللي سبب bug #5. أثناء prefill، حلقة الـ attention
+            نادت <span class="mono">append</span> لكل token prompt، وكل نداء
+            وصل عند <span class="mono">cursor = 0</span>، كاتباً فوق اللي قبله. فقط
+            k/v لآخر token نجا. الإصلاح يمرر
+            <span class="mono">pos</span> صريح لـ <span class="mono">append</span>، محسوب كـ
+            <span class="mono">cache.cursor() + token_index</span> في forward pass
+            الـ attention.
+        </p>
+
+        <h3>qk_scratch</h3>
+
+        <p>
+            <span class="mono">Vec&lt;f32&gt;</span> منفصل محجوز مسبقاً لـ
+            <span class="mono">max_seq_len</span> (2048). مُعاد استخدامه عبر كل رأس وكل
+            token في خطوة decode:
+        </p>
+
+        <pre><span class="mono">pub fn qk_scratch_mut(&amp;mut self) -&gt; &amp;mut Vec&lt;f32&gt; {
+    &amp;mut self.qk_scratch
+}</span></pre>
+
+        <p>
+            المستدعي يفعل:
+        </p>
+
+        <pre><span class="mono">let scratch = cache.qk_scratch_mut();
+scratch.clear();
+scratch.resize(total_seq_len, f32::NEG_INFINITY);
+
+// fill scratch[pos] = dot(q, k[pos]) for pos in 0..total_seq_len
+// softmax in-place on scratch
+// weight sum of v[pos] by scratch[pos]</span></pre>
+
+        <p>
+            لأن <span class="mono">scratch</span> خُصص لـ
+            <span class="mono">max_seq_len</span>، الـ <span class="mono">resize</span> لا يعيد التخصيص
+            أبداً طالما <span class="mono">total_seq_len ≤ max_seq_len</span>.
+            هذا يزيل 144 تخصيص heap صغير لكل token مولّد
+            (12 طبقة × 12 رأس).
+        </p>
+
+        <!-- ══ GGUF & QUANTIZATION ══ -->
+        <h2>صيغة GGUF والضغط</h2>
+
+        <h3>هيكل الملف</h3>
+
+        <div class="layout-block">
+offset  field
+0x00    magic:      0x47 0x55 0x46 0x47  ("GGUF")
+0x04    version:    u32 (3)
+0x08    n_tensors:  u64
+0x10    n_metadata: u64
+0x18    metadata kv pairs (n_metadata entries)
+        ...
+        tensor info table (n_tensors entries)
+        ...
+        tensor data (raw bytes at offsets from info table)
+</div>
+
+        <p>
+            المحمل يمشي على metadata ليجد hyperparameters النموذج
+            (<span class="mono">gpt2.block_count</span>، <span class="mono">gpt2.context_length</span>،
+            <span class="mono">gpt2.embedding_length</span>، إلخ)، ثم يقرا جدول معلومات
+            الـ tensor ليحصل على اسم، شكل، dtype، وإزاحة البايت
+            لكل وزن. الأوزان تُطابق بأسماء tensors GPT-2 المرمزة يدوياً
+            (<span class="mono">"tok_embeddings.weight"</span>،
+            <span class="mono">"blk.{i}.attn.output.weight"</span>، إلخ).
+        </p>
+
+        <h3>الضغط الكتلي q8_0</h3>
+
+        <p>
+            كل كتلة تشفّر 32 قيمة f32 في 34 بايت:
+        </p>
+
+        <div class="layout-block">
+bytes 0-1:    d (fp16 scale factor)
+bytes 2-33:   q[0..31] (int8 quantized values)
+
+reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
+</div>
+
+        <p>
+            حلقة فك الضغط:
+        </p>
+
+        <pre><span class="mono">for i in 0..n_blocks {
+    let d_bits = u16::from_le_bytes(src[block_start..block_start + 2]);
+    let d = f16::from_bits(d_bits).to_f32();
+
+    for j in 0..Q8_0_BLOCK_SIZE {
+        let q = src[block_start + 2 + j] as i8;  // signed int8
+        dst[out_start + j] = q as f32 * d;
+    }
+}</span></pre>
+
+        <p>
+            قيم int8 <strong>مؤشرة</strong> (<span class="mono">i8</span>)،
+            النطاق [-128, 127]. معظم تطبيقات gguf تستخدم int8 مؤشر لـ
+            q8_0. مقياس fp16 يعني إن النطاق القابل للتمثيل لكل كتلة هو
+            تقريباً <span class="mono">[-128 × d, 127 × d]</span> حيث <span class="mono">d</span>
+            يختلف لكل كتلة. لأوزان GPT-2، المقاييس النموذجية في نطاق
+            0.001-0.05، معطية تقريباً ±0.1 إلى ±6.4 لكل عنصر وزن.
+        </p>
+
+        <h3>فخ الـ column-major</h3>
+
+        <p>
+            GGUF يخزن tensors q8_0 و f16 بترتيب column-major. حجم كتلة q8_0
+            هو 32، والبعد الداخلي يجب أن يكون مضاعفاً
+            لـ 32. لمصفوفة أوزان بشكل <span class="mono">[768, 50257]</span>، بعد
+            العمود (50257) هو محور الكتلة، يُحشى لمضاعف
+            32 على القرص. البايتات الخام موضوعة: كل 768 صفاً
+            من العمود 0، ثم كل 768 صفاً من العمود 1، إلخ.
+        </p>
+
+        <p>
+            رأس معلومات الـ tensor يبلغ عن الشكل <em>المنطقي</em>
+            <span class="mono">[768, 50257]</span> باصطلاح row-major، لكن البفر
+            المفكوك ضغطه هو column-major. المحمل في الأصل كان ينادي
+            <span class="mono">reshape(&amp;[768, 50257])</span>، الذي يفترض row-major،
+            منتجاً مصفوفة أوزان معكوسة. الإصلاح سطر واحد في
+            المحمل: اعكس <span class="mono">dims</span> قبل نداء
+            <span class="mono">reshape</span>. بعد فك الضغط أو تحويل f16، المحمل
+            يفعل:
+        </p>
+
+        <pre><span class="mono">// dims = [rows, cols] from the tensor info header
+// but data is column-major, so reverse to match:
+dims.reverse();
+let tensor = CpuTensor::from_data(dims, flat_f32_data);</span></pre>
+
+        <p>
+            ثم في <span class="mono">Gpt2::from_loader</span>، أوزان الطبقات linear تُعكس
+            مجدداً لاستعادة <span class="mono">[in_features, out_features]</span>
+            للـ matmul. الـ embeddings تتخطى الـ transpose لأن عكس dims
+            يجعل <span class="mono">index_select</span> يختار صفوفاً متجاورة بالفعل.
+        </p>
+
+        <!-- ══ SAMPLER ══ -->
+        <h2>sampler</h2>
+
+        <p>
+            خط الـ sampling هو خمس مراحل تطبق بالترتيب:
+        </p>
+
+        <h3>1. temperature</h3>
+
+        <pre><span class="mono">if temperature &gt; 0.0 {
+    for l in &amp;mut logits { *l /= temperature; }
+}</span></pre>
+
+        <p>
+            temperature = 0 يعني greedy argmax، الـ pipeline يتخطى
+            temperature scaling ويذهب مباشرة لـ argmax في
+            <span class="mono">categorical_sample</span>. أي قيمة موجبة تقسم
+            الـ logits: t أقل من 1.0 يشحذ (القمم تحصل على وزن نسبي أعلى)،
+            t أكبر من 1.0 يفلطح (أكثر انتظاماً).
+        </p>
+
+        <h3>2. top-k</h3>
+
+        <pre><span class="mono">let mut indexed: Vec&lt;(usize, f32)&gt; = logits.iter().cloned().enumerate().collect();
+indexed.sort_by(|a, b| b.1.partial_cmp(&amp;a.1).unwrap_or(Equal));
+
+let threshold = indexed[k - 1].1;
+for l in logits.iter_mut() {
+    if *l &lt; threshold { *l = f32::NEG_INFINITY; }
+}</span></pre>
+
+        <p>
+            يرتب نسخة من أزواج (index, logit) تنازلياً، يقرا قيمة
+            k-th الأكبر، يقنّع كل شيء تحتها. O(V log V) حيث
+            V = حجم المفردات (50257 لـ GPT-2). لا يفعل شيء عندما k ≥ V أو k = 0.
+        </p>
+
+        <h3>3. top-p (nucleus)</h3>
+
+        <pre><span class="mono">let soft = softmax_1d(logits);              // temporary distribution
+let cutoff = nucleus_cutoff(&amp;soft, p);     // threshold value
+for (i, s) in soft.iter().enumerate() {
+    if *s &lt; cutoff { logits[i] = f32::NEG_INFINITY; }
+}</span></pre>
+
+        <p>
+            يحسب softmax مؤقت ليجد أصغر مجموعة tokens
+            يتجاوز احتمالها التراكمي p. الحد الفاصل هو أصغر
+            قيمة احتمال في تلك المجموعة. الـ softmax النهائي يحسب مرة واحدة
+            بواسطة المستدعي (<span class="mono">sample_token</span>) بعد تشغيل كل المرشحات،
+            متجنباً softmax مزدوج.
+        </p>
+
+        <h3>4. softmax</h3>
+
+        <pre><span class="mono">let max = logits.iter().fold(f32::NEG_INFINITY, |a, &amp;b| a.max(b));
+if max == f32::NEG_INFINITY {
+    return vec![1.0 / logits.len() as f32; logits.len()];
+}
+let exps: Vec&lt;f32&gt; = logits.iter().map(|x| (x - max).exp()).collect();
+let sum: f32 = exps.iter().sum();
+exps.iter().map(|x| x / sum).collect()</span></pre>
+
+        <p>
+            خدعة max تمنع overflow: طرح max من كل logit
+            يضمن إن أكبر قيمة بعد exponentiation هي <span class="mono">exp(0) = 1</span>.
+            الـ fallback للصف المقتع بالكامل يرجع توزيع منتظم.
+        </p>
+
+        <h3>5. categorical sample (inverse cdf)</h3>
+
+        <pre><span class="mono">let r: f32 = rng.gen();  // uniform in [0, 1)
+let mut cum = 0.0;
+for (i, &amp;p) in dist.iter().enumerate() {
+    cum += p;
+    if r &lt; cum { return i; }
+}
+// floating-point rounding fallback: argmax
+dist.iter().enumerate()
+    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+    .map(|(i, _)| i).unwrap_or(0)</span></pre>
+
+        <p>
+            يمشي على المجموع التراكمي للاحتمالات. أول فهرس يتجاوز
+            مجموعه الجاري السحب العشوائي هو الـ token المختار.
+        </p>
+
+        <!-- ══ PROFILING ══ -->
+        <h2>ملاحظات profiling</h2>
+
+        <p>
+            تحليل wall-clock لخطوة decode واحدة (GPT-2 small، x86_64،
+            release build). القياسات من <span class="mono">std::time::Instant</span>
+            مع microbenchmark من 1000 عينة:
+        </p>
+
+        <div class="layout-block">
+decode step total (~84 ms)
+────────────────────────────────────
+matmul (12 layers × 4 matmuls):        ~55 ms   (66%)
+  c_attn (768→2304):                      ~14 ms
+  c_proj  (768→768):                      ~6 ms
+  c_fc    (768→3072):                     ~19 ms
+  c_proj  (3072→768):                     ~16 ms
+attention (scalar loops):               ~12 ms   (14%)
+gelu (12×3072 elements):                ~5 ms    (6%)
+layer_norm (12×2×768 elements):         ~4 ms    (5%)
+softmax (12 heads × 64 dim):            ~3 ms    (4%)
+other (adds, copies, sampling):         ~4 ms    (5%)
+</div>
+
+        <p>
+            matmul يهيمن. <span class="mono">c_fc</span> و output projection هما
+            أثقل matmuls، 768×3072 و 3072×768 على التوالي،
+            كل واحد 2.36 مليون ضرب-جمع. SIMD سيخفض هذا لـ
+            تقريباً 8-10 ms، دافعاً throughput نحو 40-50 tok/s.
+        </p>
+
+        <!-- ══ EDGE CASES ══ -->
+        <h2>حالات طرفية تستحق المعرفة</h2>
+
+        <p>
+            <strong>صفوف softmax المقنّعة بالكامل.</strong> القناع السببي يضبط
+            المواضع المستقبلية لـ <span class="mono">-inf</span>. في أول خطوة decode
+            (token واحد فقط في التسلسل)، كل صف بعد الأول هو
+            بالكامل <span class="mono">-inf</span>. softmax المعياري ينتج NaN
+            (<span class="mono">(-inf - -inf).exp()</span> يقيّم لـ NaN حسب ieee 754).
+            تفرع واحد، <span class="mono">if max == f32::NEG_INFINITY { return uniform }</span>،
+            يمنع NaN من الانتشار عبر 12 طبقة إلى logits
+            المخرج.
+        </p>
+
+        <p>
+            <strong>temperature = 0.</strong> الـ sampler يتحقق
+            <span class="mono">if temperature &gt; 0.0</span> ويتخطى الـ scaling. في
+            <span class="mono">categorical_sample</span>، توزيع softmax لـ
+            logits حادة يركز كل الكتلة على token argmax، و
+            inverse cdf sampling يختاره حتمياً. هكذا ينتج
+            <span class="mono">--temperature 0</span> مخرجاً متطابقاً كل تشغيلة
+            (مع نفس rng seed).
+        </p>
+
+        <p>
+            <strong>resize بفر scratch.</strong> بفر qk_scratch مخصص
+            لـ <span class="mono">max_seq_len</span> (2048). أثناء decode في
+            الموضع 47، المستدعي يعيد تحجيمه لـ 48. لأن 48 ≤ 2048،
+            الـ resize هو no-op، السعة حُددت في وقت البناء. هذا
+            ثابت متعمد: الـ hot path لا ينادي المخصص العام أبداً.
+        </p>
+
+        <p>
+            <strong>transposed embeddings.</strong> ملف gguf يخزن
+            embeddings الـ tokens كـ <span class="mono">[vocab, embed]</span> (50257 × 768). المحمل
+            يعكسهم لـ <span class="mono">[embed, vocab]</span> (768 × 50257)
+            أثناء بناء النموذج. هذا يعني <span class="mono">index_select(token_id)</span>
+            يختار شريحة متجاورة من 768 عنصر بدل ما يجمع 768
+            عنصراً متباعداً بخطوة vocab_size. التكلفة: transpose واحد عند البدء.
+            الفائدة: كل خطوة inference تعمل memcpy بدل gather.
+        </p>
+
+        <footer>
+            <p>
+                ember ·
+                <a href="https://github.com/voidwest/ember">github.com/voidwest/ember</a>
+                · MIT license
+            </p>
+            <p style="margin-top: 0.3rem">
+                <a href="/ember/index.ar.html">الشرح</a>
+                ·
+                <a href="/">voidwest</a>
+            </p>
+        </footer>
+
+    </body>
+</html>

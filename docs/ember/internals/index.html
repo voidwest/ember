@@ -37,7 +37,7 @@
         </style>
     </head>
     <body>
-        <button class="lang-toggle" disabled title="Arabic (coming soon)">عربي</button>
+        <a href="/ember/internals/index.ar.html" class="lang-toggle" title="العربية">عربي</a>
 
         <div class="back">
             <a href="/">← voidwest</a>
@@ -57,56 +57,56 @@
         <h2>tensor</h2>
 
         <p>
-            <code>CpuTensor</code> is the only data structure every other component
+            <span class="mono">CpuTensor</span> is the only data structure every other component
             touches. three fields:
         </p>
 
-        <pre><code>pub struct CpuTensor {
+        <pre><span class="mono">pub struct CpuTensor {
     pub shape: Vec&lt;usize&gt;,      // e.g. [12, 64, 768]
     pub strides: Vec&lt;usize&gt;,    // contiguous row-major strides
     pub data: Vec&lt;f32&gt;,         // flat f32 buffer
-}</code></pre>
+}</span></pre>
 
         <p>
             <strong>strides are computed but never used for indexing.</strong>
-            the <code>compute_strides</code> function builds a standard
-            row-major stride array (e.g. <code>[768, 1]</code> for shape
-            <code>[64, 768]</code>), but every access goes through direct
-            offset math like <code>r * cols + c</code>. the strides exist
-            purely for <code>get(&amp;[usize])</code>, the multi-dimensional
+            the <span class="mono">compute_strides</span> function builds a standard
+            row-major stride array (e.g. <span class="mono">[768, 1]</span> for shape
+            <span class="mono">[64, 768]</span>), but every access goes through direct
+            offset math like <span class="mono">r * cols + c</span>. the strides exist
+            purely for <span class="mono">get(&amp;[usize])</span>, the multi-dimensional
             indexer used only in testing.
         </p>
 
         <p>
             <strong>every operation allocates.</strong> no views, no mutation in
-            place. <code>add()</code> returns a new <code>CpuTensor</code>.
-            <code>softmax()</code> returns a new <code>CpuTensor</code>.
-            <code>matmul()</code> returns a new <code>CpuTensor</code>. the
+            place. <span class="mono">add()</span> returns a new <span class="mono">CpuTensor</span>.
+            <span class="mono">softmax()</span> returns a new <span class="mono">CpuTensor</span>.
+            <span class="mono">matmul()</span> returns a new <span class="mono">CpuTensor</span>. the
             allocator sees a stream of identical-sized allocations during decode
-            (token count is constant), so <code>jemalloc</code> or the system
+            (token count is constant), so <span class="mono">jemalloc</span> or the system
             allocator reuses the same slab. this is not accidental, it's the
             reason the hot path can get away with per-op allocations without
             profiling as a malloc storm.
         </p>
 
         <p>
-            <strong><code>#[must_use]</code> on every pure op.</strong>
-            if you write <code>x.softmax();</code> without binding the result,
+            <strong><span class="mono">#[must_use]</span> on every pure op.</strong>
+            if you write <span class="mono">x.softmax();</span> without binding the result,
             the allocation drops silently and the model runs on stale data.
             the attribute makes that a compile error. it caught the bug of
-            forgetting to assign layer norm output back to <code>x</code> in
+            forgetting to assign layer norm output back to <span class="mono">x</span> in
             the transformer block loop, a bug that produces no panic, no NaN,
             just progressively degraded text.
         </p>
 
-        <h3>matmul: <code>matrixmultiply::sgemm</code></h3>
+        <h3>matmul: <span class="mono">matrixmultiply::sgemm</span></h3>
 
         <p>
-            the matmul delegates to bluss's <code>matrixmultiply</code> crate,
+            the matmul delegates to bluss's <span class="mono">matrixmultiply</span> crate,
             a pure-rust sgemm with no blas linking. the call site:
         </p>
 
-        <pre><code>unsafe {
+        <pre><span class="mono">unsafe {
     matrixmultiply::sgemm(
         m, k, n,                // dimensions
         1.0,                    // alpha
@@ -115,12 +115,12 @@
         0.0,                    // beta
         c.as_mut_ptr(), n as isize, 1, // C: m×n, row-major
     );
-}</code></pre>
+}</span></pre>
 
         <p>
-            <code>matrixmultiply</code> is scalar, so this is the throughput
-            bottleneck. the <code>Backend</code> trait is the insertion point
-            for simd: implement <code>SimdBackend</code> with the same trait,
+            <span class="mono">matrixmultiply</span> is scalar, so this is the throughput
+            bottleneck. the <span class="mono">Backend</span> trait is the insertion point
+            for simd: implement <span class="mono">SimdBackend</span> with the same trait,
             swap the backend type, and every matmul in the model uses the new
             kernel with zero model code changes.
         </p>
@@ -129,12 +129,12 @@
         <h2>backend trait</h2>
 
         <p>
-            the <code>Backend</code> trait is the abstraction that decouples model
+            the <span class="mono">Backend</span> trait is the abstraction that decouples model
             code from hardware. every operation that touches tensor data goes through
-            a <code>&amp;B</code> reference:
+            a <span class="mono">&amp;B</span> reference:
         </p>
 
-        <pre><code>pub trait Backend {
+        <pre><span class="mono">pub trait Backend {
     type Tensor: Clone + Send + Sync;
     type Error: core::error::Error;
 
@@ -154,16 +154,16 @@
         -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn add_broadcast(&amp;self, x: &amp;Self::Tensor, bias: &amp;Self::Tensor)
         -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-}</code></pre>
+}</span></pre>
 
         <p>
-            <code>CpuBackend</code> is a zero-sized struct that delegates every
-            method to <code>CpuTensor</code>. <code>CpuError</code> wraps
-            <code>TensorError</code> for shape mismatches and out-of-bounds
+            <span class="mono">CpuBackend</span> is a zero-sized struct that delegates every
+            method to <span class="mono">CpuTensor</span>. <span class="mono">CpuError</span> wraps
+            <span class="mono">TensorError</span> for shape mismatches and out-of-bounds
             indexing. the trait methods are designed to be implementable on any
             hardware: gpu, simd, or accelerator. the two llama-family primitives
-            (<code>rms_norm</code>, <code>silu</code>) are already on the trait
-            and implemented for <code>CpuBackend</code>.
+            (<span class="mono">rms_norm</span>, <span class="mono">silu</span>) are already on the trait
+            and implemented for <span class="mono">CpuBackend</span>.
         </p>
 
         <!-- ══ KV CACHE ══ -->
@@ -183,8 +183,8 @@ offset math:
   absolute    = layer_offset + head_offset + pos_offset</div>
 
         <p>
-            <strong>why this layout.</strong> <code>cache.get(layer)</code> returns
-            a contiguous <code>&amp;[f32]</code> slice of all heads and positions
+            <strong>why this layout.</strong> <span class="mono">cache.get(layer)</span> returns
+            a contiguous <span class="mono">&amp;[f32]</span> slice of all heads and positions
             for that layer. the attention loop indexes into it with fixed-stride
             math, no pointer chasing, no nested vecs, single allocation. for
             gpt-2 small at 2048 context: 12 × 12 × 2048 × 64 × 4 × 2 = ~72 MB.
@@ -195,57 +195,57 @@ offset math:
         <p>
             the cursor is the write position in the sequence dimension. it is
             <strong>not advanced per-layer</strong>. each layer reads
-            <code>cache.cursor()</code> to know where to store, but the cursor
+            <span class="mono">cache.cursor()</span> to know where to store, but the cursor
             only advances after all layers finish in
-            <code>Gpt2::forward_with_cache</code>:
+            <span class="mono">Gpt2::forward_with_cache</span>:
         </p>
 
-        <pre><code>for (layer, block) in self.blocks.iter().enumerate() {
+        <pre><span class="mono">for (layer, block) in self.blocks.iter().enumerate() {
     x = block.forward_with_cache(backend, &amp;x, cache, layer)?;
 }
 // cursor advances here, after all 12 layers have stored.
 for _ in 0..seq_len {
     cache.advance_cursor();
-}</code></pre>
+}</span></pre>
 
         <p>
             this is the design that caused bug #5. during prefill, the attention
-            loop called <code>append</code> for each prompt token, every call
-            landed at <code>cursor = 0</code>, overwriting the previous. only the
+            loop called <span class="mono">append</span> for each prompt token, every call
+            landed at <span class="mono">cursor = 0</span>, overwriting the previous. only the
             final token's k/v survived. the fix passes an explicit
-            <code>pos</code> to <code>append</code>, computed as
-            <code>cache.cursor() + token_index</code> in the attention forward
+            <span class="mono">pos</span> to <span class="mono">append</span>, computed as
+            <span class="mono">cache.cursor() + token_index</span> in the attention forward
             pass.
         </p>
 
         <h3>qk_scratch</h3>
 
         <p>
-            a separate <code>Vec&lt;f32&gt;</code> pre-allocated to
-            <code>max_seq_len</code> (2048). reused across every head and every
+            a separate <span class="mono">Vec&lt;f32&gt;</span> pre-allocated to
+            <span class="mono">max_seq_len</span> (2048). reused across every head and every
             token in a decode step:
         </p>
 
-        <pre><code>pub fn qk_scratch_mut(&amp;mut self) -&gt; &amp;mut Vec&lt;f32&gt; {
+        <pre><span class="mono">pub fn qk_scratch_mut(&amp;mut self) -&gt; &amp;mut Vec&lt;f32&gt; {
     &amp;mut self.qk_scratch
-}</code></pre>
+}</span></pre>
 
         <p>
             the caller does:
         </p>
 
-        <pre><code>let scratch = cache.qk_scratch_mut();
+        <pre><span class="mono">let scratch = cache.qk_scratch_mut();
 scratch.clear();
 scratch.resize(total_seq_len, f32::NEG_INFINITY);
 
 // fill scratch[pos] = dot(q, k[pos]) for pos in 0..total_seq_len
 // softmax in-place on scratch
-// weight sum of v[pos] by scratch[pos]</code></pre>
+// weight sum of v[pos] by scratch[pos]</span></pre>
 
         <p>
-            because <code>scratch</code> was allocated to
-            <code>max_seq_len</code>, the <code>resize</code> never
-            re-allocates as long as <code>total_seq_len ≤ max_seq_len</code>.
+            because <span class="mono">scratch</span> was allocated to
+            <span class="mono">max_seq_len</span>, the <span class="mono">resize</span> never
+            re-allocates as long as <span class="mono">total_seq_len ≤ max_seq_len</span>.
             this eliminates 144 small heap allocations per generated token
             (12 layers × 12 heads).
         </p>
@@ -270,12 +270,12 @@ offset  field
 
         <p>
             the loader walks the metadata to find model hyperparameters
-            (<code>gpt2.block_count</code>, <code>gpt2.context_length</code>,
-            <code>gpt2.embedding_length</code>, etc.), then reads the tensor
+            (<span class="mono">gpt2.block_count</span>, <span class="mono">gpt2.context_length</span>,
+            <span class="mono">gpt2.embedding_length</span>, etc.), then reads the tensor
             info table to get each weight's name, shape, dtype, and byte
             offset. weights are matched by hardcoded gpt-2 tensor names
-            (<code>"tok_embeddings.weight"</code>,
-            <code>"blk.{i}.attn.output.weight"</code>, etc.).
+            (<span class="mono">"tok_embeddings.weight"</span>,
+            <span class="mono">"blk.{i}.attn.output.weight"</span>, etc.).
         </p>
 
         <h3>q8_0 block quantization</h3>
@@ -295,7 +295,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
             the dequantization loop:
         </p>
 
-        <pre><code>for i in 0..n_blocks {
+        <pre><span class="mono">for i in 0..n_blocks {
     let d_bits = u16::from_le_bytes(src[block_start..block_start + 2]);
     let d = f16::from_bits(d_bits).to_f32();
 
@@ -303,13 +303,13 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
         let q = src[block_start + 2 + j] as i8;  // signed int8
         dst[out_start + j] = q as f32 * d;
     }
-}</code></pre>
+}</span></pre>
 
         <p>
-            the int8 values are <strong>signed</strong> (<code>i8</code>),
+            the int8 values are <strong>signed</strong> (<span class="mono">i8</span>),
             range [-128, 127]. most gguf implementations use signed int8 for
             q8_0. the fp16 scale means the representable range per block is
-            roughly <code>[-128 × d, 127 × d]</code> where <code>d</code>
+            roughly <span class="mono">[-128 × d, 127 × d]</span> where <span class="mono">d</span>
             varies per block. for gpt-2 weights, typical scales are in the
             range 0.001-0.05, giving roughly ±0.1 to ±6.4 per weight element.
         </p>
@@ -319,7 +319,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
         <p>
             gguf stores q8_0 and f16 tensors in column-major order. the q8_0
             block size is 32, and the innermost dimension must be a multiple
-            of 32. for a weight matrix shaped <code>[768, 50257]</code>, the
+            of 32. for a weight matrix shaped <span class="mono">[768, 50257]</span>, the
             column dimension (50257) is the block axis, it's padded to a
             multiple of 32 on disk. the raw bytes are laid out: all 768 rows
             of column 0, then all 768 rows of column 1, etc.
@@ -327,25 +327,25 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
 
         <p>
             the tensor info header reports the <em>logical</em> shape
-            <code>[768, 50257]</code> in row-major convention, but the
+            <span class="mono">[768, 50257]</span> in row-major convention, but the
             dequantized buffer is column-major. the loader originally called
-            <code>reshape(&amp;[768, 50257])</code>, which assumes row-major,
+            <span class="mono">reshape(&amp;[768, 50257])</span>, which assumes row-major,
             producing a transposed weight matrix. the fix is one line in the
-            loader: reverse <code>dims</code> before calling
-            <code>reshape</code>. after dequantizing or converting f16, the
+            loader: reverse <span class="mono">dims</span> before calling
+            <span class="mono">reshape</span>. after dequantizing or converting f16, the
             loader does:
         </p>
 
-        <pre><code>// dims = [rows, cols] from the tensor info header
+        <pre><span class="mono">// dims = [rows, cols] from the tensor info header
 // but data is column-major, so reverse to match:
 dims.reverse();
-let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
+let tensor = CpuTensor::from_data(dims, flat_f32_data);</span></pre>
 
         <p>
-            then in <code>Gpt2::from_loader</code>, linear layer weights are
-            transposed back to restore <code>[in_features, out_features]</code>
+            then in <span class="mono">Gpt2::from_loader</span>, linear layer weights are
+            transposed back to restore <span class="mono">[in_features, out_features]</span>
             for matmul. embeddings skip the transpose since the dim reversal
-            already makes <code>index_select</code> pick contiguous rows.
+            already makes <span class="mono">index_select</span> pick contiguous rows.
         </p>
 
         <!-- ══ SAMPLER ══ -->
@@ -357,27 +357,27 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
 
         <h3>1. temperature</h3>
 
-        <pre><code>if temperature &gt; 0.0 {
+        <pre><span class="mono">if temperature &gt; 0.0 {
     for l in &amp;mut logits { *l /= temperature; }
-}</code></pre>
+}</span></pre>
 
         <p>
             temperature = 0 means greedy argmax, the pipeline skips
             temperature scaling and goes straight to argmax in
-            <code>categorical_sample</code>. any positive value divides
+            <span class="mono">categorical_sample</span>. any positive value divides
             logits: t &lt; 1.0 sharpens (peaks get higher relative weight),
             t &gt; 1.0 flattens (more uniform).
         </p>
 
         <h3>2. top-k</h3>
 
-        <pre><code>let mut indexed: Vec&lt;(usize, f32)&gt; = logits.iter().cloned().enumerate().collect();
+        <pre><span class="mono">let mut indexed: Vec&lt;(usize, f32)&gt; = logits.iter().cloned().enumerate().collect();
 indexed.sort_by(|a, b| b.1.partial_cmp(&amp;a.1).unwrap_or(Equal));
 
 let threshold = indexed[k - 1].1;
 for l in logits.iter_mut() {
     if *l &lt; threshold { *l = f32::NEG_INFINITY; }
-}</code></pre>
+}</span></pre>
 
         <p>
             sorts a copy of (index, logit) pairs descending, reads the k-th
@@ -387,39 +387,39 @@ for l in logits.iter_mut() {
 
         <h3>3. top-p (nucleus)</h3>
 
-        <pre><code>let soft = softmax_1d(logits);              // temporary distribution
+        <pre><span class="mono">let soft = softmax_1d(logits);              // temporary distribution
 let cutoff = nucleus_cutoff(&amp;soft, p);     // threshold value
 for (i, s) in soft.iter().enumerate() {
     if *s &lt; cutoff { logits[i] = f32::NEG_INFINITY; }
-}</code></pre>
+}</span></pre>
 
         <p>
             computes a temporary softmax to find the smallest set of tokens
             whose cumulative probability exceeds p. the cutoff is the smallest
             probability value in that set. the final softmax is computed once
-            by the caller (<code>sample_token</code>) after all filters run,
+            by the caller (<span class="mono">sample_token</span>) after all filters run,
             avoiding double-softmax.
         </p>
 
         <h3>4. softmax</h3>
 
-        <pre><code>let max = logits.iter().fold(f32::NEG_INFINITY, |a, &amp;b| a.max(b));
+        <pre><span class="mono">let max = logits.iter().fold(f32::NEG_INFINITY, |a, &amp;b| a.max(b));
 if max == f32::NEG_INFINITY {
     return vec![1.0 / logits.len() as f32; logits.len()];
 }
 let exps: Vec&lt;f32&gt; = logits.iter().map(|x| (x - max).exp()).collect();
 let sum: f32 = exps.iter().sum();
-exps.iter().map(|x| x / sum).collect()</code></pre>
+exps.iter().map(|x| x / sum).collect()</span></pre>
 
         <p>
             the max trick prevents overflow: subtracting max from every logit
-            ensures the largest exponentiated value is <code>exp(0) = 1</code>.
+            ensures the largest exponentiated value is <span class="mono">exp(0) = 1</span>.
             the all-masked fallback returns a uniform distribution.
         </p>
 
         <h3>5. categorical sample (inverse cdf)</h3>
 
-        <pre><code>let r: f32 = rng.gen();  // uniform in [0, 1)
+        <pre><span class="mono">let r: f32 = rng.gen();  // uniform in [0, 1)
 let mut cum = 0.0;
 for (i, &amp;p) in dist.iter().enumerate() {
     cum += p;
@@ -428,7 +428,7 @@ for (i, &amp;p) in dist.iter().enumerate() {
 // floating-point rounding fallback: argmax
 dist.iter().enumerate()
     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-    .map(|(i, _)| i).unwrap_or(0)</code></pre>
+    .map(|(i, _)| i).unwrap_or(0)</span></pre>
 
         <p>
             walks the cumulative sum of probabilities. the first index where the
@@ -440,7 +440,7 @@ dist.iter().enumerate()
 
         <p>
             wall-clock breakdown of a single decode step (gpt-2 small, x86_64,
-            release build). measurements from <code>std::time::Instant</code>
+            release build). measurements from <span class="mono">std::time::Instant</span>
             with 1000-sample microbenchmark:
         </p>
 
@@ -460,7 +460,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
 </div>
 
         <p>
-            matmul dominates. the <code>c_fc</code> and output projection are
+            matmul dominates. the <span class="mono">c_fc</span> and output projection are
             the two heaviest matmuls, 768×3072 and 3072×768 respectively,
             each 2.36 million multiply-adds. simd would drop this to
             roughly 8-10 ms, pushing throughput toward 40-50 tok/s.
@@ -471,28 +471,28 @@ other (adds, copies, sampling):         ~4 ms    (5%)
 
         <p>
             <strong>all-masked softmax rows.</strong> the causal mask sets
-            future positions to <code>-inf</code>. on the first decode step
+            future positions to <span class="mono">-inf</span>. on the first decode step
             (only one token in the sequence), every row after the first is
-            entirely <code>-inf</code>. standard softmax produces NaN
-            (<code>(-inf - -inf).exp()</code> evaluates to NaN per ieee 754).
-            one branch, <code>if max == f32::NEG_INFINITY { return uniform }</code>,
+            entirely <span class="mono">-inf</span>. standard softmax produces NaN
+            (<span class="mono">(-inf - -inf).exp()</span> evaluates to NaN per ieee 754).
+            one branch, <span class="mono">if max == f32::NEG_INFINITY { return uniform }</span>,
             prevents NaN from propagating through 12 layers into the output
             logits.
         </p>
 
         <p>
             <strong>temperature = 0.</strong> the sampler checks
-            <code>if temperature &gt; 0.0</code> and skips scaling. in
-            <code>categorical_sample</code>, the softmax distribution for
+            <span class="mono">if temperature &gt; 0.0</span> and skips scaling. in
+            <span class="mono">categorical_sample</span>, the softmax distribution for
             sharp logits concentrates all mass on the argmax token, and
             inverse cdf sampling selects it deterministically. this is how
-            <code>--temperature 0</code> produces identical output every run
+            <span class="mono">--temperature 0</span> produces identical output every run
             (given the same rng seed).
         </p>
 
         <p>
             <strong>scratch buffer resize.</strong> the qk_scratch buffer is
-            allocated to <code>max_seq_len</code> (2048). during decode at
+            allocated to <span class="mono">max_seq_len</span> (2048). during decode at
             position 47, the caller resizes it to 48. because 48 ≤ 2048, the
             resize is a no-op, capacity was set at construction time. this
             is a deliberate invariant: the hot path never calls the global
@@ -501,9 +501,9 @@ other (adds, copies, sampling):         ~4 ms    (5%)
 
         <p>
             <strong>transposed embeddings.</strong> the gguf file stores token
-            embeddings as <code>[vocab, embed]</code> (50257 × 768). the
-            loader transposes them to <code>[embed, vocab]</code> (768 × 50257)
-            during model construction. this means <code>index_select(token_id)</code>
+            embeddings as <span class="mono">[vocab, embed]</span> (50257 × 768). the
+            loader transposes them to <span class="mono">[embed, vocab]</span> (768 × 50257)
+            during model construction. this means <span class="mono">index_select(token_id)</span>
             picks a contiguous 768-element slice rather than gathering 768
             elements strided by vocab_size. cost: one transpose at startup.
             benefit: every inference step does a memcpy instead of a gather.

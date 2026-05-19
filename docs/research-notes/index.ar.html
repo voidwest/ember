@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>research notes · voidwest</title>
+        <title>ملاحظات بحثية · voidwest</title>
         <link rel="stylesheet" href="/style.css" />
         <style>
             .note-card .date {
@@ -12,109 +12,107 @@
         </style>
     </head>
     <body>
-        <a href="/research-notes/index.ar.html" class="lang-toggle" title="العربية">عربي</a>
+        <a href="/research-notes/" class="lang-toggle" title="English">en</a>
         <div class="back">
             <a href="/">← voidwest</a>
         </div>
 
-        <h1>research notes</h1>
+        <h1>ملاحظات بحثية</h1>
 
         <p>
-            running notes on papers, experiments, and ideas. updated when i
-            learn something worth writing down.
+            ملاحظات جارية على أوراق، تجارب، وأفكار. تتحدث كل ما تعلمت شي
+            يستحق الكتابة.
         </p>
 
         <!-- ════════════════════════════════════════════════════════ -->
-        <h2>research & direction</h2>
+        <h2>بحث وتوجه</h2>
 
         <div class="note-list">
             <div class="note-card">
                 <div class="title">
                     <a
-                        href="/research-notes/the-tokenizer-isnt-the-problem.html"
-                        >the tokenizer isn't the problem</a
+                        href="/research-notes/the-tokenizer-isnt-the-problem.ar.html"
+                        >المشكلة مش في الـ tokenizer</a
                     >
                 </div>
                 <div class="desc">
-                    what i learned reading arabic nlp papers for a week. the
-                    2026 paper that broke the assumption, and why the real
-                    question is about internal representations, not
-                    tokenization.
+                    اللي تعلمته وأنا أقرا أوراق NLP العربي لمدة أسبوع. ورقة 2026
+                    اللي كسرت الفرضية، وليش السؤال الحقيقي عن التمثيلات الداخلية،
+                    مش عن الـ tokenization.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-16</span>
                     &nbsp;·&nbsp;
-                    <span class="tag key">Arabic NLP</span>
-                    <span class="tag key">morphology</span>
+                    <span class="tag key">NLP عربي</span>
+                    <span class="tag key">الصرف</span>
                     <span class="tag key">tokenization</span>
-                    <span class="tag">writeup</span>
+                    <span class="tag">مقال</span>
                 </div>
             </div>
 
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/arabic-morphology-probing.html"
-                        >probing Arabic morphology inside LLMs</a
+                    <a href="/research-notes/arabic-morphology-probing.ar.html"
+                        >سبر الصرف العربي داخل الـ LLMs</a
                     >
                 </div>
                 <div class="desc">
-                    research plan: use ember for activation probing to find
-                    where and how models learn Arabic root-pattern morphology
-                    internally. builds on the open question from Alakeel et al.
-                    (2026).
+                    خطة بحثية: استخدام ember لـ activation probing عشان نعرف
+                    وين وكيف تتعلم النماذج نظام الجذر والوزن العربي داخلياً.
+                    تبني على السؤال المفتوح من Alakeel et al. (2026).
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-16</span>
                     &nbsp;·&nbsp;
-                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">NLP عربي</span>
                     <span class="tag key">probing</span>
                     <span class="tag key">ember</span>
-                    <span class="tag">research plan</span>
+                    <span class="tag">خطة بحثية</span>
                 </div>
             </div>
         </div>
 
         <!-- ════════════════════════════════════════════════════════ -->
-        <h2>paper notes</h2>
+        <h2>ملاحظات على أوراق</h2>
 
         <div class="note-list">
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/morphemes-without-borders.html"
+                    <a href="/research-notes/morphemes-without-borders.ar.html"
                         >morphemes without borders</a
                     >
                 </div>
                 <div class="desc">
                     alakeel, qwaider, aldarmaki, alqahtani · LREC 2026.
-                    token-morpheme alignment doesn't predict morphological
-                    generation in Arabic LLMs. GPT-4o scores 97% on nonce roots
-                    with terrible tokenizer alignment.
+                    محاذاة الـ token-morpheme ما تتنبأ بقدرة النموذج على توليد
+                    الصرف العربي في الـ LLMs. GPT-4o يحقق 97% على جذور مبتكرة
+                    مع أسوأ محاذاة tokenizer.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-15</span>
                     &nbsp;·&nbsp;
-                    <span class="tag key">Arabic NLP</span>
-                    <span class="tag key">morphology</span>
+                    <span class="tag key">NLP عربي</span>
+                    <span class="tag key">الصرف</span>
                     <span class="tag key">tokenization</span>
-                    <span class="tag key">LLM evaluation</span>
+                    <span class="tag key">تقييم LLM</span>
                 </div>
             </div>
 
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/arabic-tokenization-system.html"
-                        >arabic tokenization system</a
+                    <a href="/research-notes/arabic-tokenization-system.ar.html"
+                        >نظام tokenization عربي</a
                     >
                 </div>
                 <div class="desc">
-                    attia · ~2007. a finite-state, modular Arabic tokenizer with
-                    clitic guesser, morphological analyzer, and cashida-based
-                    disambiguation. the guess-and-filter architecture.
+                    attia · ~2007. tokenizer عربي معياري finite-state مع
+                    clitic guesser، محلل صرفي، و cashida للتفريق. معمارية
+                    guess-and-filter.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-15</span>
                     &nbsp;·&nbsp;
-                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">NLP عربي</span>
                     <span class="tag key">tokenization</span>
                     <span class="tag key">finite-state</span>
                 </div>
@@ -122,23 +120,23 @@
 
             <div class="note-card">
                 <div class="title">
-                    <a href="/research-notes/wanlp-2020-embeddings.html"
-                        >tokenization in Arabic embedding models</a
+                    <a href="/research-notes/wanlp-2020-embeddings.ar.html"
+                        >الـ tokenization في نماذج الـ embeddings العربية</a
                     >
                 </div>
                 <div class="desc">
-                    alkaoud & syed · WANLP 2020. morphology-aware tokenization
-                    at the embedding layer: 60% smaller vocab, better OOV
-                    handling, SOTA without retraining. worked at Word2Vec/mBERT
-                    scale.
+                    alkaoud & syed · WANLP 2020. tokenization واعي بالصرف في
+                    طبقة الـ embedding: مفردات أصغر بـ 60%، تعامل أفضل مع
+                    الكلمات الجديدة، SOTA بدون إعادة تدريب. اشتغل على Word2Vec
+                    و mBERT.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-05-16</span>
                     &nbsp;·&nbsp;
-                    <span class="tag key">Arabic NLP</span>
+                    <span class="tag key">NLP عربي</span>
                     <span class="tag key">embeddings</span>
                     <span class="tag key">tokenization</span>
-                    <span class="tag key">morphology</span>
+                    <span class="tag key">الصرف</span>
                 </div>
             </div>
         </div>

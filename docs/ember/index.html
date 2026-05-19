@@ -82,7 +82,7 @@
         </style>
     </head>
     <body>
-        <button class="lang-toggle" disabled title="Arabic (coming soon)">عربي</button>
+        <a href="/ember/index.ar.html" class="lang-toggle" title="العربية">عربي</a>
         <div class="back">
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
@@ -120,7 +120,7 @@
             rust was chosen for two reasons. first, memory safety: juggling 12
             layers of attention weights, a flat kv cache, and a row-major tensor
             library with no garbage collector is where rust's ownership model
-            pays for itself. second, the <code>Backend</code> trait, a zero-cost
+            pays for itself. second, the <span class="mono">Backend</span> trait, a zero-cost
             abstraction that means the same transformer code runs on cpu now and
             will run on a gpu later without touching model logic.
         </p>
@@ -149,7 +149,7 @@
         </div>
 
         <p>
-            the model is generic over the <code>Backend</code> trait, so the same
+            the model is generic over the <span class="mono">Backend</span> trait, so the same
             transformer code works on cpu today and will work on a gpu tomorrow
             without rewriting attention or mlp logic.
         </p>
@@ -164,36 +164,36 @@
 
         <h3>the backend trait</h3>
         <p>
-            the <code>Backend</code> trait in <code>src/backend.rs</code> is the
-            central abstraction. model code is generic over <code>B: Backend</code>,
+            the <span class="mono">Backend</span> trait in <span class="mono">src/backend.rs</span> is the
+            central abstraction. model code is generic over <span class="mono">B: Backend</span>,
             so the same transformer implementation works on
-            <code>CpuBackend</code> today and will work on any future
+            <span class="mono">CpuBackend</span> today and will work on any future
             gpu/accelerator backend without modification. the trait exposes
-            <code>matmul</code>, <code>add</code>, <code>softmax</code>,
-            <code>gelu</code>, <code>layer_norm</code>, <code>index_select</code>,
-            <code>slice_cols</code>, <code>load_from_cpu</code>, and shape/data
+            <span class="mono">matmul</span>, <span class="mono">add</span>, <span class="mono">softmax</span>,
+            <span class="mono">gelu</span>, <span class="mono">layer_norm</span>, <span class="mono">index_select</span>,
+            <span class="mono">slice_cols</span>, <span class="mono">load_from_cpu</span>, and shape/data
             accessors. attention is not yet abstracted through the trait, the
-            model's attention methods call <code>data()</code> and run scalar cpu
-            loops, but the trait is designed so a <code>fn attention(...)</code>
+            model's attention methods call <span class="mono">data()</span> and run scalar cpu
+            loops, but the trait is designed so a <span class="mono">fn attention(...)</span>
             method can be added later.
         </p>
 
         <h3>row-major tensor layout</h3>
         <p>
-            <code>CpuTensor</code> in <code>src/tensor.rs</code> is a flat
-            <code>Vec&lt;f32&gt;</code> with row-major strides. shape
-            <code>[rows, cols]</code> means element <code>[i][j]</code> is at
-            offset <code>i * cols + j</code>. this is the standard layout for
-            matrixmultiply and blas, and it means <code>index_select(row)</code>
-            is a contiguous slice. the tradeoff: <code>slice_cols</code> is a
+            <span class="mono">CpuTensor</span> in <span class="mono">src/tensor.rs</span> is a flat
+            <span class="mono">Vec&lt;f32&gt;</span> with row-major strides. shape
+            <span class="mono">[rows, cols]</span> means element <span class="mono">[i][j]</span> is at
+            offset <span class="mono">i * cols + j</span>. this is the standard layout for
+            matrixmultiply and blas, and it means <span class="mono">index_select(row)</span>
+            is a contiguous slice. the tradeoff: <span class="mono">slice_cols</span> is a
             gather, not a slice. but in practice, you index-select rows far more
             often (embeddings, output projection) than you slice columns.
         </p>
 
         <h3>gguf v3 loader with memory mapping</h3>
         <p>
-            <code>loader.rs</code> opens the gguf file with
-            <code>memmap2::Mmap</code>, avoiding copying the file into userspace
+            <span class="mono">loader.rs</span> opens the gguf file with
+            <span class="mono">memmap2::Mmap</span>, avoiding copying the file into userspace
             buffers. the os lazily pages in data. tensors are dequantized and
             copied out; the mmap is dropped when the function returns. supports
             f32, f16, and q8_0 dtypes. f16 and q8_0 tensors are stored
@@ -203,12 +203,12 @@
 
         <h3>sampling pipeline</h3>
         <p>
-            <code>sampler.rs</code> implements the standard sampling pipeline:
+            <span class="mono">sampler.rs</span> implements the standard sampling pipeline:
             temperature scaling → top-k → top-p (nucleus) → softmax →
             categorical sample. temperature 0 uses greedy argmax. top-k keeps
             only the k highest logits. top-p keeps the smallest set of tokens
             whose cumulative softmax probability exceeds p. the softmax handles
-            all-masked rows (all <code>-inf</code>) by returning a uniform
+            all-masked rows (all <span class="mono">-inf</span>) by returning a uniform
             distribution, preventing NaN propagation. the categorical sample
             uses inverse cdf sampling with a fallback to argmax.
         </p>
@@ -225,19 +225,19 @@
         <h3>softmax</h3>
         <p>
             softmax converts a vector of logits into a probability distribution:
-            <code>exp(x_i) / Σ exp(x_j)</code>. the standard implementation
+            <span class="mono">exp(x_i) / Σ exp(x_j)</span>. the standard implementation
             subtracts the maximum logit from every element before exponentiating
-            to avoid overflow (<code>exp(88) → inf</code>). this is the "max
+            to avoid overflow (<span class="mono">exp(88) → inf</span>). this is the "max
             trick" and it's in every textbook.
         </p>
         <p>
             the less-discussed edge case: what happens when every logit in a row
-            is <code>-inf</code>? this occurs in the causal attention mask, the
+            is <span class="mono">-inf</span>? this occurs in the causal attention mask, the
             first token has no prior tokens to attend to. running
-            <code>softmax([-inf, -inf, ...])</code> produces
-            <code>(-inf) - (-inf) = NaN</code> before exponentiation. ember
+            <span class="mono">softmax([-inf, -inf, ...])</span> produces
+            <span class="mono">(-inf) - (-inf) = NaN</span> before exponentiation. ember
             detects this with a single branch, 
-            <code>if max == f32::NEG_INFINITY { return uniform; }</code>, and
+            <span class="mono">if max == f32::NEG_INFINITY { return uniform; }</span>, and
             returns a uniform distribution, one line that prevents NaN from
             propagating through 12 transformer layers.
         </p>
@@ -248,14 +248,14 @@
             function. it's a smoother version of relu: instead of hard-clipping
             negative values to zero, it squashes them toward zero
             probabilistically, weighted by the gaussian cdf. the formula:
-            <code>0.5 * x * (1 + erf(x / √2))</code>.
+            <span class="mono">0.5 * x * (1 + erf(x / √2))</span>.
         </p>
         <p>
             it lives in the mlp block: the hidden layer projects from 768 to
             3072, gelu fires on every element, then the output layer projects
             back to 768. every token passes through this bottleneck 12 times
             (once per transformer block). the implementation uses
-            <code>libm::erff</code>, pure rust, no libm linking, portable across
+            <span class="mono">libm::erff</span>, pure rust, no libm linking, portable across
             targets.
         </p>
 
@@ -263,16 +263,16 @@
         <p>
             layer normalization keeps activations from drifting into numerically
             useless ranges as they pass through 12 blocks of attention and mlp.
-            for each row of a <code>[batch, features]</code> tensor, it computes
+            for each row of a <span class="mono">[batch, features]</span> tensor, it computes
             the mean and variance across that row, normalizes every element to
-            <code>(x - mean) / √(var + ε)</code>, then scales by a learned
+            <span class="mono">(x - mean) / √(var + ε)</span>, then scales by a learned
             weight and shifts by a learned bias. epsilon (1e-5) prevents
             division by zero.
         </p>
         <p>
             it's four lines of arithmetic per row. but get it wrong, forget to
             apply the weight, skip the bias, or forget to assign the result back
-            to <code>x</code> in the block loop, and the model's output degrades
+            to <span class="mono">x</span> in the block loop, and the model's output degrades
             silently. no panic. no NaN. just progressively worse text.
         </p>
 
@@ -287,7 +287,7 @@
         <p>
             <strong>q, k, v.</strong> every token's embedding (a vector of 768
             numbers) passes through a single linear layer called
-            <code>c_attn</code>, which maps 768 → 2304. that 2304-element output
+            <span class="mono">c_attn</span>, which maps 768 → 2304. that 2304-element output
             is three 768-element vectors packed together: query, key, and value.
             for each attention head (gpt-2 small has 12), you take a 64-element
             slice of q, k, and v. the query asks "what am i looking for?", the
@@ -302,10 +302,10 @@
             by looking at future tokens, the model would learn to copy the
             answer instead of predicting it. at inference time, future tokens
             don't exist yet; they're generated one at a time. the solution is a
-            triangular mask: token at position <code>i</code> can attend to
-            positions <code>0..=i</code>, and everything beyond
-            <code>i</code> is set to <code>-inf</code> before softmax. the
-            <code>-inf</code> becomes 0 after softmax, so the model physically
+            triangular mask: token at position <span class="mono">i</span> can attend to
+            positions <span class="mono">0..=i</span>, and everything beyond
+            <span class="mono">i</span> is set to <span class="mono">-inf</span> before softmax. the
+            <span class="mono">-inf</span> becomes 0 after softmax, so the model physically
             cannot look ahead.
         </p>
 
@@ -315,7 +315,7 @@
             dimensions (768 / 12 = 64). head 0 might learn syntax, head 3 might
             learn coreference, head 7 might learn positional patterns. the
             outputs of all heads are concatenated back into a 768-element vector
-            and projected through <code>c_proj</code>.
+            and projected through <span class="mono">c_proj</span>.
         </p>
 
         <!-- ═══════════════════════════ 6. KV CACHE ═══════════════════════════ -->
@@ -331,19 +331,19 @@
         </p>
 
         <p>
-            <strong>layout.</strong> the cache is a flat <code>[layer][head][pos][head_dim]</code>
+            <strong>layout.</strong> the cache is a flat <span class="mono">[layer][head][pos][head_dim]</span>
             buffer. for gpt-2 small at 2048 context: 12 layers × 12 heads ×
             2048 positions × 64 head_dim = ~72 mb for k+v combined. the layout
-            is chosen so <code>cache.get(layer)</code> returns a contiguous slice
+            is chosen so <span class="mono">cache.get(layer)</span> returns a contiguous slice
             of all heads and positions for that layer, which the attention loop
             indexes into with fixed-stride math. no pointer chasing.
         </p>
 
         <p>
             <strong>the scratch buffer trick.</strong> attention scores are
-            computed into a pre-allocated <code>qk_scratch</code> buffer stored
-            inside the kv cache struct. capacity equals <code>max_seq_len</code>,
-            so <code>resize</code> never re-allocates during inference.
+            computed into a pre-allocated <span class="mono">qk_scratch</span> buffer stored
+            inside the kv cache struct. capacity equals <span class="mono">max_seq_len</span>,
+            so <span class="mono">resize</span> never re-allocates during inference.
             eliminating 144 small heap allocations per generated token (12
             layers × 12 heads) was a 6× speedup before the algorithmic
             improvement.
@@ -372,22 +372,22 @@
                 root cause: gguf stores q8_0 and f16 tensors in column-major
                 order so the innermost dimension is a multiple of 32 (the q8_0
                 block size). the tensor info header reports the logical shape
-                (e.g. <code>[768, 50257]</code> for the embedding matrix), but
+                (e.g. <span class="mono">[768, 50257]</span> for the embedding matrix), but
                 the dequantized flat buffer is laid out column-major, the data
-                for <code>tensor[i][j]</code> is at offset
-                <code>j * rows + i</code>, not <code>i * cols + j</code>. the
+                for <span class="mono">tensor[i][j]</span> is at offset
+                <span class="mono">j * rows + i</span>, not <span class="mono">i * cols + j</span>. the
                 loader reshaped with the logical dims in row-major order,
                 scrambling every weight matrix.
             </div>
             <div class="fix">
                 fix: after dequantizing q8_0 or converting f16, reverse the
-                <code>dims</code> vec so the reshape matches the column-major
+                <span class="mono">dims</span> vec so the reshape matches the column-major
                 storage. then adjust the transposes in
-                <code>Gpt2::from_loader</code>: embeddings need no manual
+                <span class="mono">Gpt2::from_loader</span>: embeddings need no manual
                 transpose (loader already reversed dims, so
-                <code>index_select</code> picks rows directly), while linear
-                weights get a <code>.transpose()</code> to restore
-                <code>[in_features, out_features]</code> for matmul.
+                <span class="mono">index_select</span> picks rows directly), while linear
+                weights get a <span class="mono">.transpose()</span> to restore
+                <span class="mono">[in_features, out_features]</span> for matmul.
             </div>
             <div
                 class="symptom"
@@ -403,39 +403,39 @@
         <div class="bug-card">
             <div class="title">bug #5, kv cache prefill overwrite</div>
             <div class="symptom">
-                symptom: <code>"1, 2, 3, 4, 5"</code> →
-                <code>"/5/5/5/5/5/5/5/"</code>. the model could attend to at
+                symptom: <span class="mono">"1, 2, 3, 4, 5"</span> →
+                <span class="mono">"/5/5/5/5/5/5/5/"</span>. the model could attend to at
                 most one prompt token. it saw the last token ("5") and nothing
                 else.
             </div>
             <div class="cause">
-                root cause: <code>KVCache::append</code> wrote every entry at
-                <code>self.cursor</code>. but <code>cursor</code> is
+                root cause: <span class="mono">KVCache::append</span> wrote every entry at
+                <span class="mono">self.cursor</span>. but <span class="mono">cursor</span> is
                 deliberately <em>not</em> advanced until
-                <code>Gpt2::forward_with_cache</code> finishes all 12 layers.
+                <span class="mono">Gpt2::forward_with_cache</span> finishes all 12 layers.
                 during prefill, when
-                <code>Attention::forward_with_cache</code> looped over prompt
-                tokens calling <code>append</code>, every call landed at
-                <code>cursor = 0</code>, each overwriting the last. only the
+                <span class="mono">Attention::forward_with_cache</span> looped over prompt
+                tokens calling <span class="mono">append</span>, every call landed at
+                <span class="mono">cursor = 0</span>, each overwriting the last. only the
                 final prompt token's k/v projection survived; all other
                 positions stayed zero.
             </div>
             <div class="fix">
-                fix: <code>append</code> now takes an explicit
-                <code>pos: usize</code> parameter.
-                <code>Attention::forward_with_cache</code> snapshots
-                <code>cache.cursor()</code> before the loop and passes
-                <code>cursor + pos</code>, so each token lands at its correct
+                fix: <span class="mono">append</span> now takes an explicit
+                <span class="mono">pos: usize</span> parameter.
+                <span class="mono">Attention::forward_with_cache</span> snapshots
+                <span class="mono">cache.cursor()</span> before the loop and passes
+                <span class="mono">cursor + pos</span>, so each token lands at its correct
                 absolute cache slot. the cursor is still batch-advanced
-                afterward in <code>Gpt2::forward_with_cache</code>, that part
+                afterward in <span class="mono">Gpt2::forward_with_cache</span>, that part
                 was already correct.
             </div>
             <div
                 class="symptom"
                 style="margin-top: 0.6rem; color: var(--accent2)"
             >
-                after fix: <code>"1, 2, 3, 4, 5"</code> →
-                <code>", 6, 7, 8, 9, 10, 11, 12,"</code>.
+                after fix: <span class="mono">"1, 2, 3, 4, 5"</span> →
+                <span class="mono">", 6, 7, 8, 9, 10, 11, 12,"</span>.
             </div>
         </div>
 
@@ -447,26 +447,26 @@
         <ul>
             <li>
                 <strong>transposed embeddings on load.</strong> gguf stores
-                token/position embeddings as <code>[vocab, embed]</code>. the
-                loader transposes them so <code>index_select</code> picks a row
+                token/position embeddings as <span class="mono">[vocab, embed]</span>. the
+                loader transposes them so <span class="mono">index_select</span> picks a row
                 with one contiguous slice instead of gathering strided elements.
                 cost: one transpose at startup. benefit: every inference step
                 memcpys instead of gathering.
             </li>
             <li>
                 <strong>uniform softmax for all-masked rows.</strong> a fully
-                masked row (all <code>-inf</code>) produces NaN under standard
-                softmax. one branch, if max == <code>-inf</code>, return
-                <code>1/n</code> per position, prevents NaN from propagating
+                masked row (all <span class="mono">-inf</span>) produces NaN under standard
+                softmax. one branch, if max == <span class="mono">-inf</span>, return
+                <span class="mono">1/n</span> per position, prevents NaN from propagating
                 through 12 transformer layers.
             </li>
             <li>
-                <strong><code>#[must_use]</code> on all pure tensor ops.</strong>
+                <strong><span class="mono">#[must_use]</span> on all pure tensor ops.</strong>
                 tensor operations allocate new storage, they never mutate in
-                place. calling <code>x.softmax()</code> without binding the
+                place. calling <span class="mono">x.softmax()</span> without binding the
                 result silently drops the allocation.
-                <code>#[must_use]</code> caught the bug of forgetting to assign
-                the layer norm output back to <code>x</code> in the transformer
+                <span class="mono">#[must_use]</span> caught the bug of forgetting to assign
+                the layer norm output back to <span class="mono">x</span> in the transformer
                 block loop at compile time. that bug produces silently wrong
                 logits with no panic.
             </li>
@@ -480,7 +480,7 @@
             every generation step recomputed attention over the full growing
             sequence, 71 forward passes for a 50-token prompt with 20 generated
             tokens, each doing o(n²) attention. after wiring the cache into
-            <code>Attention::forward_with_cache</code>, the generation loop does
+            <span class="mono">Attention::forward_with_cache</span>, the generation loop does
             one prefill pass (populating the cache) plus one o(n) decode step
             per generated token.
         </p>
@@ -516,10 +516,10 @@
         <p>
             the scratch buffer eliminated 144 small heap allocations per
             generated token for a 12-layer, 12-head model. the buffer is
-            pre-allocated in <code>KVCache::new()</code>; the attention loop
-            calls <code>clear()</code> + <code>resize()</code> on it, and the
+            pre-allocated in <span class="mono">KVCache::new()</span>; the attention loop
+            calls <span class="mono">clear()</span> + <span class="mono">resize()</span> on it, and the
             resize never re-allocates because capacity equals
-            <code>max_seq_len</code>.
+            <span class="mono">max_seq_len</span>.
         </p>
 
         <!-- ═══════════════════════════ 10. FIRST LIGHT ═══════════════════════════ -->
@@ -578,18 +578,18 @@
                 mean-centering step and only scales by the root-mean-square. the
                 mean is zero anyway after enough layers; dropping it saves a
                 subtraction per element. the implementation is a three-line
-                variant of the existing <code>layer_norm</code> method.
+                variant of the existing <span class="mono">layer_norm</span> method.
             </li>
             <li>
                 <strong>silu</strong> (sigmoid linear unit, also called swish)
-                replaces gelu as the activation: <code>x * sigmoid(x)</code>,
+                replaces gelu as the activation: <span class="mono">x * sigmoid(x)</span>,
                 self-gating, smooth. the gated ffn in llama uses it in a
-                <code>gate_proj * up_proj</code> element-wise product before the
+                <span class="mono">gate_proj * up_proj</span> element-wise product before the
                 down projection.
             </li>
             <li>
                 <strong>rope</strong> (rotary position embeddings) replaces the
-                learned <code>wpe</code> lookup table. instead of storing a
+                learned <span class="mono">wpe</span> lookup table. instead of storing a
                 vector for each absolute position, rope encodes position by
                 rotating pairs of dimensions in the query and key vectors by an
                 angle proportional to the position. the attention score between
@@ -603,30 +603,30 @@
                 only 8 kv heads, so four q heads share each kv pair. less memory
                 for the cache means longer context for the same ram budget. the
                 attention loop barely changes, kv heads cycle every
-                <code>n_q_heads / n_kv_heads</code> q heads.
+                <span class="mono">n_q_heads / n_kv_heads</span> q heads.
             </li>
         </ul>
 
         <p>
             each primitive is specified with starter code and tests in the repo.
-            the <code>Backend</code>
+            the <span class="mono">Backend</span>
             trait was designed for exactly this, adding a new op to the trait
             makes it available to every future backend automatically.
         </p>
 
         <p>
             <strong>simd.</strong> the current matmul delegates to
-            <code>matrixmultiply::sgemm</code>, a pure rust implementation that
+            <span class="mono">matrixmultiply::sgemm</span>, a pure rust implementation that
             is correct but scalar. the next performance jump comes from
             vectorized kernels, avx2 on x86, neon on arm. the
-            <code>Backend</code> trait is the insertion point: a
-            <code>SimdBackend</code> implementing the same trait with
+            <span class="mono">Backend</span> trait is the insertion point: a
+            <span class="mono">SimdBackend</span> implementing the same trait with
             architecture-specific intrinsics. same model code. 4× to 8×
             throughput.
         </p>
 
         <p>
-            after that: gpu support (the <code>Backend</code> trait means same
+            after that: gpu support (the <span class="mono">Backend</span> trait means same
             transformer code on cuda or metal), then embedded targets, arm
             cortex-m, no_std, models in the 10m-100m parameter range running on
             microcontrollers.

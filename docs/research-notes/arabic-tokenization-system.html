@@ -7,7 +7,7 @@
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
-        <button class="lang-toggle" disabled title="Arabic (coming soon)">عربي</button>
+        <a href="/research-notes/arabic-tokenization-system.ar.html" class="lang-toggle" title="العربية">عربي</a>
         <div class="back">
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
@@ -33,9 +33,9 @@
         <h3>preprocessing: whitespace normalization</h3>
         <p>Arabic text uses multiple whitespace characters (spaces, newlines, Arabic-specific space variants) inconsistently, especially around punctuation and clitics. a finite-state normalizer collapses whitespace to a canonical form before tokenization runs.</p>
         <h3>clitic demarcation with the cashida</h3>
-        <p>the Arabic elongation line (<em>cashida</em>, <code>ـ</code>) is repurposed as a disambiguation marker. when the tokenizer splits enclitics, it inserts a cashida between the stem and the clitic. this resolves ambiguity between proclitics and homographic enclitics, and between morphologically-attached clitics and free-standing homographs. example: <em>kitabuhum</em> (their book) becomes <em>kitab@ـhum</em>, where the cashida signals the pronoun is attached, not a separate word. clever use of existing typographic infrastructure.</p>
+        <p>the Arabic elongation line (<em>cashida</em>, <span class="mono">ـ</span>) is repurposed as a disambiguation marker. when the tokenizer splits enclitics, it inserts a cashida between the stem and the clitic. this resolves ambiguity between proclitics and homographic enclitics, and between morphologically-attached clitics and free-standing homographs. example: <em>kitabuhum</em> (their book) becomes <em>kitab@ـhum</em>, where the cashida signals the pronoun is attached, not a separate word. clever use of existing typographic infrastructure.</p>
         <h3>post-processing: token filter</h3>
-        <p>a finite-state transducer composed on top of the core tokenizer marks undesired tokenizations with a <code>+undesired</code> tag. it imports lists from the MWE transducer (curfew → forbidden + walking) and a hand-curated set of improbable splits (e.g., <em>ba'd</em> (after) being split as <em>bi</em> + <em>'add</em>). the filter doesn't query for morpho-syntactic information, it matches surface forms against known undesirable patterns.</p>
+        <p>a finite-state transducer composed on top of the core tokenizer marks undesired tokenizations with a <span class="mono">+undesired</span> tag. it imports lists from the MWE transducer (curfew → forbidden + walking) and a hand-curated set of improbable splits (e.g., <em>ba'd</em> (after) being split as <em>bi</em> + <em>'add</em>). the filter doesn't query for morpho-syntactic information, it matches surface forms against known undesirable patterns.</p>
         <h3>multiword expressions</h3>
         <p>MWEs like <em>hazr al-tajawwul</em> (curfew, lit. "forbidding of walking") are handled by keeping internal spaces intact, the tokenizer outputs them as single tokens. a dedicated MWE transducer supplies the list of expressions, and the token filter blocks the compositional analyses that a non-deterministic tokenizer would otherwise produce.</p>
         <div class="callout">
