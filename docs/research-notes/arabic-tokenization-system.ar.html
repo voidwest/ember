@@ -23,7 +23,7 @@
             <span class="tag key">morphology</span>
         </div>
         <h2>the idea</h2>
-        <p>a modular, finite-state tokenizer for Arabic built on top of the XFST platform (Beesley &amp; Karttunen, 2003). unlike statistical tokenizers that learn from data, this is a hand-engineered system with explicit rules for clitic detection, morphological analysis, and token disambiguation.</p>
+        <p>tokenizer معياري finite-state للعربي مبني على منصة XFST (Beesley &amp; Karttunen, 2003). عكس الـ tokenizers الإحصائية اللي تتعلم من البيانات، هذا نظام مصمم يدوياً بقواعد صريحة لكشف الـ clitics والتحليل الصرفي وفك غموض الـ tokens.</p>
         <h2>architecture</h2>
         <h3>three tokenization models</h3>
         <p><strong>النموذج 1: tokenization بدون محلل صرفي.</strong> يستخدم clitic guesser، وهو finite-state transducer بأنماط مكتوبة يدوياً للـ proclitic prefixes والـ enclitic suffixes. يجرّد كل تركيبات clitics الممكنة. محول lexc صغير منفصل يتعامل مع أشكال clitics المنفصلة. هذا <strong>متين</strong>، يشتغل على أي كلمة بغض النظر عن تغطية القاموس، و <strong>معياري</strong>، الـ tokenization والصرف مكونات مستقلة. المقايضة: الـ guesser غير حتمي، ينتج غموض توافقي (جملة من ثلاث كلمات تقدر تنتج 8 مسارات tokenization).</p>
