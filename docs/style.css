@@ -310,6 +310,41 @@ footer {
     text-align: left;
 }
 
+[dir="rtl"] h1,
+[dir="rtl"] h2,
+[dir="rtl"] h3 {
+    direction: ltr;
+    text-align: left;
+}
+
+[dir="rtl"] .back {
+    direction: ltr;
+    text-align: left;
+}
+
+[dir="rtl"] .meta {
+    direction: ltr;
+    text-align: left;
+}
+
+[dir="rtl"] footer {
+    direction: ltr;
+}
+
+[dir="rtl"] .project .desc,
+[dir="rtl"] .note-card .desc {
+    direction: ltr;
+    text-align: left;
+}
+
+[dir="rtl"] dt {
+    text-align: left;
+}
+
+[dir="rtl"] .hero .tagline {
+    direction: ltr;
+}
+
 @media (max-width: 600px) {
     [dir="rtl"] .lang-toggle {
         right: auto;
