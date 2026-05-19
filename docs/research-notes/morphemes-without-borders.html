@@ -5,7 +5,19 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>morphemes without borders · research notes</title>
         <link rel="stylesheet" href="/style.css" />
-    </head>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tomorrow-night.min.css">
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script defer>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('pre code').forEach(function(el) {
+                hljs.highlightElement(el);
+            });
+        });
+    </script>
+
+</head>
     <body>
         <a href="/research-notes/morphemes-without-borders.ar.html" class="lang-toggle" title="العربية">عربي</a>
         <div class="back">

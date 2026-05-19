@@ -35,7 +35,19 @@
                 .layout-block { font-size: 0.62rem; padding: 0.7rem 0.8rem; }
             }
         </style>
-    </head>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/base16/tomorrow-night.min.css">
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script defer>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('pre code').forEach(function(el) {
+                hljs.highlightElement(el);
+            });
+        });
+    </script>
+
+</head>
     <body>
         <a href="/ember/internals/index.ar.html" class="lang-toggle" title="العربية">عربي</a>
 
@@ -61,11 +73,11 @@
             touches. three fields:
         </p>
 
-        <pre><span class="mono">pub struct CpuTensor {
+        <pre><code>pub struct CpuTensor {
     pub shape: Vec&lt;usize&gt;,      // e.g. [12, 64, 768]
     pub strides: Vec&lt;usize&gt;,    // contiguous row-major strides
     pub data: Vec&lt;f32&gt;,         // flat f32 buffer
-}</span></pre>
+}</code></pre>
 
         <p>
             <strong>strides are computed but never used for indexing.</strong>
@@ -106,7 +118,7 @@
             a pure-rust sgemm with no blas linking. the call site:
         </p>
 
-        <pre><span class="mono">unsafe {
+        <pre><code>unsafe {
     matrixmultiply::sgemm(
         m, k, n,                // dimensions
         1.0,                    // alpha
@@ -115,7 +127,7 @@
         0.0,                    // beta
         c.as_mut_ptr(), n as isize, 1, // C: m×n, row-major
     );
-}</span></pre>
+}</code></pre>
 
         <p>
             <span class="mono">matrixmultiply</span> is scalar, so this is the throughput
@@ -134,7 +146,7 @@
             a <span class="mono">&amp;B</span> reference:
         </p>
 
-        <pre><span class="mono">pub trait Backend {
+        <pre><code>pub trait Backend {
     type Tensor: Clone + Send + Sync;
     type Error: core::error::Error;
 
@@ -154,7 +166,7 @@
         -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn add_broadcast(&amp;self, x: &amp;Self::Tensor, bias: &amp;Self::Tensor)
         -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
-}</span></pre>
+}</code></pre>
 
         <p>
             <span class="mono">CpuBackend</span> is a zero-sized struct that delegates every
@@ -200,13 +212,13 @@ offset math:
             <span class="mono">Gpt2::forward_with_cache</span>:
         </p>
 
-        <pre><span class="mono">for (layer, block) in self.blocks.iter().enumerate() {
+        <pre><code>for (layer, block) in self.blocks.iter().enumerate() {
     x = block.forward_with_cache(backend, &amp;x, cache, layer)?;
 }
 // cursor advances here, after all 12 layers have stored.
 for _ in 0..seq_len {
     cache.advance_cursor();
-}</span></pre>
+}</code></pre>
 
         <p>
             this is the design that caused bug #5. during prefill, the attention
@@ -226,21 +238,21 @@ for _ in 0..seq_len {
             token in a decode step:
         </p>
 
-        <pre><span class="mono">pub fn qk_scratch_mut(&amp;mut self) -&gt; &amp;mut Vec&lt;f32&gt; {
+        <pre><code>pub fn qk_scratch_mut(&amp;mut self) -&gt; &amp;mut Vec&lt;f32&gt; {
     &amp;mut self.qk_scratch
-}</span></pre>
+}</code></pre>
 
         <p>
             the caller does:
         </p>
 
-        <pre><span class="mono">let scratch = cache.qk_scratch_mut();
+        <pre><code>let scratch = cache.qk_scratch_mut();
 scratch.clear();
 scratch.resize(total_seq_len, f32::NEG_INFINITY);
 
 // fill scratch[pos] = dot(q, k[pos]) for pos in 0..total_seq_len
 // softmax in-place on scratch
-// weight sum of v[pos] by scratch[pos]</span></pre>
+// weight sum of v[pos] by scratch[pos]</code></pre>
 
         <p>
             because <span class="mono">scratch</span> was allocated to
@@ -295,7 +307,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
             the dequantization loop:
         </p>
 
-        <pre><span class="mono">for i in 0..n_blocks {
+        <pre><code>for i in 0..n_blocks {
     let d_bits = u16::from_le_bytes(src[block_start..block_start + 2]);
     let d = f16::from_bits(d_bits).to_f32();
 
@@ -303,7 +315,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
         let q = src[block_start + 2 + j] as i8;  // signed int8
         dst[out_start + j] = q as f32 * d;
     }
-}</span></pre>
+}</code></pre>
 
         <p>
             the int8 values are <strong>signed</strong> (<span class="mono">i8</span>),
@@ -336,10 +348,10 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
             loader does:
         </p>
 
-        <pre><span class="mono">// dims = [rows, cols] from the tensor info header
+        <pre><code>// dims = [rows, cols] from the tensor info header
 // but data is column-major, so reverse to match:
 dims.reverse();
-let tensor = CpuTensor::from_data(dims, flat_f32_data);</span></pre>
+let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
 
         <p>
             then in <span class="mono">Gpt2::from_loader</span>, linear layer weights are
@@ -357,9 +369,9 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</span></pre>
 
         <h3>1. temperature</h3>
 
-        <pre><span class="mono">if temperature &gt; 0.0 {
+        <pre><code>if temperature &gt; 0.0 {
     for l in &amp;mut logits { *l /= temperature; }
-}</span></pre>
+}</code></pre>
 
         <p>
             temperature = 0 means greedy argmax, the pipeline skips
@@ -371,13 +383,13 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</span></pre>
 
         <h3>2. top-k</h3>
 
-        <pre><span class="mono">let mut indexed: Vec&lt;(usize, f32)&gt; = logits.iter().cloned().enumerate().collect();
+        <pre><code>let mut indexed: Vec&lt;(usize, f32)&gt; = logits.iter().cloned().enumerate().collect();
 indexed.sort_by(|a, b| b.1.partial_cmp(&amp;a.1).unwrap_or(Equal));
 
 let threshold = indexed[k - 1].1;
 for l in logits.iter_mut() {
     if *l &lt; threshold { *l = f32::NEG_INFINITY; }
-}</span></pre>
+}</code></pre>
 
         <p>
             sorts a copy of (index, logit) pairs descending, reads the k-th
@@ -387,11 +399,11 @@ for l in logits.iter_mut() {
 
         <h3>3. top-p (nucleus)</h3>
 
-        <pre><span class="mono">let soft = softmax_1d(logits);              // temporary distribution
+        <pre><code>let soft = softmax_1d(logits);              // temporary distribution
 let cutoff = nucleus_cutoff(&amp;soft, p);     // threshold value
 for (i, s) in soft.iter().enumerate() {
     if *s &lt; cutoff { logits[i] = f32::NEG_INFINITY; }
-}</span></pre>
+}</code></pre>
 
         <p>
             computes a temporary softmax to find the smallest set of tokens
@@ -403,13 +415,13 @@ for (i, s) in soft.iter().enumerate() {
 
         <h3>4. softmax</h3>
 
-        <pre><span class="mono">let max = logits.iter().fold(f32::NEG_INFINITY, |a, &amp;b| a.max(b));
+        <pre><code>let max = logits.iter().fold(f32::NEG_INFINITY, |a, &amp;b| a.max(b));
 if max == f32::NEG_INFINITY {
     return vec![1.0 / logits.len() as f32; logits.len()];
 }
 let exps: Vec&lt;f32&gt; = logits.iter().map(|x| (x - max).exp()).collect();
 let sum: f32 = exps.iter().sum();
-exps.iter().map(|x| x / sum).collect()</span></pre>
+exps.iter().map(|x| x / sum).collect()</code></pre>
 
         <p>
             the max trick prevents overflow: subtracting max from every logit
@@ -419,7 +431,7 @@ exps.iter().map(|x| x / sum).collect()</span></pre>
 
         <h3>5. categorical sample (inverse cdf)</h3>
 
-        <pre><span class="mono">let r: f32 = rng.gen();  // uniform in [0, 1)
+        <pre><code>let r: f32 = rng.gen();  // uniform in [0, 1)
 let mut cum = 0.0;
 for (i, &amp;p) in dist.iter().enumerate() {
     cum += p;
@@ -428,7 +440,7 @@ for (i, &amp;p) in dist.iter().enumerate() {
 // floating-point rounding fallback: argmax
 dist.iter().enumerate()
     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-    .map(|(i, _)| i).unwrap_or(0)</span></pre>
+    .map(|(i, _)| i).unwrap_or(0)</code></pre>
 
         <p>
             walks the cumulative sum of probabilities. the first index where the
