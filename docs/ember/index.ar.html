@@ -136,7 +136,7 @@
         </ul>
 
         <!-- ═══════════════════════════ 2. ARCHITECTURE ═══════════════════════════ -->
-        <h2>2. architecture</h2>
+        <h2>2. architecture (المعمارية)</h2>
 
         <p>نقطة الدخول <span class="mono">main.rs</span> → <span class="mono">generate()</span>، وتمشي حلقة من مرحلتين:</p>
 
@@ -164,14 +164,14 @@
         </p>
 
         <!-- ═══════════════════════════ 3. DESIGN DECISIONS ═══════════════════════════ -->
-        <h2>3. design decisions</h2>
+        <h2>3. design decisions (القرارات الهندسية)</h2>
 
         <p>
             أربع قرارات هندسية شكلت الشيفرة. كل واحد كان مهم بطريقة
             ما صارت واضحة إلا لما ضربت bugs.
         </p>
 
-        <h3>backend trait</h3>
+        <h3>backend trait (واجهة الـ backend)</h3>
         <p>
             الـ <span class="mono">Backend</span> trait في <span class="mono">src/backend.rs</span> هو
             التجريد المركزي. شفرة النموذج معممة على <span class="mono">B: Backend</span>،
@@ -187,7 +187,7 @@
             <span class="mono">fn attention(...)</span> لاحقاً.
         </p>
 
-        <h3>row-major tensor layout</h3>
+        <h3>row-major tensor layout (تخطيط row-major)</h3>
         <p>
             <span class="mono">CpuTensor</span> في <span class="mono">src/tensor.rs</span> هو
             <span class="mono">Vec&lt;f32&gt;</span> مسطح مع strides من النوع row-major.
@@ -210,7 +210,7 @@
             تخطيط الـ tensor row-major.
         </p>
 
-        <h3>sampling pipeline</h3>
+        <h3>sampling pipeline (خط أنابيب الـ sampling)</h3>
         <p>
             <span class="mono">sampler.rs</span> ينفذ خط الـ sampling المعياري:
             temperature scaling → top-k → top-p (nucleus) → softmax →
@@ -280,7 +280,7 @@
         </p>
 
         <!-- ═══════════════════════════ 5. MODEL STRUCTURE ═══════════════════════════ -->
-        <h2>5. model structure</h2>
+        <h2>5. model structure (هيكل النموذج)</h2>
 
         <p>
             إعادة تنفيذ لـ GPT-2 small (124M):
@@ -509,7 +509,7 @@
         </div>
 
         <!-- ═══════════════════════════ 10. PERFORMANCE ═══════════════════════════ -->
-        <h2>10. performance</h2>
+        <h2>10. performance (الأداء)</h2>
 
         <p>
             GPT-2 small (124M) على CPU x86_64 واحد (Ryzen 5700G، release build):
@@ -538,7 +538,7 @@
         </table>
 
         <!-- ═══════════════════════════ 11. ROADMAP ═══════════════════════════ -->
-        <h2>11. roadmap</h2>
+        <h2>11. roadmap (خارطة الطريق)</h2>
 
         <p>
             الأولوية الحالية هي إضافة دعم llama، ليس تحسين
