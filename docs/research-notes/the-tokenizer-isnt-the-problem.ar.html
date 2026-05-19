@@ -15,7 +15,7 @@
             <a href="/research-notes/">research notes</a>
         </div>
 
-        <h1>the tokenizer isn't the problem</h1>
+        <h1>the tokenizer isn't the problem (المشكلة مش في الـ tokenizer)</h1>
 
         <div class="meta">
             what i learned reading arabic nlp papers for a week<br>
@@ -24,7 +24,7 @@
 
         <p>بنيت inference engine بلغة Rust، نشرته، وبعدها قلت في بوست على linkedin إني أبغا أتعمق في الـ Arabic tokenization. وفعلاً سويتها. اللي حصلته بعدها ما كان زي ما توقعت.</p>
 
-        <h2>why Arabic is a real stress test for tokenizers</h2>
+        <h2>why Arabic is a real stress test for tokenizers (ليش العربي اختبار حقيقي للـ tokenizers)</h2>
 
         <p>العربي يستخدم <strong>نظام الجذر والوزن (non-concatenative)</strong>. جذر من 3 حروف مثل <em>k-t-b</em> (كتب) يندمج مع قوالب صوتية لينتج: <em>kataba</em> (هو كتب)، <em>kitaab</em> (كتاب)، <em>maktab</em> (مكتب)، <em>maktūb</em> (مكتوب)، <em>yaktubu</em> (هو يكتب). الجذر ما يظهر أبداً ككلمة مستقلة، دايم متداخل داخل الشكل السطحي.</p>
 
@@ -32,7 +32,7 @@
 
         <p>BPE مصمم لدمج سلاسل حروف متجاورة بناءً على التكرار. المعنى في العربي يعيش في تداخل الجذر والوزن غير المتصل. هذول الشيئين متعارضين هيكلياً. أضف الحركات الاختيارية، عدم وجود مسافات ثابتة، وازدواجية اللغة (فصحى ضد مصري ضد خليجي ضد شامي)، وعندك مشكلة معقدة فعلاً.</p>
 
-        <h2>the obvious hypothesis: fix the tokenizer</h2>
+        <h2>the obvious hypothesis: fix the tokenizer (الفرضية البديهية: صلّح الـ tokenizer)</h2>
 
         <p>المجال جرب هالشي. كثير:</p>
 
@@ -44,7 +44,7 @@
 
         <p>افتراض معقول: إذا قطعت الـ morphemes بشكل صحيح قبل ما يشوفها النموذج، المفروض يتعلم التركيب الصرفي أفضل.</p>
 
-        <h2>then a 2026 paper broke the assumption</h2>
+        <h2>then a 2026 paper broke the assumption (بعدين ورقة 2026 كسرت الفرضية)</h2>
 
         <div class="meta">
             <div class="paper-title">Morphemes Without Borders: Evaluating Root-Pattern Morphology in Arabic Tokenizers and LLMs</div>
