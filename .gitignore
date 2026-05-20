@@ -1,13 +1,5 @@
 /target
 *.gguf
-BUGS.md
-ADDITIONS.md
-CHANGES.md
 .zed/
-.deepseek/state/
 data/*.npz
-PLAN.md
-LLAMA.md
-arabic_translation_guide.md
-blog-post-brief.md
 *.pdf
