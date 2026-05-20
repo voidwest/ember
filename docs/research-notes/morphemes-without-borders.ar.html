@@ -48,7 +48,7 @@
             <li><strong>MCR</strong>: معدل تغطية المورفيم (يتجنب التقطيع الداخلي)</li>
         </ul>
         <h3>part 2: morphological generation (الجزء 2: التوليد الصرفي)</h3>
-        <p>ثلاث مهام probing باستخدام جذور حقيقية وجذور مبتكرة (nonce):</p>
+        <p>ثلاث مهام probing باستخدام جذور حقيقية و nonce roots:</p>
         <ul>
             <li><strong>root-pattern real</strong>: طبّق وزن على جذر ثلاثي حقيقي</li>
             <li><strong>root-pattern nonce</strong>: نفس المهمة مع جذور مخترعة (تختبر التعميم، مش الحفظ)</li>
@@ -60,11 +60,11 @@
         <h2>key findings (النتائج الرئيسية)</h2>
         <div class="callout">
             <div class="label">finding 1</div>
-            <p><strong>ما فيه ارتباط بين محاذاة الـ tokenizer وأداء التوليد.</strong> GPT-4o سجل أعلى درجة عبر كل المهام (97% دقة nonce) مع <em>أسوأ</em> محاذاة (17% boundary precision). ALLAM كان عنده أفضل MCR (83-86%) لكن انهار لـ 20% على الكلمات المبتكرة.</p>
+            <p><strong>ما فيه ارتباط بين محاذاة الـ tokenizer وأداء التوليد.</strong> GPT-4o سجل أعلى درجة عبر كل المهام (97% دقة nonce) مع <em>أسوأ</em> محاذاة (17% boundary precision). ALLAM كان عنده أفضل MCR (83-86%) لكن انهار لـ 20% على nonce words.</p>
         </div>
         <div class="callout">
             <div class="label">finding 2</div>
-            <p><strong>النماذج المخصصة للعربي ما تقدر تتعامل مع الكلمات المبتكرة.</strong> ALLAM و FANAR ينهارون بشكل حاد على الجذور المبتكرة. يحفظون lexemes، مش قواعد منتجة. الـ tokenizer الصرفي لـ FANAR ما ساعده يعمم.</p>
+            <p><strong>النماذج المخصصة للعربي ما تقدر تتعامل مع nonce words.</strong> ALLAM و FANAR ينهارون بشكل حاد على nonce roots. يحفظون lexemes، مش قواعد منتجة. الـ tokenizer الصرفي لـ FANAR ما ساعده يعمم.</p>
         </div>
         <div class="callout">
             <div class="label">finding 3</div>
@@ -87,7 +87,7 @@
         <h3>3. Arabic-centric models have room to grow</h3>
         <p>ALLAM و FANAR كان أداؤهم أقل من GPT-4 و GPT-4o في كل مهمة مع إن عندهم بيانات تدريب عربية أكثر. الحجم ومنهجية الـ tuning يبدو إنها تغلب ميزة البيانات المخصصة للغة في الـ LLMs الحالية.</p>
         <h3>4. real-word-only benchmarks hide failure modes</h3>
-        <p>ALLAM سجل 67% على الجذور الحقيقية، 20% على nonce. فجوة 47 نقطة. مجسات nonce هي الطريقة الوحيدة للتمييز بين الحفظ والإنتاجية الحقيقية. المعايير بدون شروط nonce تعطي صورة ناقصة.</p>
+        <p>ALLAM سجل 67% على الجذور الحقيقية، 20% على nonce. فجوة 47 نقطة. مجسات nonce هي الطريقة الوحيدة للتمييز بين الحفظ و genuine productivity. المعايير بدون شروط nonce تعطي صورة ناقصة.</p>
         <h3>5. future directions (اتجاهات مستقبلية)</h3>
         <ul>
             <li><strong>تعلم الصرف بدون اعتماد على الـ tokenization</strong>: علّم الـ LLMs الصرف من خلال البيانات والـ tuning، مش الـ tokenizers المخصصة</li>

@@ -63,13 +63,13 @@
             من SDAIA، MBZUAI، و PNU
         </div>
 
-        <p>قيّموا 7 نماذج LLM عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) قد إيش محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) قد إيش النماذج تقدر <em>تولّد بشكل منتج</em> أشكال الجذر والوزن العربي، بما فيها <strong>جذور مبتكرة (nonce)</strong>، واللي تختبر التعميم الحقيقي، مش الحفظ.</p>
+        <p>قيّموا 7 نماذج LLM عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) قد إيش محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) قد إيش النماذج تقدر <em>تولّد بشكل منتج</em> أشكال الجذر والوزن العربي، بما فيها <strong>nonce roots (جذور مبتكرة)</strong>، واللي تختبر التعميم الحقيقي، مش الحفظ.</p>
 
         <div class="callout">
             <div class="label">finding: alignment doesn't predict competence</div>
-            <p><strong>ALLAM</strong> كان عنده أفضل محاذاة شكلية (MCR 83-86%) لكن انهار على الكلمات المبتكرة: 20% دقة. النموذج يحفظ، ما يعمم.</p>
-            <p><strong>GPT-4</strong> كان عنده <em>أسوأ</em> محاذاة tokenizer (fertility أعلى بـ 4 مرات من المثالي، boundary precision 17%) لكن سجل 92% على توليد الجذور المبتكرة. ثاني أفضل نتيجة.</p>
-            <p><strong>GPT-4o</strong> سجل 97% على الكلمات المبتكرة مع محاذاة tokenizer سيئة بالمثل.</p>
+            <p><strong>ALLAM</strong> كان عنده أفضل محاذاة شكلية (MCR 83-86%) لكن انهار على nonce words: 20% دقة. النموذج يحفظ، ما يعمم.</p>
+            <p><strong>GPT-4</strong> كان عنده <em>أسوأ</em> محاذاة tokenizer (fertility أعلى بـ 4 مرات من المثالي، boundary precision 17%) لكن سجل 92% على توليد nonce roots. ثاني أفضل نتيجة.</p>
+            <p><strong>GPT-4o</strong> سجل 97% على nonce words مع محاذاة tokenizer سيئة بالمثل.</p>
             <p><strong>ما فيه أي ارتباط</strong> بين مقاييس محاذاة الـ tokenizer وأداء التوليد الصرفي. morpheme F1 و MCR عندهم ارتباط صفري أو سلبي ضعيف مع دقة التوليد.</p>
         </div>
 
@@ -77,7 +77,7 @@
 
         <p>الـ prompts بالإنجليزي تفوقت على الـ prompts بالعربي في معظم النماذج، بيانات instruction-tuning غالبيتها إنجليزي.</p>
 
-        <p>استنتاج الورقة: <strong>الكفاءة الصرفية المفروض تنعرف بالتعميم الإنتاجي، مش بمحاذاة الـ segmentation السطحي.</strong> الاستدلال التركيبي + اتباع التعليمات يعوض عن التحليل الصرفي الصريح.</p>
+        <p>استنتاج الورقة: <strong>الكفاءة الصرفية المفروض تنعرف بـ productive generalization، مش بمحاذاة الـ segmentation السطحي.</strong> الاستدلال التركيبي + اتباع التعليمات يعوض عن التحليل الصرفي الصريح.</p>
 
         <h2>what this means (وش معنى هذا)</h2>
 
@@ -89,13 +89,13 @@
             <li>السؤال المفتوح: <strong>وين نقطة التحول؟</strong> عند أي حجم يتوقف التركيب الصرفي الصريح عن كونه مهماً كمدخل؟ وهل تقدر توصل لهذه القدرة للعربي بدون ما تحتاج قوة GPT-4 الحاسوبية؟</li>
         </ul>
 
-        <p>المجال سأل "أي tokenizer يفوز في مهام التصنيف" لسنين. أوراق متعددة (2023، 2024) استمرت توصل لـ "يعتمد على المهمة والـ dataset." ورقة 2026 تعيد صياغة السؤال بالكامل: وقف تسأل عن الـ surface segmentation وابدأ تسأل عن التعميم الإنتاجي.</p>
+        <p>المجال سأل "أي tokenizer يفوز في مهام التصنيف" لسنين. أوراق متعددة (2023، 2024) استمرت توصل لـ "يعتمد على المهمة والـ dataset." ورقة 2026 تعيد صياغة السؤال بالكامل: وقف تسأل عن الـ surface segmentation وابدأ تسأل عن productive generalization.</p>
 
-        <p>الفجوة الحقيقية ممكن تكون مش في الـ tokenizer ولا حتى في طبقة الـ embedding، ممكن تكون في <strong>التمثيلات الداخلية</strong> اللي يبنيها النموذج. GPT-4 و GPT-4o يسوون شي ALLAM ما يسويه، مع إن ALLAM عنده بيانات تدريب عربية أكثر و tokenizer أفضل. وش هو هذا الشي؟</p>
+        <p>الفجوة الحقيقية ممكن تكون مش في الـ tokenizer ولا حتى في طبقة الـ embedding، ممكن تكون في <strong>internal representations</strong> اللي يبنيها النموذج. GPT-4 و GPT-4o يسوون شي ALLAM ما يسويه، مع إن ALLAM عنده بيانات تدريب عربية أكثر و tokenizer أفضل. وش هو هذا الشي؟</p>
 
         <h2>what's next (وش الجاي)</h2>
 
-        <p>بروح أشوف زاوية الـ internal activation، <a href="/research-notes/arabic-morphology-probing.ar.html">كيف تبدو التمثيلات فعلاً</a> داخل نماذج تنجح ضد نماذج تفشل على الكلمات العربية المبتكرة؟</p>
+        <p>بروح أشوف زاوية الـ internal activation، <a href="/research-notes/arabic-morphology-probing.ar.html">كيف تبدو التمثيلات فعلاً</a> داخل نماذج تنجح ضد نماذج تفشل على Arabic nonce words؟</p>
 
         <p>colab + نماذج عربية صغيرة ممكن على معالج عادي. الـ behavioral probing (على مستوى الـ logit) ما يحتاج تحميل الأوزان كاملة. وبنيت inference engine يعطيني وصول مباشر للـ hidden states في كل طبقة.</p>
 
