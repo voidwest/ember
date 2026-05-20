@@ -26,14 +26,14 @@
             <a href="/research-notes/">research notes</a>
         </div>
 
-        <h1>the tokenizer isn't the problem (المشكلة مش في الـ tokenizer)</h1>
+        <h1>the tokenizer isn't the problem (المشكلة مو في الـ tokenizer)</h1>
 
         <div class="meta">
             what i learned reading arabic nlp papers for a week<br>
             mohammed al-thobaiti · 2026-05-16
         </div>
 
-        <p>بنيت inference engine بلغة Rust، نشرته، وبعدها قلت في بوست على linkedin إني أبغا أتعمق في الـ Arabic tokenization. وفعلاً سويتها. اللي حصلته بعدها ما كان زي ما توقعت.</p>
+        <p>بنيت inference engine بلغة Rust، نشرته، وبعدها قلت في بوست على linkedin إني أبغا أتعمق في الـ Arabic tokenization. وفعلاً سويتها. اللي حصلته بعدها ما كان مثل ما توقعت.</p>
 
         <h2>why Arabic is a real stress test for tokenizers (ليش العربي اختبار حقيقي للـ tokenizers)</h2>
 
@@ -63,7 +63,7 @@
             من SDAIA، MBZUAI، و PNU
         </div>
 
-        <p>قيّموا 7 نماذج LLM عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) قد إيش محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) قد إيش النماذج تقدر <em>تولّد بشكل منتج</em> أشكال الجذر والوزن العربي، بما فيها <strong>nonce roots (جذور مبتكرة)</strong>، واللي تختبر التعميم الحقيقي، مش الحفظ.</p>
+        <p>قيّموا 7 نماذج LLM عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) قد إيش محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) قد إيش النماذج تقدر <em>تولّد بشكل منتج</em> أشكال الجذر والوزن العربي، بما فيها <strong>nonce roots (جذور مبتكرة)</strong>، واللي تختبر التعميم الحقيقي، مو الحفظ.</p>
 
         <div class="callout">
             <div class="label">finding: alignment doesn't predict competence</div>
@@ -73,11 +73,11 @@
             <p><strong>ما فيه أي ارتباط</strong> بين مقاييس محاذاة الـ tokenizer وأداء التوليد الصرفي. morpheme F1 و MCR عندهم ارتباط صفري أو سلبي ضعيف مع دقة التوليد.</p>
         </div>
 
-        <p>FANAR، اللي عنده tokenizer واعي بالصرف (MorphBPE)، أدى بشكل ثابت لكن ما سيطر. أداؤه المستقر يمكن يكون قدرة على اتباع التعليمات، مش جودة الـ tokenizer.</p>
+        <p>FANAR، اللي عنده tokenizer واعي بالصرف (MorphBPE)، أدى بشكل ثابت لكن ما سيطر. أداؤه المستقر يمكن يكون قدرة على اتباع التعليمات، مو جودة الـ tokenizer.</p>
 
         <p>الـ prompts بالإنجليزي تفوقت على الـ prompts بالعربي في معظم النماذج، بيانات instruction-tuning غالبيتها إنجليزي.</p>
 
-        <p>استنتاج الورقة: <strong>الكفاءة الصرفية المفروض تنعرف بـ productive generalization، مش بمحاذاة الـ segmentation السطحي.</strong> الاستدلال التركيبي + اتباع التعليمات يعوض عن التحليل الصرفي الصريح.</p>
+        <p>استنتاج الورقة: <strong>الكفاءة الصرفية المفروض تنعرف بـ productive generalization، مو بمحاذاة الـ segmentation السطحي.</strong> الاستدلال التركيبي + اتباع التعليمات يعوض عن التحليل الصرفي الصريح.</p>
 
         <h2>what this means (وش معنى هذا)</h2>
 
@@ -91,7 +91,7 @@
 
         <p>المجال سأل "أي tokenizer يفوز في مهام التصنيف" لسنين. أوراق متعددة (2023، 2024) استمرت توصل لـ "يعتمد على المهمة والـ dataset." ورقة 2026 تعيد صياغة السؤال بالكامل: وقف تسأل عن الـ surface segmentation وابدأ تسأل عن productive generalization.</p>
 
-        <p>الفجوة الحقيقية ممكن تكون مش في الـ tokenizer ولا حتى في طبقة الـ embedding، ممكن تكون في <strong>internal representations</strong> اللي يبنيها النموذج. GPT-4 و GPT-4o يسوون شي ALLAM ما يسويه، مع إن ALLAM عنده بيانات تدريب عربية أكثر و tokenizer أفضل. وش هو هذا الشي؟</p>
+        <p>الفجوة الحقيقية ممكن تكون مو في الـ tokenizer ولا حتى في طبقة الـ embedding، ممكن تكون في <strong>internal representations</strong> اللي يبنيها النموذج. GPT-4 و GPT-4o يسوون شي ALLAM ما يسويه، مع إن ALLAM عنده بيانات تدريب عربية أكثر و tokenizer أفضل. وش هو هذا الشي؟</p>
 
         <h2>what's next (وش الجاي)</h2>
 

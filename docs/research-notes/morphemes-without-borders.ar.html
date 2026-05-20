@@ -51,7 +51,7 @@
         <p>ثلاث مهام probing باستخدام جذور حقيقية و nonce roots:</p>
         <ul>
             <li><strong>root-pattern real</strong>: طبّق وزن على جذر ثلاثي حقيقي</li>
-            <li><strong>root-pattern nonce</strong>: نفس المهمة مع جذور مخترعة (تختبر التعميم، مش الحفظ)</li>
+            <li><strong>root-pattern nonce</strong>: نفس المهمة مع جذور مخترعة (تختبر التعميم، مو الحفظ)</li>
             <li><strong>affix-build</strong>: ترتيب لواحق تسلسلية على كلمة أساس</li>
         </ul>
         <h3>models evaluated (النماذج المُقيمة)</h3>
@@ -64,7 +64,7 @@
         </div>
         <div class="callout">
             <div class="label">finding 2</div>
-            <p><strong>النماذج المخصصة للعربي ما تقدر تتعامل مع nonce words.</strong> ALLAM و FANAR ينهارون بشكل حاد على nonce roots. يحفظون lexemes، مش قواعد منتجة. الـ tokenizer الصرفي لـ FANAR ما ساعده يعمم.</p>
+            <p><strong>النماذج المخصصة للعربي ما تقدر تتعامل مع nonce words.</strong> ALLAM و FANAR ينهارون بشكل حاد على nonce roots. يحفظون lexemes، مو قواعد منتجة. الـ tokenizer الصرفي لـ FANAR ما ساعده يعمم.</p>
         </div>
         <div class="callout">
             <div class="label">finding 3</div>
@@ -90,7 +90,7 @@
         <p>ALLAM سجل 67% على الجذور الحقيقية، 20% على nonce. فجوة 47 نقطة. مجسات nonce هي الطريقة الوحيدة للتمييز بين الحفظ و genuine productivity. المعايير بدون شروط nonce تعطي صورة ناقصة.</p>
         <h3>5. future directions (اتجاهات مستقبلية)</h3>
         <ul>
-            <li><strong>تعلم الصرف بدون اعتماد على الـ tokenization</strong>: علّم الـ LLMs الصرف من خلال البيانات والـ tuning، مش الـ tokenizers المخصصة</li>
+            <li><strong>تعلم الصرف بدون اعتماد على الـ tokenization</strong>: علّم الـ LLMs الصرف من خلال البيانات والـ tuning، مو الـ tokenizers المخصصة</li>
             <li><strong>tokenization تكيفي/هجين</strong>: معالجة على مستوى الحرف فقط عند الحاجة الصرفية</li>
             <li><strong>تجارب مضبوطة</strong>: عزل تصميم الـ tokenizer عن المعمارية والبيانات والـ tuning</li>
         </ul>

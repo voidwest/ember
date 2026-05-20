@@ -116,7 +116,7 @@
         </p>
 
         <p>
-            الهدف مش منافسة llama.cpp في السرعة. الهدف إن الشيفرة تكون
+            الهدف مو منافسة llama.cpp في السرعة. الهدف إن الشيفرة تكون
             <strong>مقروءة</strong>. الكود مباشر، الهياكل واضحة، والقرارات
             الهندسية موثقة في مكانها. إذا تبغا تفهم كيف يشتغل الـ inference
             تحت الغطاء بدون ما تغوص في طبقات تجريد، هذا مكان جيد تبدأ منه.
@@ -206,7 +206,7 @@
             في الإزاحة <span class="mono">i * cols + j</span>. هذا التخطيط المعياري لـ
             matrixmultiply و blas، ويعني إن <span class="mono">index_select(row)</span>
             هو شريحة متجاورة. المقايضة: <span class="mono">slice_cols</span> هو عملية
-            تجميع، مش شريحة. لكن عملياً، index-select للصفوف أكثر شيوعاً
+            تجميع، مو شريحة. لكن عملياً، index-select للصفوف أكثر شيوعاً
             بكثير (embeddings، output projection) من slicing الأعمدة.
         </p>
 
@@ -381,7 +381,7 @@
                 (مثلاً <span class="mono">[768, 50257]</span> لمصفوفة الـ embedding)، لكن
                 البفر المسطح المفكوك ضغطه موضوع column-major، بيانات
                 <span class="mono">tensor[i][j]</span> في الإزاحة
-                <span class="mono">j * rows + i</span>، مش <span class="mono">i * cols + j</span>. المحمل
+                <span class="mono">j * rows + i</span>، مو <span class="mono">i * cols + j</span>. المحمل
                 أعاد تشكيل الـ dims المنطقية بترتيب row-major،
                 مبعثراً كل مصفوفة أوزان.
             </div>
@@ -515,7 +515,7 @@
 
         <div class="quote-block">
             <div class="text">
-                "ما بنيته مش محسّن. بس تقدر تقراه."
+                "ما بنيته مو محسّن. بس تقدر تقراه."
             </div>
         </div>
 
