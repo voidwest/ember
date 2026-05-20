@@ -23,13 +23,13 @@
             <a href="/">← voidwest</a>
         </div>
         <h1>terms (مصطلحات)</h1>
-        <p>قائمة بالمصطلحات التقنية المستخدمة في الموقع مع شرح مختصر بالعربي.</p>
+        <p>مصطلحات تقنية مستخدمة في الموقع، بشرح عربي سريع وبنفس مزاج النصوص.</p>
         <hr>
 
         <dl style="display: grid; grid-template-columns: 1fr; gap: 0.7rem; margin: 1.2rem 0;">
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">inference engine</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">البرنامج اللي يشغّل النموذج وينتج text. يستقبل prompt ويرجع tokens. ember مثال عليه.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">البرنامج اللي يشغّل النموذج ويطلع text. يستقبل prompt ويرجع tokens. ember مثال عليه.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">tokenizer</dt>
@@ -41,7 +41,7 @@
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">BPE (byte pair encoding)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">طريقة tokenization تدمج أزواج الحروف الأكثر تكرار. تبني مفردات من وحدات تحت الكلمة. GPT-2 و GPT-4 يستخدمونها.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">طريقة tokenization تدمج أزواج الحروف الأكثر تكراراً. تبني vocabulary من وحدات تحت الكلمة. GPT-2 و GPT-4 يستخدمونها.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">embeddings</dt>
@@ -65,7 +65,7 @@
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">temperature</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يتحكم في عشوائية المخرج. قيمة منخفضة = مخرج متوقع ومكرر. قيمة عالية = مخرج إبداعي وعشوائي. صفر = حتمي.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يتحكم في عشوائية المخرج. قيمة منخفضة = مخرج متوقع ومكرر. قيمة عالية = مخرج أوسع وأكثر عشوائية. صفر = حتمي.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">top-k sampling</dt>
@@ -77,7 +77,7 @@
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">layer normalization</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يطبّع (يضبط) القيم داخل الشبكة عشان تكون متوسطها صفر وتباينها 1. يمنع الانفجار والتلاشي في التدرّج أثناء التدريب.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يضبط القيم داخل الشبكة عشان متوسطها يصير صفر وتباينها 1. يساعد الاستقرار العددي أثناء التدريب والتشغيل.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">KV cache</dt>
@@ -85,7 +85,7 @@
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">hidden states / activations</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">القيم الداخلية اللي ينتجها النموذج في كل طبقة. التمثيل اللي "يفهم فيه" النص قبل ما يحوله لـ tokens.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">القيم الداخلية اللي ينتجها النموذج في كل طبقة. التمثيل اللي يشتغل عليه قبل ما يحوله لـ logits ثم tokens.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">GGUF</dt>
@@ -129,11 +129,11 @@
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">probing</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تقنية بحثية لمعرفة "وش يتعلم" النموذج داخلياً. تدرّب classifier بسيط على الـ hidden states وتشوف إذا يقدر يتنبأ بخاصية لغوية معينة.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تقنية بحثية لمعرفة وش يتعلم النموذج داخلياً. تدرّب classifier بسيط على الـ hidden states وتشوف إذا يقدر يتنبأ بخاصية لغوية معينة.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">morphology (الصرف)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دراسة تركيب الكلمة. في العربي: كيف الجذر الثلاثي (مثل ك-ت-ب) يندمج مع الأوزان (مثل فَعَلَ، مَفْعُول) لينتج كلمات مختلفة.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دراسة تركيب الكلمة. في العربي: كيف الجذر الثلاثي (مثل ك-ت-ب) يندمج مع الأوزان (مثل فَعَلَ، مَفْعُول) ويطلع كلمات مختلفة.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">root-pattern (non-concatenative) system</dt>
@@ -149,7 +149,7 @@
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">finite-state transducer</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">آلة رياضية تعالج السلاسل النصية بقواعد. سريعة وحتمية. استخدمتها أنظمة الـ NLP القديمة قبل الشبكات العصبية.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">آلة رياضية تعالج السلاسل النصية بقواعد. سريعة وحتمية. كانت أساسية في أنظمة NLP قبل الموجة العصبية.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">RAG (retrieval-augmented generation)</dt>

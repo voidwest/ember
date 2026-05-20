@@ -109,14 +109,14 @@
         </div>
 
         <p>
-            <strong>ember</strong> هو inference engine خفيف يعمل على المعالج (CPU)
+            <strong>ember</strong> هو inference engine خفيف يشتغل على CPU
             لنماذج transformer. يشغّل نماذج GGUF مضغوطة بدون CUDA، بدون PyTorch،
-            وبدون أي اعتماد على أطر خارجية. وجّهه لملف GGUF، أعطه prompt، ينتج
+            وبدون أي framework خارجي. وجّهه لملف GGUF، أعطه prompt، يطلع لك
             text.
         </p>
 
         <p>
-            الهدف مو منافسة llama.cpp في السرعة. الهدف إن الشيفرة تكون
+            الهدف مو منافسة llama.cpp في السرعة. الهدف إن الكود يكون
             <strong>مقروءة</strong>. الكود مباشر، الهياكل واضحة، والقرارات
             الهندسية موثقة في مكانها. إذا تبغا تفهم كيف يشتغل الـ inference
             تحت الغطاء بدون ما تغوص في طبقات تجريد، هذا مكان جيد تبدأ منه.
@@ -126,9 +126,9 @@
         <h2>1. why I built it (ليش بنيته)</h2>
 
         <p>
-            كنت أقرا ورقة attention is all you need وورقة GPT-2 ومخطط الـ GGUF
-            في نفس الوقت. عند نقطة معينة، التفسيرات الشفهية ما عادت تكفي.
-            احتجت الشيفرة تكون قدامي.
+            كنت أقرا ورقة attention is all you need، وورقة GPT-2، ومخطط GGUF
+            في نفس الوقت. عند نقطة معينة، الشرح بالكلام ما عاد يكفي.
+            احتجت الكود يكون قدامي.
         </p>
 
         <p>
@@ -139,7 +139,7 @@
             للـ transformer؟" وتلقى الجواب بدون ما تتابع خمس طبقات من dispatch.
         </p>
 
-        <p>ember ياخذ المسار المعاكس. مبدأيين:</p>
+        <p>ember ياخذ المسار المعاكس. مبدأين:</p>
 
         <ul>
             <li><strong>سطر واحد، مفهوم واحد.</strong> إذا شيء يحتاج 200 سطر من SIMD intrinsics، ما تلقاه هنا. تلقى حلقة <span class="mono">for</span>.</li>
@@ -170,7 +170,7 @@
 
         <p>
             النموذج معمم على <span class="mono">Backend</span> trait، فشفرة الـ transformer
-            نفسها تشتغل على المعالج اليوم وبتشتغل على GPU بكره بدون ما تعيد كتابة
+            نفسها تشتغل على CPU اليوم وبتشتغل على GPU بكرة بدون ما تعيد كتابة
             منطق الـ attention أو الـ mlp.
         </p>
 
@@ -178,8 +178,8 @@
         <h2>3. design decisions (القرارات الهندسية)</h2>
 
         <p>
-            أربع قرارات هندسية شكلت الشيفرة. كل واحد كان مهم بطريقة
-            ما صارت واضحة إلا لما ضربت bugs.
+            أربع قرارات هندسية شكلت الكود. كل واحد صار مهم بطريقة
+            ما وضحت إلا لما ضربت bugs.
         </p>
 
         <h3>backend trait (واجهة الـ backend)</h3>
@@ -192,7 +192,7 @@
             <span class="mono">matmul</span>، <span class="mono">add</span>، <span class="mono">softmax</span>،
             <span class="mono">gelu</span>، <span class="mono">layer_norm</span>، <span class="mono">index_select</span>،
             <span class="mono">slice_cols</span>، <span class="mono">load_from_cpu</span>، ودوال الوصول
-            للشكل والبيانات. الـ attention لم يتم تجريده بعد عبر الـ trait، دوال
+            للشكل والبيانات. الـ attention ما تجرد بعد عبر الـ trait؛ دوال
             الـ attention في النموذج تنادي <span class="mono">data()</span> وتشغّل حلقات scalar
             على المعالج، لكن الـ trait مصمم بحيث يمكن إضافة دالة
             <span class="mono">fn attention(...)</span> لاحقاً.
@@ -217,7 +217,7 @@
             نظام التشغيل يحمّل البيانات بالصفحات بشكل كسول. الـ tensors يتم
             فك ضغطها ونسخها؛ الـ mmap يُرمى لما ترجع الدالة. يدعم
             f32، f16، و q8_0 dtypes. tensors f16 و q8_0 مخزنة column-major
-            في GGUF، فالمحمل يعكس ترتيب الأبعاد أثناء فك الضغط ليطابق
+            في GGUF، فالـ loader يعكس ترتيب الأبعاد أثناء فك الضغط عشان يطابق
             تخطيط الـ tensor row-major.
         </p>
 
@@ -237,9 +237,9 @@
         <h2>4. math: gelu, softmax, layer norm (الرياضيات)</h2>
 
         <p>
-            ثلاث أوليات رياضية تحمل النموذج. كل وحدة فيها فخ
-            ينتج أرقام غلط بشكل خفي بدل ما يخرب، وكل فخ
-            انضرب أثناء التطوير.
+            ثلاث primitives رياضية شايلة النموذج. كل وحدة فيها فخ
+            يطلع أرقام غلط بصمت بدل ما يكسر البرنامج، وكل فخ
+            ضرب أثناء التطوير.
         </p>
 
         <h3>softmax</h3>
@@ -263,15 +263,15 @@
 
         <h3>gelu</h3>
         <p>
-            gelu، وحدة الخطأ الخطية الغاوسية، هي دالة تنشيط GPT-2.
-            إنها نسخة أنعم من relu: بدل ما تقطع القيم السالبة للصفر بشكل حاد،
-            تسحقها نحو الصفر احتمالياً، مرجحة بـ gaussian cdf. الصيغة:
+            gelu هي activation function في GPT-2.
+            نسخة أنعم من relu: بدل ما تقطع القيم السالبة للصفر بشكل حاد،
+            تضغطها نحو الصفر احتمالياً، موزونة بـ gaussian cdf. الصيغة:
             <span class="mono">0.5 * x * (1 + erf(x / √2))</span>.
         </p>
         <p>
             تعيش في كتلة mlp: الطبقة المخفية تعرض من 768 إلى
-            3072، gelu تشتغل على كل عنصر، ثم طبقة المخرج تعرض
-            راجع لـ 768. كل token يمر بهذا المعبر 12 مرة
+            3072، gelu تشتغل على كل عنصر، ثم طبقة المخرج ترجعها
+            لـ 768. كل token يمر من هالممر 12 مرة
             (مرة لكل transformer block). التطبيق يستخدم
             <span class="mono">libm::erff</span>، pure rust، بدون ربط libm، محمول عبر
             المنصات.
@@ -284,7 +284,7 @@
             لكل صف من tensor <span class="mono">[batch, features]</span>، يحسب
             المتوسط والتباين عبر ذلك الصف، يطبّع
             (يطرح المتوسط، يقسم على الانحراف المعياري)، ثم يطبق
-            affine transform بالـ weight والـ bias المخزنين. صيغة الطبعة:
+            affine transform بالـ weight والـ bias المخزنين. الصيغة:
             <span class="mono">(x - μ) / √(σ² + ε)</span>. كل من softmax و layer norm
             يستخدم epsilon لتجنب القسمة على صفر، القيمة
             <span class="mono">1e-5</span> قياسية عبر أوراق GPT-2 الأصلية.
@@ -301,7 +301,7 @@
 
         <h3>transformer block</h3>
         <p>
-            كل كتلة تنفذ هذا الخط بالضبط، بالترتيب:
+            كل block ينفذ هذا الخط بالضبط، بالترتيب:
         </p>
 
         <ol>
@@ -321,7 +321,7 @@
 
         <h3>causal attention mask</h3>
         <p>
-            attention mask هو مصفوفة مثلثية دنيا، المواضع المستقبلية مضبوطة
+            attention mask مصفوفة triangular، المواضع المستقبلية مضبوطة
             على <span class="mono">-inf</span>. هذا يمنع كل token من الانتباه للـ tokens
             اللي تجي بعده. بالنسبة لـ token عند الموضع P: يقرا
             المواضع 0 إلى P من الـ cache، المواضع P+1 إلى N-1 مقنّعة.
@@ -360,8 +360,8 @@
         <h2>7. bugs (this is 60% of the story)</h2>
 
         <p>
-            ستة bugs بالإجمال. أربع كانت off-by-one عادية وأخطاء
-            فهم formats. ثنين كانوا من النوع اللي ينتج
+            ستة bugs بالمجموع. أربع كانت off-by-one عادية وأخطاء
+            فهم formats. اثنين كانوا من النوع اللي ينتج
             مخرجات تبدو تقريباً صحيحة لكنها غلط بشكل منهجي.
         </p>
 
@@ -399,7 +399,7 @@
                 class="symptom"
                 style="margin-top: 0.6rem; color: var(--accent2)"
             >
-                تحقق من الإصلاح: ارتباط مع مخرج PyTorch المرجعي انتقل من
+                التحقق: correlation مع مخرج PyTorch المرجعي انتقل من
                 <strong>0.004</strong> (عملياً تشويش) إلى
                 <strong>0.999975</strong>. commit واحد.
             </div>
@@ -451,7 +451,7 @@
 
         <ul>
             <li>
-                <strong>transposed embeddings عند التحميل.</strong> GGUF يخزن
+                <strong>transposed embeddings وقت التحميل.</strong> GGUF يخزن
                 token/position embeddings كـ <span class="mono">[vocab, embed]</span>. المحمل
                 يعكسهم بحيث <span class="mono">index_select</span> يختار صف
                 بشريحة متجاورة واحدة بدل ما يجمع عناصر متباعدة.
@@ -508,7 +508,7 @@
                 decode. قبل التحسين، توزيع الـ attention كان يخصص
                 <span class="mono">Vec</span> جديد لكل score head — 144 تخصيص لكل
                 token. كانت هذه 6× من سرعة decode النهائية.
-                المكسب لم يكن خوارزمياً، كان تحسين تخصيص،
+                المكسب ما كان خوارزمي، كان allocation optimization،
                 وتتبع الـ malloc في الـ hot path هو اللي كشفه.
             </li>
         </ul>
@@ -533,7 +533,7 @@
         </ul>
 
         <p>
-            هذا حوالي 11–12 tokens في الثانية decode. llama.cpp
+            هذا حوالي 11–12 tokens في الثانية أثناء decode. llama.cpp
             على نفس الجهاز ونفس موديل f32 يشتغل حوالي 400–600 tok/s.
             الفجوة هي SIMD (AVX2 matmul هو 8× أسرع)، وليس الخوارزمية.
         </p>
@@ -545,27 +545,27 @@
             <tr><td>gelu (12 × 3072 عنصر)</td><td>5</td><td>6%</td></tr>
             <tr><td>layer_norm (12 × 2 × 768 عنصر)</td><td>4</td><td>5%</td></tr>
             <tr><td>softmax (12 رأس × 64 dim)</td><td>3</td><td>4%</td></tr>
-            <tr><td>أخرى (adds، نسخ، sampling)</td><td>4</td><td>5%</td></tr>
+            <tr><td>other (adds، copies، sampling)</td><td>4</td><td>5%</td></tr>
         </table>
 
         <!-- ═══════════════════════════ 11. ROADMAP ═══════════════════════════ -->
         <h2>11. roadmap (خارطة الطريق)</h2>
 
         <p>
-            الأولوية الحالية هي إضافة دعم llama، ليس تحسين
+            الأولوية الحالية إضافة دعم llama، مو تحسين
             GPT-2. GPT-2 كان النموذج الصحيح للبناء الأول لأنه
             الأبسط، لا GQA، لا RoPE، لا SwiGLU. الآن بعد ما أثبت
-            المعماري، إضافة عائلة llama تفتح نطاقاً أوسع
+            المعمارية، إضافة عائلة llama تفتح نطاقاً أوسع
             من النماذج (llama 1/2/3/3.1/3.2، mistral، gemma 2)
             بتغيير معتدل للـ model.rs.
         </p>
 
-        <p><strong>أوليات llama تحتاج التنفيذ:</strong></p>
+        <p><strong>llama primitives اللي تحتاج تنفيذ:</strong></p>
 
         <ul>
             <li>
                 <strong>RMS norm</strong> (root mean square layer normalization)
-                يستبدل layer norm. أبسط وأسرع، لكنه يحذف
+                يستبدل layer norm. أبسط وأسرع، لكنه يشيل
                 خطوة توسيط المتوسط ويقسم فقط على الجذر التربيعي للمتوسط. المتوسط
                 صفر على أي حال بعد طبقات كافية؛ حذفه يوفر
                 عملية طرح لكل عنصر. التطبيق هو متغير بثلاث أسطر
@@ -619,7 +619,7 @@
             بعدها: دعم GPU (الـ <span class="mono">Backend</span> trait يعني نفس
             شفرة transformer على CUDA أو metal)، ثم أهداف embedded، ARM
             cortex-m، no_std، نماذج في نطاق 10M-100M معامل تشتغل على
-            متحكمات دقيقة.
+                microcontrollers.
         </p>
 
         <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->

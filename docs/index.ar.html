@@ -41,34 +41,63 @@
             }
 
             @media (max-width: 600px) {
-                body { padding: 1.2rem 0.9rem 3rem; font-size: 0.9rem; line-height: 1.6; }
-                .hero { padding: 1.5rem 0 1.5rem; margin-bottom: 1.5rem; }
-                .hero .name { font-size: 1.8rem; }
-                .hero .tagline { font-size: 0.85rem; }
-                .hero .links { font-size: 0.74rem; gap: 0.9rem; }
-                h2 { font-size: 1.05rem; margin: 1.8rem 0 0.6rem; }
-                footer { margin-top: 2rem; padding-top: 1.2rem; font-size: 0.7rem; }
+                body {
+                    padding: 1.2rem 0.9rem 3rem;
+                    font-size: 0.9rem;
+                    line-height: 1.6;
+                }
+                .hero {
+                    padding: 1.5rem 0 1.5rem;
+                    margin-bottom: 1.5rem;
+                }
+                .hero .name {
+                    font-size: 1.8rem;
+                }
+                .hero .tagline {
+                    font-size: 0.85rem;
+                }
+                .hero .links {
+                    font-size: 0.74rem;
+                    gap: 0.9rem;
+                }
+                h2 {
+                    font-size: 1.05rem;
+                    margin: 1.8rem 0 0.6rem;
+                }
+                footer {
+                    margin-top: 2rem;
+                    padding-top: 1.2rem;
+                    font-size: 0.7rem;
+                }
             }
         </style>
-        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-    <script defer>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('pre code').forEach(function(el) {
-                hljs.highlightElement(el);
+        <script
+            defer
+            src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"
+        ></script>
+        <script
+            defer
+            src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"
+        ></script>
+        <script
+            defer
+            src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"
+        ></script>
+        <script defer>
+            document.addEventListener("DOMContentLoaded", function () {
+                document.querySelectorAll("pre code").forEach(function (el) {
+                    hljs.highlightElement(el);
+                });
             });
-        });
-    </script>
-
-</head>
+        </script>
+    </head>
     <body>
         <a href="/" class="lang-toggle" title="English">en</a>
 
         <div class="hero">
             <div class="name">voidwest</div>
             <div class="tagline">
-                أنظمة، تعلم آلي، والمساحة اللي يتقاطعون فيها.
+                أنظمة، ML، والمنطقة اللي يتقاطعون فيها.
             </div>
             <div class="links">
                 <a href="https://github.com/voidwest">github</a>
@@ -78,20 +107,20 @@
         </div>
 
         <!-- ── SYSTEMS ── -->
-        <h2>systems &amp; embedded (الأنظمة والأنظمة المضمنة)</h2>
+        <h2>systems &amp; embedded (أنظمة و embedded)</h2>
         <div class="project-list">
-
             <div class="project featured">
                 <div class="name">
                     <a href="/ember/">ember</a>
                 </div>
                 <div class="desc">
-                    محرك inference لنماذج اللغة الكبيرة يعمل على CPU أولاً،
-                    مكتوب بلغة Rust. قارئ GGUF، transformer من نوع GPT-2 مع
-                    KV cache، بدون اعتماد على أي framework. حوالي 2,200 سطر.
+                    inference engine لنماذج اللغة الكبيرة، CPU أولاً، مكتوب
+                    بـ Rust. قارئ GGUF، transformer من نوع GPT-2 مع KV cache،
+                    بدون framework. حوالي 2,200 سطر.
                 </div>
                 <div class="tags">
-                    <span>rust</span><span>inference</span><span>gguf</span><span>cpu</span>
+                    <span>rust</span><span>inference</span><span>gguf</span
+                    ><span>cpu</span>
                 </div>
                 <div class="project-links">
                     <a href="https://github.com/voidwest/ember">source</a>
@@ -105,55 +134,55 @@
                     <a href="https://github.com/voidwest/mini-os">mini-os</a>
                 </div>
                 <div class="desc">
-                    نواة x86_64 بسيطة بلغة Rust. GDT، IDT، paging، heap
-                    بثلاث استراتيجيات تخصيص، async executor تعاوني،
-                    ramdisk، و shell فيه 10 أوامر. يشتغل في QEMU.
+                    نواة x86_64 بسيطة بـ Rust. GDT، IDT، paging، heap بثلاث
+                    استراتيجيات allocation، async executor تعاوني، ramdisk، و
+                    shell فيه 10 أوامر. يشتغل في QEMU.
                 </div>
                 <div class="tags">
-                    <span>rust</span><span>kernel</span><span>x86_64</span><span>no_std</span>
+                    <span>rust</span><span>kernel</span><span>x86_64</span
+                    ><span>no_std</span>
                 </div>
             </div>
-
         </div>
 
         <!-- ── ML & INFERENCE ── -->
-        <h2>ml &amp; inference (التعلم الآلي و inference)</h2>
+        <h2>ml &amp; inference (ML و inference)</h2>
         <div class="project-list">
-
             <div class="project">
                 <div class="name">
-                    <a href="https://github.com/voidwest/devdocs-v2">devdocs-v2</a>
+                    <a href="https://github.com/voidwest/devdocs-v2"
+                        >devdocs-v2</a
+                    >
                 </div>
                 <div class="desc">
-                    نظام RAG محلي للاستعلام عن ملفات PDF.
-                    sentence-transformers للـ embeddings، ChromaDB للتخزين
-                    المتجهي، Ollama للـ inference. backend بـ FastAPI مع
-                    واجهة chat بـ HTML/CSS/JS عادية. محلي بالكامل، بدون APIs خارجية.
+                    نظام RAG محلي تسأله عن ملفات PDF. sentence-transformers
+                    للـ embeddings، ChromaDB للـ vector store، Ollama للـ
+                    inference. backend بـ FastAPI وواجهة chat عادية بـ
+                    HTML/CSS/JS. محلي بالكامل، بدون APIs خارجية.
                 </div>
                 <div class="tags">
-                    <span>python</span><span>rag</span><span>chromadb</span><span>ollama</span><span>fastapi</span>
+                    <span>python</span><span>rag</span><span>chromadb</span
+                    ><span>ollama</span><span>fastapi</span>
                 </div>
             </div>
-
         </div>
 
         <!-- ── RESEARCH NOTES ── -->
         <h2>research notes (ملاحظات بحثية)</h2>
         <div class="project-list">
-
             <div class="project">
                 <div class="name">
                     <a href="/research-notes/">research notes</a>
                 </div>
                 <div class="desc">
-                    ملاحظات متواصلة على أوراق وتجارب وأفكار. التركيز
-                    الحالي: Arabic NLP، tokenization، و mechanistic interpretability.
+                    ملاحظات على أوراق وتجارب وأفكار وهي تتشكل. التركيز الحالي:
+                    Arabic NLP، tokenization، و mechanistic interpretability.
                 </div>
                 <div class="tags">
-                    <span>papers</span><span>notes</span><span>arabic nlp</span><span>probing</span>
+                    <span>papers</span><span>notes</span><span>arabic nlp</span
+                    ><span>probing</span>
                 </div>
             </div>
-
         </div>
 
         <footer>
@@ -164,6 +193,5 @@
                 · ~/ghrepos
             </p>
         </footer>
-
     </body>
 </html>

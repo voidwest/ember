@@ -56,16 +56,16 @@
             <a href="/ember/">writeup</a>
         </div>
 
-        <h1>ember internals (تفاصيل ember الداخلية)</h1>
+        <h1>ember internals (داخل ember)</h1>
 
         <p>
-            هذا شرح سطر بسطر لهياكل البيانات والخوارزميات وتخطيطات الذاكرة
+            هذا تفكيك قريب لهياكل البيانات والخوارزميات وتخطيطات الذاكرة
             اللي تشغّل ember. يفترض إنك قريت
-            <a href="/ember/">النظرة المعمارية العامة</a> وتبغا التفاصيل التقنية.
+            <a href="/ember/">الـ architecture writeup</a> وتبغا التفاصيل التقنية.
         </p>
 
         <!-- ══ TENSOR ══ -->
-        <h2>tensor (المُوتَر)</h2>
+        <h2>tensor</h2>
 
         <p>
             <span class="mono">CpuTensor</span> هو هيكل البيانات الوحيد اللي يلمسه كل مكون
@@ -89,14 +89,14 @@
         </p>
 
         <p>
-            <strong>كل عملية تخصص.</strong> لا views، لا تغيير في المكان.
+            <strong>كل عملية تعمل allocation.</strong> لا views، لا in-place.
             <span class="mono">add()</span> يرجع <span class="mono">CpuTensor</span> جديد.
             <span class="mono">softmax()</span> يرجع <span class="mono">CpuTensor</span> جديد.
             <span class="mono">matmul()</span> يرجع <span class="mono">CpuTensor</span> جديد. المخصص
-            يرى تياراً من تخصيصات متطابقة الحجم أثناء decode
-            (عدد الـ tokens ثابت)، فـ <span class="mono">jemalloc</span> أو مخصص
+            يشوف تيار allocations بنفس الحجم أثناء decode
+            (عدد الـ tokens ثابت)، فـ <span class="mono">jemalloc</span> أو allocator
             النظام يعيد استخدام نفس الـ slab. هذا ليس عرضياً، إنه
-            السبب اللي يخلي الـ hot path يفلت من التخصيصات المتكررة بدون
+            السبب اللي يخلي الـ hot path يفلت من allocations المتكررة بدون
             ما يظهر كعاصفة malloc في profiling.
         </p>
 
@@ -113,7 +113,7 @@
         <h3>matmul: <span class="mono">matrixmultiply::sgemm</span></h3>
 
         <p>
-            الـ matmul يفوض لـ crate <span class="mono">matrixmultiply</span> الخاص بـ bluss،
+            الـ matmul يفوض لـ crate <span class="mono">matrixmultiply</span> من bluss،
             sgemm pure-rust بدون ربط blas. موقع الاستدعاء:
         </p>
 
@@ -137,11 +137,11 @@
         </p>
 
         <!-- ══ BACKEND TRAIT ══ -->
-        <h2>backend trait (واجهة المعالجة الخلفية)</h2>
+        <h2>backend trait</h2>
 
         <p>
             الـ <span class="mono">Backend</span> trait هو التجريد اللي يفصل شفرة النموذج
-            عن العتاد. كل عملية تلمس بيانات tensor تمر عبر
+            عن hardware. كل عملية تلمس بيانات tensor تمر عبر
             مرجع <span class="mono">&amp;B</span>:
         </p>
 
@@ -169,10 +169,10 @@
 
         <p>
             <span class="mono">CpuBackend</span> هو struct بحجم صفري يفوض كل
-            دالة لـ <span class="mono">CpuTensor</span>. <span class="mono">CpuError</span> يغلّف
+            دالة لـ <span class="mono">CpuTensor</span>. <span class="mono">CpuError</span> يغلف
             <span class="mono">TensorError</span> لعدم تطابق الأشكال والفهرسة خارج
             الحدود. دوال الـ trait مصممة لتكون قابلة للتنفيذ على أي
-            عتاد: GPU، SIMD، أو accelerator. الأوليتان الخاصتان بعائلة llama
+            hardware: GPU، SIMD، أو accelerator. primitives الخاصة بعائلة llama
             (<span class="mono">rms_norm</span>، <span class="mono">silu</span>) موجودتان بالفعل على الـ trait
             ومنفذتان لـ <span class="mono">CpuBackend</span>.
         </p>
@@ -195,16 +195,16 @@ offset math:
 
         <p>
             <strong>ليش هذا الـ layout.</strong> <span class="mono">cache.get(layer)</span> يرجع
-            شريحة متجاورة <span class="mono">&amp;[f32]</span> من كل الرؤوس والمواضع
+            شريحة متجاورة <span class="mono">&amp;[f32]</span> من كل heads والمواضع
             لتلك الطبقة. حلقة الـ attention تفهرس فيها برياضيات strides
-            ثابتة، لا pointer chasing، لا nested vecs، تخصيص واحد. لـ
+            ثابتة، لا pointer chasing، لا nested vecs، allocation واحد. لـ
             GPT-2 small عند 2048 سياق: 12 × 12 × 2048 × 64 × 4 × 2 = ~72 MB.
         </p>
 
         <h3>cursor semantics (دلالات المؤشر)</h3>
 
         <p>
-            المؤشر هو موقع الكتابة في بعد التسلسل. إنه
+            الـ cursor هو موقع الكتابة في بعد التسلسل. هو
             <strong>لا يتقدم لكل طبقة</strong>. كل طبقة تقرا
             <span class="mono">cache.cursor()</span> لتعرف وين تخزن، لكن المؤشر
             يتقدم فقط بعد ما تخلص كل الطبقات في
@@ -220,7 +220,7 @@ for _ in 0..seq_len {
 }</code></pre>
 
         <p>
-            هذا التصميم هو اللي سبب bug #5. أثناء prefill، حلقة الـ attention
+            هذا التصميم هو اللي سبب bug #5. أثناء prefill، حلقة attention
             نادت <span class="mono">append</span> لكل token prompt، وكل نداء
             وصل عند <span class="mono">cursor = 0</span>، كاتباً فوق اللي قبله. فقط
             k/v لآخر token نجا. الإصلاح يمرر
@@ -257,7 +257,7 @@ scratch.resize(total_seq_len, f32::NEG_INFINITY);
             لأن <span class="mono">scratch</span> خُصص لـ
             <span class="mono">max_seq_len</span>، الـ <span class="mono">resize</span> لا يعيد التخصيص
             أبداً طالما <span class="mono">total_seq_len ≤ max_seq_len</span>.
-            هذا يزيل 144 تخصيص heap صغير لكل token مولّد
+            هذا يزيل 144 heap allocation صغير لكل token مولّد
             (12 طبقة × 12 رأس).
         </p>
 
@@ -280,11 +280,11 @@ offset  field
 </div>
 
         <p>
-            المحمل يمشي على metadata ليجد hyperparameters النموذج
+            الـ loader يمشي على metadata عشان يلقى hyperparameters النموذج
             (<span class="mono">gpt2.block_count</span>، <span class="mono">gpt2.context_length</span>،
             <span class="mono">gpt2.embedding_length</span>، إلخ)، ثم يقرا جدول معلومات
-            الـ tensor ليحصل على اسم، شكل، dtype، وإزاحة البايت
-            لكل وزن. الأوزان تُطابق بأسماء tensors GPT-2 المرمزة يدوياً
+            الـ tensor عشان يطلع الاسم، الشكل، dtype، وإزاحة البايت
+            لكل وزن. الأوزان تطابق بأسماء tensors GPT-2 المكتوبة يدوياً
             (<span class="mono">"tok_embeddings.weight"</span>،
             <span class="mono">"blk.{i}.attn.output.weight"</span>، إلخ).
         </p>
@@ -317,11 +317,11 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
 }</code></pre>
 
         <p>
-            قيم int8 <strong>مؤشرة</strong> (<span class="mono">i8</span>)،
-            النطاق [-128، 127]. معظم تطبيقات gguf تستخدم int8 مؤشر لـ
+            قيم int8 <strong>signed</strong> (<span class="mono">i8</span>)،
+            النطاق [-128، 127]. معظم تطبيقات GGUF تستخدم signed int8 لـ
             q8_0. مقياس fp16 يعني إن النطاق القابل للتمثيل لكل كتلة هو
             تقريباً <span class="mono">[-128 × d, 127 × d]</span> حيث <span class="mono">d</span>
-            يختلف لكل كتلة. لأوزان GPT-2، المقاييس النموذجية في نطاق
+            يختلف لكل كتلة. لأوزان GPT-2، الـ scales المعتادة في نطاق
             0.001-0.05، معطية تقريباً ±0.1 إلى ±6.4 لكل عنصر وزن.
         </p>
 
@@ -338,7 +338,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
 
         <p>
             رأس معلومات الـ tensor يبلغ عن الشكل <em>المنطقي</em>
-            <span class="mono">[768, 50257]</span> باصطلاح row-major، لكن البفر
+            <span class="mono">[768, 50257]</span> كـ row-major، لكن البفر
             المفكوك ضغطه هو column-major. المحمل في الأصل كان ينادي
             <span class="mono">reshape(&amp;[768, 50257])</span>، الذي يفترض row-major،
             منتجاً مصفوفة أوزان معكوسة. الإصلاح سطر واحد في
@@ -360,7 +360,7 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
         </p>
 
         <!-- ══ SAMPLER ══ -->
-        <h2>sampler (أداة المعاينة)</h2>
+        <h2>sampler</h2>
 
         <p>
             خط الـ sampling هو خمس مراحل تطبق بالترتيب:
@@ -377,7 +377,7 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
             temperature scaling ويذهب مباشرة لـ argmax في
             <span class="mono">categorical_sample</span>. أي قيمة موجبة تقسم
             الـ logits: t أقل من 1.0 يشحذ (القمم تحصل على وزن نسبي أعلى)،
-            t أكبر من 1.0 يفلطح (أكثر انتظاماً).
+            t أكبر من 1.0 يسطح التوزيع (أقرب للانتظام).
         </p>
 
         <h3>2. top-k</h3>
@@ -408,7 +408,7 @@ for (i, s) in soft.iter().enumerate() {
             يحسب softmax مؤقت ليجد أصغر مجموعة tokens
             يتجاوز احتمالها التراكمي p. الحد الفاصل هو أصغر
             قيمة احتمال في تلك المجموعة. الـ softmax النهائي يحسب مرة واحدة
-            بواسطة المستدعي (<span class="mono">sample_token</span>) بعد تشغيل كل المرشحات،
+            بواسطة المستدعي (<span class="mono">sample_token</span>) بعد تشغيل كل filters،
             متجنباً softmax مزدوج.
         </p>
 
@@ -425,7 +425,7 @@ exps.iter().map(|x| x / sum).collect()</code></pre>
         <p>
             خدعة max تمنع overflow: طرح max من كل logit
             يضمن إن أكبر قيمة بعد exponentiation هي <span class="mono">exp(0) = 1</span>.
-            الـ fallback للصف المقتع بالكامل يرجع توزيع منتظم.
+            الـ fallback للصف المقنّع بالكامل يرجع توزيع منتظم.
         </p>
 
         <h3>5. categorical sample (inverse cdf)</h3>
@@ -443,14 +443,14 @@ dist.iter().enumerate()
 
         <p>
             يمشي على المجموع التراكمي للاحتمالات. أول فهرس يتجاوز
-            مجموعه الجاري السحب العشوائي هو الـ token المختار.
+            مجموعه التراكمي السحب العشوائي هو الـ token المختار.
         </p>
 
         <!-- ══ PROFILING ══ -->
         <h2>profiling notes (ملاحظات تحليل الأداء)</h2>
 
         <p>
-            تحليل wall-clock لخطوة decode واحدة (GPT-2 small، x86_64،
+            wall-clock profiling لخطوة decode واحدة (GPT-2 small، x86_64،
             release build). القياسات من <span class="mono">std::time::Instant</span>
             مع microbenchmark من 1000 عينة:
         </p>
@@ -481,10 +481,10 @@ other (adds, copies, sampling):         ~4 ms    (5%)
         <h2>edge cases worth knowing (حالات طرفية تستحق المعرفة)</h2>
 
         <p>
-            <strong>صفوف softmax المقنّعة بالكامل.</strong> القناع السببي يضبط
+            <strong>صفوف softmax المقنّعة بالكامل.</strong> causal mask يضبط
             المواضع المستقبلية لـ <span class="mono">-inf</span>. في أول خطوة decode
             (token واحد فقط في التسلسل)، كل صف بعد الأول هو
-            بالكامل <span class="mono">-inf</span>. softmax المعياري ينتج NaN
+            بالكامل <span class="mono">-inf</span>. standard softmax ينتج NaN
             (<span class="mono">(-inf - -inf).exp()</span> يقيّم لـ NaN حسب ieee 754).
             تفرع واحد، <span class="mono">if max == f32::NEG_INFINITY { return uniform }</span>،
             يمنع NaN من الانتشار عبر 12 طبقة إلى logits
@@ -506,7 +506,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
             لـ <span class="mono">max_seq_len</span> (2048). أثناء decode في
             الموضع 47، المستدعي يعيد تحجيمه لـ 48. لأن 48 ≤ 2048،
             الـ resize هو no-op، السعة حُددت في وقت البناء. هذا
-            ثابت متعمد: الـ hot path لا ينادي المخصص العام أبداً.
+            ثابت متعمد: الـ hot path ما ينادي allocator العام أبداً.
         </p>
 
         <p>
