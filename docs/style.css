@@ -347,9 +347,7 @@ footer {
 
 [dir="rtl"] .project .desc,
 [dir="rtl"] .note-card .desc {
-    direction: ltr;
-    text-align: left;
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    /* Arabic prose — let it flow RTL naturally */
 }
 
 [dir="rtl"] dt {
@@ -358,8 +356,7 @@ footer {
 }
 
 [dir="rtl"] .hero .tagline {
-    direction: ltr;
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    /* Arabic tagline — let it flow RTL naturally */
 }
 
 [dir="rtl"] .lang-toggle {
