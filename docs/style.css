@@ -29,9 +29,12 @@ body {
     padding: 2rem 1rem 4rem;
 }
 
+/* ── Arabic base ─────────────────────────────────────────── */
 [dir="rtl"] body {
     direction: rtl;
     text-align: right;
+    font-family: "Noto Naskh Arabic", "Scheherazade New", "Amiri",
+                 "SF Arabic", "Segoe UI", "Tahoma", sans-serif;
 }
 
 a { color: var(--blue); text-decoration: none; }
@@ -75,21 +78,12 @@ pre {
 }
 .mono { font-family: inherit; }
 
-/* ── Arabic font override ───────────────────────────────── */
-[dir="rtl"] body {
-    font-family: "Noto Naskh Arabic", "Scheherazade New", "Amiri",
-                 "SF Arabic", "Segoe UI", "Tahoma", sans-serif;
-}
-
 [dir="rtl"] pre,
 [dir="rtl"] .arch-tree,
 [dir="rtl"] .layout-block,
 [dir="rtl"] .pipeline-block,
 [dir="rtl"] .mono {
     font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-}
-
-[dir="rtl"] pre {
     direction: ltr;
     text-align: left;
 }
@@ -344,13 +338,6 @@ footer {
 [dir="rtl"] td {
     text-align: start;
     unicode-bidi: plaintext;
-}
-
-[dir="rtl"] .arch-tree,
-[dir="rtl"] .layout-block,
-[dir="rtl"] .pipeline-block {
-    direction: ltr;
-    text-align: left;
 }
 
 [dir="rtl"] h1,
