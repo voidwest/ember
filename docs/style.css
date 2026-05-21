@@ -29,6 +29,11 @@ body {
     padding: 2rem 1rem 4rem;
 }
 
+[dir="rtl"] body {
+    direction: rtl;
+    text-align: right;
+}
+
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
@@ -79,6 +84,7 @@ pre {
 [dir="rtl"] pre,
 [dir="rtl"] .arch-tree,
 [dir="rtl"] .layout-block,
+[dir="rtl"] .pipeline-block,
 [dir="rtl"] .mono {
     font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
@@ -90,7 +96,21 @@ pre {
 
 [dir="rtl"] .mono {
     direction: ltr;
-    unicode-bidi: embed;
+    unicode-bidi: isolate;
+}
+
+[dir="rtl"] bdi,
+[dir="rtl"] code,
+[dir="rtl"] var,
+[dir="rtl"] kbd,
+[dir="rtl"] samp {
+    direction: ltr;
+    unicode-bidi: isolate;
+}
+
+[dir="rtl"] .ltr {
+    direction: ltr;
+    unicode-bidi: isolate;
 }
 
 hr {
@@ -267,6 +287,17 @@ hr {
     color: var(--text-dim);
 }
 
+.pipeline-block {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.2rem;
+    margin: 0.9rem 0;
+    font-size: 0.82rem;
+    line-height: 1.7;
+    overflow-x: auto;
+}
+
 /* ── footer ─────────────────────────────────────────────── */
 footer {
     margin-top: 3.5rem;
@@ -311,69 +342,80 @@ footer {
 
 [dir="rtl"] th,
 [dir="rtl"] td {
-    text-align: right;
+    text-align: start;
+    unicode-bidi: plaintext;
 }
 
 [dir="rtl"] .arch-tree,
-[dir="rtl"] .layout-block {
+[dir="rtl"] .layout-block,
+[dir="rtl"] .pipeline-block {
     direction: ltr;
     text-align: left;
 }
 
 [dir="rtl"] h1,
 [dir="rtl"] h2,
-[dir="rtl"] h3 {
-    direction: ltr;
-    text-align: left;
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-}
-
-[dir="rtl"] .back {
-    direction: ltr;
-    text-align: left;
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-}
-
-[dir="rtl"] .meta {
-    direction: ltr;
-    text-align: left;
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-}
-
-[dir="rtl"] footer {
-    direction: ltr;
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-}
-
-[dir="rtl"] .project .desc,
-[dir="rtl"] .note-card .desc {
-    /* Arabic prose — let it flow RTL naturally */
+[dir="rtl"] h3,
+[dir="rtl"] p,
+[dir="rtl"] li,
+[dir="rtl"] .desc,
+[dir="rtl"] .meta,
+[dir="rtl"] .meta-row,
+[dir="rtl"] footer,
+[dir="rtl"] dd {
+    unicode-bidi: plaintext;
 }
 
 [dir="rtl"] dt {
     text-align: left;
     font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    direction: ltr;
+    unicode-bidi: isolate;
 }
 
-[dir="rtl"] .hero .tagline {
-    /* Arabic tagline — let it flow RTL naturally */
-}
-
+[dir="rtl"] .back,
+[dir="rtl"] .project .name,
+[dir="rtl"] .project-links,
+[dir="rtl"] .note-card .title,
+[dir="rtl"] .callout .label,
 [dir="rtl"] .lang-toggle {
     font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
 }
 
-[dir="rtl"] .project .name,
+[dir="rtl"] .back {
+    direction: ltr;
+    text-align: right;
+    unicode-bidi: isolate;
+}
+
+[dir="rtl"] .back a,
+[dir="rtl"] footer a,
+[dir="rtl"] .project-links a,
+[dir="rtl"] a[href^="http"] {
+    direction: ltr;
+    unicode-bidi: isolate;
+}
+
 [dir="rtl"] .project-links {
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    justify-content: flex-start;
 }
 
-[dir="rtl"] .note-card .title {
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
-}
-
+[dir="rtl"] .project .name,
+[dir="rtl"] .note-card .title,
+[dir="rtl"] .paper-title,
 [dir="rtl"] .callout .label {
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    direction: ltr;
+    unicode-bidi: isolate;
+    text-align: right;
+}
+
+[dir="rtl"] .hero .name,
+[dir="rtl"] .hero .logo,
+[dir="rtl"] .hero .meta,
+[dir="rtl"] .tag,
+[dir="rtl"] .date {
+    direction: ltr;
+    unicode-bidi: isolate;
 }
 
 @media (max-width: 600px) {

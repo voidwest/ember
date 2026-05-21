@@ -21,9 +21,9 @@
         <a href="/research-notes/arabic-morphology-probing.html" class="lang-toggle" title="English">en</a>
 
         <div class="back">
-            <a href="/">← voidwest</a>
+            <a href="/" class="ltr">← voidwest</a>
             &nbsp;&nbsp;
-            <a href="/research-notes/index.ar.html">research notes</a>
+            <a href="/research-notes/index.ar.html" class="ltr">research notes</a>
         </div>
 
         <h1>probing Arabic morphology inside LLMs (probing للصرف العربي داخل LLMs)</h1>
@@ -110,7 +110,7 @@
 
         <p>خط الأنابيب الكامل:</p>
 
-        <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 1rem 1.2rem; margin: 0.9rem 0; font-size: 0.82rem; line-height: 1.7; text-align: left;">
+        <div class="pipeline-block">
 1. stimuli/generate_stimuli.py  →  nonce_root_pattern.json  (مجموعة المحفزات)<br>
 2. src/main.rs --probe-input nonce_root_pattern.json  →  activations/  (سحب hidden states عبر ember)<br>
 3. probes/behavioral_probe.py  →  accuracy_by_layer.csv  (دقة التوليد عبر الطبقات)<br>
@@ -179,9 +179,9 @@
         </ol>
 
         <footer>
-            <a href="/research-notes/the-tokenizer-isnt-the-problem.ar.html">← tokenizer writeup</a>
+            <a href="/research-notes/the-tokenizer-isnt-the-problem.ar.html" class="ltr">← tokenizer writeup</a>
             &nbsp;·&nbsp;
-            <a href="/ember/index.ar.html">ember</a>
+            <a href="/ember/index.ar.html" class="ltr">ember</a>
             &nbsp;·&nbsp;
             <a href="https://github.com/YaraAlakeel/morphems_without_borders">stimulus dataset</a>
         </footer>
