@@ -926,10 +926,6 @@ impl<B: Backend> LlamaAttention<B> {
         let k = self.k_proj.forward(backend, x)?;
         let v = self.v_proj.forward(backend, x)?;
 
-        let q = self.q_proj.forward(backend, x)?;
-        let k = self.k_proj.forward(backend, x)?;
-        let v = self.v_proj.forward(backend, x)?;
-
         let seq_len = backend.shape(&q)[0];
         let embed_dim = self.n_heads * self.head_dim;
         let kv_dim = self.n_kv_heads * self.head_dim;
