@@ -45,6 +45,7 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 | flag | default | description |
 |------|---------|-------------|
 | `-m`, `--model` | `gpt2.Q8_0.gguf` | path to gguf model file |
+| `--arch` | `gpt2` | model architecture: `gpt2` or `llama` |
 | `--tokenizer` | `tokenizer.json` | path to tokenizer.json |
 | `-p`, `--prompt` | `The` | text prompt to complete |
 | `-n`, `--max-tokens` | `20` | tokens to generate |
@@ -76,9 +77,38 @@ cargo run --release -i
 
 commands inside the repl: `/quit`, `/help`, `/stats`.
 
+### llama models
+
+ember supports llama architectures via `--arch llama`. the following models
+have been tested:
+
+- **Llama 3.2 1B Instruct** (`Llama-3.2-1B-Instruct-Q8_0.gguf`) — 1.2B params, Q8_0 quantized (~1.3 GB on disk)
+- **Llama 3.2 3B Instruct** (`Llama-3.2-3B-Instruct-Q8_0.gguf`) — 3.2B params, Q8_0 quantized (~3.4 GB on disk)
+
+download a quantized gguf from huggingface (e.g.
+[unsloth/Llama-3.2-1B-Instruct-GGUF](https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF)),
+then run:
+
+```bash
+cargo run --release -- \
+  --model Llama-3.2-1B-Instruct-Q8_0.gguf \
+  --arch llama \
+  --prompt "The capital of France is" \
+  -n 30 \
+  --temperature 0
+```
+
+> **note**: the tokenizer path defaults to `tokenizer.json` (gpt-2). llama
+> models bundle their own tokenizer in the gguf metadata, but the current
+> loader reads from a standalone tokenizer file. point `--tokenizer` at your
+> model's tokenizer if needed.
+
+> **note**: interactive (`-i`) and demo (`--demo`) modes are not yet wired
+> for llama. only the single-prompt generation path is supported.
+
 ## architecture
 
-the entry point is `main.rs` → `generate()`, which runs a two-phase loop:
+the entry point is `main.rs` → `generate()` (or `generate_llama()` for llama models), which runs a two-phase loop:
 
 1. **prefill** - forward pass on the full prompt, populating the kv cache.
 2. **decode** - one token at a time, reading from the cache.
@@ -157,7 +187,7 @@ prevents the generation loop from producing NaNs on degenerate input.
 ## current limitations
 
 - matmul is scalar - no simd optimization yet.
-- model loader is gpt-2 specific (gguf tensor names are hardcoded).
+- model loader supports gpt-2 and llama architectures (gguf tensor names are hardcoded per arch).
 - not fully no_std - file i/o and mmap require std.
 - attention math runs in cpu scalar loops even when a future gpu backend is
   plugged in — the `Backend` trait doesn't yet include `fn attention(...)`.
