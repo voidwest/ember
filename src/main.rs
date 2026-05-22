@@ -3,7 +3,6 @@ use clap::Parser;
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::loader::load_gguf;
-use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use ember::sampler::sample_token;
 use std::io::{self, Write};
@@ -369,12 +368,8 @@ where
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
 
-            logits = model.forward_with_cache(
-                backend,
-                &[next as u32],
-                &mut cache,
-                prompt_len + step + 1,
-            )?;
+            logits =
+                model.forward_with_cache(backend, &[next as u32], &mut cache, prompt_len + step)?;
         }
         // reset color after completion
         println!("{RST}");
@@ -568,9 +563,11 @@ where
 
         log::debug!("step {}: predicted token {}", step, next_token);
 
-        if next_token == 50256 {
-            log::info!("eos token reached after {} generated tokens", step);
-            break;
+        if let Some(eos) = tokenizer.eos_token_id() {
+            if next_token == eos as usize {
+                log::info!("eos token reached after {} generated tokens", step);
+                break;
+            }
         }
 
         all_tokens.push(next_token as u32);
@@ -581,7 +578,7 @@ where
             backend,
             &[next_token as u32],
             &mut cache,
-            prompt_len + step + 1, // absolute position offset
+            prompt_len + step, // absolute position offset
         )?;
     }
 
@@ -651,7 +648,8 @@ where
     let mut cache = model.create_cache(backend, max_seq_len);
     let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
-    let embed_dim = model.embed_dim();
+    // logits have shape [prompt_len, vocab_size]; extract vocab_size from the tensor
+    let vocab_size = backend.shape(&logits)[1];
 
     // ── 2. decode loop: one new token at a time ──────────────────────────
     let decode_start = if benchmark {
@@ -660,18 +658,19 @@ where
         None
     };
     let mut generated = Vec::with_capacity(max_tokens);
-    let mut next_token: usize;
 
     for step in 0..max_tokens {
         let logit_data = backend.data(&logits);
         let last_logits = if step == 0 {
-            let last_offset = (all_tokens.len() - 1) * embed_dim;
-            &logit_data[last_offset..last_offset + embed_dim]
+            // prefill output [prompt_len, vocab_size] → take last row
+            let last_offset = (all_tokens.len() - 1) * vocab_size;
+            &logit_data[last_offset..last_offset + vocab_size]
         } else {
-            &logit_data[..embed_dim]
+            // decode output [1, vocab_size] → take the only row
+            &logit_data[..vocab_size]
         };
 
-        next_token = if temperature == 0.0 {
+        let next_token = if temperature == 0.0 {
             argmax_token(last_logits)
         } else {
             sample_token(last_logits, temperature, top_k, top_p, &mut rng)
@@ -679,20 +678,24 @@ where
 
         log::debug!("step {}: predicted token {}", step, next_token);
 
-        // llama has no fixed eos token id — check for 0-padding or stop token
-        if next_token == 0 {
-            log::info!("padding token reached after {} generated tokens", step);
-            break;
+        // stop if the model predicts the end-of-sequence token
+        if let Some(eos) = tokenizer.eos_token_id() {
+            if next_token == eos as usize {
+                log::info!("eos token reached after {} generated tokens", step);
+                break;
+            }
         }
 
         all_tokens.push(next_token as u32);
         generated.push(next_token as u32);
 
+        // decode: pass only the newly sampled token, reusing the persistent kv cache.
+        // start_pos is the absolute position of this token in the sequence.
         logits = model.forward_with_cache(
             backend,
             &[next_token as u32],
             &mut cache,
-            prompt_len + step + 1,
+            prompt_len + step,
         )?;
     }
 

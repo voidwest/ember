@@ -626,6 +626,7 @@ impl<B: Backend> Gpt2<B> {
 /// read from gguf metadata during `Llama::from_loader`.
 /// the key names here mirror meta's gguf convention
 /// (`llama.block_count`, `llama.attention.head_count`, etc.).
+#[derive(Debug)]
 pub struct LlamaConfig {
     /// number of transformer layers
     pub n_layers: usize,
@@ -933,19 +934,47 @@ impl<B: Backend> LlamaAttention<B> {
         let scale = (head_dim as f32).sqrt().recip();
         let n_repeat = self.n_heads / self.n_kv_heads;
 
-        // reshape for per-head RoPE, then reshape back
-        let q_r = backend.load_from_cpu(
-            backend.data(&q).to_vec(),
-            &[seq_len * self.n_heads, head_dim],
-        )?;
-        let k_r = backend.load_from_cpu(
-            backend.data(&k).to_vec(),
-            &[seq_len * self.n_kv_heads, head_dim],
-        )?;
-        let q_r = backend.apply_rotary_emb(&q_r, &self.rope_cos, &self.rope_sin, start_pos)?;
-        let k_r = backend.apply_rotary_emb(&k_r, &self.rope_cos, &self.rope_sin, start_pos)?;
-        let q = backend.load_from_cpu(backend.data(&q_r).to_vec(), &[seq_len, embed_dim])?;
-        let k = backend.load_from_cpu(backend.data(&k_r).to_vec(), &[seq_len, kv_dim])?;
+        // apply RoPE inline (llama.cpp style): rotate pairs (d, d+half) within each
+        // head using the precomputed cos/sin tables. no intermediate tensors.
+        let half = head_dim / 2;
+        let cos_data = backend.data(&self.rope_cos);
+        let sin_data = backend.data(&self.rope_sin);
+
+        let q_raw = backend.data(&q);
+        let mut q_rope = q_raw.to_vec();
+        for s in 0..seq_len {
+            let pos = start_pos + s;
+            let cos_row = &cos_data[pos * half..(pos + 1) * half];
+            let sin_row = &sin_data[pos * half..(pos + 1) * half];
+            for h in 0..self.n_heads {
+                let base = s * embed_dim + h * head_dim;
+                for d in 0..half {
+                    let x = q_rope[base + d];
+                    let y = q_rope[base + d + half];
+                    q_rope[base + d] = x * cos_row[d] - y * sin_row[d];
+                    q_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
+                }
+            }
+        }
+        let q = backend.load_from_cpu(q_rope, &[seq_len, embed_dim])?;
+
+        let k_raw = backend.data(&k);
+        let mut k_rope = k_raw.to_vec();
+        for s in 0..seq_len {
+            let pos = start_pos + s;
+            let cos_row = &cos_data[pos * half..(pos + 1) * half];
+            let sin_row = &sin_data[pos * half..(pos + 1) * half];
+            for h in 0..self.n_kv_heads {
+                let base = s * kv_dim + h * head_dim;
+                for d in 0..half {
+                    let x = k_rope[base + d];
+                    let y = k_rope[base + d + half];
+                    k_rope[base + d] = x * cos_row[d] - y * sin_row[d];
+                    k_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
+                }
+            }
+        }
+        let k = backend.load_from_cpu(k_rope, &[seq_len, kv_dim])?;
 
         let q_data = backend.data(&q);
         let k_data = backend.data(&k);
@@ -1060,6 +1089,8 @@ pub struct LlamaBlock<B: Backend> {
     post_attention_layernorm: B::Tensor,
     /// swiglu feed-forward network
     mlp: LlamaMlp<B>,
+    /// epsilon for rms normalization (from model config)
+    norm_eps: f32,
 }
 
 impl<B: Backend> LlamaBlock<B> {
@@ -1068,12 +1099,14 @@ impl<B: Backend> LlamaBlock<B> {
         self_attn: LlamaAttention<B>,
         post_attention_layernorm: B::Tensor,
         mlp: LlamaMlp<B>,
+        norm_eps: f32,
     ) -> Self {
         Self {
             input_layernorm,
             self_attn,
             post_attention_layernorm,
             mlp,
+            norm_eps,
         }
     }
 }
@@ -1088,14 +1121,14 @@ impl<B: Backend> LlamaBlock<B> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
         // rms_norm → attention (cached) → residual add
-        let normed = backend.rms_norm(x, &self.input_layernorm, 1e-5)?;
+        let normed = backend.rms_norm(x, &self.input_layernorm, self.norm_eps)?;
         let attn_out = self
             .self_attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
         let x = backend.add(x, &attn_out)?;
 
         // rms_norm → swiglu mlp → residual add
-        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, 1e-5)?;
+        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
         let mlp_out = self.mlp.forward(backend, &normed)?;
         backend.add(&x, &mlp_out)
     }
@@ -1104,12 +1137,12 @@ impl<B: Backend> LlamaBlock<B> {
 impl<B: Backend> Module<B> for LlamaBlock<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         // rms_norm → attention → residual add
-        let normed = backend.rms_norm(x, &self.input_layernorm, 1e-5)?;
+        let normed = backend.rms_norm(x, &self.input_layernorm, self.norm_eps)?;
         let attn_out = self.self_attn.forward(backend, &normed)?;
         let x = backend.add(x, &attn_out)?;
 
         // rms_norm → swiglu mlp → residual add
-        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, 1e-5)?;
+        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
         let mlp_out = self.mlp.forward(backend, &normed)?;
         backend.add(&x, &mlp_out)
     }
@@ -1198,11 +1231,17 @@ impl Llama<CpuBackend> {
         use crate::tensor::compute_rope_freqs;
 
         let config = LlamaConfig::from_gguf_metadata(&loader);
+        log::debug!("llama config: {:?}", config);
         let n_layers = config.n_layers;
 
         // precompute rope tables once, shared across all attention layers
         let (rope_cos, rope_sin) =
             compute_rope_freqs(config.max_seq_len, config.head_dim, config.rope_theta);
+        log::debug!(
+            "rope_cos shape: {:?}, rope_sin shape: {:?}",
+            rope_cos.shape(),
+            rope_sin.shape()
+        );
 
         let get_t = |name: &str| {
             loader
@@ -1260,19 +1299,20 @@ impl Llama<CpuBackend> {
                 attn,
                 get_t(&format!("blk.{}.ffn_norm.weight", i))?,
                 mlp,
+                config.norm_eps,
             ));
         }
         let output_weight = loader
             .tensors
             .get("output.weight")
             .map(|t| t.clone().transpose())
-            .unwrap_or_else(|| embed_tokens.clone()); // no transpose for tied weights
+            .unwrap_or_else(|| embed_tokens.clone().transpose()); // no transpose for tied weights
 
         Ok(Self {
             embed_tokens,
             blocks,
             norm: get_t("output_norm.weight")?,
-            head: Linear::new(output_weight.transpose(), None),
+            head: Linear::new(output_weight, None),
             config,
         })
     }

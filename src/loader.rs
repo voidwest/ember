@@ -84,7 +84,12 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
     for info in tensor_info.drain(..) {
         reader.seek(SeekFrom::Start(data_start + info.offset))?;
         let element_count: usize = info.dims.iter().product();
-
+        log::debug!(
+            "loading tensor '{}' dtype={} dims={:?}",
+            info.name,
+            info.dtype,
+            info.dims
+        );
         let (data, dims) = match info.dtype {
             0 => {
                 let mut data = vec![0.0f32; element_count];

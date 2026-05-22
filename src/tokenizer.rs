@@ -35,6 +35,20 @@ impl EmberTokenizer {
     pub fn vocab_size(&self) -> usize {
         self.inner.get_vocab_size(true)
     }
+
+    /// return the end-of-sequence token id, if the tokenizer defines one.
+    ///
+    /// tries the common token strings across architectures, in order:
+    /// `<|end_of_text|>` (llama-3), `<|eot_id|>` (llama-3 alt),
+    /// `<|endoftext|>` (gpt-2). returns `None` if none are found.
+    pub fn eos_token_id(&self) -> Option<u32> {
+        for token_str in &["<|end_of_text|>", "<|eot_id|>", "<|endoftext|>"] {
+            if let Some(id) = self.inner.token_to_id(token_str) {
+                return Some(id);
+            }
+        }
+        None
+    }
 }
 
 /// download the gpt-2 tokenizer from huggingface and save it to `tokenizer.json`
