@@ -351,8 +351,8 @@ impl CpuTensor {
             3 => (self.shape[0], self.shape[1], self.shape[2]),
             _ => panic!("apply_rotary_emb expects 2d or 3d input"),
         };
-        assert_eq!(cos.shape(), &[cos.shape[0], head_dim]);
-        assert_eq!(sin.shape(), &[sin.shape[0], head_dim]);
+        assert_eq!(cos.shape(), &[cos.shape[0], head_dim / 2]);
+        assert_eq!(sin.shape(), &[sin.shape[0], head_dim / 2]);
 
         let cos_data = cos.data();
         let sin_data = sin.data();
@@ -362,8 +362,8 @@ impl CpuTensor {
         for b in 0..batch {
             for s in 0..seq_len {
                 let pos = start_pos + s;
-                let cos_row = &cos_data[pos * head_dim..(pos + 1) * head_dim];
-                let sin_row = &sin_data[pos * head_dim..(pos + 1) * head_dim];
+                let cos_row = &cos_data[pos * half..(pos + 1) * half];
+                let sin_row = &sin_data[pos * half..(pos + 1) * half];
                 let offset = (b * seq_len + s) * head_dim;
 
                 for d in 0..half {
@@ -512,21 +512,19 @@ pub fn compute_rope_freqs(
     theta_base: f32,
 ) -> (CpuTensor, CpuTensor) {
     let half = head_dim / 2;
-    let mut cos = vec![0.0f32; max_seq_len * head_dim];
-    let mut sin = vec![0.0f32; max_seq_len * head_dim];
-
+    let mut cos = vec![0.0f32; max_seq_len * half];
+    let mut sin = vec![0.0f32; max_seq_len * half];
     for i in 0..half {
         let freq = theta_base.powf(-(2.0 * i as f32) / head_dim as f32);
         for p in 0..max_seq_len {
             let angle = p as f32 * freq;
-            cos[p * head_dim + i] = angle.cos();
-            sin[p * head_dim + i] = angle.sin();
+            cos[p * half + i] = angle.cos();
+            sin[p * half + i] = angle.sin();
         }
     }
-
     (
-        CpuTensor::from_data(vec![max_seq_len, head_dim], cos),
-        CpuTensor::from_data(vec![max_seq_len, head_dim], sin),
+        CpuTensor::from_data(vec![max_seq_len, half], cos),
+        CpuTensor::from_data(vec![max_seq_len, half], sin),
     )
 }
 

@@ -685,7 +685,7 @@ impl LlamaConfig {
         let n_kv_heads = get_u32("llama.attention.head_count_kv", n_heads as u32) as usize;
         let embed_dim = get_u32("llama.embedding_length", 4096) as usize;
         let head_dim = embed_dim / n_heads;
-        let max_seq_len = get_u32("llama.context_length", 2048) as usize;
+        let max_seq_len = get_u32("llama.context_length", 2048).min(4096) as usize;
         let rope_theta = get_f32("llama.rope.freq_base", 10000.0);
         let norm_eps = get_f32("llama.attention.layer_norm_rms_epsilon", 1e-5);
         let vocab_size = get_u32("llama.vocab_size", 32000) as usize;
@@ -926,8 +926,9 @@ impl<B: Backend> LlamaAttention<B> {
         let k = self.k_proj.forward(backend, x)?;
         let v = self.v_proj.forward(backend, x)?;
 
-        let q = backend.apply_rotary_emb(&q, &self.rope_cos, &self.rope_sin, start_pos)?;
-        let k = backend.apply_rotary_emb(&k, &self.rope_cos, &self.rope_sin, start_pos)?;
+        let q = self.q_proj.forward(backend, x)?;
+        let k = self.k_proj.forward(backend, x)?;
+        let v = self.v_proj.forward(backend, x)?;
 
         let seq_len = backend.shape(&q)[0];
         let embed_dim = self.n_heads * self.head_dim;
@@ -935,6 +936,20 @@ impl<B: Backend> LlamaAttention<B> {
         let head_dim = self.head_dim;
         let scale = (head_dim as f32).sqrt().recip();
         let n_repeat = self.n_heads / self.n_kv_heads;
+
+        // reshape for per-head RoPE, then reshape back
+        let q_r = backend.load_from_cpu(
+            backend.data(&q).to_vec(),
+            &[seq_len * self.n_heads, head_dim],
+        )?;
+        let k_r = backend.load_from_cpu(
+            backend.data(&k).to_vec(),
+            &[seq_len * self.n_kv_heads, head_dim],
+        )?;
+        let q_r = backend.apply_rotary_emb(&q_r, &self.rope_cos, &self.rope_sin, start_pos)?;
+        let k_r = backend.apply_rotary_emb(&k_r, &self.rope_cos, &self.rope_sin, start_pos)?;
+        let q = backend.load_from_cpu(backend.data(&q_r).to_vec(), &[seq_len, embed_dim])?;
+        let k = backend.load_from_cpu(backend.data(&k_r).to_vec(), &[seq_len, kv_dim])?;
 
         let q_data = backend.data(&q);
         let k_data = backend.data(&k);
@@ -1251,12 +1266,17 @@ impl Llama<CpuBackend> {
                 mlp,
             ));
         }
+        let output_weight = loader
+            .tensors
+            .get("output.weight")
+            .map(|t| t.clone().transpose())
+            .unwrap_or_else(|| embed_tokens.clone()); // no transpose for tied weights
 
         Ok(Self {
             embed_tokens,
             blocks,
             norm: get_t("output_norm.weight")?,
-            head: Linear::new(get_t("output.weight")?.transpose(), None),
+            head: Linear::new(output_weight.transpose(), None),
             config,
         })
     }
