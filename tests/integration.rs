@@ -12,7 +12,7 @@ fn test_matrix_multiplication_accuracy() {
 
     // expected: [ (1*7 + 2*9 + 3*11), (1*8 + 2*10 + 3*12) ]
     //           [ (4*7 + 5*9 + 6*11), (4*8 + 5*10 + 6*12) ]
-    let expected = vec![58.0, 64.0, 139.0, 154.0];
+    let expected = [58.0, 64.0, 139.0, 154.0];
 
     assert_eq!(c.shape(), &[2, 2]);
     for (i, &val) in c.data().iter().enumerate() {
@@ -154,7 +154,7 @@ fn test_gelu() {
     assert!(g.data()[0].abs() < 1e-5);
     assert!((g.data()[1] - 0.841192).abs() < 1e-3);
     assert!((g.data()[2] - (-0.158808)).abs() < 1e-3);
-    assert!((g.data()[3] - 1.954030).abs() < 1e-3);
+    assert!((g.data()[3] - 1.954_03).abs() < 1e-3);
 }
 
 #[test]
@@ -419,12 +419,17 @@ fn test_load_minimal_gguf() {
         _ => panic!("expected Str value"),
     }
 
+    use ember::loader::LoadedTensor;
     let tensor = loader
         .tensors
         .get("test.weight")
         .expect("tensor 'test.weight' not found");
-    assert_eq!(tensor.shape(), &[2, 4]);
-    assert!(tensor.data().iter().all(|&x| (x - 1.0).abs() < 1e-6));
+    let f32_tensor = match tensor {
+        LoadedTensor::F32(t) => t,
+        _ => panic!("expected F32 tensor, got Q8_0"),
+    };
+    assert_eq!(f32_tensor.shape(), &[2, 4]);
+    assert!(f32_tensor.data().iter().all(|&x| (x - 1.0).abs() < 1e-6));
 }
 
 #[test]

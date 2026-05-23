@@ -1,3 +1,4 @@
+use crate::quant::QuantizedWeight;
 use crate::tensor::{CpuTensor, TensorError};
 
 /// the core abstraction over compute hardware.
@@ -9,9 +10,9 @@ use crate::tensor::{CpuTensor, TensorError};
 /// ## scope
 ///
 /// the trait currently abstracts element-wise ops (`add`, `gelu`, `softmax`),
-/// linear algebra (`matmul`, `add_broadcast`), normalisation (`layer_norm`),
-/// shape manipulation (`slice_cols`, `index_select`, `reshape`), and tensor
-/// lifecycle (`zeroes`, `load_from_cpu`, `data`, `shape`).
+/// linear algebra (`matmul`, `matmul_q8_0`, `add_broadcast`), normalisation
+/// (`layer_norm`), shape manipulation (`slice_cols`, `index_select`, `reshape`),
+/// and tensor lifecycle (`zeroes`, `load_from_cpu`, `data`, `shape`).
 ///
 /// **attention is not yet abstracted** — the model's `Attention::forward*`
 /// methods call `data()` to extract raw f32 slices and run the attention
@@ -24,6 +25,20 @@ pub trait Backend {
 
     fn zeroes(&self, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
     fn matmul(&self, a: &Self::Tensor, b: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
+
+    /// matrix multiply with an on-the-fly dequantized q8_0 weight.
+    ///
+    /// `x` is a standard f32 tensor `[seq_len, in_features]`; `w` is a
+    /// raw q8_0 block-compressed weight with logical shape
+    /// `[out_features, in_features]` (reversed from the gguf native order
+    /// so q8_0 blocks are contiguous per output feature).  the weight is
+    /// never stored as f32 — columns are dequantized in blocks and
+    /// multiplied with `sgemm`.
+    fn matmul_q8_0(
+        &self,
+        x: &Self::Tensor,
+        w: &QuantizedWeight,
+    ) -> Result<Self::Tensor, Self::Error>;
     fn add(&self, a: &Self::Tensor, b: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
     fn softmax(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
     fn gelu(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
@@ -116,6 +131,68 @@ impl Backend for CpuBackend {
 
     fn matmul(&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(a.matmul(b))
+    }
+
+    fn matmul_q8_0(&self, x: &CpuTensor, w: &QuantizedWeight) -> Result<CpuTensor, CpuError> {
+        assert_eq!(x.ndim(), 2, "matmul_q8_0: input must be 2D");
+        let (seq_len, in_features) = (x.shape[0], x.shape[1]);
+        let out_features = w.out_features();
+        assert_eq!(
+            in_features,
+            w.in_features(),
+            "matmul_q8_0: inner dims must match (got {} vs {})",
+            in_features,
+            w.in_features()
+        );
+
+        let x_data = x.data();
+        let mut out = vec![0.0f32; seq_len * out_features];
+
+        // dequantize columns in blocks, multiply with sgemm.
+        // w_block is column-major [in_features, block_len]:
+        //   w_block[j * in_features + i] = weight[i, j_block + j]
+        const BLOCK_SIZE: usize = 256;
+        let mut w_block = vec![0.0f32; in_features * BLOCK_SIZE];
+
+        let mut j = 0;
+        while j < out_features {
+            let block_len = (out_features - j).min(BLOCK_SIZE);
+
+            // dequantize this block of columns into w_block
+            for b in 0..block_len {
+                let dst = &mut w_block[b * in_features..(b + 1) * in_features];
+                w.dequantize_row(j + b, dst);
+            }
+
+            // x [seq_len, in_features] @ w_block [in_features, block_len]
+            // → write to out[:, j..j+block_len]
+            //
+            // sgemm(m, k, n, α, A, rsa, csa, B, rsb, csb, β, C, rsc, csc)
+            //   A: row-major [m, k] → rsa=k, csa=1
+            //   B: column-major [k, n] → rsb=1, csb=k
+            //   C: row-major [m, n] → rsc=n_full, csc=1
+            unsafe {
+                matrixmultiply::sgemm(
+                    seq_len,
+                    in_features,
+                    block_len,
+                    1.0,
+                    x_data.as_ptr(),
+                    in_features as isize, // rsa
+                    1,                    // csa
+                    w_block.as_ptr(),
+                    1,                    // rsb (column-major)
+                    in_features as isize, // csb
+                    0.0,
+                    out.as_mut_ptr().add(j),
+                    out_features as isize, // rsc
+                    1,                     // csc
+                );
+            }
+            j += BLOCK_SIZE;
+        }
+
+        Ok(CpuTensor::from_data(vec![seq_len, out_features], out))
     }
 
     fn add(&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError> {

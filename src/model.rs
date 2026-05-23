@@ -1,4 +1,6 @@
 use crate::backend::{Backend, CpuBackend, Module};
+use crate::quant::QuantizedWeight;
+use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
 
 /// a model that can run inference with a kv cache.
@@ -18,23 +20,69 @@ pub trait ForwardModel<B: Backend> {
     fn n_layers(&self) -> usize;
     /// hidden dimension (for display/debug).
     fn embed_dim(&self) -> usize;
+
+    /// run forward pass and collect hidden states after each transformer block.
+    ///
+    /// returns `(per_layer_activations, final_logits)` where
+    /// `per_layer_activations[layer]` is the hidden state at the **last token
+    /// position** after block `layer`, with shape `[embed_dim]`.
+    ///
+    /// this is the probing entry point — the same model code, but collecting
+    /// intermediate representations instead of discarding them.
+    #[allow(clippy::type_complexity)]
+    fn forward_with_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+    ) -> Result<(alloc::vec::Vec<alloc::vec::Vec<f32>>, B::Tensor), B::Error>;
+}
+
+/// the kind of weight backing a `Linear` layer.
+///
+/// `F32` is the standard path — f32/f16 tensors loaded from gguf and
+/// stored as the backend's native tensor type.  `Q8_0` keeps weights in
+/// their raw block-compressed form and dequantizes on the fly during
+/// matmul, saving ~4× memory.
+pub enum WeightKind<B: Backend> {
+    /// f32 weight tensor, shape [in_features, out_features]
+    F32(B::Tensor),
+    /// q8_0 block-compressed weight, never stored as f32.
+    /// dequantized column-by-column during `matmul_q8_0`.
+    Q8_0(QuantizedWeight),
 }
 
 /// a linear (fully-connected) layer: `y = xW + b`.
 /// weight must be `[in_features, out_features]`.
 pub struct Linear<B: Backend> {
     /// weight matrix, shape [in_features, out_features]
-    weight: B::Tensor,
+    weight: WeightKind<B>,
     /// optional bias vector, shape [out_features]
     bias: Option<B::Tensor>,
 }
 
 impl<B: Backend> Linear<B> {
+    /// create a linear layer with an f32 weight tensor.
     pub fn new(weight: B::Tensor, bias: Option<B::Tensor>) -> Self {
-        Self { weight, bias }
+        Self {
+            weight: WeightKind::F32(weight),
+            bias,
+        }
     }
+
+    /// create a linear layer with a q8_0 quantized weight.
+    /// the weight stays in block-compressed form; `forward()` calls `matmul_q8_0`.
+    pub fn new_q8_0(qw: QuantizedWeight, bias: Option<B::Tensor>) -> Self {
+        Self {
+            weight: WeightKind::Q8_0(qw),
+            bias,
+        }
+    }
+
     pub fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        let mut out = backend.matmul(x, &self.weight)?;
+        let mut out = match &self.weight {
+            WeightKind::F32(w) => backend.matmul(x, w)?,
+            WeightKind::Q8_0(qw) => backend.matmul_q8_0(x, qw)?,
+        };
         if let Some(ref b) = self.bias {
             out = backend.add_broadcast(&out, b)?;
         }
@@ -419,13 +467,34 @@ impl Gpt2<CpuBackend> {
     /// metadata keys `gpt2.block_count` and `gpt2.attention.head_count` control
     /// the number of layers and heads (default 12 each if missing).
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
-        let get_t = |name: &str| {
-            loader
-                .tensors
-                .get(name)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("Missing tensor: {}", name))
+        use crate::loader::LoadedTensor;
+
+        // helper: get a tensor that must be available as f32.
+        // embeddings, norms, and biases go through this path.
+        // if a tensor happens to be q8_0 (e.g. a quantized embedding),
+        // it is fully dequantized here so index_select still works.
+        let get_f32 = |name: &str| -> anyhow::Result<CpuTensor> {
+            match loader.tensors.get(name) {
+                Some(LoadedTensor::F32(t)) => Ok(t.clone()),
+                Some(LoadedTensor::Q8_0(qw)) => Ok(qw.dequantize_all()),
+                None => anyhow::bail!("Missing tensor: {}", name),
+            }
         };
+
+        // helper: build a Linear from a weight tensor (may be f32 or q8_0)
+        // and an optional f32 bias tensor.
+        let get_linear =
+            |name: &str, bias_name: Option<&str>| -> anyhow::Result<Linear<CpuBackend>> {
+                let bias = match bias_name {
+                    Some(bname) => Some(get_f32(bname)?),
+                    None => None,
+                };
+                match loader.tensors.get(name) {
+                    Some(LoadedTensor::F32(t)) => Ok(Linear::new(t.clone().transpose(), bias)),
+                    Some(LoadedTensor::Q8_0(qw)) => Ok(Linear::new_q8_0(qw.clone(), bias)),
+                    None => anyhow::bail!("Missing tensor: {}", name),
+                }
+            };
 
         // metadata
         let n_layers = match loader.metadata.get("gpt2.block_count") {
@@ -440,63 +509,58 @@ impl Gpt2<CpuBackend> {
         // blocks
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
-            // attention mapping — quantized linear weights need transpose
-            // because the loader reverses dims for column-major q8_0 storage.
             let attn = Attention::new(
-                Linear::new(
-                    get_t(&format!("blk.{}.attn_qkv.weight", i))?.transpose(),
-                    Some(get_t(&format!("blk.{}.attn_qkv.bias", i))?),
-                ),
-                Linear::new(
-                    get_t(&format!("blk.{}.attn_output.weight", i))?.transpose(),
-                    Some(get_t(&format!("blk.{}.attn_output.bias", i))?),
-                ),
+                get_linear(
+                    &format!("blk.{}.attn_qkv.weight", i),
+                    Some(&format!("blk.{}.attn_qkv.bias", i)),
+                )?,
+                get_linear(
+                    &format!("blk.{}.attn_output.weight", i),
+                    Some(&format!("blk.{}.attn_output.bias", i)),
+                )?,
                 n_heads,
             );
 
             let mlp = Mlp::new(
-                Linear::new(
-                    get_t(&format!("blk.{}.ffn_up.weight", i))?.transpose(),
-                    Some(get_t(&format!("blk.{}.ffn_up.bias", i))?),
-                ),
-                Linear::new(
-                    get_t(&format!("blk.{}.ffn_down.weight", i))?.transpose(),
-                    Some(get_t(&format!("blk.{}.ffn_down.bias", i))?),
-                ),
+                get_linear(
+                    &format!("blk.{}.ffn_up.weight", i),
+                    Some(&format!("blk.{}.ffn_up.bias", i)),
+                )?,
+                get_linear(
+                    &format!("blk.{}.ffn_down.weight", i),
+                    Some(&format!("blk.{}.ffn_down.bias", i)),
+                )?,
             );
 
             blocks.push(Block::new(
                 LayerNorm::new(
-                    get_t(&format!("blk.{}.attn_norm.weight", i))?,
-                    get_t(&format!("blk.{}.attn_norm.bias", i))?,
+                    get_f32(&format!("blk.{}.attn_norm.weight", i))?,
+                    get_f32(&format!("blk.{}.attn_norm.bias", i))?,
                     1e-5,
                 ),
                 attn,
                 LayerNorm::new(
-                    get_t(&format!("blk.{}.ffn_norm.weight", i))?,
-                    get_t(&format!("blk.{}.ffn_norm.bias", i))?,
+                    get_f32(&format!("blk.{}.ffn_norm.weight", i))?,
+                    get_f32(&format!("blk.{}.ffn_norm.bias", i))?,
                     1e-5,
                 ),
                 mlp,
             ));
         }
 
-        let wte = get_t("token_embd.weight")?;
+        let wte = get_f32("token_embd.weight")?;
         let embed_dim = wte.shape[1];
 
         Ok(Self {
-            // embeddings are loaded with dims reversed by the loader
-            // (column-major q8_0 → [vocab, embed]), so no manual
-            // transpose needed — index_select already picks rows directly.
             wte,
-            wpe: get_t("position_embd.weight")?,
+            wpe: get_f32("position_embd.weight")?,
             blocks,
             ln_f: LayerNorm::new(
-                get_t("output_norm.weight")?,
-                get_t("output_norm.bias")?,
+                get_f32("output_norm.weight")?,
+                get_f32("output_norm.bias")?,
                 1e-5,
             ),
-            head: Linear::new(get_t("output.weight")?.transpose(), None),
+            head: get_linear("output.weight", None)?,
             n_heads,
             embed_dim,
         })
@@ -521,6 +585,13 @@ impl<B: Backend> ForwardModel<B> for Gpt2<B> {
     }
     fn embed_dim(&self) -> usize {
         self.embed_dim
+    }
+    fn forward_with_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        Gpt2::forward_with_activations(self, backend, token_ids)
     }
 }
 
@@ -614,6 +685,33 @@ impl<B: Backend> Gpt2<B> {
         let logits = self.head.forward(backend, &x)?;
 
         Ok(logits)
+    }
+
+    /// forward pass with activation capture after each transformer block.
+    ///
+    /// returns `(per_layer_hidden_states, final_logits)`.
+    /// each hidden state is the vector at the last token position after
+    /// the block's residual add, shape `[embed_dim]`.
+    #[allow(clippy::type_complexity)]
+    pub fn forward_with_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let seq_len = token_ids.len();
+        let mut x = self.embed(backend, token_ids)?;
+        let last_row_start = (seq_len - 1) * self.embed_dim;
+        let mut activations = Vec::with_capacity(self.blocks.len());
+
+        for block in &self.blocks {
+            x = block.forward(backend, &x)?;
+            let data = backend.data(&x);
+            let last_row: Vec<f32> = data[last_row_start..last_row_start + self.embed_dim].to_vec();
+            activations.push(last_row);
+        }
+        let x = self.ln_f.forward(backend, &x)?;
+        let logits = self.head.forward(backend, &x)?;
+        Ok((activations, logits))
     }
 }
 
@@ -819,14 +917,52 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
         let k = self.k_proj.forward(backend, x)?;
         let v = self.v_proj.forward(backend, x)?;
 
-        // apply rope to q and k
-        let q = backend.apply_rotary_emb(&q, &self.rope_cos, &self.rope_sin, 0)?;
-        let k = backend.apply_rotary_emb(&k, &self.rope_cos, &self.rope_sin, 0)?;
-
         let seq_len = backend.shape(&q)[0];
         let embed_dim = self.n_heads * self.head_dim;
-        let scale = (self.head_dim as f32).sqrt().recip();
+        let kv_dim = self.n_kv_heads * self.head_dim;
+        let head_dim = self.head_dim;
+        let scale = (head_dim as f32).sqrt().recip();
         let n_repeat = self.n_heads / self.n_kv_heads;
+
+        // apply RoPE inline (llama.cpp style): rotate pairs (d, d+half) within
+        // each head using precomputed cos/sin tables.
+        let half = head_dim / 2;
+        let cos_data = backend.data(&self.rope_cos);
+        let sin_data = backend.data(&self.rope_sin);
+
+        let q_raw = backend.data(&q);
+        let mut q_rope = q_raw.to_vec();
+        for s in 0..seq_len {
+            let cos_row = &cos_data[s * half..(s + 1) * half];
+            let sin_row = &sin_data[s * half..(s + 1) * half];
+            for h in 0..self.n_heads {
+                let base = s * embed_dim + h * head_dim;
+                for d in 0..half {
+                    let x = q_rope[base + d];
+                    let y = q_rope[base + d + half];
+                    q_rope[base + d] = x * cos_row[d] - y * sin_row[d];
+                    q_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
+                }
+            }
+        }
+        let q = backend.load_from_cpu(q_rope, &[seq_len, embed_dim])?;
+
+        let k_raw = backend.data(&k);
+        let mut k_rope = k_raw.to_vec();
+        for s in 0..seq_len {
+            let cos_row = &cos_data[s * half..(s + 1) * half];
+            let sin_row = &sin_data[s * half..(s + 1) * half];
+            for h in 0..self.n_kv_heads {
+                let base = s * kv_dim + h * head_dim;
+                for d in 0..half {
+                    let x = k_rope[base + d];
+                    let y = k_rope[base + d + half];
+                    k_rope[base + d] = x * cos_row[d] - y * sin_row[d];
+                    k_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
+                }
+            }
+        }
+        let k = backend.load_from_cpu(k_rope, &[seq_len, kv_dim])?;
 
         let q_data = backend.data(&q);
         let k_data = backend.data(&k);
@@ -845,7 +981,7 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
             for i in 0..seq_len {
                 for j in 0..=i {
                     let q_idx = i * embed_dim + q_head_offset;
-                    let k_idx = j * embed_dim + k_head_offset;
+                    let k_idx = j * kv_dim + k_head_offset;
                     let dot: f32 = q_data[q_idx..q_idx + self.head_dim]
                         .iter()
                         .zip(k_data[k_idx..k_idx + self.head_dim].iter())
@@ -894,7 +1030,7 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
                     if weight == 0.0 {
                         continue;
                     }
-                    let v_offset = j * embed_dim + v_head_offset;
+                    let v_offset = j * kv_dim + v_head_offset;
                     let out_offset = i * embed_dim + q_head_offset;
                     let dst = &mut attn_buf[out_offset..out_offset + self.head_dim];
                     for d in 0..self.head_dim {
@@ -1197,6 +1333,13 @@ impl<B: Backend> ForwardModel<B> for Llama<B> {
     fn embed_dim(&self) -> usize {
         self.config.embed_dim
     }
+    fn forward_with_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        Llama::forward_with_activations(self, backend, token_ids)
+    }
 }
 
 impl Llama<CpuBackend> {
@@ -1228,6 +1371,7 @@ impl Llama<CpuBackend> {
     /// f32 weights should not be transposed (the loader leaves them
     /// in natural row-major order).
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
+        use crate::loader::LoadedTensor;
         use crate::tensor::compute_rope_freqs;
 
         let config = LlamaConfig::from_gguf_metadata(&loader);
@@ -1243,35 +1387,34 @@ impl Llama<CpuBackend> {
             rope_sin.shape()
         );
 
-        let get_t = |name: &str| {
-            loader
-                .tensors
-                .get(name)
-                .cloned()
-                .ok_or_else(|| anyhow::anyhow!("Missing tensor: {}", name))
+        // helper: get a tensor as f32 (for embeddings, norms, etc.)
+        let get_f32 = |name: &str| -> anyhow::Result<CpuTensor> {
+            match loader.tensors.get(name) {
+                Some(LoadedTensor::F32(t)) => Ok(t.clone()),
+                Some(LoadedTensor::Q8_0(qw)) => Ok(qw.dequantize_all()),
+                None => anyhow::bail!("Missing tensor: {}", name),
+            }
         };
 
-        let embed_tokens = get_t("token_embd.weight")?;
+        // helper: build a Linear from a weight tensor (may be f32 or q8_0).
+        // llama weights have no bias, so this takes only the weight name.
+        let get_linear = |name: &str| -> anyhow::Result<Linear<CpuBackend>> {
+            match loader.tensors.get(name) {
+                Some(LoadedTensor::F32(t)) => Ok(Linear::new(t.clone().transpose(), None)),
+                Some(LoadedTensor::Q8_0(qw)) => Ok(Linear::new_q8_0(qw.clone(), None)),
+                None => anyhow::bail!("Missing tensor: {}", name),
+            }
+        };
+
+        let embed_tokens = get_f32("token_embd.weight")?;
 
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
             let attn = LlamaAttention::new(
-                Linear::new(
-                    get_t(&format!("blk.{}.attn_q.weight", i))?.transpose(),
-                    None,
-                ),
-                Linear::new(
-                    get_t(&format!("blk.{}.attn_k.weight", i))?.transpose(),
-                    None,
-                ),
-                Linear::new(
-                    get_t(&format!("blk.{}.attn_v.weight", i))?.transpose(),
-                    None,
-                ),
-                Linear::new(
-                    get_t(&format!("blk.{}.attn_output.weight", i))?.transpose(),
-                    None,
-                ),
+                get_linear(&format!("blk.{}.attn_q.weight", i))?,
+                get_linear(&format!("blk.{}.attn_k.weight", i))?,
+                get_linear(&format!("blk.{}.attn_v.weight", i))?,
+                get_linear(&format!("blk.{}.attn_output.weight", i))?,
                 rope_cos.clone(),
                 rope_sin.clone(),
                 config.n_heads,
@@ -1280,39 +1423,32 @@ impl Llama<CpuBackend> {
             );
 
             let mlp = LlamaMlp::new(
-                Linear::new(
-                    get_t(&format!("blk.{}.ffn_gate.weight", i))?.transpose(),
-                    None,
-                ),
-                Linear::new(
-                    get_t(&format!("blk.{}.ffn_up.weight", i))?.transpose(),
-                    None,
-                ),
-                Linear::new(
-                    get_t(&format!("blk.{}.ffn_down.weight", i))?.transpose(),
-                    None,
-                ),
+                get_linear(&format!("blk.{}.ffn_gate.weight", i))?,
+                get_linear(&format!("blk.{}.ffn_up.weight", i))?,
+                get_linear(&format!("blk.{}.ffn_down.weight", i))?,
             );
 
             blocks.push(LlamaBlock::new(
-                get_t(&format!("blk.{}.attn_norm.weight", i))?,
+                get_f32(&format!("blk.{}.attn_norm.weight", i))?,
                 attn,
-                get_t(&format!("blk.{}.ffn_norm.weight", i))?,
+                get_f32(&format!("blk.{}.ffn_norm.weight", i))?,
                 mlp,
                 config.norm_eps,
             ));
         }
-        let output_weight = loader
-            .tensors
-            .get("output.weight")
-            .map(|t| t.clone().transpose())
-            .unwrap_or_else(|| embed_tokens.clone().transpose()); // no transpose for tied weights
+
+        // lm_head: use output.weight if present, otherwise tie with embed_tokens
+        let head = match loader.tensors.get("output.weight") {
+            Some(LoadedTensor::F32(t)) => Linear::new(t.clone().transpose(), None),
+            Some(LoadedTensor::Q8_0(qw)) => Linear::new_q8_0(qw.clone(), None),
+            None => Linear::new(embed_tokens.clone().transpose(), None),
+        };
 
         Ok(Self {
             embed_tokens,
             blocks,
-            norm: get_t("output_norm.weight")?,
-            head: Linear::new(output_weight, None),
+            norm: get_f32("output_norm.weight")?,
+            head,
             config,
         })
     }
@@ -1380,5 +1516,34 @@ impl<B: Backend> Llama<B> {
         }
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         self.head.forward(backend, &x)
+    }
+
+    /// forward pass with activation capture after each transformer block.
+    #[allow(clippy::type_complexity)]
+    pub fn forward_with_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let seq_len = token_ids.len();
+        let embed_dim = self.config.embed_dim;
+        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
+        for (i, &tok) in token_ids.iter().enumerate() {
+            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
+            backend.assign_row(&mut x, i, &word_vec);
+        }
+
+        let last_row_start = (seq_len - 1) * embed_dim;
+        let mut activations = Vec::with_capacity(self.blocks.len());
+
+        for block in &self.blocks {
+            x = block.forward(backend, &x)?;
+            let data = backend.data(&x);
+            let last_row: Vec<f32> = data[last_row_start..last_row_start + embed_dim].to_vec();
+            activations.push(last_row);
+        }
+        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &x)?;
+        Ok((activations, logits))
     }
 }

@@ -11,7 +11,13 @@ write-up: https://voidwest.dev/ember
 
 ## features
 
-- **gguf v3 loader**: reads gguf model files, supports f32 and q8_0 dtypes.
+- **gguf v3 loader**: reads gguf model files, supports f32, f16, and q8_0 dtypes.
+- **on-the-fly dequantization**: q8_0 weights stay in block-compressed form in
+  memory (~4× smaller than f32) and are dequantized during matmul.  the 3B
+  model uses ~3.4 GB of ram instead of ~12.8 GB.
+- **block-wise sgemm**: quantized matmuls dequantize in blocks of 256 columns
+  and multiply with `matrixmultiply::sgemm` — 5× faster prefill than the
+  scalar path.
 - **backend trait**: model code is generic over a `Backend` trait for linear ops,
   embeddings, and element-wise math — swap cpu for gpu later without rewriting
   those paths. (attention is cpu-scalar for now; see design notes.)
@@ -29,8 +35,11 @@ write-up: https://voidwest.dev/ember
 - **ml fundamentals**: causal multi-head attention with kv caching,
   numerically stable softmax (handles all-masked rows), layer norm,
   gelu activation, top-k/top-p sampling.
-- **file format parsing**: gguf v3 loader with f32 and q8_0 quantization
-  support, including fp16 scale dequantization.
+- **file format parsing**: gguf v3 loader with f32, f16, and q8_0
+  quantization support.
+- **memory-conscious inference**: q8_0 weights stay quantized in memory
+  and are dequantized in blocks during matmul — the 3.2B model runs in
+  ~3.4 GB of ram on consumer hardware.
 - **edge case handling**: uniform fallback when every logit is -inf,
   categorical sampling with inverse cdf, nucleus cutoff logic.
 
@@ -98,10 +107,8 @@ cargo run --release -- \
   --temperature 0
 ```
 
-> **note**: the tokenizer path defaults to `tokenizer.json` (gpt-2). llama
-> models bundle their own tokenizer in the gguf metadata, but the current
-> loader reads from a standalone tokenizer file. point `--tokenizer` at your
-> model's tokenizer if needed.
+> **note**: the default `tokenizer.json` is for llama models.
+> point `--tokenizer tokenizer-gpt2.json` when running gpt-2.
 
 > **note**: interactive (`-i`) and demo (`--demo`) modes are not yet wired
 > for llama. only the single-prompt generation path is supported.
@@ -119,14 +126,14 @@ model components live in `src/model.rs` as generic `Block<B>`, `Attention<B>`,
 
 ```text
 main.rs              entry point, cli args, generation loop
-├─ loader.rs         gguf v3 parser, tensor loading + dequant
-├─ model.rs          gpt-2 transformer blocks
+├─ loader.rs         gguf v3 parser, tensor loading
+├─ model.rs          gpt-2 + llama transformer blocks
 │  ├─ backend.rs     backend trait + cpu backend impl
 │  ├─ tensor.rs      row-major f32 tensor with basic ops
 │  └─ kv_cache.rs    flat key/value cache for incremental decode
 ├─ sampler.rs        temperature, top-k, top-p sampling
 ├─ tokenizer.rs      huggingface tokenizer wrapper
-└─ quant.rs          q8_0 block dequantization
+└─ quant.rs          q8_0 block dequantization + QuantizedWeight
 ```
 
 ## design notes
@@ -138,8 +145,10 @@ main.rs              entry point, cli args, generation loop
   the attention math in scalar cpu loops, bypassing the backend abstraction.
   adding `fn attention(...)` to the trait is planned; for now the trait is
   honest about what it covers.
-- **q8_0 quantization**: 8-bit block quantization (fp16 scale + 32 int8 values
-  per block). reduces model size ~4× with minimal perplexity loss.
+- **q8_0 quantization**: 8-bit block quantization (fp16 scale + 32 int8
+  values per block). weights stay in this quantized form in memory and
+  are dequantized on the fly during matmul — ~4× smaller than f32 at
+  rest with minimal perplexity loss.
 - **kv cache**: flat `[layer][head][seq_position][head_dim]` layout. prefill
   stores k/v for all prompt tokens; decode reads from cache and appends one
   token at a time.
@@ -167,11 +176,11 @@ exists only to size the flat buffer. removing it would require threading
 the layer count through every cache method or hardcoding it. storing it is
 the more explicit path.
 
-**`matrixmultiply` as a placeholder.** the matmul delegates to
-`matrixmultiply::sgemm` - pure rust, correct, no blas linking. it's not
-optimal (no simd), but the `Backend` trait means simd kernels can be
-swapped in under a new backend type without touching model code. the
-crates.io crate is a deliberate stepping stone, not a final choice.
+**`matrixmultiply` for cpu matmul.** both f32 and q8_0 matmuls go through
+`matrixmultiply::sgemm` — pure rust, no blas linking, decent simd.  the
+`Backend` trait means faster kernels can be swapped in under a new backend
+type without touching model code.  this is a pragmatic default, not a
+final answer.
 
 **softmax returns uniform for all-masked input.** when every logit is -inf
 (fully masked row), softmax normally produces NaN. this code detects that
@@ -182,15 +191,18 @@ prevents the generation loop from producing NaNs on degenerate input.
 
 - rust stable toolchain
 - a gguf model file (e.g. gpt2 in q8_0)
-- tokenizer.json for the model (gpt-2's is included in the repo; for other models, point `--tokenizer` at their tokenizer file or use `download_gpt2_tokenizer_blocking()` from the library)
+- a tokenizer file for the model (`tokenizer.json` for llama, `tokenizer-gpt2.json` for gpt-2; both are included in the repo)
 
 ## current limitations
 
-- matmul is scalar - no simd optimization yet.
-- model loader supports gpt-2 and llama architectures (gguf tensor names are hardcoded per arch).
-- not fully no_std - file i/o and mmap require std.
 - attention math runs in cpu scalar loops even when a future gpu backend is
   plugged in — the `Backend` trait doesn't yet include `fn attention(...)`.
+- the lm head (128K output features) is the throughput bottleneck during
+  decode — each token does 501 sgemm calls for the lm head alone.  see
+  `DEQUANT.md` for benchmarks and optimisation notes.
+- model loader supports gpt-2 and llama architectures (gguf tensor names are
+  hardcoded per arch).
+- not fully no_std — file i/o and mmap require std.
 
 ## license
 

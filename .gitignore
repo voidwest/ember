@@ -3,3 +3,8 @@
 .zed/
 data/*.npz
 *.pdf
+.venv/
+
+# only README.md is tracked — design notes and logs stay local
+*.md
+!README.md

@@ -1,4 +1,4 @@
-use crate::quant::{dequantize_q8_0, Q8_0_TYPE_SIZE};
+use crate::quant::{QuantizedWeight, Q8_0_TYPE_SIZE};
 use crate::tensor::CpuTensor;
 use anyhow::{bail, Context, Ok, Result};
 use std::collections::HashMap;
@@ -10,13 +10,27 @@ const GGUF_MAGIC: u32 = 0x46554747;
 const GGUF_VERSION: u32 = 3;
 const DEFAULT_ALIGNMENT: u64 = 32;
 
+/// a tensor as loaded from a gguf file.
+///
+/// f32 and f16 tensors are stored as `CpuTensor`.  q8_0 tensors are kept
+/// in raw block-compressed form (`QuantizedWeight`) — they are never
+/// dequantized to f32, keeping the in-memory footprint at the quantized size.
+#[derive(Clone)]
+pub enum LoadedTensor {
+    /// dequantized f32 tensor (for f32, f16, and small/direct-access tensors)
+    F32(CpuTensor),
+    /// raw q8_0 block-compressed weight (dequantized on the fly during matmul)
+    Q8_0(QuantizedWeight),
+}
+
 /// holds the parsed contents of a GGUF v3 file:
 /// metadata key-value pairs and named tensors.
 pub struct GgufLoader {
     /// metadata key-value pairs from the gguf header
     pub metadata: HashMap<String, GgufValue>,
-    /// named tensors, dequantized to f32
-    pub tensors: HashMap<String, CpuTensor>,
+    /// named tensors.  linear weights are stored as `LoadedTensor::Q8_0`
+    /// when the gguf dtype is q8_0; everything else is `LoadedTensor::F32`.
+    pub tensors: HashMap<String, LoadedTensor>,
 }
 
 /// a typed value from GGUF metadata.
@@ -90,8 +104,9 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
             info.dtype,
             info.dims
         );
-        let (data, dims) = match info.dtype {
+        let loaded = match info.dtype {
             0 => {
+                // f32: read directly, no dim reversal
                 let mut data = vec![0.0f32; element_count];
                 let mut buf = vec![0u8; element_count * 4];
                 reader.read_exact(&mut buf)?;
@@ -102,9 +117,10 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                         .map_err(|_| anyhow::anyhow!("failed to read f32 at index {}", i))?;
                     *dst = f32::from_le_bytes(bytes);
                 }
-                (data, info.dims)
+                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             1 => {
+                // f16: read, convert to f32, reverse dims (column-major storage)
                 use half::f16;
                 let mut buf = vec![0u8; element_count * 2];
                 reader.read_exact(&mut buf)?;
@@ -118,27 +134,20 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                     );
                     *dst = f16::from_bits(bits).to_f32();
                 }
-                // F16 tensors may be stored column-major for quantized models.
-                // Reverse the dimension order so the reshape matches the storage layout.
                 let mut dims = info.dims;
                 dims.reverse();
-                (data, dims)
+                LoadedTensor::F32(CpuTensor::from_data(dims, data))
             }
             8 => {
+                // q8_0: store raw, dequantize on the fly during matmul.
+                // reverse dims to match the column-major storage convention
+                // (same as the old path did for f16/q8_0 tensors).
                 let n_blocks = element_count / 32;
-                let mut buf = vec![0u8; n_blocks * Q8_0_TYPE_SIZE];
-                reader.read_exact(&mut buf)?;
-
-                let mut f32_data = vec![0.0f32; element_count];
-                dequantize_q8_0(&buf, &mut f32_data)?;
-                // Q8_0 blocks are stored along the innermost dimension, which
-                // must be a multiple of 32. the gguf tensor info reports the
-                // logical shape (e.g. [embed, vocab]), but the data is laid out
-                // column-major so that the innermost dimension (vocab) becomes
-                // the outer dimension for blocking. reverse the dims here.
+                let mut raw = vec![0u8; n_blocks * Q8_0_TYPE_SIZE];
+                reader.read_exact(&mut raw)?;
                 let mut dims = info.dims;
                 dims.reverse();
-                (f32_data, dims)
+                LoadedTensor::Q8_0(QuantizedWeight::new(raw, dims))
             }
             _ => {
                 log::warn!(
@@ -149,9 +158,7 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                 continue;
             }
         };
-
-        let tensor = CpuTensor::from_data(dims, data);
-        tensors.insert(info.name, tensor);
+        tensors.insert(info.name, loaded);
     }
     Ok(GgufLoader { metadata, tensors })
 }
