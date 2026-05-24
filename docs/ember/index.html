@@ -112,7 +112,7 @@
                 <span>&#9679;</span>
                 <span>mit</span>
                 <span>&#9679;</span>
-                <span>~2,200 lines</span>
+                <span>~4,500 lines</span>
             </div>
         </div>
 
@@ -120,11 +120,13 @@
         <h2>1. what this is</h2>
 
         <p>
-            ember is a gpt-2 inference engine that runs quantized models on cpu,
-            in pure rust, with zero framework dependencies. it loads gguf files,
-            runs token-by-token generation with temperature / top-k / top-p
-            sampling, and produces coherent text from a 124m-parameter model,
-            all in roughly 2,200 lines.
+            ember is an inference engine that runs quantized gpt-2 and llama
+            models on cpu, in pure rust, with zero framework dependencies. it
+            loads gguf files, runs token-by-token generation with temperature /
+            top-k / top-p sampling, keeps weights quantized in memory with
+            on-the-fly dequantization, and extracts hidden states for probing
+            research. gpt-2 small (124m) and llama 3.2 (1B and 3B) have been
+            tested. all in roughly 4,500 lines.
         </p>
 
         <p>
@@ -148,21 +150,26 @@
         <h2>2. architecture</h2>
 
         <div class="arch-tree">
-          <div class="arch-row root"><span class="arch-file">main.rs</span><span class="arch-desc">entry point, cli args, generation loop</span></div>
+          <div class="arch-row root"><span class="arch-file">main.rs</span><span class="arch-desc">entry point, cli args, generation, demo, interactive, probe modes</span></div>
           <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">loader.rs</span><span class="arch-desc">gguf v3 parser, tensor loading + dequant</span></div>
-          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">model.rs</span><span class="arch-desc">gpt-2 transformer blocks</span></div>
-          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">backend.rs</span><span class="arch-desc">backend trait + cpu backend impl</span></div>
-          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">tensor.rs</span><span class="arch-desc">row-major f32 tensor with basic ops</span></div>
-          <div class="arch-row"><span class="arch-branch">│  └─ </span><span class="arch-file">kv_cache.rs</span><span class="arch-desc">flat key/value cache for incremental decode</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">model.rs</span><span class="arch-desc">gpt-2 + llama transformer blocks, ForwardModel trait</span></div>
+          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">backend.rs</span><span class="arch-desc">backend trait + cpu backend (matmul, rope, rms_norm, silu)</span></div>
+          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">tensor.rs</span><span class="arch-desc">row-major f32 tensor, rope, silu, elemul</span></div>
+          <div class="arch-row"><span class="arch-branch">│  └─ </span><span class="arch-file">kv_cache.rs</span><span class="arch-desc">flat k/v cache, gqa-aware (n_kv_heads)</span></div>
           <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">sampler.rs</span><span class="arch-desc">temperature, top-k, top-p sampling</span></div>
           <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">tokenizer.rs</span><span class="arch-desc">huggingface tokenizer wrapper</span></div>
-          <div class="arch-row"><span class="arch-branch">└─ </span><span class="arch-file">quant.rs</span><span class="arch-desc">q8_0 block dequantization</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">quant.rs</span><span class="arch-desc">q8_0 block dequantization + QuantizedWeight</span></div>
+          <div class="arch-row"><span class="arch-branch">└─ </span><span class="arch-file">probes/</span><span class="arch-desc">python probe scripts (linear, cca, rsa, divergence)</span></div>
         </div>
 
         <p>
-            the model is generic over the <span class="mono">Backend</span> trait, so the same
+            both architectures share the <span class="mono">ForwardModel</span> trait, so
+            <span class="mono">generate</span>, <span class="mono">demo</span>, and <span class="mono">probe</span> modes work with either.
+            the model code is generic over the <span class="mono">Backend</span> trait, so the same
             transformer code works on cpu today and will work on a gpu tomorrow
-            without rewriting attention or mlp logic.
+            without rewriting attention or mlp logic. probe mode
+            (<span class="mono">--probe</span>) extracts hidden states after every transformer
+            block for downstream analysis with the scripts in <span class="mono">probes/</span>.
         </p>
 
         <!-- ═══════════════════════════ 3. DESIGN DECISIONS ═══════════════════════════ -->
@@ -183,10 +190,13 @@
             <span class="mono">matmul</span>, <span class="mono">add</span>, <span class="mono">softmax</span>,
             <span class="mono">gelu</span>, <span class="mono">layer_norm</span>, <span class="mono">index_select</span>,
             <span class="mono">slice_cols</span>, <span class="mono">load_from_cpu</span>, and shape/data
-            accessors. attention is not yet abstracted through the trait, the
-            model's attention methods call <span class="mono">data()</span> and run scalar cpu
-            loops, but the trait is designed so a <span class="mono">fn attention(...)</span>
-            method can be added later.
+            accessors. the trait also includes llama-family primitives
+            (<span class="mono">rms_norm</span>, <span class="mono">silu</span>, <span class="mono">elemul</span>,
+            <span class="mono">apply_rotary_emb</span>, <span class="mono">matmul_q8_0</span>) with full
+            <span class="mono">CpuBackend</span> implementations. attention is not yet
+            abstracted through the trait — the model's attention methods call
+            <span class="mono">data()</span> and run scalar cpu loops — but the trait is
+            designed so a <span class="mono">fn attention(...)</span> method can be added later.
         </p>
 
         <h3>row-major tensor layout</h3>
@@ -574,73 +584,58 @@
             that behavior is the proof that the pipeline is correct.
         </p>
 
-        <!-- ═══════════════════════════ 11. WHAT'S NEXT ═══════════════════════════ -->
-        <h2>11. what's next</h2>
+        <!-- ═══════════════════════════ 11. WHAT HAPPENED ═══════════════════════════ -->
+        <h2>11. what happened after first light</h2>
 
         <p>
-            ember runs gpt-2. the path forward is llama-family support, which
-            requires four new primitives:
+            the four primitives described in the original version of this section
+            are all implemented:
         </p>
 
         <ul>
             <li>
-                <strong>rmsnorm</strong> replaces layer norm. same idea,
-                normalize activations so they don't drift, but it drops the
-                mean-centering step and only scales by the root-mean-square. the
-                mean is zero anyway after enough layers; dropping it saves a
-                subtraction per element. the implementation is a three-line
-                variant of the existing <span class="mono">layer_norm</span> method.
+                <strong>llama architecture.</strong> full <span class="mono">Llama</span>
+                model with rmsnorm, silu, rope, swiglu mlp, separate q/k/v
+                projections, and grouped-query attention. the
+                <span class="mono">ForwardModel</span> trait unifies gpt-2 and llama under
+                a single interface, so <span class="mono">generate</span>,
+                <span class="mono">demo</span>, and <span class="mono">probe</span> modes dispatch
+                generically. tested on llama 3.2 1B and 3B instruct.
             </li>
             <li>
-                <strong>silu</strong> (sigmoid linear unit, also called swish)
-                replaces gelu as the activation: <span class="mono">x * sigmoid(x)</span>,
-                self-gating, smooth. the gated ffn in llama uses it in a
-                <span class="mono">gate_proj * up_proj</span> element-wise product before the
-                down projection.
+                <strong>on-the-fly dequantization.</strong> q8_0 weights stay in
+                block-compressed form in memory (~4× smaller than f32) and are
+                dequantized during matmul. the 3B model uses ~3.4 GB of ram
+                instead of ~12.8 GB. block-wise sgemm dequantizes in chunks of
+                256 columns for a 5× prefill speedup over scalar. see
+                <span class="mono">DEQUANT.md</span> for benchmarks.
             </li>
             <li>
-                <strong>rope</strong> (rotary position embeddings) replaces the
-                learned <span class="mono">wpe</span> lookup table. instead of storing a
-                vector for each absolute position, rope encodes position by
-                rotating pairs of dimensions in the query and key vectors by an
-                angle proportional to the position. the attention score between
-                positions i and j depends only on their relative distance (j −
-                i), not their absolute positions, so the model generalizes to
-                sequence lengths it wasn't trained on.
-            </li>
-            <li>
-                <strong>grouped-query attention</strong> (gqa) reduces the kv
-                head count relative to q heads. llama 3 8b uses 32 q heads but
-                only 8 kv heads, so four q heads share each kv pair. less memory
-                for the cache means longer context for the same ram budget. the
-                attention loop barely changes, kv heads cycle every
-                <span class="mono">n_q_heads / n_kv_heads</span> q heads.
+                <strong>probing scaffold.</strong> probe mode
+                (<span class="mono">--probe</span>) extracts hidden states after every
+                transformer block and saves them as <span class="mono">.npy</span> files. the
+                <span class="mono">probes/</span> directory contains python scripts for
+                linear probing, cca, rsa, and divergence analysis. built for
+                arabic morphology research on the llama 3.2 family.
             </li>
         </ul>
 
         <p>
-            each primitive is specified with starter code and tests in the repo.
-            the <span class="mono">Backend</span>
-            trait was designed for exactly this, adding a new op to the trait
-            makes it available to every future backend automatically.
-        </p>
-
-        <p>
-            <strong>simd.</strong> the current matmul delegates to
-            <span class="mono">matrixmultiply::sgemm</span>, a pure rust implementation that
-            is correct but scalar. the next performance jump comes from
-            vectorized kernels, avx2 on x86, neon on arm. the
-            <span class="mono">Backend</span> trait is the insertion point: a
-            <span class="mono">SimdBackend</span> implementing the same trait with
-            architecture-specific intrinsics. same model code. 4× to 8×
-            throughput.
+            <strong>what's actually next.</strong> the throughput bottleneck is
+            still the lm head — 501 sgemm calls per decode token for a 128K
+            vocabulary. attention is also cpu-scalar, bypassing the
+            <span class="mono">Backend</span> trait. parallel decode (rayon across heads
+            and layers) and simd kernels (avx2/neon) are the natural next steps.
+            the <span class="mono">Backend</span> trait is the insertion point — a
+            <span class="mono">SimdBackend</span> implementing the same trait means the
+            same model code with 4× to 8× throughput.
         </p>
 
         <p>
             after that: gpu support (the <span class="mono">Backend</span> trait means same
-            transformer code on cuda or metal), then embedded targets, arm
-            cortex-m, no_std, models in the 10m-100m parameter range running on
-            microcontrollers.
+            transformer code on cuda or metal), quantized attention and
+            embeddings, then embedded targets — arm cortex-m, no_std, models in
+            the 10m-100m parameter range running on microcontrollers.
         </p>
 
         <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
@@ -652,6 +647,7 @@
             </p>
             <p style="margin-top: 0.35rem">
                 written in rust. runs on cpu. no cuda. no pytorch. just tensors.
+                also a research tool — probe mode for activation extraction.
             </p>
         </footer>
     </body>

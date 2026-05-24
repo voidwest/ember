@@ -151,10 +151,20 @@
 
     fn zeroes(&amp;self, shape: &amp;[usize]) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn matmul(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn matmul_q8_0(&amp;self, x: &amp;Self::Tensor, w: &amp;QuantizedWeight)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn add(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn softmax(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn gelu(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn layer_norm(&amp;self, x: &amp;Self::Tensor, w: &amp;Self::Tensor, b: &amp;Self::Tensor, eps: f32)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn rms_norm(&amp;self, x: &amp;Self::Tensor, w: &amp;Self::Tensor, eps: f32)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn silu(&amp;self, x: &amp;Self::Tensor) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn elemul(&amp;self, a: &amp;Self::Tensor, b: &amp;Self::Tensor)
+        -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
+    fn apply_rotary_emb(&amp;self, x: &amp;Self::Tensor, cos: &amp;Self::Tensor,
+        sin: &amp;Self::Tensor, start_pos: usize)
         -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn index_select(&amp;self, t: &amp;Self::Tensor, index: usize) -&gt; Result&lt;Self::Tensor, Self::Error&gt;;
     fn assign_row(&amp;self, dst: &amp;mut Self::Tensor, index: usize, src: &amp;Self::Tensor);
@@ -172,9 +182,11 @@
             method to <span class="mono">CpuTensor</span>. <span class="mono">CpuError</span> wraps
             <span class="mono">TensorError</span> for shape mismatches and out-of-bounds
             indexing. the trait methods are designed to be implementable on any
-            hardware: gpu, simd, or accelerator. the two llama-family primitives
-            (<span class="mono">rms_norm</span>, <span class="mono">silu</span>) are already on the trait
-            and implemented for <span class="mono">CpuBackend</span>.
+            hardware: gpu, simd, or accelerator. the five llama-family primitives
+            (<span class="mono">rms_norm</span>, <span class="mono">silu</span>, <span class="mono">elemul</span>,
+            <span class="mono">apply_rotary_emb</span>, <span class="mono">matmul_q8_0</span>) sit alongside
+            the gpt-2 primitives on the trait, each with a
+            <span class="mono">CpuBackend</span> implementation.
         </p>
 
         <!-- ══ KV CACHE ══ -->
@@ -357,6 +369,166 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
             transposed back to restore <span class="mono">[in_features, out_features]</span>
             for matmul. embeddings skip the transpose since the dim reversal
             already makes <span class="mono">index_select</span> pick contiguous rows.
+        </p>
+
+        <!-- ══ FORWARDMODEL TRAIT ══ -->
+        <h2>ForwardModel trait</h2>
+
+        <p>
+            <span class="mono">ForwardModel&lt;B: Backend&gt;</span> is the trait that unifies
+            gpt-2 and llama under a single inference interface. both
+            <span class="mono">Gpt2&lt;B&gt;</span> and <span class="mono">Llama&lt;B&gt;</span> implement it:
+        </p>
+
+        <pre><code>pub trait ForwardModel&lt;B: Backend&gt; {
+    fn create_cache(&amp;self, backend: &amp;B, max_seq_len: usize) -&gt; KVCache;
+    fn forward_with_cache(
+        &amp;self, backend: &amp;B, token_ids: &amp;[u32],
+        cache: &amp;mut KVCache, start_pos: usize,
+    ) -&gt; Result&lt;B::Tensor, B::Error&gt;;
+    fn n_layers(&amp;self) -&gt; usize;
+    fn embed_dim(&amp;self) -&gt; usize;
+    fn forward_with_activations(
+        &amp;self, backend: &amp;B, token_ids: &amp;[u32],
+    ) -&gt; Result&lt;(Vec&lt;Vec&lt;f32&gt;&gt;, B::Tensor), B::Error&gt;;
+}</code></pre>
+
+        <p>
+            <span class="mono">forward_with_cache</span> is the standard inference path:
+            embed tokens, run through transformer blocks with kv cache,
+            project to logits. <span class="mono">forward_with_activations</span> is the
+            probing entry point — same forward pass, but it collects hidden
+            states after every transformer block at the last token position
+            instead of discarding them. this is what <span class="mono">--probe</span> mode
+            calls to extract activations for downstream analysis.
+        </p>
+
+        <!-- ══ LLAMA ARCHITECTURE ══ -->
+        <h2>llama architecture specifics</h2>
+
+        <p>
+            llama-family models differ from gpt-2 in four structural ways. each
+            required a new primitive on the <span class="mono">Backend</span> trait.
+        </p>
+
+        <h3>rotary position embeddings (RoPE)</h3>
+
+        <p>
+            instead of learned position embeddings, llama encodes position by
+            rotating pairs of dimensions in the query and key vectors. the
+            rotation angle for dimension pair <span class="mono">2i, 2i+1</span> at position
+            <span class="mono">p</span> is <span class="mono">p / theta^(2i/d)</span> where
+            <span class="mono">theta</span> is typically 500,000.0 for llama 3.
+        </p>
+
+        <p>
+            cos/sin tables are precomputed once in
+            <span class="mono">Llama::from_loader</span> via
+            <span class="mono">compute_rope_freqs(max_seq_len, head_dim, theta_base)</span>
+            and cloned into each <span class="mono">LlamaAttention</span> layer. at inference
+            time, <span class="mono">apply_rotary_emb</span> rotates the q and k tensors
+            in-place using these tables. the precomputation means RoPE costs
+            one 2d-subspace rotation per dimension pair per token — no
+            trigonometry in the hot path.
+        </p>
+
+        <h3>RMS norm</h3>
+
+        <p>
+            <span class="mono">rms_norm</span> normalizes activations by the root mean square
+            without centering:
+        </p>
+
+        <pre><code>rms = sqrt(mean(x²) + eps)
+y[i] = x[i] * weight[i] / rms</code></pre>
+
+        <p>
+            layer norm subtracts the mean before dividing by standard deviation;
+            RMS norm skips the mean subtraction. in deep networks, the mean of
+            activations is approximately zero anyway, so the subtraction is
+            redundant. dropping it saves one subtraction per element and one
+            reduction pass. llama uses RMS norm before attention and before the
+            mlp in every block, and as the final output norm.
+        </p>
+
+        <h3>SwiGLU mlp</h3>
+
+        <p>
+            llama's feed-forward network replaces gpt-2's
+            <span class="mono">c_fc → gelu → c_proj</span> with a gated variant:
+        </p>
+
+        <pre><code>gate = silu(gate_proj(x))    // swish activation on gate
+up   = up_proj(x)           // linear projection
+y    = gate ⊙ up            // element-wise multiply
+out  = down_proj(y)         // final projection</code></pre>
+
+        <p>
+            the element-wise product (<span class="mono">elemul</span>) is the new primitive.
+            SwiGLU uses two weight matrices (<span class="mono">gate_proj</span> and
+            <span class="mono">up_proj</span>) instead of one (<span class="mono">c_fc</span>), roughly
+            doubling the mlp parameter count for the same hidden size. llama
+            compensates by using an intermediate size of
+            <span class="mono">8/3 * hidden_dim</span> instead of gpt-2's <span class="mono">4 * hidden_dim</span>.
+        </p>
+
+        <h3>grouped-query attention (GQA)</h3>
+
+        <p>
+            llama uses fewer kv heads than query heads to reduce cache memory.
+            llama 3.2 1B uses 32 q heads and 8 kv heads — four q heads share
+            each kv pair. the <span class="mono">KVCache</span> stores only
+            <span class="mono">n_kv_heads</span> k/v per layer, not <span class="mono">n_heads</span>.
+        </p>
+
+        <p>
+            during attention, kv heads are repeated to match the query head count:
+        </p>
+
+        <pre><code>let n_repeat = n_heads / n_kv_heads;  // 4 for llama 3.2 1B
+let kv_h = h / n_repeat;              // which kv head does query head h use?
+// read k[kv_h], v[kv_h] from cache
+// compute dot(q[h], k[kv_h]) as usual</code></pre>
+
+        <p>
+            for gpt-2, <span class="mono">n_heads == n_kv_heads</span> so this is a
+            zero-behavior-change path. for llama, the cache uses 75% less memory
+            (8 kv heads vs 32 query heads), enabling longer context windows
+            for the same ram budget. the <span class="mono">qk_scratch</span> buffer size is
+            unchanged since qk scores are per query head.
+        </p>
+
+        <!-- ══ PROBING PIPELINE ══ -->
+        <h2>probing pipeline</h2>
+
+        <p>
+            probe mode (<span class="mono">--probe</span>) is a research feature that extracts
+            hidden states from every transformer block. the flow:
+        </p>
+
+        <div class="layout-block">
+stimuli json (e.g. nonce_root_pattern.json)
+  │
+  ▼  tokenize each stimulus
+model.forward_with_activations(token_ids)
+  │
+  ▼  collect per-layer activations at last token position
+save as .npy (shape: [n_stimuli, n_layers, embed_dim])
+  │
+  ▼  python probe scripts
+train_linear_probe.py   → logistic regression classifier
+cca_analysis.py         → canonical correlation with linguistic features
+rsa_analysis.py         → representational similarity matrices
+divergence_analysis.py  → layer-wise js divergence</div>
+
+        <p>
+            <span class="mono">forward_with_activations</span> runs the same forward pass as
+            inference but collects hidden states after each block at the last
+            token position — shape <span class="mono">[embed_dim]</span> per layer. this is
+            the standard probing setup: train a simple classifier on these
+            representations and test whether the model encodes specific
+            linguistic properties (e.g. morphological features) at particular
+            layers.
         </p>
 
         <!-- ══ SAMPLER ══ -->

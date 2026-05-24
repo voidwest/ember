@@ -172,9 +172,11 @@
             دالة لـ <span class="mono">CpuTensor</span>. <span class="mono">CpuError</span> يغلف
             <span class="mono">TensorError</span> لعدم تطابق الأشكال والفهرسة خارج
             الحدود. دوال الـ trait مصممة لتكون قابلة للتنفيذ على أي
-            hardware: GPU، SIMD، أو accelerator. primitives الخاصة بعائلة llama
-            (<span class="mono">rms_norm</span>، <span class="mono">silu</span>) موجودتان بالفعل على الـ trait
-            ومنفذتان لـ <span class="mono">CpuBackend</span>.
+            hardware: GPU، SIMD، أو accelerator. primitives الخمسة لعائلة llama
+            (<span class="mono">rms_norm</span>، <span class="mono">silu</span>، <span class="mono">elemul</span>،
+            <span class="mono">apply_rotary_emb</span>، <span class="mono">matmul_q8_0</span>) تجلس
+            بجانب primitives gpt-2 على الـ trait، كل منها مع تطبيق
+            <span class="mono">CpuBackend</span>.
         </p>
 
         <!-- ══ KV CACHE ══ -->
@@ -444,6 +446,177 @@ dist.iter().enumerate()
         <p>
             يمشي على المجموع التراكمي للاحتمالات. أول فهرس يتجاوز
             مجموعه التراكمي السحب العشوائي هو الـ token المختار.
+        </p>
+
+        <!-- ══ FORWARDMODEL ══ -->
+        <h2>ForwardModel trait</h2>
+
+        <p>
+            الـ <span class="mono">ForwardModel</span> trait في <span class="mono">src/model.rs</span>
+            هو واجهة الاستدلال العامة. كلا من <span class="mono">Gpt2&lt;B&gt;</span> و
+            <span class="mono">Llama&lt;B&gt;</span> ينفذانه:
+        </p>
+
+        <pre><code>pub trait ForwardModel&lt;B: Backend&gt; {
+    fn create_cache(&amp;self, backend: &amp;B, max_seq_len: usize) -&gt; KVCache;
+    fn forward_with_cache(
+        &amp;self, backend: &amp;B, token_ids: &amp;[u32],
+        cache: &amp;mut KVCache, start_pos: usize,
+    ) -&gt; Result&lt;B::Tensor, B::Error&gt;;
+    fn n_layers(&amp;self) -&gt; usize;
+    fn embed_dim(&amp;self) -&gt; usize;
+    fn forward_with_activations(
+        &amp;self, backend: &amp;B, token_ids: &amp;[u32],
+    ) -&gt; Result&lt;(Vec&lt;Vec&lt;f32&gt;&gt;, B::Tensor), B::Error&gt;;
+}</code></pre>
+
+        <p>
+            <span class="mono">forward_with_cache</span> هو مسار الاستدلال المعياري:
+            embed tokens، مرر عبر transformer blocks مع kv cache،
+            project إلى logits. <span class="mono">forward_with_activations</span> هو مدخل
+            الـ probing — نفس forward pass، لكنه يجمع hidden states
+            بعد كل كتلة transformer عند آخر موضع token بدل رميها.
+            هذا ما يناديه نمط <span class="mono">--probe</span> لاستخراج الـ activations
+            للتحليل اللاحق.
+        </p>
+
+        <!-- ══ LLAMA ARCHITECTURE ══ -->
+        <h2>تفاصيل معمارية llama</h2>
+
+        <p>
+            نماذج عائلة llama تختلف عن gpt-2 بأربع طرق هيكلية. كل واحدة
+            تطلبت primitive جديدة على trait <span class="mono">Backend</span>.
+        </p>
+
+        <h3>rotary position embeddings (RoPE)</h3>
+
+        <p>
+            بدل position embeddings متعلمة، llama يشفّر الموضع بتدوير
+            أزواج من الأبعاد في متجهات query و key. زاوية التدوير
+            لزوج الأبعاد <span class="mono">2i, 2i+1</span> عند الموضع
+            <span class="mono">p</span> هي <span class="mono">p / theta^(2i/d)</span> حيث
+            <span class="mono">theta</span> عادة 500,000.0 لـ llama 3.
+        </p>
+
+        <p>
+            جداول cos/sin تُحسب مسبقاً مرة واحدة في
+            <span class="mono">Llama::from_loader</span> عبر
+            <span class="mono">compute_rope_freqs(max_seq_len, head_dim, theta_base)</span>
+            وتُنسخ لكل طبقة <span class="mono">LlamaAttention</span>. وقت الاستدلال،
+            <span class="mono">apply_rotary_emb</span> يدور tensors q و k في مكانها
+            باستخدام هذه الجداول. الحساب المسبق يعني أن RoPE يكلف
+            دوران subspace ثنائي الأبعاد واحد لكل زوج بعد لكل token — لا
+            trigonometry في الـ hot path.
+        </p>
+
+        <h3>RMS norm</h3>
+
+        <p>
+            <span class="mono">rms_norm</span> يعاير الـ activations بالـ root mean square
+            بدون توسيط:
+        </p>
+
+        <pre><code>rms = sqrt(mean(x²) + eps)
+y[i] = x[i] * weight[i] / rms</code></pre>
+
+        <p>
+            layer norm يطرح المتوسط قبل القسمة على الانحراف المعياري؛
+            RMS norm يتخطى طرح المتوسط. في الشبكات العميقة، متوسط
+            الـ activations تقريباً صفر على أي حال، فالطرح
+            زائد عن الحاجة. حذفه يوفر طرح واحد لكل عنصر ومرور
+            reduction واحد. llama يستخدم RMS norm قبل attention وقبل
+            mlp في كل block، وكـ output norm نهائي.
+        </p>
+
+        <h3>SwiGLU mlp</h3>
+
+        <p>
+            شبكة feed-forward في llama تستبدل
+            <span class="mono">c_fc → gelu → c_proj</span> في gpt-2 بنسخة مبوبة:
+        </p>
+
+        <pre><code>gate = silu(gate_proj(x))    // swish activation على البوابة
+up   = up_proj(x)           // إسقاط خطي
+y    = gate ⊙ up            // جداء عنصري
+out  = down_proj(y)         // الإسقاط النهائي</code></pre>
+
+        <p>
+            الجداء العنصري (<span class="mono">elemul</span>) هو الـ primitive الجديد.
+            SwiGLU يستخدم مصفوفتي أوزان (<span class="mono">gate_proj</span> و
+            <span class="mono">up_proj</span>) بدل واحدة (<span class="mono">c_fc</span>)، تقريباً
+            يضاعف عدد معاملات mlp لنفس الحجم المخفي. llama يعوض
+            باستخدام حجم وسيط <span class="mono">8/3 * hidden_dim</span> بدل
+            <span class="mono">4 * hidden_dim</span> في gpt-2.
+        </p>
+
+        <h3>grouped-query attention (GQA)</h3>
+
+        <p>
+            llama يستخدم رؤوس kv أقل من رؤوس query لتقليل ذاكرة cache.
+            llama 3.2 1B يستخدم 32 رأس q و8 رؤوس kv — أربع رؤوس q تتشارك
+            كل زوج kv. الـ <span class="mono">KVCache</span> يخزن فقط
+            <span class="mono">n_kv_heads</span> k/v لكل طبقة، ليس <span class="mono">n_heads</span>.
+        </p>
+
+        <p>
+            أثناء attention، رؤوس kv تُكرر لتطابق عدد رؤوس query:
+        </p>
+
+        <pre><code>let n_repeat = n_heads / n_kv_heads;  // 4 لـ llama 3.2 1B
+let kv_h = h / n_repeat;              // أي رأس kv يستخدم رأس query h؟
+// اقرأ k[kv_h]، v[kv_h] من cache
+// احسب dot(q[h]، k[kv_h]) كالمعتاد</code></pre>
+
+        <p>
+            لـ gpt-2، <span class="mono">n_heads == n_kv_heads</span> فهذا مسار
+            لا يغير السلوك. لـ llama، الـ cache يستخدم ذاكرة أقل بـ 75%
+            (8 رؤوس kv مقابل 32 رأس query)، مما يمكن نوافذ سياق أطول
+            لنفس ميزانية الرام. حجم بفر <span class="mono">qk_scratch</span> لا يتغير
+            لأن scores qk هي لكل رأس query.
+        </p>
+
+        <!-- ══ PROBING PIPELINE ══ -->
+        <h2>probing pipeline (خط أنابيب الـ probing)</h2>
+
+        <p>
+            نمط probe (<span class="mono">--probe</span>) هو ميزة بحثية تستخرج
+            hidden states من كل كتلة transformer. التدفق:
+        </p>
+
+        <div class="layout-block">
+ stimuli json (مثلاً nonce_root_pattern.json)
+   │
+   ▼  tokenize كل stimulus
+ model.forward_with_activations(token_ids)
+   │
+   ▼  جمع per-layer activations عند آخر موضع token
+ حفظ كـ .npy (الشكل: [n_stimuli، n_layers، embed_dim])
+   │
+   ▼  سكريبتات python probe
+ train_linear_probe.py   → مصنف logistic regression
+ cca_analysis.py         → canonical correlation مع سمات لغوية
+ rsa_analysis.py         → representational similarity matrices
+ divergence_analysis.py  → JS divergence لكل طبقة
+</div>
+
+        <p>
+            <span class="mono">forward_with_activations</span> يشغّل نفس forward pass
+            للاستدلال لكنه يجمع hidden states بعد كل block عند آخر موضع
+            token. المخرج هو <span class="mono">Vec&lt;Vec&lt;f32&gt;&gt;</span> حيث
+            <span class="mono">activations[layer][d]</span> هو قيمة hidden state
+            للبعد <span class="mono">d</span> في الطبقة <span class="mono">layer</span>.
+            هذه تُسطح وتُصف في مصفوفة 3d وتحفظ بصيغة numpy (npy.)
+            format — يمكن تحميلها مباشرة من سكريبتات python.
+        </p>
+
+        <p>
+            بالإضافة لـ <span class="mono">.npy</span>، نمط probe يكتب ملف
+            <span class="mono">_correctness.json</span> يتتبع أي stimulus أنتج
+            الاستمرارية المتوقعة بالنمط (مفيد لقياس ما إذا كان النموذج
+            قد تعلم مورفولوجيا عربية سطحية). الـ <span class="mono">forward_with_activations</span>
+            منفذ لكلا <span class="mono">Gpt2</span> و<span class="mono">Llama</span> عبر trait
+            <span class="mono">ForwardModel</span>، لذا نمط probe يعمل مع
+            أي معمارية.
         </p>
 
         <!-- ══ PROFILING ══ -->

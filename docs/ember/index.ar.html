@@ -157,21 +157,26 @@
         </ol>
 
         <div class="arch-tree">
-          <div class="arch-row root"><span class="arch-file">main.rs</span><span class="arch-desc">نقطة الدخول، parsing الـ cli args، حلقة التوليد</span></div>
+          <div class="arch-row root"><span class="arch-file">main.rs</span><span class="arch-desc">نقطة الدخول، parsing الـ cli args، التوليد، probe mode</span></div>
           <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">loader.rs</span><span class="arch-desc">قارئ GGUF v3، تحميل الـ tensor وفك الضغط</span></div>
-          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">model.rs</span><span class="arch-desc">transformer blocks من نوع GPT-2</span></div>
-          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">backend.rs</span><span class="arch-desc">backend trait + تطبيق المعالج</span></div>
-          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">tensor.rs</span><span class="arch-desc">tensor f32 صفي رئيسي مع عمليات أساسية</span></div>
-          <div class="arch-row"><span class="arch-branch">│  └─ </span><span class="arch-file">kv_cache.rs</span><span class="arch-desc">key/value cache مسطح للـ decode التزايدي</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">model.rs</span><span class="arch-desc">transformer GPT-2 + LLaMA، ForwardModel trait</span></div>
+          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">backend.rs</span><span class="arch-desc">backend trait + primitives عائلة LLaMA</span></div>
+          <div class="arch-row"><span class="arch-branch">│  ├─ </span><span class="arch-file">tensor.rs</span><span class="arch-desc">tensor f32 رئيسي، RoPE، silu، elemul</span></div>
+          <div class="arch-row"><span class="arch-branch">│  └─ </span><span class="arch-file">kv_cache.rs</span><span class="arch-desc">k/v cache مسطح، يدعم GQA (n_kv_heads)</span></div>
           <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">sampler.rs</span><span class="arch-desc">temperature، top-k، top-p sampling</span></div>
           <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">tokenizer.rs</span><span class="arch-desc">مغلّف لـ huggingface tokenizer</span></div>
-          <div class="arch-row"><span class="arch-branch">└─ </span><span class="arch-file">quant.rs</span><span class="arch-desc">فك ضغط q8_0 block</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">quant.rs</span><span class="arch-desc">فك ضغط q8_0 block + QuantizedWeight</span></div>
+          <div class="arch-row"><span class="arch-branch">└─ </span><span class="arch-file">probes/</span><span class="arch-desc">سكريبتات Python للـ probing (linear، cca، rsa، divergence)</span></div>
         </div>
 
         <p>
-            النموذج معمم على <span class="mono">Backend</span> trait، فشفرة الـ transformer
+            كلا المعماريتين تتشاركان <span class="mono">ForwardModel</span> trait، فأنماط
+            <span class="mono">generate</span> و<span class="mono">demo</span> و<span class="mono">probe</span> تشتغل مع أيٍّ منهما.
+            شفرة النموذج معممة على <span class="mono">Backend</span> trait، فشفرة الـ transformer
             نفسها تشتغل على CPU اليوم وبتشتغل على GPU بكرة بدون ما تعيد كتابة
-            منطق الـ attention أو الـ mlp.
+            منطق الـ attention أو الـ mlp. نمط الـ probe
+            (<span class="mono">--probe</span>) يستخرج الـ hidden states بعد كل كتلة
+            transformer للتحليل بالـ scripts في <span class="mono">probes/</span>.
         </p>
 
         <!-- ═══════════════════════════ 3. DESIGN DECISIONS ═══════════════════════════ -->
@@ -192,7 +197,10 @@
             <span class="mono">matmul</span>، <span class="mono">add</span>، <span class="mono">softmax</span>،
             <span class="mono">gelu</span>، <span class="mono">layer_norm</span>، <span class="mono">index_select</span>،
             <span class="mono">slice_cols</span>، <span class="mono">load_from_cpu</span>، ودوال الوصول
-            للشكل والبيانات. الـ attention ما تجرد بعد عبر الـ trait؛ دوال
+            للشكل والبيانات. الـ trait يتضمن أيضاً primitives عائلة llama
+            (<span class="mono">rms_norm</span>، <span class="mono">silu</span>، <span class="mono">elemul</span>،
+            <span class="mono">apply_rotary_emb</span>، <span class="mono">matmul_q8_0</span>) مع تطبيقات
+            كاملة لـ <span class="mono">CpuBackend</span>. الـ attention ما تجرد بعد عبر الـ trait؛ دوال
             الـ attention في النموذج تنادي <span class="mono">data()</span> وتشغّل حلقات scalar
             على المعالج، لكن الـ trait مصمم بحيث يمكن إضافة دالة
             <span class="mono">fn attention(...)</span> لاحقاً.
@@ -548,78 +556,57 @@
             <tr><td>other (adds، copies، sampling)</td><td>4</td><td>5%</td></tr>
         </table>
 
-        <!-- ═══════════════════════════ 11. ROADMAP ═══════════════════════════ -->
-        <h2>11. roadmap (خارطة الطريق)</h2>
+        <!-- ═══════════════════════════ 11. WHAT HAPPENED ═══════════════════════════ -->
+        <h2>11. what happened after first light (اللي صار بعد الضوء الأول)</h2>
 
         <p>
-            الأولوية الحالية إضافة دعم llama، مو تحسين
-            GPT-2. GPT-2 كان النموذج الصحيح للبناء الأول لأنه
-            الأبسط، لا GQA، لا RoPE، لا SwiGLU. الآن بعد ما أثبت
-            المعمارية، إضافة عائلة llama تفتح نطاقاً أوسع
-            من النماذج (llama 1/2/3/3.1/3.2، mistral، gemma 2)
-            بتغيير معتدل للـ model.rs.
+            كل الـ primitives الأربع الموصوفة في النسخة الأصلية من هذا القسم
+            تم تنفيذها:
         </p>
-
-        <p><strong>llama primitives اللي تحتاج تنفيذ:</strong></p>
 
         <ul>
             <li>
-                <strong>RMS norm</strong> (root mean square layer normalization)
-                يستبدل layer norm. أبسط وأسرع، لكنه يشيل
-                خطوة توسيط المتوسط ويقسم فقط على الجذر التربيعي للمتوسط. المتوسط
-                صفر على أي حال بعد طبقات كافية؛ حذفه يوفر
-                عملية طرح لكل عنصر. التطبيق هو متغير بثلاث أسطر
-                من دالة <span class="mono">layer_norm</span> الحالية.
+                <strong>معمارية llama.</strong> نموذج <span class="mono">Llama</span>
+                كامل مع rmsnorm، silu، rope، swiglu mlp، إسقاطات q/k/v منفصلة،
+                وgrouped-query attention. trait
+                <span class="mono">ForwardModel</span> يوحد gpt-2 وllama تحت
+                واجهة واحدة، فأنماط <span class="mono">generate</span>،
+                <span class="mono">demo</span>، و<span class="mono">probe</span> توزع
+                بشكل عام. اختُبر على llama 3.2 1B و3B instruct.
             </li>
             <li>
-                <strong>silu</strong> (sigmoid linear unit، تسمى أيضاً swish)
-                يستبدل gelu كدالة تنشيط: <span class="mono">x * sigmoid(x)</span>،
-                بوابة ذاتية، ناعمة. الـ gated FFN في llama يستخدمها في
-                جداء عنصري <span class="mono">gate_proj * up_proj</span> قبل إسقاط
-                down projection.
+                <strong>فك الضغط أثناء التشغيل.</strong> أوزان q8_0 تبقى بشكلها
+                المضغوط في الذاكرة (~4× أصغر من f32) ويتم فك ضغطها أثناء matmul.
+                نموذج 3B يستخدم ~3.4 GB رام بدل ~12.8 GB. block-wise sgemm يفك
+                الضغط بقطع 256 عمود لتحقيق 5× سرعة prefill على الـ scalar.
+                راجع <span class="mono">DEQUANT.md</span> للمقاييس.
             </li>
             <li>
-                <strong>RoPE</strong> (rotary position embeddings) يستبدل
-                جدول البحث <span class="mono">wpe</span> المتعلّم. بدل تخزين
-                متجه لكل موضع مطلق، RoPE يشفّر الموضع بتدوير
-                أزواج من الأبعاد في متجهات query و key بزاوية
-                متناسبة مع الموضع. score الـ attention بين
-                الموضعين i و j يعتمد فقط على مسافتهم النسبية (j −
-                i)، ليس مواضعهم المطلقة، فيعمم النموذج لأطوال
-                تسلسل لم يتدرب عليها.
-            </li>
-            <li>
-                <strong>grouped-query attention</strong> (GQA) يقلل عدد
-                رؤوس الـ kv نسبة لرؤوس الـ q. llama 3 8b يستخدم 32 رأس q لكن
-                فقط 8 رؤوس kv، فأربع رؤوس q تتشارك كل زوج kv. ذاكرة أقل
-                للـ cache تعني سياق أطول لنفس ميزانية الرام. حلقة
-                الـ attention بالكاد تتغير، رؤوس kv تدور كل
-                <span class="mono">n_q_heads / n_kv_heads</span> رأس q.
+                <strong>منصة probing.</strong> نمط الـ probe
+                (<span class="mono">--probe</span>) يستخرج hidden states بعد كل
+                كتلة transformer ويحفظها كملفات <span class="mono">.npy</span>. مجلد
+                <span class="mono">probes/</span> يحتوي سكريبتات Python للـ
+                linear probing، cca، rsa، وتحليل divergence. صُمم لأبحاث
+                الصرف العربي على عائلة llama 3.2.
             </li>
         </ul>
 
         <p>
-            كل أولية محددة بشيفرة بداية واختبارات في المستودع. الـ <span class="mono">Backend</span>
-            trait صُمم لهذا بالضبط، إضافة عملية جديدة للـ trait
-            تجعلها متاحة لكل backend مستقبلي تلقائياً.
+            <strong>الخطوة التالية فعلاً.</strong> عنق الزجاجة في throughput لا يزال
+            lm head — 501 نداء sgemm لكل token decode لمفردات 128K.
+            الـ attention أيضاً cpu-scalar، متجاوزاً trait
+            <span class="mono">Backend</span>. parallel decode (rayon عبر الرؤوس
+            والطبقات) وkernels SIMD (avx2/neon) هما الخطوتان الطبيعيتان التاليتان.
+            trait <span class="mono">Backend</span> هو نقطة الإدخال —
+            <span class="mono">SimdBackend</span> ينفذ نفس الـ trait يعني نفس
+            شفرة النموذج مع 4× إلى 8× throughput.
         </p>
 
         <p>
-            <strong>SIMD.</strong> الـ matmul الحالي يفوض لـ
-            <span class="mono">matrixmultiply::sgemm</span>، تطبيق pure rust
-            صحيح لكن scalar. القفزة التالية في الأداء تأتي من
-            kernels موجهة، AVX2 على x86، NEON على ARM. الـ
-            <span class="mono">Backend</span> trait هو نقطة الإدخال:
-            <span class="mono">SimdBackend</span> ينفذ نفس الـ trait بـ
-            intrinsics محددة للمعمارية. نفس شفرة النموذج. 4× إلى 8×
-            throughput.
-        </p>
-
-        <p>
-            بعدها: دعم GPU (الـ <span class="mono">Backend</span> trait يعني نفس
-            شفرة transformer على CUDA أو metal)، ثم أهداف embedded، ARM
-            cortex-m، no_std، نماذج في نطاق 10M-100M معامل تشتغل على
-                microcontrollers.
+            بعدها: دعم GPU (trait <span class="mono">Backend</span> يعني نفس
+            شفرة transformer على cuda أو metal)، attention وembeddings مضغوطة،
+            ثم أهداف embedded — ARM cortex-m، no_std، نماذج في نطاق 10M-100M
+            معامل تشتغل على microcontrollers.
         </p>
 
         <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
@@ -631,6 +618,7 @@
             </p>
             <p style="margin-top: 0.35rem">
                 مكتوب بـ Rust. يشتغل على المعالج. لا CUDA. لا PyTorch. فقط tensors.
+                أيضاً أداة بحثية — نمط probe لاستخراج الـ activations.
             </p>
         </footer>
 
