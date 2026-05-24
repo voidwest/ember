@@ -26,7 +26,7 @@
             <a href="/research-notes/" class="ltr">research notes</a>
         </div>
 
-        <h1>tokenization in Arabic embedding models (الـ tokenization في نماذج الـ embeddings العربية)</h1>
+        <h1><bdi>tokenization in Arabic embedding models</bdi> (الـ <bdi>tokenization</bdi> في نماذج الـ <bdi>embeddings</bdi> العربية)</h1>
 
         <div class="meta">
             <div class="paper-title">On the Importance of Tokenization in Arabic Embedding Models</div>
@@ -38,7 +38,8 @@
         </div>
 
         <h2>the claim (الادعاء)</h2>
-        <p>morph-aware tokenization في طبقة الـ embedding يحسّن أداء Arabic NLP من دون إعادة تدريب. المؤلفون عدّلوا Word2Vec و BERT لاستخدام tokens على مستوى morpheme بدلاً من الكلمات السطحية أو BPE، وقاسوا على NER و sentiment و POS tagging.</p>
+        <p><bdi>morph-aware tokenization</bdi> في طبقة الـ <bdi>embedding</bdi> يحسّن أداء <bdi>Arabic NLP</bdi> من دون إعادة تدريب.</p>
+        <p>المؤلفون عدّلوا <bdi>Word2Vec</bdi> و <bdi>BERT</bdi> لاستخدام <bdi>tokens</bdi> على مستوى <bdi>morpheme</bdi> بدلاً من الكلمات السطحية أو <bdi>BPE</bdi>، وقاسوا على <bdi>NER</bdi> و <bdi>sentiment</bdi> و <bdi>POS tagging</bdi>.</p>
 
         <h2>results (النتائج)</h2>
         <ul>
@@ -50,9 +51,11 @@
         <h2>context (السياق)</h2>
         <p>هذا نجح لأن النظام الصرفي العربي يضم مجموعة محدودة، وصغيرة نسبياً، من الجذور والأوزان واللواصق. morph-aware tokenizer يرد الأشكال السطحية لهذه primitives، ويقلل المفردات الفعالة من حوالي مليون شكل سطحي إلى حوالي 20K morpheme. وبما أن طبقة الـ embedding تشكل نسبة كبيرة من parameters النماذج الصغيرة، تصغير جدول الـ embedding مع الحفاظ على التركيب الدلالي يوفر مكاسب.</p>
 
-        <div class="callout">
-            <div class="label">why this matters alongside the 2026 results</div>
-            <p>نتيجة 2020 (الحقن الصرفي يساعد) ونتيجة 2026 (محاذاة الـ tokenizer لا تتنبأ بجودة التوليد) متسقتين إذا المتغير الأساسي هو <strong>حجم النموذج</strong>. على مستوى Word2Vec/mBERT، التركيب الصرفي الصريح في طبقة الـ embedding يعوض قدرة النموذج المحدودة على تعلمه ضمنياً. على مستوى GPT-4، الاستدلال التركيبي واتباع التعليمات يستبدلون التحليل الصرفي الصريح. السؤال الباقي: أين نقطة التحول، وهل يمكننا الوصول لها بدون compute GPT-4؟</p>
+        <div class="callout hypothesis">
+            <div class="label">Hypothesis</div>
+            <p><strong>لماذا هذا مهم بجانب نتائج 2026؟</strong></p>
+            <p>نتيجة 2020 (الحقن الصرفي يساعد) ونتيجة 2026 (محاذاة الـ <bdi>tokenizer</bdi> لا تتنبأ بجودة التوليد) متسقتين إذا المتغير الأساسي هو <strong>حجم النموذج</strong>.</p>
+            <p>على مستوى <bdi>Word2Vec/mBERT</bdi>، التركيب الصرفي الصريح في طبقة الـ <bdi>embedding</bdi> يعوض قدرة النموذج المحدودة على تعلمه ضمنياً. على مستوى <bdi>GPT-4</bdi>، الاستدلال التركيبي واتباع التعليمات يستبدلون التحليل الصرفي الصريح. السؤال الباقي: أين نقطة التحول، وهل يمكننا الوصول لها بدون <bdi>compute GPT-4</bdi>؟</p>
         </div>
 
         <footer>

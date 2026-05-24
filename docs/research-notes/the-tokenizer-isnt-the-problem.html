@@ -65,8 +65,9 @@
 
         <p>they evaluated 7 Arabic LLMs (ALLAM, FANAR, GPT-4, GPT-4o, LLaMA-3, Qwen-3, Cohere) on two dimensions: (1) how well their tokenizers align with gold-standard morpheme boundaries, and (2) how well the models can <em>productively generate</em> Arabic root-pattern forms, including <strong>nonce (invented) roots</strong>, which tests real generalization, not memorization.</p>
 
-        <div class="callout">
-            <div class="label">finding: alignment doesn't predict competence</div>
+        <div class="callout key-finding">
+            <div class="label">Key Finding</div>
+            <p><strong>alignment doesn't predict competence</strong></p>
             <p><strong>ALLAM</strong> had the best tokenizer morphological alignment (MCR 83-86%) but collapsed on nonce words: 20% accuracy. it's memorizing, not generalizing.</p>
             <p><strong>GPT-4</strong> had the <em>worst</em> tokenizer alignment (fertility 4× higher than ideal, boundary precision 17%) but scored 92% on nonce root-pattern generation. second best overall.</p>
             <p><strong>GPT-4o</strong> scored 97% on nonce words despite similarly bad tokenizer alignment.</p>

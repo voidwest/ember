@@ -26,7 +26,7 @@
             <a href="/research-notes/index.ar.html" class="ltr">research notes</a>
         </div>
 
-        <h1>probing Arabic morphology inside LLMs (probing للصرف العربي داخل LLMs)</h1>
+        <h1><bdi>probing Arabic morphology inside LLMs</bdi> (<bdi>probing</bdi> للصرف العربي داخل <bdi>LLMs</bdi>)</h1>
 
         <div class="meta">
             a research plan · 2026-05-16<br>
@@ -37,25 +37,27 @@
             <span class="tag">research plan</span>
         </div>
 
-        <div class="callout">
-            <div class="label">the question</div>
-            <p>ورقة <em>morphemes without borders</em> وضّحت إن GPT-4o يصل إلى 97% على توليد Arabic nonce roots مع إن محاذاة الـ tokenizer لديه سيئة، بينما ALLAM ينهار لـ 20% مع إن محاذاته أفضل ولديه بيانات تدريب عربية أكثر. GPT-4o يتعلم الصرف <em>في مكان ما داخل النموذج</em>، و ALLAM لا. أين؟ وكيف تبدو التمثيلات؟</p>
+        <div class="callout open-question">
+            <div class="label">Open Question</div>
+            <p>ورقة <em><bdi>morphemes without borders</bdi></em> وضّحت إن <bdi>GPT-4o</bdi> يصل إلى 97% على توليد <bdi>Arabic nonce roots</bdi> مع إن محاذاة الـ <bdi>tokenizer</bdi> لديه سيئة، بينما <bdi>ALLAM</bdi> ينهار لـ 20% مع إن محاذاته أفضل ولديه بيانات تدريب عربية أكثر. <bdi>GPT-4o</bdi> يتعلم الصرف <em>في مكان ما داخل النموذج</em>، و <bdi>ALLAM</bdi> لا. أين؟ وكيف تبدو التمثيلات؟</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>motivation (الدافع)</h2>
+        <h2><bdi>motivation</bdi> (الدافع)</h2>
 
-        <p>ورقة 2026 تترك سؤال مفتوح: الكفاءة الصرفية في الـ LLMs تنقاس بـ productive generalization، لا بمحاذاة الـ tokenizer، لكن لا نعرف <em>كيف</em> يحققها النموذج. المؤلفون يقترحون "الاستدلال التركيبي + اتباع التعليمات" كآلية، لكن هذا وصف سلوكي، ليس mechanistic.</p>
+        <p>ورقة 2026 تترك سؤال مفتوح: الكفاءة الصرفية في الـ <bdi>LLMs</bdi> تنقاس بـ <bdi>productive generalization</bdi>، لا بمحاذاة الـ <bdi>tokenizer</bdi>، لكن لا نعرف <em>كيف</em> يحققها النموذج.</p>
+        <p>المؤلفون يقترحون "الاستدلال التركيبي + اتباع التعليمات" كآلية، لكن هذا وصف سلوكي، ليس <bdi>mechanistic</bdi>.</p>
 
         <p>ثلاث حقائق تجعل هذا ممكن حالياً:</p>
 
         <ol>
-            <li><strong>ember يعطي وصول مباشر للـ hidden states.</strong> بعد كل transformer block، أاستطاع أنادي <span class="mono">backend.data(&amp;x)</span> وأقرأ الـ activations. بدون hooks، من دون CUDA synchronization، بدون framework overhead.</li>
+            <li><strong><bdi>ember</bdi> يعطي وصول مباشر للـ <bdi>hidden states</bdi>.</strong> بعد كل <bdi>transformer block</bdi>، أاستطاع أنادي <span class="mono">backend.data(&amp;x)</span> وأقرأ الـ <bdi>activations</bdi>. بدون <bdi>hooks</bdi>، من دون <bdi>CUDA synchronization</bdi>، بدون <bdi>framework overhead</bdi>.</li>
             <li><strong>الـ behavioral probing رخيص.</strong> لا أحتاج إلى تدريب probes على 100K مثال. مهمة الجذر والوزن المبتكرة من ورقة 2026 تعطي ground truth نظيف: أعطِ جذر + وزن، وتأكد إذا المخرج صحيح. probe في كل طبقة.</li>
-            <li><strong>المقارنة تكتب نفسها.</strong> شغّل نفس الـ probe على GPT-2 (أسوأ محاذاة tokenizer، أداء عربي غير معروف)، LLaMA 3 (اختُبر في ورقة 2026، في المنتصف)، ونموذج عربي متخصص (ALLAM إذا كان متاح، وإلا AraBERT). طبقة بطبقة، نفس المحفزات.</li>
+            <li><strong>المقارنة تكتب نفسها.</strong> شغّل نفس الـ <bdi>probe</bdi> على <bdi>GPT-2</bdi> (أسوأ محاذاة <bdi>tokenizer</bdi>، أداء عربي غير معروف)، <bdi>LLaMA 3</bdi> (اختُبر في ورقة 2026، في المنتصف)، ونموذج عربي متخصص (<bdi>ALLAM</bdi> إذا كان متاح، وإلا <bdi>AraBERT</bdi>). طبقة بطبقة، نفس المحفزات.</li>
         </ol>
 
-        <p><strong>تحفظ على اختيار النماذج.</strong> GPT-2، LLaMA 3، و ALLAM يختلفون في المعمارية، خليط بيانات التدريب، والحجم في نفس الوقت؛ أي مقارنة بينهم تخلط العوامل الثلاثة. داخل هذه المجموعة، عائلة LLaMA 3 (1B→3B→8B) تعطي أنظف scaling curve: نفس المعمارية، نفس توزيع التدريب، أحجام مختلفة. مقارنات GPT-2 و ALLAM تظل مفيدة للأنماط عبر العوايل (مثلاً إذا دقة الـ probe وهندسة الطبقات تعمم)، لكن الادعاءات حول تأثير scaling تحديداً لازم تستند على منحنى LLaMA.</p>
+        <p><strong>تحفظ على اختيار النماذج.</strong> <bdi>GPT-2</bdi>، <bdi>LLaMA 3</bdi>، و <bdi>ALLAM</bdi> يختلفون في المعمارية، خليط بيانات التدريب، والحجم في نفس الوقت؛ أي مقارنة بينهم تخلط العوامل الثلاثة.</p>
+        <p>داخل هذه المجموعة، عائلة <bdi>LLaMA 3</bdi> (<bdi>1B→3B→8B</bdi>) تعطي أنظف <bdi>scaling curve</bdi>: نفس المعمارية، نفس توزيع التدريب، أحجام مختلفة. مقارنات <bdi>GPT-2</bdi> و <bdi>ALLAM</bdi> تظل مفيدة للأنماط عبر العوايل (مثلاً إذا دقة الـ <bdi>probe</bdi> وهندسة الطبقات تعمم)، لكن الادعاءات حول تأثير <bdi>scaling</bdi> تحديداً لازم تستند على منحنى <bdi>LLaMA</bdi>.</p>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2>experimental design (التصميم التجريبي)</h2>

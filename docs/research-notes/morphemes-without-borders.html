@@ -58,24 +58,29 @@
         <p>ALLAM, FANAR, GPT-4, GPT-4o, LLaMA-3, Qwen-3, Cohere. FANAR uses MorphBPE (morphologically-informed tokenization); the rest use standard BPE/Unigram/WordPiece. zero-shot and one-shot prompts, tested in both English and Arabic.</p>
         <hr>
         <h2>key findings</h2>
-        <div class="callout">
-            <div class="label">finding 1</div>
+        <div class="callout key-finding">
+            <div class="label">Key Finding</div>
+            <p><strong>finding 1</strong></p>
             <p><strong>no correlation between tokenizer alignment and generation performance.</strong> GPT-4o scored highest across all tasks (97% nonce accuracy) with one of the <em>worst</em> alignment scores (17% boundary precision). ALLAM had the best MCR (83-86%) but fell to 20% on nonce words.</p>
         </div>
-        <div class="callout">
-            <div class="label">finding 2</div>
+        <div class="callout key-finding">
+            <div class="label">Key Finding</div>
+            <p><strong>finding 2</strong></p>
             <p><strong>Arabic-centric models can't handle nonce words.</strong> ALLAM and FANAR drop sharply on nonce roots. memorized lexemes, not productive rules. FANAR's morphological tokenizer didn't help it generalize.</p>
         </div>
-        <div class="callout">
-            <div class="label">finding 3</div>
+        <div class="callout key-finding">
+            <div class="label">Key Finding</div>
+            <p><strong>finding 3</strong></p>
             <p><strong>English prompts work better than Arabic prompts.</strong> most models did worse when prompted in Arabic. probably a side effect of English-heavy instruction-tuning data.</p>
         </div>
-        <div class="callout">
-            <div class="label">finding 4</div>
+        <div class="callout key-finding">
+            <div class="label">Key Finding</div>
+            <p><strong>finding 4</strong></p>
             <p><strong>one-shot prompting helps weak models, not strong ones.</strong> GPT-4 and GPT-4o were flat across zero-shot and one-shot. LLaMA-3, Qwen-3, and Cohere improved with an example. they need in-context scaffolding to figure out the transformation.</p>
         </div>
-        <div class="callout">
-            <div class="label">finding 5</div>
+        <div class="callout observation">
+            <div class="label">Observation</div>
+            <p><strong>finding 5</strong></p>
             <p><strong>five error modes.</strong> pattern misapplication (root right, template wrong), root deformation (consonants changed), real-word substitution (outputting a valid word instead of applying the pattern), incorrect affix ordering, and partial truncation.</p>
         </div>
         <hr>

@@ -4,88 +4,118 @@
    ═════════════════════════════════════════════════════════════════════ */
 
 :root {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --border: #30363d;
-    --text: #c9d1d9;
-    --text-dim: #8b949e;
-    --accent: #f78166;
-    --accent2: #d2a8ff;
-    --green: #7ee787;
-    --blue: #79c0ff;
-    --red: #ff7b72;
-    --yellow: #d29922;
+    --bg: #111318;
+    --surface: #181b21;
+    --surface-soft: #14171d;
+    --border: #31363f;
+    --text: #d7d3c8;
+    --text-dim: #9d9b93;
+    --accent: #e89b6c;
+    --accent2: #a9c47f;
+    --green: #8fbc8f;
+    --blue: #8ab4d6;
+    --red: #d9827f;
+    --yellow: #d4b36a;
+    --prose: 74ch;
+    --prose-ar: 68ch;
+    --body-font: "Inter", "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --arabic-font: "IBM Plex Sans Arabic", "Readex Pro", "Noto Sans Arabic", "SF Arabic", "Segoe UI", Tahoma, sans-serif;
+    --mono-font: "Berkeley Mono", "JetBrains Mono", "Iosevka", "SF Mono", "Fira Code", ui-monospace, monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    font-family: var(--body-font);
     background: var(--bg);
     color: var(--text);
-    line-height: 1.7;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 2rem 1rem 4rem;
+    line-height: 1.75;
+    max-inline-size: var(--prose);
+    margin-inline: auto;
+    padding-block: 2.8rem 4.5rem;
+    padding-inline: 1.25rem;
+    font-size: 1rem;
+    letter-spacing: 0;
+    text-rendering: optimizeLegibility;
 }
 
 /* ── Arabic base ─────────────────────────────────────────── */
 [dir="rtl"] body {
     direction: rtl;
-    text-align: right;
-    font-family: "Noto Naskh Arabic", "Scheherazade New", "Amiri",
-                 "SF Arabic", "Segoe UI", "Tahoma", sans-serif;
+    text-align: start;
+    font-family: var(--arabic-font);
+    line-height: 1.9;
+    max-inline-size: var(--prose-ar);
+    letter-spacing: 0;
 }
 
 a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
 h1 {
-    font-size: 1.3rem;
+    font-size: clamp(1.45rem, 2vw, 1.85rem);
+    line-height: 1.25;
     color: var(--accent);
-    margin: 1.5rem 0 1rem;
-    padding-bottom: 0.35rem;
-    border-bottom: 1px solid var(--border);
+    margin-block: 1.8rem 1.25rem;
+    padding-block-end: 0.7rem;
+    border-block-end: 1px solid var(--border);
+    font-weight: 650;
 }
 h2 {
-    font-size: 1.1rem;
+    font-size: 1.16rem;
+    line-height: 1.35;
     color: var(--accent);
-    margin: 2.2rem 0 0.7rem;
-    padding-bottom: 0.3rem;
-    border-bottom: 1px solid var(--border);
+    margin-block: 3rem 0.85rem;
+    padding-block-end: 0.4rem;
+    border-block-end: 1px solid var(--border);
+    font-weight: 650;
 }
 h3 {
-    font-size: 0.95rem;
+    font-size: 0.98rem;
+    line-height: 1.45;
     color: var(--accent2);
-    margin: 1.4rem 0 0.4rem;
+    margin-block: 1.8rem 0.45rem;
+    font-weight: 650;
 }
 
-p  { margin: 0.7rem 0; }
-ul, ol { padding-left: 1.4rem; margin: 0.5rem 0 0.8rem; }
-li { margin-bottom: 0.2rem; }
+p  { margin-block: 0.95rem; }
+ul, ol {
+    padding-inline-start: 1.45rem;
+    margin-block: 0.65rem 1rem;
+}
+li { margin-block-end: 0.28rem; }
 
 pre {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 1rem 1.2rem;
+    padding-block: 1rem;
+    padding-inline: 1.15rem;
     overflow-x: auto;
-    font-size: 0.8rem;
+    font-family: var(--mono-font);
+    font-size: 0.82rem;
     line-height: 1.5;
-    margin: 0.9rem 0;
+    margin-block: 1.15rem;
     direction: ltr;
-    text-align: left;
+    text-align: start;
+    unicode-bidi: isolate;
 }
-.mono { font-family: inherit; }
+code,
+kbd,
+samp,
+.mono {
+    font-family: var(--mono-font);
+    font-size: 0.93em;
+}
 
 [dir="rtl"] pre,
 [dir="rtl"] .arch-tree,
 [dir="rtl"] .layout-block,
 [dir="rtl"] .pipeline-block,
 [dir="rtl"] .mono {
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    font-family: var(--mono-font);
     direction: ltr;
-    text-align: left;
+    text-align: start;
 }
 
 [dir="rtl"] .mono {
@@ -109,23 +139,24 @@ pre {
 
 hr {
     border: none;
-    border-top: 1px solid var(--border);
-    margin: 1.5rem 0;
+    border-block-start: 1px solid var(--border);
+    margin-block: 2rem;
 }
 
 /* ── language toggle ─────────────────────────────────────── */
 .lang-toggle {
     position: fixed;
-    top: 0.8rem;
-    right: 1rem;
+    inset-block-start: 0.8rem;
+    inset-inline-end: 1rem;
     z-index: 100;
-    font-family: inherit;
+    font-family: var(--mono-font);
     font-size: 0.78rem;
     background: var(--surface);
     color: var(--text-dim);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 0.25em 0.55em;
+    padding-block: 0.25em;
+    padding-inline: 0.55em;
     cursor: pointer;
     opacity: 0.7;
 }
@@ -137,8 +168,8 @@ hr {
 
 @media (max-width: 600px) {
     .lang-toggle {
-        top: 0.5rem;
-        right: 0.5rem;
+        inset-block-start: 0.5rem;
+        inset-inline-end: 0.5rem;
         font-size: 0.7rem;
     }
 }
@@ -146,7 +177,7 @@ hr {
 /* ── navigation ─────────────────────────────────────────── */
 .back {
     font-size: 0.82rem;
-    margin-bottom: 1rem;
+    margin-block-end: 1.25rem;
 }
 .back a { color: var(--text-dim); }
 
@@ -154,20 +185,22 @@ hr {
 .meta {
     font-size: 0.8rem;
     color: var(--text-dim);
-    margin-bottom: 1.2rem;
+    margin-block-end: 1.6rem;
     line-height: 1.5;
 }
 .paper-title {
     font-size: 1rem;
     color: var(--accent);
     font-weight: 600;
-    margin-bottom: 0.2rem;
+    margin-block-end: 0.2rem;
 }
 .tag {
     display: inline-block;
     font-size: 0.72rem;
-    padding: 0.1em 0.5em;
-    margin: 0.2em 0.2em 0 0;
+    padding-block: 0.1em;
+    padding-inline: 0.5em;
+    margin-block: 0.2em 0;
+    margin-inline: 0 0.2em;
     border-radius: 3px;
     background: var(--surface);
     border: 1px solid var(--border);
@@ -179,17 +212,34 @@ hr {
 
 /* ── callout block ──────────────────────────────────────── */
 .callout {
-    background: var(--surface);
-    border-left: 3px solid var(--accent);
-    border-radius: 0 4px 4px 0;
-    padding: 0.9rem 1.1rem;
-    margin: 1rem 0;
-    font-size: 0.86rem;
+    background: var(--surface-soft);
+    border: 1px solid var(--border);
+    border-inline-start: 3px solid var(--accent);
+    border-radius: 5px;
+    padding-block: 0.95rem;
+    padding-inline: 1.1rem 1.2rem;
+    margin-block: 1.35rem;
+    font-size: 0.92rem;
+}
+.callout.observation { border-inline-start-color: var(--blue); }
+.callout.hypothesis { border-inline-start-color: var(--yellow); }
+.callout.key-finding { border-inline-start-color: var(--accent); }
+.callout.open-question { border-inline-start-color: var(--green); }
+.callout.observation .label { color: var(--blue); }
+.callout.hypothesis .label { color: var(--yellow); }
+.callout.key-finding .label { color: var(--accent); }
+.callout.open-question .label { color: var(--green); }
+.callout p {
+    margin-block: 0.45rem;
 }
 .callout .label {
     color: var(--accent);
     font-weight: 600;
-    margin-bottom: 0.25rem;
+    margin-block-end: 0.25rem;
+    font-family: var(--mono-font);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
 }
 
 /* ── project cards (root index) ─────────────────────────── */
@@ -197,13 +247,14 @@ hr {
     display: flex;
     flex-direction: column;
     gap: 1.1rem;
-    margin: 1rem 0;
+    margin-block: 1rem;
 }
 .project {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 1rem 1.2rem;
+    padding-block: 1rem;
+    padding-inline: 1.2rem;
 }
 .project .name {
     color: var(--accent2);
@@ -214,11 +265,11 @@ hr {
 .project .desc {
     color: var(--text-dim);
     font-size: 0.83rem;
-    margin-top: 0.25rem;
+    margin-block-start: 0.25rem;
     line-height: 1.5;
 }
 .project .tags {
-    margin-top: 0.4rem;
+    margin-block-start: 0.4rem;
     font-size: 0.72rem;
     color: var(--text-dim);
 }
@@ -226,13 +277,14 @@ hr {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 3px;
-    padding: 0.1em 0.4em;
-    margin-right: 0.35rem;
+    padding-block: 0.1em;
+    padding-inline: 0.4em;
+    margin-inline-end: 0.35rem;
     color: var(--text);
 }
-.project.featured { border-left: 3px solid var(--accent); }
+.project.featured { border-inline-start: 3px solid var(--accent); }
 .project-links {
-    margin-top: 0.6rem;
+    margin-block-start: 0.6rem;
     display: flex;
     gap: 0.8rem;
     font-size: 0.78rem;
@@ -242,7 +294,8 @@ hr {
     background: var(--bg);
     border: 1px solid var(--border);
     border-radius: 4px;
-    padding: 0.2em 0.6em;
+    padding-block: 0.2em;
+    padding-inline: 0.6em;
     text-decoration: none;
 }
 .project-links a:hover {
@@ -255,13 +308,14 @@ hr {
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
-    margin: 1rem 0;
+    margin-block: 1rem;
 }
 .note-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 0.9rem 1.1rem;
+    padding-block: 0.95rem;
+    padding-inline: 1.1rem;
 }
 .note-card .title {
     font-size: 0.95rem;
@@ -272,11 +326,11 @@ hr {
 .note-card .desc {
     color: var(--text-dim);
     font-size: 0.82rem;
-    margin-top: 0.2rem;
-    line-height: 1.5;
+    margin-block-start: 0.32rem;
+    line-height: 1.62;
 }
 .note-card .meta-row {
-    margin-top: 0.4rem;
+    margin-block-start: 0.55rem;
     font-size: 0.72rem;
     color: var(--text-dim);
 }
@@ -285,8 +339,9 @@ hr {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 1rem 1.2rem;
-    margin: 0.9rem 0;
+    padding-block: 1rem;
+    padding-inline: 1.2rem;
+    margin-block: 1.1rem;
     font-size: 0.82rem;
     line-height: 1.7;
     overflow-x: auto;
@@ -294,44 +349,12 @@ hr {
 
 /* ── footer ─────────────────────────────────────────────── */
 footer {
-    margin-top: 3.5rem;
-    padding-top: 1.8rem;
-    border-top: 1px solid var(--border);
+    margin-block-start: 3.8rem;
+    padding-block-start: 1.8rem;
+    border-block-start: 1px solid var(--border);
     text-align: center;
     color: var(--text-dim);
     font-size: 0.76rem;
-}
-
-/* ── RTL (Arabic pages) ─────────────────────────────────── */
-[dir="rtl"] ul,
-[dir="rtl"] ol {
-    padding-left: 0;
-    padding-right: 1.4rem;
-}
-
-[dir="rtl"] .callout {
-    border-left: none;
-    border-right: 3px solid var(--accent);
-    border-radius: 4px 0 0 4px;
-}
-
-[dir="rtl"] .lang-toggle {
-    right: auto;
-    left: 1rem;
-}
-
-[dir="rtl"] .tag {
-    margin: 0.2em 0 0 0.2em;
-}
-
-[dir="rtl"] .project .tags span {
-    margin-right: 0;
-    margin-left: 0.35rem;
-}
-
-[dir="rtl"] .project.featured {
-    border-left: none;
-    border-right: 3px solid var(--accent);
 }
 
 [dir="rtl"] th,
@@ -352,8 +375,8 @@ footer {
 }
 
 [dir="rtl"] dt {
-    text-align: left;
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    text-align: start;
+    font-family: var(--mono-font);
     direction: ltr;
     unicode-bidi: isolate;
 }
@@ -364,12 +387,12 @@ footer {
 [dir="rtl"] .note-card .title,
 [dir="rtl"] .callout .label,
 [dir="rtl"] .lang-toggle {
-    font-family: "Iosevka", "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+    font-family: var(--mono-font);
 }
 
 [dir="rtl"] .back {
     direction: ltr;
-    text-align: right;
+    text-align: end;
     unicode-bidi: isolate;
 }
 
@@ -398,7 +421,7 @@ footer {
 [dir="rtl"] .callout .label {
     direction: ltr;
     unicode-bidi: isolate;
-    text-align: right;
+    text-align: end;
 }
 
 [dir="rtl"] .hero .name,
@@ -408,13 +431,6 @@ footer {
 [dir="rtl"] .date {
     direction: ltr;
     unicode-bidi: isolate;
-}
-
-@media (max-width: 600px) {
-    [dir="rtl"] .lang-toggle {
-        right: auto;
-        left: 0.5rem;
-    }
 }
 
 /* ── syntax highlighting (highlight.js, custom theme) ──────── */
@@ -457,25 +473,27 @@ pre code.hljs {
 /* ── mobile ─────────────────────────────────────────────── */
 @media (max-width: 600px) {
     body {
-        padding: 1.2rem 0.9rem 3rem;
-        font-size: 0.88rem;
-        line-height: 1.6;
+        padding-block: 1.5rem 3rem;
+        padding-inline: 0.95rem;
+        font-size: 0.94rem;
+        line-height: 1.7;
     }
-    h1 { font-size: 1.1rem; }
-    h2 { font-size: 1rem; margin: 1.6rem 0 0.5rem; }
-    h3 { font-size: 0.87rem; }
+    [dir="rtl"] body { line-height: 1.86; }
+    h1 { font-size: 1.35rem; }
+    h2 { font-size: 1.06rem; margin-block: 2.15rem 0.65rem; }
+    h3 { font-size: 0.95rem; }
 
-    pre { padding: 0.7rem 0.8rem; font-size: 0.7rem; }
-    .callout { padding: 0.7rem 0.85rem; font-size: 0.8rem; }
-    .project { padding: 0.8rem 0.9rem; }
+    pre { padding-block: 0.75rem; padding-inline: 0.8rem; font-size: 0.74rem; }
+    .callout { padding-block: 0.8rem; padding-inline: 0.9rem; font-size: 0.86rem; }
+    .project { padding-block: 0.8rem; padding-inline: 0.9rem; }
     .project .name { font-size: 0.87rem; }
     .project .desc { font-size: 0.78rem; }
     .project .tags { font-size: 0.68rem; }
-    .note-card { padding: 0.8rem 0.9rem; }
+    .note-card { padding-block: 0.85rem; padding-inline: 0.9rem; }
 
     footer {
-        margin-top: 2rem;
-        padding-top: 1.2rem;
+        margin-block-start: 2.4rem;
+        padding-block-start: 1.2rem;
         font-size: 0.7rem;
     }
 }

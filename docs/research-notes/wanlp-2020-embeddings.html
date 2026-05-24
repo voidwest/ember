@@ -50,8 +50,9 @@
         <h2>context</h2>
         <p>this worked because Arabic's morphological system has a finite (and relatively small) set of roots, patterns, and affixes. a morphology-aware tokenizer maps surface forms to these primitives, reducing the effective vocabulary from ~1M surface forms to ~20K morphemes, and since the embedding layer accounts for a large fraction of parameter count in smaller models, shrinking the embedding table while keeping semantic compositionality intact produces gains.</p>
 
-        <div class="callout">
-            <div class="label">why this matters alongside the 2026 results</div>
+        <div class="callout hypothesis">
+            <div class="label">Hypothesis</div>
+            <p><strong>why this matters alongside the 2026 results</strong></p>
             <p>the 2020 result (morphological injection helps) and the 2026 result (tokenizer alignment doesn't predict generation quality) are consistent if the key variable is <strong>model scale</strong>. at Word2Vec/mBERT scale, explicit morphological structure at the embedding layer compensates for the model's limited capacity to learn it implicitly. at GPT-4 scale, compositional reasoning and instruction-following substitute for explicit morphological parsing. the question that remains: where is the inflection point, and can you reach it without GPT-4's compute?</p>
         </div>
 

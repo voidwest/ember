@@ -37,8 +37,8 @@
             <span class="tag">research plan</span>
         </div>
 
-        <div class="callout">
-            <div class="label">the question</div>
+        <div class="callout open-question">
+            <div class="label">Open Question</div>
             <p>the <em>morphemes without borders</em> paper showed GPT-4o gets 97% on nonce Arabic root-pattern generation despite having terrible tokenizer alignment, while ALLAM drops to 20% despite better alignment and more Arabic training data. GPT-4o is learning morphology <em>somewhere inside the model</em>, and ALLAM isn't. where, and what do the representations look like?</p>
         </div>
 
@@ -84,28 +84,33 @@
 
         <h3>analysis questions</h3>
 
-        <div class="callout">
-            <div class="label">Q1: where does root identity live?</div>
+        <div class="callout open-question">
+            <div class="label">Open Question</div>
+            <p><strong>Q1: where does root identity live?</strong></p>
             <p>train linear probes on the hidden states at each layer to classify the root (which of the 200 nonce roots produced this activation?). a high-accuracy probe at a given layer means root identity is linearly decodable there. compare across models.</p>
         </div>
 
-        <div class="callout">
-            <div class="label">Q2: where does pattern identity live?</div>
+        <div class="callout open-question">
+            <div class="label">Open Question</div>
+            <p><strong>Q2: where does pattern identity live?</strong></p>
             <p>same probe, different target: classify which pattern was applied. does pattern information appear at the same layers as root information? does it appear earlier or later?</p>
         </div>
 
-        <div class="callout">
-            <div class="label">Q3: are root and pattern disentangled?</div>
+        <div class="callout open-question">
+            <div class="label">Open Question</div>
+            <p><strong>Q3: are root and pattern disentangled?</strong></p>
             <p>for a model that <em>succeeds</em> at the task (e.g., GPT-4-class), are the root and pattern representations in orthogonal subspaces of the hidden state? compute the cosine similarity between root-probe weight vectors and pattern-probe weight vectors at each layer. low similarity = disentangled.</p>
         </div>
 
-        <div class="callout">
-            <div class="label">Q4: where does the model "figure it out"?</div>
+        <div class="callout open-question">
+            <div class="label">Open Question</div>
+            <p><strong>Q4: where does the model "figure it out"?</strong></p>
             <p>compare the hidden states of correct vs incorrect predictions within the same model. at which layer do the representations for correct and incorrect outputs diverge? this tells us where the computation succeeds or fails, is the failure early (bad encoding of root/pattern) or late (good encoding but bad output projection)?</p>
         </div>
 
-        <div class="callout">
-            <div class="label">Q5: the scaling question</div>
+        <div class="callout hypothesis">
+            <div class="label">Hypothesis</div>
+            <p><strong>Q5: the scaling question</strong></p>
             <p>if possible, run the same probes on GPT-2 small → medium → large (or LLaMA 3 1B → 3B → 8B). at what parameter count does the model transition from memorization (ALLAM-like, real roots only) to productive generalization (GPT-4o-like, nonce roots)? this answers the inflection-point question from the tokenizer writeup.</p>
         </div>
 
