@@ -22,138 +22,138 @@
         <div class="back">
             <a href="/" class="ltr">← voidwest</a>
         </div>
-        <h1>terms (مصطلحات)</h1>
-        <p>مصطلحات تقنية مستخدمة في الموقع، بشرح عربي سريع وبنفس أسلوب النصوص.</p>
+        <h1>terms</h1>
+        <p>مصطلحات تقنية مستخدمة في الموقع، بشرح عربي سريع وبنفس أسلوب الكتابة هنا.</p>
         <hr>
 
         <dl style="display: grid; grid-template-columns: 1fr; gap: 0.7rem; margin: 1.2rem 0;">
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">inference engine</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">البرنامج الذي يشغّل النموذج وينتج نص. يستقبل prompt ويعيد tokens. ember مثال عليه.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">البرنامج اللي يشغّل النموذج ويطلع منه نص. تستقبله prompt ويرجع tokens. ember مثال عليه.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">tokenizer</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يحوّل النص لـ tokens (أرقام) والعكس. النموذج لا يقرأ حروف، يقرأ أرقام. الـ tokenizer هو المترجم بينهم.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يحوّل النص إلى tokens (أرقام) والعكس. النموذج ما يقرأ حروف، يقرأ أرقام. الـ tokenizer هو المترجم بينهم.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">token</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">وحدة نصية صغيرة. قد تكون كلمة كاملة، جزء من كلمة، أو حرف. النموذج يولد token بعد token.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">وحدة نصية صغيرة. ممكن تكون كلمة كاملة، أو جزء من كلمة، أو حرف واحد. النموذج يولّد token ورا token.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">BPE (byte pair encoding)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">طريقة tokenization تدمج أزواج الحروف الأكثر تكراراً. تبني vocabulary من وحدات تحت الكلمة. GPT-2 و GPT-4 يستخدمونها.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">طريقة tokenization تدمج أزواج الحروف الأكثر تكرار. تبني vocabulary من وحدات أصغر من الكلمة. GPT-2 و GPT-4 يستخدمونها.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">embeddings</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">متجهات (أرقام) تمثّل كلمة أو token في فضاء متعدد الأبعاد. الكلمات المتشابهة تكون متجهاتها متقاربة.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">transformer</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">معمارية الشبكة العصبية التي تشغّل GPT و LLaMA وكل الـ LLMs الحديثة. مبنية على attention بدلاً من التكرار.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">متجهات (أرقام) تمثّل كلمة أو token في فضاء متعدد الأبعاد. الكلمات المتشابهة متجهاتها قريبة من بعض.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">attention</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">آلية تجعل كل token "ينتبه" للـ tokens الثانية ويأخذ منها معلومات موزونة حسب الأهمية. هذا الجزء الذي يربط الكلمات ببعض.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">softmax</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دالة رياضية تحوّل أي مجموعة أرقام لتوزيع احتمالي (مجموعها = 1). تستخدم في attention وفي اختيار الـ token التالي.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">logits</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">المخرج الخام من النموذج قبل تحويله لاحتمالات. أرقام غير مقيدة، قيم عالية = النموذج "واثق" إن هذا الـ token هو الصحيح.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">temperature</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يتحكم في عشوائية المخرج. قيمة منخفضة = مخرج متوقع ومكرر. قيمة عالية = مخرج أوسع وأكثر عشوائية. صفر = حتمي.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">top-k sampling</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يختار عشوائياً من أعلى k tokens. يقص الخيارات الضعيفة ويجعل الاختيار من أفضل المرشحين فقط.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">top-p (nucleus) sampling</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يختار من أصغر مجموعة tokens مجموع احتمالاتها يتجاوز p. أدق من top-k لأنه يتكيف مع توزيع الاحتمالات.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">layer normalization</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يضبط القيم داخل الشبكة ليصبح متوسطها صفر وتباينها 1. يساعد الاستقرار العددي أثناء التدريب والتشغيل.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">آلية تخلّي كل token "ينتبه" لكل الـ tokens السابقة عشان يفهم السياق. أساس الـ transformer.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">KV cache</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">ذاكرة تخزن حسابات الـ attention السابقة بدلاً من حسابها من جديد لكل token. يسرّع الـ inference بشكل كبير.</dd>
-            </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">hidden states / activations</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">القيم الداخلية التي ينتجها النموذج في كل طبقة. التمثيل الذي يعمل عليه قبل أن يحوله لـ logits ثم tokens.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">ذاكرة تخزن حسابات الـ attention السابقة. بدل ما تحسب كل شي من البداية لكل token جديد، تقرأ من الـ cache. يسرّع الـ inference بشكل كبير.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">GGUF</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">صيغة ملف تخزن النموذج (أوزان + إعدادات) في ملف واحد. تدعم الضغط (quantization) وتستخدمها llama.cpp و ember.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">صيغة ملف لتخزين نماذج اللغة (GPT، LLaMA، إلخ). فيها الأوزان والـ metadata وكل شي النموذج يحتاجه. تدعم الضغط (quantization).</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">quantization</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">ضغط الأوزان من f32 (32 بت) لـ 8 بت أو 4 بت. يقلل حجم النموذج واستهلاك الذاكرة بتكلفة صغيرة في الدقة.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">ضغط أوزان النموذج من f32 (4 بايت لكل وزن) إلى 8-bit أو 4-bit. يقلل الحجم والذاكرة مع خسارة بسيطة في الجودة.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">prefill / decode</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">مرحلتان في الـ inference: prefill يعالج الـ prompt كامل مرة وحدة. decode يولد token واحد كل مرة باستخدام الـ cache.</dd>
+                <dt style="color: var(--accent2); font-weight: 600;">transformer</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">المعمارية الأساسية لنماذج اللغة الحديثة (GPT، LLaMA، BERT). مبنية على attention mechanism و feed-forward layers.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">prefill</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">المرحلة الأولى من الـ inference. النموذج يقرأ الـ prompt كامل مرة وحدة ويملأ الـ KV cache.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">decode</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">المرحلة الثانية. النموذج يولّد token واحد في كل مرة، يضيفه للـ cache، ويكرر لين يوصل لـ token النهاية.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">temperature</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يتحكم في عشوائية المخرجات. temperature = 0 يعني دايم تختار أعلى احتمال (حتمي). قيم أعلى = عشوائية أكثر = إبداع أكثر.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">top-k / top-p (nucleus)</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">خوارزميات sampling. top-k يبقي أعلى k tokens. top-p يبقي أقل مجموعة tokens مجموع احتمالاتها يتجاوز p. يمنعون النموذج من اختيار tokens غير منطقية.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">softmax</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يحوّل مجموعة أرقام (logits) لتوزيع احتمالي مجموعها = 1. الخطوة الأخيرة قبل اختيار الـ token التالي.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">layer normalization</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">يثبّت قيم الـ activations عشان ما تكبر أو تصغر بشكل يخرب الحسابات. كل طبقة transformer تستخدمه قبل الـ attention وقبل الـ mlp.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">residual stream</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">المسار الرئيسي للمعلومات في الـ transformer. مخرج كل طبقة = المدخل + معالجة الطبقة. يخلي الإشارة الأصلية حية عبر النموذج كله.</dd>
+            </div>
+            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
+                <dt style="color: var(--accent2); font-weight: 600;">hidden state</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">التمثيل الداخلي لكل token في كل طبقة. متجه من 768-4096 بعد (حسب حجم النموذج). probing يكشف إيش يحتوي.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">matmul (matrix multiplication)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">ضرب المصفوفات. العملية الحسابية الأهم في الـ inference. 66% من وقت الـ decode يصرف فيها.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">ضرب المصفوفات. أهم عملية حسابية في الـ inference. 66% من وقت الـ decode يروح فيها.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">SIMD</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تعليمات معالج تعالج أكثر من رقم في نفس الوقت. AVX2 على x86، NEON على ARM. تسرّع الـ matmul 4-8 مرات.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تعليمات معالج تعالج أكثر من رقم في نفس الوقت. AVX2 على x86، NEON على ARM. تسرّع الـ matmul من 4 إلى 8 مرات.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">GELU</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دالة تنشيط في GPT-2. نسخة أنعم من ReLU. تسمح بمرور القيم السالبة بشكل جزئي بدلاً من قطعها للصفر.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دالة تنشيط في GPT-2. نسخة أنعم من ReLU. تسمح بمرور القيم السالبة بشكل جزئي بدل ما تقطعها للصفر.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">RoPE (rotary position embeddings)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">طريقة تشفير موقع الـ token في التسلسل بتدوير أبعاده. يساعد النموذج على التعميم لأطوال أطول مما تدرب عليها. يستخدم في LLaMA.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">طريقة تشفير موقع الـ token في التسلسل عن طريق تدوير أبعاده. يساعد النموذج يعمم على أطوال أطول مما تدرب عليها. يُستخدم في LLaMA.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">GQA (grouped-query attention)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تحسين للـ attention يقلل عدد رؤوس key/value مقارنة برؤوس query. يوفر ذاكرة وسرعة مع تأثير ضئيل على الجودة.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تحسين للـ attention يقلل عدد رؤوس key/value مقارنة برؤوس query. يوفر ذاكرة وسرعة مع تأثير بسيط على الجودة.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">SwiGLU / SiLU</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دوال تنشيط أحدث تستخدم في LLaMA. SiLU = x ضرب sigmoid(x). SwiGLU = نسخة ببوابة (gated) من SiLU.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دوال تنشيط أحدث تُستخدم في LLaMA. SiLU = x × sigmoid(x). SwiGLU = نسخة ببوابة (gated) من SiLU.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">RMS norm</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">نسخة مبسطة من layer normalization. يستخدم الجذر التربيعي للمتوسط فقط بدون توسيط. أسرع ويستخدم في LLaMA.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">نسخة مبسطة من layer normalization. يستخدم الجذر التربيعي للمتوسط فقط بدون توسيط. أسرع ويُستخدم في LLaMA.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">probing</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تقنية بحثية لمعرفة ما يتعلمه النموذج داخلياً. تدرّب classifier بسيط على الـ hidden states وتتحقق إذا يمكنه التنبؤ بخاصية لغوية معينة.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تقنية بحثية لمعرفة إيش يتعلمه النموذج داخلياً. تدرّب classifier بسيط على الـ hidden states وتتحقق إذا يقدر يتنبأ بخاصية لغوية معينة.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">morphology (الصرف)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دراسة تركيب الكلمة. في العربي: كيف الجذر الثلاثي (مثل ك-ت-ب) يندمج مع الأوزان (مثل فَعَلَ، مَفْعُول) وينتج كلمات مختلفة.</dd>
+                <dt style="color: var(--accent2); font-weight: 600;">morphology</dt>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">دراسة تركيب الكلمة. في العربي: كيف الجذر الثلاثي (مثل ك-ت-ب) يندمج مع الأوزان (مثل فَعَلَ، مَفْعُول) ويطلع كلمات مختلفة.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">root-pattern (non-concatenative) system</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">نظام الجذر والوزن. الجذر (حروف ساكنة) والوزن (قوالب صوتية) يتداخلون بدلاً من التسلسل. عكس الإنجليزية التي تلصق prefix+stem+suffix.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">نظام الجذر والوزن. الجذر (حروف ساكنة) والوزن (قوالب صوتية) يتداخلون بدل ما يتسلسلون. عكس الإنجليزية اللي تلصق prefix+stem+suffix.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">nonce roots</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">جذور مبتكرة (مخترعة) غير موجودة في اللغة. تستخدم في الاختبارات لكي تفرق بين الحفظ (النموذج حفظ الكلمة) والتعميم (النموذج تعلم القاعدة).</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">جذور مبتكرة (مخترعة) مو موجودة في اللغة. تُستخدم في الاختبارات عشان تفرق بين الحفظ (النموذج حفظ الكلمة) والتعميم (النموذج تعلم القاعدة).</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">clitic</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">مقطع صغير يتصل بالكلمة. في العربي: حروف الجر (بـ، لـ، كـ) والضمائر المتصلة (ـه، ـهم). جزء كلامي يلتصق شكلياً.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">مقطع صغير يلتصق بالكلمة. في العربي: حروف الجر (بـ، لـ، كـ) والضمائر المتصلة (ـه، ـهم). جزء كلامي يلتصق شكلياً.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">finite-state transducer</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">آلة رياضية تعالج السلاسل النصية بقواعد. سريعة وحتمية. كانت أساسية في أنظمة NLP قبل الموجة العصبية.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">آلة رياضية تعالج السلاسل النصية بقواعد. سريعة وحتمية. كانت أساس في أنظمة NLP قبل الموجة العصبية.</dd>
             </div>
             <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
                 <dt style="color: var(--accent2); font-weight: 600;">RAG (retrieval-augmented generation)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تقنية تدمج البحث في المستندات مع التوليد. النموذج يبحث في قاعدة معرفة قبل الإجابة، بدلاً من الاعتماد على ذاكرته فقط.</dd>
+                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">تقنية تدمج البحث في المستندات مع التوليد. النموذج يبحث في قاعدة معرفة قبل ما يجاوب، بدل ما يعتمد على ذاكرته فقط.</dd>
             </div>
         </dl>
     </body>

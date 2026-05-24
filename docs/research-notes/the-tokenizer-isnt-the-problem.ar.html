@@ -26,38 +26,38 @@
             <a href="/research-notes/" class="ltr">research notes</a>
         </div>
 
-        <h1><bdi>the tokenizer isn't the problem</bdi> (المشكلة ليست في الـ <bdi>tokenizer</bdi>)</h1>
+        <h1><bdi>the tokenizer isn't the problem</bdi></h1>
 
         <div class="meta">
             what i learned reading arabic nlp papers for a week<br>
             mohammed al-thobaiti · 2026-05-16
         </div>
 
-        <p>بنيت <bdi>inference engine</bdi> بـ <bdi>Rust</bdi>، نشرته، وبعدها قلت في بوست على <bdi>LinkedIn</bdi> إني أرغب أتعمق في <bdi>Arabic tokenization</bdi>.</p>
-        <p>وفعلاً فعلت ذلك. ما خرجت به بعدها لم يكن كما توقعت.</p>
+        <p>بنيت <bdi>inference engine</bdi> بـ <bdi>Rust</bdi>، نشرته، وبعدها كتبت بوست على <bdi>LinkedIn</bdi> إني أبغى أتعمق في <bdi>Arabic tokenization</bdi>.</p>
+        <p>وفعلاً غصت فيه. اللي طلعت به ما كان اللي توقعته.</p>
 
-        <h2><bdi>why Arabic is a real stress test for tokenizers</bdi> (ليش العربي اختبار حقيقي للـ <bdi>tokenizers</bdi>)</h2>
+        <h2><bdi>why Arabic is a real stress test for tokenizers</bdi></h2>
 
-        <p>العربي يستخدم <strong>نظام الجذر والوزن (non-concatenative)</strong>. جذر من 3 حروف مثل <em>k-t-b</em> (كتب) يندمج مع قوالب صوتية وينتج: <em>kataba</em> (هو كتب)، <em>kitaab</em> (كتاب)، <em>maktab</em> (مكتب)، <em>maktūb</em> (مكتوب)، <em>yaktubu</em> (هو يكتب). الجذر لا يظهر ككلمة مستقلة؛ دائماً متداخل داخل الشكل السطحي.</p>
+        <p>العربي يستخدم <strong>نظام الجذر والوزن</strong>. جذر من 3 حروف مثل <em>k-t-b</em> (كتب) يندمج مع قوالب صوتية وينتج: <em>kataba</em> (هو كتب)، <em>kitaab</em> (كتاب)، <em>maktab</em> (مكتب)، <em>maktūb</em> (مكتوب)، <em>yaktubu</em> (هو يكتب). الجذر ما يظهر ككلمة مستقلة أبداً — دايم متداخل داخل الشكل السطحي.</p>
 
-        <p>يمكن لكلمة عربية واحدة أن تحمل ما يعادل 4 tokens في الإنجليزي. <em>fasayaktubūnahā</em> (فسيكتبونها) = "and they will write it"، كلمة واحدة تضم proclitics وجذر و enclitic مدمجين معاً.</p>
+        <p>كلمة عربية وحدة تقدر تحمل اللي يعادل 4 tokens في الإنجليزي. <em>fasayaktubūnahā</em> (فسيكتبونها) = "and they will write it" — كلمة وحدة فيها proclitics وجذر و enclitic مدمجين.</p>
 
-        <p><bdi>BPE</bdi> مصمم لدمج سلاسل حروف متجاورة بناءً على التكرار. المعنى في العربي يعيش في تداخل الجذر والوزن غير المتصل. هذان متعارضين هيكلياً.</p>
-        <p>أضف الحركات الاختيارية، عدم ثبات المسافات، وتعدد العربية نفسها (فصحى، مصري، خليجي، شامي)، وعندك مشكلة معقدة فعلاً.</p>
+        <p><bdi>BPE</bdi> مصمم يدمج سلاسل حروف متجاورة بناءً على التكرار. المعنى في العربي يعيش في تداخل الجذر والوزن غير المتصل. الاثنين متعارضين هيكلياً.</p>
+        <p>ضيف الحركات الاختيارية، عدم ثبات المسافات، وتعدد العربي نفسه (فصحى، مصري، خليجي، شامي)، وعندك مشكلة معقدة فعلاً.</p>
 
-        <h2><bdi>the obvious hypothesis: fix the tokenizer</bdi> (الفرضية البديهية: صلّح الـ <bdi>tokenizer</bdi>)</h2>
+        <h2><bdi>the obvious hypothesis: fix the tokenizer</bdi></h2>
 
-        <p>المجال جرب هذا. كثير:</p>
+        <p>جربوا هذا كثير:</p>
 
         <ul>
-            <li><strong>CAMeL Tools و Farasa</strong>: محللات صرفية تنتج segmentation شبه مثالي للـ morphemes (Farasa يصل إلى 99% morpheme F1 على الفصحى)</li>
+            <li><strong>CAMeL Tools و Farasa</strong>: محللات صرفية تنتج segmentation شبه مثالي للـ morphemes (Farasa يوصل 99% morpheme F1 على الفصحى)</li>
             <li><strong>MorphBPE</strong>: BPE مع إشراف صرفي</li>
-            <li><strong><bdi>Alkaoud &amp; Syed</bdi> (<bdi>WANLP 2020</bdi>)</strong>: عدّلوا <bdi>Word2Vec</bdi> و <bdi>BERT</bdi> لاستخدام <bdi>morph-aware tokenization</bdi> في طبقة الـ <bdi>embedding</bdi>. النتيجة: مفردات أصغر بـ 60%، تعامل أفضل مع الكلمات الجديدة، <bdi>SOTA</bdi> على <bdi>datasets</bdi> عربية <em>من دون إعادة تدريب</em>. بدا ذلك واعداً.</li>
+            <li><strong><bdi>Alkaoud &amp; Syed</bdi> (<bdi>WANLP 2020</bdi>)</strong>: عدّلوا <bdi>Word2Vec</bdi> و <bdi>BERT</bdi> عشان يستخدموا <bdi>morph-aware tokenization</bdi> في طبقة الـ <bdi>embedding</bdi>. النتيجة: مفردات أصغر بـ 60%، تعامل أفضل مع الكلمات الجديدة، <bdi>SOTA</bdi> على <bdi>datasets</bdi> عربية <em>من دون إعادة تدريب</em>. بدا واعد.</li>
         </ul>
 
-        <p>افتراض معقول: إذا قطعت الـ morphemes بشكل صحيح قبل أن يراها النموذج، من المفترض أن يتعلم التركيب الصرفي أفضل.</p>
+        <p>فرضية معقولة: لو قطعت الـ morphemes صح قبل ما يشوفها النموذج، مفروض يتعلم الصرف أفضل.</p>
 
-        <h2>then a 2026 paper broke the assumption (ثم ورقة 2026 كسرت الفرضية)</h2>
+        <h2><bdi>then a 2026 paper broke the assumption</bdi></h2>
 
         <div class="meta">
             <div class="paper-title">Morphemes Without Borders: Evaluating Root-Pattern Morphology in Arabic Tokenizers and LLMs</div>
@@ -65,57 +65,57 @@
             من SDAIA، MBZUAI، و PNU
         </div>
 
-        <p>قيّموا 7 LLMs عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) مدى محاذاة الـ tokenizers الخاصة بهم مع حدود الـ morpheme المثالية، و (2) مدى قدرة النماذج على <em>توليد بشكل منتج</em> أشكال الجذر والوزن العربي، بما فيها <strong>nonce roots (جذور مبتكرة)</strong>، والتي تختبر التعميم الحقيقي، ليس الحفظ.</p>
+        <p>قيّموا 7 LLMs عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) مدى محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) مدى قدرة النماذج على <em>توليد</em> أشكال الجذر والوزن، بما فيها <strong>nonce roots</strong> — جذور مبتكرة ما مرت عليهم قبل — وهذا يختبر التعميم الحقيقي، مو الحفظ.</p>
 
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
-            <p><strong>المحاذاة لا تتنبأ بالكفاءة.</strong></p>
-            <p><strong><bdi>ALLAM</bdi></strong> كان لديه أفضل محاذاة شكلية (<bdi>MCR</bdi> 83-86%) لكنه انهار على <bdi>nonce words</bdi>: 20% دقة. النموذج يحفظ، لا يعمم.</p>
-            <p><strong><bdi>GPT-4</bdi></strong> كان لديه <em>أسوأ</em> محاذاة <bdi>tokenizer</bdi> (<bdi>fertility</bdi> أعلى بـ 4 مرات من المثالي، <bdi>boundary precision</bdi> 17%) لكنه سجل 92% على توليد <bdi>nonce roots</bdi>. ثاني أفضل نتيجة.</p>
-            <p><strong><bdi>GPT-4o</bdi></strong> سجل 97% على <bdi>nonce words</bdi> مع محاذاة <bdi>tokenizer</bdi> سيئة بالمثل.</p>
-            <p><strong>ما فيه أي ارتباط</strong> بين مقاييس محاذاة الـ <bdi>tokenizer</bdi> وأداء التوليد الصرفي. <bdi>morpheme F1</bdi> و <bdi>MCR</bdi> لديهم ارتباط صفري أو سلبي ضعيف مع دقة التوليد.</p>
+            <p><strong>المحاذاة ما تتنبأ بالأداء.</strong></p>
+            <p><strong><bdi>ALLAM</bdi></strong> عنده أفضل محاذاة (<bdi>MCR</bdi> 83-86%) لكن انهار على <bdi>nonce words</bdi>: 20% دقة. النموذج يحفظ، ما يعمم.</p>
+            <p><strong><bdi>GPT-4</bdi></strong> عنده <em>أسوأ</em> محاذاة (<bdi>fertility</bdi> أعلى بـ 4 مرات من المثالي، <bdi>boundary precision</bdi> 17%) لكنه سجل 92% على <bdi>nonce roots</bdi>. ثاني أفضل نتيجة.</p>
+            <p><strong><bdi>GPT-4o</bdi></strong> سجل 97% على <bdi>nonce words</bdi> مع محاذاة سيئة بنفس المستوى.</p>
+            <p><strong>ما فيه أي ارتباط</strong> بين مقاييس محاذاة الـ <bdi>tokenizer</bdi> وأداء التوليد الصرفي. <bdi>morpheme F1</bdi> و <bdi>MCR</bdi> ارتباطهم صفر أو سلبي مع دقة التوليد.</p>
         </div>
 
-        <p>FANAR، التي لديه tokenizer واعي بالصرف (MorphBPE)، أدى بشكل ثابت لكن ما سيطر. أداؤه المستقر يمكن يكون قدرة على اتباع التعليمات، ليس جودة الـ tokenizer.</p>
+        <p>FANAR، اللي tokenizer حقه واعي بالصرف (MorphBPE)، أدى بشكل ثابت لكن ما سيطر. يمكن سبب أدائه المستقر هو قدرته على اتباع التعليمات، مو جودة الـ tokenizer.</p>
 
-        <p>الـ prompts بالإنجليزي تفوقت على الـ prompts بالعربي في معظم النماذج، بيانات instruction-tuning غالبيتها إنجليزي.</p>
+        <p>الـ prompts بالإنجليزي تفوقت على العربي في معظم النماذج — بيانات instruction-tuning أغلبها إنجليزي.</p>
 
-        <p>استنتاج الورقة: <strong>الكفاءة الصرفية من المفترض تنقاس بـ productive generalization، لا بمحاذاة surface segmentation.</strong> الاستدلال التركيبي + اتباع التعليمات يعوض عن التحليل الصرفي الصريح.</p>
+        <p>استنتاج الورقة: <strong>الكفاءة الصرفية تنقاس بالتعميم، مو بجودة التقطيع السطحي.</strong> النموذج يقدر يعوض ضعف الـ tokenizer بقدراته الداخلية وقدرته على فهم التعليمات.</p>
 
-        <h2>what this means (ما معنى هذا)</h2>
+        <h2><bdi>what this means</bdi></h2>
 
-        <p>نتيجة 2020 (morph-aware tokenization يساعد) ونتيجة 2026 (محاذاة الـ tokenizer لا تتنبأ بالتوليد) ليسا متناقضين بالكامل. الاختلاف يعتمد على الحجم:</p>
+        <p>نتيجة 2020 (morph-aware tokenization يفيد) ونتيجة 2026 (محاذاة الـ tokenizer ما تفرق) مو متناقضين. الفرق يعتمد على الحجم:</p>
 
         <ul>
-            <li>على <strong>مستوى Word2Vec/mBERT</strong> (~100M معامل)، الحقن الصرفي الصريح في طبقة الـ embedding يعوض عن القدرة المحدودة على تعلمه ضمنياً</li>
-            <li>على <strong>مستوى GPT-4</strong>، الاستدلال التركيبي + اتباع التعليمات يعوض عن أسوأ محاذاة tokenizer</li>
-            <li>السؤال المفتوح: <strong>أين نقطة التحول؟</strong> عند أي حجم يتوقف التركيب الصرفي الصريح عن كونه مهماً كمدخل؟ وهل يمكن الوصول إلى هذه القدرة للعربي بدون compute GPT-4؟</li>
+            <li>على <strong>مستوى Word2Vec/mBERT</strong> (~100M معامل): تحط الصرف بشكل صريح في طبقة الـ embedding لأنه النموذج صغير وما يقدر يتعلمه بنفسه</li>
+            <li>على <strong>مستوى GPT-4</strong>: النموذج كبير ويقدر يعوض أسوأ محاذاة tokenizer بذكائه الداخلي</li>
+            <li>السؤال المفتوح: <strong>وين نقطة التحول؟</strong> عند أي حجم يصير الصرف الصريح كمدخل غير مهم؟ وهل نقدر نوصل لهالقدرة للعربي بدون compute مستوى GPT-4؟</li>
         </ul>
 
-        <p>المجال سأل "أي tokenizer يفوز في مهام التصنيف" لسنين. أوراق متعددة (2023، 2024) استمرت توصل لـ "يعتمد على المهمة والـ dataset." ورقة 2026 تعيد صياغة السؤال بالكامل: وقف تسأل عن الـ surface segmentation وابدأ تسأل عن productive generalization.</p>
+        <p>المجال سأل "أي tokenizer يفوز في مهام التصنيف" لسنين. أوراق 2023 و 2024 دايم تطلع بنتيجة "يعتمد على المهمة والـ dataset." ورقة 2026 تعيد صياغة السؤال كله: وقف تسأل عن التقطيع السطحي وابدأ تسأل عن التعميم.</p>
 
-        <p>الفجوة الحقيقية قد تكون ليست في الـ <bdi>tokenizer</bdi> ولا حتى في طبقة الـ <bdi>embedding</bdi>؛ قد تكون في <strong><bdi>internal representations</bdi></strong> التي يبنيها النموذج.</p>
-        <p><bdi>GPT-4</bdi> و <bdi>GPT-4o</bdi> يفعلون شيء <bdi>ALLAM</bdi> لا يفعله، مع إن <bdi>ALLAM</bdi> لديه بيانات تدريب عربية أكثر و <bdi>tokenizer</bdi> أفضل. ما هو هذا الشيء؟</p>
+        <p>الفجوة الحقيقية مو في الـ <bdi>tokenizer</bdi> ولا حتى طبقة الـ <bdi>embedding</bdi>. يمكن في <strong><bdi>internal representations</bdi></strong> اللي يبنيها النموذج داخلياً.</p>
+        <p><bdi>GPT-4</bdi> و <bdi>GPT-4o</bdi> يسوون شيء <bdi>ALLAM</bdi> ما يسويه، مع إن <bdi>ALLAM</bdi> عنده بيانات تدريب عربية أكثر و <bdi>tokenizer</bdi> أفضل. وش هو هذا الشيء؟</p>
 
-        <h2>what's next (ما التالي)</h2>
+        <h2><bdi>what's next</bdi></h2>
 
-        <p>بروح أشوف زاوية الـ internal activation، <a href="/research-notes/arabic-morphology-probing.ar.html">كيف تبدو التمثيلات فعلاً</a> داخل نماذج تنجح ضد نماذج تفشل على Arabic nonce words؟</p>
+        <p>بروح أشوف زاوية الـ internal activation: <a href="/research-notes/arabic-morphology-probing.ar.html">كيف تبدو التمثيلات فعلاً</a> داخل نماذج تنجح ضد نماذج تفشل على Arabic nonce words؟</p>
 
-        <p>colab + نماذج عربية صغيرة ممكنة على معالج عادي. الـ behavioral probing (على مستوى الـ logit) لا يحتاج إلى تحميل الأوزان كاملة. وبنيت inference engine يوفر وصولاً مباشراً للـ hidden states في كل طبقة.</p>
+        <p>colab + نماذج عربية صغيرة ممكنة على معالج عادي. الـ behavioral probing (على مستوى الـ logit) ما يحتاج تحميل الأوزان كاملة. وعندي inference engine يعطيني وصول مباشر للـ hidden states في كل طبقة.</p>
 
         <p>خطوط ثانية أتابعها:</p>
 
         <ul>
-            <li><strong>مشكلة اللهجات</strong> (الفصحى ضد العامية) تستمر بالظهور في كل ورقة كمسألة غير محلولة. المحللات الصرفية متحيزة للفصحى. البيانات اللهجية ممثلة تمثيل ناقص.</li>
-            <li><strong>العربيزي</strong> (العربي بالحروف اللاتينية والأرقام، مثل "3arabi" لعربي) لا تم التطرق له أبداً في أدبيات الـ tokenization التي شفتها.</li>
-            <li><strong>سؤال التحجيم</strong>: هل ناستطاع نلقى نقطة التقاطع التي يتفوق فيها تعلم الصرف الضمني على الحقن الصرفي الصريح؟ هذا سؤال بحثي محدد وقابل للإجابة.</li>
+            <li><strong>مشكلة اللهجات</strong> (الفصحى ضد العامية) تطلع في كل ورقة كمسألة غير محلولة. المحللات الصرفية متحيزة للفصحى. البيانات اللهجية تمثيلها ناقص.</li>
+            <li><strong>العربيزي</strong> (العربي بالحروف اللاتينية والأرقام، مثل "3arabi") ما شفت أي ورقة tokenization تلمسه.</li>
+            <li><strong>سؤال التحجيم</strong>: هل نقدر نلقى نقطة التقاطع اللي يتفوق فيها تعلم الصرف الضمني على الحقن الصرفي الصريح؟ هذا سؤال بحثي محدد وقابل للإجابة.</li>
         </ul>
 
-        <p>الموضوع بدا كفضول من بوست LinkedIn. الآن عندي أسئلة بحثية حقيقية واتجاه لا يبدو مستكشف بالكامل. تحديثات أكثر مع الوقت.</p>
+        <p>الموضوع بدأ كفضول من بوست LinkedIn. الحين عندي أسئلة بحثية حقيقية واتجاه مو مستكشف بالكامل. تحديثات أكثر مع الوقت.</p>
 
         <hr>
 
-        <h2>papers referenced (أوراق مذكورة)</h2>
+        <h2><bdi>papers referenced</bdi></h2>
         <ol>
             <li>alakeel, qwaider, aldarmaki, alqahtani, "morphemes without borders", LREC 2026, <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
             <li>alkaoud & syed, "on the importance of tokenization in Arabic embedding models", WANLP 2020, <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a></li>

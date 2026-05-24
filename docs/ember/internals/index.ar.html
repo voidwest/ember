@@ -56,7 +56,7 @@
             <a href="/ember/" class="ltr">writeup</a>
         </div>
 
-        <h1>ember internals (داخل ember)</h1>
+        <h1>ember internals</h1>
 
         <p>
             هذا تفكيك قريب لهياكل البيانات والخوارزميات وتخطيطات الذاكرة
@@ -182,7 +182,7 @@
         <!-- ══ KV CACHE ══ -->
         <h2>kv cache</h2>
 
-        <h3>layout (التخطيط)</h3>
+        <h3>layout</h3>
 
         <div class="layout-block">
 k: Vec&lt;f32&gt;   // flat [layer][head][pos][head_dim]
@@ -203,7 +203,7 @@ offset math:
             GPT-2 small عند 2048 سياق: 12 × 12 × 2048 × 64 × 4 × 2 = ~72 MB.
         </p>
 
-        <h3>cursor semantics (دلالات المؤشر)</h3>
+        <h3>cursor semantics</h3>
 
         <p>
             الـ cursor هو موقع الكتابة في بعد التسلسل. هو
@@ -264,9 +264,9 @@ scratch.resize(total_seq_len, f32::NEG_INFINITY);
         </p>
 
         <!-- ══ GGUF & QUANTIZATION ══ -->
-        <h2>GGUF format and quantization (صيغة GGUF والضغط)</h2>
+        <h2>GGUF format and quantization</h2>
 
-        <h3>file structure (هيكل الملف)</h3>
+        <h3>file structure</h3>
 
         <div class="layout-block">
 offset  field
@@ -291,7 +291,7 @@ offset  field
             <span class="mono">"blk.{i}.attn.output.weight"</span>، إلخ).
         </p>
 
-        <h3>q8_0 block quantization (الضغط الكتلي q8_0)</h3>
+        <h3>q8_0 block quantization</h3>
 
         <p>
             كل كتلة تشفّر 32 قيمة f32 في 34 بايت:
@@ -327,7 +327,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
             0.001-0.05، معطية تقريباً ±0.1 إلى ±6.4 لكل عنصر وزن.
         </p>
 
-        <h3>the column-major trap (حالة دقيقة الـ column-major)</h3>
+        <h3>the column-major trap</h3>
 
         <p>
             GGUF يخزن tensors q8_0 و f16 بترتيب column-major. حجم كتلة q8_0
@@ -481,7 +481,7 @@ dist.iter().enumerate()
         </p>
 
         <!-- ══ LLAMA ARCHITECTURE ══ -->
-        <h2>تفاصيل معمارية llama</h2>
+        <h2>llama architecture details</h2>
 
         <p>
             نماذج عائلة llama تختلف عن gpt-2 بأربع طرق هيكلية. كل واحدة
@@ -576,7 +576,7 @@ let kv_h = h / n_repeat;              // أي رأس kv يستخدم رأس quer
         </p>
 
         <!-- ══ PROBING PIPELINE ══ -->
-        <h2>probing pipeline (خط أنابيب الـ probing)</h2>
+        <h2>probing pipeline</h2>
 
         <p>
             نمط probe (<span class="mono">--probe</span>) هو ميزة بحثية تستخرج
@@ -620,7 +620,7 @@ let kv_h = h / n_repeat;              // أي رأس kv يستخدم رأس quer
         </p>
 
         <!-- ══ PROFILING ══ -->
-        <h2>profiling notes (ملاحظات تحليل الأداء)</h2>
+        <h2>profiling notes</h2>
 
         <p>
             wall-clock profiling لخطوة decode واحدة (GPT-2 small، x86_64،
@@ -651,7 +651,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
         </p>
 
         <!-- ══ EDGE CASES ══ -->
-        <h2>edge cases worth knowing (حالات طرفية تستحق المعرفة)</h2>
+        <h2>edge cases worth knowing</h2>
 
         <p>
             <strong>صفوف softmax المقنّعة بالكامل.</strong> causal mask يضبط

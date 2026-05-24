@@ -26,7 +26,7 @@
             <a href="/research-notes/" class="ltr">research notes</a>
         </div>
 
-        <h1><bdi>tokenization in Arabic embedding models</bdi> (الـ <bdi>tokenization</bdi> في نماذج الـ <bdi>embeddings</bdi> العربية)</h1>
+        <h1><bdi>tokenization in Arabic embedding models</bdi></h1>
 
         <div class="meta">
             <div class="paper-title">On the Importance of Tokenization in Arabic Embedding Models</div>
@@ -37,25 +37,25 @@
             <span class="tag key">embeddings</span>
         </div>
 
-        <h2>the claim (الادعاء)</h2>
-        <p><bdi>morph-aware tokenization</bdi> في طبقة الـ <bdi>embedding</bdi> يحسّن أداء <bdi>Arabic NLP</bdi> من دون إعادة تدريب.</p>
-        <p>المؤلفون عدّلوا <bdi>Word2Vec</bdi> و <bdi>BERT</bdi> لاستخدام <bdi>tokens</bdi> على مستوى <bdi>morpheme</bdi> بدلاً من الكلمات السطحية أو <bdi>BPE</bdi>، وقاسوا على <bdi>NER</bdi> و <bdi>sentiment</bdi> و <bdi>POS tagging</bdi>.</p>
+        <h2><bdi>the claim</bdi></h2>
+        <p>استخدام <bdi>morph-aware tokenization</bdi> في طبقة الـ <bdi>embedding</bdi> يرفع أداء مهام <bdi>Arabic NLP</bdi> بدون ما تحتاج تعيد تدريب النموذج.</p>
+        <p>بدل ما تستخدم كلمات سطحية أو <bdi>BPE</bdi>، استخدم <bdi>tokens</bdi> على مستوى الـ <bdi>morpheme</bdi>. المؤلفون جربوا هالشي على <bdi>Word2Vec</bdi> و <bdi>BERT</bdi> وقاسوا الأداء على <bdi>NER</bdi> و <bdi>sentiment</bdi> و <bdi>POS tagging</bdi>.</p>
 
-        <h2>results (النتائج)</h2>
+        <h2><bdi>results</bdi></h2>
         <ul>
-            <li><strong>مفردات أصغر بـ 60%</strong>، الـ morph-aware tokenization رجّع الأشكال السطحية لمكوناتها المورفيمية</li>
-            <li><strong>تعامل أفضل مع الكلمات الجديدة</strong>، الكلمات غير المرئية المكونة من morphemes معروفة أصبحت قابلة للتمثيل</li>
-            <li><strong>SOTA من دون إعادة تدريب</strong>، BERT المعدل حقق SOTA على datasets عربية باستخدام نموذج pretrained ومجمد</li>
+            <li><strong>مفردات أصغر بـ 60%</strong> — الـ <bdi>tokenizer</bdi> المورفيمي يفكك الكلمة لمكوناتها الأساسية بدل ما يتعامل مع كل شكل سطحي ككلمة مستقلة.</li>
+            <li><strong>تعامل أفضل مع الكلمات الجديدة</strong> — حتى لو الكلمة جديدة على النموذج، <bdi>morphemes</bdi>ها معروفة ويقدر يمثلها بدون مشكلة.</li>
+            <li><strong><bdi>SOTA</bdi> من دون إعادة تدريب</strong> — <bdi>BERT</bdi> المعدل وصل <bdi>SOTA</bdi> على <bdi>datasets</bdi> عربية وهو يستخدم نموذج <bdi>pretrained</bdi> مجمد بالكامل.</li>
         </ul>
 
-        <h2>context (السياق)</h2>
-        <p>هذا نجح لأن النظام الصرفي العربي يضم مجموعة محدودة، وصغيرة نسبياً، من الجذور والأوزان واللواصق. morph-aware tokenizer يرد الأشكال السطحية لهذه primitives، ويقلل المفردات الفعالة من حوالي مليون شكل سطحي إلى حوالي 20K morpheme. وبما أن طبقة الـ embedding تشكل نسبة كبيرة من parameters النماذج الصغيرة، تصغير جدول الـ embedding مع الحفاظ على التركيب الدلالي يوفر مكاسب.</p>
+        <h2><bdi>context</bdi></h2>
+        <p>السر في النظام الصرفي العربي نفسه. عندك مجموعة صغيرة ومحدودة من الجذور والأوزان واللواصق — وكل الكلمات العربية تقريباً تتكون منها. الـ <bdi>tokenizer</bdi> المورفيمي يفكك الكلمة لهالمكونات الأساسية، فتنزل المفردات الفعلية من حوالي مليون شكل سطحي إلى 20K <bdi>morpheme</bdi> فقط. طبقة الـ <bdi>embedding</bdi> في النماذج الصغيرة تاخذ جزء كبير من الـ <bdi>parameters</bdi>، فتصغير جدول الـ <bdi>embedding</bdi> — مع الاحتفاظ بالتركيب الدلالي — يعطي مكاسب واضحة.</p>
 
         <div class="callout hypothesis">
             <div class="label">Hypothesis</div>
-            <p><strong>لماذا هذا مهم بجانب نتائج 2026؟</strong></p>
-            <p>نتيجة 2020 (الحقن الصرفي يساعد) ونتيجة 2026 (محاذاة الـ <bdi>tokenizer</bdi> لا تتنبأ بجودة التوليد) متسقتين إذا المتغير الأساسي هو <strong>حجم النموذج</strong>.</p>
-            <p>على مستوى <bdi>Word2Vec/mBERT</bdi>، التركيب الصرفي الصريح في طبقة الـ <bdi>embedding</bdi> يعوض قدرة النموذج المحدودة على تعلمه ضمنياً. على مستوى <bdi>GPT-4</bdi>، الاستدلال التركيبي واتباع التعليمات يستبدلون التحليل الصرفي الصريح. السؤال الباقي: أين نقطة التحول، وهل يمكننا الوصول لها بدون <bdi>compute GPT-4</bdi>؟</p>
+            <p><strong>ليش هالشي مهم جنب نتائج 2026؟</strong></p>
+            <p>نتيجة 2020 تقول: الحقن الصرفي يساعد. نتيجة 2026 تقول: محاذاة الـ <bdi>tokenizer</bdi> ما تتنبأ بجودة التوليد. الاثنين متسقين إذا المتغير الأساسي هو <strong>حجم النموذج</strong>.</p>
+            <p>على مستوى <bdi>Word2Vec/mBERT</bdi>: النموذج صغير وما يقدر يتعلم التركيب الصرفي من نفسه، فتحتاج تحطه بشكل صريح في طبقة الـ <bdi>embedding</bdi>. على مستوى <bdi>GPT-4</bdi>: النموذج كبير ويقدر يستنتج التحليل الصرفي بنفسه بقدراته الداخلية واتباع التعليمات. السؤال المفتوح: وين بالضبط تصير هالنقلة؟ وهل نقدر نوصل لها بدون <bdi>compute</bdi> مستوى <bdi>GPT-4</bdi>؟</p>
         </div>
 
         <footer>
