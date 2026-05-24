@@ -4,6 +4,7 @@
 data/*.npz
 *.pdf
 .venv/
+.deepseek/
 
 # only README.md is tracked — design notes and logs stay local
 *.md
