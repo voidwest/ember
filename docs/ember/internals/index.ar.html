@@ -60,15 +60,15 @@
 
         <p>
             هذا تفكيك قريب لهياكل البيانات والخوارزميات وتخطيطات الذاكرة
-            اللي تشغّل ember. يفترض إنك قريت
-            <a href="/ember/">الـ architecture writeup</a> وتبغا التفاصيل التقنية.
+            التي تشغّل ember. يفترض إنك قريت
+            <a href="/ember/">الـ architecture writeup</a> وترغب التفاصيل التقنية.
         </p>
 
         <!-- ══ TENSOR ══ -->
         <h2>tensor</h2>
 
         <p>
-            <span class="mono">CpuTensor</span> هو هيكل البيانات الوحيد اللي يلمسه كل مكون
+            <span class="mono">CpuTensor</span> هو هيكل البيانات الوحيد التي يلمسه كل مكون
             آخر. ثلاث حقول:
         </p>
 
@@ -96,15 +96,15 @@
             يشوف تيار allocations بنفس الحجم أثناء decode
             (عدد الـ tokens ثابت)، فـ <span class="mono">jemalloc</span> أو allocator
             النظام يعيد استخدام نفس الـ slab. هذا ليس عرضياً، إنه
-            السبب اللي يخلي الـ hot path يفلت من allocations المتكررة بدون
-            ما يظهر كعاصفة malloc في profiling.
+            السبب التي يجعل الـ hot path يفلت من allocations المتكررة بدون
+            لا يظهر كعاصفة malloc في profiling.
         </p>
 
         <p>
             <strong><span class="mono">#[must_use]</span> على كل عملية بحتة.</strong>
-            إذا كتبت <span class="mono">x.softmax();</span> بدون ربط النتيجة،
-            التخصيص يُسقط بصمت والنموذج يشتغل على بيانات قديمة.
-            الـ attribute يخلي هذا compile error. كشف bug
+            إذا كتبت <span class="mono">x.softmax();</span> من دون ربط النتيجة،
+            التخصيص يُسقط بصمت والنموذج يعمل على بيانات قديمة.
+            الـ attribute يجعل هذا compile error. كشف bug
             نسيان إسناد مخرج layer norm راجع لـ <span class="mono">x</span> في
             حلقة كتلة transformer، bug لا ينتج panic ولا NaN،
             فقط نص متدهور تدريجياً.
@@ -114,7 +114,7 @@
 
         <p>
             الـ matmul يفوض لـ crate <span class="mono">matrixmultiply</span> من bluss،
-            sgemm pure-rust بدون ربط blas. موقع الاستدعاء:
+            sgemm pure-rust من دون ربط blas. موقع الاستدعاء:
         </p>
 
         <pre><code>unsafe {
@@ -140,7 +140,7 @@
         <h2>backend trait</h2>
 
         <p>
-            الـ <span class="mono">Backend</span> trait هو التجريد اللي يفصل شفرة النموذج
+            الـ <span class="mono">Backend</span> trait هو التجريد الذي يفصل شفرة النموذج
             عن hardware. كل عملية تلمس بيانات tensor تمر عبر
             مرجع <span class="mono">&amp;B</span>:
         </p>
@@ -207,9 +207,9 @@ offset math:
 
         <p>
             الـ cursor هو موقع الكتابة في بعد التسلسل. هو
-            <strong>لا يتقدم لكل طبقة</strong>. كل طبقة تقرا
-            <span class="mono">cache.cursor()</span> لتعرف وين تخزن، لكن المؤشر
-            يتقدم فقط بعد ما تخلص كل الطبقات في
+            <strong>لا يتقدم لكل طبقة</strong>. كل طبقة تقرأ
+            <span class="mono">cache.cursor()</span> لتعرف أين تخزن، لكن المؤشر
+            يتقدم فقط بعد لا تخلص كل الطبقات في
             <span class="mono">Gpt2::forward_with_cache</span>:
         </p>
 
@@ -222,9 +222,9 @@ for _ in 0..seq_len {
 }</code></pre>
 
         <p>
-            هذا التصميم هو اللي سبب bug #5. أثناء prefill، حلقة attention
+            هذا التصميم هو التي سبب bug #5. أثناء prefill، حلقة attention
             نادت <span class="mono">append</span> لكل token prompt، وكل نداء
-            وصل عند <span class="mono">cursor = 0</span>، كاتباً فوق اللي قبله. فقط
+            وصل عند <span class="mono">cursor = 0</span>، كاتباً فوق ما قبله. فقط
             k/v لآخر token نجا. الإصلاح يمرر
             <span class="mono">pos</span> صريح لـ <span class="mono">append</span>، محسوب كـ
             <span class="mono">cache.cursor() + token_index</span> في forward pass
@@ -258,7 +258,7 @@ scratch.resize(total_seq_len, f32::NEG_INFINITY);
         <p>
             لأن <span class="mono">scratch</span> خُصص لـ
             <span class="mono">max_seq_len</span>، الـ <span class="mono">resize</span> لا يعيد التخصيص
-            أبداً طالما <span class="mono">total_seq_len ≤ max_seq_len</span>.
+            أبداً طاعندما <span class="mono">total_seq_len ≤ max_seq_len</span>.
             هذا يزيل 144 heap allocation صغير لكل token مولّد
             (12 طبقة × 12 رأس).
         </p>
@@ -282,10 +282,10 @@ offset  field
 </div>
 
         <p>
-            الـ loader يمشي على metadata عشان يلقى hyperparameters النموذج
+            الـ loader يمر على metadata للعثور على hyperparameters النموذج
             (<span class="mono">gpt2.block_count</span>، <span class="mono">gpt2.context_length</span>،
-            <span class="mono">gpt2.embedding_length</span>، إلخ)، ثم يقرا جدول معلومات
-            الـ tensor عشان يطلع الاسم، الشكل، dtype، وإزاحة البايت
+            <span class="mono">gpt2.embedding_length</span>، إلخ)، ثم يقرأ جدول معلومات
+            الـ tensor لكي ينتج الاسم، الشكل، dtype، وإزاحة البايت
             لكل وزن. الأوزان تطابق بأسماء tensors GPT-2 المكتوبة يدوياً
             (<span class="mono">"tok_embeddings.weight"</span>،
             <span class="mono">"blk.{i}.attn.output.weight"</span>، إلخ).
@@ -327,7 +327,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
             0.001-0.05، معطية تقريباً ±0.1 إلى ±6.4 لكل عنصر وزن.
         </p>
 
-        <h3>the column-major trap (فخ الـ column-major)</h3>
+        <h3>the column-major trap (حالة دقيقة الـ column-major)</h3>
 
         <p>
             GGUF يخزن tensors q8_0 و f16 بترتيب column-major. حجم كتلة q8_0
@@ -340,7 +340,7 @@ reconstruction:  dst[j] = q[j] as f32 * d.to_f32()
 
         <p>
             رأس معلومات الـ tensor يبلغ عن الشكل <em>المنطقي</em>
-            <span class="mono">[768, 50257]</span> كـ row-major، لكن البفر
+            <span class="mono">[768, 50257]</span> كـ row-major، لكن المخزن المؤقت
             المفكوك ضغطه هو column-major. المحمل في الأصل كان ينادي
             <span class="mono">reshape(&amp;[768, 50257])</span>، الذي يفترض row-major،
             منتجاً مصفوفة أوزان معكوسة. الإصلاح سطر واحد في
@@ -378,7 +378,7 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
             temperature = 0 يعني greedy argmax، الـ pipeline يتخطى
             temperature scaling ويذهب مباشرة لـ argmax في
             <span class="mono">categorical_sample</span>. أي قيمة موجبة تقسم
-            الـ logits: t أقل من 1.0 يشحذ (القمم تحصل على وزن نسبي أعلى)،
+            الـ logits: t أقل من 1.0 يشحذ (القمم تستخدم وزن نسبي أعلى)،
             t أكبر من 1.0 يسطح التوزيع (أقرب للانتظام).
         </p>
 
@@ -393,7 +393,7 @@ for l in logits.iter_mut() {
 }</code></pre>
 
         <p>
-            يرتب نسخة من أزواج (index، logit) تنازلياً، يقرا قيمة
+            يرتب نسخة من أزواج (index، logit) تنازلياً، يقرأ قيمة
             k-th الأكبر، يقنّع كل شيء تحتها. O(V log V) حيث
             V = حجم المفردات (50257 لـ GPT-2). لا يفعل شيء عندما k ≥ V أو k = 0.
         </p>
@@ -425,7 +425,7 @@ let sum: f32 = exps.iter().sum();
 exps.iter().map(|x| x / sum).collect()</code></pre>
 
         <p>
-            خدعة max تمنع overflow: طرح max من كل logit
+            آلية max تمنع overflow: طرح max من كل logit
             يضمن إن أكبر قيمة بعد exponentiation هي <span class="mono">exp(0) = 1</span>.
             الـ fallback للصف المقنّع بالكامل يرجع توزيع منتظم.
         </p>
@@ -444,7 +444,7 @@ dist.iter().enumerate()
     .map(|(i, _)| i).unwrap_or(0)</code></pre>
 
         <p>
-            يمشي على المجموع التراكمي للاحتمالات. أول فهرس يتجاوز
+            يمر على المجموع التراكمي للاحتمالات. أول فهرس يتجاوز
             مجموعه التراكمي السحب العشوائي هو الـ token المختار.
         </p>
 
@@ -476,7 +476,7 @@ dist.iter().enumerate()
             project إلى logits. <span class="mono">forward_with_activations</span> هو مدخل
             الـ probing — نفس forward pass، لكنه يجمع hidden states
             بعد كل كتلة transformer عند آخر موضع token بدل رميها.
-            هذا ما يناديه نمط <span class="mono">--probe</span> لاستخراج الـ activations
+            هذا لا يستدعيه نمط <span class="mono">--probe</span> لاستخراج الـ activations
             للتحليل اللاحق.
         </p>
 
@@ -570,8 +570,8 @@ let kv_h = h / n_repeat;              // أي رأس kv يستخدم رأس quer
         <p>
             لـ gpt-2، <span class="mono">n_heads == n_kv_heads</span> فهذا مسار
             لا يغير السلوك. لـ llama، الـ cache يستخدم ذاكرة أقل بـ 75%
-            (8 رؤوس kv مقابل 32 رأس query)، مما يمكن نوافذ سياق أطول
-            لنفس ميزانية الرام. حجم بفر <span class="mono">qk_scratch</span> لا يتغير
+            (8 رؤوس kv مقابل 32 رأس query)، مما يتيح نوافذ سياق أطول
+            لنفس ميزانية الرام. حجم مخزن مؤقت <span class="mono">qk_scratch</span> لا يتغير
             لأن scores qk هي لكل رأس query.
         </p>
 
@@ -675,11 +675,11 @@ other (adds, copies, sampling):         ~4 ms    (5%)
         </p>
 
         <p>
-            <strong>resize بفر scratch.</strong> بفر qk_scratch مخصص
+            <strong>resize مخزن مؤقت scratch.</strong> مخزن مؤقت qk_scratch مخصص
             لـ <span class="mono">max_seq_len</span> (2048). أثناء decode في
             الموضع 47، المستدعي يعيد تحجيمه لـ 48. لأن 48 ≤ 2048،
             الـ resize هو no-op، السعة حُددت في وقت البناء. هذا
-            ثابت متعمد: الـ hot path ما ينادي allocator العام أبداً.
+            ثابت متعمد: الـ hot path لا يستدعي allocator العام أبداً.
         </p>
 
         <p>
@@ -687,7 +687,7 @@ other (adds, copies, sampling):         ~4 ms    (5%)
             embeddings الـ tokens كـ <span class="mono">[vocab, embed]</span> (50257 × 768). المحمل
             يعكسهم لـ <span class="mono">[embed, vocab]</span> (768 × 50257)
             أثناء بناء النموذج. هذا يعني <span class="mono">index_select(token_id)</span>
-            يختار شريحة متجاورة من 768 عنصر بدل ما يجمع 768
+            يختار شريحة متجاورة من 768 عنصر بدلاً من جمع 768
             عنصراً متباعداً بخطوة vocab_size. التكلفة: transpose واحد عند البدء.
             الفائدة: كل خطوة inference تعمل memcpy بدل gather.
         </p>

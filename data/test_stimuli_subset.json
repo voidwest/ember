@@ -1,0 +1,852 @@
+[
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "fa3ala",
+    "pattern_description": "basic past (form I)",
+    "expected_surface": "banaSa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa3ala\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa3ala\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa3ala\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa3ala\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "yaf3alu",
+    "pattern_description": "basic present (form I)",
+    "expected_surface": "yabnaSu",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"yaf3alu\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"yaf3alu\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"yaf3alu\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"yaf3alu\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "fā3il",
+    "pattern_description": "active participle (form I)",
+    "expected_surface": "bāniS",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fā3il\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fā3il\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fā3il\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fā3il\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "maf3ūl",
+    "pattern_description": "passive participle (form I)",
+    "expected_surface": "mabnūS",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"maf3ūl\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"maf3ūl\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"maf3ūl\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"maf3ūl\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "fa33āl",
+    "pattern_description": "intensive/professional noun",
+    "expected_surface": "bannāS",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa33āl\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa33āl\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa33āl\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa33āl\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "ifta3ala",
+    "pattern_description": "form VIII past (reflexive)",
+    "expected_surface": "ibtanaSa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"ifta3ala\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"ifta3ala\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"ifta3ala\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"ifta3ala\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "infa3ala",
+    "pattern_description": "form VII past (passive-reflexive)",
+    "expected_surface": "inbanaSa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"infa3ala\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"infa3ala\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"infa3ala\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"infa3ala\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "istaf3ala",
+    "pattern_description": "form X past (requestative)",
+    "expected_surface": "istabnaSa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"istaf3ala\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"istaf3ala\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"istaf3ala\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"istaf3ala\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "tafā3ul",
+    "pattern_description": "verbal noun form VI",
+    "expected_surface": "tabānuS",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"tafā3ul\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"tafā3ul\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"tafā3ul\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"tafā3ul\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "mufā3ala",
+    "pattern_description": "verbal noun form III",
+    "expected_surface": "mubānaSa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"mufā3ala\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"mufā3ala\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"mufā3ala\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"mufā3ala\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "fa3ala",
+    "pattern_description": "basic past (form I)",
+    "expected_surface": "tadagha",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa3ala\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa3ala\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa3ala\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa3ala\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "yaf3alu",
+    "pattern_description": "basic present (form I)",
+    "expected_surface": "yatdaghu",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"yaf3alu\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"yaf3alu\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"yaf3alu\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"yaf3alu\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "fā3il",
+    "pattern_description": "active participle (form I)",
+    "expected_surface": "tādigh",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fā3il\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fā3il\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fā3il\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fā3il\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "maf3ūl",
+    "pattern_description": "passive participle (form I)",
+    "expected_surface": "matdūgh",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"maf3ūl\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"maf3ūl\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"maf3ūl\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"maf3ūl\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "fa33āl",
+    "pattern_description": "intensive/professional noun",
+    "expected_surface": "taddāgh",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa33āl\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa33āl\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa33āl\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa33āl\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "ifta3ala",
+    "pattern_description": "form VIII past (reflexive)",
+    "expected_surface": "ittadagha",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"ifta3ala\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"ifta3ala\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"ifta3ala\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"ifta3ala\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "infa3ala",
+    "pattern_description": "form VII past (passive-reflexive)",
+    "expected_surface": "intadagha",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"infa3ala\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"infa3ala\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"infa3ala\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"infa3ala\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "istaf3ala",
+    "pattern_description": "form X past (requestative)",
+    "expected_surface": "istatdagha",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"istaf3ala\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"istaf3ala\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"istaf3ala\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"istaf3ala\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "tafā3ul",
+    "pattern_description": "verbal noun form VI",
+    "expected_surface": "tatādugh",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"tafā3ul\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"tafā3ul\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"tafā3ul\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"tafā3ul\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "t-d-gh",
+    "root_consonants": [
+      "t",
+      "d",
+      "gh"
+    ],
+    "pattern": "mufā3ala",
+    "pattern_description": "verbal noun form III",
+    "expected_surface": "mutādagha",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"mufā3ala\" to the root \"t-d-gh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"mufā3ala\" to the root \"t-d-gh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"mufā3ala\" على الجذر \"t-d-gh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"mufā3ala\" على الجذر \"t-d-gh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "th-m-kh",
+    "root_consonants": [
+      "th",
+      "m",
+      "kh"
+    ],
+    "pattern": "fa3ala",
+    "pattern_description": "basic past (form I)",
+    "expected_surface": "thamakha",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa3ala\" to the root \"th-m-kh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa3ala\" to the root \"th-m-kh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa3ala\" على الجذر \"th-m-kh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa3ala\" على الجذر \"th-m-kh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "th-m-kh",
+    "root_consonants": [
+      "th",
+      "m",
+      "kh"
+    ],
+    "pattern": "yaf3alu",
+    "pattern_description": "basic present (form I)",
+    "expected_surface": "yathmakhu",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"yaf3alu\" to the root \"th-m-kh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"yaf3alu\" to the root \"th-m-kh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"yaf3alu\" على الجذر \"th-m-kh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"yaf3alu\" على الجذر \"th-m-kh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "th-m-kh",
+    "root_consonants": [
+      "th",
+      "m",
+      "kh"
+    ],
+    "pattern": "fā3il",
+    "pattern_description": "active participle (form I)",
+    "expected_surface": "thāmikh",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fā3il\" to the root \"th-m-kh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fā3il\" to the root \"th-m-kh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fā3il\" على الجذر \"th-m-kh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fā3il\" على الجذر \"th-m-kh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "th-m-kh",
+    "root_consonants": [
+      "th",
+      "m",
+      "kh"
+    ],
+    "pattern": "maf3ūl",
+    "pattern_description": "passive participle (form I)",
+    "expected_surface": "mathmūkh",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"maf3ūl\" to the root \"th-m-kh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"maf3ūl\" to the root \"th-m-kh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"maf3ūl\" على الجذر \"th-m-kh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"maf3ūl\" على الجذر \"th-m-kh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "th-m-kh",
+    "root_consonants": [
+      "th",
+      "m",
+      "kh"
+    ],
+    "pattern": "fa33āl",
+    "pattern_description": "intensive/professional noun",
+    "expected_surface": "thammākh",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa33āl\" to the root \"th-m-kh\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa33āl\" to the root \"th-m-kh\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa33āl\" على الجذر \"th-m-kh\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa33āl\" على الجذر \"th-m-kh\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "fa3ala",
+    "pattern_description": "basic past (form I)",
+    "expected_surface": "shaZaqa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa3ala\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa3ala\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa3ala\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa3ala\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "yaf3alu",
+    "pattern_description": "basic present (form I)",
+    "expected_surface": "yashZaqu",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"yaf3alu\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"yaf3alu\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"yaf3alu\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"yaf3alu\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "fā3il",
+    "pattern_description": "active participle (form I)",
+    "expected_surface": "shāZiq",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fā3il\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fā3il\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fā3il\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fā3il\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "maf3ūl",
+    "pattern_description": "passive participle (form I)",
+    "expected_surface": "mashZūq",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"maf3ūl\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"maf3ūl\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"maf3ūl\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"maf3ūl\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "fa33āl",
+    "pattern_description": "intensive/professional noun",
+    "expected_surface": "shaZZāq",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa33āl\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa33āl\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa33āl\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa33āl\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "ifta3ala",
+    "pattern_description": "form VIII past (reflexive)",
+    "expected_surface": "ishtaZaqa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"ifta3ala\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"ifta3ala\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"ifta3ala\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"ifta3ala\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "infa3ala",
+    "pattern_description": "form VII past (passive-reflexive)",
+    "expected_surface": "inshaZaqa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"infa3ala\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"infa3ala\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"infa3ala\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"infa3ala\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "istaf3ala",
+    "pattern_description": "form X past (requestative)",
+    "expected_surface": "istashZaqa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"istaf3ala\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"istaf3ala\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"istaf3ala\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"istaf3ala\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "tafā3ul",
+    "pattern_description": "verbal noun form VI",
+    "expected_surface": "tashāZuq",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"tafā3ul\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"tafā3ul\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"tafā3ul\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"tafā3ul\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "sh-Z-q",
+    "root_consonants": [
+      "sh",
+      "Z",
+      "q"
+    ],
+    "pattern": "mufā3ala",
+    "pattern_description": "verbal noun form III",
+    "expected_surface": "mushāZaqa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"mufā3ala\" to the root \"sh-Z-q\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"mufā3ala\" to the root \"sh-Z-q\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"mufā3ala\" على الجذر \"sh-Z-q\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"mufā3ala\" على الجذر \"sh-Z-q\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "fa3ala",
+    "pattern_description": "basic past (form I)",
+    "expected_surface": "Taghada",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa3ala\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa3ala\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa3ala\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa3ala\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "yaf3alu",
+    "pattern_description": "basic present (form I)",
+    "expected_surface": "yaTghadu",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"yaf3alu\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"yaf3alu\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"yaf3alu\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"yaf3alu\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "fā3il",
+    "pattern_description": "active participle (form I)",
+    "expected_surface": "Tāghid",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fā3il\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fā3il\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fā3il\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fā3il\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "maf3ūl",
+    "pattern_description": "passive participle (form I)",
+    "expected_surface": "maTghūd",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"maf3ūl\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"maf3ūl\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"maf3ūl\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"maf3ūl\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "fa33āl",
+    "pattern_description": "intensive/professional noun",
+    "expected_surface": "Taghghād",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa33āl\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa33āl\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa33āl\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa33āl\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "ifta3ala",
+    "pattern_description": "form VIII past (reflexive)",
+    "expected_surface": "iTtaghada",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"ifta3ala\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"ifta3ala\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"ifta3ala\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"ifta3ala\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "infa3ala",
+    "pattern_description": "form VII past (passive-reflexive)",
+    "expected_surface": "inTaghada",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"infa3ala\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"infa3ala\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"infa3ala\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"infa3ala\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "istaf3ala",
+    "pattern_description": "form X past (requestative)",
+    "expected_surface": "istaTghada",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"istaf3ala\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"istaf3ala\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"istaf3ala\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"istaf3ala\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "tafā3ul",
+    "pattern_description": "verbal noun form VI",
+    "expected_surface": "taTāghud",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"tafā3ul\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"tafā3ul\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"tafā3ul\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"tafā3ul\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "T-gh-d",
+    "root_consonants": [
+      "T",
+      "gh",
+      "d"
+    ],
+    "pattern": "mufā3ala",
+    "pattern_description": "verbal noun form III",
+    "expected_surface": "muTāghada",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"mufā3ala\" to the root \"T-gh-d\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"mufā3ala\" to the root \"T-gh-d\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"mufā3ala\" على الجذر \"T-gh-d\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"mufā3ala\" على الجذر \"T-gh-d\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "gh-sh-T",
+    "root_consonants": [
+      "gh",
+      "sh",
+      "T"
+    ],
+    "pattern": "fa3ala",
+    "pattern_description": "basic past (form I)",
+    "expected_surface": "ghashaTa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa3ala\" to the root \"gh-sh-T\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa3ala\" to the root \"gh-sh-T\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa3ala\" على الجذر \"gh-sh-T\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa3ala\" على الجذر \"gh-sh-T\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "gh-sh-T",
+    "root_consonants": [
+      "gh",
+      "sh",
+      "T"
+    ],
+    "pattern": "yaf3alu",
+    "pattern_description": "basic present (form I)",
+    "expected_surface": "yaghshaTu",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"yaf3alu\" to the root \"gh-sh-T\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"yaf3alu\" to the root \"gh-sh-T\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"yaf3alu\" على الجذر \"gh-sh-T\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"yaf3alu\" على الجذر \"gh-sh-T\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "gh-sh-T",
+    "root_consonants": [
+      "gh",
+      "sh",
+      "T"
+    ],
+    "pattern": "fā3il",
+    "pattern_description": "active participle (form I)",
+    "expected_surface": "ghāshiT",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fā3il\" to the root \"gh-sh-T\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fā3il\" to the root \"gh-sh-T\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fā3il\" على الجذر \"gh-sh-T\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fā3il\" على الجذر \"gh-sh-T\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "gh-sh-T",
+    "root_consonants": [
+      "gh",
+      "sh",
+      "T"
+    ],
+    "pattern": "maf3ūl",
+    "pattern_description": "passive participle (form I)",
+    "expected_surface": "maghshūT",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"maf3ūl\" to the root \"gh-sh-T\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"maf3ūl\" to the root \"gh-sh-T\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"maf3ūl\" على الجذر \"gh-sh-T\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"maf3ūl\" على الجذر \"gh-sh-T\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "gh-sh-T",
+    "root_consonants": [
+      "gh",
+      "sh",
+      "T"
+    ],
+    "pattern": "fa33āl",
+    "pattern_description": "intensive/professional noun",
+    "expected_surface": "ghashshāT",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa33āl\" to the root \"gh-sh-T\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa33āl\" to the root \"gh-sh-T\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa33āl\" على الجذر \"gh-sh-T\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa33āl\" على الجذر \"gh-sh-T\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  }
+]

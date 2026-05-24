@@ -1,0 +1,18 @@
+[
+  {
+    "expected": "banaSa",
+    "index": 0,
+    "pattern": "fa3ala",
+    "predicted": "The",
+    "predicted_id": 578,
+    "root": "b-n-S"
+  },
+  {
+    "expected": "yabnaSu",
+    "index": 1,
+    "pattern": "yaf3alu",
+    "predicted": "The",
+    "predicted_id": 578,
+    "root": "b-n-S"
+  }
+]

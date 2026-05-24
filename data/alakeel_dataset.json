@@ -1,0 +1,4984 @@
+{
+  "corpus_stats": {
+    "total_real_roots": 390,
+    "total_nonce_roots": 100,
+    "with_affix_real": 260,
+    "with_affix_nonce": 0,
+    "root_category_counts": {
+      "real": {
+        "high_frequency": 195,
+        "low_frequency": 195
+      },
+      "nonce": {
+        "nonce": 100
+      }
+    },
+    "templates_used": {
+      "real": {
+        "فعال": {
+          "type": "Broken plural",
+          "count": 30
+        },
+        "فعلاء": {
+          "type": "Broken plural",
+          "count": 30
+        },
+        "فعول": {
+          "type": "Broken plural",
+          "count": 30
+        },
+        "استفعل": {
+          "type": "Past/Present Form X verb",
+          "count": 30
+        },
+        "فاعل": {
+          "type": "Active participle verb form 1",
+          "count": 30
+        },
+        "فعالة": {
+          "type": "Verbal noun",
+          "count": 30
+        },
+        "فعيل": {
+          "type": "Intensive adjective",
+          "count": 30
+        },
+        "مفعول": {
+          "type": "Passive participle",
+          "count": 30
+        },
+        "افتعال": {
+          "type": "Verbal noun",
+          "count": 30
+        },
+        "انفعل": {
+          "type": "Passive reflexive verb",
+          "count": 30
+        },
+        "فعلان": {
+          "type": "Intensive adjective",
+          "count": 30
+        },
+        "مفتعل": {
+          "type": "Active participle verb form 8",
+          "count": 30
+        },
+        "مفعال": {
+          "type": "Instrument nouns",
+          "count": 30
+        }
+      },
+      "nonce": {
+        "فعال": 20,
+        "فعول": 20,
+        "استفعل": 20,
+        "فاعل": 20,
+        "مفعول": 20
+      }
+    }
+  },
+  "real_roots": [
+    {
+      "root": "ط.ل.ب",
+      "template": "فعال",
+      "base_form": "طلاب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "طلاب",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ط.ل.ب",
+      "template": "فعال",
+      "base_form": "طلاب",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الطلاب",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ط.ل.ب",
+      "template": "فعال",
+      "base_form": "طلاب",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "طلابهم",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ب.ر",
+      "template": "فعال",
+      "base_form": "كبار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كبار",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ب.ر",
+      "template": "فعال",
+      "base_form": "كبار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الكبار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ب.ر",
+      "template": "فعال",
+      "base_form": "كبار",
+      "prefix": "ل",
+      "suffix": "",
+      "full_form": "لكبار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ل",
+      "template": "فعال",
+      "base_form": "عمال",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "عمال",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ل",
+      "template": "فعال",
+      "base_form": "عمال",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "العمال",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ل",
+      "template": "فعال",
+      "base_form": "عمال",
+      "prefix": "لل",
+      "suffix": "",
+      "full_form": "للعمال",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ث.م.ر",
+      "template": "فعال",
+      "base_form": "ثمار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ثمار",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ث.م.ر",
+      "template": "فعال",
+      "base_form": "ثمار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الثمار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ث.م.ر",
+      "template": "فعال",
+      "base_form": "ثمار",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "ثماره",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ت.ج.ر",
+      "template": "فعال",
+      "base_form": "تجار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "تجار",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ت.ج.ر",
+      "template": "فعال",
+      "base_form": "تجار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "التجار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ت.ج.ر",
+      "template": "فعال",
+      "base_form": "تجار",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فتجار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "س.ل.ل",
+      "template": "فعال",
+      "base_form": "سلال",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "سلال",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.ل.ل",
+      "template": "فعال",
+      "base_form": "سلال",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "السلال",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.ل.ل",
+      "template": "فعال",
+      "base_form": "سلال",
+      "prefix": "",
+      "suffix": "ها",
+      "full_form": "سلالها",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ب.ل",
+      "template": "فعال",
+      "base_form": "جبال",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جبال",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ب.ل",
+      "template": "فعال",
+      "base_form": "جبال",
+      "prefix": "",
+      "suffix": "ها",
+      "full_form": "جبالها",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ب.ل",
+      "template": "فعال",
+      "base_form": "جبال",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "جبالهم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ث.ق.ل",
+      "template": "فعال",
+      "base_form": "ثقال",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ثقال",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ث.ق.ل",
+      "template": "فعال",
+      "base_form": "ثقال",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الثقال",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ث.ق.ل",
+      "template": "فعال",
+      "base_form": "ثقال",
+      "prefix": "ب",
+      "suffix": "",
+      "full_form": "بثقال",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ر.م.ل",
+      "template": "فعال",
+      "base_form": "رمال",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "رمال",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ر.م.ل",
+      "template": "فعال",
+      "base_form": "رمال",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الرمال",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ر.م.ل",
+      "template": "فعال",
+      "base_form": "رمال",
+      "prefix": "ب",
+      "suffix": "",
+      "full_form": "برمال",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.م.ر",
+      "template": "فعال",
+      "base_form": "جمار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جمار",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.م.ر",
+      "template": "فعال",
+      "base_form": "جمار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الجمار",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.م.ر",
+      "template": "فعال",
+      "base_form": "جمار",
+      "prefix": "",
+      "suffix": "ها",
+      "full_form": "جمارها",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ل.م",
+      "template": "فعلاء",
+      "base_form": "علماء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "علماء",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ل.م",
+      "template": "فعلاء",
+      "base_form": "علماء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "العلماء",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ل.م",
+      "template": "فعلاء",
+      "base_form": "علمائ",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "علمائهم",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ل",
+      "template": "فعلاء",
+      "base_form": "عملاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "عملاء",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ل",
+      "template": "فعلاء",
+      "base_form": "عملاء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "العملاء",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ل",
+      "template": "فعلاء",
+      "base_form": "عملائ",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "عملائه",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ك",
+      "template": "فعلاء",
+      "base_form": "شركاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شركاء",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ك",
+      "template": "فعلاء",
+      "base_form": "شركائ",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "شركائه",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ك",
+      "template": "فعلاء",
+      "base_form": "شركاء",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "شركاءهم",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ل.ف",
+      "template": "فعلاء",
+      "base_form": "خلفاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "خلفاء",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ل.ف",
+      "template": "فعلاء",
+      "base_form": "خلفاء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الخلفاء",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ل.ف",
+      "template": "فعلاء",
+      "base_form": "خلفاء",
+      "prefix": "لل",
+      "suffix": "",
+      "full_form": "للخلفاء",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ع.ر",
+      "template": "فعلاء",
+      "base_form": "شعراء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شعراء",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ع.ر",
+      "template": "فعلاء",
+      "base_form": "شعرائ",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "شعرائهم",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ع.ر",
+      "template": "فعلاء",
+      "base_form": "شعراء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الشعراء",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ز.م.ل",
+      "template": "فعلاء",
+      "base_form": "زملاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "زملاء",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.م.ل",
+      "template": "فعلاء",
+      "base_form": "زملائ",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "زملائه",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.م.ل",
+      "template": "فعلاء",
+      "base_form": "زملائ",
+      "prefix": "",
+      "suffix": "ها",
+      "full_form": "زملائها",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.ط.ف",
+      "template": "فعلاء",
+      "base_form": "لطفاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "لطفاء",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.ط.ف",
+      "template": "فعلاء",
+      "base_form": "لطفاء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "اللطفاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.ط.ف",
+      "template": "فعلاء",
+      "base_form": "لطفاء",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "باللطفاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ص.ح",
+      "template": "فعلاء",
+      "base_form": "فصحاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فصحاء",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ص.ح",
+      "template": "فعلاء",
+      "base_form": "فصحاء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الفصحاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ص.ح",
+      "template": "فعلاء",
+      "base_form": "فصحاء",
+      "prefix": "ب",
+      "suffix": "",
+      "full_form": "بفصحاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ب.ه",
+      "template": "فعلاء",
+      "base_form": "نبهاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "نبهاء",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ب.ه",
+      "template": "فعلاء",
+      "base_form": "نبهاء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "النبهاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ب.ه",
+      "template": "فعلاء",
+      "base_form": "نبهاء",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالنبهاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ه.ل",
+      "template": "فعلاء",
+      "base_form": "جهلاء",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جهلاء",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ه.ل",
+      "template": "فعلاء",
+      "base_form": "جهلاء",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الجهلاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ه.ل",
+      "template": "فعلاء",
+      "base_form": "جهلاء",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالجهلاء",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ه.ر",
+      "template": "فعول",
+      "base_form": "شهور",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شهور",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.ر",
+      "template": "فعول",
+      "base_form": "شهور",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الشهور",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.ر",
+      "template": "فعول",
+      "base_form": "شهور",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "شهوره",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ح.د.د",
+      "template": "فعول",
+      "base_form": "حدود",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حدود",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ح.د.د",
+      "template": "فعول",
+      "base_form": "حدود",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الحدود",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ح.د.د",
+      "template": "فعول",
+      "base_form": "حدود",
+      "prefix": "",
+      "suffix": "ها",
+      "full_form": "حدودها",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ض",
+      "template": "فعول",
+      "base_form": "عروض",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "عروض",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ض",
+      "template": "فعول",
+      "base_form": "عروض",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "العروض",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ض",
+      "template": "فعول",
+      "base_form": "عروض",
+      "prefix": "ب",
+      "suffix": "ه",
+      "full_form": "بعروضه",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ط",
+      "template": "فعول",
+      "base_form": "شروط",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شروط",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ط",
+      "template": "فعول",
+      "base_form": "شروط",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الشروط",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ط",
+      "template": "فعول",
+      "base_form": "شروط",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالشروط",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ر.س",
+      "template": "فعول",
+      "base_form": "دروس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "دروس",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ر.س",
+      "template": "فعول",
+      "base_form": "دروس",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالدروس",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ر.س",
+      "template": "فعول",
+      "base_form": "دروس",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الدروس",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ر.ع",
+      "template": "فعول",
+      "base_form": "دروع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "دروع",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "د.ر.ع",
+      "template": "فعول",
+      "base_form": "دروع",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الدروع",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "د.ر.ع",
+      "template": "فعول",
+      "base_form": "دروع",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "دروعهم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ق.ل",
+      "template": "فعول",
+      "base_form": "حقول",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حقول",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ق.ل",
+      "template": "فعول",
+      "base_form": "حقول",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "حقولهم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ق.ل",
+      "template": "فعول",
+      "base_form": "حقول",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الحقول",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.ع",
+      "template": "فعول",
+      "base_form": "فروع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فروع",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.ع",
+      "template": "فعول",
+      "base_form": "فروع",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "فروعه",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.ع",
+      "template": "فعول",
+      "base_form": "فروع",
+      "prefix": "",
+      "suffix": "نا",
+      "full_form": "فروعنا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ر.ح",
+      "template": "فعول",
+      "base_form": "شروح",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شروح",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ر.ح",
+      "template": "فعول",
+      "base_form": "شروح",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الشروح",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ر.ح",
+      "template": "فعول",
+      "base_form": "شروح",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "شروحهم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ر.ض",
+      "template": "فعول",
+      "base_form": "قروض",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "قروض",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ر.ض",
+      "template": "فعول",
+      "base_form": "قروض",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "القروض",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ر.ض",
+      "template": "فعول",
+      "base_form": "قروض",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "قروضهم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.د.م",
+      "template": "استفعل",
+      "base_form": "استخدم",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استخدم",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.د.م",
+      "template": "استفعل",
+      "base_form": "استخدم",
+      "prefix": "",
+      "suffix": "نا",
+      "full_form": "استخدمنا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.د.م",
+      "template": "استفعل",
+      "base_form": "استخدم",
+      "prefix": "",
+      "suffix": "ها",
+      "full_form": "استخدمها",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ث.م.ر",
+      "template": "استفعل",
+      "base_form": "استثمر",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استثمر",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ث.م.ر",
+      "template": "استفعل",
+      "base_form": "استثمر",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "استثمره",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ث.م.ر",
+      "template": "استفعل",
+      "base_form": "استثمر",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "استثمرت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ت.ج",
+      "template": "استفعل",
+      "base_form": "استنتج",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استنتج",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ت.ج",
+      "template": "استفعل",
+      "base_form": "استنتج",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "استنتجوا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ت.ج",
+      "template": "استفعل",
+      "base_form": "استنتج",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "استنتجت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ر",
+      "template": "استفعل",
+      "base_form": "استعمر",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استعمر",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ر",
+      "template": "استفعل",
+      "base_form": "استعمر",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "استعمرت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.م.ر",
+      "template": "استفعل",
+      "base_form": "استعمر",
+      "prefix": "",
+      "suffix": "تها",
+      "full_form": "استعمرتها",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ب.ع.د",
+      "template": "استفعل",
+      "base_form": "استبعد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استبعد",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ب.ع.د",
+      "template": "استفعل",
+      "base_form": "استبعد",
+      "prefix": "",
+      "suffix": "وه",
+      "full_form": "استبعدوه",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ب.ع.د",
+      "template": "استفعل",
+      "base_form": "استبعد",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "استبعدوا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "غ.ر.ق",
+      "template": "استفعل",
+      "base_form": "استغرق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استغرق",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.ر.ق",
+      "template": "استفعل",
+      "base_form": "استغرق",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "استغرقه",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.ر.ق",
+      "template": "استفعل",
+      "base_form": "استغرق",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فاستغرق",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.س.خ",
+      "template": "استفعل",
+      "base_form": "استنسخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استنسخ",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.س.خ",
+      "template": "استفعل",
+      "base_form": "استنسخ",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "استنسخوا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.س.خ",
+      "template": "استفعل",
+      "base_form": "استنسخ",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فاستنسخ",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ل.ص",
+      "template": "استفعل",
+      "base_form": "استخلص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استخلص",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ل.ص",
+      "template": "استفعل",
+      "base_form": "استخلص",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "استخلصت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ل.ص",
+      "template": "استفعل",
+      "base_form": "استخلص",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "استخلصوا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ط.ب",
+      "template": "استفعل",
+      "base_form": "استقطب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استقطب",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ط.ب",
+      "template": "استفعل",
+      "base_form": "استقطب",
+      "prefix": "",
+      "suffix": "نا",
+      "full_form": "استقطبنا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ط.ب",
+      "template": "استفعل",
+      "base_form": "استقطب",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "استقطبت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "م.س.ك",
+      "template": "استفعل",
+      "base_form": "استمسك",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استمسك",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "م.س.ك",
+      "template": "استفعل",
+      "base_form": "استمسك",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "استمسكت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "م.س.ك",
+      "template": "استفعل",
+      "base_form": "استمسك",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "استمسكوا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "فاعل",
+      "base_form": "كاتب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كاتب",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "فاعل",
+      "base_form": "كاتب",
+      "prefix": "",
+      "suffix": "ان",
+      "full_form": "كاتبان",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "فاعل",
+      "base_form": "كاتب",
+      "prefix": "",
+      "suffix": "نا",
+      "full_form": "كاتبنا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ط.ل.ب",
+      "template": "فاعل",
+      "base_form": "طالب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "طالب",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ط.ل.ب",
+      "template": "فاعل",
+      "base_form": "طالب",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "الطالبات",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ط.ل.ب",
+      "template": "فاعل",
+      "base_form": "طالب",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "طالبة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ل.ع.ب",
+      "template": "فاعل",
+      "base_form": "لاعب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "لاعب",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ل.ع.ب",
+      "template": "فاعل",
+      "base_form": "لاعب",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "لاعبين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ل.ع.ب",
+      "template": "فاعل",
+      "base_form": "لاعب",
+      "prefix": "",
+      "suffix": "ي",
+      "full_form": "لاعبي",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.د",
+      "template": "فاعل",
+      "base_form": "شاهد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شاهد",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.د",
+      "template": "فاعل",
+      "base_form": "شاهد",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "الشاهدين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.د",
+      "template": "فاعل",
+      "base_form": "شاهد",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "الشاهدات",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ل.م",
+      "template": "فاعل",
+      "base_form": "عالم",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "عالم",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ل.م",
+      "template": "فاعل",
+      "base_form": "عالم",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "العالمين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ل.م",
+      "template": "فاعل",
+      "base_form": "عالم",
+      "prefix": "بال",
+      "suffix": "ة",
+      "full_form": "بالعالمة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ر.غ",
+      "template": "فاعل",
+      "base_form": "فارغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فارغ",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.غ",
+      "template": "فاعل",
+      "base_form": "فارغ",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الفارغ",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.غ",
+      "template": "فاعل",
+      "base_form": "فارغ",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "فارغة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ل.م",
+      "template": "فاعل",
+      "base_form": "حالم",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حالم",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ل.م",
+      "template": "فاعل",
+      "base_form": "حالم",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "الحالمين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ل.م",
+      "template": "فاعل",
+      "base_form": "حالم",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "الحالمات",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ز.م",
+      "template": "فاعل",
+      "base_form": "عازم",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "عازم",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ز.م",
+      "template": "فاعل",
+      "base_form": "عازم",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "العازمين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ز.م",
+      "template": "فاعل",
+      "base_form": "عازم",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "عازما",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ه.ر.ب",
+      "template": "فاعل",
+      "base_form": "هارب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "هارب",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ه.ر.ب",
+      "template": "فاعل",
+      "base_form": "هارب",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "الهاربين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ه.ر.ب",
+      "template": "فاعل",
+      "base_form": "هارب",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "هاربا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ط.ف",
+      "template": "فاعل",
+      "base_form": "خاطف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "خاطف",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ط.ف",
+      "template": "فاعل",
+      "base_form": "خاطف",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "خاطفهم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ط.ف",
+      "template": "فاعل",
+      "base_form": "خاطف",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "خاطفين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "د.ر.س",
+      "template": "فعالة",
+      "base_form": "دراسة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "دراسة",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ر.س",
+      "template": "فعالة",
+      "base_form": "دراست",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "دراستهم",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ر.س",
+      "template": "فعالة",
+      "base_form": "دراسة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الدراسة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ن.ع",
+      "template": "فعالة",
+      "base_form": "صناعة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "صناعة",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ن.ع",
+      "template": "فعالة",
+      "base_form": "صناعة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الصناعة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ن.ع",
+      "template": "فعالة",
+      "base_form": "صناعت",
+      "prefix": "",
+      "suffix": "ها",
+      "full_form": "صناعتها",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "فعالة",
+      "base_form": "كتابة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كتابة",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "فعالة",
+      "base_form": "كتابة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الكتابة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "فعالة",
+      "base_form": "كتابت",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "كتابته",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.د",
+      "template": "فعالة",
+      "base_form": "شهادة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شهادة",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.د",
+      "template": "فعالة",
+      "base_form": "شهادة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الشهادة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ه.د",
+      "template": "فعالة",
+      "base_form": "شهادت",
+      "prefix": "ب",
+      "suffix": "ه",
+      "full_form": "بشهادته",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ت.ج.ر",
+      "template": "فعالة",
+      "base_form": "تجارة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "تجارة",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ت.ج.ر",
+      "template": "فعالة",
+      "base_form": "تجارة",
+      "prefix": "لل",
+      "suffix": "",
+      "full_form": "للتجارة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ت.ج.ر",
+      "template": "فعالة",
+      "base_form": "تجارة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "التجارة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ج.د.ر",
+      "template": "فعالة",
+      "base_form": "جدارة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جدارة",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.د.ر",
+      "template": "فعالة",
+      "base_form": "جدارة",
+      "prefix": "ل",
+      "suffix": "",
+      "full_form": "لجدارة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.د.ر",
+      "template": "فعالة",
+      "base_form": "جدارة",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالجدارة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.س",
+      "template": "فعالة",
+      "base_form": "فراسة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فراسة",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.س",
+      "template": "فعالة",
+      "base_form": "فراسة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الفراسة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.س",
+      "template": "فعالة",
+      "base_form": "فراست",
+      "prefix": "ب",
+      "suffix": "هم",
+      "full_form": "بفراستهم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ص.ل.ب",
+      "template": "فعالة",
+      "base_form": "صلابة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "صلابة",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ص.ل.ب",
+      "template": "فعالة",
+      "base_form": "صلابة",
+      "prefix": "ب",
+      "suffix": "",
+      "full_form": "بصلابة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ص.ل.ب",
+      "template": "فعالة",
+      "base_form": "صلابة",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالصلابة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ر.ث",
+      "template": "فعالة",
+      "base_form": "حراثة",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حراثة",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ر.ث",
+      "template": "فعالة",
+      "base_form": "حراثة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الحراثة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ر.ث",
+      "template": "فعالة",
+      "base_form": "حراثة",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالحراثة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ص.د",
+      "template": "فعالة",
+      "base_form": "حصاده",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حصاده",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ص.د",
+      "template": "فعالة",
+      "base_form": "حصادة",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الحصادة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ص.د",
+      "template": "فعالة",
+      "base_form": "حصادة",
+      "prefix": "لل",
+      "suffix": "",
+      "full_form": "للحصادة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ك.ب.ر",
+      "template": "فعيل",
+      "base_form": "كبير",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كبير",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ب.ر",
+      "template": "فعيل",
+      "base_form": "كبير",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "كبيرة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ب.ر",
+      "template": "فعيل",
+      "base_form": "كبير",
+      "prefix": "ال",
+      "suffix": "ة",
+      "full_form": "الكبيرة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ج.د.د",
+      "template": "فعيل",
+      "base_form": "جديد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جديد",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ج.د.د",
+      "template": "فعيل",
+      "base_form": "جديد",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الجديد",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ج.د.د",
+      "template": "فعيل",
+      "base_form": "جديد",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "جديدة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ث.ر",
+      "template": "فعيل",
+      "base_form": "كثير",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كثير",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ث.ر",
+      "template": "فعيل",
+      "base_form": "كثيرة",
+      "prefix": "ب",
+      "suffix": "ه",
+      "full_form": "بكثيرة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ث.ر",
+      "template": "فعيل",
+      "base_form": "كثير",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "كثيرة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ح.ح",
+      "template": "فعيل",
+      "base_form": "صحيح",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "صحيح",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ح.ح",
+      "template": "فعيل",
+      "base_form": "صحيح",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الصحيح",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ح.ح",
+      "template": "فعيل",
+      "base_form": "صحيح",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "صحيحا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ج.م.ل",
+      "template": "فعيل",
+      "base_form": "جميل",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جميل",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ج.م.ل",
+      "template": "فعيل",
+      "base_form": "جميل",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالجميل",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ج.م.ل",
+      "template": "فعيل",
+      "base_form": "جميل",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الجميل",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ث.ق.ل",
+      "template": "فعيل",
+      "base_form": "ثقيل",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ثقيل",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ث.ق.ل",
+      "template": "فعيل",
+      "base_form": "ثقيل",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "ثقيلة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ث.ق.ل",
+      "template": "فعيل",
+      "base_form": "ثقيل",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الثقيل",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.م.ق",
+      "template": "فعيل",
+      "base_form": "عميق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "عميق",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.م.ق",
+      "template": "فعيل",
+      "base_form": "عميق",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "عميقا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.م.ق",
+      "template": "فعيل",
+      "base_form": "عميق",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "العميق",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.م.ك",
+      "template": "فعيل",
+      "base_form": "سميك",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "سميك",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.م.ك",
+      "template": "فعيل",
+      "base_form": "سميك",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "سميكا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.م.ك",
+      "template": "فعيل",
+      "base_form": "سميك",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالسميك",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ظ.ف",
+      "template": "فعيل",
+      "base_form": "نظيف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "نظيف",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ظ.ف",
+      "template": "فعيل",
+      "base_form": "نظيف",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "النظيف",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ظ.ف",
+      "template": "فعيل",
+      "base_form": "نظيف",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "نظيفا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ف.ف",
+      "template": "فعيل",
+      "base_form": "خفيف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "خفيف",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ف.ف",
+      "template": "فعيل",
+      "base_form": "خفيف",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "خفيفة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ف.ف",
+      "template": "فعيل",
+      "base_form": "خفيف",
+      "prefix": "ال",
+      "suffix": "ة",
+      "full_form": "الخفيفة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ر.ف",
+      "template": "مفعول",
+      "base_form": "معروف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "معروف",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ف",
+      "template": "مفعول",
+      "base_form": "معروف",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المعروف",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ف",
+      "template": "مفعول",
+      "base_form": "معروف",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "معروفين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ذ.ك.ر",
+      "template": "مفعول",
+      "base_form": "مذكور",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مذكور",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ذ.ك.ر",
+      "template": "مفعول",
+      "base_form": "مذكور",
+      "prefix": "ال",
+      "suffix": "ة",
+      "full_form": "المذكورة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ذ.ك.ر",
+      "template": "مفعول",
+      "base_form": "مذكور",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المذكور",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "مفعول",
+      "base_form": "مكتوب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مكتوب",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "مفعول",
+      "base_form": "مكتوب",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المكتوب",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "مفعول",
+      "base_form": "مكتوبة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "مكتوبة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "مفعول",
+      "base_form": "مفتوح",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مفتوح",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "مفعول",
+      "base_form": "مفتوح",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "مفتوحة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "مفعول",
+      "base_form": "مفتوح",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "مفتوحا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ن.ع",
+      "template": "مفعول",
+      "base_form": "مصنوع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مصنوع",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ن.ع",
+      "template": "مفعول",
+      "base_form": "مصنوع",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "مصنوعة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ن.ع",
+      "template": "مفعول",
+      "base_form": "مصنوع",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "المصنوعات",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ب",
+      "template": "مفعول",
+      "base_form": "مشروب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مشروب",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ر.ب",
+      "template": "مفعول",
+      "base_form": "مشروب",
+      "prefix": "",
+      "suffix": "ك",
+      "full_form": "مشروبك",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ر.ب",
+      "template": "مفعول",
+      "base_form": "مشروب",
+      "prefix": "",
+      "suffix": "ات",
+      "full_form": "مشروبات",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ز.ع",
+      "template": "مفعول",
+      "base_form": "منزوع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "منزوع",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ز.ع",
+      "template": "مفعول",
+      "base_form": "منزوع",
+      "prefix": "ال",
+      "suffix": "ة",
+      "full_form": "المنزوعة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ز.ع",
+      "template": "مفعول",
+      "base_form": "منزوع",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المنزوع",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.ف.ف",
+      "template": "مفعول",
+      "base_form": "ملفوف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ملفوف",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.ف.ف",
+      "template": "مفعول",
+      "base_form": "ملفوف",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "ملفوفه",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.ف.ف",
+      "template": "مفعول",
+      "base_form": "ملفوف",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الملفوف",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ه.د.د",
+      "template": "مفعول",
+      "base_form": "مهدود",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مهدود",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ه.د.د",
+      "template": "مفعول",
+      "base_form": "مهدود",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المهدود",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ه.د.د",
+      "template": "مفعول",
+      "base_form": "مهدود",
+      "prefix": "ال",
+      "suffix": "ة",
+      "full_form": "المهدودة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.م.ر",
+      "template": "مفعول",
+      "base_form": "مغمور",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مغمور",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.م.ر",
+      "template": "مفعول",
+      "base_form": "مغمور",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المغمور",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.م.ر",
+      "template": "مفعول",
+      "base_form": "مغمورة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "مغمورة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.م.ل",
+      "template": "افتعال",
+      "base_form": "احتمال",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "احتمال",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ح.م.ل",
+      "template": "افتعال",
+      "base_form": "احتمالية",
+      "prefix": "",
+      "suffix": "يه",
+      "full_form": "احتمالية",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ح.م.ل",
+      "template": "افتعال",
+      "base_form": "احتمال",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "الاحتمالات",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ه.م.م",
+      "template": "افتعال",
+      "base_form": "اهتمام",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "اهتمام",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ه.م.م",
+      "template": "افتعال",
+      "base_form": "اهتمام",
+      "prefix": "",
+      "suffix": "ات",
+      "full_form": "اهتمامات",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ه.م.م",
+      "template": "افتعال",
+      "base_form": "اهتمام",
+      "prefix": "",
+      "suffix": "هم",
+      "full_form": "اهتمامهم",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ر.ف.ع",
+      "template": "افتعال",
+      "base_form": "ارتفاع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ارتفاع",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ر.ف.ع",
+      "template": "افتعال",
+      "base_form": "ارتفاع",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الارتفاع",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ر.ف.ع",
+      "template": "افتعال",
+      "base_form": "ارتفاع",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "الارتفاعات",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "س.ل.م",
+      "template": "افتعال",
+      "base_form": "استلام",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استلام",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "س.ل.م",
+      "template": "افتعال",
+      "base_form": "استلام",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "استلامه",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "س.ل.م",
+      "template": "افتعال",
+      "base_form": "استلام",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الاستلام",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ق.ص.د",
+      "template": "افتعال",
+      "base_form": "اقتصاد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "اقتصاد",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ق.ص.د",
+      "template": "افتعال",
+      "base_form": "اقتصاد",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الاقتصاد",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ق.ص.د",
+      "template": "افتعال",
+      "base_form": "اقتصاد",
+      "prefix": "",
+      "suffix": "اتها",
+      "full_form": "اقتصاداتها",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ع.ل",
+      "template": "افتعال",
+      "base_form": "اشتعال",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "اشتعال",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ع.ل",
+      "template": "افتعال",
+      "base_form": "اشتعال",
+      "prefix": "",
+      "suffix": "ات",
+      "full_form": "اشتعالات",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ش.ع.ل",
+      "template": "افتعال",
+      "base_form": "اشتعال",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "اشتعالا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.س",
+      "template": "افتعال",
+      "base_form": "افتراس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "افتراس",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.س",
+      "template": "افتعال",
+      "base_form": "افتراس",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الافتراس",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.س",
+      "template": "افتعال",
+      "base_form": "افتراس",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالافتراس",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.م.س",
+      "template": "افتعال",
+      "base_form": "التماس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "التماس",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.م.س",
+      "template": "افتعال",
+      "base_form": "التماس",
+      "prefix": "",
+      "suffix": "ات",
+      "full_form": "التماسات",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ل.م.س",
+      "template": "افتعال",
+      "base_form": "التماس",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الالتماس",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ن.ع",
+      "template": "افتعال",
+      "base_form": "اقتناع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "اقتناع",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ن.ع",
+      "template": "افتعال",
+      "base_form": "اقتناع",
+      "prefix": "",
+      "suffix": "كم",
+      "full_form": "اقتناعكم",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ن.ع",
+      "template": "افتعال",
+      "base_form": "اقتناع",
+      "prefix": "",
+      "suffix": "نا",
+      "full_form": "اقتناعنا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ط.ف",
+      "template": "افتعال",
+      "base_form": "اختطاف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "اختطاف",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ط.ف",
+      "template": "افتعال",
+      "base_form": "اختطاف",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الاختطاف",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ط.ف",
+      "template": "افتعال",
+      "base_form": "اختطاف",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "الاختطافات",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ق.د",
+      "template": "انفعل",
+      "base_form": "انعقد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انعقد",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ق.د",
+      "template": "انفعل",
+      "base_form": "انعقد",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انعقدت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ق.د",
+      "template": "انفعل",
+      "base_form": "انعقد",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فانعقد",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ف.ع",
+      "template": "انفعل",
+      "base_form": "اندفع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "اندفع",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ف.ع",
+      "template": "انفعل",
+      "base_form": "اندفع",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "اندفعت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "د.ف.ع",
+      "template": "انفعل",
+      "base_form": "اندفع",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "اندفعوا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "انفعل",
+      "base_form": "انفتح",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انفتح",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "انفعل",
+      "base_form": "انفتح",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انفتحت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "انفعل",
+      "base_form": "انفتح",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فانفتح",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "انفعل",
+      "base_form": "انكتب",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انكتب",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "انفعل",
+      "base_form": "انكتب",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انكتبت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.ت.ب",
+      "template": "انفعل",
+      "base_form": "انكتب",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "انكتبوا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ق.ط.ع",
+      "template": "انفعل",
+      "base_form": "انقطع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انقطع",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ق.ط.ع",
+      "template": "انفعل",
+      "base_form": "انقطع",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انقطعت",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ق.ط.ع",
+      "template": "انفعل",
+      "base_form": "انقطع",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فانقطع",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.س.ر",
+      "template": "انفعل",
+      "base_form": "انكسر",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انكسر",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ك.س.ر",
+      "template": "انفعل",
+      "base_form": "انكسر",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انكسرت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ك.س.ر",
+      "template": "انفعل",
+      "base_form": "انكسر",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فانكسر",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.س.م",
+      "template": "انفعل",
+      "base_form": "انحسم",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انحسم",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.س.م",
+      "template": "انفعل",
+      "base_form": "انحسم",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انحسمت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.س.م",
+      "template": "انفعل",
+      "base_form": "انحسم",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "انحسموا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ب.س.ط",
+      "template": "انفعل",
+      "base_form": "انبسط",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انبسط",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ب.س.ط",
+      "template": "انفعل",
+      "base_form": "انبسط",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انبسطت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ب.س.ط",
+      "template": "انفعل",
+      "base_form": "انبسط",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "انبسطوا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ص.ر",
+      "template": "انفعل",
+      "base_form": "انحصر",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انحصر",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ص.ر",
+      "template": "انفعل",
+      "base_form": "انحصر",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انحصرت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ص.ر",
+      "template": "انفعل",
+      "base_form": "انحصر",
+      "prefix": "",
+      "suffix": "وا",
+      "full_form": "انحصروا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ب.ض",
+      "template": "انفعل",
+      "base_form": "انقبض",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "انقبض",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ب.ض",
+      "template": "انفعل",
+      "base_form": "انقبض",
+      "prefix": "",
+      "suffix": "ت",
+      "full_form": "انقبضت",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ب.ض",
+      "template": "انفعل",
+      "base_form": "انقبض",
+      "prefix": "ف",
+      "suffix": "",
+      "full_form": "فانقبض",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ط.ش",
+      "template": "فعلان",
+      "base_form": "عطشان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "عطشان",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ط.ش",
+      "template": "فعلان",
+      "base_form": "عطشان",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "عطشانين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ط.ش",
+      "template": "فعلان",
+      "base_form": "عطشان",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "عطشانه",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ج.ل",
+      "template": "فعلان",
+      "base_form": "خجلان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "خجلان",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ج.ل",
+      "template": "فعلان",
+      "base_form": "خجلانة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "خجلانة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ج.ل",
+      "template": "فعلان",
+      "base_form": "خجلان",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالخجلان",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ع.س",
+      "template": "فعلان",
+      "base_form": "نعسان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "نعسان",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ع.س",
+      "template": "فعلان",
+      "base_form": "نعسان",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "النعسان",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ع.س",
+      "template": "فعلان",
+      "base_form": "نعسانة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "نعسانة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.س.ل",
+      "template": "فعلان",
+      "base_form": "كسلان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كسلان",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.س.ل",
+      "template": "فعلان",
+      "base_form": "كسلانة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "كسلانة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ك.س.ل",
+      "template": "فعلان",
+      "base_form": "كسلان",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "كسلانين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.د.م",
+      "template": "فعلان",
+      "base_form": "ندمان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ندمان",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.د.م",
+      "template": "فعلان",
+      "base_form": "ندمان",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "ندمانا",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.د.م",
+      "template": "فعلان",
+      "base_form": "ندمانة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "ندمانة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "غ.ر.ق",
+      "template": "فعلان",
+      "base_form": "غرقان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "غرقان",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.ر.ق",
+      "template": "فعلان",
+      "base_form": "غرقانة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "غرقانة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.ر.ق",
+      "template": "فعلان",
+      "base_form": "غرقان",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الغرقان",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.ع.ل",
+      "template": "فعلان",
+      "base_form": "زعلان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "زعلان",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.ع.ل",
+      "template": "فعلان",
+      "base_form": "زعلانة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "زعلانة",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.ع.ل",
+      "template": "فعلان",
+      "base_form": "زعلان",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الزعلان",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.ض.ب",
+      "template": "فعلان",
+      "base_form": "غضبان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "غضبان",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.ض.ب",
+      "template": "فعلان",
+      "base_form": "غضبان",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "الغضبان",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "غ.ض.ب",
+      "template": "فعلان",
+      "base_form": "غضبان",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "غضبانه",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.ح",
+      "template": "فعلان",
+      "base_form": "فرحان",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فرحان",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.ح",
+      "template": "فعلان",
+      "base_form": "فرحان",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "فرحانه",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ف.ر.ح",
+      "template": "فعلان",
+      "base_form": "فرحان",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "فرحانين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.ك.ر",
+      "template": "فعلان",
+      "base_form": "سكران",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "سكران",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.ك.ر",
+      "template": "فعلان",
+      "base_form": "سكران",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "السكرانين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.ك.ر",
+      "template": "فعلان",
+      "base_form": "سكران",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "سكرانين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ع.ر.ض",
+      "template": "مفتعل",
+      "base_form": "معترض",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "معترض",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ض",
+      "template": "مفتعل",
+      "base_form": "معترض",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المعترض",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ض",
+      "template": "مفتعل",
+      "base_form": "معترض",
+      "prefix": "ال",
+      "suffix": "ون",
+      "full_form": "المعترضون",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ظ.م",
+      "template": "مفتعل",
+      "base_form": "منتظم",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "منتظم",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ظ.م",
+      "template": "مفتعل",
+      "base_form": "منتظم",
+      "prefix": "ال",
+      "suffix": "ة",
+      "full_form": "المنتظمة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ظ.م",
+      "template": "مفتعل",
+      "base_form": "منتظمة",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "منتظمة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ف",
+      "template": "مفتعل",
+      "base_form": "معترف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "معترف",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ف",
+      "template": "مفتعل",
+      "base_form": "معترف",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "معترفه",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ع.ر.ف",
+      "template": "مفتعل",
+      "base_form": "معترف",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "المعترفين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ك",
+      "template": "مفتعل",
+      "base_form": "مشترك",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مشترك",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ك",
+      "template": "مفتعل",
+      "base_form": "مشترك",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المشترك",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ش.ر.ك",
+      "template": "مفتعل",
+      "base_form": "مشترك",
+      "prefix": "",
+      "suffix": "ة",
+      "full_form": "مشتركة",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ل.ف",
+      "template": "مفتعل",
+      "base_form": "مختلف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مختلف",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ل.ف",
+      "template": "مفتعل",
+      "base_form": "مختلف",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "مختلفين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ل.ف",
+      "template": "مفتعل",
+      "base_form": "مختلف",
+      "prefix": "ب",
+      "suffix": "",
+      "full_form": "بمختلف",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ق.ن.ع",
+      "template": "مفتعل",
+      "base_form": "مقتنع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مقتنع",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ن.ع",
+      "template": "مفتعل",
+      "base_form": "مقتنع",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "مقتنعين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ن.ع",
+      "template": "مفتعل",
+      "base_form": "مقتنع",
+      "prefix": "",
+      "suffix": "ا",
+      "full_form": "مقتنعا",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ر.ح",
+      "template": "مفتعل",
+      "base_form": "مقترح",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مقترح",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ر.ح",
+      "template": "مفتعل",
+      "base_form": "مقترح",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المقترح",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ر.ح",
+      "template": "مفتعل",
+      "base_form": "مقترح",
+      "prefix": "ال",
+      "suffix": "ات",
+      "full_form": "المقترحات",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ر.ق",
+      "template": "مفتعل",
+      "base_form": "مخترق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مخترق",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ر.ق",
+      "template": "مفتعل",
+      "base_form": "مخترق",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المخترق",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "خ.ر.ق",
+      "template": "مفتعل",
+      "base_form": "مخترق",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "مخترقين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ح.ر",
+      "template": "مفتعل",
+      "base_form": "منتحر",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "منتحر",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ح.ر",
+      "template": "مفتعل",
+      "base_form": "منتحر",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "منتحرين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ح.ر",
+      "template": "مفتعل",
+      "base_form": "منتحر",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المنتحر",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ف.ع",
+      "template": "مفتعل",
+      "base_form": "منتفع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "منتفع",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ف.ع",
+      "template": "مفتعل",
+      "base_form": "منتفع",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المنتفع",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ن.ف.ع",
+      "template": "مفتعل",
+      "base_form": "منتفع",
+      "prefix": "لل",
+      "suffix": "ين",
+      "full_form": "للمنتفعين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ص.ب.ح",
+      "template": "مفعال",
+      "base_form": "مصباح",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مصباح",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ب.ح",
+      "template": "مفعال",
+      "base_form": "مصباح",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المصباح",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ص.ب.ح",
+      "template": "مفعال",
+      "base_form": "مصباح",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "مصباحين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "مفعال",
+      "base_form": "مفتاح",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مفتاح",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "مفعال",
+      "base_form": "مفتاح",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المفتاح",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ف.ت.ح",
+      "template": "مفعال",
+      "base_form": "مفتاح",
+      "prefix": "ب",
+      "suffix": "",
+      "full_form": "بمفتاح",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ظ.ر",
+      "template": "مفعال",
+      "base_form": "منظار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "منظار",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ظ.ر",
+      "template": "مفعال",
+      "base_form": "منظار",
+      "prefix": "ال",
+      "suffix": "ين",
+      "full_form": "المنظارين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ظ.ر",
+      "template": "مفعال",
+      "base_form": "منظار",
+      "prefix": "",
+      "suffix": "ه",
+      "full_form": "منظاره",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ش.ر",
+      "template": "مفعال",
+      "base_form": "منشار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "منشار",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ش.ر",
+      "template": "مفعال",
+      "base_form": "منشار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المنشار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ن.ش.ر",
+      "template": "مفعال",
+      "base_form": "منشار",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالمنشار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ب.ر",
+      "template": "مفعال",
+      "base_form": "مخبار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مخبار",
+      "has_affix": false,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ب.ر",
+      "template": "مفعال",
+      "base_form": "مخبار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المخبار",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "خ.ب.ر",
+      "template": "مفعال",
+      "base_form": "مخبار",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "مخبارين",
+      "has_affix": true,
+      "root_category": "high_frequency"
+    },
+    {
+      "root": "ح.ر.ث",
+      "template": "مفعال",
+      "base_form": "محراث",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "محراث",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ر.ث",
+      "template": "مفعال",
+      "base_form": "محراث",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المحراث",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ح.ر.ث",
+      "template": "مفعال",
+      "base_form": "محراث",
+      "prefix": "ال",
+      "suffix": "ان",
+      "full_form": "المحراثان",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.م.ر",
+      "template": "مفعال",
+      "base_form": "مسمار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مسمار",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.م.ر",
+      "template": "مفعال",
+      "base_form": "مسمار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المسمار",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "س.م.ر",
+      "template": "مفعال",
+      "base_form": "مسمار",
+      "prefix": "",
+      "suffix": "ين",
+      "full_form": "مسمارين",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ل.ع",
+      "template": "مفعال",
+      "base_form": "مقلاع",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مقلاع",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ل.ع",
+      "template": "مفعال",
+      "base_form": "مقلاع",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المقلاع",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ق.ل.ع",
+      "template": "مفعال",
+      "base_form": "مقلاع",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالمقلاع",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.م.ر",
+      "template": "مفعال",
+      "base_form": "مزمار",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مزمار",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.م.ر",
+      "template": "مفعال",
+      "base_form": "مزمار",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالمزمار",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ز.م.ر",
+      "template": "مفعال",
+      "base_form": "مزمار",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المزمار",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ر.ف",
+      "template": "مفعال",
+      "base_form": "مجراف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مجراف",
+      "has_affix": false,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ر.ف",
+      "template": "مفعال",
+      "base_form": "مجراف",
+      "prefix": "بال",
+      "suffix": "",
+      "full_form": "بالمجراف",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    },
+    {
+      "root": "ج.ر.ف",
+      "template": "مفعال",
+      "base_form": "مجراف",
+      "prefix": "ال",
+      "suffix": "",
+      "full_form": "المجراف",
+      "has_affix": true,
+      "root_category": "low_frequency"
+    }
+  ],
+  "nonce_roots": [
+    {
+      "root": "ت.د.غ",
+      "template": "فعال",
+      "base_form": "تداغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "تداغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ت.د.غ",
+      "template": "فعول",
+      "base_form": "تدوغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "تدوغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ت.د.غ",
+      "template": "استفعل",
+      "base_form": "استتدغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استتدغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ت.د.غ",
+      "template": "فاعل",
+      "base_form": "تادغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "تادغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ت.د.غ",
+      "template": "مفعول",
+      "base_form": "متدوغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "متدوغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ب.ص",
+      "template": "فعال",
+      "base_form": "جباص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جباص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ب.ص",
+      "template": "فعول",
+      "base_form": "جبوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جبوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ب.ص",
+      "template": "استفعل",
+      "base_form": "استجبص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استجبص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ب.ص",
+      "template": "فاعل",
+      "base_form": "جابص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جابص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ب.ص",
+      "template": "مفعول",
+      "base_form": "مجبوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مجبوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ش.ظ.ق",
+      "template": "فعال",
+      "base_form": "شظاق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شظاق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ش.ظ.ق",
+      "template": "فعول",
+      "base_form": "شظوق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شظوق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ش.ظ.ق",
+      "template": "استفعل",
+      "base_form": "استشظق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استشظق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ش.ظ.ق",
+      "template": "فاعل",
+      "base_form": "شاظق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "شاظق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ش.ظ.ق",
+      "template": "مفعول",
+      "base_form": "مشظوق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مشظوق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ق.ه.ث",
+      "template": "فعال",
+      "base_form": "قهاث",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "قهاث",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ق.ه.ث",
+      "template": "فعول",
+      "base_form": "قهوث",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "قهوث",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ق.ه.ث",
+      "template": "استفعل",
+      "base_form": "استقهث",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استقهث",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ق.ه.ث",
+      "template": "فاعل",
+      "base_form": "قاهث",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "قاهث",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ق.ه.ث",
+      "template": "مفعول",
+      "base_form": "مقهوث",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مقهوث",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.ج.ز",
+      "template": "فعال",
+      "base_form": "فجاز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فجاز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.ج.ز",
+      "template": "فعول",
+      "base_form": "فجوز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فجوز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.ج.ز",
+      "template": "استفعل",
+      "base_form": "استفجز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استفجز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.ج.ز",
+      "template": "فاعل",
+      "base_form": "فاجز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فاجز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.ج.ز",
+      "template": "مفعول",
+      "base_form": "مفجوز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مفجوز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ط.غ.د",
+      "template": "فعال",
+      "base_form": "طغاد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "طغاد",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ط.غ.د",
+      "template": "فعول",
+      "base_form": "طغود",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "طغود",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ط.غ.د",
+      "template": "استفعل",
+      "base_form": "استطغد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استطغد",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ط.غ.د",
+      "template": "فاعل",
+      "base_form": "طاغد",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "طاغد",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ط.غ.د",
+      "template": "مفعول",
+      "base_form": "مطغود",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مطغود",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "خ.ف.ص",
+      "template": "فعال",
+      "base_form": "خفاص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "خفاص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "خ.ف.ص",
+      "template": "فعول",
+      "base_form": "خفوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "خفوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "خ.ف.ص",
+      "template": "استفعل",
+      "base_form": "استخفص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استخفص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "خ.ف.ص",
+      "template": "فاعل",
+      "base_form": "خافص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "خافص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "خ.ف.ص",
+      "template": "مفعول",
+      "base_form": "مخفوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مخفوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ذ.ح.ج",
+      "template": "فعال",
+      "base_form": "ذحاج",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ذحاج",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ذ.ح.ج",
+      "template": "فعول",
+      "base_form": "ذحوج",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ذحوج",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ذ.ح.ج",
+      "template": "استفعل",
+      "base_form": "استذحج",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استذحج",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ذ.ح.ج",
+      "template": "فاعل",
+      "base_form": "ذاحج",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ذاحج",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ذ.ح.ج",
+      "template": "مفعول",
+      "base_form": "مذحوج",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مذحوج",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ث.م.خ",
+      "template": "فعال",
+      "base_form": "ثماخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ثماخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ث.م.خ",
+      "template": "فعول",
+      "base_form": "ثموخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ثموخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ث.م.خ",
+      "template": "استفعل",
+      "base_form": "استثمخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استثمخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ث.م.خ",
+      "template": "فاعل",
+      "base_form": "ثامخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ثامخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ث.م.خ",
+      "template": "مفعول",
+      "base_form": "مثموخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مثموخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ف.ق",
+      "template": "فعال",
+      "base_form": "جفاق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جفاق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ف.ق",
+      "template": "فعول",
+      "base_form": "جفوق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جفوق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ف.ق",
+      "template": "استفعل",
+      "base_form": "استجفق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استجفق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ف.ق",
+      "template": "فاعل",
+      "base_form": "جافق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "جافق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ج.ف.ق",
+      "template": "مفعول",
+      "base_form": "مجفوق",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مجفوق",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ح.ذ.س",
+      "template": "فعال",
+      "base_form": "حذاس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حذاس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ح.ذ.س",
+      "template": "فعول",
+      "base_form": "حذوس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حذوس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ح.ذ.س",
+      "template": "استفعل",
+      "base_form": "استحذس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استحذس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ح.ذ.س",
+      "template": "فاعل",
+      "base_form": "حاذس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "حاذس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ح.ذ.س",
+      "template": "مفعول",
+      "base_form": "محذوس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "محذوس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.غ.ز",
+      "template": "فعال",
+      "base_form": "دغاز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "دغاز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.غ.ز",
+      "template": "فعول",
+      "base_form": "دغوز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "دغوز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.غ.ز",
+      "template": "استفعل",
+      "base_form": "استدغز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استدغز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.غ.ز",
+      "template": "فاعل",
+      "base_form": "داغز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "داغز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.غ.ز",
+      "template": "مفعول",
+      "base_form": "مدغوز",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مدغوز",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "م.د.ص",
+      "template": "فعال",
+      "base_form": "مداص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مداص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "م.د.ص",
+      "template": "فعول",
+      "base_form": "مدوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مدوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "م.د.ص",
+      "template": "استفعل",
+      "base_form": "استمدص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استمدص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "م.د.ص",
+      "template": "فاعل",
+      "base_form": "مادص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مادص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "م.د.ص",
+      "template": "مفعول",
+      "base_form": "ممدوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "ممدوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ن.ف.غ",
+      "template": "فعال",
+      "base_form": "نفاغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "نفاغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ن.ف.غ",
+      "template": "فعول",
+      "base_form": "نفوغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "نفوغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ن.ف.غ",
+      "template": "استفعل",
+      "base_form": "استنفغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استنفغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ن.ف.غ",
+      "template": "فاعل",
+      "base_form": "نافغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "نافغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ن.ف.غ",
+      "template": "مفعول",
+      "base_form": "منفوغ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "منفوغ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ه.ز.خ",
+      "template": "فعال",
+      "base_form": "هزاخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "هزاخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ه.ز.خ",
+      "template": "فعول",
+      "base_form": "هزوخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "هزوخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ه.ز.خ",
+      "template": "استفعل",
+      "base_form": "استهزخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استهزخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ه.ز.خ",
+      "template": "فاعل",
+      "base_form": "هازخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "هازخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ه.ز.خ",
+      "template": "مفعول",
+      "base_form": "مهزوخ",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مهزوخ",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ك.غ.ف",
+      "template": "فعال",
+      "base_form": "كغاف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كغاف",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ك.غ.ف",
+      "template": "فعول",
+      "base_form": "كغوف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كغوف",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ك.غ.ف",
+      "template": "استفعل",
+      "base_form": "استكغف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استكغف",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ك.غ.ف",
+      "template": "فاعل",
+      "base_form": "كاغف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "كاغف",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ك.غ.ف",
+      "template": "مفعول",
+      "base_form": "مكغوف",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مكغوف",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ب.ن.ص",
+      "template": "فعال",
+      "base_form": "بناص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "بناص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ب.ن.ص",
+      "template": "فعول",
+      "base_form": "بنوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "بنوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ب.ن.ص",
+      "template": "استفعل",
+      "base_form": "استبنص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استبنص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ب.ن.ص",
+      "template": "فاعل",
+      "base_form": "بانص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "بانص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ب.ن.ص",
+      "template": "مفعول",
+      "base_form": "مبنوص",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مبنوص",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.ق.س",
+      "template": "فعال",
+      "base_form": "دقاس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "دقاس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.ق.س",
+      "template": "فعول",
+      "base_form": "دقوس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "دقوس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.ق.س",
+      "template": "استفعل",
+      "base_form": "استدقس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استدقس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.ق.س",
+      "template": "فاعل",
+      "base_form": "داقس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "داقس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "د.ق.س",
+      "template": "مفعول",
+      "base_form": "مدقوس",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مدقوس",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.غ.ش",
+      "template": "فعال",
+      "base_form": "فغاش",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فغاش",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.غ.ش",
+      "template": "فعول",
+      "base_form": "فغوش",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فغوش",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.غ.ش",
+      "template": "استفعل",
+      "base_form": "استفغش",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استفغش",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.غ.ش",
+      "template": "فاعل",
+      "base_form": "فاغش",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "فاغش",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "ف.غ.ش",
+      "template": "مفعول",
+      "base_form": "مفغوش",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مفغوش",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "غ.ش.ط",
+      "template": "فعال",
+      "base_form": "غشاط",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "غشاط",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "غ.ش.ط",
+      "template": "فعول",
+      "base_form": "غشوط",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "غشوط",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "غ.ش.ط",
+      "template": "استفعل",
+      "base_form": "استغشط",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "استغشط",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "غ.ش.ط",
+      "template": "فاعل",
+      "base_form": "غاشط",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "غاشط",
+      "has_affix": false,
+      "root_category": "nonce"
+    },
+    {
+      "root": "غ.ش.ط",
+      "template": "مفعول",
+      "base_form": "مغشوط",
+      "prefix": "",
+      "suffix": "",
+      "full_form": "مغشوط",
+      "has_affix": false,
+      "root_category": "nonce"
+    }
+  ]
+}

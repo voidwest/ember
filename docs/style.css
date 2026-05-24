@@ -337,7 +337,7 @@ footer {
 [dir="rtl"] th,
 [dir="rtl"] td {
     text-align: start;
-    unicode-bidi: plaintext;
+    unicode-bidi: isolate;
 }
 
 [dir="rtl"] p,
@@ -347,7 +347,8 @@ footer {
 [dir="rtl"] .meta-row,
 [dir="rtl"] footer,
 [dir="rtl"] dd {
-    unicode-bidi: plaintext;
+    direction: rtl;
+    unicode-bidi: isolate;
 }
 
 [dir="rtl"] dt {
@@ -369,6 +370,13 @@ footer {
 [dir="rtl"] .back {
     direction: ltr;
     text-align: right;
+    unicode-bidi: isolate;
+}
+
+[dir="rtl"] h1,
+[dir="rtl"] h2,
+[dir="rtl"] h3 {
+    direction: rtl;
     unicode-bidi: isolate;
 }
 

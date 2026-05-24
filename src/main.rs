@@ -3,8 +3,11 @@ use clap::Parser;
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::loader::load_gguf;
+use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use ember::sampler::sample_token;
+use std::fs;
+use std::io::BufWriter;
 use std::io::{self, Write};
 use std::time::Instant;
 
@@ -59,6 +62,19 @@ struct Args {
     /// print prefill/decode timing stats to stderr
     #[arg(long)]
     benchmark: bool,
+
+    /// probe mode: extract hidden states from each transformer block
+    /// for every stimulus in the stimuli file, and save as .npy.
+    #[arg(long, conflicts_with_all = ["demo", "interactive"])]
+    probe: bool,
+
+    /// path to stimuli json for probe mode
+    #[arg(long, default_value = "stimuli/nonce_root_pattern.json")]
+    probe_stimuli: String,
+
+    /// output path for probe activations (.npy)
+    #[arg(long, default_value = "data/activations.npy")]
+    probe_output: String,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -119,6 +135,14 @@ fn main() -> anyhow::Result<()> {
                     args.top_k,
                     args.top_p,
                 )?;
+            } else if args.probe {
+                probe_mode(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.probe_stimuli,
+                    &args.probe_output,
+                )?;
             } else {
                 let output = generate(
                     &backend,
@@ -146,6 +170,14 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("demo mode not yet supported for llama");
             } else if args.interactive {
                 anyhow::bail!("interactive mode not yet supported for llama");
+            } else if args.probe {
+                probe_mode(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.probe_stimuli,
+                    &args.probe_output,
+                )?;
             } else {
                 let output = generate_llama(
                     &backend,
@@ -810,6 +842,171 @@ where
             }
         }
     }
+
+    Ok(())
+}
+
+// ── probe mode ─────────────────────────────────────────────────
+
+/// write a 3d f32 array as a .npy file (numpy format v1.0).
+///
+/// shape is `[dim0, dim1, dim2]`, data is row-major f32 little-endian.
+fn write_npy(path: &str, data: &[f32], shape: &[usize; 3]) -> anyhow::Result<()> {
+    let header = format!(
+        "{{'descr': '<f4', 'fortran_order': False, 'shape': ({}, {}, {}), }}",
+        shape[0], shape[1], shape[2]
+    );
+    // pad to 16-byte boundary (including the 10-byte prefix)
+    let mut header_bytes = header.into_bytes();
+    let total_prefix = 10 + header_bytes.len();
+    let padding = (16 - (total_prefix % 16)) % 16;
+    if padding > 0 {
+        header_bytes.extend(std::iter::repeat_n(b' ', padding));
+    }
+    // header_len is the length of the header dict including padding,
+    // NOT including the 2-byte header_len field itself.
+    let header_len = header_bytes.len() as u16;
+
+    let file = fs::File::create(path)?;
+    let mut w = BufWriter::new(file);
+    use std::io::Write as _;
+    w.write_all(b"\x93NUMPY")?; // magic
+    w.write_all(&[1u8, 0u8])?; // version 1.0
+    w.write_all(&header_len.to_le_bytes())?; // header length
+    w.write_all(&header_bytes)?; // header
+
+    // data as f32 little-endian
+    let data_bytes: &[u8] =
+        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
+    w.write_all(data_bytes)?;
+    w.flush()?;
+    Ok(())
+}
+
+/// probe mode: feed each stimulus prompt through the model and
+/// collect per-layer hidden states at the last token position.
+///
+/// writes a 3d .npy file: `(n_stimuli, n_layers, embed_dim)`.
+fn probe_mode<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    stimuli_path: &str,
+    output_path: &str,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    // ── load stimuli ──────────────────────────────────────────
+    let stimuli_json = fs::read_to_string(stimuli_path)
+        .with_context(|| format!("failed to read stimuli file: {}", stimuli_path))?;
+    let stimuli: Vec<serde_json::Value> = serde_json::from_str(&stimuli_json)?;
+    eprintln!("loaded {} stimuli from {}", stimuli.len(), stimuli_path);
+
+    let n_layers = model.n_layers();
+    let embed_dim = model.embed_dim();
+    eprintln!("model: {} layers, {} hidden dim", n_layers, embed_dim);
+
+    let total_floats = stimuli.len() * n_layers * embed_dim;
+    eprintln!(
+        "allocating activation buffer: {} floats ({:.1} MB)",
+        total_floats,
+        total_floats as f64 * 4.0 / 1_048_576.0
+    );
+    let mut activations: Vec<f32> = vec![0.0f32; total_floats];
+
+    // ── collect ───────────────────────────────────────────────
+    let start = Instant::now();
+    let mut correctness: Vec<serde_json::Value> = Vec::with_capacity(stimuli.len());
+
+    for (si, stimulus) in stimuli.iter().enumerate() {
+        let prompt = stimulus["prompts"]["en_zero"]
+            .as_str()
+            .unwrap_or("Apply the pattern.");
+
+        let token_ids = tokenizer.encode(prompt)?;
+        if token_ids.is_empty() {
+            eprintln!(
+                "  [{}/{}] WARNING: empty tokenization, skipping",
+                si + 1,
+                stimuli.len()
+            );
+            continue;
+        }
+
+        let (layer_states, logits) = model.forward_with_activations(backend, &token_ids)?;
+
+        // record correctness: argmax of logits at last position
+        let logit_data = backend.data(&logits);
+        let logit_shape = backend.shape(&logits);
+        let vocab_size = logit_shape[1];
+        let last_row_start = (token_ids.len() - 1) * vocab_size;
+        let last_logits = &logit_data[last_row_start..];
+        let predicted_id = last_logits
+            .iter()
+            .enumerate()
+            .fold((0usize, f32::NEG_INFINITY), |(max_i, max_v), (i, &v)| {
+                if v > max_v {
+                    (i, v)
+                } else {
+                    (max_i, max_v)
+                }
+            })
+            .0;
+        let predicted_text = tokenizer.decode(&[predicted_id as u32])?;
+        let expected = stimulus["expected_surface"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        correctness.push(serde_json::json!({
+            "index": si,
+            "root": stimulus["root"],
+            "pattern": stimulus["pattern"],
+            "expected": expected,
+            "predicted": predicted_text.trim().to_string(),
+            "predicted_id": predicted_id,
+        }));
+
+        for (li, state) in layer_states.iter().enumerate() {
+            let offset = (si * n_layers + li) * embed_dim;
+            activations[offset..offset + embed_dim].copy_from_slice(state);
+        }
+
+        if (si + 1) % 10 == 0 || si + 1 == stimuli.len() {
+            eprintln!(
+                "  [{:3}/{}] collected in {:.1}s",
+                si + 1,
+                stimuli.len(),
+                start.elapsed().as_secs_f64()
+            );
+        }
+    }
+
+    // ── save ──────────────────────────────────────────────────
+    let shape = [stimuli.len(), n_layers, embed_dim];
+    write_npy(output_path, &activations, &shape)?;
+    eprintln!("saved activations to {}", output_path);
+
+    let correct_count = correctness
+        .iter()
+        .filter(|c| c["predicted"] == c["expected"])
+        .count();
+    eprintln!(
+        "correctness: {}/{} ({:.1}%)",
+        correct_count,
+        correctness.len(),
+        correct_count as f64 / correctness.len() as f64 * 100.0
+    );
+
+    // write correctness json alongside .npy
+    let correctness_path = output_path.replace(".npy", "_correctness.json");
+    fs::write(
+        &correctness_path,
+        serde_json::to_string_pretty(&correctness)?,
+    )?;
+    eprintln!("saved correctness to {}", correctness_path);
+
+    eprintln!("done in {:.1}s", start.elapsed().as_secs_f64());
 
     Ok(())
 }

@@ -1,0 +1,36 @@
+[
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "fa3ala",
+    "pattern_description": "basic past (form I)",
+    "expected_surface": "banaSa",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"fa3ala\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"fa3ala\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"fa3ala\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"fa3ala\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  },
+  {
+    "root": "b-n-S",
+    "root_consonants": [
+      "b",
+      "n",
+      "S"
+    ],
+    "pattern": "yaf3alu",
+    "pattern_description": "basic present (form I)",
+    "expected_surface": "yabnaSu",
+    "prompts": {
+      "en_zero": "Apply the Arabic pattern \"yaf3alu\" to the root \"b-n-S\". Output only the resulting Arabic word.",
+      "en_one": "Apply the Arabic pattern \"yaf3alu\" to the root \"b-n-S\". Example: applying \"fa3ala\" to \"k-t-b\" gives \"kataba\". Output only the resulting Arabic word.",
+      "ar_zero": "طبق النمط \"yaf3alu\" على الجذر \"b-n-S\". أخرج الكلمة العربية الناتجة فقط.",
+      "ar_one": "طبق النمط \"yaf3alu\" على الجذر \"b-n-S\". مثال: تطبيق \"fa3ala\" على الجذر \"k-t-b\" يعطي \"kataba\". أخرج الكلمة العربية الناتجة فقط."
+    }
+  }
+]

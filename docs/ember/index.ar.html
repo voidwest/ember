@@ -109,51 +109,51 @@
         </div>
 
         <p>
-            <strong>ember</strong> هو inference engine خفيف يشتغل على CPU
-            لنماذج transformer. يشغّل نماذج GGUF مضغوطة بدون CUDA، بدون PyTorch،
-            وبدون أي framework خارجي. وجّهه لملف GGUF، أعطه prompt، يطلع لك
-            text.
+            <strong>ember</strong> هو inference engine خفيف يعمل على CPU
+            لنماذج transformer. يشغّل نماذج GGUF مضغوطة من دون CUDA، من دون PyTorch،
+            ومن دون أي framework خارجي. وجّهه لملف GGUF، أعطه prompt، ينتج لك
+            نص.
         </p>
 
         <p>
-            الهدف مو منافسة llama.cpp في السرعة. الهدف إن الكود يكون
-            <strong>مقروءة</strong>. الكود مباشر، الهياكل واضحة، والقرارات
-            الهندسية موثقة في مكانها. إذا تبغا تفهم كيف يشتغل الـ inference
-            تحت الغطاء بدون ما تغوص في طبقات تجريد، هذا مكان جيد تبدأ منه.
+            الهدف ليس منافسة llama.cpp في السرعة. الهدف إن الكود يكون
+            <strong>مقروءاً</strong>. الكود مباشر، الهياكل واضحة، والقرارات
+            الهندسية موثقة في مكانها. إذا كنت ترغب في فهم كيف يعمل الـ inference
+            تحت الغطاء من دون أن تغوص في طبقات تجريد، فهذا مكان مناسب للبدء.
         </p>
 
         <!-- ═══════════════════════════ 1. MOTIVATION ═══════════════════════════ -->
         <h2>1. why I built it (ليش بنيته)</h2>
 
         <p>
-            كنت أقرا ورقة attention is all you need، وورقة GPT-2، ومخطط GGUF
-            في نفس الوقت. عند نقطة معينة، الشرح بالكلام ما عاد يكفي.
-            احتجت الكود يكون قدامي.
+            كنت أقرأ ورقة attention is all you need، وورقة GPT-2، ومخطط GGUF
+            في نفس الوقت. عند نقطة معينة، الشرح بالكلام لم يعد كافياً.
+            احتجت أن أرى الكود أمامي.
         </p>
 
         <p>
             البدائل الموجودة — llama.cpp، candle، burn — تحل المشكلة الحقيقية
-            (الـ inference السريع والمحمول) لكن ما تساعد على القراءة.
-            llama.cpp فيه 80 ألف سطر من C++ محسّنة بـ SIMD و CUDA و metal.
-            ما تقدر تفتح <span class="mono">llama.cpp</span> وتسأل "كيف يدخل الـ token
-            للـ transformer؟" وتلقى الجواب بدون ما تتابع خمس طبقات من dispatch.
+            (الـ inference السريع والمحمول) لكن لا تساعد على القراءة.
+            llama.cpp يضم 80 ألف سطر من C++ محسّنة بـ SIMD و CUDA و metal.
+            يصعب فتح <span class="mono">llama.cpp</span> والسؤال "كيف يدخل الـ token
+            للـ transformer؟" والعثور على الجواب من دون أن تتابع خمس طبقات من dispatch.
         </p>
 
-        <p>ember ياخذ المسار المعاكس. مبدأين:</p>
+        <p>ember يتخذ المسار المعاكس. مبدأين:</p>
 
         <ul>
-            <li><strong>سطر واحد، مفهوم واحد.</strong> إذا شيء يحتاج 200 سطر من SIMD intrinsics، ما تلقاه هنا. تلقى حلقة <span class="mono">for</span>.</li>
+            <li><strong>سطر واحد، مفهوم واحد.</strong> إذا شيء يحتاج 200 سطر من SIMD intrinsics، لن تجده هنا. تجد حلقة <span class="mono">for</span>.</li>
             <li><strong>لا تخصيصات مخفية.</strong> <span class="mono">Vec&lt;f32&gt;</span> في كل مكان. الـ memory واضحة.</li>
         </ul>
 
         <!-- ═══════════════════════════ 2. ARCHITECTURE ═══════════════════════════ -->
         <h2>2. architecture (المعمارية)</h2>
 
-        <p>نقطة الدخول <span class="mono">main.rs</span> → <span class="mono">generate()</span>، وتمشي حلقة من مرحلتين:</p>
+        <p>نقطة الدخول <span class="mono">main.rs</span> → <span class="mono">generate()</span>، وتعمل حلقة من مرحلتين:</p>
 
         <ol>
-            <li><strong>prefill</strong> — forward pass على كامل الـ prompt، تعبي الـ KV cache.</li>
-            <li><strong>decode</strong> — token ورا token، تقرا من الـ cache.</li>
+            <li><strong>prefill</strong> — forward pass على كامل الـ prompt، تملأ الـ KV cache.</li>
+            <li><strong>decode</strong> — token بعد token، تقرأ من الـ cache.</li>
         </ol>
 
         <div class="arch-tree">
@@ -173,7 +173,7 @@
             كلا المعماريتين تتشاركان <span class="mono">ForwardModel</span> trait، فأنماط
             <span class="mono">generate</span> و<span class="mono">demo</span> و<span class="mono">probe</span> تشتغل مع أيٍّ منهما.
             شفرة النموذج معممة على <span class="mono">Backend</span> trait، فشفرة الـ transformer
-            نفسها تشتغل على CPU اليوم وبتشتغل على GPU بكرة بدون ما تعيد كتابة
+            نفسها تشتغل على CPU اليوم وستعمل على GPU بكرة من دون أن تعيد كتابة
             منطق الـ attention أو الـ mlp. نمط الـ probe
             (<span class="mono">--probe</span>) يستخرج الـ hidden states بعد كل كتلة
             transformer للتحليل بالـ scripts في <span class="mono">probes/</span>.
@@ -183,24 +183,24 @@
         <h2>3. design decisions (القرارات الهندسية)</h2>
 
         <p>
-            أربع قرارات هندسية شكلت الكود. كل واحد صار مهم بطريقة
-            ما وضحت إلا لما ضربت bugs.
+            أربع قرارات هندسية شكّلت الكود. أصبح كل منها مهماً بطريقة
+            ما وضحت إلا عندما ظهرت الأخطاء.
         </p>
 
         <h3>backend trait (واجهة الـ backend)</h3>
         <p>
             الـ <span class="mono">Backend</span> trait في <span class="mono">src/backend.rs</span> هو
             التجريد المركزي. شفرة النموذج معممة على <span class="mono">B: Backend</span>،
-            فنفس تطبيق الـ transformer يشتغل على
-            <span class="mono">CpuBackend</span> اليوم وبيشتغل على أي GPU/accelerator backend
-            مستقبلاً بدون تعديل. الـ trait يعرض
+            فنفس تطبيق الـ transformer يعمل على
+            <span class="mono">CpuBackend</span> اليوم وسيعمل على أي GPU/accelerator backend
+            مستقبلاً من دون تعديل. الـ trait يعرض
             <span class="mono">matmul</span>، <span class="mono">add</span>، <span class="mono">softmax</span>،
             <span class="mono">gelu</span>، <span class="mono">layer_norm</span>، <span class="mono">index_select</span>،
             <span class="mono">slice_cols</span>، <span class="mono">load_from_cpu</span>، ودوال الوصول
             للشكل والبيانات. الـ trait يتضمن أيضاً primitives عائلة llama
             (<span class="mono">rms_norm</span>، <span class="mono">silu</span>، <span class="mono">elemul</span>،
             <span class="mono">apply_rotary_emb</span>، <span class="mono">matmul_q8_0</span>) مع تطبيقات
-            كاملة لـ <span class="mono">CpuBackend</span>. الـ attention ما تجرد بعد عبر الـ trait؛ دوال
+            كاملة لـ <span class="mono">CpuBackend</span>. الـ attention لم تُجرّد بعد عبر الـ trait؛ دوال
             الـ attention في النموذج تنادي <span class="mono">data()</span> وتشغّل حلقات scalar
             على المعالج، لكن الـ trait مصمم بحيث يمكن إضافة دالة
             <span class="mono">fn attention(...)</span> لاحقاً.
@@ -214,18 +214,18 @@
             في الإزاحة <span class="mono">i * cols + j</span>. هذا التخطيط المعياري لـ
             matrixmultiply و blas، ويعني إن <span class="mono">index_select(row)</span>
             هو شريحة متجاورة. المقايضة: <span class="mono">slice_cols</span> هو عملية
-            تجميع، مو شريحة. لكن عملياً، index-select للصفوف أكثر شيوعاً
+            تجميع، ليس شريحة. لكن عملياً، index-select للصفوف أكثر شيوعاً
             بكثير (embeddings، output projection) من slicing الأعمدة.
         </p>
 
         <h3>gguf v3 loader with memory mapping (محمل GGUF v3)</h3>
         <p>
             <span class="mono">loader.rs</span> يفتح ملف GGUF بـ
-            <span class="mono">memmap2::Mmap</span>، متجنباً نسخ الملف لبفرات userspace.
+            <span class="mono">memmap2::Mmap</span>، متجنباً نسخ الملف لمخازن مؤقتة userspace.
             نظام التشغيل يحمّل البيانات بالصفحات بشكل كسول. الـ tensors يتم
-            فك ضغطها ونسخها؛ الـ mmap يُرمى لما ترجع الدالة. يدعم
+            فك ضغطها ونسخها؛ الـ mmap يُرمى عند عودة الدالة. يدعم
             f32، f16، و q8_0 dtypes. tensors f16 و q8_0 مخزنة column-major
-            في GGUF، فالـ loader يعكس ترتيب الأبعاد أثناء فك الضغط عشان يطابق
+            في GGUF، فالـ loader يعكس ترتيب الأبعاد أثناء فك الضغط لكي يطابق
             تخطيط الـ tensor row-major.
         </p>
 
@@ -245,9 +245,8 @@
         <h2>4. math: gelu, softmax, layer norm (الرياضيات)</h2>
 
         <p>
-            ثلاث primitives رياضية شايلة النموذج. كل وحدة فيها فخ
-            يطلع أرقام غلط بصمت بدل ما يكسر البرنامج، وكل فخ
-            ضرب أثناء التطوير.
+            ثلاث primitives رياضية تحمل النموذج. كل عملية فيها حالة دقيقة
+            تنتج أرقام خاطئة بصمت بدلاً من كسر البرنامج، وكل واحدة منها ظهرت أثناء التطوير.
         </p>
 
         <h3>softmax</h3>
@@ -255,33 +254,32 @@
             softmax يحول متجه logits لتوزيع احتمالي:
             <span class="mono">exp(x_i) / Σ exp(x_j)</span>. التطبيق المعياري
             يطرح أقصى logit من كل عنصر قبل الـ exponentiation
-            لتجنب overflow (<span class="mono">exp(88) → inf</span>). هذه "خدعة
-            max" وموجودة في كل كتاب.
+            لتجنب overflow (<span class="mono">exp(88) → inf</span>). هذه آلية "max" وموجودة في كل كتاب.
         </p>
         <p>
-            الحالة الطرفية الأقل نقاشاً: ماذا يحدث لما يكون كل logit في صف
+            الحالة الطرفية الأقل نقاشاً: ماذا يحدث عندما يكون كل logit في صف
             هو <span class="mono">-inf</span>؟ هذا يحدث في causal attention mask، أول
-            token ما عنده tokens سابقة ينتبه لها. تشغيل
+            token لا توجد لديه tokens سابقة ينتبه لها. تشغيل
             <span class="mono">softmax([-inf, -inf, ...])</span> ينتج
             <span class="mono">(-inf) - (-inf) = NaN</span> قبل الـ exponentiation. ember
             يكشف هذا بتفرع واحد،
-            <span class="mono">if max == f32::NEG_INFINITY { return uniform; }</span>، ويرجع
+            <span class="mono">if max == f32::NEG_INFINITY { return uniform; }</span>، ويعيد
             توزيع منتظم، سطر واحد يمنع NaN من الانتشار عبر 12 طبقة transformer.
         </p>
 
         <h3>gelu</h3>
         <p>
             gelu هي activation function في GPT-2.
-            نسخة أنعم من relu: بدل ما تقطع القيم السالبة للصفر بشكل حاد،
+            نسخة أنعم من relu: بدلاً من قطع القيم السالبة للصفر بشكل حاد،
             تضغطها نحو الصفر احتمالياً، موزونة بـ gaussian cdf. الصيغة:
             <span class="mono">0.5 * x * (1 + erf(x / √2))</span>.
         </p>
         <p>
             تعيش في كتلة mlp: الطبقة المخفية تعرض من 768 إلى
-            3072، gelu تشتغل على كل عنصر، ثم طبقة المخرج ترجعها
-            لـ 768. كل token يمر من هالممر 12 مرة
+            3072، gelu تعمل على كل عنصر، ثم طبقة المخرج ترجعها
+            لـ 768. كل token يعبر هذا المسار 12 مرة
             (مرة لكل transformer block). التطبيق يستخدم
-            <span class="mono">libm::erff</span>، pure rust، بدون ربط libm، محمول عبر
+            <span class="mono">libm::erff</span>، pure rust، من دون ربط libm، محمول عبر
             المنصات.
         </p>
 
@@ -331,9 +329,9 @@
         <p>
             attention mask مصفوفة triangular، المواضع المستقبلية مضبوطة
             على <span class="mono">-inf</span>. هذا يمنع كل token من الانتباه للـ tokens
-            اللي تجي بعده. بالنسبة لـ token عند الموضع P: يقرا
+            التي تأتي بعده. بالنسبة لـ token عند الموضع P: يقرأ
             المواضع 0 إلى P من الـ cache، المواضع P+1 إلى N-1 مقنّعة.
-            نفس القناع يشتغل لكل من prefill و decode، ما فيه حاجة خاصة.
+            نفس القناع يعمل لكل من prefill و decode، لا حاجة خاصة.
         </p>
 
         <!-- ═══════════════════════════ 6. KV CACHE ═══════════════════════════ -->
@@ -348,15 +346,15 @@
 
         <p>
             <strong>Memory layout: <span class="mono">[layer][head][pos][head_dim]</span>.</strong>
-            كل طبقة عندها key slice متجاورة و value slice متجاورة. التخطيط
+            كل طبقة لديها key slice متجاورة و value slice متجاورة. التخطيط
             اختير بحيث <span class="mono">cache.get(layer)</span> يرجع شريحة متجاورة
             من جميع الرؤوس والمواضع لتلك الطبقة، والـ attention loop
             يفهرسها برياضيات strides ثابتة. لا pointer chasing.
         </p>
 
         <p>
-            <strong>خدعة الـ scratch buffer.</strong> scores الـ attention تُحسب
-            في بفر <span class="mono">qk_scratch</span> محجوز مسبقاً ومخزن
+            <strong>آلية الـ scratch buffer.</strong> scores الـ attention تُحسب
+            في مخزن مؤقت <span class="mono">qk_scratch</span> محجوز مسبقاً ومخزن
             داخل struct الـ kv cache. السعة تساوي <span class="mono">max_seq_len</span>،
             فـ <span class="mono">resize</span> لا يعيد التخصيص أبداً أثناء الـ inference.
             إزالة 144 تخصيص heap صغير لكل token مولّد (12
@@ -369,38 +367,38 @@
 
         <p>
             ستة bugs بالمجموع. أربع كانت off-by-one عادية وأخطاء
-            فهم formats. اثنين كانوا من النوع اللي ينتج
-            مخرجات تبدو تقريباً صحيحة لكنها غلط بشكل منهجي.
+            فهم formats. اثنين كانوا من النوع الذي ينتج
+            مخرجات تبدو تقريباً صحيحة لكنها خاطئة بشكل منهجي.
         </p>
 
         <div class="bug-card">
-            <div class="title">bug #4، التخطيط اللي كسر كل شيء</div>
+            <div class="title">bug #4، التخطيط الذي كسر كل شيء</div>
             <div class="symptom">
-                العَرَض: كل prompt ينتج هراء كامل. temperature
-                0، argmax حتمي، المفروض ينتج نفس المخرج كل
+                العَرَض: كل prompt ينتج نص غير مترابط كامل. temperature
+                0، argmax حتمي، من المفترض أن ينتج نفس المخرج كل
                 مرة، ينتج string عشوائي مختلف كل تشغيلة. llama.cpp
                 بنفس ملف gguf ينتج نص متماسك. النموذج كان
-                يقرا أوزان مبعثرة.
+                يقرأ أوزان مبعثرة.
             </div>
             <div class="cause">
                 السبب الجذري: GGUF يخزن tensors q8_0 و f16 بترتيب column-major
                 بحيث يكون البعد الداخلي مضاعف 32 (حجم block q8_0). رأس معلومات
                 الـ tensor يبلغ عن الشكل المنطقي
                 (مثلاً <span class="mono">[768, 50257]</span> لمصفوفة الـ embedding)، لكن
-                البفر المسطح المفكوك ضغطه موضوع column-major، بيانات
+                المخزن المؤقت المسطح المفكوك ضغطه موضوع column-major، بيانات
                 <span class="mono">tensor[i][j]</span> في الإزاحة
-                <span class="mono">j * rows + i</span>، مو <span class="mono">i * cols + j</span>. المحمل
+                <span class="mono">j * rows + i</span>، ليس <span class="mono">i * cols + j</span>. المحمل
                 أعاد تشكيل الـ dims المنطقية بترتيب row-major،
                 مبعثراً كل مصفوفة أوزان.
             </div>
             <div class="fix">
                 الإصلاح: بعد فك ضغط q8_0 أو تحويل f16، اعكس
-                متجه <span class="mono">dims</span> بحيث يطابق إعادة التشكيل التخزين
+                متجه <span class="mono">dims</span> بحيث يطابق إعادة التشكيل تخزين
                 column-major. ثم عدّل transposes في
                 <span class="mono">Gpt2::from_loader</span>: الـ embeddings لا تحتاج transpose يدوي
                 (المحمل عكس dims بالفعل، فـ
                 <span class="mono">index_select</span> يختار الصفوف مباشرة)، بينما أوزان
-                linear تحصل على <span class="mono">.transpose()</span> لاستعادة
+                linear تستخدم <span class="mono">.transpose()</span> لاستعادة
                 <span class="mono">[in_features, out_features]</span> للـ matmul.
             </div>
             <div
@@ -417,19 +415,19 @@
             <div class="title">bug #5، الكتابة الفوقية للـ KV cache prefill</div>
             <div class="symptom">
                 العَرَض: <span class="mono">"1, 2, 3, 4, 5"</span> →
-                <span class="mono">"/5/5/5/5/5/5/5/"</span>. النموذج قدر ينتبه لـ
-                token واحد بالكثير من الـ prompt. شاف آخر token ("5") ولا شيء
+                <span class="mono">"/5/5/5/5/5/5/5/"</span>. النموذج استطاع الانتباه لـ
+                token واحد بالكثير من الـ prompt. رأى آخر token ("5") ولا شيء
                 غيره.
             </div>
             <div class="cause">
                 السبب الجذري: <span class="mono">KVCache::append</span> كتب كل إدخال عند
                 <span class="mono">self.cursor</span>. لكن <span class="mono">cursor</span>
                 <em>لا</em> يتقدم عمداً حتى
-                <span class="mono">Gpt2::forward_with_cache</span> يخلص كل الـ 12 طبقة.
-                أثناء prefill، لما
+                <span class="mono">Gpt2::forward_with_cache</span> ينتهي من كل الـ 12 طبقة.
+                أثناء prefill، عندما
                 <span class="mono">Attention::forward_with_cache</span> دار عبر tokens الـ prompt
                 نادياً <span class="mono">append</span>، كل نداء وصل عند
-                <span class="mono">cursor = 0</span>، وكل واحد كتب فوق اللي قبله. فقط
+                <span class="mono">cursor = 0</span>، وكل واحد كتب فوق ما قبله. فقط
                 إسقاط k/v لآخر token من الـ prompt نجا؛ كل المواضع
                 الأخرى بقيت أصفار.
             </div>
@@ -438,10 +436,10 @@
                 <span class="mono">pos: usize</span>.
                 <span class="mono">Attention::forward_with_cache</span> يلتقط لقطة من
                 <span class="mono">cache.cursor()</span> قبل الحلقة ويمرر
-                <span class="mono">cursor + pos</span>، فيصل كل token لمكانه الصحيح
-                المطلق في الـ cache. المؤشر لا يزال يُقدم على دفعات
+                <span class="mono">cursor + pos</span>، فيصل كل token لمكانه الصحيحيح
+                المطلق في الـ cache. المؤشر لا يزال يتقدم على دفعات
                 بعدها في <span class="mono">Gpt2::forward_with_cache</span>، هذا الجزء
-                كان صحيح من البداية.
+                كان صحيحاً من البداية.
             </div>
             <div
                 class="symptom"
@@ -453,7 +451,7 @@
         </div>
 
         <!-- ═══════════════════════════ 8. WHAT WORKED FIRST TRY ═══════════════════════════ -->
-        <h2>8. what worked first try (اللي اشتغل من أول مرة)</h2>
+        <h2>8. what worked first try (ما نجح من المحاولة الأولى)</h2>
 
         <p>ثلاث قرارات هندسية أثمرت فوراً:</p>
 
@@ -462,7 +460,7 @@
                 <strong>transposed embeddings وقت التحميل.</strong> GGUF يخزن
                 token/position embeddings كـ <span class="mono">[vocab, embed]</span>. المحمل
                 يعكسهم بحيث <span class="mono">index_select</span> يختار صف
-                بشريحة متجاورة واحدة بدل ما يجمع عناصر متباعدة.
+                بشريحة متجاورة واحدة بدلاً من جمع عناصر متباعدة.
                 التكلفة: transpose واحد عند البدء. الفائدة: كل خطوة inference
                 تعمل memcpy بدل gather.
             </li>
@@ -476,7 +474,7 @@
             <li>
                 <strong><span class="mono">#[must_use]</span> على كل عمليات tensor البحتة.</strong>
                 عمليات tensor تخصص تخزيناً جديداً، لا تغيّر أبداً في المكان.
-                نداء <span class="mono">x.softmax()</span> بدون ربط النتيجة
+                نداء <span class="mono">x.softmax()</span> من دون ربط النتيجة
                 يُسقط التخصيص بصمت.
                 <span class="mono">#[must_use]</span> يجعل هذا compile error. كشف عن bug
                 نسيان إسناد مخرج layer norm راجع لـ <span class="mono">x</span> في
@@ -486,11 +484,11 @@
         </ul>
 
         <!-- ═══════════════════════════ 9. LESSONS ═══════════════════════════ -->
-        <h2>9. what I learned (اللي تعلمته)</h2>
+        <h2>9. what I learned (التي تعلمته)</h2>
 
         <p>
             بناء inference engine من الصفر يعلّمك أشياء
-            ما تتعلمها من استخدام واحد. ثلاثة دروس برزت.
+            لا تتعلمها من استخدام واحد. ثلاثة دروس برزت.
         </p>
 
         <ul>
@@ -503,7 +501,7 @@
                 يتعامل مع أبعاد متعددة على memory مسطحة.
             </li>
             <li>
-                <strong>الـ bugs المثيرة ما تخرب.</strong> لما تنسى تعكس dims
+                <strong>الأخطاء الصعبة لا تُعطّل التشغيل.</strong> عند نسيان عكس dims
                 في محمل GGUF، الأوزان تبقى قيماً شرعية من f32 — فقط
                 في غير محلها. النموذج ينتج tokens بثقة دون panic.
                 الطريقة الوحيدة للإمساك بها هي مقارنة المخرج
@@ -515,15 +513,15 @@
                 واحد بـ 8K مسبقاً أزال 144 تخصيصاً صغيراً لكل خطوة
                 decode. قبل التحسين، توزيع الـ attention كان يخصص
                 <span class="mono">Vec</span> جديد لكل score head — 144 تخصيص لكل
-                token. كانت هذه 6× من سرعة decode النهائية.
-                المكسب ما كان خوارزمي، كان allocation optimization،
-                وتتبع الـ malloc في الـ hot path هو اللي كشفه.
+                token. مثّلت هذه 6× من سرعة decode النهائية.
+                لم يكن المكسب خوارزمياً، كان allocation optimization،
+                وتتبع الـ malloc في الـ hot path هو الذي كشفه.
             </li>
         </ul>
 
         <div class="quote-block">
             <div class="text">
-                "ما بنيته مو محسّن. بس تقدر تقراه."
+                "ما بنيته ليس محسناً. لكنه قابل للقراءة."
             </div>
         </div>
 
@@ -542,7 +540,7 @@
 
         <p>
             هذا حوالي 11–12 tokens في الثانية أثناء decode. llama.cpp
-            على نفس الجهاز ونفس موديل f32 يشتغل حوالي 400–600 tok/s.
+            على نفس الجهاز ونفس موديل f32 يعمل حوالي 400–600 tok/s.
             الفجوة هي SIMD (AVX2 matmul هو 8× أسرع)، وليس الخوارزمية.
         </p>
 
@@ -557,7 +555,7 @@
         </table>
 
         <!-- ═══════════════════════════ 11. WHAT HAPPENED ═══════════════════════════ -->
-        <h2>11. what happened after first light (اللي صار بعد الضوء الأول)</h2>
+        <h2>11. what happened after first light (التي صار بعد الضوء الأول)</h2>
 
         <p>
             كل الـ primitives الأربع الموصوفة في النسخة الأصلية من هذا القسم
@@ -617,7 +615,7 @@
                 · MIT license
             </p>
             <p style="margin-top: 0.35rem">
-                مكتوب بـ Rust. يشتغل على المعالج. لا CUDA. لا PyTorch. فقط tensors.
+                مكتوب بـ Rust. يعمل على المعالج. لا CUDA. لا PyTorch. فقط tensors.
                 أيضاً أداة بحثية — نمط probe لاستخراج الـ activations.
             </p>
         </footer>

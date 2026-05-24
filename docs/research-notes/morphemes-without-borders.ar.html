@@ -35,12 +35,12 @@
             <span class="tag">arXiv:2603.15773</span>
         </div>
         <h2>the core claim (الادعاء الأساسي)</h2>
-        <p>محاذاة الـ token مع الـ morpheme ما تتنبأ بقدرة النموذج على توليد أشكال الجذر والوزن العربي. tokenizer يقطع الـ morphemes بشكل نظيف ما يضمن توليد جيد، و tokenizer يقطع زيادة عن اللزوم (GPT-4) ما يمنعه.</p>
+        <p>محاذاة الـ token مع الـ morpheme لا تتنبأ بقدرة النموذج على توليد أشكال الجذر والوزن العربي. tokenizer يقطع الـ morphemes بشكل نظيف لا يضمن توليد جيد، و tokenizer يقطع زيادة عن اللزوم (GPT-4) لا يمنعه.</p>
         <h2>why Arabic morphology is a good test (ليش الصرف العربي اختبار جيد)</h2>
-        <p>العربي يستخدم <strong>نظام الجذر والوزن</strong> (non-concatenative). جذور ساكنة تندمج مع قوالب صوتية لتكوين الكلمات. مثال: الجذر <em>ktb</em> (كتب) + الوزن <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (مكتوب). الجذر والوزن يتداخلون؛ ما هم متسلسلين مثل prefix+stem+suffix في الإنجليزي، وهذا يخلي العربي stress test للـ subword tokenizers (BPE، Unigram، WordPiece) المبنية للصرف التسلسلي.</p>
+        <p>العربي يستخدم <strong>نظام الجذر والوزن</strong> (non-concatenative). جذور ساكنة تندمج مع قوالب صوتية لتكوين الكلمات. مثال: الجذر <em>ktb</em> (كتب) + الوزن <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (مكتوب). الجذر والوزن يتداخلون؛ ليسا متسلسلين مثل prefix+stem+suffix في الإنجليزي، وهذا يجعل العربي stress test للـ subword tokenizers (BPE، Unigram، WordPiece) المبنية للصرف التسلسلي.</p>
         <h2>experimental design (التصميم التجريبي)</h2>
         <h3>part 1: tokenizer morphological alignment (الجزء 1: المحاذاة الصرفية)</h3>
-        <p>قاسوا قد إيش قطع الـ tokenizer تطابق حدود الـ morpheme المثالية من محللات CAMEL و Farasa، على الفصحى (ATB3) واللهجات (BOLT). المقاييس:</p>
+        <p>قاسوا مدى قطع الـ tokenizer تطابق حدود الـ morpheme المثالية من محللات CAMEL و Farasa، على الفصحى (ATB3) واللهجات (BOLT). المقاييس:</p>
         <ul>
             <li><strong>fertility</strong>: tokens لكل كلمة</li>
             <li><strong>morpheme F<sub>1</sub></strong>: تطابق المورفيم الدقيق</li>
@@ -51,7 +51,7 @@
         <p>ثلاث مهام probing باستخدام جذور حقيقية و nonce roots:</p>
         <ul>
             <li><strong>root-pattern real</strong>: طبّق وزن على جذر ثلاثي حقيقي</li>
-            <li><strong>root-pattern nonce</strong>: نفس المهمة مع جذور مخترعة (تختبر التعميم، مو الحفظ)</li>
+            <li><strong>root-pattern nonce</strong>: نفس المهمة مع جذور مخترعة (تختبر التعميم، ليس الحفظ)</li>
             <li><strong>affix-build</strong>: ترتيب لواحق تسلسلية على كلمة أساس</li>
         </ul>
         <h3>models evaluated (النماذج المُقيمة)</h3>
@@ -60,47 +60,47 @@
         <h2>key findings (النتائج الرئيسية)</h2>
         <div class="callout">
             <div class="label">finding 1</div>
-            <p><strong>ما فيه ارتباط بين محاذاة الـ tokenizer وأداء التوليد.</strong> GPT-4o سجل أعلى درجة عبر كل المهام (97% دقة nonce) مع <em>أسوأ</em> محاذاة (17% boundary precision). ALLAM كان عنده أفضل MCR (83-86%) لكنه انهار لـ 20% على nonce words.</p>
+            <p><strong>ما فيه ارتباط بين محاذاة الـ tokenizer وأداء التوليد.</strong> GPT-4o سجل أعلى درجة عبر كل المهام (97% دقة nonce) مع <em>أسوأ</em> محاذاة (17% boundary precision). ALLAM كان لديه أفضل MCR (83-86%) لكنه انهار لـ 20% على nonce words.</p>
         </div>
         <div class="callout">
             <div class="label">finding 2</div>
-            <p><strong>النماذج المخصصة للعربي ما تقدر تتعامل مع nonce words.</strong> ALLAM و FANAR ينهارون بشكل حاد على nonce roots. يحفظون lexemes، مو قواعد منتجة. الـ tokenizer الصرفي لـ FANAR ما ساعده يعمم.</p>
+            <p><strong>النماذج المخصصة للعربية لا تستطيع التعامل مع nonce words.</strong> ALLAM و FANAR ينهارون بشكل حاد على nonce roots. يحفظون lexemes، ليس قواعد منتجة. الـ tokenizer الصرفي لـ FANAR لم يساعده على التعميم.</p>
         </div>
         <div class="callout">
             <div class="label">finding 3</div>
-            <p><strong>الـ prompts بالإنجليزي أفضل من الـ prompts بالعربي.</strong> معظم النماذج كان أداؤها أسوأ لما تلقّت تعليمات بالعربي. غالباً أثر جانبي لبيانات instruction-tuning المليانة إنجليزي.</p>
+            <p><strong>الـ prompts بالإنجليزي أفضل من الـ prompts بالعربي.</strong> معظم النماذج كان أداؤها أسوأ عندما تلقّت تعليمات بالعربي. غالباً أثر جانبي لبيانات instruction-tuning الممتلئة بالمحتوى الإنجليزي.</p>
         </div>
         <div class="callout">
             <div class="label">finding 4</div>
-            <p><strong>الـ one-shot يساعد النماذج الضعيفة، مو القوية.</strong> GPT-4 و GPT-4o كانوا ثابتين بين zero-shot و one-shot. LLaMA-3، Qwen-3، و Cohere تحسنوا مع مثال. يحتاجون scaffolding سياقي عشان يفهمون التحويل.</p>
+            <p><strong>الـ one-shot يساعد النماذج الضعيفة، ليس القوية.</strong> GPT-4 و GPT-4o كانوا ثابتين بين zero-shot و one-shot. LLaMA-3، Qwen-3، و Cohere تحسنوا مع مثال. يحتاجون scaffolding سياقي لكي تفهم التحويل.</p>
         </div>
         <div class="callout">
             <div class="label">finding 5</div>
-            <p><strong>خمسة أنماط خطأ.</strong> تطبيق خاطئ للوزن (الجذر صحيح، القالب غلط)، تشويه الجذر (تغيرت الحروف الساكنة)، استبدال بكلمة حقيقية (إخراج كلمة صحيحة بدل تطبيق الوزن)، ترتيب خاطئ للواحق، واقتطاع جزئي.</p>
+            <p><strong>خمسة أنماط خطأ.</strong> تطبيق خاطئ للوزن (الجذر صحيح، القالب خاطئ)، تشويه الجذر (تغيرت الحروف الساكنة)، استبدال بكلمة حقيقية (إخراج كلمة صحيحة بدل تطبيق الوزن)، ترتيب خاطئ للواحق، واقتطاع جزئي.</p>
         </div>
         <hr>
-        <h2>what this means for Arabic NLP research (وش يعني هذا لبحث NLP العربي)</h2>
+        <h2>what this means for Arabic NLP research (دلالة ذلك لبحث NLP العربي)</h2>
         <h3>1. morphology-aware tokenizers may not be worth the complexity</h3>
         <p>الـ tokenizers المخصصة للغة (MorphBPE، Splinter، إلخ) مكلفة في البناء. التدريب المسبق على نطاق واسع و instruction tuning يبدو إنها تعوض، أو حتى تتفوق عليها. tokenizer GPT-4o يقطع العربي زيادة عن اللزوم (fertility أكبر من 3، boundary precision 17%) ومع ذلك يصيب أنماط nonce 97% من الوقت.</p>
         <h3>2. instruction-following matters more than tokenizer design</h3>
-        <p>الاستدلال التركيبي + اتباع التعليمات يستبدلون التحليل الصرفي الصريح. النماذج اللي تتبع التعليمات تطبق القواعد الصرفية باستمرار. النماذج اللي ما تقدر تتبع التعليمات تفشل بغض النظر عن جودة الـ tokenizer.</p>
+        <p>الاستدلال التركيبي + اتباع التعليمات يستبدلون التحليل الصرفي الصريح. النماذج التي تتبع التعليمات تطبق القواعد الصرفية باستمرار. النماذج التي لا تستطيع اتباع التعليمات تفشل بغض النظر عن جودة الـ tokenizer.</p>
         <h3>3. Arabic-centric models have room to grow</h3>
-        <p>ALLAM و FANAR كان أداؤهم أقل من GPT-4 و GPT-4o في كل مهمة مع إن عندهم بيانات تدريب عربية أكثر. الحجم ومنهجية الـ tuning يبدو إنها تغلب ميزة البيانات المخصصة للغة في الـ LLMs الحالية.</p>
+        <p>ALLAM و FANAR كان أداؤهم أقل من GPT-4 و GPT-4o في كل مهمة مع إن لديهم بيانات تدريب عربية أكثر. الحجم ومنهجية الـ tuning يبدو إنها تغلب ميزة البيانات المخصصة للغة في الـ LLMs الحالية.</p>
         <h3>4. real-word-only benchmarks hide failure modes</h3>
         <p>ALLAM سجل 67% على الجذور الحقيقية، 20% على nonce. فجوة 47 نقطة. nonce probes هي الطريقة الوحيدة للتمييز بين الحفظ و genuine productivity. benchmarks بدون شرط nonce تعطي صورة ناقصة.</p>
         <h3>5. future directions (اتجاهات مستقبلية)</h3>
         <ul>
-            <li><strong>تعلم الصرف بدون اعتماد على الـ tokenization</strong>: علّم الـ LLMs الصرف من خلال البيانات والـ tuning، مو tokenizers مخصصة</li>
+            <li><strong>تعلم الصرف بدون اعتماد على الـ tokenization</strong>: علّم الـ LLMs الصرف من خلال البيانات والـ tuning، ليس tokenizers مخصصة</li>
             <li><strong>tokenization تكيفي/هجين</strong>: معالجة على مستوى الحرف فقط عند الحاجة الصرفية</li>
             <li><strong>تجارب مضبوطة</strong>: عزل تصميم الـ tokenizer عن المعمارية والبيانات والـ tuning</li>
         </ul>
         <hr>
         <h2>limitations (القيود)</h2>
         <ul>
-            <li>مهمة التوليد تخلط الصرف مع اتباع التعليمات؛ النماذج اللي ما تقدر تتبع تنسيق التعليمات تسجل أقل بغض النظر عن كفاءتها الصرفية</li>
-            <li>الارتباط ما يثبت السببية: المعماريات والبيانات والـ tuning متداخلة</li>
-            <li>7 نماذج فقط، 13 وزن؛ بيانات أكثر راح تساعد</li>
-            <li>اللهجات العربية (BOLT) اختُبرت للمحاذاة لكن مو للتوليد</li>
+            <li>مهمة التوليد تخلط الصرف مع اتباع التعليمات؛ النماذج التي لا تستطيع اتباع تنسيق التعليمات تسجل أقل بغض النظر عن كفاءتها الصرفية</li>
+            <li>الارتباط لا يثبت السببية: المعماريات والبيانات والـ tuning متداخلة</li>
+            <li>7 نماذج فقط، 13 وزن؛ بيانات أكثر سوف تساعد</li>
+            <li>اللهجات العربية (BOLT) اختُبرت للمحاذاة لكن ليس للتوليد</li>
         </ul>
         <footer>
             <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a>
