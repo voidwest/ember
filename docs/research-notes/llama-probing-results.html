@@ -388,19 +388,6 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
             <li><strong>intervention experiments.</strong> if the representation–behavior gap is about instruction-following connecting representations to output, causal interventions (activation patching, steering vectors) could test whether directing attention toward the morphological subspace improves generation. this moves from correlational probing to causal mechanistic analysis.</li>
         </ol>
 
-        <h3>write-up target</h3>
-
-        <p>if the 1B/3B/8B scaling story holds with additional prompt conditions and non-linear probes, this is a clean 6–8 page findings paper. the narrative arc:</p>
-
-        <ol>
-            <li>Alakeel et al. showed tokenizer alignment doesn't predict morphological generation.</li>
-            <li>we ask: what's happening inside the model? do the representations exist even when behavior fails?</li>
-            <li><strong>yes.</strong> all three LLaMA scales have structured, linearly separable morphological information recoverable from hidden states.</li>
-            <li><strong>but.</strong> the recoverable structure doesn't appear to influence outputs under these prompts ,  every model outputs <code>"The"</code>.</li>
-            <li><strong>and.</strong> scaling is non-monotonic: root becomes harder to linearly decode at mid-layers in larger models; pattern becomes linearly accessible at the surface at 3B.</li>
-            <li><strong>implication.</strong> the bottleneck may not be whether recoverable morphological structure exists; it may be in how strongly that structure shapes outputs, likely influenced by instruction-tuning quality.</li>
-        </ol>
-
         <!-- ════════════════════════════════════════════════ -->
         <h2>references</h2>
 
