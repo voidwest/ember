@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="what LLaMA knows about Arabic morphology (and won't say)" />
+        <meta property="og:description" content="Probing LLaMA 3.2 1B/3B/8B with linear classifiers, CCA, and RSA reveals structured morphological representations — but every model outputs 'The'. A scaling analysis with non-monotonic results." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/llama-probing-results.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>what LLaMA knows about Arabic morphology (and won't say) · research notes</title>
+        <link rel="stylesheet" href="/style.css" />
+        <style>
+            /* ── chart images ────────────────────────────── */
+            .chart {
+                display: block;
+                max-inline-size: 100%;
+                block-size: auto;
+                margin-block: 1.2rem;
+                border-radius: 6px;
+                background: #0d1117;
+            }
+            .chart-full {
+                max-inline-size: 100%;
+            }
+
+            /* ── data tables ────────────────────────────── */
+            .data-table {
+                inline-size: 100%;
+                border-collapse: collapse;
+                margin-block: 1rem;
+                font-size: 0.82rem;
+                line-height: 1.5;
+            }
+            .data-table th {
+                text-align: start;
+                padding-block: 0.4rem;
+                padding-inline: 0.5rem;
+                border-block-end: 1px solid var(--border);
+                color: var(--text-dim);
+                font-weight: 600;
+                font-size: 0.76rem;
+                text-transform: uppercase;
+                letter-spacing: 0.03em;
+            }
+            .data-table td {
+                padding-block: 0.35rem;
+                padding-inline: 0.5rem;
+                border-block-end: 1px solid var(--border);
+                color: var(--text);
+                font-family: var(--mono-font);
+                font-size: 0.8rem;
+            }
+            .data-table tr:last-child td {
+                border-block-end: none;
+            }
+            .data-table .num {
+                text-align: end;
+                font-variant-numeric: tabular-nums;
+            }
+            .data-table .hi {
+                color: var(--accent);
+                font-weight: 600;
+            }
+
+            /* ── comparison block ────────────────────────── */
+            .comparison {
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
+                gap: 0.8rem;
+                margin-block: 1rem;
+                font-size: 0.82rem;
+            }
+            @media (max-width: 700px) {
+                .comparison {
+                    grid-template-columns: 1fr;
+                }
+            }
+            .comparison .col {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 5px;
+                padding: 0.8rem 0.9rem;
+            }
+            .comparison .col .name {
+                color: var(--accent2);
+                font-weight: 600;
+                margin-block-end: 0.5rem;
+                font-size: 0.88rem;
+            }
+            .comparison .col .stat {
+                display: flex;
+                justify-content: space-between;
+                padding-block: 0.18rem;
+                border-block-end: 1px solid var(--border);
+                font-size: 0.78rem;
+            }
+            .comparison .col .stat:last-child {
+                border-block-end: none;
+            }
+            .comparison .col .stat .label {
+                color: var(--text-dim);
+            }
+            .comparison .col .stat .value {
+                color: var(--text);
+                font-family: var(--mono-font);
+            }
+            .comparison .col .stat .bad {
+                color: var(--red);
+            }
+            .comparison .col .stat .good {
+                color: var(--green);
+            }
+        </style>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script defer>
+        document.addEventListener('DOMContentLoaded', function() {
+            document.querySelectorAll('pre code').forEach(function(el) {
+                hljs.highlightElement(el);
+            });
+        });
+    </script>
+
+</head>
+    <body>
+        <a href="/research-notes/llama-probing-results.ar.html" class="lang-toggle" title="العربية">عربي</a>
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>what LLaMA knows about Arabic morphology (and won't say)</h1>
+
+        <div class="meta">
+            probing internal representations across model scales<br>
+            mohammed al-thobaiti · 2026-05-26<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">ember</span>
+            <span class="tag model">LLaMA</span>
+            <span class="tag metric">scaling</span>
+        </div>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>motivation</h2>
+
+        <p>the <a href="/research-notes/morphemes-without-borders.html">Alakeel et al. (2026)</a> paper left an open question: GPT-4o gets 97% on nonce Arabic root-pattern generation despite having the worst tokenizer alignment in the study (17% boundary precision). ALLAM, with the best tokenizer alignment, collapses to 20% on the same task. tokenizer quality doesn't predict morphological competence — so what does?</p>
+
+        <p>the authors suggested "compositional reasoning + instruction-following" as the mechanism. but that's a behavioral description. this experiment asks the mechanistic question: <strong>what do the internal representations actually look like?</strong></p>
+
+        <p>i used <a href="/ember/">ember</a>, a from-scratch inference engine that gives direct access to hidden states at every transformer block, to probe LLaMA 3.2 1B, LLaMA 3.2 3B, and LLaMA 3.1 8B on a nonce root-pattern task. 20 invented triliteral roots (from the Alakeel dataset) crossed with 10 Arabic morphological patterns = 200 stimuli, all Latin-transliterated for ASCII-safe probing. four analysis methods:</p>
+
+        <ul>
+            <li><strong>linear probes</strong> — per-layer logistic regression: is root identity (20-way) or pattern identity (10-way) linearly decodable from hidden states?</li>
+            <li><strong>CCA</strong> — canonical correlation analysis: how similar are representations across layers? are root and pattern probe weights disentangled?</li>
+            <li><strong>RSA</strong> — representational similarity analysis: do layers organize stimuli the same way geometrically?</li>
+            <li><strong>divergence</strong> — correct-vs-incorrect: at which layer do hidden states for correct and incorrect predictions separate?</li>
+        </ul>
+
+        <div class="callout observation">
+            <div class="label">Observation</div>
+            <p>all three models output <code>"The"</code> for every single stimulus. 0/200 correct across every scale. the morphological representations exist, they're structured, they're disentangled — but they never reach the output.</p>
+        </div>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>the pipeline</h2>
+
+        <div class="pipeline-block">
+<pre><code>generate_stimuli.py        → stimuli/nonce_root_pattern.json  (200 stimuli)
+ember --probe              → activations.npy + correctness.json
+train_linear_probe.py      → probes.npz           (root + pattern accuracy per layer)
+cca_analysis.py            → cca.npz              (layer similarity + disentanglement)
+rsa_analysis.py            → rsa.npz              (representational similarity)
+divergence_analysis.py     → divergence.npz        (correct vs incorrect gap)
+plot_results.py --dark     → probe_results.png     (3×2 figure)
+</code></pre>
+        </div>
+
+        <p>all code is in the <a href="https://github.com/voidwest/ember">ember repository</a>. the pipeline runs end-to-end in under 15 minutes per model on a consumer laptop, Q8_0 quantization keeps the 8B model under 8 GB RAM.</p>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>results</h2>
+
+        <!-- ── 1B chart ────────────────────────────────────── -->
+        <h3>LLaMA 3.2 1B (16 layers, 2048-dim hidden)</h3>
+
+        <img class="chart" src="/plots/llama1b_probe_results.png"
+             alt="LLaMA 3.2 1B probing results: 3×2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
+             loading="lazy" />
+
+        <p><strong>root identity</strong> is trivially decodable at every layer (92–100% accuracy, flat curve). the model never loses track of which root it's processing.</p>
+
+        <p><strong>pattern identity</strong> shows a clean acquisition curve: 73% at layer 0, jumps to 92% at layer 1, 97% at layer 2, then saturates at 100% from layer 3 onward. the first three transformer blocks do the morphological work.</p>
+
+        <p><strong>CCA</strong> self-similarity starts at 0.92 (layer 0) and saturates rapidly (0.98 by layer 1, 0.999 by layer 4). representations stabilize fast. <strong>RSA</strong> reveals a sharp representational reorganization at layers 3–4: the next-neighbor correlation drops to 0.46, then recovers — a discrete phase transition coinciding with pattern acquisition.</p>
+
+        <p><strong>root-pattern subspace CCA</strong> declines from 0.25 to 0.10 across layers — the representations become progressively more disentangled with depth.</p>
+
+        <hr />
+
+        <!-- ── 3B chart ────────────────────────────────────── -->
+        <h3>LLaMA 3.2 3B (28 layers, 3072-dim hidden)</h3>
+
+        <img class="chart" src="/plots/llama3b_probe_results.png"
+             alt="LLaMA 3.2 3B probing results: note the U-shaped root accuracy dip and flat 100% pattern accuracy"
+             loading="lazy" />
+
+        <p>this is where things get strange.</p>
+
+        <p><strong>root identity</strong> develops a <strong>U-shaped dip</strong>. it starts at 99%, peaks at 100% (layers 2–3), then erodes across mid-layers: 94% → 90% → bottoms at <strong>78% at layer 18–19</strong>, before partially recovering to 82% in the final layers. the model is doing something in mid-layers that makes root identity <em>harder</em> to linearly decode, not easier.</p>
+
+        <p><strong>pattern identity</strong> is dead flat at 100% for all 28 layers. pattern has become a surface-level feature — no depth required to separate the 10 pattern classes linearly. the 3B model has reorganized its representational geometry so that pattern identity sits on a trivially accessible subspace from the very first layer.</p>
+
+        <p><strong>CCA</strong> self-similarity starts at 0.889 at layer 0 (slightly lower than 1B's 0.921) but stabilizes faster: 0.977 by layer 1, 0.995 by layer 3. the heatmap is essentially uniform bright yellow from layer 4 onward. <strong>RSA</strong> shows smooth, continuous transitions with no discrete phase boundary — unlike 1B's sharp layer 3–4 break.</p>
+
+        <p><strong>root-pattern CCA</strong> is the strongest disentanglement of all three models: 0.02–0.07 across all layers, minimum 0.021 at layer 1. root and pattern subspaces are nearly orthogonal everywhere.</p>
+
+        <div class="callout observation">
+            <div class="label">Observation</div>
+            <p><strong>3B is an anomalous regime.</strong> 1B and 8B both show pattern acquisition curves (rising from 69–73% to 100%). 3B is flat 100%. 1B and 8B both have ~0.21–0.25 root-pattern CCA at early layers. 3B starts at 0.07. something about the 3B capacity/depth ratio creates a qualitatively different representational strategy — and the model <a href="#caveats">has no Arabic output</a> to show for it.</p>
+        </div>
+
+        <hr />
+
+        <!-- ── 8B chart ────────────────────────────────────── -->
+        <h3>LLaMA 3.1 8B (32 layers, 4096-dim hidden)</h3>
+
+        <img class="chart" src="/plots/llama8b_probe_results.png"
+             alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, fusion-then-separate subspace curve"
+             loading="lazy" />
+
+        <p><strong>root identity</strong> deepens the U-dip: after a brief peak at 100% (layer 1), it descends through 94% → 88% → 75% → bottoms at <strong>70% at layer 19</strong>, partially recovers to 89%, then drops again to 79% at the final layer. the curve is textured, not a clean U — jagged descent with a secondary dip at the end. bigger models make root identity progressively harder to linearly decode in mid-layers.</p>
+
+        <p><strong>pattern identity</strong> returns to a staircase: 69% at layer 0 → 82% → 92% → 100% by layer 3. compressed but present — more like 1B than 3B.</p>
+
+        <p><strong>CCA</strong> starts dramatically lower: <strong>0.566 at layer 0</strong> — the noisiest early representation of any model. then climbs: 0.68 (layer 1) → 0.94 (layer 2) → 0.99 (layer 4). the heatmap has a visibly dark bottom-left corner that brightens across the first 4 layers. <strong>RSA</strong> layer 0→1 correlation is 0.76, then smooth 0.96–0.999 thereafter.</p>
+
+        <p><strong>root-pattern CCA</strong> shows the most interesting curve: it <em>rises</em> to a <strong>peak of 0.345 at layer 4</strong> — the representations briefly become more entangled — then steadily declines to 0.078 at layer 30. this is a <strong>fusion-then-separate</strong> strategy: early layers fuse root and pattern into a combined representation; deeper layers disentangle them. neither 1B (monotonic decline) nor 3B (flat-near-zero) shows this two-phase pattern.</p>
+
+        <div class="callout key-finding">
+            <div class="label">Key Finding</div>
+            <p><strong>root probing is non-monotonic with scale.</strong> 1B has flat-high root accuracy. 3B develops a U-dip (78% trough). 8B deepens it further (70% trough). root identity becomes <em>less</em> linearly accessible as models get larger — the information is presumably still there but encoded in a format linear probes can't recover from mid-layer states.</p>
+        </div>
+
+        <hr />
+
+        <!-- ── comparison grid ─────────────────────────────── -->
+        <h3>side-by-side</h3>
+
+        <div class="comparison">
+            <div class="col">
+                <div class="name">LLaMA 3.2 1B</div>
+                <div class="stat"><span class="label">layers</span><span class="value">16</span></div>
+                <div class="stat"><span class="label">hidden dim</span><span class="value">2048</span></div>
+                <div class="stat"><span class="label">root acc (best)</span><span class="value good">100%</span></div>
+                <div class="stat"><span class="label">root acc (worst)</span><span class="value">92%</span></div>
+                <div class="stat"><span class="label">pattern L0 acc</span><span class="value">73%</span></div>
+                <div class="stat"><span class="label">pattern L3+ acc</span><span class="value good">100%</span></div>
+                <div class="stat"><span class="label">CCA L0 self</span><span class="value">0.921</span></div>
+                <div class="stat"><span class="label">R-P subspace range</span><span class="value">0.25→0.10</span></div>
+                <div class="stat"><span class="label">RSA transition</span><span class="value bad">sharp (L3→4: 0.46)</span></div>
+                <div class="stat"><span class="label">gen accuracy</span><span class="value bad">0/200</span></div>
+            </div>
+            <div class="col">
+                <div class="name">LLaMA 3.2 3B</div>
+                <div class="stat"><span class="label">layers</span><span class="value">28</span></div>
+                <div class="stat"><span class="label">hidden dim</span><span class="value">3072</span></div>
+                <div class="stat"><span class="label">root acc (best)</span><span class="value good">100%</span></div>
+                <div class="stat"><span class="label">root acc (worst)</span><span class="value bad">78% (L18)</span></div>
+                <div class="stat"><span class="label">pattern L0 acc</span><span class="value good">100%</span></div>
+                <div class="stat"><span class="label">pattern L3+ acc</span><span class="value good">100%</span></div>
+                <div class="stat"><span class="label">CCA L0 self</span><span class="value">0.889</span></div>
+                <div class="stat"><span class="label">R-P subspace range</span><span class="value">0.07→0.02</span></div>
+                <div class="stat"><span class="label">RSA transition</span><span class="value">smooth</span></div>
+                <div class="stat"><span class="label">gen accuracy</span><span class="value bad">0/200</span></div>
+            </div>
+            <div class="col">
+                <div class="name">LLaMA 3.1 8B</div>
+                <div class="stat"><span class="label">layers</span><span class="value">32</span></div>
+                <div class="stat"><span class="label">hidden dim</span><span class="value">4096</span></div>
+                <div class="stat"><span class="label">root acc (best)</span><span class="value good">100%</span></div>
+                <div class="stat"><span class="label">root acc (worst)</span><span class="value bad">70% (L19)</span></div>
+                <div class="stat"><span class="label">pattern L0 acc</span><span class="value">69%</span></div>
+                <div class="stat"><span class="label">pattern L3+ acc</span><span class="value good">100%</span></div>
+                <div class="stat"><span class="label">CCA L0 self</span><span class="value bad">0.566</span></div>
+                <div class="stat"><span class="label">R-P subspace range</span><span class="value">0.21→0.08</span></div>
+                <div class="stat"><span class="label">RSA transition</span><span class="value">smooth</span></div>
+                <div class="stat"><span class="label">gen accuracy</span><span class="value bad">0/200</span></div>
+            </div>
+        </div>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>discussion</h2>
+
+        <h3>1. the representation–behavior gap</h3>
+
+        <p>this is the central puzzle. all three models have linearly decodable morphological structure — root identity is classifiable at 70–100% accuracy everywhere, pattern at 100% by layer 3 or sooner. the representations exist, they're structured, and they're strongly disentangled (subspace CCA &lt; 0.1 in deep layers).</p>
+
+        <p>yet every model outputs <code>"The"</code> for every stimulus. the morphological knowledge is present in the hidden states but never reaches the output tokens.</p>
+
+        <p>this narrows the Alakeel et al. question considerably. the failure mode is not "the model doesn't know morphology." it's "the model doesn't <em>use</em> what it knows during autoregressive generation." GPT-4o's 97% accuracy on the same task, with the same (or worse) tokenizer, suggests the difference is in instruction-tuning: how the representation-to-output pathway is wired during training.</p>
+
+        <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results refine this: <strong>instruction-following is what connects internal morphological representations to output behavior.</strong> the representations are there without GPT-4o-level tuning; the behavior is not.</p>
+
+        <h3>2. non-monotonic scaling</h3>
+
+        <p>"bigger is better" doesn't describe root probing. the accuracy curve goes from flat (1B) to U-shaped (3B) to more deeply U-shaped (8B). this is consistent with the hypothesis from the <a href="/research-notes/arabic-morphology-probing.html">original research plan</a>:</p>
+
+        <blockquote>
+            <p><em>"if the inflection point is between 1B and 3B, this means explicit morphological injection might only help below ~1B parameters. above that, the model learns it — but possibly in a form that linear probes can't access."</em></p>
+        </blockquote>
+
+        <p>the data suggests the inflection point isn't about <em>whether</em> the model learns morphology, but <strong>how</strong> it encodes it. at 1B, root identity lives in a linearly accessible subspace at every layer. at 3B+, root identity gets distributed or transformed in mid-layers into a format that logistic regression can't recover — but the information is presumably still present (since accuracy partially recovers in deeper layers). this is a qualitative change in representational strategy, not a failure.</p>
+
+        <h3>3. pattern trivialization at 3B</h3>
+
+        <p>the most dramatic scale effect: pattern requires 3 layers of computation at both 1B and 8B, but zero layers at 3B. this is not a smooth trend — 1B → 3B → 8B at layer 0 is 73% → 100% → 69%. the 3B model is an outlier.</p>
+
+        <p>possible explanations:</p>
+
+        <ol>
+            <li><strong>architectural regime.</strong> 3B has 28 layers with 3072-dim hidden states. the capacity-to-depth ratio may create a regime where surface features saturate early layers in a way that doesn't happen at 16L/2048d (1B) or 32L/4096d (8B).</li>
+            <li><strong>training data artifact.</strong> 3B may have seen more transliterated Arabic or morphological pattern-description data during pretraining, making pattern recognition a trivial surface operation.</li>
+            <li><strong>representational trade-off.</strong> making pattern linearly accessible everywhere forces root identity to be encoded in a more distributed, non-linear format — producing the U-dip. the two effects may be causally linked.</li>
+        </ol>
+
+        <h3>4. fusion-then-separate at 8B</h3>
+
+        <p>the 8B root-pattern CCA curve (rise to 0.345 at layer 4, then decline to 0.078) suggests a two-phase encoding strategy: early layers fuse root and pattern into a combined representation; deeper layers disentangle them. this hump-and-decline shape is absent at both smaller scales.</p>
+
+        <p>if this pattern replicates across model families (Qwen, Mistral), it could be a signature of compositional morphological encoding that emerges at larger scale — the model learns an intermediate fused representation before factorizing it into independent dimensions. this is consistent with how humans process non-concatenative morphology: the root and pattern are inseparable in the surface form and only become distinct at a more abstract level.</p>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2 id="caveats">caveats</h2>
+
+        <div class="callout hypothesis">
+            <div class="label">Caveat 1</div>
+            <p><strong>one model family.</strong> these results are LLaMA 3.2/3.1 only. we don't know if the U-shaped root dip is a LLaMA architectural artifact (RoPE + GQA + SwiGLU + specific training data mix) or a general property of Transformer scaling. a Qwen or Mistral run at comparable sizes would test this in a day of compute.</p>
+        </div>
+
+        <div class="callout hypothesis">
+            <div class="label">Caveat 2</div>
+            <p><strong>prompt format.</strong> all current data uses English zero-shot prompts. the <code>"The"</code> output might be a chat-template artifact — LLaMA may be defaulting to an English continuation because it doesn't recognize the morphological instruction format. testing Arabic prompts, one-shot prompts, and different output constraints could change the story. if LLaMA produces actual transliterated Arabic with a better prompt, divergence analysis becomes possible and the representation–behavior gap may narrow.</p>
+        </div>
+
+        <div class="callout hypothesis">
+            <div class="label">Caveat 3</div>
+            <p><strong>sample size.</strong> 200 stimuli for 20-way classification is 10 samples per class before cross-validation. the probes may be underpowered in the mid-layer trough. auto fold-reduction helps, but more stimuli or repeated forward passes with different seeds would tighten error bars. the U-dip could partially be a sample-size artifact — though its consistency across 3B and 8B (and deepening with scale) argues against this.</p>
+        </div>
+
+        <div class="callout hypothesis">
+            <div class="label">Caveat 4</div>
+            <p><strong>no non-linear probes yet.</strong> the most interesting claim — "root identity becomes non-linearly encoded in mid-layers" — is currently an interpretation. a 2-layer MLP probe would test it directly. if MLP probes recover 95%+ accuracy in the 70–78% trough, it's a second strong finding. if they don't, the information might genuinely be attenuated, which is a different (and still interesting) story.</p>
+        </div>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>next steps</h2>
+
+        <h3>immediate</h3>
+
+        <ol>
+            <li><strong>test non-zero-shot and Arabic prompts.</strong> the <code>en_one</code>, <code>ar_zero</code>, and <code>ar_one</code> templates exist in the stimulus set but haven't been run. the Alakeel paper found one-shot helps weaker models and Arabic prompts are worse behaviorally — but the impact on internal representations is unknown.</li>
+            <li><strong>complete the 8B pipeline.</strong> CCA and RSA data is collected; run the full analysis and confirm the fusion-then-separate CCA curve holds at higher resolution.</li>
+            <li><strong>non-linear probes.</strong> a 2-layer MLP on mid-layer activations. ~20 lines of PyTorch. directly tests whether root identity is non-linearly encoded vs. genuinely attenuated.</li>
+        </ol>
+
+        <h3>short-term</h3>
+
+        <ol start="4">
+            <li><strong>cross-model CCA.</strong> compare representations across scales (1B→3B, 3B→8B). the <code>cca_cross_model</code> function is already implemented. do the models build similar morphological subspaces?</li>
+            <li><strong>GPT-2 baseline.</strong> no Arabic pretraining, English-only BPE tokenizer. serves as a negative control: do representations look qualitatively different without Arabic exposure?</li>
+            <li><strong>Qwen or Mistral replication.</strong> test whether the U-dip and fusion-then-separate patterns are LLaMA-specific or general Transformer phenomena.</li>
+        </ol>
+
+        <h3>medium-term</h3>
+
+        <ol start="7">
+            <li><strong>LLaMA 3.3 70B.</strong> if compute is available (quantized 70B fits in ~40 GB RAM), does the U-dip continue deepening or does a new strategy emerge?</li>
+            <li><strong>Arabic-centric models.</strong> ALLAM or FANAR, if open-weight versions are accessible. does a model that produces Arabic output (competent on real roots, poor on nonce per the 2026 paper) have the same internal representations?</li>
+            <li><strong>intervention experiments.</strong> if the representation–behavior gap is about instruction-following connecting representations to output, causal interventions (activation patching, steering vectors) could test whether directing attention toward the morphological subspace improves generation. this moves from correlational probing to causal mechanistic analysis.</li>
+        </ol>
+
+        <h3>write-up target</h3>
+
+        <p>if the 1B/3B/8B scaling story holds with additional prompt conditions and non-linear probes, this is a clean 6–8 page findings paper. the narrative arc:</p>
+
+        <ol>
+            <li>Alakeel et al. showed tokenizer alignment doesn't predict morphological generation.</li>
+            <li>we ask: what's happening inside the model? do the representations exist even when behavior fails?</li>
+            <li><strong>yes.</strong> all three LLaMA scales have structured, disentangled morphological representations.</li>
+            <li><strong>but.</strong> the representations don't reach output — every model outputs <code>"The"</code>.</li>
+            <li><strong>and.</strong> scaling is non-monotonic: root becomes harder to linearly decode at mid-layers in larger models; pattern becomes a surface-level feature at 3B.</li>
+            <li><strong>implication.</strong> the bottleneck is not representational capacity. it's the representation-to-output pathway, likely gated by instruction-tuning quality.</li>
+        </ol>
+
+        <!-- ════════════════════════════════════════════════ -->
+        <h2>references</h2>
+
+        <ol>
+            <li>alakeel, qwaider, aldarmaki, alqahtani. "morphemes without borders: evaluating root-pattern morphology in Arabic tokenizers and LLMs." LREC 2026. <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
+            <li>alkaoud & syed. "on the importance of tokenization in Arabic embedding models." WANLP 2020. <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a></li>
+            <li>tenney et al. "BERT rediscovers the classical NLP pipeline." ACL 2019. <a href="https://arxiv.org/abs/1905.05950">arXiv:1905.05950</a></li>
+            <li>alain & bengio. "understanding intermediate layers using linear classifier probes." ICLR 2017. <a href="https://arxiv.org/abs/1610.01644">arXiv:1610.01644</a></li>
+            <li>conneau et al. "what you can cram into a single vector: probing sentence embeddings for linguistic properties." ACL 2018. <a href="https://arxiv.org/abs/1805.01070">arXiv:1805.01070</a></li>
+        </ol>
+
+        <footer>
+            <a href="/research-notes/arabic-morphology-probing.html">← probing plan</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/morphemes-without-borders.html">morphemes without borders</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest/ember">code</a>
+        </footer>
+
+    </body>
+</html>

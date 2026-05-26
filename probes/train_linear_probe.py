@@ -7,7 +7,8 @@ import numpy as np
 from pathlib import Path
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import cross_val_score
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.pipeline import make_pipeline
 
 
 def load_activations(path: str) -> np.ndarray:
@@ -62,7 +63,7 @@ def train_probes(activations, labels, n_folds=5):
 
     for layer in range(n_layers):
         X = activations[:, layer, :]
-        probe = LogisticRegression(max_iter=1000)
+        probe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
         if effective_folds >= 2:
             scores = cross_val_score(probe, X, y, cv=effective_folds)
             acc = scores.mean()
@@ -121,8 +122,8 @@ def main():
             args.output,
             root_accuracy=root_acc,
             pattern_accuracy=pat_acc,
-            root_probe_weights=[p.coef_ for p in root_probes],
-            pattern_probe_weights=[p.coef_ for p in pat_probes],
+            root_probe_weights=[p.named_steps['logisticregression'].coef_ for p in root_probes],
+            pattern_probe_weights=[p.named_steps['logisticregression'].coef_ for p in pat_probes],
         )
         print(f"\nsaved probe weights to {args.output}")
 
