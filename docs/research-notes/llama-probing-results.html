@@ -64,6 +64,15 @@
                 font-weight: 600;
             }
 
+            /* ── punchline ──────────────────────────────── */
+            .punchline {
+                text-align: center;
+                font-weight: 600;
+                font-size: 0.92rem;
+                margin-block: 1.2rem;
+                color: var(--accent);
+            }
+
             /* ── comparison block ────────────────────────── */
             .comparison {
                 display: grid;
@@ -167,7 +176,7 @@
 
         <div class="callout observation">
             <div class="label">Observation</div>
-            <p>all three models output <code>"The"</code> for every single stimulus. 0/200 correct across every scale. the morphological information is recoverable, structured, and appears separable under the probe setup ,  but that structure never surfaces in the model's outputs.</p>
+            <p>every model outputs <code>"The"</code>. every stimulus, every scale. chat template artifact? probably ,  i need to test Arabic prompts and one-shot to know for sure. but that's almost beside the point: recoverable, structured morphological representations exist internally. the output is completely broken. 0/200. the gap itself is the finding.</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
@@ -297,6 +306,8 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
             </div>
         </div>
 
+        <p class="punchline">all three models: 0/200 correct. the structure is there. the behavior isn't.</p>
+
         <!-- ════════════════════════════════════════════════ -->
         <h2>discussion</h2>
 
@@ -308,7 +319,7 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <p>this narrows the Alakeel et al. question considerably. the failure mode is not "the model lacks recoverable morphological structure." it's "whatever structure is present doesn't appear to drive the model's autoregressive outputs under these prompts." GPT-4o's 97% accuracy on the same task, with the same (or worse) tokenizer, suggests the difference may be in instruction-tuning: how strongly the representation-to-output pathway is shaped during training.</p>
 
-        <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results are consistent with a refinement: <strong>instruction-following may be what connects recoverable morphological structure to output behavior.</strong> the structure is recoverable without GPT-4o-level tuning; the behavior is not.</p>
+        <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results are consistent with a refinement: <strong>instruction-following may be what connects recoverable morphological structure to output behavior.</strong> the structure is recoverable without GPT-4o-level tuning; the behavior is not. (the U-dip interpretation hinges on linear probes; a 2-layer MLP might recover more from mid-layer states ,  that experiment is on the shortlist.)</p>
 
         <h3>2. non-monotonic scaling</h3>
 
@@ -318,7 +329,7 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
             <p><em>"if the inflection point is between 1B and 3B, this means explicit morphological injection might only help below ~1B parameters. above that, the model may develop the capability internally ,  but possibly in a form that linear probes can't access."</em></p>
         </blockquote>
 
-        <p>the data suggests the inflection point isn't about <em>whether</em> morphological structure is recoverable, but <strong>how</strong> it is organized. at 1B, root identity is linearly accessible at every layer. at 3B+, root identity appears distributed or transformed in mid-layers into a format that logistic regression can't recover ,  but the information may still be present (since accuracy partially recovers in deeper layers). this looks like a qualitative change in representational organization, not a failure of the model to capture the distinction.</p>
+        <p>the data suggests the inflection point isn't about <em>whether</em> morphological structure is recoverable, but <strong>how</strong> it is organized. at 1B, root identity is linearly accessible at every layer. at 3B+, root identity appears distributed or transformed in mid-layers into a format that logistic regression can't recover ,  but the information may still be present (since accuracy partially recovers in deeper layers). this looks like a qualitative change in representational organization, not a failure of the model to capture the distinction. (these results are LLaMA-only; a Qwen or Mistral run would test whether the pattern generalizes.)</p>
 
         <h3>3. pattern trivialization at 3B</h3>
 
@@ -336,56 +347,27 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <p>the 8B root-pattern CCA curve (rise to 0.345 at layer 4, then decline to 0.078) shows a pattern consistent with two-phase organization: early layers show increased subspace overlap between root and pattern probe weights, while deeper layers show increasingly separable subspaces. this hump-and-decline shape is absent at both smaller scales.</p>
 
-        <p>if this pattern replicates across model families (Qwen, Mistral), it could be a signature of compositional morphological organization that emerges at larger scale ,  an intermediate format with higher probe subspace overlap, followed by more separable organization in deeper layers. interestingly, this mirrors how humans process non-concatenative morphology: the root and pattern are inseparable in the surface form and only become distinct at a more abstract level.</p>
+        <p>if this pattern replicates across model families (Qwen, Mistral), it could be a signature of compositional morphological organization that emerges at larger scale: an intermediate format with higher probe subspace overlap, followed by more separable organization in deeper layers ,  a two-phase organizational pattern absent at both smaller scales.</p>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2 id="caveats">caveats</h2>
 
         <div class="callout hypothesis">
-            <div class="label">Caveat 1</div>
-            <p><strong>one model family.</strong> these results are LLaMA 3.2/3.1 only. all observations are potentially specific to this architecture, training data, and tokenizer. we don't know if the U-shaped root dip is a LLaMA architectural artifact (RoPE + GQA + SwiGLU + specific training data mix) or a general property of Transformer scaling. a Qwen or Mistral run at comparable sizes would test this in a day of compute.</p>
+            <div class="label">prompts</div>
+            <p>all data uses English zero-shot prompts. the <code>"The"</code> output might be a chat-template artifact ,  testing Arabic prompts and one-shot could change the story. if LLaMA produces actual transliterated Arabic with a better prompt, divergence analysis becomes possible.</p>
         </div>
 
         <div class="callout hypothesis">
-            <div class="label">Caveat 2</div>
-            <p><strong>prompt format.</strong> all current data uses English zero-shot prompts. the <code>"The"</code> output might be a chat-template artifact ,  LLaMA may be defaulting to an English continuation because it doesn't recognize the morphological instruction format. testing Arabic prompts, one-shot prompts, and different output constraints could change the story. if LLaMA produces actual transliterated Arabic with a better prompt, divergence analysis becomes possible and the representation–behavior gap may narrow.</p>
+            <div class="label">sample size</div>
+            <p>200 stimuli for 20-way classification = 10 samples per class before cross-validation. more stimuli or repeated forward passes would tighten error bars, though the U-dip's consistency across 3B and 8B (and deepening with scale) argues against it being purely a sample-size artifact.</p>
         </div>
 
-        <div class="callout hypothesis">
-            <div class="label">Caveat 3</div>
-            <p><strong>sample size.</strong> 200 stimuli for 20-way classification is 10 samples per class before cross-validation. the probes may be underpowered in the mid-layer trough. auto fold-reduction helps, but more stimuli or repeated forward passes with different seeds would tighten error bars. the U-dip could partially be a sample-size artifact ,  though its consistency across 3B and 8B (and deepening with scale) argues against this.</p>
-        </div>
-
-        <div class="callout hypothesis">
-            <div class="label">Caveat 4</div>
-            <p><strong>no non-linear probes yet.</strong> the most interesting claim ,  that root identity becomes organized in a format linear probes can't access in mid-layers ,  is currently an interpretation, not a direct measurement. a 2-layer MLP probe would test it directly. if MLP probes recover 95%+ accuracy in the 70–78% trough, it's a second strong finding. if they don't, the information might genuinely be attenuated, which is a different (and still interesting) story.</p>
-        </div>
-
-        <!-- ════════════════════════════════════════════════ -->
         <h2>next steps</h2>
 
-        <h3>immediate</h3>
-
         <ol>
-            <li><strong>test non-zero-shot and Arabic prompts.</strong> the <code>en_one</code>, <code>ar_zero</code>, and <code>ar_one</code> templates exist in the stimulus set but haven't been run. the Alakeel paper found one-shot helps weaker models and Arabic prompts are worse behaviorally ,  but the impact on internal representations is unknown.</li>
-            <li><strong>complete the 8B pipeline.</strong> CCA and RSA data is collected; run the full analysis and confirm the mixing-then-separating CCA pattern holds at higher resolution.</li>
             <li><strong>non-linear probes.</strong> a 2-layer MLP on mid-layer activations. ~20 lines of PyTorch. directly tests whether root identity is organized in a non-linear format vs. genuinely attenuated.</li>
-        </ol>
-
-        <h3>short-term</h3>
-
-        <ol start="4">
-            <li><strong>cross-model CCA.</strong> compare representations across scales (1B→3B, 3B→8B). the <code>cca_cross_model</code> function is already implemented. do the models build similar morphological subspaces?</li>
-            <li><strong>GPT-2 baseline.</strong> no Arabic pretraining, English-only BPE tokenizer. serves as a negative control: do representations look qualitatively different without Arabic exposure?</li>
-            <li><strong>Qwen or Mistral replication.</strong> test whether the U-dip and mixing-then-separating patterns are LLaMA-specific or appear across model families.</li>
-        </ol>
-
-        <h3>medium-term</h3>
-
-        <ol start="7">
-            <li><strong>LLaMA 3.3 70B.</strong> if compute is available (quantized 70B fits in ~40 GB RAM), does the U-dip continue deepening or does a new strategy emerge?</li>
-            <li><strong>Arabic-centric models.</strong> ALLAM or FANAR, if open-weight versions are accessible. does a model that produces Arabic output (competent on real roots, poor on nonce per the 2026 paper) have the same internal representations?</li>
-            <li><strong>intervention experiments.</strong> if the representation–behavior gap is about instruction-following connecting representations to output, causal interventions (activation patching, steering vectors) could test whether directing attention toward the morphological subspace improves generation. this moves from correlational probing to causal mechanistic analysis.</li>
+            <li><strong>test Arabic and one-shot prompts.</strong> the <code>en_one</code>, <code>ar_zero</code>, and <code>ar_one</code> templates exist but haven't been run. if LLaMA produces actual transliterated Arabic, divergence analysis becomes possible and the representation–behavior gap may narrow.</li>
+            <li><strong>cross-model replication.</strong> run the same pipeline on Qwen or Mistral at comparable sizes. tests whether the U-dip and mixing-then-separating patterns are LLaMA-specific or general.</li>
         </ol>
 
         <!-- ════════════════════════════════════════════════ -->
