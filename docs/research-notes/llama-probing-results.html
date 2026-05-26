@@ -163,9 +163,11 @@
             <li><strong>divergence</strong> ,  correct-vs-incorrect: at which layer do hidden states for correct and incorrect predictions separate?</li>
         </ul>
 
+        <p>a note on method: probes measure what information is <em>recoverable</em> from hidden states, not what the model causally uses during generation. linear separability is a lower bound on the structure present; it doesn't imply the model relies on that structure for its outputs.</p>
+
         <div class="callout observation">
             <div class="label">Observation</div>
-            <p>all three models output <code>"The"</code> for every single stimulus. 0/200 correct across every scale. the morphological representations exist, they're structured, they're disentangled ,  but they never reach the output.</p>
+            <p>all three models output <code>"The"</code> for every single stimulus. 0/200 correct across every scale. the morphological information is recoverable, structured, and appears separable under the probe setup ,  but they never reach the output.</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
@@ -194,13 +196,13 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
              alt="LLaMA 3.2 1B probing results: 3×2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
              loading="lazy" />
 
-        <p><strong>root identity</strong> is trivially decodable at every layer (92–100% accuracy, flat curve). the model never loses track of which root it's processing.</p>
+        <p><strong>root identity</strong> is trivially decodable at every layer (92–100% accuracy, flat curve). root information remains linearly recoverable across the full depth of the model.</p>
 
-        <p><strong>pattern identity</strong> shows a clean acquisition curve: 73% at layer 0, jumps to 92% at layer 1, 97% at layer 2, then saturates at 100% from layer 3 onward. the first three transformer blocks do the morphological work.</p>
+        <p><strong>pattern identity</strong> shows a clean acquisition curve: 73% at layer 0, jumps to 92% at layer 1, 97% at layer 2, then saturates at 100% from layer 3 onward. pattern becomes recoverable within the first three transformer blocks.</p>
 
-        <p><strong>CCA</strong> self-similarity starts at 0.92 (layer 0) and saturates rapidly (0.98 by layer 1, 0.999 by layer 4). representations stabilize fast. <strong>RSA</strong> reveals a sharp representational reorganization at layers 3–4: the next-neighbor correlation drops to 0.46, then recovers ,  a discrete phase transition coinciding with pattern acquisition.</p>
+        <p><strong>CCA</strong> self-similarity starts at 0.92 (layer 0) and saturates rapidly (0.98 by layer 1, 0.999 by layer 4). representations stabilize fast. <strong>RSA</strong> reveals a sharp representational reorganization at layers 3–4: the next-neighbor correlation drops to 0.46, then recovers ,  a sharp drop in geometric similarity coinciding with when pattern becomes recoverable.</p>
 
-        <p><strong>root-pattern subspace CCA</strong> declines from 0.25 to 0.10 across layers ,  the representations become progressively more disentangled with depth.</p>
+        <p><strong>root-pattern subspace CCA</strong> declines from 0.25 to 0.10 across layers ,  the representations become progressively more separable under the probe setup with depth.</p>
 
         <hr />
 
@@ -213,17 +215,17 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <p>this is where things get strange.</p>
 
-        <p><strong>root identity</strong> develops a <strong>U-shaped dip</strong>. it starts at 99%, peaks at 100% (layers 2–3), then erodes across mid-layers: 94% → 90% → bottoms at <strong>78% at layer 18–19</strong>, before partially recovering to 82% in the final layers. the model is doing something in mid-layers that makes root identity <em>harder</em> to linearly decode, not easier.</p>
+        <p><strong>root identity</strong> develops a <strong>U-shaped dip</strong>. it starts at 99%, peaks at 100% (layers 2–3), then erodes across mid-layers: 94% → 90% → bottoms at <strong>78% at layer 18–19</strong>, before partially recovering to 82% in the final layers. root identity becomes <em>less</em> linearly accessible in mid-layers before partially returning in the deepest blocks.</p>
 
-        <p><strong>pattern identity</strong> is dead flat at 100% for all 28 layers. pattern has become a surface-level feature ,  no depth required to separate the 10 pattern classes linearly. the 3B model has reorganized its representational geometry so that pattern identity sits on a trivially accessible subspace from the very first layer.</p>
+        <p><strong>pattern identity</strong> is dead flat at 100% for all 28 layers. pattern is linearly separable as a surface-level feature ,  no depth required to separate the 10 pattern classes linearly. the 3B model shows pattern identity on a linearly accessible subspace from the first layer onward.</p>
 
-        <p><strong>CCA</strong> self-similarity starts at 0.889 at layer 0 (slightly lower than 1B's 0.921) but stabilizes faster: 0.977 by layer 1, 0.995 by layer 3. the heatmap is essentially uniform bright yellow from layer 4 onward. <strong>RSA</strong> shows smooth, continuous transitions with no discrete phase boundary ,  unlike 1B's sharp layer 3–4 break.</p>
+        <p><strong>CCA</strong> self-similarity starts at 0.889 at layer 0 (slightly lower than 1B's 0.921) but stabilizes faster: 0.977 by layer 1, 0.995 by layer 3. the heatmap is essentially uniform bright yellow from layer 4 onward. <strong>RSA</strong> shows smooth, continuous transitions with no sharp break like 1B's layer 3–4 drop.</p>
 
-        <p><strong>root-pattern CCA</strong> is the strongest disentanglement of all three models: 0.02–0.07 across all layers, minimum 0.021 at layer 1. root and pattern subspaces are nearly orthogonal everywhere.</p>
+        <p><strong>root-pattern CCA</strong> is the lowest subspace overlap of all three models: 0.02–0.07 across all layers, minimum 0.021 at layer 1. the probe weight subspaces for root and pattern appear nearly orthogonal under CCA at every layer.</p>
 
         <div class="callout observation">
             <div class="label">Observation</div>
-            <p><strong>3B is an anomalous regime.</strong> 1B and 8B both show pattern acquisition curves (rising from 69–73% to 100%). 3B is flat 100%. 1B and 8B both have ~0.21–0.25 root-pattern CCA at early layers. 3B starts at 0.07. something about the 3B capacity/depth ratio creates a qualitatively different representational strategy ,  and the model <a href="#caveats">has no Arabic output</a> to show for it.</p>
+            <p><strong>3B is an anomalous regime.</strong> 1B and 8B both show pattern acquisition curves (rising from 69–73% to 100%). 3B is flat 100%. 1B and 8B both have ~0.21–0.25 root-pattern CCA at early layers. 3B starts at 0.07. something about the 3B capacity/depth ratio produces a qualitatively different representational organization ,  and the model <a href="#caveats">has no Arabic output</a> to show for it.</p>
         </div>
 
         <hr />
@@ -232,7 +234,7 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
         <h3>LLaMA 3.1 8B (32 layers, 4096-dim hidden)</h3>
 
         <img class="chart" src="/plots/llama8b_probe_results.png"
-             alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, fusion-then-separate subspace curve"
+             alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
              loading="lazy" />
 
         <p><strong>root identity</strong> deepens the U-dip: after a brief peak at 100% (layer 1), it descends through 94% → 88% → 75% → bottoms at <strong>70% at layer 19</strong>, partially recovers to 89%, then drops again to 79% at the final layer. the curve is textured, not a clean U ,  jagged descent with a secondary dip at the end. bigger models make root identity progressively harder to linearly decode in mid-layers.</p>
@@ -241,11 +243,11 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <p><strong>CCA</strong> starts dramatically lower: <strong>0.566 at layer 0</strong> ,  the noisiest early representation of any model. then climbs: 0.68 (layer 1) → 0.94 (layer 2) → 0.99 (layer 4). the heatmap has a visibly dark bottom-left corner that brightens across the first 4 layers. <strong>RSA</strong> layer 0→1 correlation is 0.76, then smooth 0.96–0.999 thereafter.</p>
 
-        <p><strong>root-pattern CCA</strong> shows the most interesting curve: it <em>rises</em> to a <strong>peak of 0.345 at layer 4</strong> ,  the representations briefly become more entangled ,  then steadily declines to 0.078 at layer 30. this is a <strong>fusion-then-separate</strong> strategy: early layers fuse root and pattern into a combined representation; deeper layers disentangle them. neither 1B (monotonic decline) nor 3B (flat-near-zero) shows this two-phase pattern.</p>
+        <p><strong>root-pattern CCA</strong> shows the most interesting curve: it <em>rises</em> to a <strong>peak of 0.345 at layer 4</strong> ,  the probe subspaces briefly show higher overlap ,  then steadily declines to 0.078 at layer 30. this is a pattern consistent with early representational mixing followed by later separability: the first few layers show increased subspace overlap between root and pattern probe weights, while deeper layers show increasingly separable organization. neither 1B (monotonic decline) nor 3B (flat-near-zero) shows this two-phase pattern.</p>
 
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
-            <p><strong>root probing is non-monotonic with scale.</strong> 1B has flat-high root accuracy. 3B develops a U-dip (78% trough). 8B deepens it further (70% trough). root identity becomes <em>less</em> linearly accessible as models get larger ,  the information is presumably still there but encoded in a format linear probes can't recover from mid-layer states.</p>
+            <p><strong>root probing is non-monotonic with scale.</strong> 1B has flat-high root accuracy. 3B develops a U-dip (78% trough). 8B deepens it further (70% trough). root identity becomes <em>less</em> linearly accessible as models get larger ,  the information is presumably still there but organized in a format that linear probes cannot fully recover from mid-layer states.</p>
         </div>
 
         <hr />
@@ -300,23 +302,23 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <h3>1. the representation–behavior gap</h3>
 
-        <p>this is the central puzzle. all three models have linearly decodable morphological structure ,  root identity is classifiable at 70–100% accuracy everywhere, pattern at 100% by layer 3 or sooner. the representations exist, they're structured, and they're strongly disentangled (subspace CCA &lt; 0.1 in deep layers).</p>
+        <p>this is the central puzzle. all three models have linearly decodable morphological structure ,  root identity is classifiable at 70–100% accuracy everywhere, pattern at 100% by layer 3 or sooner. the information is recoverable, structured, and shows high linear separability (subspace CCA &lt; 0.1 in deep layers).</p>
 
-        <p>yet every model outputs <code>"The"</code> for every stimulus. the morphological knowledge is present in the hidden states but never reaches the output tokens.</p>
+        <p>yet every model outputs <code>"The"</code> for every stimulus. the morphological information is recoverable from hidden states but never reaches the output tokens.</p>
 
-        <p>this narrows the Alakeel et al. question considerably. the failure mode is not "the model doesn't know morphology." it's "the model doesn't <em>use</em> what it knows during autoregressive generation." GPT-4o's 97% accuracy on the same task, with the same (or worse) tokenizer, suggests the difference is in instruction-tuning: how the representation-to-output pathway is wired during training.</p>
+        <p>this narrows the Alakeel et al. question considerably. the failure mode is not "the model lacks recoverable morphological structure." it's "whatever structure is present doesn't appear to drive the model's autoregressive outputs under these prompts." GPT-4o's 97% accuracy on the same task, with the same (or worse) tokenizer, suggests the difference may be in instruction-tuning: how strongly the representation-to-output pathway is shaped during training.</p>
 
-        <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results refine this: <strong>instruction-following is what connects internal morphological representations to output behavior.</strong> the representations are there without GPT-4o-level tuning; the behavior is not.</p>
+        <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results are consistent with a refinement: <strong>instruction-following may be what connects recoverable morphological structure to output behavior.</strong> the structure is recoverable without GPT-4o-level tuning; the behavior is not.</p>
 
         <h3>2. non-monotonic scaling</h3>
 
         <p>"bigger is better" doesn't describe root probing. the accuracy curve goes from flat (1B) to U-shaped (3B) to more deeply U-shaped (8B). this is consistent with the hypothesis from the <a href="/research-notes/arabic-morphology-probing.html">original research plan</a>:</p>
 
         <blockquote>
-            <p><em>"if the inflection point is between 1B and 3B, this means explicit morphological injection might only help below ~1B parameters. above that, the model learns it ,  but possibly in a form that linear probes can't access."</em></p>
+            <p><em>"if the inflection point is between 1B and 3B, this means explicit morphological injection might only help below ~1B parameters. above that, the model may develop the capability internally ,  but possibly in a form that linear probes can't access."</em></p>
         </blockquote>
 
-        <p>the data suggests the inflection point isn't about <em>whether</em> the model learns morphology, but <strong>how</strong> it encodes it. at 1B, root identity lives in a linearly accessible subspace at every layer. at 3B+, root identity gets distributed or transformed in mid-layers into a format that logistic regression can't recover ,  but the information is presumably still present (since accuracy partially recovers in deeper layers). this is a qualitative change in representational strategy, not a failure.</p>
+        <p>the data suggests the inflection point isn't about <em>whether</em> morphological structure is recoverable, but <strong>how</strong> it is organized. at 1B, root identity is linearly accessible at every layer. at 3B+, root identity appears distributed or transformed in mid-layers into a format that logistic regression can't recover ,  but the information may still be present (since accuracy partially recovers in deeper layers). this looks like a qualitative change in representational organization, not a failure of the model to capture the distinction.</p>
 
         <h3>3. pattern trivialization at 3B</h3>
 
@@ -327,21 +329,21 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
         <ol>
             <li><strong>architectural regime.</strong> 3B has 28 layers with 3072-dim hidden states. the capacity-to-depth ratio may create a regime where surface features saturate early layers in a way that doesn't happen at 16L/2048d (1B) or 32L/4096d (8B).</li>
             <li><strong>training data artifact.</strong> 3B may have seen more transliterated Arabic or morphological pattern-description data during pretraining, making pattern recognition a trivial surface operation.</li>
-            <li><strong>representational trade-off.</strong> making pattern linearly accessible everywhere forces root identity to be encoded in a more distributed, non-linear format ,  producing the U-dip. the two effects may be causally linked.</li>
+            <li><strong>representational trade-off.</strong> when pattern is linearly accessible at every layer, root identity may be organized in a more distributed, non-linear format ,  which could produce the U-dip if linear probes can't access it. the two patterns may be related.</li>
         </ol>
 
-        <h3>4. fusion-then-separate at 8B</h3>
+        <h3>4. mixing-then-separating at 8B</h3>
 
-        <p>the 8B root-pattern CCA curve (rise to 0.345 at layer 4, then decline to 0.078) suggests a two-phase encoding strategy: early layers fuse root and pattern into a combined representation; deeper layers disentangle them. this hump-and-decline shape is absent at both smaller scales.</p>
+        <p>the 8B root-pattern CCA curve (rise to 0.345 at layer 4, then decline to 0.078) shows a pattern consistent with two-phase organization: early layers show increased subspace overlap between root and pattern probe weights, while deeper layers show increasingly separable subspaces. this hump-and-decline shape is absent at both smaller scales.</p>
 
-        <p>if this pattern replicates across model families (Qwen, Mistral), it could be a signature of compositional morphological encoding that emerges at larger scale ,  the model learns an intermediate fused representation before factorizing it into independent dimensions. this is consistent with how humans process non-concatenative morphology: the root and pattern are inseparable in the surface form and only become distinct at a more abstract level.</p>
+        <p>if this pattern replicates across model families (Qwen, Mistral), it could be a signature of compositional morphological organization that emerges at larger scale ,  an intermediate format with higher probe subspace overlap, followed by more separable organization in deeper layers. interestingly, this mirrors how humans process non-concatenative morphology: the root and pattern are inseparable in the surface form and only become distinct at a more abstract level.</p>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2 id="caveats">caveats</h2>
 
         <div class="callout hypothesis">
             <div class="label">Caveat 1</div>
-            <p><strong>one model family.</strong> these results are LLaMA 3.2/3.1 only. we don't know if the U-shaped root dip is a LLaMA architectural artifact (RoPE + GQA + SwiGLU + specific training data mix) or a general property of Transformer scaling. a Qwen or Mistral run at comparable sizes would test this in a day of compute.</p>
+            <p><strong>one model family.</strong> these results are LLaMA 3.2/3.1 only. all observations are potentially specific to this architecture, training data, and tokenizer. we don't know if the U-shaped root dip is a LLaMA architectural artifact (RoPE + GQA + SwiGLU + specific training data mix) or a general property of Transformer scaling. a Qwen or Mistral run at comparable sizes would test this in a day of compute.</p>
         </div>
 
         <div class="callout hypothesis">
@@ -356,7 +358,7 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <div class="callout hypothesis">
             <div class="label">Caveat 4</div>
-            <p><strong>no non-linear probes yet.</strong> the most interesting claim ,  "root identity becomes non-linearly encoded in mid-layers" ,  is currently an interpretation. a 2-layer MLP probe would test it directly. if MLP probes recover 95%+ accuracy in the 70–78% trough, it's a second strong finding. if they don't, the information might genuinely be attenuated, which is a different (and still interesting) story.</p>
+            <p><strong>no non-linear probes yet.</strong> the most interesting claim ,  that root identity becomes organized in a format linear probes can't access in mid-layers ,  is currently an interpretation, not a direct measurement. a 2-layer MLP probe would test it directly. if MLP probes recover 95%+ accuracy in the 70–78% trough, it's a second strong finding. if they don't, the information might genuinely be attenuated, which is a different (and still interesting) story.</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
@@ -366,8 +368,8 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <ol>
             <li><strong>test non-zero-shot and Arabic prompts.</strong> the <code>en_one</code>, <code>ar_zero</code>, and <code>ar_one</code> templates exist in the stimulus set but haven't been run. the Alakeel paper found one-shot helps weaker models and Arabic prompts are worse behaviorally ,  but the impact on internal representations is unknown.</li>
-            <li><strong>complete the 8B pipeline.</strong> CCA and RSA data is collected; run the full analysis and confirm the fusion-then-separate CCA curve holds at higher resolution.</li>
-            <li><strong>non-linear probes.</strong> a 2-layer MLP on mid-layer activations. ~20 lines of PyTorch. directly tests whether root identity is non-linearly encoded vs. genuinely attenuated.</li>
+            <li><strong>complete the 8B pipeline.</strong> CCA and RSA data is collected; run the full analysis and confirm the mixing-then-separating CCA pattern holds at higher resolution.</li>
+            <li><strong>non-linear probes.</strong> a 2-layer MLP on mid-layer activations. ~20 lines of PyTorch. directly tests whether root identity is organized in a non-linear format vs. genuinely attenuated.</li>
         </ol>
 
         <h3>short-term</h3>
@@ -375,7 +377,7 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
         <ol start="4">
             <li><strong>cross-model CCA.</strong> compare representations across scales (1B→3B, 3B→8B). the <code>cca_cross_model</code> function is already implemented. do the models build similar morphological subspaces?</li>
             <li><strong>GPT-2 baseline.</strong> no Arabic pretraining, English-only BPE tokenizer. serves as a negative control: do representations look qualitatively different without Arabic exposure?</li>
-            <li><strong>Qwen or Mistral replication.</strong> test whether the U-dip and fusion-then-separate patterns are LLaMA-specific or general Transformer phenomena.</li>
+            <li><strong>Qwen or Mistral replication.</strong> test whether the U-dip and mixing-then-separating patterns are LLaMA-specific or appear across model families.</li>
         </ol>
 
         <h3>medium-term</h3>
@@ -393,10 +395,10 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
         <ol>
             <li>Alakeel et al. showed tokenizer alignment doesn't predict morphological generation.</li>
             <li>we ask: what's happening inside the model? do the representations exist even when behavior fails?</li>
-            <li><strong>yes.</strong> all three LLaMA scales have structured, disentangled morphological representations.</li>
-            <li><strong>but.</strong> the representations don't reach output ,  every model outputs <code>"The"</code>.</li>
-            <li><strong>and.</strong> scaling is non-monotonic: root becomes harder to linearly decode at mid-layers in larger models; pattern becomes a surface-level feature at 3B.</li>
-            <li><strong>implication.</strong> the bottleneck is not representational capacity. it's the representation-to-output pathway, likely gated by instruction-tuning quality.</li>
+            <li><strong>yes.</strong> all three LLaMA scales have structured, linearly separable morphological information recoverable from hidden states.</li>
+            <li><strong>but.</strong> the recoverable structure doesn't appear to influence outputs under these prompts ,  every model outputs <code>"The"</code>.</li>
+            <li><strong>and.</strong> scaling is non-monotonic: root becomes harder to linearly decode at mid-layers in larger models; pattern becomes linearly accessible at the surface at 3B.</li>
+            <li><strong>implication.</strong> the bottleneck may not be whether recoverable morphological structure exists; it may be in how strongly that structure shapes outputs, likely influenced by instruction-tuning quality.</li>
         </ol>
 
         <!-- ════════════════════════════════════════════════ -->
