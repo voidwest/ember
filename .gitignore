@@ -2,9 +2,14 @@
 *.gguf
 .zed/
 data/*.npz
+data/*_activations.npy
+data/*_activations_correctness.json
 *.pdf
 .venv/
 .deepseek/
+ember.log
+probes/__pycache__/
+docs/plots/root_probe_scale_comparison.png
 
 # only README.md is tracked — design notes and logs stay local
 *.md
