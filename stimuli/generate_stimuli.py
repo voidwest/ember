@@ -78,6 +78,49 @@ PROMPT_TEMPLATES = {
                'أخرج الكلمة العربية الناتجة فقط.',
 }
 
+ABLATION_PROMPT_TEMPLATES = {
+    "root_masked": {
+        "en_zero": 'Apply the Arabic pattern "{pattern}" to the root "[ROOT]". Output only the resulting Arabic word.',
+        "en_one":  'Apply the Arabic pattern "{pattern}" to the root "[ROOT]". '
+                   'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
+                   'Output only the resulting Arabic word.',
+        "ar_zero": 'طبق النمط "{pattern}" على الجذر "[ROOT]". أخرج الكلمة العربية الناتجة فقط.',
+        "ar_one":  'طبق النمط "{pattern}" على الجذر "[ROOT]". '
+                   'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
+                   'أخرج الكلمة العربية الناتجة فقط.',
+    },
+    "pattern_masked": {
+        "en_zero": 'Apply the Arabic pattern "[PATTERN]" to the root "{root}". Output only the resulting Arabic word.',
+        "en_one":  'Apply the Arabic pattern "[PATTERN]" to the root "{root}". '
+                   'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
+                   'Output only the resulting Arabic word.',
+        "ar_zero": 'طبق النمط "[PATTERN]" على الجذر "{root}". أخرج الكلمة العربية الناتجة فقط.',
+        "ar_one":  'طبق النمط "[PATTERN]" على الجذر "{root}". '
+                   'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
+                   'أخرج الكلمة العربية الناتجة فقط.',
+    },
+    "both_masked": {
+        "en_zero": 'Apply the Arabic pattern "[PATTERN]" to the root "[ROOT]". Output only the resulting Arabic word.',
+        "en_one":  'Apply the Arabic pattern "[PATTERN]" to the root "[ROOT]". '
+                   'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
+                   'Output only the resulting Arabic word.',
+        "ar_zero": 'طبق النمط "[PATTERN]" على الجذر "[ROOT]". أخرج الكلمة العربية الناتجة فقط.',
+        "ar_one":  'طبق النمط "[PATTERN]" على الجذر "[ROOT]". '
+                   'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
+                   'أخرج الكلمة العربية الناتجة فقط.',
+    },
+    "fake_pattern": {
+        "en_zero": 'Apply the Arabic pattern "CVCCVC" to the root "{root}". Output only the resulting Arabic word.',
+        "en_one":  'Apply the Arabic pattern "CVCCVC" to the root "{root}". '
+                   'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
+                   'Output only the resulting Arabic word.',
+        "ar_zero": 'طبق النمط "CVCCVC" على الجذر "{root}". أخرج الكلمة العربية الناتجة فقط.',
+        "ar_one":  'طبق النمط "CVCCVC" على الجذر "{root}". '
+                   'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
+                   'أخرج الكلمة العربية الناتجة فقط.',
+    },
+}
+
 
 def load_nonce_roots(source_path: str | None) -> list[str]:
     """load unique nonce roots from a source file, or return defaults.
@@ -162,7 +205,7 @@ def generate_stimuli(
     return stimuli
 
 
-def render_prompts(stimuli: list[dict]) -> list[dict]:
+def render_prompts(stimuli: list[dict], include_ablations: bool = False) -> list[dict]:
     """add prompt strings for each template to every stimulus."""
     for s in stimuli:
         s["prompts"] = {}
@@ -171,6 +214,13 @@ def render_prompts(stimuli: list[dict]) -> list[dict]:
                 root=s["root"],
                 pattern=s["pattern"],
             )
+        if include_ablations:
+            for ablation_name, templates in ABLATION_PROMPT_TEMPLATES.items():
+                for name, tmpl in templates.items():
+                    s["prompts"][f"{name}_{ablation_name}"] = tmpl.format(
+                        root=s["root"],
+                        pattern=s["pattern"],
+                    )
     return stimuli
 
 
@@ -229,6 +279,11 @@ def main():
         default=None,
         help="path to arabic word list for collision validation",
     )
+    parser.add_argument(
+        "--include-ablations",
+        action="store_true",
+        help="include masked and fake-pattern control prompt templates",
+    )
     args = parser.parse_args()
 
     # load roots
@@ -237,7 +292,7 @@ def main():
 
     # generate and render
     stimuli = generate_stimuli(nonce_roots, PATTERNS)
-    stimuli = render_prompts(stimuli)
+    stimuli = render_prompts(stimuli, include_ablations=args.include_ablations)
     stimuli = validate_stimuli(stimuli, args.lexicon)
 
     compute_stats(stimuli)

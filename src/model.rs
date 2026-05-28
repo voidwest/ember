@@ -24,8 +24,8 @@ pub trait ForwardModel<B: Backend> {
     /// run forward pass and collect hidden states after each transformer block.
     ///
     /// returns `(per_layer_activations, final_logits)` where
-    /// `per_layer_activations[layer]` is the hidden state at the **last token
-    /// position** after block `layer`, with shape `[embed_dim]`.
+    /// `per_layer_activations[layer]` is the flattened hidden state after
+    /// block `layer`, with shape `[seq_len * embed_dim]`.
     ///
     /// this is the probing entry point - the same model code, but collecting
     /// intermediate representations instead of discarding them.
@@ -690,24 +690,21 @@ impl<B: Backend> Gpt2<B> {
     /// forward pass with activation capture after each transformer block.
     ///
     /// returns `(per_layer_hidden_states, final_logits)`.
-    /// each hidden state is the vector at the last token position after
-    /// the block's residual add, shape `[embed_dim]`.
+    /// each hidden state is the flattened sequence state after the block's
+    /// residual add, shape `[seq_len * embed_dim]`.
     #[allow(clippy::type_complexity)]
     pub fn forward_with_activations(
         &self,
         backend: &B,
         token_ids: &[u32],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
-        let seq_len = token_ids.len();
         let mut x = self.embed(backend, token_ids)?;
-        let last_row_start = (seq_len - 1) * self.embed_dim;
         let mut activations = Vec::with_capacity(self.blocks.len());
 
         for block in &self.blocks {
             x = block.forward(backend, &x)?;
             let data = backend.data(&x);
-            let last_row: Vec<f32> = data[last_row_start..last_row_start + self.embed_dim].to_vec();
-            activations.push(last_row);
+            activations.push(data.to_vec());
         }
         let x = self.ln_f.forward(backend, &x)?;
         let logits = self.head.forward(backend, &x)?;
@@ -1563,14 +1560,12 @@ impl<B: Backend> Llama<B> {
             backend.assign_row(&mut x, i, &word_vec);
         }
 
-        let last_row_start = (seq_len - 1) * embed_dim;
         let mut activations = Vec::with_capacity(self.blocks.len());
 
         for block in &self.blocks {
             x = block.forward(backend, &x)?;
             let data = backend.data(&x);
-            let last_row: Vec<f32> = data[last_row_start..last_row_start + embed_dim].to_vec();
-            activations.push(last_row);
+            activations.push(data.to_vec());
         }
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &x)?;

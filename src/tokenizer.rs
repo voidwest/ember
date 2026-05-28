@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use tokenizers::Tokenizer;
 
+pub type TokenOffsets = Vec<(usize, usize)>;
+
 /// wraps the huggingface `tokenizers` crate for text-token id conversion.
 pub struct EmberTokenizer {
     /// wrapped huggingface tokenizers instance
@@ -22,6 +24,15 @@ impl EmberTokenizer {
             .map_err(anyhow::Error::msg)
             .context("encode failed")?;
         Ok(encoding.get_ids().to_vec())
+    }
+
+    pub fn encode_with_offsets(&self, text: &str) -> Result<(Vec<u32>, TokenOffsets)> {
+        let encoding = self
+            .inner
+            .encode(text, true)
+            .map_err(anyhow::Error::msg)
+            .context("encode failed")?;
+        Ok((encoding.get_ids().to_vec(), encoding.get_offsets().to_vec()))
     }
 
     pub fn decode(&self, ids: &[u32]) -> Result<String> {

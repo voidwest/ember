@@ -75,6 +75,14 @@ struct Args {
     /// output path for probe activations (.npy)
     #[arg(long, default_value = "data/activations.npy")]
     probe_output: String,
+
+    /// prompt template key to read from each stimulus prompts object
+    #[arg(long, default_value = "en_zero")]
+    probe_template: String,
+
+    /// hidden-state position to probe: last, root, pattern, or prompt_mean
+    #[arg(long, default_value = "last")]
+    probe_position: String,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -128,8 +136,14 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    &args.probe_stimuli,
-                    &args.probe_output,
+                    ProbeConfig {
+                        stimuli_path: &args.probe_stimuli,
+                        output_path: &args.probe_output,
+                        template: &args.probe_template,
+                        position: ProbePosition::parse(&args.probe_position)?,
+                        model_path: &args.model,
+                        arch: &args.arch,
+                    },
                 )?;
             } else {
                 let output = generate(
@@ -163,8 +177,14 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    &args.probe_stimuli,
-                    &args.probe_output,
+                    ProbeConfig {
+                        stimuli_path: &args.probe_stimuli,
+                        output_path: &args.probe_output,
+                        template: &args.probe_template,
+                        position: ProbePosition::parse(&args.probe_position)?,
+                        model_path: &args.model,
+                        arch: &args.arch,
+                    },
                 )?;
             } else {
                 let output = generate_llama(
@@ -871,25 +891,161 @@ fn write_npy(path: &str, data: &[f32], shape: &[usize; 3]) -> anyhow::Result<()>
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ProbePosition {
+    Last,
+    Root,
+    Pattern,
+    PromptMean,
+}
+
+struct ProbeConfig<'a> {
+    stimuli_path: &'a str,
+    output_path: &'a str,
+    template: &'a str,
+    position: ProbePosition,
+    model_path: &'a str,
+    arch: &'a str,
+}
+
+impl ProbePosition {
+    fn parse(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "last" => Ok(Self::Last),
+            "root" => Ok(Self::Root),
+            "pattern" => Ok(Self::Pattern),
+            "prompt_mean" => Ok(Self::PromptMean),
+            _ => anyhow::bail!(
+                "unknown probe position '{}'; expected last, root, pattern, or prompt_mean",
+                value
+            ),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Last => "last",
+            Self::Root => "root",
+            Self::Pattern => "pattern",
+            Self::PromptMean => "prompt_mean",
+        }
+    }
+}
+
+fn token_indices_for_offsets(offsets: &[(usize, usize)], start: usize, end: usize) -> Vec<usize> {
+    offsets
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &(tok_start, tok_end))| {
+            if tok_start != tok_end && tok_start < end && tok_end > start {
+                Some(i)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn non_special_token_indices(offsets: &[(usize, usize)], token_count: usize) -> Vec<usize> {
+    let indices: Vec<usize> = offsets
+        .iter()
+        .enumerate()
+        .filter_map(|(i, &(start, end))| if start != end { Some(i) } else { None })
+        .collect();
+    if indices.is_empty() {
+        (0..token_count).collect()
+    } else {
+        indices
+    }
+}
+
+fn stimulus_text_field(stimulus: &serde_json::Value, field: &str) -> anyhow::Result<String> {
+    stimulus[field]
+        .as_str()
+        .map(str::to_owned)
+        .with_context(|| format!("stimulus missing string field '{}'", field))
+}
+
+fn select_probe_indices(
+    prompt: &str,
+    token_ids: &[u32],
+    offsets: &[(usize, usize)],
+    stimulus: &serde_json::Value,
+    position: ProbePosition,
+) -> anyhow::Result<Vec<usize>> {
+    match position {
+        ProbePosition::Last => {
+            let indices = non_special_token_indices(offsets, token_ids.len());
+            indices
+                .last()
+                .copied()
+                .map(|i| vec![i])
+                .context("cannot select last token from empty prompt")
+        }
+        ProbePosition::PromptMean => Ok(non_special_token_indices(offsets, token_ids.len())),
+        ProbePosition::Root | ProbePosition::Pattern => {
+            let field = match position {
+                ProbePosition::Root => "root",
+                ProbePosition::Pattern => "pattern",
+                _ => unreachable!(),
+            };
+            let needle = stimulus_text_field(stimulus, field)?;
+            let start = prompt.find(&needle).with_context(|| {
+                format!(
+                    "could not locate {} '{}' in selected prompt template",
+                    field, needle
+                )
+            })?;
+            let indices = token_indices_for_offsets(offsets, start, start + needle.len());
+            if indices.is_empty() {
+                anyhow::bail!(
+                    "could not map {} '{}' to tokenizer offsets in selected prompt template",
+                    field,
+                    needle
+                );
+            }
+            Ok(indices)
+        }
+    }
+}
+
+fn pool_activation(layer_state: &[f32], token_indices: &[usize], embed_dim: usize) -> Vec<f32> {
+    let mut pooled = vec![0.0f32; embed_dim];
+    for &token_index in token_indices {
+        let row_start = token_index * embed_dim;
+        for (j, value) in pooled.iter_mut().enumerate() {
+            *value += layer_state[row_start + j];
+        }
+    }
+    let scale = 1.0 / token_indices.len() as f32;
+    for value in &mut pooled {
+        *value *= scale;
+    }
+    pooled
+}
+
 /// probe mode: feed each stimulus prompt through the model and
-/// collect per-layer hidden states at the last token position.
+/// collect pooled per-layer hidden states at the selected token position.
 ///
 /// writes a 3d .npy file: `(n_stimuli, n_layers, embed_dim)`.
 fn probe_mode<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
-    stimuli_path: &str,
-    output_path: &str,
+    config: ProbeConfig<'_>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
 {
     // -- load stimuli ------------------------------------------
-    let stimuli_json = fs::read_to_string(stimuli_path)
-        .with_context(|| format!("failed to read stimuli file: {}", stimuli_path))?;
+    let stimuli_json = fs::read_to_string(config.stimuli_path)
+        .with_context(|| format!("failed to read stimuli file: {}", config.stimuli_path))?;
     let stimuli: Vec<serde_json::Value> = serde_json::from_str(&stimuli_json)?;
-    eprintln!("loaded {} stimuli from {}", stimuli.len(), stimuli_path);
+    eprintln!(
+        "loaded {} stimuli from {}",
+        stimuli.len(),
+        config.stimuli_path
+    );
 
     let n_layers = model.n_layers();
     let embed_dim = model.embed_dim();
@@ -906,13 +1062,19 @@ where
     // -- collect -----------------------------------------------
     let start = Instant::now();
     let mut correctness: Vec<serde_json::Value> = Vec::with_capacity(stimuli.len());
+    let mut token_selections: Vec<serde_json::Value> = Vec::with_capacity(stimuli.len());
 
     for (si, stimulus) in stimuli.iter().enumerate() {
-        let prompt = stimulus["prompts"]["en_zero"]
+        let prompt = stimulus["prompts"][config.template]
             .as_str()
-            .unwrap_or("Apply the pattern.");
+            .with_context(|| {
+                format!(
+                    "stimulus {} missing prompt template '{}'",
+                    si, config.template
+                )
+            })?;
 
-        let token_ids = tokenizer.encode(prompt)?;
+        let (token_ids, offsets) = tokenizer.encode_with_offsets(prompt)?;
         if token_ids.is_empty() {
             eprintln!(
                 "  [{}/{}] WARNING: empty tokenization, skipping",
@@ -922,6 +1084,8 @@ where
             continue;
         }
 
+        let probe_indices =
+            select_probe_indices(prompt, &token_ids, &offsets, stimulus, config.position)?;
         let (layer_states, logits) = model.forward_with_activations(backend, &token_ids)?;
 
         // record correctness: argmax of logits at last position
@@ -953,11 +1117,28 @@ where
             "expected": expected,
             "predicted": predicted_text.trim().to_string(),
             "predicted_id": predicted_id,
+            "probe_template": config.template,
+            "probe_position": config.position.as_str(),
+            "probe_token_indices": probe_indices,
+        }));
+        token_selections.push(serde_json::json!({
+            "index": si,
+            "token_count": token_ids.len(),
+            "probe_token_indices": probe_indices,
         }));
 
         for (li, state) in layer_states.iter().enumerate() {
+            if state.len() != token_ids.len() * embed_dim {
+                anyhow::bail!(
+                    "layer {} activation length mismatch: got {}, expected {}",
+                    li,
+                    state.len(),
+                    token_ids.len() * embed_dim
+                );
+            }
+            let pooled = pool_activation(state, &probe_indices, embed_dim);
             let offset = (si * n_layers + li) * embed_dim;
-            activations[offset..offset + embed_dim].copy_from_slice(state);
+            activations[offset..offset + embed_dim].copy_from_slice(&pooled);
         }
 
         if (si + 1) % 10 == 0 || si + 1 == stimuli.len() {
@@ -972,8 +1153,8 @@ where
 
     // -- save --------------------------------------------------
     let shape = [stimuli.len(), n_layers, embed_dim];
-    write_npy(output_path, &activations, &shape)?;
-    eprintln!("saved activations to {}", output_path);
+    write_npy(config.output_path, &activations, &shape)?;
+    eprintln!("saved activations to {}", config.output_path);
 
     let correct_count = correctness
         .iter()
@@ -987,12 +1168,30 @@ where
     );
 
     // write correctness json alongside .npy
-    let correctness_path = output_path.replace(".npy", "_correctness.json");
+    let correctness_path = config.output_path.replace(".npy", "_correctness.json");
     fs::write(
         &correctness_path,
         serde_json::to_string_pretty(&correctness)?,
     )?;
     eprintln!("saved correctness to {}", correctness_path);
+
+    let metadata = serde_json::json!({
+        "model_path": config.model_path,
+        "architecture": config.arch,
+        "stimuli_path": config.stimuli_path,
+        "output_path": config.output_path,
+        "probe_template": config.template,
+        "probe_position": config.position.as_str(),
+        "n_stimuli": stimuli.len(),
+        "n_layers": n_layers,
+        "embed_dim": embed_dim,
+        "activation_shape": shape,
+        "correctness_path": correctness_path,
+        "token_selections": token_selections,
+    });
+    let metadata_path = config.output_path.replace(".npy", "_metadata.json");
+    fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)?;
+    eprintln!("saved metadata to {}", metadata_path);
 
     eprintln!("done in {:.1}s", start.elapsed().as_secs_f64());
 

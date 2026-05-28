@@ -3,8 +3,8 @@ to predict arabic root and pattern from hidden states.
 
 supports:
   - standard cross-validated linear probing
-  - random-label control tasks (selectivity à la Hewitt & Liang 2019)
-  - root-disjoint train/test splits (hold out entire roots)
+  - random-label control tasks (selectivity, Hewitt & Liang 2019)
+  - task-specific held-out splits
   - selectivity score reporting (real accuracy / max(control, chance))
 """
 
@@ -13,7 +13,7 @@ import json
 import numpy as np
 from pathlib import Path
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import cross_val_score, GroupKFold
+from sklearn.model_selection import GroupKFold, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import make_pipeline
 
@@ -47,29 +47,67 @@ def load_labels(stimuli_path: str):
     return roots, patterns
 
 
-def train_probes(activations, labels, n_folds=5, groups=None):
+def encode_groups(values):
+    """encode string group labels as integers for sklearn splitters."""
+    le = LabelEncoder()
+    return le.fit_transform(values)
+
+
+def make_splits(y, n_folds=5, groups=None, split_name="random"):
+    """make valid closed-set splits for a classification probe.
+
+    Grouped splits are valid only when every test label also appears in the
+    corresponding training fold. This prevents impossible setups such as
+    predicting root identity while holding out entire roots.
+    """
+    y = np.asarray(y)
+    min_per_class = int(np.bincount(y).min())
+
+    if groups is None:
+        effective_folds = min(n_folds, min_per_class)
+        if effective_folds < 2:
+            return None
+        splitter = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=0)
+        return list(splitter.split(np.zeros(len(y)), y))
+
+    groups = np.asarray(groups)
+    n_groups = len(set(groups))
+    for effective_folds in range(min(n_folds, n_groups), 1, -1):
+        splitter = GroupKFold(n_splits=effective_folds)
+        splits = list(splitter.split(np.zeros(len(y)), y, groups=groups))
+        valid = True
+        for train_idx, test_idx in splits:
+            train_labels = set(y[train_idx])
+            test_labels = set(y[test_idx])
+            if not test_labels.issubset(train_labels):
+                valid = False
+                break
+        if valid:
+            return splits
+
+    raise ValueError(
+        f"{split_name} creates test labels that are absent from training. "
+        "Choose a split whose groups are independent of the target label."
+    )
+
+
+def train_probes(activations, labels, n_folds=5, groups=None, split_name="random"):
     """train linear probes on each layer's activations.
 
     returns per-layer accuracy and trained models.
     if groups is provided, uses GroupKFold (groups define
-    disjoint sets like roots that must not span folds).
+    disjoint sets like roots or patterns that must not span folds).
     """
     le = LabelEncoder()
     y = le.fit_transform(labels)
-    n_classes = len(set(y))
+    splits = make_splits(y, n_folds=n_folds, groups=groups, split_name=split_name)
 
-    # auto-reduce folds when there aren't enough samples per class
-    min_per_class = min(np.bincount(y))
-    if groups is not None:
-        n_groups = len(set(groups))
-        effective_folds = min(n_folds, n_groups, min_per_class)
-    else:
-        effective_folds = min(n_folds, min_per_class, len(y) // n_classes)
-
-    if effective_folds < 2:
-        print(f"  warning: only {min_per_class} samples per class, "
-              f"skipping cross-validation (using train accuracy)")
-        effective_folds = 0
+    if splits is None:
+        min_per_class = min(np.bincount(y))
+        print(
+            f"  warning: only {min_per_class} samples per class, "
+            "skipping cross-validation (using train accuracy)"
+        )
 
     n_layers = activations.shape[1]
     accuracies = []
@@ -78,23 +116,18 @@ def train_probes(activations, labels, n_folds=5, groups=None):
     for layer in range(n_layers):
         X = activations[:, layer, :]
         probe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
-        if effective_folds >= 2:
-            if groups is not None:
-                gkf = GroupKFold(n_splits=effective_folds)
-                scores = []
-                for train_idx, test_idx in gkf.split(X, y, groups=groups):
-                    probe_clone = make_pipeline(
-                        StandardScaler(), LogisticRegression(max_iter=1000)
-                    )
-                    probe_clone.fit(X[train_idx], y[train_idx])
-                    scores.append(probe_clone.score(X[test_idx], y[test_idx]))
-                acc = np.mean(scores)
-            else:
-                scores = cross_val_score(probe, X, y, cv=effective_folds)
-                acc = scores.mean()
-        else:
+        if splits is None:
             probe.fit(X, y)
             acc = probe.score(X, y)  # train accuracy (optimistic)
+        else:
+            scores = []
+            for train_idx, test_idx in splits:
+                probe_clone = make_pipeline(
+                    StandardScaler(), LogisticRegression(max_iter=1000)
+                )
+                probe_clone.fit(X[train_idx], y[train_idx])
+                scores.append(probe_clone.score(X[test_idx], y[test_idx]))
+            acc = np.mean(scores)
         accuracies.append(acc)
         probe.fit(X, y)  # refit on all data for export
         probes.append(probe)
@@ -119,14 +152,11 @@ def run_control(activations, labels, n_folds=5, groups=None, n_repeats=5):
         rng = np.random.RandomState(repeat * 31 + 7)
         rng.shuffle(y_shuffled)
 
-        if groups is not None:
-            groups_shuffled = groups.copy()
-            rng.shuffle(groups_shuffled)
-
         acc, _, _ = train_probes(
             activations, le.inverse_transform(y_shuffled),
             n_folds=n_folds,
-            groups=groups_shuffled if groups is not None else None,
+            groups=groups,
+            split_name="control",
         )
         all_acc[repeat] = acc
 
@@ -147,6 +177,17 @@ def compute_selectivity(real_acc, control_acc_mean, chance):
     denominator = np.where(denominator < 1e-8, 1e-8, denominator)
     selectivity = (real_acc - control_acc_mean) / denominator
     return np.maximum(selectivity, 0.0)
+
+
+def groups_for_split(split, roots, patterns):
+    """return group ids for a split policy."""
+    if split == "random":
+        return None
+    if split == "root":
+        return encode_groups(roots)
+    if split == "pattern":
+        return encode_groups(patterns)
+    raise ValueError(f"unknown split policy: {split}")
 
 
 def main():
@@ -179,9 +220,28 @@ def main():
     parser.add_argument(
         "--split-root",
         action="store_true",
-        help="use root-disjoint splits (GroupKFold by root) instead of random CV",
+        help="deprecated: use root-held-out CV for pattern probes only",
+    )
+    parser.add_argument(
+        "--root-split",
+        choices=["pattern", "random"],
+        default="pattern",
+        help="CV split for root probes. 'pattern' tests roots on held-out patterns.",
+    )
+    parser.add_argument(
+        "--pattern-split",
+        choices=["root", "random"],
+        default="root",
+        help="CV split for pattern probes. 'root' tests patterns on held-out roots.",
     )
     args = parser.parse_args()
+
+    if args.split_root:
+        print(
+            "warning: --split-root is deprecated; using --pattern-split root "
+            "and leaving --root-split unchanged"
+        )
+        args.pattern_split = "root"
 
     activations = load_activations(args.activations)
     roots, patterns = load_labels(args.stimuli)
@@ -189,21 +249,22 @@ def main():
     print(f"activations shape: {activations.shape}")
     print(f"stimuli: {len(roots)} roots, {len(set(roots))} unique roots, "
           f"{len(set(patterns))} unique patterns")
-    if args.split_root:
-        print("using root-disjoint splits (GroupKFold by root)")
+    print(f"root probe split: {args.root_split}")
+    print(f"pattern probe split: {args.pattern_split}")
     if args.control:
         print(f"running random-label control ({args.control_repeats} repeats)")
 
-    # prepare groups for root-disjoint CV
-    root_groups = None
-    if args.split_root:
-        root_le = LabelEncoder()
-        root_groups = root_le.fit_transform(roots)
+    root_groups = groups_for_split(args.root_split, roots, patterns)
+    pattern_groups = groups_for_split(args.pattern_split, roots, patterns)
 
-    # ── root probes ───────────────────────────────────────────────
+    # root probes
     print("\n--- root probes ---")
     root_acc, root_probes, root_le = train_probes(
-        activations, roots, args.folds, groups=root_groups
+        activations,
+        roots,
+        args.folds,
+        groups=root_groups,
+        split_name=f"root-split={args.root_split}",
     )
     for i, acc in enumerate(root_acc):
         print(f"  layer {i:2d}: {acc:.3f}")
@@ -214,7 +275,10 @@ def main():
     if args.control:
         print("\n--- root: random-label control ---")
         root_control_mean, root_control_std = run_control(
-            activations, roots, args.folds, groups=root_groups,
+            activations,
+            roots,
+            args.folds,
+            groups=root_groups,
             n_repeats=args.control_repeats,
         )
         chance_root = 1.0 / len(set(roots))
@@ -227,10 +291,14 @@ def main():
         print(f"  mean selectivity: {root_selectivity.mean():.3f} "
               f"(max: {root_selectivity.max():.3f} at layer {root_selectivity.argmax()})")
 
-    # ── pattern probes ────────────────────────────────────────────
+    # pattern probes
     print("\n--- pattern probes ---")
     pat_acc, pat_probes, pat_le = train_probes(
-        activations, patterns, args.folds, groups=root_groups
+        activations,
+        patterns,
+        args.folds,
+        groups=pattern_groups,
+        split_name=f"pattern-split={args.pattern_split}",
     )
     for i, acc in enumerate(pat_acc):
         print(f"  layer {i:2d}: {acc:.3f}")
@@ -241,7 +309,10 @@ def main():
     if args.control:
         print("\n--- pattern: random-label control ---")
         pat_control_mean, pat_control_std = run_control(
-            activations, patterns, args.folds, groups=root_groups,
+            activations,
+            patterns,
+            args.folds,
+            groups=pattern_groups,
             n_repeats=args.control_repeats,
         )
         chance_pat = 1.0 / len(set(patterns))
@@ -254,7 +325,7 @@ def main():
         print(f"  mean selectivity: {pat_selectivity.mean():.3f} "
               f"(max: {pat_selectivity.max():.3f} at layer {pat_selectivity.argmax()})")
 
-    # ── save ──────────────────────────────────────────────────────
+    # save
     if args.output:
         save_dict = {
             "root_accuracy": root_acc,
@@ -267,6 +338,8 @@ def main():
                 p.named_steps["logisticregression"].coef_
                 for p in pat_probes
             ],
+            "root_split": args.root_split,
+            "pattern_split": args.pattern_split,
         }
         if args.control:
             save_dict["root_control_mean"] = root_control_mean

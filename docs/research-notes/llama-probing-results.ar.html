@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta property="og:title" content="what LLaMA knows about Arabic morphology (and won't say)" />
-        <meta property="og:description" content="Probing LLaMA 3.2 1B/3B/8B with linear classifiers, CCA, and RSA reveals structured morphological representations, but every model outputs 'The'." />
+        <meta property="og:description" content="Corrected probing of LLaMA 3.2 1B/3B shows root and pattern variables are recoverable from prompts even when generation fails. 8B is archived pending rerun." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/llama-probing-results.ar.html" />
         <meta property="og:site_name" content="voidwest" />
@@ -141,7 +141,7 @@
 
         <div class="meta">
             probing internal representations across model scales<br>
-            mohammed al-thobaiti · 2026-05-26<br>
+            mohammed al-thobaiti · 2026-05-26 · corrected 2026-05-29<br>
             <span class="tag key">Arabic NLP</span>
             <span class="tag key">probing</span>
             <span class="tag key">morphology</span>
@@ -156,7 +156,7 @@
 
         <p>المؤلفون اقترحوا "الاستدلال التركيبي + اتباع التعليمات" كآلية. لكن هذا وصف سلوكي. هذه التجربة تسأل السؤال الـ <bdi>mechanistic</bdi>: <strong>كيف تبدو التمثيلات الداخلية فعلاً؟</strong></p>
 
-        <p>استخدمت <a href="/ember/index.ar.html"><bdi>ember</bdi></a>، وهو <bdi>inference engine</bdi> مكتوب من الصفر ويعطي وصول مباشر للـ <bdi>hidden states</bdi> بعد كل <bdi>transformer block</bdi>، عشان أفحص <bdi>LLaMA 3.2 1B</bdi> و <bdi>LLaMA 3.2 3B</bdi> و <bdi>LLaMA 3.1 8B</bdi> على مهمة <bdi>nonce root-pattern</bdi>. 20 جذر ثلاثي مخترع من بيانات <bdi>Alakeel</bdi> × 10 أوزان عربية = 200 محفز، كلها مكتوبة بحروف لاتينية عشان يكون الـ <bdi>probing</bdi> آمن مع <bdi>ASCII</bdi>. أربع طرق تحليل:</p>
+        <p>استخدمت <a href="/ember/index.ar.html"><bdi>ember</bdi></a>، وهو <bdi>inference engine</bdi> مكتوب من الصفر ويعطي وصول مباشر للـ <bdi>hidden states</bdi> بعد كل <bdi>transformer block</bdi>، عشان أفحص <bdi>LLaMA 3.2 1B</bdi> و <bdi>LLaMA 3.2 3B</bdi> على مهمة <bdi>nonce root-pattern</bdi>. 20 جذر ثلاثي مخترع من بيانات <bdi>Alakeel</bdi> × 10 أوزان عربية = 200 محفز، كلها مكتوبة بحروف لاتينية عشان يكون الـ <bdi>probing</bdi> آمن مع <bdi>ASCII</bdi>. نتائج <bdi>8B</bdi> من التشغيل الأول مؤرشفة أدناه إلى أن تنعاد على جهاز أقوى. أربع طرق تحليل:</p>
 
         <ul>
             <li><strong><bdi>linear probes</bdi></strong>: <bdi>logistic regression</bdi> لكل طبقة. هل هوية الجذر (20 فئة) أو هوية الوزن (10 فئات) قابلة للفك خطياً من الـ <bdi>hidden states</bdi>؟</li>
@@ -165,11 +165,11 @@
             <li><strong><bdi>divergence</bdi></strong>: صحيح ضد خاطئ. في أي طبقة تبدأ <bdi>hidden states</bdi> للتوقعات الصحيحة والخاطئة تنفصل؟</li>
         </ul>
 
-        <p>ملاحظة منهجية: الـ <bdi>probes</bdi> تقيس المعلومة القابلة للاسترجاع من الـ <bdi>hidden states</bdi>، مو المعلومة اللي يستخدمها النموذج سببياً أثناء التوليد. القابلية للفصل الخطي حد أدنى على البنية الموجودة؛ ما تعني إن النموذج يعتمد عليها في المخرج.</p>
+        <p>ملاحظة منهجية: الـ <bdi>probes</bdi> تقيس المعلومة القابلة للاسترجاع من الـ <bdi>hidden states</bdi>، مو المعلومة اللي يستخدمها النموذج سببياً أثناء التوليد. القابلية للفصل الخطي حد أدنى على البنية الموجودة؛ ما تعني إن النموذج يعتمد عليها في المخرج. التشغيل المصحح يستخدم تقسيمات مغلقة مناسبة للمهمة: فحص الجذر يمسك الأوزان خارج التدريب، وفحص الوزن يمسك الجذور خارج التدريب. الصياغة القديمة عن فحص الجذر مع جذور محجوبة كانت غير صالحة لأنها تطلب من المصنف توقع جذور لم يرها في التدريب.</p>
 
         <div class="callout observation">
             <div class="label">Observation</div>
-            <p>كل نموذج يخرج الكلمة الإنجليزية <code><bdi>The</bdi></code>. كل محفز، كل حجم. أثر <bdi>chat template</bdi>؟ غالباً، وأحتاج أختبر <bdi>Arabic prompts</bdi> و <bdi>one-shot</bdi> عشان أتأكد. لكن هذا تقريباً خارج النقطة الأساسية: التمثيلات الصرفية المنظمة والقابلة للاسترجاع موجودة داخلياً. المخرج مكسور بالكامل. <bdi>0/200</bdi>. الفجوة نفسها هي النتيجة.</p>
+            <p>التشغيل المصحح لـ <bdi>1B</bdi> و <bdi>3B</bdi> ما زال يخرج <code><bdi>The</bdi></code> لكل محفز: <bdi>0/200</bdi>. الـ <bdi>hidden states</bdi> تحتفظ بمتغيرات الجذر والوزن المكتوبة صراحة في الـ <bdi>prompt</bdi>، لكن هذا ليس دليلاً كافياً بعد على صرف عربي داخلي. الخطوة التالية لازم تفصل بين استرجاع متغيرات الـ <bdi>prompt</bdi> وبين الحساب الصرفي فعلاً.</p>
         </div>
 
         <h2><bdi>the pipeline</bdi></h2>
@@ -181,27 +181,27 @@ train_linear_probe.py      → probes.npz           (root + pattern accuracy per
 cca_analysis.py            → cca.npz              (layer similarity + disentanglement)
 rsa_analysis.py            → rsa.npz              (representational similarity)
 divergence_analysis.py     → divergence.npz        (correct vs incorrect gap)
-plot_results.py --dark     → probe_results.png     (3×2 figure)
+plot_results.py --dark     → probe_results.png     (3x2 figure)
 </code></pre>
         </div>
 
-        <p>كل الكود في <a href="https://github.com/voidwest/ember">مستودع <bdi>ember</bdi></a>. نماذج <bdi>1B</bdi> و <bdi>3B</bdi> اشتغلت على لابتوب بـ 16 <bdi>GB</bdi>. نموذج <bdi>8B</bdi> احتاج <bdi>cloud instance</bdi> (<bdi>Hetzner CPX62</bdi>) لمرحلة استخراج الـ <bdi>activations</bdi>. تكميم <bdi>Q8_0</bdi> يخلي نموذج <bdi>3B</bdi> تحت 4 <bdi>GB RAM</bdi> و <bdi>8B</bdi> تحت 8 <bdi>GB</bdi>.</p>
+        <p>كل الكود في <a href="https://github.com/voidwest/ember">مستودع <bdi>ember</bdi></a>. التشغيل المصحح لـ <bdi>1B</bdi> و <bdi>3B</bdi> تم محلياً. رسم <bdi>8B</bdi> يبقى معروضاً كأرشيف للمقارنة، لكنه لم يُعد بالتقسيم المصحح لأن الجهاز المحلي لا يشغله بثبات.</p>
 
         <h2><bdi>results</bdi></h2>
 
         <h3><bdi>LLaMA 3.2 1B</bdi> (16 طبقة، <bdi>hidden dim</bdi> 2048)</h3>
 
         <img class="chart" src="/plots/llama1b_probe_results.png"
-             alt="LLaMA 3.2 1B probing results: 3×2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
+             alt="LLaMA 3.2 1B probing results: 3x2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
              loading="lazy" />
 
-        <p><strong>هوية الجذر</strong> قابلة للفك بسهولة في كل طبقة (دقة 92-100%، منحنى شبه مسطح). معلومة الجذر تبقى قابلة للاسترجاع خطياً عبر عمق النموذج كامل.</p>
+        <p><strong>هوية الجذر</strong> قابلة للفك بسهولة في كل طبقة (دقة 96-100%، منحنى شبه مسطح). معلومة الجذر تبقى قابلة للاسترجاع خطياً عبر عمق النموذج كامل.</p>
 
-        <p><strong>هوية الوزن</strong> تظهر منحنى اكتساب واضح: 73% في الطبقة 0، تقفز لـ 92% في الطبقة 1، 97% في الطبقة 2، وبعدها تتشبع عند 100% من الطبقة 3 وطالع. الوزن يصير قابلاً للاسترجاع داخل أول ثلاث <bdi>transformer blocks</bdi>.</p>
+        <p><strong>هوية الوزن</strong> قابلة للفك خطياً من الطبقة 0 تحت التقسيم المصحح الذي يحجب الجذور: 99.5% في الطبقة 0 ثم 100% بعد ذلك. منحنى "اكتساب الوزن" القديم لا يصمد بعد تصحيح منطق التقسيم.</p>
 
-        <p><strong><bdi>CCA</bdi></strong> للتشابه الذاتي يبدأ عند 0.92 (الطبقة 0) ويتشبع بسرعة (0.98 عند الطبقة 1، و 0.999 عند الطبقة 4). التمثيلات تستقر بسرعة. <strong><bdi>RSA</bdi></strong> يكشف إعادة تنظيم تمثيلية حادة عند الطبقات 3-4: ارتباط الجار التالي ينخفض إلى 0.46 ثم يتعافى. هبوط هندسي حاد يتزامن مع لحظة صيرورة الوزن قابلاً للاسترجاع.</p>
+        <p><strong><bdi>CCA</bdi></strong> للتشابه الذاتي يبدأ عند 0.92 (الطبقة 0) ويتشبع بسرعة (0.98 عند الطبقة 1، و 0.999 عند الطبقة 4). التمثيلات تستقر بسرعة. <strong><bdi>RSA</bdi></strong> ما زال يكشف انتقالاً هندسياً مبكراً، لكنه لم يعد يفسر كلحظة صيرورة الوزن قابلاً للاسترجاع.</p>
 
-        <p><strong><bdi>root-pattern subspace CCA</bdi></strong> ينخفض من 0.25 إلى 0.10 عبر الطبقات. تحت إعداد الـ <bdi>probe</bdi>، التمثيلات تصير أكثر انفصالاً تدريجياً مع العمق.</p>
+        <p><strong><bdi>root-pattern subspace CCA</bdi></strong> منخفض من البداية في الإعداد المصحح، تقريباً بين 0.04 و 0.08 عبر الطبقات، والحد الأدنى 0.040 عند الطبقة 3. أوزان فحص الجذر والوزن منفصلة بقوة من البداية.</p>
 
         <hr />
 
@@ -213,30 +213,32 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <p>هنا تبدأ الغرابة.</p>
 
-        <p><strong>هوية الجذر</strong> تطور <strong>هبوط على شكل <bdi>U</bdi></strong>. تبدأ عند 99%، تصل 100% في الطبقات 2-3، ثم تتآكل في الطبقات الوسطى: 94% ← 90% ← وتصل القاع عند <strong>78% في الطبقات 18-19</strong>، قبل ما تتعافى جزئياً إلى 82% في الطبقات الأخيرة. هوية الجذر تصير <em>أقل</em> قابلية للوصول الخطي في الطبقات الوسطى قبل ما ترجع جزئياً في أعمق الكتل.</p>
+        <p><strong>هوية الجذر</strong> ما زالت تطور <strong>هبوط على شكل <bdi>U</bdi></strong>، لكن القاع المصحح أضعف من النسخة الأولى. تبدأ عند 100%، تتآكل في الطبقات الوسطى، تصل القاع عند <strong>86% في الطبقة 19</strong>، ثم تتعافى جزئياً إلى 92% في الطبقة الأخيرة. هوية الجذر تصير <em>أقل</em> قابلية للوصول الخطي في الطبقات الوسطى قبل ما ترجع جزئياً في أعمق الكتل.</p>
 
         <p><strong>هوية الوزن</strong> مسطحة تماماً عند 100% لكل الطبقات الـ 28. الوزن قابل للفصل خطياً كخاصية سطحية، بدون حاجة للعمق. نموذج <bdi>3B</bdi> يظهر هوية الوزن على فضاء فرعي قابل للوصول الخطي من أول طبقة.</p>
 
         <p><strong><bdi>CCA</bdi></strong> للتشابه الذاتي يبدأ عند 0.889 في الطبقة 0 (أقل شوي من 0.921 في <bdi>1B</bdi>) لكنه يستقر أسرع: 0.977 عند الطبقة 1، و 0.995 عند الطبقة 3. خريطة الحرارة شبه موحدة وفاتحة من الطبقة 4 وطالع. <strong><bdi>RSA</bdi></strong> يظهر انتقالات ناعمة ومستمرة بدون الكسر الحاد اللي ظهر في <bdi>1B</bdi> عند الطبقات 3-4.</p>
 
-        <p><strong><bdi>root-pattern CCA</bdi></strong> هو أقل تداخل فضاءات فرعية بين النماذج الثلاثة: 0.02-0.07 عبر كل الطبقات، والحد الأدنى 0.021 عند الطبقة 1. فضاءات أوزان الـ <bdi>probe</bdi> للجذر والوزن تبدو شبه متعامدة تحت <bdi>CCA</bdi> في كل طبقة.</p>
+        <p><strong><bdi>root-pattern CCA</bdi></strong> منخفض جداً في التشغيل المصحح: 0.02-0.07 عبر كل الطبقات، والحد الأدنى 0.021 عند الطبقة 1. فضاءات أوزان الـ <bdi>probe</bdi> للجذر والوزن تبدو شبه متعامدة تحت <bdi>CCA</bdi> في كل طبقة.</p>
 
         <div class="callout observation">
             <div class="label">Observation</div>
-            <p><strong><bdi>3B</bdi> نظام شاذ.</strong> <bdi>1B</bdi> و <bdi>8B</bdi> كلاهما يظهران منحنى اكتساب للوزن (ارتفاع من 69-73% إلى 100%). <bdi>3B</bdi> مسطح عند 100%. <bdi>1B</bdi> و <bdi>8B</bdi> كلاهما عندهما <bdi>root-pattern CCA</bdi> قريب من 0.21-0.25 في الطبقات المبكرة. <bdi>3B</bdi> يبدأ عند 0.07. فيه شيء في نسبة السعة إلى العمق في <bdi>3B</bdi> ينتج تنظيماً تمثيلياً مختلفاً نوعياً، ومع ذلك النموذج <a href="#caveats">ما عنده مخرج عربي</a> يورّيك هذا الشيء.</p>
+            <p><strong><bdi>3B</bdi> ما زال عنده أوضح هبوط للجذر.</strong> بعد تصحيح التقسيم، <bdi>1B</bdi> لم يعد يظهر منحنى اكتساب للوزن. كلا <bdi>1B</bdi> و <bdi>3B</bdi> يملكان هوية الوزن تقريباً من الطبقة 0. النتيجة الخاصة بـ <bdi>3B</bdi> هي هبوط الجذر: هوية الجذر لا تزال قابلة للاسترجاع، لكنها أقل قابلية للوصول الخطي في منتصف الشبكة. ومع ذلك النموذج <a href="#caveats">ما عنده مخرج عربي</a>.</p>
         </div>
 
         <hr />
 
-        <h3><bdi>LLaMA 3.1 8B</bdi> (32 طبقة، <bdi>hidden dim</bdi> 4096)</h3>
+        <h3><bdi>LLaMA 3.1 8B</bdi> (تشغيل أول مؤرشف، لم يُعد)</h3>
 
         <img class="chart" src="/plots/llama8b_probe_results.png"
              alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
              loading="lazy" />
 
-        <p><strong>هوية الجذر</strong> تعمّق هبوط الـ <bdi>U</bdi>: بعد قمة قصيرة عند 100% (الطبقة 1)، ينزل عبر 94% ← 88% ← 75% ← ويصل القاع عند <strong>70% في الطبقة 19</strong>، ثم يتعافى جزئياً إلى 89%، وبعدها يهبط مرة ثانية إلى 79% في الطبقة الأخيرة. المنحنى مليء بالتفاصيل، مو <bdi>U</bdi> نظيف: نزول متعرج مع هبوط ثانوي في النهاية. النماذج الأكبر تخلي هوية الجذر أصعب تدريجياً للفك الخطي في الطبقات الوسطى.</p>
+        <p><strong>تنبيه أرشيفي:</strong> هذا القسم يستخدم ملفات التشغيل الأول لـ <bdi>8B</bdi> ولم يُعد بمنطق التقسيم المصحح. لا تقارن أرقامه الدقيقة مباشرة بنتائج <bdi>1B/3B</bdi> المصححة بعد.</p>
 
-        <p><strong>هوية الوزن</strong> ترجع كسلم: 69% في الطبقة 0 ← 82% ← 92% ← 100% عند الطبقة 3. مضغوطة لكنها موجودة، أقرب لـ <bdi>1B</bdi> من <bdi>3B</bdi>.</p>
+        <p><strong>هوية الجذر</strong> بدت وكأنها تعمّق هبوط الـ <bdi>U</bdi>: بعد قمة قصيرة عند 100% (الطبقة 1)، ينزل عبر 94% ← 88% ← 75% ← ويصل القاع عند <strong>70% في الطبقة 19</strong>، ثم يتعافى جزئياً إلى 89%، وبعدها يهبط مرة ثانية إلى 79% في الطبقة الأخيرة. المنحنى مليء بالتفاصيل، مو <bdi>U</bdi> نظيف: نزول متعرج مع هبوط ثانوي في النهاية. تعامل مع هذا كإشارة مؤرشفة، لا كاستنتاج تحجيم مصحح.</p>
+
+        <p><strong>هوية الوزن</strong> بدت كسلم في التشغيل المؤرشف: 69% في الطبقة 0 ← 82% ← 92% ← 100% عند الطبقة 3. لأن نتيجة <bdi>1B</bdi> تغيرت بعد التصحيح، فهذا الادعاء عن <bdi>8B</bdi> ينتظر إعادة التشغيل.</p>
 
         <p><strong><bdi>CCA</bdi></strong> يبدأ منخفض جداً: <strong>0.566 عند الطبقة 0</strong>، وهي أكثر تمثيلات مبكرة ضجيجاً بين النماذج. بعدها يصعد: 0.68 (الطبقة 1) ← 0.94 (الطبقة 2) ← 0.99 (الطبقة 4). خريطة الحرارة فيها زاوية سفلية يسارية داكنة بوضوح وتفتح عبر أول 4 طبقات. <strong><bdi>RSA</bdi></strong> ارتباط الطبقة 0→1 هو 0.76، ثم يصير ناعماً بين 0.96 و 0.999 بعد ذلك.</p>
 
@@ -244,7 +246,7 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
 
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
-            <p><strong>فحص الجذر غير رتيب مع الحجم.</strong> <bdi>1B</bdi> عنده دقة جذر عالية ومسطحة. <bdi>3B</bdi> يطور هبوط <bdi>U</bdi> (قاع 78%). <bdi>8B</bdi> يعمقه أكثر (قاع 70%). هوية الجذر تصير <em>أقل</em> قابلية للوصول الخطي كلما كبرت النماذج. المعلومة غالباً ما زالت موجودة، لكنها منظمة بصيغة ما يقدر الـ <bdi>linear probe</bdi> يسترجعها بالكامل من حالات الطبقات الوسطى.</p>
+            <p><strong>فحص الجذر غير رتيب في التشغيلين المحليين المصححين.</strong> <bdi>1B</bdi> يبقى عالياً وشبه مسطح؛ <bdi>3B</bdi> يطور هبوطاً وسطياً بقاع 86%. التشغيل القديم لـ <bdi>8B</bdi> اقترح قاعاً أعمق عند 70%، لكنه ينتظر إعادة التشغيل بالتقسيم المصحح.</p>
         </div>
 
         <hr />
@@ -257,12 +259,12 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
                 <div class="stat"><span class="label">الطبقات</span><span class="value">16</span></div>
                 <div class="stat"><span class="label"><bdi>hidden dim</bdi></span><span class="value">2048</span></div>
                 <div class="stat"><span class="label">أفضل دقة جذر</span><span class="value good">100%</span></div>
-                <div class="stat"><span class="label">أسوأ دقة جذر</span><span class="value">92%</span></div>
-                <div class="stat"><span class="label">دقة الوزن L0</span><span class="value">73%</span></div>
+                <div class="stat"><span class="label">أسوأ دقة جذر</span><span class="value">96%</span></div>
+                <div class="stat"><span class="label">دقة الوزن L0</span><span class="value good">99.5%</span></div>
                 <div class="stat"><span class="label">دقة الوزن L3+</span><span class="value good">100%</span></div>
                 <div class="stat"><span class="label"><bdi>CCA L0 self</bdi></span><span class="value">0.921</span></div>
-                <div class="stat"><span class="label"><bdi>R-P subspace</bdi></span><span class="value">0.25→0.10</span></div>
-                <div class="stat"><span class="label">انتقال <bdi>RSA</bdi></span><span class="value bad">حاد (L3→4: 0.46)</span></div>
+                <div class="stat"><span class="label"><bdi>R-P subspace</bdi></span><span class="value">0.04-0.08</span></div>
+                <div class="stat"><span class="label">التقسيم</span><span class="value">root:pattern / pattern:root</span></div>
                 <div class="stat"><span class="label">دقة التوليد</span><span class="value bad">0/200</span></div>
             </div>
             <div class="col">
@@ -270,16 +272,16 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
                 <div class="stat"><span class="label">الطبقات</span><span class="value">28</span></div>
                 <div class="stat"><span class="label"><bdi>hidden dim</bdi></span><span class="value">3072</span></div>
                 <div class="stat"><span class="label">أفضل دقة جذر</span><span class="value good">100%</span></div>
-                <div class="stat"><span class="label">أسوأ دقة جذر</span><span class="value bad">78% (L18)</span></div>
+                <div class="stat"><span class="label">أسوأ دقة جذر</span><span class="value bad">86% (L19)</span></div>
                 <div class="stat"><span class="label">دقة الوزن L0</span><span class="value good">100%</span></div>
                 <div class="stat"><span class="label">دقة الوزن L3+</span><span class="value good">100%</span></div>
                 <div class="stat"><span class="label"><bdi>CCA L0 self</bdi></span><span class="value">0.889</span></div>
-                <div class="stat"><span class="label"><bdi>R-P subspace</bdi></span><span class="value">0.07→0.02</span></div>
-                <div class="stat"><span class="label">انتقال <bdi>RSA</bdi></span><span class="value">ناعم</span></div>
+                <div class="stat"><span class="label"><bdi>R-P subspace</bdi></span><span class="value">0.02-0.07</span></div>
+                <div class="stat"><span class="label">التقسيم</span><span class="value">root:pattern / pattern:root</span></div>
                 <div class="stat"><span class="label">دقة التوليد</span><span class="value bad">0/200</span></div>
             </div>
             <div class="col">
-                <div class="name"><bdi>LLaMA 3.1 8B</bdi></div>
+                <div class="name"><bdi>LLaMA 3.1 8B</bdi> (قديم)</div>
                 <div class="stat"><span class="label">الطبقات</span><span class="value">32</span></div>
                 <div class="stat"><span class="label"><bdi>hidden dim</bdi></span><span class="value">4096</span></div>
                 <div class="stat"><span class="label">أفضل دقة جذر</span><span class="value good">100%</span></div>
@@ -288,71 +290,72 @@ plot_results.py --dark     → probe_results.png     (3×2 figure)
                 <div class="stat"><span class="label">دقة الوزن L3+</span><span class="value good">100%</span></div>
                 <div class="stat"><span class="label"><bdi>CCA L0 self</bdi></span><span class="value bad">0.566</span></div>
                 <div class="stat"><span class="label"><bdi>R-P subspace</bdi></span><span class="value">0.21→0.08</span></div>
-                <div class="stat"><span class="label">انتقال <bdi>RSA</bdi></span><span class="value">ناعم</span></div>
+                <div class="stat"><span class="label">التقسيم</span><span class="value">قديم / غير مصحح</span></div>
                 <div class="stat"><span class="label">دقة التوليد</span><span class="value bad">0/200</span></div>
             </div>
         </div>
 
-        <p class="punchline">كل النماذج الثلاثة: <bdi>0/200</bdi> صحيحة. البنية موجودة. السلوك غير موجود.</p>
+        <p class="punchline">التشغيل المصحح لـ <bdi>1B/3B</bdi>: <bdi>0/200</bdi> صحيحة. متغيرات الـ <bdi>prompt</bdi> قابلة للاسترجاع؛ السلوك لا يزال مكسوراً.</p>
 
         <h2><bdi>discussion</bdi></h2>
 
         <h3>1. فجوة التمثيل والسلوك</h3>
 
-        <p>هذا هو اللغز الأساسي. كل النماذج الثلاثة عندها بنية صرفية قابلة للفك الخطي: هوية الجذر تُصنف بدقة 70-100% في كل مكان، والوزن يصل 100% عند الطبقة 3 أو قبلها. المعلومة قابلة للاسترجاع، منظمة، وتظهر قابلية فصل خطية عالية (<bdi>subspace CCA</bdi> أقل من 0.1 في الطبقات العميقة).</p>
+        <p>هذا هو اللغز الأساسي. التشغيلان المصححان لـ <bdi>1B</bdi> و <bdi>3B</bdi> يملكان متغيرات جذر ووزن قابلة للفك الخطي. هوية الجذر عالية لكنها تهبط في وسط <bdi>3B</bdi>؛ هوية الوزن شبه كاملة من الطبقة الأولى. المعلومة قابلة للاسترجاع ومنظمة، لكن نقطة الاستخراج الحالية هي آخر توكن في <bdi>prompt</bdi> يذكر الجذر والوزن صراحة.</p>
 
-        <p>ومع ذلك، كل نموذج يرجع نفس المخرج الموحد لكل محفز: <code><bdi>The</bdi></code>. المعلومة الصرفية قابلة للاسترجاع من الـ <bdi>hidden states</bdi> لكنها ما تصل إلى <bdi>output tokens</bdi>.</p>
+        <p>ومع ذلك، كل نموذج يرجع نفس المخرج الموحد لكل محفز: <code><bdi>The</bdi></code>. متغيرات الجذر والوزن قابلة للاسترجاع من الـ <bdi>hidden states</bdi> لكنها لا تتحول إلى <bdi>output tokens</bdi> المطلوبة تحت هذا الإعداد.</p>
 
-        <p>هذا يضيّق سؤال <bdi>Alakeel et al.</bdi> كثير. نمط الفشل مو "النموذج ما عنده بنية صرفية قابلة للاسترجاع." هو: "أي بنية موجودة ما تبدو إنها تقود مخرجات النموذج الـ <bdi>autoregressive</bdi> تحت هذه الـ <bdi>prompts</bdi>." دقة <bdi>GPT-4o</bdi> البالغة 97% على نفس المهمة، وبنفس أو أسوأ <bdi>tokenizer</bdi>، تشير إن الفرق قد يكون في <bdi>instruction-tuning</bdi>: مدى قوة تشكيل مسار التمثيل إلى المخرج أثناء التدريب.</p>
+        <p>هذا يضيّق سؤال <bdi>Alakeel et al.</bdi> كثير. نمط الفشل مو ببساطة "متغيرات الـ <bdi>prompt</bdi> غائبة عن الـ <bdi>hidden states</bdi>." هي موجودة. السؤال غير المحسوم هو هل هذه المتغيرات تعكس حساباً صرفياً أو مجرد احتفاظ مباشر بنص التعليمات. دقة <bdi>GPT-4o</bdi> البالغة 97% على نفس المهمة، وبنفس أو أسوأ <bdi>tokenizer</bdi>، تشير إن الفرق قد يكون في <bdi>instruction-tuning</bdi>: مدى قوة تشكيل مسار التمثيل إلى المخرج أثناء التدريب.</p>
 
-        <p>ورقة <bdi>Alakeel</bdi> خلصت إلى أن "الاستدلال التركيبي + اتباع التعليمات يعوض التحليل الصرفي الصريح." نتائجنا متسقة مع صياغة أدق: <strong>اتباع التعليمات قد يكون الشيء اللي يربط البنية الصرفية القابلة للاسترجاع بسلوك المخرج.</strong> البنية قابلة للاسترجاع بدون ضبط على مستوى <bdi>GPT-4o</bdi>؛ السلوك لا. تفسير هبوط الـ <bdi>U</bdi> يعتمد على <bdi>linear probes</bdi>؛ يمكن <bdi>2-layer MLP</bdi> يسترجع أكثر من حالات الطبقات الوسطى. هذه التجربة من الخطوات المباشرة القادمة.</p>
+        <p>ورقة <bdi>Alakeel</bdi> خلصت إلى أن "الاستدلال التركيبي + اتباع التعليمات يعوض التحليل الصرفي الصريح." نتائجنا متسقة مع صياغة أدق: <strong>اتباع التعليمات قد يكون الشيء اللي يربط متغيرات المهمة القابلة للاسترجاع بسلوك المخرج.</strong> عشان تتحول هذه إلى دعوى صرفية أقوى، نحتاج <bdi>prompt ablations</bdi>، واستخراج من مواضع الجذر والوزن، وتجارب يحذف فيها نص الجذر أو الوزن أو يستبدل.</p>
 
         <h3>2. التحجيم غير الرتيب</h3>
 
-        <p>"الأكبر أفضل" ما يصف فحص الجذر. منحنى الدقة ينتقل من مسطح (<bdi>1B</bdi>) إلى شكل <bdi>U</bdi> (<bdi>3B</bdi>) إلى <bdi>U</bdi> أعمق (<bdi>8B</bdi>). هذا متسق مع فرضية <a href="/research-notes/arabic-morphology-probing.ar.html">الخطة البحثية الأصلية</a>:</p>
+        <p>"الأكبر أفضل" ما يصف فحص الجذر. منحنى الدقة المصحح محلياً ينتقل من شبه مسطح (<bdi>1B</bdi>) إلى شكل <bdi>U</bdi> (<bdi>3B</bdi>). التشغيل القديم لـ <bdi>8B</bdi> قد يعمق النمط، لكنه ليس جزءاً من المقارنة المصححة بعد. هذا متسق مع فرضية <a href="/research-notes/arabic-morphology-probing.ar.html">الخطة البحثية الأصلية</a>:</p>
 
         <blockquote>
             <p><em>"إذا نقطة الانعطاف بين <bdi>1B</bdi> و <bdi>3B</bdi>، فهذا يعني إن الحقن الصرفي الصريح يمكن يساعد فقط تحت حوالي <bdi>1B</bdi> معامل. فوق ذلك، النموذج قد يطور القدرة داخلياً، لكن ربما بصيغة ما تقدر الـ <bdi>linear probes</bdi> توصل لها."</em></p>
         </blockquote>
 
-        <p>البيانات تشير إن نقطة الانعطاف مو عن <em>هل</em> البنية الصرفية قابلة للاسترجاع، بل عن <strong>كيف</strong> هي منظمة. عند <bdi>1B</bdi>، هوية الجذر قابلة للوصول الخطي في كل طبقة. عند <bdi>3B+</bdi>، هوية الجذر تبدو موزعة أو متحولة في الطبقات الوسطى إلى صيغة ما يقدر <bdi>logistic regression</bdi> يسترجعها، لكن المعلومة قد تكون ما زالت موجودة لأن الدقة تتعافى جزئياً في الطبقات الأعمق. هذا يبدو كتغير نوعي في التنظيم التمثيلي، مو فشل من النموذج في التقاط الفرق. هذه النتائج خاصة بـ <bdi>LLaMA</bdi> حالياً. تشغيل <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> يختبر هل النمط يعمم.</p>
+        <p>البيانات تشير إن نقطة الانعطاف مو عن <em>هل</em> البنية الصرفية قابلة للاسترجاع، بل عن <strong>كيف</strong> هي منظمة. عند <bdi>1B</bdi>، هوية الجذر قابلة للوصول الخطي في كل طبقة. عند <bdi>3B</bdi>، هوية الجذر تبدو موزعة أو متحولة في الطبقات الوسطى إلى صيغة يسترجعها <bdi>logistic regression</bdi> بدرجة أضعف، لكن المعلومة قد تكون ما زالت موجودة لأن الدقة تتعافى جزئياً في الطبقات الأعمق. هذا يبدو كتغير نوعي في التنظيم التمثيلي، مو فشل من النموذج في التقاط الفرق. هذه النتائج خاصة بـ <bdi>LLaMA</bdi> حالياً. تشغيل <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> يختبر هل النمط يعمم.</p>
 
-        <h3>3. تبسيط الوزن عند <bdi>3B</bdi></h3>
+        <h3>3. الوزن متغير واضح في الـ <bdi>prompt</bdi></h3>
 
-        <p>أوضح أثر للتحجيم: الوزن يحتاج 3 طبقات حساب في <bdi>1B</bdi> و <bdi>8B</bdi>، لكنه يحتاج صفر طبقات في <bdi>3B</bdi>. هذا مو اتجاه ناعم: <bdi>1B → 3B → 8B</bdi> في الطبقة 0 يساوي 73% → 100% → 69%. نموذج <bdi>3B</bdi> خارج النمط.</p>
+        <p>النتيجة المصححة أبسط وأكثر تحفظاً: الوزن قابل للفصل الخطي من أول طبقة تقريباً في <bdi>1B</bdi> و <bdi>3B</bdi>. هذا منطقي لأن الـ <bdi>prompt</bdi> يذكر اسم الوزن صراحة. النتيجة مفيدة، لكنها لا تثبت لوحدها أن النموذج نفذ تركيباً صرفياً عربياً.</p>
 
         <p>تفسيرات ممكنة:</p>
 
         <ol>
-            <li><strong>نظام معماري.</strong> <bdi>3B</bdi> عنده 28 طبقة مع <bdi>hidden states</bdi> ببعد 3072. نسبة السعة إلى العمق قد تنتج نظاماً تتشبع فيه الخصائص السطحية في الطبقات المبكرة بطريقة ما تصير عند 16L/2048d (<bdi>1B</bdi>) أو 32L/4096d (<bdi>8B</bdi>).</li>
-            <li><strong>أثر بيانات تدريب.</strong> يمكن <bdi>3B</bdi> شاف عربي منقول بالحروف اللاتينية أو بيانات وصف أوزان صرفية أكثر أثناء التدريب المسبق، فيصير التعرف على الوزن عملية سطحية سهلة.</li>
-            <li><strong>مقايضة تمثيلية.</strong> لما يكون الوزن قابلاً للوصول الخطي في كل طبقة، يمكن هوية الجذر تُنظم بصيغة أكثر توزيعاً ولا خطية، وهذا قد ينتج هبوط الـ <bdi>U</bdi> إذا الـ <bdi>linear probes</bdi> ما تقدر توصل لها. النمطان قد يكونان مرتبطين.</li>
+            <li><strong>احتفاظ بالـ <bdi>prompt</bdi>.</strong> آخر <bdi>hidden state</bdi> يمكن يحمل نص الوزن الموجود صراحة في التعليمات، فالدقة العالية قد تقيس احتفاظاً بمتغيرات الـ <bdi>prompt</bdi>.</li>
+            <li><strong>فصل سطحي.</strong> أسماء الأوزان العشرة مختلفة بصرياً وتوكنيزرياً، فيمكن للـ <bdi>linear probe</bdi> فصلها قبل حدوث أي تركيب.</li>
+            <li><strong>التركيب لم يُختبر بعد.</strong> لاختبار التركيب، نحتاج استخراجاً من موضع الصيغة المتوقعة أو تجارب يحجب فيها اسم الوزن أو يستبدل.</li>
         </ol>
 
-        <h3>4. خلط ثم فصل عند <bdi>8B</bdi></h3>
+        <h3>4. <bdi>8B</bdi> مؤرشف: ينتظر إعادة التشغيل</h3>
 
         <p>منحنى <bdi>root-pattern CCA</bdi> في <bdi>8B</bdi> (ارتفاع إلى 0.345 عند الطبقة 4 ثم هبوط إلى 0.078) يظهر نمطاً متسقاً مع تنظيم ثنائي المرحلة: الطبقات المبكرة تعرض تداخلاً أعلى بين فضاءات أوزان <bdi>probe</bdi> للجذر والوزن، بينما الطبقات الأعمق تعرض فضاءات أكثر انفصالاً. شكل القمة ثم الهبوط غائب عند الحجمين الأصغر.</p>
 
-        <p>إذا تكرر هذا النمط عبر عوائل نماذج ثانية (<bdi>Qwen</bdi>، <bdi>Mistral</bdi>)، قد يكون توقيعاً لتنظيم صرفي تركيبي يظهر عند حجم أكبر: صيغة وسيطة بتداخل فضاء فرعي أعلى، ثم تنظيم أكثر انفصالاً في الطبقات العميقة. نمط تنظيمي ثنائي المرحلة غائب عند الحجمين الأصغر.</p>
+        <p>إذا صمد هذا النمط بعد إعادة تشغيل <bdi>8B</bdi> بالتقسيم المصحح وتكرر عبر عوائل نماذج ثانية (<bdi>Qwen</bdi>، <bdi>Mistral</bdi>)، قد يكون توقيعاً لتنظيم صرفي تركيبي يظهر عند حجم أكبر: صيغة وسيطة بتداخل فضاء فرعي أعلى، ثم تنظيم أكثر انفصالاً في الطبقات العميقة. نمط تنظيمي ثنائي المرحلة غائب عند الحجمين الأصغر.</p>
 
         <h2 id="caveats"><bdi>caveats</bdi></h2>
 
         <div class="callout hypothesis">
             <div class="label">prompts</div>
-            <p>كل البيانات تستخدم <bdi>English zero-shot prompts</bdi>. المخرج الموحد <code><bdi>The</bdi></code> قد يكون أثر <bdi>chat-template</bdi>؛ اختبار <bdi>Arabic prompts</bdi> و <bdi>one-shot</bdi> ممكن يغير القصة. إذا أنتج <bdi>LLaMA</bdi> عربي منقول بالحروف اللاتينية مع <bdi>prompt</bdi> أفضل، يصير تحليل <bdi>divergence</bdi> ممكناً.</p>
+            <p>كل البيانات المصححة ما زالت تستخدم <bdi>English zero-shot prompts</bdi> وآخر توكن في الـ <bdi>prompt</bdi>. المخرج الموحد <code><bdi>The</bdi></code> قد يكون أثر <bdi>chat-template</bdi>؛ اختبار <bdi>Arabic prompts</bdi> و <bdi>one-shot</bdi> و <bdi>prompt ablations</bdi> ممكن يغير القصة.</p>
         </div>
 
         <div class="callout hypothesis">
             <div class="label">sample size</div>
-            <p>200 محفز لتصنيف من 20 فئة = 10 عينات لكل فئة قبل <bdi>cross-validation</bdi>. محفزات أكثر أو تمريرات أمامية مكررة تضيق أشرطة الخطأ، رغم أن اتساق هبوط الـ <bdi>U</bdi> عبر <bdi>3B</bdi> و <bdi>8B</bdi> وتعمقه مع الحجم يجعل كونه مجرد أثر حجم عينة أقل احتمالاً.</p>
+            <p>200 محفز لتصنيف من 20 فئة = 10 عينات لكل فئة قبل <bdi>cross-validation</bdi>. منطق التقسيم المصحح يتجنب الطيات المستحيلة، لكن ما زلنا نحتاج محفزات أكثر وفواصل ثقة.</p>
         </div>
 
         <h2><bdi>next steps</bdi></h2>
 
         <ol>
-            <li><strong><bdi>non-linear probes</bdi>.</strong> <bdi>2-layer MLP</bdi> على <bdi>mid-layer activations</bdi>. حوالي 20 سطر <bdi>PyTorch</bdi>. يختبر مباشرة هل هوية الجذر منظمة بصيغة لا خطية أو أنها تضعف فعلاً.</li>
-            <li><strong>اختبار <bdi>Arabic</bdi> و <bdi>one-shot prompts</bdi>.</strong> قوالب <code>en_one</code> و <code>ar_zero</code> و <code>ar_one</code> موجودة لكنها ما اشتغلت بعد. إذا أنتج <bdi>LLaMA</bdi> عربي منقول بالحروف اللاتينية، يصير تحليل <bdi>divergence</bdi> ممكناً وقد تضيق فجوة التمثيل والسلوك.</li>
-            <li><strong>تكرار عبر نماذج ثانية.</strong> شغل نفس الـ <bdi>pipeline</bdi> على <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> بأحجام مشابهة. يختبر هل هبوط الـ <bdi>U</bdi> ونمط الخلط ثم الفصل خاصين بـ <bdi>LLaMA</bdi> أو عامين.</li>
+            <li><strong>ضوابط الـ <bdi>prompt</bdi> والمواضع.</strong> أضف <code>--probe-template</code>، واستخراج من موضع الجذر والوزن، وتجارب تحجب الجذر أو الوزن. هذا هو العائق الأساسي قبل دعوى صرفية أقوى.</li>
+            <li><strong>إعادة تشغيل <bdi>8B</bdi> خارجياً.</strong> رسم <bdi>8B</bdi> قديم ومؤرشف، وليس مصححاً. يحتاج جهاز يتحمل النموذج.</li>
+            <li><strong><bdi>non-linear probes</bdi>.</strong> <bdi>2-layer MLP</bdi> على <bdi>mid-layer activations</bdi>. يختبر هل هبوط الجذر في <bdi>3B</bdi> خاص بالـ <bdi>linear probe</bdi>.</li>
+            <li><strong>تكرار عبر نماذج ثانية.</strong> شغل نفس الـ <bdi>pipeline</bdi> على <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> بأحجام مشابهة.</li>
         </ol>
 
         <h2><bdi>references</bdi></h2>
