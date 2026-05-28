@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 /// a flat, pre-allocated key/value cache for transformer attention.
 ///
 /// memory layout: `[layer][head][seq_position][head_dim]`.
-/// wired into `Attention::forward_with_cache` — during prefill the full
+/// wired into `Attention::forward_with_cache` - during prefill the full
 /// k/v projection is cached; subsequent decode steps read from the cache
 /// instead of recomputing against the full sequence each pass.
 pub struct KVCache {
@@ -83,7 +83,7 @@ impl KVCache {
     ///
     /// the caller should `clear()` and then `resize(total_seq_len, f32::NEG_INFINITY)`
     /// before use. because the buffer was allocated to `max_seq_len`,
-    /// `resize` will never reallocate as long as `total_seq_len ≤ max_seq_len`.
+    /// `resize` will never reallocate as long as `total_seq_len <= max_seq_len`.
     #[inline]
     pub fn qk_scratch_mut(&mut self) -> &mut Vec<f32> {
         &mut self.qk_scratch

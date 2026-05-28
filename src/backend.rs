@@ -14,7 +14,7 @@ use crate::tensor::{CpuTensor, TensorError};
 /// (`layer_norm`), shape manipulation (`slice_cols`, `index_select`, `reshape`),
 /// and tensor lifecycle (`zeroes`, `load_from_cpu`, `data`, `shape`).
 ///
-/// **attention is not yet abstracted** — the model's `Attention::forward*`
+/// **attention is not yet abstracted** - the model's `Attention::forward*`
 /// methods call `data()` to extract raw f32 slices and run the attention
 /// math in scalar cpu loops. a gpu backend would still execute attention
 /// on the cpu through this path. adding `fn attention(...)` to the trait
@@ -32,7 +32,7 @@ pub trait Backend {
     /// raw q8_0 block-compressed weight with logical shape
     /// `[out_features, in_features]` (reversed from the gguf native order
     /// so q8_0 blocks are contiguous per output feature).  the weight is
-    /// never stored as f32 — columns are dequantized in blocks and
+    /// never stored as f32 - columns are dequantized in blocks and
     /// multiplied with `sgemm`.
     fn matmul_q8_0(
         &self,
@@ -66,13 +66,13 @@ pub trait Backend {
         bias: &Self::Tensor,
     ) -> Result<Self::Tensor, Self::Error>;
 
-    // ── llama-family primitives ─────────────────────────────────
+    // -- llama-family primitives ---------------------------------
     // rms norm and silu are needed by llama model code.
     // `CpuTensor` already implements both; these trait methods
     // expose them through the abstraction so `Llama<CpuBackend>`
     // works today, and a future gpu backend must provide them too.
 
-    /// rms normalization: `x * weight / sqrt(mean(x²) + eps)`.
+    /// rms normalization: `x * weight / sqrt(mean(x^2) + eps)`.
     /// llama-family models use this instead of layer norm (no mean subtraction, no bias).
     fn rms_norm(
         &self,
@@ -165,12 +165,12 @@ impl Backend for CpuBackend {
             }
 
             // x [seq_len, in_features] @ w_block [in_features, block_len]
-            // → write to out[:, j..j+block_len]
+            // -> write to out[:, j..j+block_len]
             //
-            // sgemm(m, k, n, α, A, rsa, csa, B, rsb, csb, β, C, rsc, csc)
-            //   A: row-major [m, k] → rsa=k, csa=1
-            //   B: column-major [k, n] → rsb=1, csb=k
-            //   C: row-major [m, n] → rsc=n_full, csc=1
+            // sgemm(m, k, n, alpha, A, rsa, csa, B, rsb, csb, beta, C, rsc, csc)
+            //   A: row-major [m, k] -> rsa=k, csa=1
+            //   B: column-major [k, n] -> rsb=1, csb=k
+            //   C: row-major [m, n] -> rsc=n_full, csc=1
             unsafe {
                 matrixmultiply::sgemm(
                     seq_len,

@@ -27,7 +27,7 @@ pub trait ForwardModel<B: Backend> {
     /// `per_layer_activations[layer]` is the hidden state at the **last token
     /// position** after block `layer`, with shape `[embed_dim]`.
     ///
-    /// this is the probing entry point — the same model code, but collecting
+    /// this is the probing entry point - the same model code, but collecting
     /// intermediate representations instead of discarding them.
     #[allow(clippy::type_complexity)]
     fn forward_with_activations(
@@ -39,10 +39,10 @@ pub trait ForwardModel<B: Backend> {
 
 /// the kind of weight backing a `Linear` layer.
 ///
-/// `F32` is the standard path — f32/f16 tensors loaded from gguf and
+/// `F32` is the standard path - f32/f16 tensors loaded from gguf and
 /// stored as the backend's native tensor type.  `Q8_0` keeps weights in
 /// their raw block-compressed form and dequantizes on the fly during
-/// matmul, saving ~4× memory.
+/// matmul, saving ~4x memory.
 pub enum WeightKind<B: Backend> {
     /// f32 weight tensor, shape [in_features, out_features]
     F32(B::Tensor),
@@ -90,7 +90,7 @@ impl<B: Backend> Linear<B> {
     }
 }
 
-/// gpt-2's two-layer feed-forward network: `c_fc` → gelu → `c_proj`.
+/// gpt-2's two-layer feed-forward network: `c_fc` -> gelu -> `c_proj`.
 pub struct Mlp<B: Backend> {
     /// hidden layer (in_features -> 4*in_features in gpt-2)
     c_fc: Linear<B>,
@@ -142,7 +142,7 @@ impl<B: Backend> Attention<B> {
     /// computed and k/v projections for every position are stored in the
     /// cache. during **decode** (`seq_len == 1`) only the new token's q
     /// is computed; cached k/v from all prior positions are reused, turning
-    /// the O(n²·d) full-sequence attention into O(n·d) per step.
+    /// the O(n^2*d) full-sequence attention into O(n*d) per step.
     ///
     /// the cache uses a `[layer][head][seq_position][head_dim]` layout.
     /// this method appends the current step's k/v to the cache before
@@ -168,7 +168,7 @@ impl<B: Backend> Attention<B> {
         let k_data = backend.data(&k);
         let v_data = backend.data(&v);
 
-        // ── 1. store k/v for the current step(s) into the cache ──────
+        // -- 1. store k/v for the current step(s) into the cache ------
         //      (cursor advances after all layers have stored, in gpt2::forward_with_cache)
         let cursor = cache.cursor();
         for pos in 0..seq_len {
@@ -181,8 +181,8 @@ impl<B: Backend> Attention<B> {
             );
         }
 
-        // ── 2. compute attention against the *full* cached k/v ───────
-        //      (cursor hasn't advanced yet — it advances after all layers
+        // -- 2. compute attention against the *full* cached k/v -------
+        //      (cursor hasn't advanced yet - it advances after all layers
         //      finish, in gpt2::forward_with_cache)
         let total_seq_len = cache.cursor() + seq_len;
         let (cached_k, cached_v) = cache.get(layer);
@@ -191,7 +191,7 @@ impl<B: Backend> Attention<B> {
         let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
 
         // pre-allocate scratch buffer once per call (not per head, not per token).
-        // resizing never re-allocates because capacity == cache.max_seq_len() ≥ total_seq_len.
+        // resizing never re-allocates because capacity == cache.max_seq_len() >= total_seq_len.
         let mut qk_scratch = Vec::with_capacity(cache.max_seq_len());
 
         for h in 0..self.n_heads {
@@ -350,8 +350,8 @@ impl<B: Backend> Module<B> for Attention<B> {
         self.c_proj.forward(backend, &result_tensor)
     }
 }
-/// a single transformer block: layer_norm → attention → residual add
-/// → layer_norm → mlp → residual add.
+/// a single transformer block: layer_norm -> attention -> residual add
+/// -> layer_norm -> mlp -> residual add.
 pub struct Block<B: Backend> {
     /// pre-attention layer norm
     ln_1: LayerNorm<B>,
@@ -715,9 +715,10 @@ impl<B: Backend> Gpt2<B> {
     }
 }
 
-// ── llama support ────────────────────────────────────────────
-// (work in progress; see LLAMA.md for the full plan)
-// ─────────────────────────────────────────────────────────────
+// -- llama support --------------------------------------------
+// Llama-family architectures share the `ForwardModel` interface with GPT-2.
+// Demo and interactive CLI modes are still GPT-2-only.
+// -------------------------------------------------------------
 
 /// architectural parameters for a llama-family model.
 ///
@@ -756,14 +757,14 @@ impl LlamaConfig {
     ///
     /// mapped metadata keys (per-architecture prefix):
     ///
-    ///   `{prefix}.block_count`                       → n_layers (default 32)
-    ///   `{prefix}.attention.head_count`              → n_heads (default 32)
-    ///   `{prefix}.attention.head_count_kv`           → n_kv_heads (default n_heads)
-    ///   `{prefix}.embedding_length`                  → embed_dim (default 4096)
-    ///   `{prefix}.context_length`                    → max_seq_len (default 2048)
-    ///   `{prefix}.rope.freq_base`                    → rope_theta (default 10000.0)
-    ///   `{prefix}.attention.layer_norm_rms_epsilon`  → norm_eps (default 1e-5)
-    ///   `{prefix}.vocab_size`                        → vocab_size (default 32000)
+    ///   `{prefix}.block_count`                       -> n_layers (default 32)
+    ///   `{prefix}.attention.head_count`              -> n_heads (default 32)
+    ///   `{prefix}.attention.head_count_kv`           -> n_kv_heads (default n_heads)
+    ///   `{prefix}.embedding_length`                  -> embed_dim (default 4096)
+    ///   `{prefix}.context_length`                    -> max_seq_len (default 2048)
+    ///   `{prefix}.rope.freq_base`                    -> rope_theta (default 10000.0)
+    ///   `{prefix}.attention.layer_norm_rms_epsilon`  -> norm_eps (default 1e-5)
+    ///   `{prefix}.vocab_size`                        -> vocab_size (default 32000)
     ///
     /// supported architectures: llama, qwen2 (including qwen2.5)
     pub fn from_gguf_metadata(loader: &crate::loader::GgufLoader) -> Self {
@@ -835,19 +836,19 @@ impl LlamaConfig {
 /// llama's swiglu feed-forward network.
 ///
 /// three linear projections (no bias):
-///   `silu(gate_proj(x)) * up_proj(x) → down_proj`
+///   `silu(gate_proj(x)) * up_proj(x) -> down_proj`
 ///
-/// this replaces gpt-2's `Mlp` (which uses `c_fc` → gelu → `c_proj`).
+/// this replaces gpt-2's `Mlp` (which uses `c_fc` -> gelu -> `c_proj`).
 /// gguf tensor names: `blk.{i}.ffn_gate.weight`, `blk.{i}.ffn_up.weight`,
 /// `blk.{i}.ffn_down.weight`.
 ///
-/// reference: llama paper (touvron et al. 2023) §3.3, the PaLM paper's
+/// reference: llama paper (touvron et al. 2023) section 3.3, the PaLM paper's
 /// swiglu variant (shazeer 2020).
 #[allow(dead_code)]
 pub struct LlamaMlp<B: Backend> {
-    /// gate projection (input → 8/3 * input for standard llama)
+    /// gate projection (input -> 8/3 * input for standard llama)
     gate_proj: Linear<B>,
-    /// up projection (input → 8/3 * input, multiplied after gate)
+    /// up projection (input -> 8/3 * input, multiplied after gate)
     up_proj: Linear<B>,
     /// down projection (back to embed_dim)
     down_proj: Linear<B>,
@@ -884,12 +885,12 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 /// `blk.{i}.attn_v.weight`, `blk.{i}.attn_output.weight`.
 ///
 /// reference material:
-///   • llama paper (touvron et al. 2023)
-///   • gqa paper (ainslie et al. 2023)
-///   • rope paper (su et al. 2021)
-///   • llama.cpp's attention in `llama-arch.cpp` — the gold standard
+///   - llama paper (touvron et al. 2023)
+///   - gqa paper (ainslie et al. 2023)
+///   - rope paper (su et al. 2021)
+///   - llama.cpp's attention in `llama-arch.cpp` - the gold standard
 ///     for a working reference that handles all the edge cases
-///   • huggingface `LlamaAttention` for the pure-python reference
+///   - huggingface `LlamaAttention` for the pure-python reference
 #[allow(dead_code)]
 pub struct LlamaAttention<B: Backend> {
     /// query projection (no bias)
@@ -1231,8 +1232,8 @@ impl<B: Backend> LlamaAttention<B> {
 /// a single llama decoder block.
 ///
 /// ```text
-/// x → rms_norm → self_attention → residual add
-///   → rms_norm → swiglu_mlp → residual add
+/// x -> rms_norm -> self_attention -> residual add
+///   -> rms_norm -> swiglu_mlp -> residual add
 /// ```
 ///
 /// note the order: pre-norm (rms), then attention/mlp, then add.
@@ -1241,9 +1242,9 @@ impl<B: Backend> LlamaAttention<B> {
 /// (no mean, no bias).
 ///
 /// gguf tensor names:
-///   `blk.{i}.attn_norm.weight` → rms_norm weight for attention
-///   `blk.{i}.ffn_norm.weight`  → rms_norm weight for mlp
-///   (no bias tensors — rms norm has no bias parameter)
+///   `blk.{i}.attn_norm.weight` -> rms_norm weight for attention
+///   `blk.{i}.ffn_norm.weight`  -> rms_norm weight for mlp
+///   (no bias tensors - rms norm has no bias parameter)
 #[allow(dead_code)]
 pub struct LlamaBlock<B: Backend> {
     /// pre-attention rms normalization weight
@@ -1285,14 +1286,14 @@ impl<B: Backend> LlamaBlock<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        // rms_norm → attention (cached) → residual add
+        // rms_norm -> attention (cached) -> residual add
         let normed = backend.rms_norm(x, &self.input_layernorm, self.norm_eps)?;
         let attn_out = self
             .self_attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
         let x = backend.add(x, &attn_out)?;
 
-        // rms_norm → swiglu mlp → residual add
+        // rms_norm -> swiglu mlp -> residual add
         let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
         let mlp_out = self.mlp.forward(backend, &normed)?;
         backend.add(&x, &mlp_out)
@@ -1301,12 +1302,12 @@ impl<B: Backend> LlamaBlock<B> {
 
 impl<B: Backend> Module<B> for LlamaBlock<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        // rms_norm → attention → residual add
+        // rms_norm -> attention -> residual add
         let normed = backend.rms_norm(x, &self.input_layernorm, self.norm_eps)?;
         let attn_out = self.self_attn.forward(backend, &normed)?;
         let x = backend.add(x, &attn_out)?;
 
-        // rms_norm → swiglu mlp → residual add
+        // rms_norm -> swiglu mlp -> residual add
         let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
         let mlp_out = self.mlp.forward(backend, &normed)?;
         backend.add(&x, &mlp_out)
@@ -1316,13 +1317,13 @@ impl<B: Backend> Module<B> for LlamaBlock<B> {
 /// the full llama transformer model.
 ///
 /// fields match the gguf tensor names in comments:
-///   `token_embd.weight`      → embed_tokens
-///   `blk.{i}.*`              → blocks
-///   `output_norm.weight`     → norm  (rms, no bias)
-///   `output.weight`          → head  (linear, no bias)
+///   `token_embd.weight`      -> embed_tokens
+///   `blk.{i}.*`              -> blocks
+///   `output_norm.weight`     -> norm  (rms, no bias)
+///   `output.weight`          -> head  (linear, no bias)
 ///
 /// embedding lookup replaces gpt-2's `wte + wpe` with a single
-/// token embedding (no learned position embeddings — rope handles
+/// token embedding (no learned position embeddings - rope handles
 /// position). the `from_loader` builder reads llama-specific gguf
 /// metadata keys.
 pub struct Llama<B: Backend> {
@@ -1379,20 +1380,20 @@ impl Llama<CpuBackend> {
     /// from the llama naming convention.
     ///
     /// expected gguf tensor names per layer:
-    ///   `blk.{i}.attn_q.weight`       → q_proj
-    ///   `blk.{i}.attn_k.weight`       → k_proj
-    ///   `blk.{i}.attn_v.weight`       → v_proj
-    ///   `blk.{i}.attn_output.weight`  → o_proj
-    ///   `blk.{i}.ffn_gate.weight`     → gate_proj
-    ///   `blk.{i}.ffn_up.weight`       → up_proj
-    ///   `blk.{i}.ffn_down.weight`     → down_proj
-    ///   `blk.{i}.attn_norm.weight`    → input_layernorm (rms, no bias)
-    ///   `blk.{i}.ffn_norm.weight`     → post_attention_layernorm (rms, no bias)
+    ///   `blk.{i}.attn_q.weight`       -> q_proj
+    ///   `blk.{i}.attn_k.weight`       -> k_proj
+    ///   `blk.{i}.attn_v.weight`       -> v_proj
+    ///   `blk.{i}.attn_output.weight`  -> o_proj
+    ///   `blk.{i}.ffn_gate.weight`     -> gate_proj
+    ///   `blk.{i}.ffn_up.weight`       -> up_proj
+    ///   `blk.{i}.ffn_down.weight`     -> down_proj
+    ///   `blk.{i}.attn_norm.weight`    -> input_layernorm (rms, no bias)
+    ///   `blk.{i}.ffn_norm.weight`     -> post_attention_layernorm (rms, no bias)
     ///
     /// global tensors:
-    ///   `token_embd.weight`           → embed_tokens
-    ///   `output_norm.weight`          → final rms norm (no bias)
-    ///   `output.weight`               → lm_head (linear, no bias)
+    ///   `token_embd.weight`           -> embed_tokens
+    ///   `output_norm.weight`          -> final rms norm (no bias)
+    ///   `output.weight`               -> lm_head (linear, no bias)
     ///
     /// design note: quantized llama models from llama.cpp use the same
     /// column-major storage as quantized gpt-2 models. as with `Gpt2::from_loader`,
@@ -1501,9 +1502,9 @@ impl<B: Backend> Llama<B> {
     /// forward pass with incremental kv caching.
     ///
     /// mirrors `Gpt2::forward_with_cache` but:
-    ///   • uses `LlamaBlock::forward_with_cache` which passes start_pos for rope
-    ///   • normalizes with rms norm (via `backend.rms_norm`)
-    ///   • no position embedding lookup (rope is in the attention layer)
+    ///   - uses `LlamaBlock::forward_with_cache` which passes start_pos for rope
+    ///   - normalizes with rms norm (via `backend.rms_norm`)
+    ///   - no position embedding lookup (rope is in the attention layer)
     pub fn forward_with_cache(
         &self,
         backend: &B,

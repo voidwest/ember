@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 /// a row-major f32 tensor backed by a flat vec.
 ///
 /// shape is [d0, d1, d2, ...] with strides computed for efficient
-/// indexing. the data is always contiguous — strides are used only
+/// indexing. the data is always contiguous - strides are used only
 /// for bounds-aware access, not for views into other storage.
 /// all pure operations return a new allocation; nothing mutates in place.
 #[derive(Clone, Debug, PartialEq)]
@@ -249,8 +249,8 @@ impl CpuTensor {
     }
 
     /// rms normalization over the last dimension of a 2d `[batch, features]`
-    /// tensor. normalizes each row independently: `x * weight / sqrt(mean(x²) + eps)`.
-    /// lLaMA-family models use this instead of layer_norm — no mean subtraction, no bias.
+    /// tensor. normalizes each row independently: `x * weight / sqrt(mean(x^2) + eps)`.
+    /// lLaMA-family models use this instead of layer_norm - no mean subtraction, no bias.
     #[must_use]
     #[inline]
     pub fn rms_norm(&self, weight: &Self, eps: f32) -> Self {
@@ -296,26 +296,26 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), data)
     }
 
-    // ── rotary position embeddings (rope) ──────────────────────
+    // -- rotary position embeddings (rope) ----------------------
     // llama models encode position by rotating q/k vectors in 2d
     // subspaces of the head dimension. the rotation angle depends
     // on the absolute position and a per-dimension frequency.
     //
     // reference material:
-    //   • the original rope paper (su et al. 2021)
-    //   • llama.cpp's `llama_rope` in `llama-arch.cpp`
+    //   - the original rope paper (su et al. 2021)
+    //   - llama.cpp's `llama_rope` in `llama-arch.cpp`
     //     and `ggml_rope_ext_inplace`
-    //   • huggingface transformers `LlamaRotaryEmbedding` class
+    //   - huggingface transformers `LlamaRotaryEmbedding` class
     //
     // the typical approach is two functions:
     //
     //   compute_rope_freqs(max_seq_len, head_dim, theta_base)
-    //     → cos_table: [max_seq_len, head_dim]
-    //     → sin_table: [max_seq_len, head_dim]
+    //     -> cos_table: [max_seq_len, head_dim]
+    //     -> sin_table: [max_seq_len, head_dim]
     //
     //   apply_rotary_emb(q_or_k: [batch, seq_len, head_dim],
     //                    cos_table, sin_table, start_pos)
-    //     → rotated tensor, same shape
+    //     -> rotated tensor, same shape
     //
     // frequencies follow a geometric series:
     //   freq[i] = theta_base^(-i * 2 / head_dim)
@@ -339,10 +339,10 @@ impl CpuTensor {
     /// is returned.
     ///
     /// input expectations:
-    ///   `x` — a 3d `[batch, seq_len, head_dim]` or a 2d `[seq_len, head_dim]`
-    ///   `cos` — precomputed cos table, `[max_seq_len, head_dim]`
-    ///   `sin` — precomputed sin table, `[max_seq_len, head_dim]`
-    ///   `start_pos` — absolute position offset for the first element of `x`
+    ///   `x` - a 3d `[batch, seq_len, head_dim]` or a 2d `[seq_len, head_dim]`
+    ///   `cos` - precomputed cos table, `[max_seq_len, head_dim]`
+    ///   `sin` - precomputed sin table, `[max_seq_len, head_dim]`
+    ///   `start_pos` - absolute position offset for the first element of `x`
     #[must_use]
     pub fn apply_rotary_emb(&self, cos: &Self, sin: &Self, start_pos: usize) -> Self {
         // accepts 2d [seq_len, head_dim] or 3d [batch, seq_len, head_dim]
@@ -419,7 +419,7 @@ impl CpuTensor {
 
     /// select the `index`-th row from a 2d tensor.
     ///
-    /// returns a **1d** tensor of shape `[row_size]` — the row is flattened.
+    /// returns a **1d** tensor of shape `[row_size]` - the row is flattened.
     /// if you need a 2d `[1, row_size]` result, reshape the output.
     pub fn index_select(&self, index: usize) -> Result<Self, TensorError> {
         if self.shape.len() < 2 {
@@ -505,7 +505,7 @@ impl CpuTensor {
 ///   cos_table[p][d] = cos(p * freq[d])
 ///   sin_table[p][d] = sin(p * freq[d])
 ///
-/// returns `(cos, sin)` — two `[max_seq_len, head_dim]` tensors.
+/// returns `(cos, sin)` - two `[max_seq_len, head_dim]` tensors.
 pub fn compute_rope_freqs(
     max_seq_len: usize,
     head_dim: usize,

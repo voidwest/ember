@@ -1,8 +1,7 @@
 use anyhow::{Context, Result};
 use tokenizers::Tokenizer;
 
-/// wraps the huggingface `tokenizers` crate for text ↔ token id conversion.
-/// currently hardcoded for gpt-2's tokenizer (vocab size 50257).
+/// wraps the huggingface `tokenizers` crate for text-token id conversion.
 pub struct EmberTokenizer {
     /// wrapped huggingface tokenizers instance
     inner: Tokenizer,
@@ -49,17 +48,4 @@ impl EmberTokenizer {
         }
         None
     }
-}
-
-/// download the gpt-2 tokenizer from huggingface and save it to `tokenizer.json`
-/// in the current working directory. if the file already exists, the download is
-/// skipped — callers who need a fresh copy should delete the file first.
-pub fn download_gpt2_tokenizer_blocking() -> Result<EmberTokenizer> {
-    let path = "tokenizer.json";
-    if !std::path::Path::new(path).exists() {
-        let url = "https://huggingface.co/openai-community/gpt2/resolve/main/tokenizer.json";
-        let response = reqwest::blocking::get(url)?.bytes()?;
-        std::fs::write(path, &response)?;
-    }
-    EmberTokenizer::from_file(path)
 }

@@ -32,9 +32,9 @@ pub fn dequantize_q8_0(src: &[u8], dst: &mut [f32]) -> Result<()> {
 
 /// a q8_0 weight matrix kept in raw block-compressed form.
 ///
-/// weights are never stored as f32 — `dequantize_row(j)` dequantizes
+/// weights are never stored as f32 - `dequantize_row(j)` dequantizes
 /// one output-feature column on demand during matmul.  this keeps the
-/// in-memory footprint at the quantized size (~4× smaller than f32).
+/// in-memory footprint at the quantized size (~4x smaller than f32).
 ///
 /// ## layout
 ///
@@ -44,7 +44,7 @@ pub fn dequantize_q8_0(src: &[u8], dst: &mut [f32]) -> Result<()> {
 /// `shape[1]` is `in_features`.
 #[derive(Clone, Debug)]
 pub struct QuantizedWeight {
-    /// raw q8_0 bytes: [block₀_scale(2B) | block₀_q(32B) | block₁_scale(2B) | ...]
+    /// raw q8_0 bytes: [block0_scale(2B) | block0_q(32B) | block1_scale(2B) | ...]
     pub data: Vec<u8>,
     /// logical shape [out_features, in_features] (reversed from gguf dims)
     pub shape: Vec<usize>,

@@ -4,14 +4,14 @@ use rand::Rng;
 /// sample a token from logits with temperature scaling, top-k, and top-p filtering.
 ///
 /// the standard sampling pipeline:
-/// 1. **temperature scaling** — divides logits by `temperature` to sharpen or flatten
+/// 1. **temperature scaling** - divides logits by `temperature` to sharpen or flatten
 ///    the distribution. `0.0` means greedy argmax.
-/// 2. **top-k filtering** — keeps only the `k` highest logits, sets the rest to `-inf`.
-/// 3. **top-p (nucleus) filtering** — keeps the smallest set of tokens whose cumulative
+/// 2. **top-k filtering** - keeps only the `k` highest logits, sets the rest to `-inf`.
+/// 3. **top-p (nucleus) filtering** - keeps the smallest set of tokens whose cumulative
 ///    softmax probability exceeds `p`, sets the rest to `-inf`.
-/// 4. **softmax** — converts filtered logits to a probability distribution.
+/// 4. **softmax** - converts filtered logits to a probability distribution.
 ///    if every logit is `-inf` (fully masked), returns a uniform distribution.
-/// 5. **inverse cdf sampling** — draws a token from the categorical distribution.
+/// 5. **inverse cdf sampling** - draws a token from the categorical distribution.
 ///
 /// this is the same sampling pipeline used by llama.cpp, huggingface transformers,
 /// and the openai api (holtzman et al. 2020).
@@ -38,7 +38,7 @@ pub fn sample_token(
         top_p_filter(&mut logits, p);
     }
 
-    // single softmax at the end — top_p_filter uses its own internal softmax
+    // single softmax at the end - top_p_filter uses its own internal softmax
     // to find the nucleus cutoff; the final distribution is computed once here.
     let dist = softmax_1d(&logits);
 
@@ -73,7 +73,7 @@ fn top_k_filter(logits: &mut [f32], k: usize) {
 /// computes softmax on the current logits to find the cutoff threshold,
 /// then masks logits whose softmax probability falls below that threshold.
 /// the caller is responsible for computing the final softmax on the
-/// filtered logits — this avoids computing softmax twice.
+/// filtered logits - this avoids computing softmax twice.
 fn top_p_filter(logits: &mut [f32], p: f32) {
     let soft = softmax_1d(logits);
     let cutoff = nucleus_cutoff(&soft, p);
@@ -88,7 +88,7 @@ fn top_p_filter(logits: &mut [f32], p: f32) {
 ///
 /// subtracts the maximum logit before exponentiating to avoid overflow (the "max trick").
 /// for all-masked input (every value is `f32::NEG_INFINITY`), returns a uniform
-/// distribution — this matches the behavior of `CpuTensor::softmax` and prevents
+/// distribution - this matches the behavior of `CpuTensor::softmax` and prevents
 /// NaN propagation from `(-inf - -inf).exp()` per ieee 754.
 pub fn softmax_1d(logits: &[f32]) -> Vec<f32> {
     let max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));

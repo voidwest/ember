@@ -86,21 +86,9 @@ fn main() -> anyhow::Result<()> {
         log::set_max_level(log::LevelFilter::Off);
     }
 
-    // dispatch to the selected architecture.
-    // when `--arch llama` is requested, this early-exits until
-    // `Llama::from_loader` is implemented (see LLAMA.md for the full plan).
-    //
-    // future pattern (once both architectures exist):
-    //
-    //   let model = match args.arch.as_str() {
-    //       "gpt2"  => Gpt2::from_loader(loader)?,
-    //       "llama" => Llama::from_loader(loader)?,
-    //       _       => anyhow::bail!("unknown architecture: {}", args.arch),
-    //   };
-    //
-    // because Gpt2 and Llama are separate concrete types, the caller
-    // (generate, demo_mode, interactive_mode) would need to be generic
-    // over the model or accept a trait object. see LLAMA.md §main.rs for options.
+    // Dispatch to the selected architecture. The single-prompt generation and
+    // probe paths are generic over `ForwardModel`; demo and interactive mode
+    // still use GPT-2-specific helpers.
     let loader = load_gguf(&args.model)?;
     let n_tensors = loader.tensors.len();
     let backend = CpuBackend;
@@ -201,7 +189,7 @@ fn main() -> anyhow::Result<()> {
 
 /// run a curated demo showcasing the project.
 ///
-/// uses greedy sampling (temperature 0) for deterministic, repeatable output —
+/// uses greedy sampling (temperature 0) for deterministic, repeatable output -
 /// ideal for screen recordings, benchmarks, and project demonstrations.
 /// runs through a fixed set of prompts, printing each one with its completion
 /// and per-prompt timing, then a summary table.
@@ -220,7 +208,7 @@ fn demo_mode<B: Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
-    // ── ansi style helpers ──────────────────────────────────────────────
+    // -- ansi style helpers ----------------------------------------------
     // simple string concatenation to avoid macro complexity.
     // each "style" builder returns a formatted string with escape codes.
     const RST: &str = "\x1b[0m";
@@ -250,21 +238,21 @@ where
     let embed_dim = backend.shape(&model.wte)[1];
     let head_dim = embed_dim / model.n_heads;
 
-    // ── header ──────────────────────────────────────────────────────
+    // -- header ------------------------------------------------------
     let header_border = s2(
         DIM,
         CYN,
-        &"╔══════════════════════════════════════════════════╗",
+        &"+--------------------------------------------------+",
     );
     let header_line = s2(
         BLD,
         CYN,
-        &"║              ember  ·  llm inference             ║",
+        &"|              ember  -  llm inference             |",
     );
     let header_sep = s2(
         DIM,
         CYN,
-        &"╠══════════════════════════════════════════════════╣",
+        &"+--------------------------------------------------+",
     );
 
     println!("{header_border}");
@@ -274,10 +262,10 @@ where
     let kv = |k: &str, v: &dyn std::fmt::Display| {
         println!(
             "{} {} {:>37} {}",
-            s2(DIM, CYN, &"║"),
+            s2(DIM, CYN, &"|"),
             s(DIM, &k),
             s(BLD, &v),
-            s2(DIM, CYN, &"║"),
+            s2(DIM, CYN, &"|"),
         );
     };
     kv("model     ", &model_path);
@@ -291,7 +279,7 @@ where
     let header_foot = s2(
         DIM,
         CYN,
-        &"╚══════════════════════════════════════════════════╝",
+        &"+--------------------------------------------------+",
     );
     println!("{header_foot}");
 
@@ -301,7 +289,7 @@ where
             "{}",
             s(
                 DIM,
-                &format!("  typewriter delay: {delay_ms} ms/token · press ctrl-c to exit")
+                &format!("  typewriter delay: {delay_ms} ms/token - press ctrl-c to exit")
             ),
         );
     }
@@ -320,7 +308,7 @@ where
         ("The meaning of life is", "open-ended reasoning"),
     ];
 
-    let spinner_chars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let spinner_chars = ['|', '/', '-', '\\'];
 
     let mut total_prefill_ms = 0.0;
     let mut total_decode_ms = 0.0;
@@ -332,11 +320,11 @@ where
         let prompt_len = prompt_tokens.len();
         let max_seq_len = prompt_len + max_tokens;
 
-        // ── prefill with spinner ──────────────────────────────────
+        // -- prefill with spinner ----------------------------------
         let prefill_start = std::time::Instant::now();
         eprint_flush!(
             "{}  {}{}",
-            s(CYN, &"▒"),
+            s(CYN, &"*"),
             s(DIM, &"prefilling... "),
             spinner_chars[0],
         );
@@ -345,9 +333,9 @@ where
         let mut logits = model.forward_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
 
         let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
-        eprint_flush!("\r{}\n", s(GRN, &"✓ prefill complete"));
+        eprint_flush!("\r{}\n", s(GRN, &"prefill complete"));
 
-        // ── decode with typewriter streaming ──────────────────────
+        // -- decode with typewriter streaming ----------------------
         let decode_start = std::time::Instant::now();
         let mut all_tokens = prompt_tokens.clone();
         let mut generated = Vec::with_capacity(max_tokens);
@@ -356,15 +344,15 @@ where
         println!();
         let pn = i + 1;
         let card_width: usize = 50;
-        let top_prefix = format!("┌─ prompt {pn} ─ {category} ─ ");
+        let top_prefix = format!("+- prompt {pn} - {category} - ");
         let pad_len = card_width.saturating_sub(top_prefix.chars().count() + 1);
-        let dashes = "─".repeat(pad_len);
-        println!("{}", s2(BLD, CYN, &format!("{top_prefix}{dashes}┐")),);
-        println!("{}", s(DIM, &"│"));
-        println!("{} {}", s(DIM, &"│ prompt:    "), s(YLW, &prompt),);
+        let dashes = "-".repeat(pad_len);
+        println!("{}", s2(BLD, CYN, &format!("{top_prefix}{dashes}+")),);
+        println!("{}", s(DIM, &"|"));
+        println!("{} {}", s(DIM, &"| prompt:    "), s(YLW, &prompt),);
         print_flush!(
             "{} {}",
-            s(DIM, &"│ completion:"),
+            s(DIM, &"| completion:"),
             GRN, // start completion on a new line, green
         );
 
@@ -388,7 +376,7 @@ where
 
             // stream this single token now, before computing the next.
             // individual subword tokens may decode to replacement characters
-            // (U+FFFD �) when they're part of a multi-token UTF-8 sequence;
+            // (U+FFFD) when they're part of a multi-token UTF-8 sequence;
             // filter those out so the typewriter effect stays clean.
             let token_text = tokenizer.decode(&[next as u32])?;
             let cleaned: String = token_text.chars().filter(|c| *c != '\u{FFFD}').collect();
@@ -407,24 +395,24 @@ where
         println!("{RST}");
         let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
-        // ── per-prompt stats ─────────────────────────────────────
-        println!("{}", s(DIM, &"│"));
+        // -- per-prompt stats -------------------------------------
+        println!("{}", s(DIM, &"|"));
         println!(
             "{} {} prompt + {} generated = {} total",
-            s(DIM, &"│ tokens:    "),
+            s(DIM, &"| tokens:    "),
             prompt_len,
             generated.len(),
             prompt_len + generated.len(),
         );
         println!(
             "{} {:.1} ms ({:.0} tok/s)",
-            s(DIM, &"│ prefill:   "),
+            s(DIM, &"| prefill:   "),
             prefill_ms,
             prompt_len as f64 / (prefill_ms / 1000.0)
         );
         println!(
             "{} {:.1} ms ({:.0} tok/s)",
-            s(DIM, &"│ decode:    "),
+            s(DIM, &"| decode:    "),
             decode_ms,
             generated.len() as f64 / (decode_ms / 1000.0)
         );
@@ -433,7 +421,7 @@ where
             s2(
                 DIM,
                 CYN,
-                &"└────────────────────────────────────────────────┘"
+                &"+------------------------------------------------+"
             )
         );
         println!();
@@ -449,7 +437,7 @@ where
         }
     }
 
-    // ── summary ────────────────────────────────────────────────────
+    // -- summary ----------------------------------------------------
     let total_ms = total_prefill_ms + total_decode_ms;
     let total_tokens = total_prompt_tokens + total_generated;
 
@@ -458,7 +446,7 @@ where
         s2(
             BLD,
             YLW,
-            &"═══════════════════════════ summary ══════════════════════════"
+            &"=========================== summary =========================="
         ),
     );
     println!();
@@ -473,12 +461,12 @@ where
         total_tokens as f64 / (total_ms / 1000.0)
     );
     println!(
-        "  prefill avg:   {:.1} ms · {:.0} tok/s",
+        "  prefill avg:   {:.1} ms - {:.0} tok/s",
         total_prefill_ms / prompts.len() as f64,
         total_prompt_tokens as f64 / (total_prefill_ms / 1000.0)
     );
     println!(
-        "  decode avg:    {:.1} ms · {:.0} tok/s",
+        "  decode avg:    {:.1} ms - {:.0} tok/s",
         total_decode_ms / prompts.len() as f64,
         total_generated as f64 / (total_decode_ms / 1000.0)
     );
@@ -488,18 +476,18 @@ where
         s2(
             DIM,
             YLW,
-            &"══════════════════════════════════════════════════════════════"
+            &"=============================================================="
         ),
     );
     println!();
 
-    // ── end-of-demo flicker ────────────────────────────────────
+    // -- end-of-demo flicker ------------------------------------
     // prints a blinking cursor effect that persists for ~2 seconds
     // so the viewer knows the demo is complete and the terminal is
     // still live.
     if delay_ms > 0 {
         print_flush!("{}", s(DIM, &"demo complete. "));
-        let cursor_chars = ['▌', ' '];
+        let cursor_chars = ['|', ' '];
         let flicker_start = std::time::Instant::now();
         let mut flicker_idx = 0usize;
         while flicker_start.elapsed().as_secs() < 2 {
@@ -521,9 +509,9 @@ where
 /// run the full autoregressive generation loop.
 ///
 /// operates in two phases:
-/// 1. **prefill** — feeds the entire prompt through the model in one forward pass,
+/// 1. **prefill** - feeds the entire prompt through the model in one forward pass,
 ///    populating the kv cache with key/value projections for all prompt tokens.
-/// 2. **decode** — generates one token at a time: samples from the last position's
+/// 2. **decode** - generates one token at a time: samples from the last position's
 ///    logits, appends it, and runs a single-token forward pass reusing the cached
 ///    k/v from all previous positions. stops when `max_tokens` is reached or the
 ///    eos token (50256) is predicted.
@@ -555,7 +543,7 @@ where
     let prompt_len = all_tokens.len();
     let max_seq_len = prompt_len + max_tokens;
 
-    // ── 1. prefill: run full forward pass on the prompt and fill kv cache ──
+    // -- 1. prefill: run full forward pass on the prompt and fill kv cache --
     let prefill_start = if benchmark {
         Some(Instant::now())
     } else {
@@ -567,7 +555,7 @@ where
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
     let embed_dim = backend.shape(&logits)[1];
 
-    // ── 2. decode loop: one new token at a time ──────────────────────────
+    // -- 2. decode loop: one new token at a time --------------------------
     let decode_start = if benchmark {
         Some(Instant::now())
     } else {
@@ -621,13 +609,13 @@ where
         let decode_ms = decode_start.unwrap().elapsed().as_secs_f64() * 1000.0;
         eprintln!("--- benchmark ---");
         eprintln!(
-            "prefill: {} tokens in {:.1}ms → {:.0} tok/s",
+            "prefill: {} tokens in {:.1}ms -> {:.0} tok/s",
             prompt_len,
             prefill_ms,
             prompt_len as f64 / prefill_elapsed.unwrap().as_secs_f64()
         );
         eprintln!(
-            "decode:  {} tokens in {:.1}ms → {:.0} tok/s",
+            "decode:  {} tokens in {:.1}ms -> {:.0} tok/s",
             generated.len(),
             decode_ms,
             generated.len() as f64 / decode_start.unwrap().elapsed().as_secs_f64()
@@ -670,7 +658,7 @@ where
     let prompt_len = all_tokens.len();
     let max_seq_len = prompt_len + max_tokens;
 
-    // ── 1. prefill: run full forward pass on the prompt and fill kv cache ──
+    // -- 1. prefill: run full forward pass on the prompt and fill kv cache --
     let prefill_start = if benchmark {
         Some(Instant::now())
     } else {
@@ -683,7 +671,7 @@ where
     // logits have shape [prompt_len, vocab_size]; extract vocab_size from the tensor
     let vocab_size = backend.shape(&logits)[1];
 
-    // ── 2. decode loop: one new token at a time ──────────────────────────
+    // -- 2. decode loop: one new token at a time --------------------------
     let decode_start = if benchmark {
         Some(Instant::now())
     } else {
@@ -694,11 +682,11 @@ where
     for step in 0..max_tokens {
         let logit_data = backend.data(&logits);
         let last_logits = if step == 0 {
-            // prefill output [prompt_len, vocab_size] → take last row
+            // prefill output [prompt_len, vocab_size] -> take last row
             let last_offset = (all_tokens.len() - 1) * vocab_size;
             &logit_data[last_offset..last_offset + vocab_size]
         } else {
-            // decode output [1, vocab_size] → take the only row
+            // decode output [1, vocab_size] -> take the only row
             &logit_data[..vocab_size]
         };
 
@@ -738,13 +726,13 @@ where
         let decode_ms = decode_start.unwrap().elapsed().as_secs_f64() * 1000.0;
         eprintln!("--- benchmark ---");
         eprintln!(
-            "prefill: {} tokens in {:.1}ms → {:.0} tok/s",
+            "prefill: {} tokens in {:.1}ms -> {:.0} tok/s",
             prompt_len,
             prefill_ms,
             prompt_len as f64 / prefill_elapsed.unwrap().as_secs_f64()
         );
         eprintln!(
-            "decode:  {} tokens in {:.1}ms → {:.0} tok/s",
+            "decode:  {} tokens in {:.1}ms -> {:.0} tok/s",
             generated.len(),
             decode_ms,
             generated.len() as f64 / decode_start.unwrap().elapsed().as_secs_f64()
@@ -846,7 +834,7 @@ where
     Ok(())
 }
 
-// ── probe mode ─────────────────────────────────────────────────
+// -- probe mode -------------------------------------------------
 
 /// write a 3d f32 array as a .npy file (numpy format v1.0).
 ///
@@ -897,7 +885,7 @@ fn probe_mode<B: Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
-    // ── load stimuli ──────────────────────────────────────────
+    // -- load stimuli ------------------------------------------
     let stimuli_json = fs::read_to_string(stimuli_path)
         .with_context(|| format!("failed to read stimuli file: {}", stimuli_path))?;
     let stimuli: Vec<serde_json::Value> = serde_json::from_str(&stimuli_json)?;
@@ -915,7 +903,7 @@ where
     );
     let mut activations: Vec<f32> = vec![0.0f32; total_floats];
 
-    // ── collect ───────────────────────────────────────────────
+    // -- collect -----------------------------------------------
     let start = Instant::now();
     let mut correctness: Vec<serde_json::Value> = Vec::with_capacity(stimuli.len());
 
@@ -982,7 +970,7 @@ where
         }
     }
 
-    // ── save ──────────────────────────────────────────────────
+    // -- save --------------------------------------------------
     let shape = [stimuli.len(), n_layers, embed_dim];
     write_npy(output_path, &activations, &shape)?;
     eprintln!("saved activations to {}", output_path);

@@ -13,7 +13,7 @@ const DEFAULT_ALIGNMENT: u64 = 32;
 /// a tensor as loaded from a gguf file.
 ///
 /// f32 and f16 tensors are stored as `CpuTensor`.  q8_0 tensors are kept
-/// in raw block-compressed form (`QuantizedWeight`) — they are never
+/// in raw block-compressed form (`QuantizedWeight`) - they are never
 /// dequantized to f32, keeping the in-memory footprint at the quantized size.
 #[derive(Clone)]
 pub enum LoadedTensor {
