@@ -748,46 +748,75 @@ pub struct LlamaConfig {
 }
 
 impl LlamaConfig {
-    /// read llama config from gguf metadata.
+    /// read config from gguf metadata, supporting multiple architectures.
     ///
-    /// maps these gguf metadata keys (with sensible defaults
-    /// when a key is missing):
+    /// detects the architecture from `general.architecture` and uses the
+    /// appropriate prefix (`llama.*`, `qwen2.*`).  falls back to `llama.*`
+    /// when the architecture key is missing for backward compatibility.
     ///
-    ///   `llama.block_count`                       → n_layers (default 32)
-    ///   `llama.attention.head_count`              → n_heads (default 32)
-    ///   `llama.attention.head_count_kv`           → n_kv_heads (default n_heads)
-    ///   `llama.embedding_length`                  → embed_dim (default 4096)
-    ///   `llama.context_length`                    → max_seq_len (default 2048)
-    ///   `llama.rope.freq_base`                    → rope_theta (default 10000.0)
-    ///   `llama.attention.layer_norm_rms_epsilon`  → norm_eps (default 1e-5)
-    ///   `llama.vocab_size`                        → vocab_size (default 32000)
+    /// mapped metadata keys (per-architecture prefix):
     ///
-    /// reference: llama.cpp reads the same keys in `llama-arch.cpp`.
-    pub fn from_gguf_metadata(metadata: &crate::loader::GgufLoader) -> Self {
+    ///   `{prefix}.block_count`                       → n_layers (default 32)
+    ///   `{prefix}.attention.head_count`              → n_heads (default 32)
+    ///   `{prefix}.attention.head_count_kv`           → n_kv_heads (default n_heads)
+    ///   `{prefix}.embedding_length`                  → embed_dim (default 4096)
+    ///   `{prefix}.context_length`                    → max_seq_len (default 2048)
+    ///   `{prefix}.rope.freq_base`                    → rope_theta (default 10000.0)
+    ///   `{prefix}.attention.layer_norm_rms_epsilon`  → norm_eps (default 1e-5)
+    ///   `{prefix}.vocab_size`                        → vocab_size (default 32000)
+    ///
+    /// supported architectures: llama, qwen2 (including qwen2.5)
+    pub fn from_gguf_metadata(loader: &crate::loader::GgufLoader) -> Self {
         use crate::loader::GgufValue;
 
+        // detect architecture prefix from gguf metadata.
+        // llama models use "llama.*", qwen2.5 uses "qwen2.*", etc.
+        // fall back to "llama" for backward compatibility.
+        let arch_prefix = match loader.metadata.get("general.architecture") {
+            Some(GgufValue::Str(s)) => s.as_str(),
+            _ => "llama",
+        };
+        // normalize: qwen2 covers qwen2.5 (same arch family)
+        let prefix = match arch_prefix {
+            "qwen2" => "qwen2",
+            _ => "llama",
+        };
+
         let get_u32 = |key: &str, default: u32| -> u32 {
-            match metadata.metadata.get(key) {
-                Some(GgufValue::U32(v)) => *v,
+            // try architecture-specific key first, then fall back to llama
+            let arch_key = format!("{}.{}", prefix, key);
+            let llama_key = format!("llama.{}", key);
+            match (
+                loader.metadata.get(&arch_key),
+                loader.metadata.get(&llama_key),
+            ) {
+                (Some(GgufValue::U32(v)), _) => *v,
+                (_, Some(GgufValue::U32(v))) => *v,
                 _ => default,
             }
         };
         let get_f32 = |key: &str, default: f32| -> f32 {
-            match metadata.metadata.get(key) {
-                Some(GgufValue::F32(v)) => *v,
+            let arch_key = format!("{}.{}", prefix, key);
+            let llama_key = format!("llama.{}", key);
+            match (
+                loader.metadata.get(&arch_key),
+                loader.metadata.get(&llama_key),
+            ) {
+                (Some(GgufValue::F32(v)), _) => *v,
+                (_, Some(GgufValue::F32(v))) => *v,
                 _ => default,
             }
         };
 
-        let n_layers = get_u32("llama.block_count", 32) as usize;
-        let n_heads = get_u32("llama.attention.head_count", 32) as usize;
-        let n_kv_heads = get_u32("llama.attention.head_count_kv", n_heads as u32) as usize;
-        let embed_dim = get_u32("llama.embedding_length", 4096) as usize;
+        let n_layers = get_u32("block_count", 32) as usize;
+        let n_heads = get_u32("attention.head_count", 32) as usize;
+        let n_kv_heads = get_u32("attention.head_count_kv", n_heads as u32) as usize;
+        let embed_dim = get_u32("embedding_length", 4096) as usize;
         let head_dim = embed_dim / n_heads;
-        let max_seq_len = get_u32("llama.context_length", 2048).min(4096) as usize;
-        let rope_theta = get_f32("llama.rope.freq_base", 10000.0);
-        let norm_eps = get_f32("llama.attention.layer_norm_rms_epsilon", 1e-5);
-        let vocab_size = get_u32("llama.vocab_size", 32000) as usize;
+        let max_seq_len = get_u32("context_length", 2048).min(4096) as usize;
+        let rope_theta = get_f32("rope.freq_base", 10000.0);
+        let norm_eps = get_f32("attention.layer_norm_rms_epsilon", 1e-5);
+        let vocab_size = get_u32("vocab_size", 32000) as usize;
 
         Self {
             n_layers,

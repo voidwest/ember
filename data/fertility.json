@@ -1,0 +1,30 @@
+[
+  {
+    "label": "llama",
+    "total_prompts": 800,
+    "mean_tokens": 39.55,
+    "median_tokens": 38.5,
+    "std_tokens": 11.468979902327844,
+    "min_tokens": 25,
+    "max_tokens": 56,
+    "mean_fertility": 2.3835586124401913,
+    "mean_chars_per_token": 2.8582885266652966,
+    "en_mean_tokens": 36.55,
+    "ar_mean_tokens": 42.55,
+    "en_ar_ratio": 1.1641586867305063
+  },
+  {
+    "label": "gpt2",
+    "total_prompts": 800,
+    "mean_tokens": 64.05,
+    "median_tokens": 57.5,
+    "std_tokens": 31.766295031054533,
+    "min_tokens": 26,
+    "max_tokens": 114,
+    "mean_fertility": 4.024198564593302,
+    "mean_chars_per_token": 2.1842262586342525,
+    "en_mean_tokens": 37.8,
+    "ar_mean_tokens": 90.3,
+    "en_ar_ratio": 2.388888888888889
+  }
+]
