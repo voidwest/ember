@@ -1,6 +1,24 @@
 use crate::quant::QuantizedWeight;
 use crate::tensor::{CpuTensor, TensorError};
 
+/// shape metadata for standard causal self-attention.
+#[derive(Debug, Clone, Copy)]
+pub struct AttentionSpec {
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+}
+
+/// shape metadata for cached causal self-attention.
+#[derive(Debug, Clone, Copy)]
+pub struct CachedAttentionSpec {
+    pub n_heads: usize,
+    pub n_kv_heads: usize,
+    pub head_dim: usize,
+    pub max_seq_len: usize,
+    pub total_seq_len: usize,
+}
+
 /// the core abstraction over compute hardware.
 ///
 /// model code is generic over the backend, so the same transformer
@@ -10,15 +28,10 @@ use crate::tensor::{CpuTensor, TensorError};
 /// ## scope
 ///
 /// the trait currently abstracts element-wise ops (`add`, `gelu`, `softmax`),
-/// linear algebra (`matmul`, `matmul_q8_0`, `add_broadcast`), normalisation
-/// (`layer_norm`), shape manipulation (`slice_cols`, `index_select`, `reshape`),
-/// and tensor lifecycle (`zeroes`, `load_from_cpu`, `data`, `shape`).
-///
-/// **attention is not yet abstracted** - the model's `Attention::forward*`
-/// methods call `data()` to extract raw f32 slices and run the attention
-/// math in scalar cpu loops. a gpu backend would still execute attention
-/// on the cpu through this path. adding `fn attention(...)` to the trait
-/// is the next step; for now the abstraction is honest about what it covers.
+/// linear algebra (`matmul`, `matmul_q8_0`, `add_broadcast`), attention,
+/// normalisation (`layer_norm`), shape manipulation (`slice_cols`,
+/// `index_select`, `reshape`), and tensor lifecycle (`zeroes`,
+/// `load_from_cpu`, `data`, `shape`).
 pub trait Backend {
     type Tensor: Clone + Send + Sync;
     type Error: core::error::Error;
@@ -64,6 +77,20 @@ pub trait Backend {
         &self,
         x: &Self::Tensor,
         bias: &Self::Tensor,
+    ) -> Result<Self::Tensor, Self::Error>;
+    fn causal_attention(
+        &self,
+        q: &Self::Tensor,
+        k: &Self::Tensor,
+        v: &Self::Tensor,
+        spec: AttentionSpec,
+    ) -> Result<Self::Tensor, Self::Error>;
+    fn cached_causal_attention(
+        &self,
+        q: &Self::Tensor,
+        cached_k: &[f32],
+        cached_v: &[f32],
+        spec: CachedAttentionSpec,
     ) -> Result<Self::Tensor, Self::Error>;
 
     // -- llama-family primitives ---------------------------------
@@ -242,6 +269,147 @@ impl Backend for CpuBackend {
         Ok(x.add_broadcast(bias))
     }
 
+    fn causal_attention(
+        &self,
+        q: &CpuTensor,
+        k: &CpuTensor,
+        v: &CpuTensor,
+        spec: AttentionSpec,
+    ) -> Result<CpuTensor, CpuError> {
+        let seq_len = validate_attention_inputs(q, k, v, spec)?;
+        let embed_dim = spec.n_heads * spec.head_dim;
+        let kv_dim = spec.n_kv_heads * spec.head_dim;
+        let n_repeat = validate_gqa(spec.n_heads, spec.n_kv_heads)?;
+        let scale = (spec.head_dim as f32).sqrt().recip();
+
+        let q_data = q.data();
+        let k_data = k.data();
+        let v_data = v.data();
+        let mut out = vec![0.0f32; seq_len * embed_dim];
+        let mut qk_row = vec![f32::NEG_INFINITY; seq_len];
+
+        for h in 0..spec.n_heads {
+            let q_head_offset = h * spec.head_dim;
+            let kv_h = h / n_repeat;
+            let kv_head_offset = kv_h * spec.head_dim;
+
+            for i in 0..seq_len {
+                qk_row.fill(f32::NEG_INFINITY);
+                let q_idx = i * embed_dim + q_head_offset;
+
+                for (j, slot) in qk_row.iter_mut().enumerate().take(i + 1) {
+                    let k_idx = j * kv_dim + kv_head_offset;
+                    let dot: f32 = q_data[q_idx..q_idx + spec.head_dim]
+                        .iter()
+                        .zip(k_data[k_idx..k_idx + spec.head_dim].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    *slot = dot * scale;
+                }
+
+                softmax_prefix(&mut qk_row, i + 1);
+
+                let out_offset = i * embed_dim + q_head_offset;
+                for (j, &weight) in qk_row.iter().enumerate().take(i + 1) {
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let v_offset = j * kv_dim + kv_head_offset;
+                    for d in 0..spec.head_dim {
+                        out[out_offset + d] += weight * v_data[v_offset + d];
+                    }
+                }
+            }
+        }
+
+        Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out))
+    }
+
+    fn cached_causal_attention(
+        &self,
+        q: &CpuTensor,
+        cached_k: &[f32],
+        cached_v: &[f32],
+        spec: CachedAttentionSpec,
+    ) -> Result<CpuTensor, CpuError> {
+        if q.ndim() != 2 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: q must be 2D, got {:?}",
+                q.shape()
+            )));
+        }
+        let seq_len = q.shape()[0];
+        let embed_dim = spec.n_heads * spec.head_dim;
+        if q.shape()[1] != embed_dim {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: q width {} != expected {}",
+                q.shape()[1],
+                embed_dim
+            )));
+        }
+        if spec.total_seq_len < seq_len || spec.total_seq_len > spec.max_seq_len {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: total_seq_len {} invalid for seq_len {} and max_seq_len {}",
+                spec.total_seq_len,
+                seq_len,
+                spec.max_seq_len
+            )));
+        }
+        let cache_len = spec.n_kv_heads * spec.max_seq_len * spec.head_dim;
+        if cached_k.len() != cache_len || cached_v.len() != cache_len {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: cache len mismatch, got k={} v={}, expected {}",
+                cached_k.len(),
+                cached_v.len(),
+                cache_len
+            )));
+        }
+
+        let n_repeat = validate_gqa(spec.n_heads, spec.n_kv_heads)?;
+        let scale = (spec.head_dim as f32).sqrt().recip();
+        let q_data = q.data();
+        let cache_head_stride = spec.max_seq_len * spec.head_dim;
+        let mut out = vec![0.0f32; seq_len * embed_dim];
+        let mut qk_row = Vec::with_capacity(spec.max_seq_len);
+
+        for h in 0..spec.n_heads {
+            let q_head_offset = h * spec.head_dim;
+            let kv_h = h / n_repeat;
+
+            for i in 0..seq_len {
+                let max_j = spec.total_seq_len - seq_len + i;
+                qk_row.clear();
+                qk_row.resize(spec.total_seq_len, f32::NEG_INFINITY);
+                let q_idx = i * embed_dim + q_head_offset;
+
+                for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
+                    let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                    let dot: f32 = q_data[q_idx..q_idx + spec.head_dim]
+                        .iter()
+                        .zip(cached_k[k_offset..k_offset + spec.head_dim].iter())
+                        .map(|(a, b)| a * b)
+                        .sum();
+                    *slot = dot * scale;
+                }
+
+                softmax_prefix(&mut qk_row, max_j + 1);
+
+                let out_offset = i * embed_dim + q_head_offset;
+                for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                    for d in 0..spec.head_dim {
+                        out[out_offset + d] += weight * cached_v[v_offset + d];
+                    }
+                }
+            }
+        }
+
+        Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out))
+    }
+
     fn rms_norm(&self, x: &CpuTensor, weight: &CpuTensor, eps: f32) -> Result<CpuTensor, CpuError> {
         Ok(x.rms_norm(weight, eps))
     }
@@ -262,5 +430,74 @@ impl Backend for CpuBackend {
         start_pos: usize,
     ) -> Result<CpuTensor, CpuError> {
         Ok(x.apply_rotary_emb(cos, sin, start_pos))
+    }
+}
+
+fn validate_attention_inputs(
+    q: &CpuTensor,
+    k: &CpuTensor,
+    v: &CpuTensor,
+    spec: AttentionSpec,
+) -> Result<usize, CpuError> {
+    if q.ndim() != 2 || k.ndim() != 2 || v.ndim() != 2 {
+        return Err(CpuError::ShapeMismatch(format!(
+            "causal_attention expects 2D q/k/v, got q={:?} k={:?} v={:?}",
+            q.shape(),
+            k.shape(),
+            v.shape()
+        )));
+    }
+    let seq_len = q.shape()[0];
+    let embed_dim = spec.n_heads * spec.head_dim;
+    let kv_dim = spec.n_kv_heads * spec.head_dim;
+    if q.shape() != [seq_len, embed_dim] {
+        return Err(CpuError::ShapeMismatch(format!(
+            "causal_attention: q shape {:?} != [{}, {}]",
+            q.shape(),
+            seq_len,
+            embed_dim
+        )));
+    }
+    if k.shape() != [seq_len, kv_dim] || v.shape() != [seq_len, kv_dim] {
+        return Err(CpuError::ShapeMismatch(format!(
+            "causal_attention: k/v shape mismatch, got k={:?} v={:?}, expected [{}, {}]",
+            k.shape(),
+            v.shape(),
+            seq_len,
+            kv_dim
+        )));
+    }
+    validate_gqa(spec.n_heads, spec.n_kv_heads)?;
+    Ok(seq_len)
+}
+
+fn validate_gqa(n_heads: usize, n_kv_heads: usize) -> Result<usize, CpuError> {
+    if n_heads == 0 || n_kv_heads == 0 || !n_heads.is_multiple_of(n_kv_heads) {
+        return Err(CpuError::ShapeMismatch(format!(
+            "attention heads must satisfy n_heads % n_kv_heads == 0, got {} and {}",
+            n_heads, n_kv_heads
+        )));
+    }
+    Ok(n_heads / n_kv_heads)
+}
+
+fn softmax_prefix(row: &mut [f32], len: usize) {
+    let max_val = row[..len].iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+    if max_val == f32::NEG_INFINITY {
+        let uniform = 1.0 / (len as f32);
+        for slot in row.iter_mut().take(len) {
+            *slot = uniform;
+        }
+        return;
+    }
+
+    let mut sum = 0.0;
+    for slot in row.iter_mut().take(len) {
+        *slot = (*slot - max_val).exp();
+        sum += *slot;
+    }
+    let inv_sum = sum.recip();
+    for slot in row.iter_mut().take(len) {
+        *slot *= inv_sum;
     }
 }

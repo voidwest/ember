@@ -468,6 +468,64 @@ fn test_matmul_q8_0_dimension_mismatch_returns_error() {
 }
 
 #[test]
+fn test_backend_causal_attention_shapes() {
+    use ember::backend::{AttentionSpec, Backend, CpuBackend};
+
+    let backend = CpuBackend;
+    let q = CpuTensor::from_data(vec![2, 2], vec![1.0, 0.0, 0.0, 1.0]);
+    let k = q.clone();
+    let v = CpuTensor::from_data(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]);
+
+    let out = backend
+        .causal_attention(
+            &q,
+            &k,
+            &v,
+            AttentionSpec {
+                n_heads: 1,
+                n_kv_heads: 1,
+                head_dim: 2,
+            },
+        )
+        .expect("attention should run");
+
+    assert_eq!(out.shape(), &[2, 2]);
+    assert!((out.data()[0] - 1.0).abs() < 1e-5);
+    assert!((out.data()[1] - 2.0).abs() < 1e-5);
+    assert!(out.data()[2] > 1.0 && out.data()[2] < 3.0);
+    assert!(out.data()[3] > 2.0 && out.data()[3] < 4.0);
+}
+
+#[test]
+fn test_backend_cached_causal_attention_shapes() {
+    use ember::backend::{Backend, CachedAttentionSpec, CpuBackend};
+
+    let backend = CpuBackend;
+    let q = CpuTensor::from_data(vec![1, 2], vec![0.0, 1.0]);
+    let cached_k = vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let cached_v = vec![1.0, 2.0, 3.0, 4.0, 0.0, 0.0];
+
+    let out = backend
+        .cached_causal_attention(
+            &q,
+            &cached_k,
+            &cached_v,
+            CachedAttentionSpec {
+                n_heads: 1,
+                n_kv_heads: 1,
+                head_dim: 2,
+                max_seq_len: 3,
+                total_seq_len: 2,
+            },
+        )
+        .expect("cached attention should run");
+
+    assert_eq!(out.shape(), &[1, 2]);
+    assert!(out.data()[0] > 1.0 && out.data()[0] < 3.0);
+    assert!(out.data()[1] > 2.0 && out.data()[1] < 4.0);
+}
+
+#[test]
 fn test_sampler_temperature_zero() {
     use ember::sampler::sample_token;
     use rand::rngs::StdRng;

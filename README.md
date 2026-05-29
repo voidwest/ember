@@ -232,11 +232,9 @@ main.rs              entry point, cli args, dispatch, probe mode
 
 - **backend trait**: the transformer is generic - `CpuBackend` is the default,
   but any type implementing `Backend` works. the trait abstracts linear ops,
-  element-wise math, layer norm, and tensor lifecycle. **attention is a known
-  exception**: the forward methods extract raw f32 slices via `data()` and run
-  the attention math in scalar cpu loops, bypassing the backend abstraction.
-  adding `fn attention(...)` to the trait is planned; for now the trait is
-  honest about what it covers.
+  element-wise math, layer norm, attention, and tensor lifecycle. the current
+  attention backend is still scalar cpu code, but the model no longer owns
+  those kernels directly.
 - **q8_0 quantization**: 8-bit block quantization (fp16 scale + 32 int8
   values per block). weights stay in this quantized form in memory and
   are dequantized on the fly during matmul - ~4x smaller than f32 at
@@ -289,8 +287,8 @@ prevents the generation loop from producing NaNs on degenerate input.
 
 ## current limitations
 
-- attention math runs in cpu scalar loops even when a future gpu backend is
-  plugged in - the `Backend` trait doesn't yet include `fn attention(...)`.
+- attention math is abstracted behind the `Backend` trait, but the only
+  implementation today is scalar cpu code.
 - the lm head (128K output features) is the throughput bottleneck during
   decode - each token does 501 sgemm calls for the lm head alone. batching
   or a fused/deferred lm-head path is the next obvious optimization target.

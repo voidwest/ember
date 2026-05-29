@@ -1,4 +1,4 @@
-use crate::backend::{Backend, CpuBackend, Module};
+use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, Module};
 use crate::quant::QuantizedWeight;
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
@@ -158,13 +158,11 @@ impl<B: Backend> Attention<B> {
         let embed_dim = backend.shape(&qkv)[1] / 3;
         let seq_len = backend.shape(x)[0];
         let head_dim = embed_dim / self.n_heads;
-        let scale = (head_dim as f32).sqrt().recip();
 
         let q = backend.slice_cols(&qkv, 0, embed_dim);
         let k = backend.slice_cols(&qkv, embed_dim, 2 * embed_dim);
         let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim);
 
-        let q_data = backend.data(&q);
         let k_data = backend.data(&k);
         let v_data = backend.data(&v);
 
@@ -186,71 +184,19 @@ impl<B: Backend> Attention<B> {
         //      finish, in gpt2::forward_with_cache)
         let total_seq_len = cache.cursor() + seq_len;
         let (cached_k, cached_v) = cache.get(layer);
-        let cache_head_stride = cache.max_seq_len() * head_dim;
 
-        let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
-
-        // pre-allocate scratch buffer once per call (not per head, not per token).
-        // resizing never re-allocates because capacity == cache.max_seq_len() >= total_seq_len.
-        let mut qk_scratch = Vec::with_capacity(cache.max_seq_len());
-
-        for h in 0..self.n_heads {
-            let q_head_offset = h * head_dim;
-
-            for i in 0..seq_len {
-                // causal mask: position i (in the current batch) attends to
-                // positions 0..=total_seq_len - seq_len + i in the cache.
-                let max_j = total_seq_len - seq_len + i;
-
-                qk_scratch.clear();
-                qk_scratch.resize(total_seq_len, f32::NEG_INFINITY);
-                let qk_row = qk_scratch.as_mut_slice();
-                let q_idx_abs = i * embed_dim + q_head_offset;
-
-                for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
-                    let k_cache_abs = h * cache_head_stride + j * head_dim;
-                    let dot: f32 = q_data[q_idx_abs..q_idx_abs + head_dim]
-                        .iter()
-                        .zip(cached_k[k_cache_abs..k_cache_abs + head_dim].iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-                    *slot = dot * scale;
-                }
-
-                // softmax
-                let max_val = qk_row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-                if max_val == f32::NEG_INFINITY {
-                    let uniform = 1.0 / (total_seq_len as f32);
-                    for slot in qk_row.iter_mut().take(total_seq_len) {
-                        *slot = uniform;
-                    }
-                } else {
-                    let mut sum = 0.0;
-                    for s in qk_row.iter_mut() {
-                        *s = (*s - max_val).exp();
-                        sum += *s;
-                    }
-                    let inv_sum = sum.recip();
-                    for s in qk_row.iter_mut() {
-                        *s *= inv_sum;
-                    }
-                }
-
-                // weighted sum of values
-                for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    let v_cache_abs = h * cache_head_stride + j * head_dim;
-                    let out_offset = i * embed_dim + q_head_offset;
-                    for d in 0..head_dim {
-                        attn_buf[out_offset + d] += weight * cached_v[v_cache_abs + d];
-                    }
-                }
-            }
-        }
-
-        let result = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        let result = backend.cached_causal_attention(
+            &q,
+            cached_k,
+            cached_v,
+            CachedAttentionSpec {
+                n_heads: self.n_heads,
+                n_kv_heads: self.n_heads,
+                head_dim,
+                max_seq_len: cache.max_seq_len(),
+                total_seq_len,
+            },
+        )?;
         self.c_proj.forward(backend, &result)
     }
 }
@@ -264,89 +210,16 @@ impl<B: Backend> Module<B> for Attention<B> {
         let v = backend.slice_cols(&qkv, 2 * embed_dim, 3 * embed_dim);
 
         let head_dim = embed_dim / self.n_heads;
-        let scale = (head_dim as f32).sqrt().recip();
-        let x_shape = backend.shape(x);
-        let seq_len = x_shape[0];
-
-        let q_data = backend.data(&q);
-        let k_data = backend.data(&k);
-        let v_data = backend.data(&v);
-
-        let mut attn_buf = vec![0.0; seq_len * embed_dim];
-
-        for h in 0..self.n_heads {
-            let q_head_offset = h * head_dim;
-            let k_head_offset = h * head_dim;
-            let v_head_offset = h * head_dim;
-
-            let mut qk = vec![f32::NEG_INFINITY; seq_len * seq_len];
-
-            for i in 0..seq_len {
-                // causal mask: token i can only attend to tokens 0..i (including itself)
-                for j in 0..=i {
-                    let q_idx = i * embed_dim + q_head_offset;
-                    let k_idx = j * embed_dim + k_head_offset;
-                    let dot: f32 = q_data[q_idx..q_idx + head_dim]
-                        .iter()
-                        .zip(k_data[k_idx..k_idx + head_dim].iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-                    qk[i * seq_len + j] = dot * scale;
-                }
-            }
-
-            let max_per_row: Vec<f32> = qk
-                .chunks(seq_len)
-                .map(|row| row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)))
-                .collect();
-
-            let mut row_sums = vec![0.0; seq_len];
-            for i in 0..seq_len {
-                let row_start = i * seq_len;
-                let row = &mut qk[row_start..row_start + seq_len];
-                let max = max_per_row[i];
-                if max == f32::NEG_INFINITY {
-                    let uniform = 1.0 / (seq_len as f32);
-                    for s in row.iter_mut() {
-                        *s = uniform;
-                    }
-                    row_sums[i] = 1.0;
-                    continue;
-                }
-                let mut sum = 0.0;
-                for s in row.iter_mut() {
-                    *s = (*s - max).exp();
-                    sum += *s;
-                }
-                row_sums[i] = sum;
-            }
-
-            for (row, sum) in qk.chunks_mut(seq_len).zip(row_sums.iter()) {
-                let inv_sum = sum.recip();
-                for s in row.iter_mut() {
-                    *s *= inv_sum;
-                }
-            }
-
-            for i in 0..seq_len {
-                for j in 0..=i {
-                    let weight = qk[i * seq_len + j];
-                    if weight == 0.0 {
-                        continue;
-                    }
-
-                    let v_offset = j * embed_dim + v_head_offset;
-                    let out_offset = i * embed_dim + q_head_offset;
-
-                    let dst = &mut attn_buf[out_offset..out_offset + head_dim];
-                    for d in 0..head_dim {
-                        dst[d] += weight * v_data[v_offset + d];
-                    }
-                }
-            }
-        }
-
-        let result_tensor = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        let result_tensor = backend.causal_attention(
+            &q,
+            &k,
+            &v,
+            AttentionSpec {
+                n_heads: self.n_heads,
+                n_kv_heads: self.n_heads,
+                head_dim,
+            },
+        )?;
         self.c_proj.forward(backend, &result_tensor)
     }
 }
@@ -948,8 +821,6 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
         let embed_dim = self.n_heads * self.head_dim;
         let kv_dim = self.n_kv_heads * self.head_dim;
         let head_dim = self.head_dim;
-        let scale = (head_dim as f32).sqrt().recip();
-        let n_repeat = self.n_heads / self.n_kv_heads;
 
         // apply RoPE inline (llama.cpp style): rotate pairs (d, d+half) within
         // each head using precomputed cos/sin tables.
@@ -991,83 +862,16 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
         }
         let k = backend.load_from_cpu(k_rope, &[seq_len, kv_dim])?;
 
-        let q_data = backend.data(&q);
-        let k_data = backend.data(&k);
-        let v_data = backend.data(&v);
-
-        let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
-
-        for h in 0..self.n_heads {
-            let q_head_offset = h * self.head_dim;
-            let kv_h = h / n_repeat;
-            let k_head_offset = kv_h * self.head_dim;
-            let v_head_offset = kv_h * self.head_dim;
-
-            let mut qk = vec![f32::NEG_INFINITY; seq_len * seq_len];
-
-            for i in 0..seq_len {
-                for j in 0..=i {
-                    let q_idx = i * embed_dim + q_head_offset;
-                    let k_idx = j * kv_dim + k_head_offset;
-                    let dot: f32 = q_data[q_idx..q_idx + self.head_dim]
-                        .iter()
-                        .zip(k_data[k_idx..k_idx + self.head_dim].iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-                    qk[i * seq_len + j] = dot * scale;
-                }
-            }
-
-            let max_per_row: Vec<f32> = qk
-                .chunks(seq_len)
-                .map(|row| row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b)))
-                .collect();
-
-            let mut row_sums = vec![0.0; seq_len];
-            for i in 0..seq_len {
-                let row_start = i * seq_len;
-                let row = &mut qk[row_start..row_start + seq_len];
-                let max = max_per_row[i];
-                if max == f32::NEG_INFINITY {
-                    let uniform = 1.0 / (seq_len as f32);
-                    for s in row.iter_mut() {
-                        *s = uniform;
-                    }
-                    row_sums[i] = 1.0;
-                    continue;
-                }
-                let mut sum = 0.0;
-                for s in row.iter_mut() {
-                    *s = (*s - max).exp();
-                    sum += *s;
-                }
-                row_sums[i] = sum;
-            }
-
-            for (row, sum) in qk.chunks_mut(seq_len).zip(row_sums.iter()) {
-                let inv_sum = sum.recip();
-                for s in row.iter_mut() {
-                    *s *= inv_sum;
-                }
-            }
-
-            for i in 0..seq_len {
-                for j in 0..=i {
-                    let weight = qk[i * seq_len + j];
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    let v_offset = j * kv_dim + v_head_offset;
-                    let out_offset = i * embed_dim + q_head_offset;
-                    let dst = &mut attn_buf[out_offset..out_offset + self.head_dim];
-                    for d in 0..self.head_dim {
-                        dst[d] += weight * v_data[v_offset + d];
-                    }
-                }
-            }
-        }
-
-        let result_tensor = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        let result_tensor = backend.causal_attention(
+            &q,
+            &k,
+            &v,
+            AttentionSpec {
+                n_heads: self.n_heads,
+                n_kv_heads: self.n_kv_heads,
+                head_dim,
+            },
+        )?;
         self.o_proj.forward(backend, &result_tensor)
     }
 }
@@ -1094,8 +898,6 @@ impl<B: Backend> LlamaAttention<B> {
         let embed_dim = self.n_heads * self.head_dim;
         let kv_dim = self.n_kv_heads * self.head_dim;
         let head_dim = self.head_dim;
-        let scale = (head_dim as f32).sqrt().recip();
-        let n_repeat = self.n_heads / self.n_kv_heads;
 
         // apply RoPE inline (llama.cpp style): rotate pairs (d, d+half) within each
         // head using the precomputed cos/sin tables. no intermediate tensors.
@@ -1139,7 +941,6 @@ impl<B: Backend> LlamaAttention<B> {
         }
         let k = backend.load_from_cpu(k_rope, &[seq_len, kv_dim])?;
 
-        let q_data = backend.data(&q);
         let k_data = backend.data(&k);
         let v_data = backend.data(&v);
 
@@ -1158,73 +959,18 @@ impl<B: Backend> LlamaAttention<B> {
         // compute attention against full cached k/v
         let total_seq_len = cache.cursor() + seq_len;
         let (cached_k, cached_v) = cache.get(layer);
-        let cache_head_stride = cache.max_seq_len() * head_dim;
-
-        let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
-        let mut qk_scratch = Vec::with_capacity(cache.max_seq_len());
-
-        for h in 0..self.n_heads {
-            let q_head_offset = h * head_dim;
-            let kv_h = h / n_repeat;
-
-            for i in 0..seq_len {
-                let max_j = total_seq_len - seq_len + i;
-
-                qk_scratch.clear();
-                qk_scratch.resize(total_seq_len, f32::NEG_INFINITY);
-                let qk_row = qk_scratch.as_mut_slice();
-                let q_idx_abs = i * embed_dim + q_head_offset;
-
-                for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
-                    let k_cache_abs = kv_h * cache_head_stride + j * head_dim;
-                    let dot: f32 = q_data[q_idx_abs..q_idx_abs + head_dim]
-                        .iter()
-                        .zip(cached_k[k_cache_abs..k_cache_abs + head_dim].iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
-                    *slot = dot * scale;
-                }
-
-                // softmax
-                let max_val = qk_row[..=max_j]
-                    .iter()
-                    .fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-                if max_val == f32::NEG_INFINITY {
-                    let uniform = 1.0 / (total_seq_len as f32);
-                    for slot in qk_row.iter_mut().take(total_seq_len) {
-                        *slot = uniform;
-                    }
-                } else {
-                    let mut sum = 0.0;
-                    for slot in qk_row.iter_mut().take(max_j + 1) {
-                        *slot = (*slot - max_val).exp();
-                        sum += *slot;
-                    }
-                    let inv_sum = sum.recip();
-                    for slot in qk_row.iter_mut().take(max_j + 1) {
-                        *slot *= inv_sum;
-                    }
-                    // zero out masked positions
-                    for slot in qk_row.iter_mut().skip(max_j + 1) {
-                        *slot = 0.0;
-                    }
-                }
-
-                // weighted sum of values
-                for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
-                    if weight == 0.0 {
-                        continue;
-                    }
-                    let v_cache_abs = kv_h * cache_head_stride + j * head_dim;
-                    let out_offset = i * embed_dim + q_head_offset;
-                    for d in 0..head_dim {
-                        attn_buf[out_offset + d] += weight * cached_v[v_cache_abs + d];
-                    }
-                }
-            }
-        }
-
-        let result = backend.load_from_cpu(attn_buf, &[seq_len, embed_dim])?;
+        let result = backend.cached_causal_attention(
+            &q,
+            cached_k,
+            cached_v,
+            CachedAttentionSpec {
+                n_heads: self.n_heads,
+                n_kv_heads: self.n_kv_heads,
+                head_dim,
+                max_seq_len: cache.max_seq_len(),
+                total_seq_len,
+            },
+        )?;
         self.o_proj.forward(backend, &result)
     }
 }
