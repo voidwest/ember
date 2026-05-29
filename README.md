@@ -121,6 +121,33 @@ selections used.
 works with both gpt-2 and llama architectures through the `ForwardModel`
 trait.
 
+Batch extraction lets one model load produce a full prompt/position matrix:
+
+```bash
+cargo run --release -- \
+  --arch llama \
+  --model Llama-3.2-1B-Instruct-Q8_0.gguf \
+  --probe \
+  --probe-stimuli stimuli/nonce_root_pattern.json \
+  --probe-output-dir data/matrix \
+  --probe-output-prefix llama1b \
+  --probe-templates en_zero,en_one,ar_zero,ar_one \
+  --probe-positions last,root,pattern,prompt_mean \
+  --probe-generate-tokens 1
+```
+
+The matrix runner wraps that extraction and then runs probes, CCA, RSA, and
+divergence for each emitted activation file:
+
+```bash
+python probes/run_probe_matrix.py \
+  --model 1b:Llama-3.2-1B-Instruct-Q8_0.gguf \
+  --templates en_zero en_one \
+  --positions last root \
+  --generate-tokens 1 \
+  --dry-run
+```
+
 the `probes/` directory contains python scripts for downstream analysis:
 
 | script | purpose |
@@ -150,6 +177,8 @@ features that drop under linear probing remain recoverable non-linearly, and
 `run_probe_matrix.py --dry-run` prints the full extraction/analysis command
 matrix for model, prompt-template, and probe-position ablations. The matrix
 runner uses batch probe extraction so each model is loaded once per matrix run.
+For local CPU runs, `--probe-generate-tokens 1` is the practical default for
+matrix sweeps; longer behavioral continuations should run on a larger machine.
 
 ## testing
 
