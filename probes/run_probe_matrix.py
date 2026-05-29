@@ -59,6 +59,22 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for label, model_path in args.model:
+        extract_cmd = [
+            "cargo", "run", "--release", "--",
+            "--arch", args.arch,
+            "--model", model_path,
+            "--probe",
+            "--probe-stimuli", args.stimuli,
+            "--probe-output-dir", str(out_dir),
+            "--probe-output-prefix", label,
+            "--probe-templates", ",".join(args.templates),
+            "--probe-positions", ",".join(args.positions),
+            "--probe-generate-tokens", str(args.generate_tokens),
+        ]
+        if args.tokenizer:
+            extract_cmd.extend(["--tokenizer", args.tokenizer])
+        run(extract_cmd, args.dry_run)
+
         for template in args.templates:
             for position in args.positions:
                 prefix = out_dir / f"{label}_{template}_{position}"
@@ -67,21 +83,6 @@ def main():
                 cca = f"{prefix}_{args.probe_kind}_cca.npz"
                 rsa = f"{prefix}_rsa.npz"
                 divergence = f"{prefix}_divergence.npz"
-
-                extract_cmd = [
-                    "cargo", "run", "--release", "--",
-                    "--arch", args.arch,
-                    "--model", model_path,
-                    "--probe",
-                    "--probe-stimuli", args.stimuli,
-                    "--probe-output", activations,
-                    "--probe-template", template,
-                    "--probe-position", position,
-                    "--probe-generate-tokens", str(args.generate_tokens),
-                ]
-                if args.tokenizer:
-                    extract_cmd.extend(["--tokenizer", args.tokenizer])
-                run(extract_cmd, args.dry_run)
 
                 probe_cmd = [
                     "python", "probes/train_linear_probe.py",

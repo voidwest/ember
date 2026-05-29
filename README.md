@@ -78,7 +78,11 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 | `--probe-stimuli` | `stimuli/nonce_root_pattern.json` | path to stimuli json for probe mode |
 | `--probe-output` | `data/activations.npy` | output path for probe activations (.npy) |
 | `--probe-template` | `en_zero` | stimulus prompt key to probe (`en_zero`, `en_one`, `ar_zero`, `ar_one`, or generated controls) |
+| `--probe-templates` | (none) | comma-separated prompt template keys for batch probe extraction |
 | `--probe-position` | `last` | hidden-state position to pool: `last`, `root`, `pattern`, or `prompt_mean` |
+| `--probe-positions` | (none) | comma-separated hidden-state positions for batch probe extraction |
+| `--probe-output-dir` | `data/probe_matrix` in batch mode | output directory for batch probe extraction |
+| `--probe-output-prefix` | `probe` | output filename prefix for batch probe extraction |
 | `--probe-generate-tokens` | `16` | continuation length for probe behavioral scoring |
 
 ### demo mode
@@ -144,7 +148,8 @@ checked-in fixtures and published figures are kept small and explicit.
 for hardening runs, `train_linear_probe.py --probe-kind mlp` tests whether
 features that drop under linear probing remain recoverable non-linearly, and
 `run_probe_matrix.py --dry-run` prints the full extraction/analysis command
-matrix for model, prompt-template, and probe-position ablations.
+matrix for model, prompt-template, and probe-position ablations. The matrix
+runner uses batch probe extraction so each model is loaded once per matrix run.
 
 ## testing
 

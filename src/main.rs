@@ -80,9 +80,25 @@ struct Args {
     #[arg(long, default_value = "en_zero")]
     probe_template: String,
 
+    /// comma-separated prompt template keys for batch probe extraction
+    #[arg(long)]
+    probe_templates: Option<String>,
+
     /// hidden-state position to probe: last, root, pattern, or prompt_mean
     #[arg(long, default_value = "last")]
     probe_position: String,
+
+    /// comma-separated hidden-state positions for batch probe extraction
+    #[arg(long)]
+    probe_positions: Option<String>,
+
+    /// output directory for batch probe extraction
+    #[arg(long)]
+    probe_output_dir: Option<String>,
+
+    /// output filename prefix for batch probe extraction
+    #[arg(long, default_value = "probe")]
+    probe_output_prefix: String,
 
     /// number of continuation tokens to generate for probe behavioral scoring
     #[arg(long, default_value_t = 16)]
@@ -140,20 +156,7 @@ fn main() -> anyhow::Result<()> {
                     args.top_p,
                 )?;
             } else if args.probe {
-                probe_mode(
-                    &backend,
-                    &model,
-                    &tokenizer,
-                    ProbeConfig {
-                        stimuli_path: &args.probe_stimuli,
-                        output_path: &args.probe_output,
-                        template: &args.probe_template,
-                        position: ProbePosition::parse(&args.probe_position)?,
-                        generate_tokens: args.probe_generate_tokens,
-                        model_path: &args.model,
-                        arch: &args.arch,
-                    },
-                )?;
+                run_probe_jobs(&backend, &model, &tokenizer, &args)?;
             } else {
                 let output = generate(
                     &backend,
@@ -182,20 +185,7 @@ fn main() -> anyhow::Result<()> {
             } else if args.interactive {
                 anyhow::bail!("interactive mode not yet supported for llama");
             } else if args.probe {
-                probe_mode(
-                    &backend,
-                    &model,
-                    &tokenizer,
-                    ProbeConfig {
-                        stimuli_path: &args.probe_stimuli,
-                        output_path: &args.probe_output,
-                        template: &args.probe_template,
-                        position: ProbePosition::parse(&args.probe_position)?,
-                        generate_tokens: args.probe_generate_tokens,
-                        model_path: &args.model,
-                        arch: &args.arch,
-                    },
-                )?;
+                run_probe_jobs(&backend, &model, &tokenizer, &args)?;
             } else {
                 let output = generate_llama(
                     &backend,
@@ -994,6 +984,12 @@ struct ProbeConfig<'a> {
     arch: &'a str,
 }
 
+struct ProbeJob {
+    template: String,
+    position: ProbePosition,
+    output_path: String,
+}
+
 impl ProbePosition {
     fn parse(value: &str) -> anyhow::Result<Self> {
         match value {
@@ -1016,6 +1012,121 @@ impl ProbePosition {
             Self::PromptMean => "prompt_mean",
         }
     }
+}
+
+fn split_probe_list(value: Option<&String>, fallback: &str) -> Vec<String> {
+    value
+        .map(|s| s.as_str())
+        .unwrap_or(fallback)
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn sanitize_probe_path_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn build_probe_jobs(args: &Args) -> anyhow::Result<Vec<ProbeJob>> {
+    let templates = split_probe_list(args.probe_templates.as_ref(), &args.probe_template);
+    let positions = split_probe_list(args.probe_positions.as_ref(), &args.probe_position);
+    if templates.is_empty() {
+        anyhow::bail!("probe template list is empty");
+    }
+    if positions.is_empty() {
+        anyhow::bail!("probe position list is empty");
+    }
+
+    let is_batch = args.probe_templates.is_some()
+        || args.probe_positions.is_some()
+        || args.probe_output_dir.is_some()
+        || templates.len() > 1
+        || positions.len() > 1;
+    if !is_batch {
+        return Ok(vec![ProbeJob {
+            template: templates[0].clone(),
+            position: ProbePosition::parse(&positions[0])?,
+            output_path: args.probe_output.clone(),
+        }]);
+    }
+
+    let output_dir = args
+        .probe_output_dir
+        .clone()
+        .unwrap_or_else(|| "data/probe_matrix".to_string());
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("failed to create probe output directory: {output_dir}"))?;
+
+    let mut jobs = Vec::with_capacity(templates.len() * positions.len());
+    let prefix = sanitize_probe_path_part(&args.probe_output_prefix);
+    for template in templates {
+        let template_part = sanitize_probe_path_part(&template);
+        for position_value in &positions {
+            let position = ProbePosition::parse(position_value)?;
+            let output_path = format!(
+                "{}/{}_{}_{}_activations.npy",
+                output_dir,
+                prefix,
+                template_part,
+                position.as_str()
+            );
+            jobs.push(ProbeJob {
+                template: template.clone(),
+                position,
+                output_path,
+            });
+        }
+    }
+    Ok(jobs)
+}
+
+fn run_probe_jobs<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    args: &Args,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let jobs = build_probe_jobs(args)?;
+    eprintln!("running {} probe extraction job(s)", jobs.len());
+    for (idx, job) in jobs.iter().enumerate() {
+        eprintln!(
+            "\n=== probe job {}/{}: template={} position={} output={} ===",
+            idx + 1,
+            jobs.len(),
+            job.template,
+            job.position.as_str(),
+            job.output_path
+        );
+        probe_mode(
+            backend,
+            model,
+            tokenizer,
+            ProbeConfig {
+                stimuli_path: &args.probe_stimuli,
+                output_path: &job.output_path,
+                template: &job.template,
+                position: job.position,
+                generate_tokens: args.probe_generate_tokens,
+                model_path: &args.model,
+                arch: &args.arch,
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn token_indices_for_offsets(offsets: &[(usize, usize)], start: usize, end: usize) -> Vec<usize> {
