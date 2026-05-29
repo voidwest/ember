@@ -64,7 +64,7 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 |------|---------|-------------|
 | `-m`, `--model` | `gpt2.Q8_0.gguf` | path to gguf model file |
 | `--arch` | `gpt2` | model architecture: `gpt2` or `llama` |
-| `--tokenizer` | `tokenizer.json` | path to tokenizer.json |
+| `--tokenizer` | arch-dependent | path to tokenizer.json (`tokenizer-gpt2.json` for gpt-2, `tokenizer.json` for llama) |
 | `-p`, `--prompt` | `The` | text prompt to complete |
 | `-n`, `--max-tokens` | `20` | tokens to generate |
 | `-t`, `--temperature` | `0.8` | sampling temp (0 = greedy) |
@@ -178,8 +178,8 @@ cargo run --release -- \
   --temperature 0
 ```
 
-> **note**: the default `tokenizer.json` is for llama models.
-> point `--tokenizer tokenizer-gpt2.json` when running gpt-2.
+> **note**: if `--tokenizer` is omitted, ember picks `tokenizer-gpt2.json`
+> for `--arch gpt2` and `tokenizer.json` for `--arch llama`.
 
 > **note**: interactive (`-i`) and demo (`--demo`) modes are not yet wired
 > for llama. the single-prompt generation path and probe (`--probe`) mode

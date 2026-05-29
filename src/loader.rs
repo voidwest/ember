@@ -147,7 +147,7 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                 reader.read_exact(&mut raw)?;
                 let mut dims = info.dims;
                 dims.reverse();
-                LoadedTensor::Q8_0(QuantizedWeight::new(raw, dims))
+                LoadedTensor::Q8_0(QuantizedWeight::try_new(raw, dims)?)
             }
             _ => {
                 log::warn!(

@@ -1161,6 +1161,7 @@ impl<B: Backend> LlamaAttention<B> {
         let cache_head_stride = cache.max_seq_len() * head_dim;
 
         let mut attn_buf = vec![0.0f32; seq_len * embed_dim];
+        let mut qk_scratch = Vec::with_capacity(cache.max_seq_len());
 
         for h in 0..self.n_heads {
             let q_head_offset = h * head_dim;
@@ -1169,7 +1170,9 @@ impl<B: Backend> LlamaAttention<B> {
             for i in 0..seq_len {
                 let max_j = total_seq_len - seq_len + i;
 
-                let mut qk_row = vec![f32::NEG_INFINITY; total_seq_len];
+                qk_scratch.clear();
+                qk_scratch.resize(total_seq_len, f32::NEG_INFINITY);
+                let qk_row = qk_scratch.as_mut_slice();
                 let q_idx_abs = i * embed_dim + q_head_offset;
 
                 for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {

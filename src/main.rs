@@ -20,8 +20,8 @@ struct Args {
     model: String,
 
     /// path to tokenizer.json
-    #[arg(long, default_value = "tokenizer.json")]
-    tokenizer: String,
+    #[arg(long)]
+    tokenizer: Option<String>,
 
     /// text prompt to complete
     #[arg(short, long, default_value = "The")]
@@ -32,15 +32,15 @@ struct Args {
     max_tokens: usize,
 
     /// sampling temperature (0 = greedy argmax)
-    #[arg(short, long, default_value_t = 0.8)]
+    #[arg(short, long, default_value_t = 0.8, value_parser = parse_temperature)]
     temperature: f32,
 
     /// top-k sampling: keep only the k highest logits
-    #[arg(long)]
+    #[arg(long, value_parser = parse_top_k)]
     top_k: Option<usize>,
 
     /// top-p (nucleus) sampling: keep smallest set of tokens with cumulative probability >= p
-    #[arg(long)]
+    #[arg(long, value_parser = parse_top_p)]
     top_p: Option<f32>,
 
     /// stay in an interactive read-eval-print loop after the first prompt
@@ -48,7 +48,7 @@ struct Args {
     interactive: bool,
 
     /// model architecture: gpt2 or llama (llama dispatches to `Llama::from_loader`)
-    #[arg(long, default_value = "gpt2")]
+    #[arg(long, default_value = "gpt2", value_parser = ["gpt2", "llama"])]
     arch: String,
 
     /// run a curated demo that showcases the project with deterministic output and timing
@@ -100,7 +100,11 @@ fn main() -> anyhow::Result<()> {
     let loader = load_gguf(&args.model)?;
     let n_tensors = loader.tensors.len();
     let backend = CpuBackend;
-    let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&args.tokenizer)?;
+    let tokenizer_path = args
+        .tokenizer
+        .as_deref()
+        .unwrap_or_else(|| default_tokenizer_for_arch(&args.arch));
+    let tokenizer = ember::tokenizer::EmberTokenizer::from_file(tokenizer_path)?;
 
     match args.arch.as_str() {
         "gpt2" => {
@@ -205,6 +209,47 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn default_tokenizer_for_arch(arch: &str) -> &'static str {
+    match arch {
+        "gpt2" => "tokenizer-gpt2.json",
+        "llama" => "tokenizer.json",
+        _ => "tokenizer.json",
+    }
+}
+
+fn parse_temperature(value: &str) -> Result<f32, String> {
+    let temperature = value
+        .parse::<f32>()
+        .map_err(|_| format!("invalid temperature '{value}'"))?;
+    if temperature.is_finite() && temperature >= 0.0 {
+        Ok(temperature)
+    } else {
+        Err("temperature must be a finite number >= 0".to_string())
+    }
+}
+
+fn parse_top_k(value: &str) -> Result<usize, String> {
+    let top_k = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid top-k '{value}'"))?;
+    if top_k > 0 {
+        Ok(top_k)
+    } else {
+        Err("top-k must be greater than 0".to_string())
+    }
+}
+
+fn parse_top_p(value: &str) -> Result<f32, String> {
+    let top_p = value
+        .parse::<f32>()
+        .map_err(|_| format!("invalid top-p '{value}'"))?;
+    if top_p.is_finite() && top_p > 0.0 && top_p <= 1.0 {
+        Ok(top_p)
+    } else {
+        Err("top-p must be in the range (0, 1]".to_string())
+    }
 }
 
 /// run a curated demo showcasing the project.
@@ -573,7 +618,7 @@ where
     let mut cache = model.create_cache(backend, max_seq_len);
     let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
-    let embed_dim = backend.shape(&logits)[1];
+    let vocab_size = backend.shape(&logits)[1];
 
     // -- 2. decode loop: one new token at a time --------------------------
     let decode_start = if benchmark {
@@ -588,11 +633,11 @@ where
         let logit_data = backend.data(&logits);
         let last_logits = if step == 0 {
             // prefill step: pick the last position's logits
-            let last_offset = (all_tokens.len() - 1) * embed_dim;
-            &logit_data[last_offset..last_offset + embed_dim]
+            let last_offset = (all_tokens.len() - 1) * vocab_size;
+            &logit_data[last_offset..last_offset + vocab_size]
         } else {
             // decode step: only one token in the input, logits[0] is the output
-            &logit_data[..embed_dim]
+            &logit_data[..vocab_size]
         };
 
         next_token = if temperature == 0.0 {
@@ -777,6 +822,40 @@ fn argmax_token(logits: &[f32]) -> usize {
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
         .map(|(i, _)| i)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_tokenizer_tracks_architecture() {
+        let gpt2 = Args::try_parse_from(["ember"]).expect("default args should parse");
+        assert_eq!(
+            gpt2.tokenizer
+                .as_deref()
+                .unwrap_or_else(|| default_tokenizer_for_arch(&gpt2.arch)),
+            "tokenizer-gpt2.json"
+        );
+
+        let llama =
+            Args::try_parse_from(["ember", "--arch", "llama"]).expect("llama args should parse");
+        assert_eq!(
+            llama
+                .tokenizer
+                .as_deref()
+                .unwrap_or_else(|| default_tokenizer_for_arch(&llama.arch)),
+            "tokenizer.json"
+        );
+    }
+
+    #[test]
+    fn cli_rejects_invalid_sampling_args() {
+        assert!(Args::try_parse_from(["ember", "--temperature", "-0.1"]).is_err());
+        assert!(Args::try_parse_from(["ember", "--top-k", "0"]).is_err());
+        assert!(Args::try_parse_from(["ember", "--top-p", "0"]).is_err());
+        assert!(Args::try_parse_from(["ember", "--top-p", "1.1"]).is_err());
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

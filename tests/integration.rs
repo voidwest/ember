@@ -444,6 +444,30 @@ fn test_load_minimal_gguf_bad_magic() {
 }
 
 #[test]
+fn test_quantized_weight_try_new_rejects_bad_shape() {
+    use ember::quant::QuantizedWeight;
+
+    let raw = vec![0u8; 34];
+    let result = QuantizedWeight::try_new(raw, vec![1, 31]);
+
+    assert!(result.is_err(), "q8_0 in_features must align to block size");
+}
+
+#[test]
+fn test_matmul_q8_0_dimension_mismatch_returns_error() {
+    use ember::backend::{Backend, CpuBackend};
+    use ember::quant::QuantizedWeight;
+
+    let backend = CpuBackend;
+    let x = CpuTensor::zeroes(&[1, 16]);
+    let weight = QuantizedWeight::try_new(vec![0u8; 34], vec![1, 32]).unwrap();
+
+    let result = backend.matmul_q8_0(&x, &weight);
+
+    assert!(result.is_err(), "q8_0 matmul mismatch should not panic");
+}
+
+#[test]
 fn test_sampler_temperature_zero() {
     use ember::sampler::sample_token;
     use rand::rngs::StdRng;

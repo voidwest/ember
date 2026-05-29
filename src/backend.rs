@@ -134,16 +134,21 @@ impl Backend for CpuBackend {
     }
 
     fn matmul_q8_0(&self, x: &CpuTensor, w: &QuantizedWeight) -> Result<CpuTensor, CpuError> {
-        assert_eq!(x.ndim(), 2, "matmul_q8_0: input must be 2D");
+        if x.ndim() != 2 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "matmul_q8_0: input must be 2D, got shape {:?}",
+                x.shape()
+            )));
+        }
         let (seq_len, in_features) = (x.shape[0], x.shape[1]);
         let out_features = w.out_features();
-        assert_eq!(
-            in_features,
-            w.in_features(),
-            "matmul_q8_0: inner dims must match (got {} vs {})",
-            in_features,
-            w.in_features()
-        );
+        if in_features != w.in_features() {
+            return Err(CpuError::ShapeMismatch(format!(
+                "matmul_q8_0: inner dims must match (got {} vs {})",
+                in_features,
+                w.in_features()
+            )));
+        }
 
         let x_data = x.data();
         let mut out = vec![0.0f32; seq_len * out_features];

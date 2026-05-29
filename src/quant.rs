@@ -1,5 +1,5 @@
 use crate::tensor::CpuTensor;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use half::f16;
 
 /// number of float elements per q8_0 quantization block
@@ -53,26 +53,32 @@ pub struct QuantizedWeight {
 impl QuantizedWeight {
     /// create a quantized weight from raw q8_0 bytes and logical shape
     /// `[out_features, in_features]`.
-    ///
-    /// # panics
-    /// panics if `shape[1]` (in_features) is not a multiple of 32.
     pub fn new(data: Vec<u8>, shape: Vec<usize>) -> Self {
-        assert_eq!(
-            shape[1] % Q8_0_BLOCK_SIZE,
-            0,
-            "QuantizedWeight: in_features ({}) must be a multiple of {}",
-            shape[1],
-            Q8_0_BLOCK_SIZE
-        );
+        Self::try_new(data, shape).expect("invalid q8_0 weight")
+    }
+
+    /// fallible constructor for q8_0 weights loaded from external model files.
+    pub fn try_new(data: Vec<u8>, shape: Vec<usize>) -> Result<Self> {
+        if shape.len() != 2 {
+            bail!("QuantizedWeight: expected 2D shape, got {:?}", shape);
+        }
+        if !shape[1].is_multiple_of(Q8_0_BLOCK_SIZE) {
+            bail!(
+                "QuantizedWeight: in_features ({}) must be a multiple of {}",
+                shape[1],
+                Q8_0_BLOCK_SIZE
+            );
+        }
         let expected_blocks = shape[0] * shape[1] / Q8_0_BLOCK_SIZE;
-        assert_eq!(
-            data.len(),
-            expected_blocks * Q8_0_TYPE_SIZE,
-            "QuantizedWeight: data len ({}) != expected ({})",
-            data.len(),
-            expected_blocks * Q8_0_TYPE_SIZE
-        );
-        Self { data, shape }
+        let expected_len = expected_blocks * Q8_0_TYPE_SIZE;
+        if data.len() != expected_len {
+            bail!(
+                "QuantizedWeight: data len ({}) != expected ({})",
+                data.len(),
+                expected_len
+            );
+        }
+        Ok(Self { data, shape })
     }
 
     /// dequantize one output-feature column into `dst`.
@@ -82,6 +88,15 @@ impl QuantizedWeight {
     /// starting at byte offset `j * blocks_per_col * 34`.
     #[inline]
     pub fn dequantize_row(&self, row: usize, dst: &mut [f32]) {
+        self.validate_row_bounds(row)
+            .expect("q8_0 row out of bounds");
+        assert_eq!(
+            dst.len(),
+            self.shape[1],
+            "dequantize_row destination len ({}) != in_features ({})",
+            dst.len(),
+            self.shape[1]
+        );
         let in_features = self.shape[1];
         let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
         let row_start = row * blocks_per_row;
@@ -126,5 +141,16 @@ impl QuantizedWeight {
     /// number of input features (second dimension, `shape[1]`).
     pub fn in_features(&self) -> usize {
         self.shape[1]
+    }
+
+    fn validate_row_bounds(&self, row: usize) -> Result<()> {
+        if row >= self.shape[0] {
+            bail!(
+                "QuantizedWeight: row {} out of bounds for {} rows",
+                row,
+                self.shape[0]
+            );
+        }
+        Ok(())
     }
 }
