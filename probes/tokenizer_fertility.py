@@ -19,7 +19,6 @@ import argparse
 import json
 import numpy as np
 from pathlib import Path
-from collections import defaultdict
 
 
 def load_stimuli(path: str) -> list[dict]:
@@ -32,8 +31,8 @@ def load_tokenizer(path: str):
     from tokenizers import Tokenizer
     tok = Tokenizer.from_file(path)
 
-    def encode(text: str) -> list[int]:
-        return tok.encode(text).ids
+    def encode(text: str):
+        return tok.encode(text)
 
     def decode(ids: list[int]) -> str:
         return tok.decode(ids)
@@ -47,28 +46,69 @@ def analyze_prompt(
     prompt: str, encode_fn, stimulus: dict | None = None
 ) -> dict:
     """tokenize a prompt and compute fertility metrics."""
-    ids = encode_fn(prompt)
+    encoding = encode_fn(prompt)
+    ids = encoding.ids
+    offsets = encoding.offsets
+    tokens = encoding.tokens
     n_tokens = len(ids)
 
-    # decode each token individually for subword analysis
-    tokens = []
-    for tid in ids:
-        # we need a decode fn — use the tokenizer's decode
-        tokens.append(tid)
-
-    # approximate "words" by splitting on whitespace
-    # and counting tokens that form each word
     words = prompt.split()
-    # crude alignment: count chars per word and estimate tokens/word
-    char_counts = [len(w) for w in words]
 
-    return {
+    span_metrics = {}
+    if stimulus is not None:
+        for field in ["root", "pattern"]:
+            value = stimulus.get(field)
+            if value:
+                span_metrics[field] = analyze_span(prompt, value, offsets, tokens)
+
+    result = {
         "prompt_chars": len(prompt),
         "n_tokens": n_tokens,
         "n_words": len(words),
         "fertility": n_tokens / max(len(words), 1),
         "chars_per_token": len(prompt) / max(n_tokens, 1),
         "token_ids": ids,
+        "tokens": tokens,
+    }
+    for field, metrics in span_metrics.items():
+        result.update({
+            f"{field}_present": metrics["present"],
+            f"{field}_token_count": metrics["token_count"],
+            f"{field}_split": metrics["split"],
+            f"{field}_boundary_crossing": metrics["boundary_crossing"],
+            f"{field}_token_text": metrics["token_text"],
+        })
+    return result
+
+
+def analyze_span(prompt: str, value: str, offsets: list[tuple[int, int]],
+                 tokens: list[str]) -> dict:
+    """align one stimulus field to tokenizer offsets."""
+    start = prompt.find(value)
+    if start < 0:
+        return {
+            "present": False,
+            "token_count": 0,
+            "split": False,
+            "boundary_crossing": False,
+            "token_text": [],
+        }
+
+    end = start + len(value)
+    span_token_indices = [
+        i for i, (tok_start, tok_end) in enumerate(offsets)
+        if tok_start != tok_end and tok_start < end and tok_end > start
+    ]
+    boundary_crossing = any(
+        offsets[i][0] < start or offsets[i][1] > end
+        for i in span_token_indices
+    )
+    return {
+        "present": True,
+        "token_count": len(span_token_indices),
+        "split": len(span_token_indices) > 1,
+        "boundary_crossing": boundary_crossing,
+        "token_text": [tokens[i] for i in span_token_indices],
     }
 
 
@@ -96,6 +136,16 @@ def analyze_all(stimuli, encode_fn, label: str) -> dict:
     # split by variant (en vs ar)
     en_results = [r for r in per_prompt if r["variant"].startswith("en")]
     ar_results = [r for r in per_prompt if r["variant"].startswith("ar")]
+    root_results = [r for r in per_prompt if r.get("root_present")]
+    pattern_results = [r for r in per_prompt if r.get("pattern_present")]
+
+    def mean_or_none(rows, key):
+        values = [r[key] for r in rows if key in r]
+        return float(np.mean(values)) if values else None
+
+    def rate_or_none(rows, key):
+        values = [bool(r[key]) for r in rows if key in r]
+        return float(np.mean(values)) if values else None
 
     return {
         "label": label,
@@ -123,6 +173,16 @@ def analyze_all(stimuli, encode_fn, label: str) -> dict:
             )
             if en_results and ar_results
             else None
+        ),
+        "root_mean_tokens": mean_or_none(root_results, "root_token_count"),
+        "root_split_rate": rate_or_none(root_results, "root_split"),
+        "root_boundary_crossing_rate": rate_or_none(
+            root_results, "root_boundary_crossing"
+        ),
+        "pattern_mean_tokens": mean_or_none(pattern_results, "pattern_token_count"),
+        "pattern_split_rate": rate_or_none(pattern_results, "pattern_split"),
+        "pattern_boundary_crossing_rate": rate_or_none(
+            pattern_results, "pattern_boundary_crossing"
         ),
         "per_prompt": per_prompt,
     }
@@ -164,6 +224,23 @@ def print_report(results: list[dict]):
     for label, key in lang_rows:
         vals = "  ".join(
             f"{r[key]:>12.1f}" if r[key] is not None else f"{'N/A':>12}"
+            for r in results
+        )
+        print(f"  {label:<28} {vals}")
+
+    print()
+    print("span alignment:")
+    span_rows = [
+        ("root mean tokens", "root_mean_tokens", ".2f"),
+        ("root split rate", "root_split_rate", ".2f"),
+        ("root boundary crossing", "root_boundary_crossing_rate", ".2f"),
+        ("pattern mean tokens", "pattern_mean_tokens", ".2f"),
+        ("pattern split rate", "pattern_split_rate", ".2f"),
+        ("pattern boundary crossing", "pattern_boundary_crossing_rate", ".2f"),
+    ]
+    for label, key, fmt in span_rows:
+        vals = "  ".join(
+            f"{r[key]:>12{fmt}}" if r[key] is not None else f"{'N/A':>12}"
             for r in results
         )
         print(f"  {label:<28} {vals}")

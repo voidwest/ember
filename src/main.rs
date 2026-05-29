@@ -83,6 +83,10 @@ struct Args {
     /// hidden-state position to probe: last, root, pattern, or prompt_mean
     #[arg(long, default_value = "last")]
     probe_position: String,
+
+    /// number of continuation tokens to generate for probe behavioral scoring
+    #[arg(long, default_value_t = 16)]
+    probe_generate_tokens: usize,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -145,6 +149,7 @@ fn main() -> anyhow::Result<()> {
                         output_path: &args.probe_output,
                         template: &args.probe_template,
                         position: ProbePosition::parse(&args.probe_position)?,
+                        generate_tokens: args.probe_generate_tokens,
                         model_path: &args.model,
                         arch: &args.arch,
                     },
@@ -186,6 +191,7 @@ fn main() -> anyhow::Result<()> {
                         output_path: &args.probe_output,
                         template: &args.probe_template,
                         position: ProbePosition::parse(&args.probe_position)?,
+                        generate_tokens: args.probe_generate_tokens,
                         model_path: &args.model,
                         arch: &args.arch,
                     },
@@ -983,6 +989,7 @@ struct ProbeConfig<'a> {
     output_path: &'a str,
     template: &'a str,
     position: ProbePosition,
+    generate_tokens: usize,
     model_path: &'a str,
     arch: &'a str,
 }
@@ -1103,6 +1110,77 @@ fn pool_activation(layer_state: &[f32], token_indices: &[usize], embed_dim: usiz
     pooled
 }
 
+fn normalize_for_match(text: &str) -> String {
+    text.trim()
+        .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace())
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn match_generated_text(generated: &str, expected: &str) -> (bool, bool) {
+    let generated_norm = normalize_for_match(generated);
+    let expected_norm = normalize_for_match(expected);
+    if expected_norm.is_empty() {
+        return (false, false);
+    }
+    (
+        generated_norm == expected_norm,
+        generated_norm.contains(&expected_norm),
+    )
+}
+
+fn generate_probe_continuation<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    prompt_tokens: &[u32],
+    max_tokens: usize,
+) -> anyhow::Result<(Vec<u32>, String)>
+where
+    B::Error: Send + Sync + 'static,
+{
+    if max_tokens == 0 {
+        return Ok((Vec::new(), String::new()));
+    }
+
+    let prompt_len = prompt_tokens.len();
+    let max_seq_len = prompt_len + max_tokens;
+    let mut cache = model.create_cache(backend, max_seq_len);
+    let mut logits = model.forward_with_cache(backend, prompt_tokens, &mut cache, 0)?;
+    let vocab_size = backend.shape(&logits)[1];
+    let mut generated = Vec::with_capacity(max_tokens);
+
+    for step in 0..max_tokens {
+        let logit_data = backend.data(&logits);
+        let last_logits = if step == 0 {
+            let last_offset = (prompt_len - 1) * vocab_size;
+            &logit_data[last_offset..last_offset + vocab_size]
+        } else {
+            &logit_data[..vocab_size]
+        };
+        let next_token = argmax_token(last_logits);
+
+        if let Some(eos) = tokenizer.eos_token_id() {
+            if next_token == eos as usize {
+                break;
+            }
+        }
+
+        generated.push(next_token as u32);
+        logits = model.forward_with_cache(
+            backend,
+            &[next_token as u32],
+            &mut cache,
+            prompt_len + step,
+        )?;
+    }
+
+    let generated_text = tokenizer.decode(&generated)?;
+    Ok((generated, generated_text))
+}
+
 /// probe mode: feed each stimulus prompt through the model and
 /// collect pooled per-layer hidden states at the selected token position.
 ///
@@ -1185,10 +1263,19 @@ where
             })
             .0;
         let predicted_text = tokenizer.decode(&[predicted_id as u32])?;
+        let (generated_ids, generated_text) = generate_probe_continuation(
+            backend,
+            model,
+            tokenizer,
+            &token_ids,
+            config.generate_tokens,
+        )?;
         let expected = stimulus["expected_surface"]
             .as_str()
             .unwrap_or("")
             .to_string();
+        let (generated_exact_match, generated_contains_match) =
+            match_generated_text(&generated_text, &expected);
         correctness.push(serde_json::json!({
             "index": si,
             "root": stimulus["root"],
@@ -1196,8 +1283,16 @@ where
             "expected": expected,
             "predicted": predicted_text.trim().to_string(),
             "predicted_id": predicted_id,
+            "next_token_predicted": predicted_text.trim().to_string(),
+            "next_token_id": predicted_id,
+            "generated": generated_text.trim().to_string(),
+            "generated_ids": generated_ids,
+            "generated_exact_match": generated_exact_match,
+            "generated_contains_match": generated_contains_match,
+            "correct": generated_exact_match || generated_contains_match,
             "probe_template": config.template,
             "probe_position": config.position.as_str(),
+            "probe_generate_tokens": config.generate_tokens,
             "probe_token_indices": probe_indices,
         }));
         token_selections.push(serde_json::json!({
@@ -1237,7 +1332,11 @@ where
 
     let correct_count = correctness
         .iter()
-        .filter(|c| c["predicted"] == c["expected"])
+        .filter(|c| {
+            c["correct"]
+                .as_bool()
+                .unwrap_or(c["predicted"] == c["expected"])
+        })
         .count();
     eprintln!(
         "correctness: {}/{} ({:.1}%)",
@@ -1261,6 +1360,7 @@ where
         "output_path": config.output_path,
         "probe_template": config.template,
         "probe_position": config.position.as_str(),
+        "probe_generate_tokens": config.generate_tokens,
         "n_stimuli": stimuli.len(),
         "n_layers": n_layers,
         "embed_dim": embed_dim,

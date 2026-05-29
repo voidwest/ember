@@ -13,6 +13,7 @@ import json
 import numpy as np
 from pathlib import Path
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import GroupKFold, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import make_pipeline
@@ -91,7 +92,32 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
     )
 
 
-def train_probes(activations, labels, n_folds=5, groups=None, split_name="random"):
+def make_probe(probe_kind: str):
+    """build the requested probe model."""
+    if probe_kind == "linear":
+        return make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+    if probe_kind == "mlp":
+        return make_pipeline(
+            StandardScaler(),
+            MLPClassifier(
+                hidden_layer_sizes=(64,),
+                activation="relu",
+                alpha=1e-3,
+                max_iter=500,
+                random_state=0,
+            ),
+        )
+    raise ValueError(f"unknown probe kind: {probe_kind}")
+
+
+def train_probes(
+    activations,
+    labels,
+    n_folds=5,
+    groups=None,
+    split_name="random",
+    probe_kind="linear",
+):
     """train linear probes on each layer's activations.
 
     returns per-layer accuracy and trained models.
@@ -115,16 +141,14 @@ def train_probes(activations, labels, n_folds=5, groups=None, split_name="random
 
     for layer in range(n_layers):
         X = activations[:, layer, :]
-        probe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+        probe = make_probe(probe_kind)
         if splits is None:
             probe.fit(X, y)
             acc = probe.score(X, y)  # train accuracy (optimistic)
         else:
             scores = []
             for train_idx, test_idx in splits:
-                probe_clone = make_pipeline(
-                    StandardScaler(), LogisticRegression(max_iter=1000)
-                )
+                probe_clone = make_probe(probe_kind)
                 probe_clone.fit(X[train_idx], y[train_idx])
                 scores.append(probe_clone.score(X[test_idx], y[test_idx]))
             acc = np.mean(scores)
@@ -135,7 +159,14 @@ def train_probes(activations, labels, n_folds=5, groups=None, split_name="random
     return np.array(accuracies), probes, le
 
 
-def run_control(activations, labels, n_folds=5, groups=None, n_repeats=5):
+def run_control(
+    activations,
+    labels,
+    n_folds=5,
+    groups=None,
+    n_repeats=5,
+    probe_kind="linear",
+):
     """run random-label control: shuffle labels, train probes, report accuracy.
 
     repeats n_repeats times and returns mean + std across repeats.
@@ -157,6 +188,7 @@ def run_control(activations, labels, n_folds=5, groups=None, n_repeats=5):
             n_folds=n_folds,
             groups=groups,
             split_name="control",
+            probe_kind=probe_kind,
         )
         all_acc[repeat] = acc
 
@@ -218,6 +250,12 @@ def main():
         help="number of random-label repeats for control (default: 5)",
     )
     parser.add_argument(
+        "--probe-kind",
+        choices=["linear", "mlp"],
+        default="linear",
+        help="probe model: linear logistic regression or one-hidden-layer MLP",
+    )
+    parser.add_argument(
         "--split-root",
         action="store_true",
         help="deprecated: use root-held-out CV for pattern probes only",
@@ -251,6 +289,7 @@ def main():
           f"{len(set(patterns))} unique patterns")
     print(f"root probe split: {args.root_split}")
     print(f"pattern probe split: {args.pattern_split}")
+    print(f"probe kind: {args.probe_kind}")
     if args.control:
         print(f"running random-label control ({args.control_repeats} repeats)")
 
@@ -265,6 +304,7 @@ def main():
         args.folds,
         groups=root_groups,
         split_name=f"root-split={args.root_split}",
+        probe_kind=args.probe_kind,
     )
     for i, acc in enumerate(root_acc):
         print(f"  layer {i:2d}: {acc:.3f}")
@@ -280,6 +320,7 @@ def main():
             args.folds,
             groups=root_groups,
             n_repeats=args.control_repeats,
+            probe_kind=args.probe_kind,
         )
         chance_root = 1.0 / len(set(roots))
         root_selectivity = compute_selectivity(root_acc, root_control_mean, chance_root)
@@ -299,6 +340,7 @@ def main():
         args.folds,
         groups=pattern_groups,
         split_name=f"pattern-split={args.pattern_split}",
+        probe_kind=args.probe_kind,
     )
     for i, acc in enumerate(pat_acc):
         print(f"  layer {i:2d}: {acc:.3f}")
@@ -314,6 +356,7 @@ def main():
             args.folds,
             groups=pattern_groups,
             n_repeats=args.control_repeats,
+            probe_kind=args.probe_kind,
         )
         chance_pat = 1.0 / len(set(patterns))
         pat_selectivity = compute_selectivity(pat_acc, pat_control_mean, chance_pat)
@@ -330,17 +373,19 @@ def main():
         save_dict = {
             "root_accuracy": root_acc,
             "pattern_accuracy": pat_acc,
-            "root_probe_weights": [
-                p.named_steps["logisticregression"].coef_
-                for p in root_probes
-            ],
-            "pattern_probe_weights": [
-                p.named_steps["logisticregression"].coef_
-                for p in pat_probes
-            ],
+            "probe_kind": args.probe_kind,
             "root_split": args.root_split,
             "pattern_split": args.pattern_split,
         }
+        if args.probe_kind == "linear":
+            save_dict["root_probe_weights"] = [
+                p.named_steps["logisticregression"].coef_
+                for p in root_probes
+            ]
+            save_dict["pattern_probe_weights"] = [
+                p.named_steps["logisticregression"].coef_
+                for p in pat_probes
+            ]
         if args.control:
             save_dict["root_control_mean"] = root_control_mean
             save_dict["root_control_std"] = root_control_std

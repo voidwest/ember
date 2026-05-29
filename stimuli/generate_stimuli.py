@@ -68,56 +68,56 @@ PATTERNS = [
 # Prompt templates
 # ---------------------------------------------------------------------------
 PROMPT_TEMPLATES = {
-    "en_zero": 'Apply the Arabic pattern "{pattern}" to the root "{root}". Output only the resulting Arabic word.',
+    "en_zero": 'Apply the Arabic pattern "{pattern}" to the root "{root}". Output only the resulting transliterated word.',
     "en_one":  'Apply the Arabic pattern "{pattern}" to the root "{root}". '
                'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
-               'Output only the resulting Arabic word.',
-    "ar_zero": 'طبق النمط "{pattern}" على الجذر "{root}". أخرج الكلمة العربية الناتجة فقط.',
+               'Output only the resulting transliterated word.',
+    "ar_zero": 'طبق النمط "{pattern}" على الجذر "{root}". أخرج الناتج بالحروف اللاتينية فقط.',
     "ar_one":  'طبق النمط "{pattern}" على الجذر "{root}". '
                'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
-               'أخرج الكلمة العربية الناتجة فقط.',
+               'أخرج الناتج بالحروف اللاتينية فقط.',
 }
 
 ABLATION_PROMPT_TEMPLATES = {
     "root_masked": {
-        "en_zero": 'Apply the Arabic pattern "{pattern}" to the root "[ROOT]". Output only the resulting Arabic word.',
+        "en_zero": 'Apply the Arabic pattern "{pattern}" to the root "[ROOT]". Output only the resulting transliterated word.',
         "en_one":  'Apply the Arabic pattern "{pattern}" to the root "[ROOT]". '
                    'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
-                   'Output only the resulting Arabic word.',
-        "ar_zero": 'طبق النمط "{pattern}" على الجذر "[ROOT]". أخرج الكلمة العربية الناتجة فقط.',
+                   'Output only the resulting transliterated word.',
+        "ar_zero": 'طبق النمط "{pattern}" على الجذر "[ROOT]". أخرج الناتج بالحروف اللاتينية فقط.',
         "ar_one":  'طبق النمط "{pattern}" على الجذر "[ROOT]". '
                    'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
-                   'أخرج الكلمة العربية الناتجة فقط.',
+                   'أخرج الناتج بالحروف اللاتينية فقط.',
     },
     "pattern_masked": {
-        "en_zero": 'Apply the Arabic pattern "[PATTERN]" to the root "{root}". Output only the resulting Arabic word.',
+        "en_zero": 'Apply the Arabic pattern "[PATTERN]" to the root "{root}". Output only the resulting transliterated word.',
         "en_one":  'Apply the Arabic pattern "[PATTERN]" to the root "{root}". '
                    'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
-                   'Output only the resulting Arabic word.',
-        "ar_zero": 'طبق النمط "[PATTERN]" على الجذر "{root}". أخرج الكلمة العربية الناتجة فقط.',
+                   'Output only the resulting transliterated word.',
+        "ar_zero": 'طبق النمط "[PATTERN]" على الجذر "{root}". أخرج الناتج بالحروف اللاتينية فقط.',
         "ar_one":  'طبق النمط "[PATTERN]" على الجذر "{root}". '
                    'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
-                   'أخرج الكلمة العربية الناتجة فقط.',
+                   'أخرج الناتج بالحروف اللاتينية فقط.',
     },
     "both_masked": {
-        "en_zero": 'Apply the Arabic pattern "[PATTERN]" to the root "[ROOT]". Output only the resulting Arabic word.',
+        "en_zero": 'Apply the Arabic pattern "[PATTERN]" to the root "[ROOT]". Output only the resulting transliterated word.',
         "en_one":  'Apply the Arabic pattern "[PATTERN]" to the root "[ROOT]". '
                    'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
-                   'Output only the resulting Arabic word.',
-        "ar_zero": 'طبق النمط "[PATTERN]" على الجذر "[ROOT]". أخرج الكلمة العربية الناتجة فقط.',
+                   'Output only the resulting transliterated word.',
+        "ar_zero": 'طبق النمط "[PATTERN]" على الجذر "[ROOT]". أخرج الناتج بالحروف اللاتينية فقط.',
         "ar_one":  'طبق النمط "[PATTERN]" على الجذر "[ROOT]". '
                    'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
-                   'أخرج الكلمة العربية الناتجة فقط.',
+                   'أخرج الناتج بالحروف اللاتينية فقط.',
     },
     "fake_pattern": {
-        "en_zero": 'Apply the Arabic pattern "CVCCVC" to the root "{root}". Output only the resulting Arabic word.',
+        "en_zero": 'Apply the Arabic pattern "CVCCVC" to the root "{root}". Output only the resulting transliterated word.',
         "en_one":  'Apply the Arabic pattern "CVCCVC" to the root "{root}". '
                    'Example: applying "fa3ala" to "k-t-b" gives "kataba". '
-                   'Output only the resulting Arabic word.',
-        "ar_zero": 'طبق النمط "CVCCVC" على الجذر "{root}". أخرج الكلمة العربية الناتجة فقط.',
+                   'Output only the resulting transliterated word.',
+        "ar_zero": 'طبق النمط "CVCCVC" على الجذر "{root}". أخرج الناتج بالحروف اللاتينية فقط.',
         "ar_one":  'طبق النمط "CVCCVC" على الجذر "{root}". '
                    'مثال: تطبيق "fa3ala" على الجذر "k-t-b" يعطي "kataba". '
-                   'أخرج الكلمة العربية الناتجة فقط.',
+                   'أخرج الناتج بالحروف اللاتينية فقط.',
     },
 }
 

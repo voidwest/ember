@@ -29,7 +29,9 @@ def divergence_curves(
     n_stimuli, n_layers, hidden_dim = activations.shape
 
     correct_mask = np.array([
-        c["predicted"].strip() == c["expected"].strip()
+        bool(c["correct"])
+        if "correct" in c
+        else c["predicted"].strip() == c["expected"].strip()
         for c in correctness
     ])
     n_correct = correct_mask.sum()
