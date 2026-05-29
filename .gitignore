@@ -5,6 +5,7 @@ data/*.npz
 data/*_activations.npy
 data/*_activations_correctness.json
 data/*_activations_metadata.json
+data/matrix/
 *.pdf
 .venv/
 .deepseek/
