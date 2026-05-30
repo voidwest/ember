@@ -647,9 +647,10 @@ impl LlamaConfig {
             Some(GgufValue::Str(s)) => s.as_str(),
             _ => "llama",
         };
-        // normalize: qwen2 covers qwen2.5 (same arch family)
+        // normalize: qwen2 covers qwen2.5 and qwen3 (same arch family)
         let prefix = match arch_prefix {
             "qwen2" => "qwen2",
+            "qwen3" => "qwen3",
             _ => "llama",
         };
 
@@ -683,7 +684,9 @@ impl LlamaConfig {
         let n_heads = get_u32("attention.head_count", 32) as usize;
         let n_kv_heads = get_u32("attention.head_count_kv", n_heads as u32) as usize;
         let embed_dim = get_u32("embedding_length", 4096) as usize;
-        let head_dim = embed_dim / n_heads;
+        // Some architectures (qwen3, deepseek, etc.) specify head_dim explicitly
+        // in the GGUF metadata. Fall back to embed_dim / n_heads when absent.
+        let head_dim = get_u32("attention.key_length", (embed_dim / n_heads) as u32) as usize;
         let max_seq_len = get_u32("context_length", 2048).min(4096) as usize;
         let rope_theta = get_f32("rope.freq_base", 10000.0);
         let norm_eps = get_f32("attention.layer_norm_rms_epsilon", 1e-5);
@@ -781,6 +784,10 @@ pub struct LlamaAttention<B: Backend> {
     rope_cos: B::Tensor,
     /// precomputed rope sin table, shape [max_seq_len, head_dim]
     rope_sin: B::Tensor,
+    /// optional QK normalization weight (qwen3): applied to q after rope, shape [head_dim]
+    q_norm: Option<B::Tensor>,
+    /// optional QK normalization weight (qwen3): applied to k after rope, shape [head_dim]
+    k_norm: Option<B::Tensor>,
 }
 
 impl<B: Backend> LlamaAttention<B> {
@@ -795,6 +802,8 @@ impl<B: Backend> LlamaAttention<B> {
         n_heads: usize,
         n_kv_heads: usize,
         head_dim: usize,
+        q_norm: Option<B::Tensor>,
+        k_norm: Option<B::Tensor>,
     ) -> Self {
         Self {
             q_proj,
@@ -806,6 +815,8 @@ impl<B: Backend> LlamaAttention<B> {
             n_heads,
             n_kv_heads,
             head_dim,
+            q_norm,
+            k_norm,
         }
     }
 }
@@ -843,6 +854,24 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
                 }
             }
         }
+        // apply QK-Norm if present (qwen3): rms_norm per-head after RoPE
+        if let Some(ref q_norm) = self.q_norm {
+            let q_norm_data = backend.data(q_norm);
+            let eps = 1e-6;
+            for s in 0..seq_len {
+                for h in 0..self.n_heads {
+                    let base = s * embed_dim + h * head_dim;
+                    let mut sq_sum = 0.0f32;
+                    for d in 0..head_dim {
+                        sq_sum += q_rope[base + d] * q_rope[base + d];
+                    }
+                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
+                    for d in 0..head_dim {
+                        q_rope[base + d] = q_rope[base + d] / rms * q_norm_data[d];
+                    }
+                }
+            }
+        }
         let q = backend.load_from_cpu(q_rope, &[seq_len, embed_dim])?;
 
         let k_raw = backend.data(&k);
@@ -857,6 +886,24 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
                     let y = k_rope[base + d + half];
                     k_rope[base + d] = x * cos_row[d] - y * sin_row[d];
                     k_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
+                }
+            }
+        }
+        // apply QK-Norm to k if present (qwen3)
+        if let Some(ref k_norm) = self.k_norm {
+            let k_norm_data = backend.data(k_norm);
+            let eps = 1e-6;
+            for s in 0..seq_len {
+                for h in 0..self.n_kv_heads {
+                    let base = s * kv_dim + h * head_dim;
+                    let mut sq_sum = 0.0f32;
+                    for d in 0..head_dim {
+                        sq_sum += k_rope[base + d] * k_rope[base + d];
+                    }
+                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
+                    for d in 0..head_dim {
+                        k_rope[base + d] = k_rope[base + d] / rms * k_norm_data[d];
+                    }
                 }
             }
         }
@@ -921,6 +968,24 @@ impl<B: Backend> LlamaAttention<B> {
                 }
             }
         }
+        // apply QK-Norm if present (qwen3): rms_norm per-head after RoPE
+        if let Some(ref q_norm) = self.q_norm {
+            let q_norm_data = backend.data(q_norm);
+            let eps = 1e-6;
+            for s in 0..seq_len {
+                for h in 0..self.n_heads {
+                    let base = s * embed_dim + h * head_dim;
+                    let mut sq_sum = 0.0f32;
+                    for d in 0..head_dim {
+                        sq_sum += q_rope[base + d] * q_rope[base + d];
+                    }
+                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
+                    for d in 0..head_dim {
+                        q_rope[base + d] = q_rope[base + d] / rms * q_norm_data[d];
+                    }
+                }
+            }
+        }
         let q = backend.load_from_cpu(q_rope, &[seq_len, embed_dim])?;
 
         let k_raw = backend.data(&k);
@@ -936,6 +1001,24 @@ impl<B: Backend> LlamaAttention<B> {
                     let y = k_rope[base + d + half];
                     k_rope[base + d] = x * cos_row[d] - y * sin_row[d];
                     k_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
+                }
+            }
+        }
+        // apply QK-Norm to k if present (qwen3)
+        if let Some(ref k_norm) = self.k_norm {
+            let k_norm_data = backend.data(k_norm);
+            let eps = 1e-6;
+            for s in 0..seq_len {
+                for h in 0..self.n_kv_heads {
+                    let base = s * kv_dim + h * head_dim;
+                    let mut sq_sum = 0.0f32;
+                    for d in 0..head_dim {
+                        sq_sum += k_rope[base + d] * k_rope[base + d];
+                    }
+                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
+                    for d in 0..head_dim {
+                        k_rope[base + d] = k_rope[base + d] / rms * k_norm_data[d];
+                    }
                 }
             }
         }
@@ -1186,6 +1269,22 @@ impl Llama<CpuBackend> {
 
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
+            // optionally load QK-Norm weights (qwen3, etc.)
+            let qk_q_norm = loader
+                .tensors
+                .get(&format!("blk.{}.attn_q_norm.weight", i))
+                .and_then(|t| match t {
+                    LoadedTensor::F32(t) => Some(t.clone()),
+                    _ => None,
+                });
+            let qk_k_norm = loader
+                .tensors
+                .get(&format!("blk.{}.attn_k_norm.weight", i))
+                .and_then(|t| match t {
+                    LoadedTensor::F32(t) => Some(t.clone()),
+                    _ => None,
+                });
+
             let attn = LlamaAttention::new(
                 get_linear(&format!("blk.{}.attn_q.weight", i))?,
                 get_linear(&format!("blk.{}.attn_k.weight", i))?,
@@ -1196,6 +1295,8 @@ impl Llama<CpuBackend> {
                 config.n_heads,
                 config.n_kv_heads,
                 config.head_dim,
+                qk_q_norm,
+                qk_k_norm,
             );
 
             let mlp = LlamaMlp::new(

@@ -17,3 +17,4 @@ docs/plots/root_probe_scale_comparison.png
 # only README.md is tracked — design notes and logs stay local
 *.md
 !README.md
+tokenizer-qwen3.json

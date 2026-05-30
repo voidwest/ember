@@ -47,8 +47,8 @@ struct Args {
     #[arg(short, long)]
     interactive: bool,
 
-    /// model architecture: gpt2 or llama (llama dispatches to `Llama::from_loader`)
-    #[arg(long, default_value = "gpt2", value_parser = ["gpt2", "llama"])]
+    /// model architecture: gpt2, llama, or qwen3 (llama/qwen3 dispatch to `Llama::from_loader`)
+    #[arg(long, default_value = "gpt2", value_parser = ["gpt2", "llama", "qwen3"])]
     arch: String,
 
     /// run a curated demo that showcases the project with deterministic output and timing
@@ -172,7 +172,7 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", output);
             }
         }
-        "llama" => {
+        "llama" | "qwen3" => {
             use ember::model::Llama;
             let model = Llama::from_loader(loader)?;
             log::info!("loading model from {}", args.model);
