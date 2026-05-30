@@ -120,7 +120,9 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                 LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             1 => {
-                // f16: read, convert to f32, reverse dims (column-major storage)
+                // f16: read and convert to f32. Keep the logical GGUF shape
+                // unchanged; model builders handle any linear-weight transpose
+                // the same way they do for native f32 tensors.
                 use half::f16;
                 let mut buf = vec![0u8; element_count * 2];
                 reader.read_exact(&mut buf)?;
@@ -134,9 +136,7 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                     );
                     *dst = f16::from_bits(bits).to_f32();
                 }
-                let mut dims = info.dims;
-                dims.reverse();
-                LoadedTensor::F32(CpuTensor::from_data(dims, data))
+                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             8 => {
                 // q8_0: store raw, dequantize on the fly during matmul.

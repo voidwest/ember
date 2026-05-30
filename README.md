@@ -63,8 +63,8 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 | flag | default | description |
 |------|---------|-------------|
 | `-m`, `--model` | `gpt2.Q8_0.gguf` | path to gguf model file |
-| `--arch` | `gpt2` | model architecture: `gpt2` or `llama` |
-| `--tokenizer` | arch-dependent | path to tokenizer.json (`tokenizer-gpt2.json` for gpt-2, `tokenizer.json` for llama) |
+| `--arch` | `gpt2` | model architecture: `gpt2`, `llama`, `qwen3`, or `gemma4` |
+| `--tokenizer` | arch-dependent | path to tokenizer.json (`tokenizer-gpt2.json` for gpt-2, `tokenizer.json` for llama/qwen3, `tokenizer-gemma4.json` for Gemma 4) |
 | `-p`, `--prompt` | `The` | text prompt to complete |
 | `-n`, `--max-tokens` | `20` | tokens to generate |
 | `-t`, `--temperature` | `0.8` | sampling temp (0 = greedy) |
@@ -118,8 +118,8 @@ pooled per-layer hidden states at the selected prompt position. saves a 3d
 `_metadata.json` sidecars with next-token predictions, generated continuations,
 match results, and the exact prompt template, position, model, shape, and token
 selections used.
-works with both gpt-2 and llama architectures through the `ForwardModel`
-trait.
+works with gpt-2, llama/qwen-family models, and dense text-only Gemma 4
+models through the `ForwardModel` trait.
 
 Batch extraction lets one model load produce a full prompt/position matrix:
 
@@ -146,6 +146,19 @@ python probes/run_probe_matrix.py \
   --positions last root \
   --generate-tokens 1 \
   --dry-run
+```
+
+Gemma 4 uses the same probe pipeline:
+
+```bash
+cargo run --release -- \
+  --arch gemma4 \
+  --model models/gemma-4-E2B-it.Q8_0.gguf \
+  --tokenizer tokenizer-gemma4.json \
+  --probe \
+  --probe-stimuli stimuli/nonce_root_pattern.json \
+  --probe-output data/gemma4_activations.npy \
+  --probe-generate-tokens 1
 ```
 
 the `probes/` directory contains python scripts for downstream analysis:
@@ -195,8 +208,8 @@ does not need to download large model weights.
 
 ### llama models
 
-ember supports llama-compatible architectures via `--arch llama`. the following
-models have been tested:
+ember supports llama-compatible architectures via `--arch llama`, and qwen3
+models via `--arch qwen3`. the following models have been tested:
 
 - **Llama 3.2 1B Instruct** (`Llama-3.2-1B-Instruct-Q8_0.gguf`) - 1.2B params, Q8_0 (~1.3 GB)
 - **Llama 3.2 3B Instruct** (`Llama-3.2-3B-Instruct-Q8_0.gguf`) - 3.2B params, Q8_0 (~3.4 GB)
@@ -206,6 +219,30 @@ models have been tested:
 qwen2.5 models use the same `--arch llama` flag - ember auto-detects the
 architecture from gguf metadata and supports qwen2-family models through
 the same inference path.
+qwen3 models can also be run with `--arch qwen3`; this dispatches through the
+same llama-family model path while enabling qwen3-specific metadata handling.
+
+### Gemma 4 text models
+
+ember supports dense text-only Gemma 4 models via `--arch gemma4`. The path
+targets E2B/E4B/31B-style GGUFs with f32, f16, or Q8_0 weights. It rejects
+MoE Gemma 4 models, multimodal inputs, speculative drafter models, and
+K-quantized GGUFs in this first pass.
+
+The Gemma 4 loader handles long-context RoPE without cloning per-layer tables,
+uses packed Q8 per-layer embeddings without full dequantization, projects
+per-layer embedding chunks through `blk.N.proj.weight`, and supports probe mode
+for hidden-state extraction. A one-stimulus smoke probe on
+`gemma-4-E2B-it.Q8_0.gguf` produced activations with shape `(1, 35, 1536)`.
+
+```bash
+cargo run --release -- \
+  --arch gemma4 \
+  --model Gemma-4-E2B-Q8_0.gguf \
+  --tokenizer tokenizer-gemma4.json \
+  --prompt "The capital of France is" \
+  -n 8 --temperature 0 --benchmark
+```
 
 download a quantized gguf from huggingface (e.g.
 [unsloth/Llama-3.2-1B-Instruct-GGUF](https://huggingface.co/unsloth/Llama-3.2-1B-Instruct-GGUF)),
@@ -224,8 +261,8 @@ cargo run --release -- \
 > for `--arch gpt2` and `tokenizer.json` for `--arch llama`.
 
 > **note**: interactive (`-i`) and demo (`--demo`) modes are not yet wired
-> for llama. the single-prompt generation path and probe (`--probe`) mode
-> work with both architectures.
+> for llama/qwen or Gemma 4. the single-prompt generation path and probe
+> (`--probe`) mode work with these architectures.
 
 ## research: arabic morphology probing
 

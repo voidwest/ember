@@ -399,6 +399,44 @@ fn build_minimal_gguf() -> Vec<u8> {
     buf
 }
 
+/// build a minimal GGUF v3 file containing one tensor with caller-provided
+/// dtype, dims, and raw tensor payload bytes.
+fn build_single_tensor_gguf(dtype: u32, dims: &[u64], tensor_bytes: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    buf.extend_from_slice(&0x46554747u32.to_le_bytes());
+    buf.extend_from_slice(&3u32.to_le_bytes());
+    buf.extend_from_slice(&1u64.to_le_bytes());
+    buf.extend_from_slice(&1u64.to_le_bytes());
+
+    let key = b"general.name";
+    buf.extend_from_slice(&(key.len() as u64).to_le_bytes());
+    buf.extend_from_slice(key);
+    buf.extend_from_slice(&8u32.to_le_bytes());
+    let val = b"layout-test";
+    buf.extend_from_slice(&(val.len() as u64).to_le_bytes());
+    buf.extend_from_slice(val);
+
+    let tname = b"test.weight";
+    buf.extend_from_slice(&(tname.len() as u64).to_le_bytes());
+    buf.extend_from_slice(tname);
+    buf.extend_from_slice(&(dims.len() as u32).to_le_bytes());
+    for dim in dims {
+        buf.extend_from_slice(&dim.to_le_bytes());
+    }
+    buf.extend_from_slice(&dtype.to_le_bytes());
+    buf.extend_from_slice(&0u64.to_le_bytes());
+
+    let current_pos = buf.len() as u64;
+    let alignment = 32u64;
+    let data_start = (current_pos + alignment - 1) & !(alignment - 1);
+    let padding = (data_start - current_pos) as usize;
+    buf.resize(buf.len() + padding, 0);
+
+    buf.extend_from_slice(tensor_bytes);
+    buf
+}
+
 #[test]
 fn test_load_minimal_gguf() {
     use ember::loader::load_gguf_from_reader;
@@ -430,6 +468,55 @@ fn test_load_minimal_gguf() {
     };
     assert_eq!(f32_tensor.shape(), &[2, 4]);
     assert!(f32_tensor.data().iter().all(|&x| (x - 1.0).abs() < 1e-6));
+}
+
+#[test]
+fn test_load_f16_keeps_logical_shape() {
+    use ember::loader::{load_gguf_from_reader, LoadedTensor};
+    use half::f16;
+    use std::io::Cursor;
+
+    let mut tensor_bytes = Vec::new();
+    for value in 0..8 {
+        tensor_bytes.extend_from_slice(&f16::from_f32(value as f32).to_bits().to_le_bytes());
+    }
+    let gguf_bytes = build_single_tensor_gguf(1, &[2, 4], &tensor_bytes);
+    let mut cursor = Cursor::new(&gguf_bytes);
+    let loader = load_gguf_from_reader(&mut cursor).expect("should parse f16 gguf");
+
+    let tensor = loader
+        .tensors
+        .get("test.weight")
+        .expect("tensor 'test.weight' not found");
+    let f16_tensor = match tensor {
+        LoadedTensor::F32(t) => t,
+        _ => panic!("expected f16 tensor to load as F32"),
+    };
+    assert_eq!(f16_tensor.shape(), &[2, 4]);
+    assert_eq!(f16_tensor.data()[7], 7.0);
+}
+
+#[test]
+fn test_load_q8_0_reverses_to_quantized_matmul_shape() {
+    use ember::loader::{load_gguf_from_reader, LoadedTensor};
+    use ember::quant::Q8_0_TYPE_SIZE;
+    use std::io::Cursor;
+
+    let tensor_bytes = vec![0u8; 2 * Q8_0_TYPE_SIZE];
+    let gguf_bytes = build_single_tensor_gguf(8, &[32, 2], &tensor_bytes);
+    let mut cursor = Cursor::new(&gguf_bytes);
+    let loader = load_gguf_from_reader(&mut cursor).expect("should parse q8_0 gguf");
+
+    let tensor = loader
+        .tensors
+        .get("test.weight")
+        .expect("tensor 'test.weight' not found");
+    let q8 = match tensor {
+        LoadedTensor::Q8_0(qw) => qw,
+        _ => panic!("expected Q8_0 tensor"),
+    };
+    assert_eq!(q8.out_features(), 2);
+    assert_eq!(q8.in_features(), 32);
 }
 
 #[test]

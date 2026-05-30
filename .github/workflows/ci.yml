@@ -15,6 +15,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - uses: actions/cache@v4
         with:
           path: |
@@ -34,3 +38,8 @@ jobs:
 
       - name: fmt
         run: cargo fmt -- --check
+
+      - name: python smoke
+        run: |
+          python -m compileall -q probes stimuli
+          python probes/run_probe_matrix.py --model smoke:dummy.gguf --templates en_zero --positions last --generate-tokens 1 --dry-run

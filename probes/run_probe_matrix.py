@@ -39,7 +39,7 @@ def main():
         metavar="LABEL:PATH",
         help="model label and GGUF path; may be repeated",
     )
-    parser.add_argument("--arch", default="llama", choices=["gpt2", "llama"])
+    parser.add_argument("--arch", default="llama", choices=["gpt2", "llama", "qwen3", "gemma4"])
     parser.add_argument("--tokenizer", default=None)
     parser.add_argument(
         "--stimuli",

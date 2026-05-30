@@ -47,6 +47,20 @@ impl KVCache {
     pub fn append(&mut self, layer: usize, pos: usize, k_new: &[f32], v_new: &[f32]) {
         assert_eq!(k_new.len(), self.n_kv_heads * self.head_dim);
         assert_eq!(v_new.len(), self.n_kv_heads * self.head_dim);
+        self.append_with_head_dim(layer, pos, k_new, v_new, self.head_dim);
+    }
+
+    pub fn append_with_head_dim(
+        &mut self,
+        layer: usize,
+        pos: usize,
+        k_new: &[f32],
+        v_new: &[f32],
+        active_head_dim: usize,
+    ) {
+        assert!(active_head_dim <= self.head_dim);
+        assert_eq!(k_new.len(), self.n_kv_heads * active_head_dim);
+        assert_eq!(v_new.len(), self.n_kv_heads * active_head_dim);
         assert!(
             pos < self.max_seq_len,
             "kv cache overflow: pos={}, max_seq_len={}",
@@ -60,10 +74,10 @@ impl KVCache {
         for h in 0..self.n_kv_heads {
             let head_offset = h * self.max_seq_len * self.head_dim;
             let dst = layer_offset + head_offset + seq_offset;
-            let src = h * self.head_dim;
+            let src = h * active_head_dim;
 
-            self.k[dst..dst + self.head_dim].copy_from_slice(&k_new[src..src + self.head_dim]);
-            self.v[dst..dst + self.head_dim].copy_from_slice(&v_new[src..src + self.head_dim]);
+            self.k[dst..dst + active_head_dim].copy_from_slice(&k_new[src..src + active_head_dim]);
+            self.v[dst..dst + active_head_dim].copy_from_slice(&v_new[src..src + active_head_dim]);
         }
     }
     pub fn get(&self, layer: usize) -> (&[f32], &[f32]) {
@@ -73,6 +87,10 @@ impl KVCache {
             &self.k[layer_offset..layer_offset + len],
             &self.v[layer_offset..layer_offset + len],
         )
+    }
+
+    pub fn head_dim(&self) -> usize {
+        self.head_dim
     }
 
     pub fn cursor(&self) -> usize {

@@ -47,8 +47,8 @@ struct Args {
     #[arg(short, long)]
     interactive: bool,
 
-    /// model architecture: gpt2, llama, or qwen3 (llama/qwen3 dispatch to `Llama::from_loader`)
-    #[arg(long, default_value = "gpt2", value_parser = ["gpt2", "llama", "qwen3"])]
+    /// model architecture: gpt2, llama, qwen3, or gemma4
+    #[arg(long, default_value = "gpt2", value_parser = ["gpt2", "llama", "qwen3", "gemma4"])]
     arch: String,
 
     /// run a curated demo that showcases the project with deterministic output and timing
@@ -201,6 +201,35 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", output);
             }
         }
+        "gemma4" => {
+            use ember::gemma4::Gemma4;
+            let model = Gemma4::from_loader(loader)?;
+            log::info!("loading model from {}", args.model);
+            log::info!("loaded {} tensors", n_tensors);
+            log::info!("model built (gemma4)");
+            log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
+
+            if args.demo {
+                anyhow::bail!("demo mode not yet supported for gemma4");
+            } else if args.interactive {
+                anyhow::bail!("interactive mode not yet supported for gemma4");
+            } else if args.probe {
+                run_probe_jobs(&backend, &model, &tokenizer, &args)?;
+            } else {
+                let output = generate_llama(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    args.max_tokens,
+                    args.temperature,
+                    args.top_k,
+                    args.top_p,
+                    args.benchmark,
+                )?;
+                println!("{}", output);
+            }
+        }
         _ => anyhow::bail!("unknown architecture: {}", args.arch),
     }
 
@@ -211,6 +240,7 @@ fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     match arch {
         "gpt2" => "tokenizer-gpt2.json",
         "llama" => "tokenizer.json",
+        "gemma4" => "tokenizer-gemma4.json",
         _ => "tokenizer.json",
     }
 }
@@ -392,6 +422,7 @@ where
 
         let mut cache = model.create_cache(backend, max_seq_len);
         let mut logits = model.forward_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
+        let vocab_size = backend.shape(&logits)[1];
 
         let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
         eprint_flush!("\r{}\n", s(GRN, &"prefill complete"));
@@ -420,10 +451,10 @@ where
         for step in 0..max_tokens {
             let logit_data = backend.data(&logits);
             let last_logits = if step == 0 {
-                let last_offset = (all_tokens.len() - 1) * embed_dim;
-                &logit_data[last_offset..last_offset + embed_dim]
+                let last_offset = (all_tokens.len() - 1) * vocab_size;
+                &logit_data[last_offset..last_offset + vocab_size]
             } else {
-                &logit_data[..embed_dim]
+                &logit_data[..vocab_size]
             };
 
             let next = argmax_token(last_logits);
@@ -697,7 +728,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn generate_llama<B: Backend>(
     backend: &B,
-    model: &ember::model::Llama<B>,
+    model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
     prompt: &str,
     max_tokens: usize,
@@ -842,6 +873,16 @@ mod tests {
                 .as_deref()
                 .unwrap_or_else(|| default_tokenizer_for_arch(&llama.arch)),
             "tokenizer.json"
+        );
+
+        let gemma4 =
+            Args::try_parse_from(["ember", "--arch", "gemma4"]).expect("gemma4 args should parse");
+        assert_eq!(
+            gemma4
+                .tokenizer
+                .as_deref()
+                .unwrap_or_else(|| default_tokenizer_for_arch(&gemma4.arch)),
+            "tokenizer-gemma4.json"
         );
     }
 

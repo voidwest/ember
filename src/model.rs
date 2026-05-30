@@ -1224,11 +1224,10 @@ impl Llama<CpuBackend> {
     ///   `output_norm.weight`          -> final rms norm (no bias)
     ///   `output.weight`               -> lm_head (linear, no bias)
     ///
-    /// design note: quantized llama models from llama.cpp use the same
-    /// column-major storage as quantized gpt-2 models. as with `Gpt2::from_loader`,
-    /// quantized linear weights need `.transpose()` after loading.
-    /// f32 weights should not be transposed (the loader leaves them
-    /// in natural row-major order).
+    /// design note: f32/f16 linear weights are loaded with their GGUF logical
+    /// shape and transposed when building `Linear`, matching `Gpt2::from_loader`.
+    /// q8_0 weights are loaded into `QuantizedWeight` with the reversed
+    /// `[out_features, in_features]` shape expected by the quantized matmul path.
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
         use crate::loader::LoadedTensor;
         use crate::tensor::compute_rope_freqs;

@@ -1,5 +1,6 @@
 extern crate alloc;
 pub mod backend;
+pub mod gemma4;
 pub mod kv_cache;
 pub mod loader;
 pub mod model;
