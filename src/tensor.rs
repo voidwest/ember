@@ -149,13 +149,8 @@ impl CpuTensor {
             self.shape, other.shape,
             "addition: shapes must match (for now)"
         );
-
-        let data: Vec<f32> = self
-            .data
-            .iter()
-            .zip(&other.data)
-            .map(|(a, b)| a + b)
-            .collect();
+        let mut data = vec![0.0f32; self.len()];
+        crate::simd::add(&self.data, &other.data, &mut data);
         Self::from_data(self.shape.clone(), data)
     }
 
@@ -259,16 +254,16 @@ impl CpuTensor {
         assert_eq!(weight.len(), features);
 
         let mut out = vec![0.0f32; self.len()];
+        let weight_data = weight.data();
         for b in 0..batch {
             let offset = b * features;
-            let slice = &self.data[offset..offset + features];
+            let row = &self.data[offset..offset + features];
+            let dst = &mut out[offset..offset + features];
 
-            let mean_sq = slice.iter().map(|x| x * x).sum::<f32>() / features as f32;
+            let mean_sq = crate::simd::sum_squares(row) / features as f32;
             let rstd = (mean_sq + eps).sqrt().recip();
 
-            for i in 0..features {
-                out[offset + i] = slice[i] * rstd * weight.data[i];
-            }
+            crate::simd::scale_weight_mul(row, rstd, weight_data, dst);
         }
         Self::from_data(self.shape.clone(), out)
     }
@@ -287,12 +282,8 @@ impl CpuTensor {
     #[inline]
     pub fn elemul(&self, other: &Self) -> Self {
         assert_eq!(self.shape, other.shape, "elemul: shapes must match");
-        let data: Vec<f32> = self
-            .data
-            .iter()
-            .zip(&other.data)
-            .map(|(a, b)| a * b)
-            .collect();
+        let mut data = vec![0.0f32; self.len()];
+        crate::simd::elemul(&self.data, &other.data, &mut data);
         Self::from_data(self.shape.clone(), data)
     }
 

@@ -101,19 +101,7 @@ impl QuantizedWeight {
         let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
         let row_start = row * blocks_per_row;
 
-        for b in 0..blocks_per_row {
-            let byte_offset = (row_start + b) * Q8_0_TYPE_SIZE;
-
-            let d_bits =
-                u16::from_le_bytes(self.data[byte_offset..byte_offset + 2].try_into().unwrap());
-            let d = f16::from_bits(d_bits).to_f32();
-
-            let out_offset = b * Q8_0_BLOCK_SIZE;
-            for j in 0..Q8_0_BLOCK_SIZE {
-                let q = self.data[byte_offset + 2 + j] as i8;
-                dst[out_offset + j] = q as f32 * d;
-            }
-        }
+        crate::simd::dequantize_q8_0_row(&self.data, row_start, blocks_per_row, dst);
     }
 
     /// fully dequantize to a f32 `CpuTensor` with shape `[out_features, in_features]`.

@@ -7,5 +7,6 @@ pub mod loader;
 pub mod model;
 pub mod quant;
 pub mod sampler;
+pub mod simd;
 pub mod tensor;
 pub mod tokenizer;

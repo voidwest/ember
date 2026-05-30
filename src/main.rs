@@ -675,11 +675,10 @@ where
 
         log::debug!("step {}: predicted token {}", step, next_token);
 
-        if let Some(eos) = tokenizer.eos_token_id() {
-            if next_token == eos as usize {
-                log::info!("eos token reached after {} generated tokens", step);
-                break;
-            }
+        let eos_ids = tokenizer.eos_token_ids();
+        if eos_ids.contains(&(next_token as u32)) {
+            log::info!("eos token reached after {} generated tokens", step);
+            break;
         }
 
         all_tokens.push(next_token as u32);
@@ -791,11 +790,10 @@ where
         log::debug!("step {}: predicted token {}", step, next_token);
 
         // stop if the model predicts the end-of-sequence token
-        if let Some(eos) = tokenizer.eos_token_id() {
-            if next_token == eos as usize {
-                log::info!("eos token reached after {} generated tokens", step);
-                break;
-            }
+        let eos_ids = tokenizer.eos_token_ids();
+        if eos_ids.contains(&(next_token as u32)) {
+            log::info!("eos token reached after {} generated tokens", step);
+            break;
         }
 
         all_tokens.push(next_token as u32);
@@ -1314,10 +1312,9 @@ where
         };
         let next_token = argmax_token(last_logits);
 
-        if let Some(eos) = tokenizer.eos_token_id() {
-            if next_token == eos as usize {
-                break;
-            }
+        let eos_ids = tokenizer.eos_token_ids();
+        if eos_ids.contains(&(next_token as u32)) {
+            break;
         }
 
         generated.push(next_token as u32);

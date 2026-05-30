@@ -46,17 +46,19 @@ impl EmberTokenizer {
         self.inner.get_vocab_size(true)
     }
 
-    /// return the end-of-sequence token id, if the tokenizer defines one.
+    /// return all end-of-sequence token ids defined by the tokenizer.
     ///
-    /// tries the common token strings across architectures, in order:
-    /// `<|end_of_text|>` (llama-3), `<|eot_id|>` (llama-3 alt),
-    /// `<|endoftext|>` (gpt-2). returns `None` if none are found.
-    pub fn eos_token_id(&self) -> Option<u32> {
-        for token_str in &["<|end_of_text|>", "<|eot_id|>", "<|endoftext|>"] {
+    /// checks for `<|eot_id|>` (llama-3 end-of-turn), `<|end_of_text|>`
+    /// (llama-3 end-of-sequence), and `<|endoftext|>` (gpt-2).
+    /// models typically predict `<|eot_id|>` at the end of an assistant
+    /// turn; stopping there prevents the model from looping on header tokens.
+    pub fn eos_token_ids(&self) -> Vec<u32> {
+        let mut ids = Vec::new();
+        for token_str in &["<|eot_id|>", "<|end_of_text|>", "<|endoftext|>"] {
             if let Some(id) = self.inner.token_to_id(token_str) {
-                return Some(id);
+                ids.push(id);
             }
         }
-        None
+        ids
     }
 }

@@ -180,7 +180,15 @@ impl Backend for CpuBackend {
         let x_data = x.data();
         let mut out = vec![0.0f32; seq_len * out_features];
 
-        // dequantize columns in blocks, multiply with sgemm.
+        // decode path: single input row, no column reuse.
+        // skip the dense w_block buffer and sgemm dispatch overhead;
+        // compute the dot product directly from compressed Q8_0 data.
+        if seq_len == 1 {
+            crate::simd::matmul_q8_0_decode(x_data, w, &mut out);
+            return Ok(CpuTensor::from_data(vec![seq_len, out_features], out));
+        }
+
+        // prefill path: dequantize columns in blocks, multiply with sgemm.
         // w_block is column-major [in_features, block_len]:
         //   w_block[j * in_features + i] = weight[i, j_block + j]
         const BLOCK_SIZE: usize = 256;
@@ -384,11 +392,10 @@ impl Backend for CpuBackend {
 
                 for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
                     let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
-                    let dot: f32 = q_data[q_idx..q_idx + spec.head_dim]
-                        .iter()
-                        .zip(cached_k[k_offset..k_offset + spec.head_dim].iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
+                    let dot = crate::simd::dot_product(
+                        &q_data[q_idx..q_idx + spec.head_dim],
+                        &cached_k[k_offset..k_offset + spec.head_dim],
+                    );
                     *slot = dot * scale;
                 }
 
@@ -400,9 +407,11 @@ impl Backend for CpuBackend {
                         continue;
                     }
                     let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
-                    for d in 0..spec.head_dim {
-                        out[out_offset + d] += weight * cached_v[v_offset + d];
-                    }
+                    crate::simd::weighted_add(
+                        &mut out[out_offset..out_offset + spec.head_dim],
+                        &cached_v[v_offset..v_offset + spec.head_dim],
+                        weight,
+                    );
                 }
             }
         }
@@ -490,7 +499,6 @@ fn softmax_prefix(row: &mut [f32], len: usize) {
         }
         return;
     }
-
     let mut sum = 0.0;
     for slot in row.iter_mut().take(len) {
         *slot = (*slot - max_val).exp();
