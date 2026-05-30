@@ -2,6 +2,7 @@ extern crate alloc;
 pub mod backend;
 pub mod gemma4;
 pub mod kv_cache;
+pub mod llama;
 pub mod loader;
 pub mod model;
 pub mod quant;
