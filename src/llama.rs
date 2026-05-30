@@ -449,8 +449,9 @@ impl<B: Backend> LlamaAttention<B> {
 
         // compute attention against full cached k/v
         let total_seq_len = cache.cursor() + seq_len;
-        let (cached_k, cached_v) = cache.get(layer);
-        let result = backend.cached_causal_attention(
+        let max_seq_len = cache.max_seq_len();
+        let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(layer);
+        let result = backend.cached_causal_attention_with_scratch(
             &q,
             cached_k,
             cached_v,
@@ -458,9 +459,10 @@ impl<B: Backend> LlamaAttention<B> {
                 n_heads: self.n_heads,
                 n_kv_heads: self.n_kv_heads,
                 head_dim,
-                max_seq_len: cache.max_seq_len(),
+                max_seq_len,
                 total_seq_len,
             },
+            qk_scratch,
         )?;
         self.o_proj.forward(backend, &result)
     }
@@ -593,6 +595,15 @@ impl<B: Backend> ForwardModel<B> for Llama<B> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
         Llama::forward_with_cache(self, backend, token_ids, cache, start_pos)
+    }
+    fn forward_last_logits_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
     }
     fn n_layers(&self) -> usize {
         self.blocks.len()
@@ -783,6 +794,34 @@ impl<B: Backend> Llama<B> {
         }
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         self.head.forward(backend, &x)
+    }
+
+    pub fn forward_last_logits_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let seq_len = token_ids.len();
+        let embed_dim = self.config.embed_dim;
+        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
+        for (i, &tok) in token_ids.iter().enumerate() {
+            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
+            backend.assign_row(&mut x, i, &word_vec);
+        }
+
+        for (layer, block) in self.blocks.iter().enumerate() {
+            x = block.forward_with_cache(backend, &x, cache, layer, start_pos)?;
+        }
+        for _ in 0..seq_len {
+            cache.advance_cursor();
+        }
+
+        let last = backend.index_select(&x, seq_len - 1)?;
+        let last = backend.load_from_cpu(backend.data(&last).to_vec(), &[1, embed_dim])?;
+        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        self.head.forward(backend, &last)
     }
 
     /// forward pass without caching (full sequence).

@@ -320,8 +320,10 @@ impl<B: Backend> Gemma4Attention<B> {
         };
 
         let total_seq_len = cache.cursor() + seq_len;
-        let (cached_k, cached_v) = cache.get(source_layer);
-        let out = cached_attention(
+        let cache_head_dim = cache.head_dim();
+        let max_seq_len = cache.max_seq_len();
+        let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(source_layer);
+        let out = cached_attention_with_scratch(
             backend,
             &q,
             cached_k,
@@ -330,8 +332,8 @@ impl<B: Backend> Gemma4Attention<B> {
                 n_heads: self.n_heads,
                 n_kv_heads: self.n_kv_heads,
                 head_dim: self.head_dim,
-                cache_head_dim: cache.head_dim(),
-                max_seq_len: cache.max_seq_len(),
+                cache_head_dim,
+                max_seq_len,
                 total_seq_len,
                 sliding_window: if self.layer_type == Gemma4AttentionType::Local {
                     Some(self.sliding_window)
@@ -339,6 +341,7 @@ impl<B: Backend> Gemma4Attention<B> {
                     None
                 },
             },
+            qk_scratch,
         )?;
         debug_assert_eq!(backend.shape(&out), &[seq_len, q_dim]);
         self.o_proj.forward(backend, &out)
@@ -529,6 +532,16 @@ impl<B: Backend> ForwardModel<B> for Gemma4<B> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
         Gemma4::forward_with_cache(self, backend, token_ids, cache, start_pos)
+    }
+
+    fn forward_last_logits_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        Gemma4::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
     }
 
     fn n_layers(&self) -> usize {
@@ -779,6 +792,36 @@ impl<B: Backend> Gemma4<B> {
         }
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &x)?;
+        softcap_logits(backend, &logits, self.config.final_logit_softcap)
+    }
+
+    pub fn forward_last_logits_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let mut x = embed_tokens(
+            backend,
+            &self.embed_tokens,
+            token_ids,
+            self.config.embed_dim,
+        )?;
+        let ple = self.ple_vectors(backend, token_ids)?;
+        for (layer, block) in self.blocks.iter().enumerate() {
+            let layer_ple = ple.as_ref().map(|v| &v[layer]);
+            x = block.forward_with_cache(backend, &x, layer_ple, cache, layer, start_pos)?;
+        }
+        for _ in 0..token_ids.len() {
+            cache.advance_cursor();
+        }
+
+        let last = backend.index_select(&x, token_ids.len() - 1)?;
+        let last =
+            backend.load_from_cpu(backend.data(&last).to_vec(), &[1, self.config.embed_dim])?;
+        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &last)?;
         softcap_logits(backend, &logits, self.config.final_logit_softcap)
     }
 
@@ -1062,27 +1105,31 @@ struct Gemma4CachedAttentionSpec {
     sliding_window: Option<usize>,
 }
 
-fn cached_attention<B: Backend>(
+fn cached_attention_with_scratch<B: Backend>(
     backend: &B,
     q: &B::Tensor,
     cached_k: &[f32],
     cached_v: &[f32],
     spec: Gemma4CachedAttentionSpec,
+    scores: &mut Vec<f32>,
 ) -> Result<B::Tensor, B::Error> {
     let seq_len = backend.shape(q)[0];
     let q_width = spec.n_heads * spec.head_dim;
     let n_repeat = spec.n_heads / spec.n_kv_heads;
     let q_data = backend.data(q);
     let mut out = vec![0.0; seq_len * q_width];
-    let mut scores = vec![f32::NEG_INFINITY; spec.total_seq_len];
+    if scores.capacity() < spec.max_seq_len {
+        scores.reserve(spec.max_seq_len - scores.capacity());
+    }
     let cache_head_stride = spec.max_seq_len * spec.cache_head_dim;
 
     for h in 0..spec.n_heads {
         let q_head = h * spec.head_dim;
         let kv_h = h / n_repeat;
         for i in 0..seq_len {
-            scores.fill(f32::NEG_INFINITY);
             let max_j = spec.total_seq_len - seq_len + i;
+            scores.fill(f32::NEG_INFINITY);
+            scores.resize(max_j + 1, f32::NEG_INFINITY);
             let min_j = spec
                 .sliding_window
                 .map(|w| (max_j + 1).saturating_sub(w))
@@ -1095,7 +1142,7 @@ fn cached_attention<B: Backend>(
                     &cached_k[k_idx..k_idx + spec.head_dim],
                 );
             }
-            softmax_range(&mut scores, min_j, max_j + 1);
+            softmax_range(scores.as_mut_slice(), min_j, max_j + 1);
             let out_idx = i * q_width + q_head;
             for (j, &weight) in scores.iter().enumerate().take(max_j + 1).skip(min_j) {
                 if weight == 0.0 {

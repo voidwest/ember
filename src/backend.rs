@@ -92,6 +92,14 @@ pub trait Backend {
         cached_v: &[f32],
         spec: CachedAttentionSpec,
     ) -> Result<Self::Tensor, Self::Error>;
+    fn cached_causal_attention_with_scratch(
+        &self,
+        q: &Self::Tensor,
+        cached_k: &[f32],
+        cached_v: &[f32],
+        spec: CachedAttentionSpec,
+        qk_row: &mut Vec<f32>,
+    ) -> Result<Self::Tensor, Self::Error>;
 
     // -- llama-family primitives ---------------------------------
     // rms norm and silu are needed by llama model code.
@@ -340,6 +348,18 @@ impl Backend for CpuBackend {
         cached_v: &[f32],
         spec: CachedAttentionSpec,
     ) -> Result<CpuTensor, CpuError> {
+        let mut qk_row = Vec::with_capacity(spec.max_seq_len);
+        self.cached_causal_attention_with_scratch(q, cached_k, cached_v, spec, &mut qk_row)
+    }
+
+    fn cached_causal_attention_with_scratch(
+        &self,
+        q: &CpuTensor,
+        cached_k: &[f32],
+        cached_v: &[f32],
+        spec: CachedAttentionSpec,
+        qk_row: &mut Vec<f32>,
+    ) -> Result<CpuTensor, CpuError> {
         if q.ndim() != 2 {
             return Err(CpuError::ShapeMismatch(format!(
                 "cached_causal_attention: q must be 2D, got {:?}",
@@ -378,7 +398,9 @@ impl Backend for CpuBackend {
         let q_data = q.data();
         let cache_head_stride = spec.max_seq_len * spec.head_dim;
         let mut out = vec![0.0f32; seq_len * embed_dim];
-        let mut qk_row = Vec::with_capacity(spec.max_seq_len);
+        if qk_row.capacity() < spec.max_seq_len {
+            qk_row.reserve(spec.max_seq_len - qk_row.capacity());
+        }
 
         for h in 0..spec.n_heads {
             let q_head_offset = h * spec.head_dim;
@@ -399,7 +421,7 @@ impl Backend for CpuBackend {
                     *slot = dot * scale;
                 }
 
-                softmax_prefix(&mut qk_row, max_j + 1);
+                softmax_prefix(qk_row.as_mut_slice(), max_j + 1);
 
                 let out_offset = i * embed_dim + q_head_offset;
                 for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {

@@ -610,6 +610,26 @@ fn test_backend_cached_causal_attention_shapes() {
     assert_eq!(out.shape(), &[1, 2]);
     assert!(out.data()[0] > 1.0 && out.data()[0] < 3.0);
     assert!(out.data()[1] > 2.0 && out.data()[1] < 4.0);
+
+    let mut scratch = Vec::with_capacity(3);
+    let scratch_out = backend
+        .cached_causal_attention_with_scratch(
+            &q,
+            &cached_k,
+            &cached_v,
+            CachedAttentionSpec {
+                n_heads: 1,
+                n_kv_heads: 1,
+                head_dim: 2,
+                max_seq_len: 3,
+                total_seq_len: 2,
+            },
+            &mut scratch,
+        )
+        .expect("scratch-backed cached attention should run");
+
+    assert_eq!(scratch_out, out);
+    assert!(scratch.capacity() >= 3);
 }
 
 #[test]

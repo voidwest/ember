@@ -23,7 +23,8 @@ research write-up: https://voidwest.dev/ember
 - **backend trait**: model code is generic over a `Backend` trait for linear ops,
   embeddings, and element-wise math - swap cpu for gpu later without rewriting
   those paths. (attention is cpu-scalar for now; see design notes.)
-- **explicit memory**: no hidden allocations in the inference hot path.
+- **explicit memory**: pre-allocated kv caches and explicit tensor ownership make
+  inference memory use visible and easy to profile.
 - **alloc-first design**: core tensor types and model code avoid `std` where practical, using `alloc` for vec-backed storage.
 - **hidden-state probing**: extract per-layer activations at any token position.
   probe mode (`--probe`) feeds stimuli through the model and saves full
@@ -37,7 +38,7 @@ research write-up: https://voidwest.dev/ember
 
 - **systems programming in rust**: manual memory layout for the kv cache
   (`[layer][head][pos][head_dim]`), explicit stride math for tensor indexing,
-  no hidden allocations in the hot path.
+  and scoped allocations that can be profiled and optimized directly.
 - **generic backend architecture**: the transformer is written against a
   `Backend` trait - the same model code works on cpu today and could run
   on gpu tomorrow without modification.
@@ -208,19 +209,18 @@ does not need to download large model weights.
 
 ### llama models
 
-ember supports llama-compatible architectures via `--arch llama`, and qwen3
-models via `--arch qwen3`. the following models have been tested:
+ember supports llama-compatible architectures via `--arch llama`. qwen-family
+ggufs run through the same llama-family model path; use `--arch qwen3` for
+qwen3-specific metadata handling. the following models have been tested:
 
 - **llama 3.2 1b instruct** (`Llama-3.2-1B-Instruct-Q8_0.gguf`) - 1.2b params, q8_0 (~1.3 gb)
 - **llama 3.2 3b instruct** (`Llama-3.2-3B-Instruct-Q8_0.gguf`) - 3.2b params, q8_0 (~3.4 gb)
 - **llama 3.1 8b instruct** (`meta-llama-3.1-8b-instruct.Q8_0.gguf`) - 8b params, q8_0 (~8.5 gb)
 - **qwen2.5 1.5b instruct** (`qwen2.5-1.5b-instruct-q8_0.gguf`) - 1.5b params, q8_0 (~1.8 gb)
 
-qwen2.5 models use the same `--arch llama` flag - ember auto-detects the
-architecture from gguf metadata and supports qwen2-family models through
-the same inference path.
-qwen3 models can also be run with `--arch qwen3`; this dispatches through the
-same llama-family model path while enabling qwen3-specific metadata handling.
+qwen2.5 models use `--arch llama`; ember auto-detects the qwen2 gguf metadata
+inside the shared llama-family path. qwen3 models use `--arch qwen3`, which
+dispatches through that same path while selecting qwen3 metadata keys.
 
 ### gemma 4 text models
 
@@ -285,8 +285,8 @@ full research write-up: https://voidwest.dev/ember
 
 ## architecture
 
-the entry point is `main.rs` -> `generate()` (or the generic `generate_llama()`
-path for decoder families), which runs a two-phase loop:
+the entry point is `main.rs` -> `generate()`, a generic `ForwardModel` path
+used by gpt-2, llama/qwen, and gemma 4. generation runs a two-phase loop:
 
 1. **prefill** - forward pass on the full prompt, populating the kv cache.
 2. **decode** - one token at a time, reading from the cache.

@@ -187,7 +187,7 @@ fn main() -> anyhow::Result<()> {
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args)?;
             } else {
-                let output = generate_llama(
+                let output = generate(
                     &backend,
                     &model,
                     &tokenizer,
@@ -216,7 +216,7 @@ fn main() -> anyhow::Result<()> {
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args)?;
             } else {
-                let output = generate_llama(
+                let output = generate(
                     &backend,
                     &model,
                     &tokenizer,
@@ -613,120 +613,6 @@ where
 #[allow(clippy::too_many_arguments)]
 fn generate<B: Backend>(
     backend: &B,
-    model: &Gpt2<B>,
-    tokenizer: &ember::tokenizer::EmberTokenizer,
-    prompt: &str,
-    max_tokens: usize,
-    temperature: f32,
-    top_k: Option<usize>,
-    top_p: Option<f32>,
-    benchmark: bool,
-) -> anyhow::Result<String>
-where
-    B::Error: Send + Sync + 'static,
-{
-    let mut rng = rand::thread_rng();
-
-    let mut all_tokens = tokenizer
-        .encode(prompt)
-        .context("failed to tokenize prompt")?;
-    log::info!("prompt has {} tokens", all_tokens.len());
-
-    let prompt_len = all_tokens.len();
-    let max_seq_len = prompt_len + max_tokens;
-
-    // -- 1. prefill: run full forward pass on the prompt and fill kv cache --
-    let prefill_start = if benchmark {
-        Some(Instant::now())
-    } else {
-        None
-    };
-    log::info!("prefilling KV cache for {} tokens", prompt_len);
-    let mut cache = model.create_cache(backend, max_seq_len);
-    let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
-    let prefill_elapsed = prefill_start.map(|s| s.elapsed());
-    let vocab_size = backend.shape(&logits)[1];
-
-    // -- 2. decode loop: one new token at a time --------------------------
-    let decode_start = if benchmark {
-        Some(Instant::now())
-    } else {
-        None
-    };
-    let mut generated = Vec::with_capacity(max_tokens);
-    let mut next_token: usize;
-
-    for step in 0..max_tokens {
-        let logit_data = backend.data(&logits);
-        let last_logits = if step == 0 {
-            // prefill step: pick the last position's logits
-            let last_offset = (all_tokens.len() - 1) * vocab_size;
-            &logit_data[last_offset..last_offset + vocab_size]
-        } else {
-            // decode step: only one token in the input, logits[0] is the output
-            &logit_data[..vocab_size]
-        };
-
-        next_token = if temperature == 0.0 {
-            argmax_token(last_logits)
-        } else {
-            sample_token(last_logits, temperature, top_k, top_p, &mut rng)
-        };
-
-        log::debug!("step {}: predicted token {}", step, next_token);
-
-        let eos_ids = tokenizer.eos_token_ids();
-        if eos_ids.contains(&(next_token as u32)) {
-            log::info!("eos token reached after {} generated tokens", step);
-            break;
-        }
-
-        all_tokens.push(next_token as u32);
-        generated.push(next_token as u32);
-
-        // decode step: forward with just the new token, using cached K/V
-        logits = model.forward_with_cache(
-            backend,
-            &[next_token as u32],
-            &mut cache,
-            prompt_len + step, // absolute position offset
-        )?;
-    }
-
-    let output = tokenizer.decode(&generated)?;
-
-    if benchmark {
-        let prefill_ms = prefill_elapsed.unwrap().as_secs_f64() * 1000.0;
-        let decode_ms = decode_start.unwrap().elapsed().as_secs_f64() * 1000.0;
-        eprintln!("--- benchmark ---");
-        eprintln!(
-            "prefill: {} tokens in {:.1}ms -> {:.0} tok/s",
-            prompt_len,
-            prefill_ms,
-            prompt_len as f64 / prefill_elapsed.unwrap().as_secs_f64()
-        );
-        eprintln!(
-            "decode:  {} tokens in {:.1}ms -> {:.0} tok/s",
-            generated.len(),
-            decode_ms,
-            generated.len() as f64 / decode_start.unwrap().elapsed().as_secs_f64()
-        );
-    }
-
-    if log::log_enabled!(log::Level::Debug) {
-        let decoded_prompt = tokenizer.decode(&all_tokens[..prompt_len])?;
-        log::debug!("prompt: {:?}", decoded_prompt);
-        log::debug!("generated: {:?}", output);
-    }
-
-    Ok(output)
-}
-
-/// generate function for llama-family models.
-/// mirrors `generate` but accepts `Llama<CpuBackend>` instead of `Gpt2<CpuBackend>`.
-#[allow(clippy::too_many_arguments)]
-fn generate_llama<B: Backend>(
-    backend: &B,
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
     prompt: &str,
@@ -749,7 +635,9 @@ where
     let prompt_len = all_tokens.len();
     let max_seq_len = prompt_len + max_tokens;
 
-    // -- 1. prefill: run full forward pass on the prompt and fill kv cache --
+    // -- 1. prefill: run the prompt through the transformer and fill kv cache.
+    // Only the last prompt position needs logits for generation, so avoid
+    // materializing a full [prompt_len, vocab_size] logits tensor.
     let prefill_start = if benchmark {
         Some(Instant::now())
     } else {
@@ -757,9 +645,8 @@ where
     };
     log::info!("prefilling KV cache for {} tokens", prompt_len);
     let mut cache = model.create_cache(backend, max_seq_len);
-    let mut logits = model.forward_with_cache(backend, &all_tokens, &mut cache, 0)?;
+    let mut logits = model.forward_last_logits_with_cache(backend, &all_tokens, &mut cache, 0)?;
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
-    // logits have shape [prompt_len, vocab_size]; extract vocab_size from the tensor
     let vocab_size = backend.shape(&logits)[1];
 
     // -- 2. decode loop: one new token at a time --------------------------
@@ -769,19 +656,13 @@ where
         None
     };
     let mut generated = Vec::with_capacity(max_tokens);
+    let mut next_token: usize;
 
     for step in 0..max_tokens {
         let logit_data = backend.data(&logits);
-        let last_logits = if step == 0 {
-            // prefill output [prompt_len, vocab_size] -> take last row
-            let last_offset = (all_tokens.len() - 1) * vocab_size;
-            &logit_data[last_offset..last_offset + vocab_size]
-        } else {
-            // decode output [1, vocab_size] -> take the only row
-            &logit_data[..vocab_size]
-        };
+        let last_logits = &logit_data[..vocab_size];
 
-        let next_token = if temperature == 0.0 {
+        next_token = if temperature == 0.0 {
             argmax_token(last_logits)
         } else {
             sample_token(last_logits, temperature, top_k, top_p, &mut rng)
@@ -789,7 +670,6 @@ where
 
         log::debug!("step {}: predicted token {}", step, next_token);
 
-        // stop if the model predicts the end-of-sequence token
         let eos_ids = tokenizer.eos_token_ids();
         if eos_ids.contains(&(next_token as u32)) {
             log::info!("eos token reached after {} generated tokens", step);
@@ -799,13 +679,12 @@ where
         all_tokens.push(next_token as u32);
         generated.push(next_token as u32);
 
-        // decode: pass only the newly sampled token, reusing the persistent kv cache.
-        // start_pos is the absolute position of this token in the sequence.
-        logits = model.forward_with_cache(
+        // decode step: forward with just the new token, using cached K/V
+        logits = model.forward_last_logits_with_cache(
             backend,
             &[next_token as u32],
             &mut cache,
-            prompt_len + step,
+            prompt_len + step, // absolute position offset
         )?;
     }
 
@@ -1298,18 +1177,13 @@ where
     let prompt_len = prompt_tokens.len();
     let max_seq_len = prompt_len + max_tokens;
     let mut cache = model.create_cache(backend, max_seq_len);
-    let mut logits = model.forward_with_cache(backend, prompt_tokens, &mut cache, 0)?;
+    let mut logits = model.forward_last_logits_with_cache(backend, prompt_tokens, &mut cache, 0)?;
     let vocab_size = backend.shape(&logits)[1];
     let mut generated = Vec::with_capacity(max_tokens);
 
     for step in 0..max_tokens {
         let logit_data = backend.data(&logits);
-        let last_logits = if step == 0 {
-            let last_offset = (prompt_len - 1) * vocab_size;
-            &logit_data[last_offset..last_offset + vocab_size]
-        } else {
-            &logit_data[..vocab_size]
-        };
+        let last_logits = &logit_data[..vocab_size];
         let next_token = argmax_token(last_logits);
 
         let eos_ids = tokenizer.eos_token_ids();
@@ -1318,7 +1192,7 @@ where
         }
 
         generated.push(next_token as u32);
-        logits = model.forward_with_cache(
+        logits = model.forward_last_logits_with_cache(
             backend,
             &[next_token as u32],
             &mut cache,

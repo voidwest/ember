@@ -89,6 +89,16 @@ impl KVCache {
         )
     }
 
+    pub fn get_with_scratch(&mut self, layer: usize) -> (&[f32], &[f32], &mut Vec<f32>) {
+        let layer_offset = layer * self.n_kv_heads * self.max_seq_len * self.head_dim;
+        let len = self.n_kv_heads * self.max_seq_len * self.head_dim;
+        (
+            &self.k[layer_offset..layer_offset + len],
+            &self.v[layer_offset..layer_offset + len],
+            &mut self.qk_scratch,
+        )
+    }
+
     pub fn head_dim(&self) -> usize {
         self.head_dim
     }
