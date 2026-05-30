@@ -1,5 +1,12 @@
 use crate::quant::QuantizedWeight;
 use crate::tensor::{CpuTensor, TensorError};
+use std::cell::RefCell;
+
+const Q8_0_PREFILL_BLOCK_SIZE: usize = 256;
+
+thread_local! {
+    static Q8_0_PREFILL_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+}
 
 /// shape metadata for standard causal self-attention.
 #[derive(Debug, Clone, Copy)]
@@ -67,6 +74,8 @@ pub trait Backend {
         tensor: &Self::Tensor,
         index: usize,
     ) -> Result<Self::Tensor, Self::Error>;
+    /// select one row from a 2D tensor while preserving a 2D `[1, cols]` shape.
+    fn row_as_2d(&self, tensor: &Self::Tensor, index: usize) -> Result<Self::Tensor, Self::Error>;
     fn assign_row(&self, dst: &mut Self::Tensor, index: usize, src: &Self::Tensor);
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor;
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
@@ -196,49 +205,18 @@ impl Backend for CpuBackend {
             return Ok(CpuTensor::from_data(vec![seq_len, out_features], out));
         }
 
-        // prefill path: dequantize columns in blocks, multiply with sgemm.
-        // w_block is column-major [in_features, block_len]:
-        //   w_block[j * in_features + i] = weight[i, j_block + j]
-        const BLOCK_SIZE: usize = 256;
-        let mut w_block = vec![0.0f32; in_features * BLOCK_SIZE];
-
-        let mut j = 0;
-        while j < out_features {
-            let block_len = (out_features - j).min(BLOCK_SIZE);
-
-            // dequantize this block of columns into w_block
-            for b in 0..block_len {
-                let dst = &mut w_block[b * in_features..(b + 1) * in_features];
-                w.dequantize_row(j + b, dst);
-            }
-
-            // x [seq_len, in_features] @ w_block [in_features, block_len]
-            // -> write to out[:, j..j+block_len]
-            //
-            // sgemm(m, k, n, alpha, A, rsa, csa, B, rsb, csb, beta, C, rsc, csc)
-            //   A: row-major [m, k] -> rsa=k, csa=1
-            //   B: column-major [k, n] -> rsb=1, csb=k
-            //   C: row-major [m, n] -> rsc=n_full, csc=1
-            unsafe {
-                matrixmultiply::sgemm(
-                    seq_len,
-                    in_features,
-                    block_len,
-                    1.0,
-                    x_data.as_ptr(),
-                    in_features as isize, // rsa
-                    1,                    // csa
-                    w_block.as_ptr(),
-                    1,                    // rsb (column-major)
-                    in_features as isize, // csb
-                    0.0,
-                    out.as_mut_ptr().add(j),
-                    out_features as isize, // rsc
-                    1,                     // csc
-                );
-            }
-            j += BLOCK_SIZE;
-        }
+        Q8_0_PREFILL_SCRATCH.with(|scratch| {
+            let mut scratch = scratch.borrow_mut();
+            matmul_q8_0_prefill(
+                x_data,
+                w,
+                seq_len,
+                in_features,
+                out_features,
+                &mut out,
+                &mut scratch,
+            );
+        });
 
         Ok(CpuTensor::from_data(vec![seq_len, out_features], out))
     }
@@ -265,6 +243,9 @@ impl Backend for CpuBackend {
     }
     fn index_select(&self, x: &CpuTensor, index: usize) -> Result<CpuTensor, Self::Error> {
         Ok(x.index_select(index)?)
+    }
+    fn row_as_2d(&self, x: &CpuTensor, index: usize) -> Result<CpuTensor, Self::Error> {
+        Ok(x.row_as_2d(index)?)
     }
     fn assign_row(&self, dst: &mut CpuTensor, index: usize, src: &CpuTensor) {
         dst.assign_row(index, src);
@@ -461,6 +442,60 @@ impl Backend for CpuBackend {
         start_pos: usize,
     ) -> Result<CpuTensor, CpuError> {
         Ok(x.apply_rotary_emb(cos, sin, start_pos))
+    }
+}
+
+fn matmul_q8_0_prefill(
+    x_data: &[f32],
+    w: &QuantizedWeight,
+    seq_len: usize,
+    in_features: usize,
+    out_features: usize,
+    out: &mut [f32],
+    w_block: &mut Vec<f32>,
+) {
+    // w_block is column-major [in_features, block_len]:
+    //   w_block[j * in_features + i] = weight[i, j_block + j]
+    let required = in_features * Q8_0_PREFILL_BLOCK_SIZE;
+    if w_block.len() < required {
+        w_block.resize(required, 0.0);
+    }
+
+    let mut j = 0;
+    while j < out_features {
+        let block_len = (out_features - j).min(Q8_0_PREFILL_BLOCK_SIZE);
+
+        for b in 0..block_len {
+            let dst = &mut w_block[b * in_features..(b + 1) * in_features];
+            w.dequantize_row(j + b, dst);
+        }
+
+        // x [seq_len, in_features] @ w_block [in_features, block_len]
+        // -> write to out[:, j..j+block_len]
+        //
+        // sgemm(m, k, n, alpha, A, rsa, csa, B, rsb, csb, beta, C, rsc, csc)
+        //   A: row-major [m, k] -> rsa=k, csa=1
+        //   B: column-major [k, n] -> rsb=1, csb=k
+        //   C: row-major [m, n] -> rsc=n_full, csc=1
+        unsafe {
+            matrixmultiply::sgemm(
+                seq_len,
+                in_features,
+                block_len,
+                1.0,
+                x_data.as_ptr(),
+                in_features as isize,
+                1,
+                w_block.as_ptr(),
+                1,
+                in_features as isize,
+                0.0,
+                out.as_mut_ptr().add(j),
+                out_features as isize,
+                1,
+            );
+        }
+        j += Q8_0_PREFILL_BLOCK_SIZE;
     }
 }
 

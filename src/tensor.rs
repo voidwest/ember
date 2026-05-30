@@ -456,6 +456,30 @@ impl CpuTensor {
 
         self.data[start..end].copy_from_slice(&src.data);
     }
+    #[inline]
+    pub fn row_as_2d(&self, index: usize) -> Result<Self, TensorError> {
+        if self.shape.len() != 2 {
+            return Err(TensorError::ShapeMismatch(format!(
+                "row_as_2d requires a 2D tensor [rows, cols], got {:?}",
+                self.shape
+            )));
+        }
+        if index >= self.shape[0] {
+            return Err(TensorError::IndexOutOfBounds {
+                index,
+                shape: self.shape.clone(),
+            });
+        }
+
+        let cols = self.shape[1];
+        let start = index * cols;
+        let end = start + cols;
+        Ok(Self::from_data(
+            vec![1, cols],
+            self.data[start..end].to_vec(),
+        ))
+    }
+
     #[must_use]
     #[inline]
     pub fn slice_cols(&self, start_col: usize, end_col: usize) -> Self {

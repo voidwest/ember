@@ -95,7 +95,7 @@ impl LlamaConfig {
         // some architectures (qwen3, deepseek, etc.) specify head_dim explicitly
         // in the gguf metadata. fall back to embed_dim / n_heads when absent.
         let head_dim = get_u32("attention.key_length", (embed_dim / n_heads) as u32) as usize;
-        let max_seq_len = get_u32("context_length", 2048).min(4096) as usize;
+        let max_seq_len = get_u32("context_length", 2048) as usize;
         let rope_theta = get_f32("rope.freq_base", 10000.0);
         let norm_eps = get_f32("attention.layer_norm_rms_epsilon", 1e-5);
         let vocab_size = get_u32("vocab_size", 32000) as usize;
@@ -587,6 +587,9 @@ impl<B: Backend> ForwardModel<B> for Llama<B> {
             max_seq_len,
         )
     }
+    fn max_seq_len(&self, _backend: &B) -> usize {
+        self.config.max_seq_len
+    }
     fn forward_with_cache(
         &self,
         backend: &B,
@@ -648,10 +651,22 @@ impl Llama<CpuBackend> {
     /// q8_0 weights are loaded into `QuantizedWeight` with the reversed
     /// `[out_features, in_features]` shape expected by the quantized matmul path.
     pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
+        Self::from_loader_with_max_seq_len(loader, None)
+    }
+
+    /// build a llama model from a gguf loader, optionally capping runtime
+    /// context length and rope table allocation below the GGUF metadata value.
+    pub fn from_loader_with_max_seq_len(
+        loader: crate::loader::GgufLoader,
+        max_seq_len: Option<usize>,
+    ) -> anyhow::Result<Self> {
         use crate::loader::LoadedTensor;
         use crate::tensor::compute_rope_freqs;
 
-        let config = LlamaConfig::from_gguf_metadata(&loader);
+        let mut config = LlamaConfig::from_gguf_metadata(&loader);
+        if let Some(max_seq_len) = max_seq_len {
+            config.max_seq_len = config.max_seq_len.min(max_seq_len);
+        }
         log::debug!("llama config: {:?}", config);
         let n_layers = config.n_layers;
 
@@ -818,8 +833,7 @@ impl<B: Backend> Llama<B> {
             cache.advance_cursor();
         }
 
-        let last = backend.index_select(&x, seq_len - 1)?;
-        let last = backend.load_from_cpu(backend.data(&last).to_vec(), &[1, embed_dim])?;
+        let last = backend.row_as_2d(&x, seq_len - 1)?;
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         self.head.forward(backend, &last)
     }
@@ -866,5 +880,26 @@ impl<B: Backend> Llama<B> {
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &x)?;
         Ok((activations, logits))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::{GgufLoader, GgufValue};
+    use std::collections::HashMap;
+
+    #[test]
+    fn llama_config_honors_full_context_length_metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert("llama.context_length".to_string(), GgufValue::U32(131_072));
+        let loader = GgufLoader {
+            metadata,
+            tensors: HashMap::new(),
+        };
+
+        let config = LlamaConfig::from_gguf_metadata(&loader);
+
+        assert_eq!(config.max_seq_len, 131_072);
     }
 }

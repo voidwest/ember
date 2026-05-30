@@ -524,6 +524,10 @@ impl<B: Backend> ForwardModel<B> for Gemma4<B> {
         KVCache::new(self.blocks.len(), max_kv_heads, max_head_dim, max_seq_len)
     }
 
+    fn max_seq_len(&self, _backend: &B) -> usize {
+        self.config.max_seq_len
+    }
+
     fn forward_with_cache(
         &self,
         backend: &B,
@@ -817,9 +821,7 @@ impl<B: Backend> Gemma4<B> {
             cache.advance_cursor();
         }
 
-        let last = backend.index_select(&x, token_ids.len() - 1)?;
-        let last =
-            backend.load_from_cpu(backend.data(&last).to_vec(), &[1, self.config.embed_dim])?;
+        let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &last)?;
         softcap_logits(backend, &logits, self.config.final_logit_softcap)

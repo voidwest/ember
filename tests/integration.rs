@@ -244,6 +244,22 @@ fn test_index_select() {
 }
 
 #[test]
+fn test_backend_row_as_2d() {
+    let backend = CpuBackend;
+    let t = CpuTensor::from_data(
+        vec![3, 4],
+        vec![
+            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+        ],
+    );
+
+    let row1 = backend.row_as_2d(&t, 1).expect("row_as_2d should work");
+
+    assert_eq!(row1.shape(), &[1, 4]);
+    assert_eq!(row1.data(), &[5.0, 6.0, 7.0, 8.0]);
+}
+
+#[test]
 fn test_assign_row() {
     let mut t = CpuTensor::zeroes(&[2, 4]);
     let src = CpuTensor::from_data(vec![4], vec![1.0, 2.0, 3.0, 4.0]);

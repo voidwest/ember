@@ -68,6 +68,7 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 | `--tokenizer` | arch-dependent | path to tokenizer.json (`tokenizer-gpt2.json` for gpt-2, `tokenizer.json` for llama/qwen3, `tokenizer-gemma4.json` for gemma 4) |
 | `-p`, `--prompt` | `The` | text prompt to complete |
 | `-n`, `--max-tokens` | `20` | tokens to generate |
+| `--max-seq-len` | model metadata | cap usable context length below the model metadata value |
 | `-t`, `--temperature` | `0.8` | sampling temp (0 = greedy) |
 | `--top-k` | (none) | top-k sampling |
 | `--top-p` | (none) | nucleus sampling |
@@ -258,7 +259,8 @@ cargo run --release -- \
 ```
 
 > **note**: if `--tokenizer` is omitted, ember picks `tokenizer-gpt2.json`
-> for `--arch gpt2` and `tokenizer.json` for `--arch llama`.
+> for `--arch gpt2`, `tokenizer.json` for llama/qwen, and
+> `tokenizer-gemma4.json` for `--arch gemma4`.
 
 > **note**: interactive (`-i`) and demo (`--demo`) modes are not yet wired
 > for llama/qwen or gemma 4. the single-prompt generation path and probe
@@ -375,9 +377,10 @@ prevents the generation loop from producing NaNs on degenerate input.
 - the lm head (128K output features) is the throughput bottleneck during
   decode - each token does 501 sgemm calls for the lm head alone. batching
   or a fused/deferred lm-head path is the next obvious optimization target.
-- model loader supports gpt-2 and llama architectures (gguf tensor names are
-  hardcoded per arch). demo and interactive modes are not yet wired for
-  llama; single-prompt generation and probe mode work with both.
+- model loader supports gpt-2, llama/qwen, and dense text-only gemma 4 ggufs
+  through architecture-specific tensor names. demo and interactive modes are
+  not yet wired for llama/qwen or gemma 4; single-prompt generation and probe
+  mode work with those architectures.
 - not fully no_std - file i/o and mmap require std.
 
 ## license

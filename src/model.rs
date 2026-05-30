@@ -11,6 +11,8 @@ pub use crate::llama::{Llama, LlamaConfig};
 /// in `main.rs` are generic over architecture.
 pub trait ForwardModel<B: Backend> {
     fn create_cache(&self, backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache;
+    /// maximum sequence length supported by this loaded model.
+    fn max_seq_len(&self, backend: &B) -> usize;
     fn forward_with_cache(
         &self,
         backend: &B,
@@ -455,6 +457,9 @@ impl<B: Backend> ForwardModel<B> for Gpt2<B> {
     fn create_cache(&self, backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
         Gpt2::create_cache(self, backend, max_seq_len)
     }
+    fn max_seq_len(&self, backend: &B) -> usize {
+        backend.shape(&self.wpe)[0]
+    }
     fn forward_with_cache(
         &self,
         backend: &B,
@@ -583,8 +588,7 @@ impl<B: Backend> Gpt2<B> {
             cache.advance_cursor();
         }
 
-        let last = backend.index_select(&x, seq_len - 1)?;
-        let last = backend.load_from_cpu(backend.data(&last).to_vec(), &[1, self.embed_dim])?;
+        let last = backend.row_as_2d(&x, seq_len - 1)?;
         let last = self.ln_f.forward(backend, &last)?;
         self.head.forward(backend, &last)
     }

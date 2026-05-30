@@ -31,6 +31,10 @@ struct Args {
     #[arg(short = 'n', long, default_value_t = 20)]
     max_tokens: usize,
 
+    /// cap usable context length below the model metadata value
+    #[arg(long, value_parser = parse_max_seq_len)]
+    max_seq_len: Option<usize>,
+
     /// sampling temperature (0 = greedy argmax)
     #[arg(short, long, default_value_t = 0.8, value_parser = parse_temperature)]
     temperature: f32,
@@ -154,27 +158,17 @@ fn main() -> anyhow::Result<()> {
                     args.temperature,
                     args.top_k,
                     args.top_p,
+                    args.max_seq_len,
                 )?;
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args)?;
             } else {
-                let output = generate(
-                    &backend,
-                    &model,
-                    &tokenizer,
-                    &args.prompt,
-                    args.max_tokens,
-                    args.temperature,
-                    args.top_k,
-                    args.top_p,
-                    args.benchmark,
-                )?;
-                println!("{}", output);
+                run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
         }
         "llama" | "qwen3" => {
             use ember::model::Llama;
-            let model = Llama::from_loader(loader)?;
+            let model = Llama::from_loader_with_max_seq_len(loader, args.max_seq_len)?;
             log::info!("loading model from {}", args.model);
             log::info!("loaded {} tensors", n_tensors);
             log::info!("model built (llama)");
@@ -187,18 +181,7 @@ fn main() -> anyhow::Result<()> {
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args)?;
             } else {
-                let output = generate(
-                    &backend,
-                    &model,
-                    &tokenizer,
-                    &args.prompt,
-                    args.max_tokens,
-                    args.temperature,
-                    args.top_k,
-                    args.top_p,
-                    args.benchmark,
-                )?;
-                println!("{}", output);
+                run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
         }
         "gemma4" => {
@@ -216,18 +199,7 @@ fn main() -> anyhow::Result<()> {
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args)?;
             } else {
-                let output = generate(
-                    &backend,
-                    &model,
-                    &tokenizer,
-                    &args.prompt,
-                    args.max_tokens,
-                    args.temperature,
-                    args.top_k,
-                    args.top_p,
-                    args.benchmark,
-                )?;
-                println!("{}", output);
+                run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
         }
         _ => anyhow::bail!("unknown architecture: {}", args.arch),
@@ -276,6 +248,73 @@ fn parse_top_p(value: &str) -> Result<f32, String> {
     } else {
         Err("top-p must be in the range (0, 1]".to_string())
     }
+}
+
+fn parse_max_seq_len(value: &str) -> Result<usize, String> {
+    let max_seq_len = value
+        .parse::<usize>()
+        .map_err(|_| format!("invalid max sequence length '{value}'"))?;
+    if max_seq_len > 0 {
+        Ok(max_seq_len)
+    } else {
+        Err("max sequence length must be greater than 0".to_string())
+    }
+}
+
+fn effective_context_limit<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    args: &Args,
+) -> usize {
+    match args.max_seq_len {
+        Some(cap) => cap.min(model.max_seq_len(backend)),
+        None => model.max_seq_len(backend),
+    }
+}
+
+fn ensure_sequence_fits(
+    prompt_len: usize,
+    max_tokens: usize,
+    context_limit: usize,
+) -> anyhow::Result<usize> {
+    let requested = prompt_len
+        .checked_add(max_tokens)
+        .context("requested sequence length overflowed usize")?;
+    if requested > context_limit {
+        anyhow::bail!(
+            "requested sequence length {} exceeds context limit {} (prompt tokens {} + generation tokens {})",
+            requested,
+            context_limit,
+            prompt_len,
+            max_tokens
+        );
+    }
+    Ok(requested)
+}
+
+fn run_single_prompt<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    args: &Args,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let output = generate(
+        backend,
+        model,
+        tokenizer,
+        &args.prompt,
+        args.max_tokens,
+        args.temperature,
+        args.top_k,
+        args.top_p,
+        args.benchmark,
+        effective_context_limit(backend, model, args),
+    )?;
+    println!("{}", output);
+    Ok(())
 }
 
 /// run a curated demo showcasing the project.
@@ -605,8 +644,8 @@ where
 ///    populating the kv cache with key/value projections for all prompt tokens.
 /// 2. **decode** - generates one token at a time: samples from the last position's
 ///    logits, appends it, and runs a single-token forward pass reusing the cached
-///    k/v from all previous positions. stops when `max_tokens` is reached or the
-///    eos token (50256) is predicted.
+///    k/v from all previous positions. stops when `max_tokens` is reached or a
+///    tokenizer-defined eos token is predicted.
 ///
 /// temperature 0.0 uses greedy argmax; any positive value enables temperature
 /// scaling with optional top-k and top-p filtering via [`sample_token`].
@@ -621,6 +660,7 @@ fn generate<B: Backend>(
     top_k: Option<usize>,
     top_p: Option<f32>,
     benchmark: bool,
+    context_limit: usize,
 ) -> anyhow::Result<String>
 where
     B::Error: Send + Sync + 'static,
@@ -633,7 +673,7 @@ where
     log::info!("prompt has {} tokens", all_tokens.len());
 
     let prompt_len = all_tokens.len();
-    let max_seq_len = prompt_len + max_tokens;
+    let max_seq_len = ensure_sequence_fits(prompt_len, max_tokens, context_limit)?;
 
     // -- 1. prefill: run the prompt through the transformer and fill kv cache.
     // Only the last prompt position needs logits for generation, so avoid
@@ -769,6 +809,7 @@ mod tests {
         assert!(Args::try_parse_from(["ember", "--top-k", "0"]).is_err());
         assert!(Args::try_parse_from(["ember", "--top-p", "0"]).is_err());
         assert!(Args::try_parse_from(["ember", "--top-p", "1.1"]).is_err());
+        assert!(Args::try_parse_from(["ember", "--max-seq-len", "0"]).is_err());
     }
 }
 
@@ -782,6 +823,7 @@ fn interactive_mode<B: Backend>(
     temperature: f32,
     top_k: Option<usize>,
     top_p: Option<f32>,
+    max_seq_len: Option<usize>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -836,6 +878,9 @@ where
                     top_k,
                     top_p,
                     false, // benchmark not meaningful in interactive mode
+                    max_seq_len.unwrap_or_else(|| {
+                        <Gpt2<B> as ForwardModel<B>>::max_seq_len(model, backend)
+                    }),
                 )?;
                 println!("{}", output);
                 print!("> ");
@@ -898,6 +943,7 @@ struct ProbeConfig<'a> {
     template: &'a str,
     position: ProbePosition,
     generate_tokens: usize,
+    context_limit: usize,
     model_path: &'a str,
     arch: &'a str,
 }
@@ -1039,6 +1085,7 @@ where
                 template: &job.template,
                 position: job.position,
                 generate_tokens: args.probe_generate_tokens,
+                context_limit: effective_context_limit(backend, model, args),
                 model_path: &args.model,
                 arch: &args.arch,
             },
@@ -1166,6 +1213,7 @@ fn generate_probe_continuation<B: Backend>(
     tokenizer: &ember::tokenizer::EmberTokenizer,
     prompt_tokens: &[u32],
     max_tokens: usize,
+    context_limit: usize,
 ) -> anyhow::Result<(Vec<u32>, String)>
 where
     B::Error: Send + Sync + 'static,
@@ -1175,7 +1223,7 @@ where
     }
 
     let prompt_len = prompt_tokens.len();
-    let max_seq_len = prompt_len + max_tokens;
+    let max_seq_len = ensure_sequence_fits(prompt_len, max_tokens, context_limit)?;
     let mut cache = model.create_cache(backend, max_seq_len);
     let mut logits = model.forward_last_logits_with_cache(backend, prompt_tokens, &mut cache, 0)?;
     let vocab_size = backend.shape(&logits)[1];
@@ -1255,6 +1303,7 @@ where
             })?;
 
         let (token_ids, offsets) = tokenizer.encode_with_offsets(prompt)?;
+        ensure_sequence_fits(token_ids.len(), 0, config.context_limit)?;
         if token_ids.is_empty() {
             eprintln!(
                 "  [{}/{}] WARNING: empty tokenization, skipping",
@@ -1292,6 +1341,7 @@ where
             tokenizer,
             &token_ids,
             config.generate_tokens,
+            config.context_limit,
         )?;
         let expected = stimulus["expected_surface"]
             .as_str()
@@ -1384,6 +1434,7 @@ where
         "probe_template": config.template,
         "probe_position": config.position.as_str(),
         "probe_generate_tokens": config.generate_tokens,
+        "context_limit": config.context_limit,
         "n_stimuli": stimuli.len(),
         "n_layers": n_layers,
         "embed_dim": embed_dim,
