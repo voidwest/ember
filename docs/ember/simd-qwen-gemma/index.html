@@ -3,38 +3,52 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="ember simd and model support" />
+        <meta property="og:title" content="simd kernels, qwen 3, and gemma 4 support" />
         <meta property="og:description" content="How ember's SIMD Q8_0 kernels, Qwen 3 path, and dense text-only Gemma 4 support fit into the CPU-first inference engine." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/ember/simd-qwen-gemma/" />
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary" />
-        <title>ember simd and model support</title>
+        <title>simd kernels, qwen 3, and gemma 4 support</title>
         <link rel="stylesheet" href="/style.css" />
         <style>
-            table {
+            .table-wrap {
+                width: 100%;
+                margin: 0.9rem 0;
+                overflow-x: auto;
+            }
+            .simd-table {
                 width: 100%;
                 border-collapse: collapse;
-                margin: 0.9rem 0;
-                display: block;
-                overflow-x: auto;
                 white-space: nowrap;
                 font-size: 0.83rem;
             }
-            th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: start; }
-            th { background: var(--surface); color: var(--accent2); }
-            td { color: var(--text); }
-            .pipeline-block {
+            .simd-table th, .simd-table td {
+                border: 1px solid var(--border);
+                padding: 0.45rem 0.7rem;
+                text-align: start;
+                vertical-align: top;
+            }
+            .simd-table th { background: var(--surface); color: var(--accent2); }
+            .simd-table td { color: var(--text); }
+            .flow-list {
                 background: var(--surface);
                 border: 1px solid var(--border);
                 border-radius: 6px;
-                padding: 1rem 1.2rem;
+                padding: 0.85rem 1rem;
                 margin: 0.9rem 0;
-                font-size: 0.8rem;
-                line-height: 1.65;
-                white-space: pre;
-                overflow-x: auto;
-                color: var(--text-dim);
+                list-style: none;
+            }
+            .flow-list li {
+                display: grid;
+                grid-template-columns: 12rem 1fr;
+                gap: 0.8rem;
+                padding: 0.55rem 0;
+                border-block-end: 1px solid var(--border);
+            }
+            .flow-list li:last-child { border-block-end: 0; }
+            .flow-list strong { color: var(--accent2); }
+            .flow-list span { color: var(--text-dim); }
             }
             .chart {
                 display: block;
@@ -50,9 +64,11 @@
                 margin-top: -0.5rem;
             }
             @media (max-width: 600px) {
-                .pipeline-block { font-size: 0.62rem; padding: 0.7rem 0.8rem; }
-                table { font-size: 0.73rem; }
-                th, td { padding: 0.35rem 0.5rem; }
+                .flow-list { padding: 0.65rem 0.8rem; }
+                .flow-list li { display: block; }
+                .flow-list span { display: block; margin-top: 0.2rem; }
+                .simd-table { font-size: 0.73rem; }
+                .simd-table th, .simd-table td { padding: 0.35rem 0.5rem; }
             }
         </style>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -76,7 +92,7 @@
             <a href="/ember/internals/">internals</a>
         </div>
 
-        <h1>simd, qwen 3, and gemma 4</h1>
+        <h1>simd kernels, qwen 3, and gemma 4 support</h1>
 
         <p>
             ember started as a clean cpu path: row-major tensors, gguf loading,
@@ -101,15 +117,20 @@
             layout and changes only the inner loops.
         </p>
 
-        <div class="pipeline-block">Q8_0 block:
-  [scale: f16][q0: i8][q1: i8] ... [q31: i8]
-
-decode, seq_len = 1:
-  x · dequant(w_row) directly from compressed bytes
-
-prefill, seq_len > 1:
-  dequantize output-column blocks into scratch
-  matrixmultiply::sgemm over the dense scratch block</div>
+        <ol class="flow-list">
+            <li>
+                <strong>q8_0 block</strong>
+                <span><span class="mono">[scale: f16][q0: i8] ... [q31: i8]</span></span>
+            </li>
+            <li>
+                <strong>decode, seq_len = 1</strong>
+                <span><span class="mono">x · dequant(w_row)</span> directly from compressed bytes</span>
+            </li>
+            <li>
+                <strong>prefill, seq_len &gt; 1</strong>
+                <span>dequantize output-column blocks into scratch, then run <span class="mono">matrixmultiply::sgemm</span> over the dense scratch block</span>
+            </li>
+        </ol>
 
         <p>
             runtime dispatch lives in <span class="mono">src/simd.rs</span>. x86-64 uses
@@ -119,17 +140,19 @@ prefill, seq_len > 1:
             <span class="mono">Linear::forward</span>.
         </p>
 
-        <table>
-            <thead>
-                <tr><th>path</th><th>kernel</th><th>why it exists</th></tr>
-            </thead>
-            <tbody>
-                <tr><td>q8_0 row dequant</td><td>avx2 / neon / scalar</td><td>turn compressed rows into f32 without changing storage</td></tr>
-                <tr><td>single-token decode</td><td>fused q8_0 dot product</td><td>avoid a dense temporary and sgemm overhead</td></tr>
-                <tr><td>prefill</td><td>block dequant + sgemm</td><td>reuse dense matrix multiply when many prompt rows share weights</td></tr>
-                <tr><td>elementwise ops</td><td>sum squares, add, elemul, weighted add</td><td>speed up rms norm, attention accumulation, and mlp glue</td></tr>
-            </tbody>
-        </table>
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>path</th><th>kernel</th><th>why it exists</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>q8_0 row dequant</td><td>avx2 / neon / scalar</td><td>turn compressed rows into f32 without changing storage</td></tr>
+                    <tr><td>single-token decode</td><td>fused q8_0 dot product</td><td>avoid a dense temporary and sgemm overhead</td></tr>
+                    <tr><td>prefill</td><td>block dequant + sgemm</td><td>reuse dense matrix multiply when many prompt rows share weights</td></tr>
+                    <tr><td>elementwise ops</td><td>sum squares, add, elemul, weighted add</td><td>speed up rms norm, attention accumulation, and mlp glue</td></tr>
+                </tbody>
+            </table>
+        </div>
 
         <p>
             the unsafe surface is intentionally small. the backend validates
@@ -219,19 +242,21 @@ prefill, seq_len > 1:
             probe extraction use the shared <span class="mono">ForwardModel</span> trait.
         </p>
 
-        <table>
-            <thead>
-                <tr><th>feature</th><th>qwen 3</th><th>gemma 4</th></tr>
-            </thead>
-            <tbody>
-                <tr><td>module</td><td><span class="mono">src/llama.rs</span></td><td><span class="mono">src/gemma4.rs</span></td></tr>
-                <tr><td>cli arch</td><td><span class="mono">--arch qwen3</span></td><td><span class="mono">--arch gemma4</span></td></tr>
-                <tr><td>tokenizer default</td><td><span class="mono">tokenizer-qwen3.json</span></td><td><span class="mono">tokenizer-gemma4.json</span></td></tr>
-                <tr><td>quantized weights</td><td>q8_0 path</td><td>q8_0 path</td></tr>
-                <tr><td>probe mode</td><td>shared path</td><td>shared path</td></tr>
-                <tr><td>known boundary</td><td>llama-family assumptions plus q/k norm</td><td>dense text-only; no moe or multimodal path</td></tr>
-            </tbody>
-        </table>
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>feature</th><th>qwen 3</th><th>gemma 4</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>module</td><td><span class="mono">src/llama.rs</span></td><td><span class="mono">src/gemma4.rs</span></td></tr>
+                    <tr><td>cli arch</td><td><span class="mono">--arch qwen3</span></td><td><span class="mono">--arch gemma4</span></td></tr>
+                    <tr><td>tokenizer default</td><td><span class="mono">tokenizer-qwen3.json</span></td><td><span class="mono">tokenizer-gemma4.json</span></td></tr>
+                    <tr><td>quantized weights</td><td>q8_0 path</td><td>q8_0 path</td></tr>
+                    <tr><td>probe mode</td><td>shared path</td><td>shared path</td></tr>
+                    <tr><td>known boundary</td><td>llama-family assumptions plus q/k norm</td><td>dense text-only; no moe or multimodal path</td></tr>
+                </tbody>
+            </table>
+        </div>
 
         <h2>why this matters</h2>
 
