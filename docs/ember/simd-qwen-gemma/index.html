@@ -49,12 +49,18 @@
             .flow-list li:last-child { border-block-end: 0; }
             .flow-list strong { color: var(--accent2); }
             .flow-list span { color: var(--text-dim); }
+            .chart-wrap {
+                margin-block: 1.2rem;
+                max-width: 100%;
+                overflow-x: auto;
+                direction: ltr;
             }
             .chart {
                 display: block;
+                width: 100%;
+                max-width: 100%;
                 max-inline-size: 100%;
-                block-size: auto;
-                margin-block: 1.2rem;
+                height: auto;
                 border-radius: 6px;
                 background: #0d1117;
             }
@@ -174,9 +180,11 @@
             8.2x for the decode kernel that generation hits every new token.
         </p>
 
-        <img class="chart" src="/plots/simd_benchmark_dark.png"
-             alt="Ember Q8_0 CPU kernel benchmark showing 3.8x Q8_0 dequant speedup and 8.2x fused Q8_0 decode speedup"
-             loading="lazy" />
+        <figure class="chart-wrap">
+            <img class="chart" src="/plots/simd_benchmark_dark.png"
+                 alt="Ember Q8_0 CPU kernel benchmark showing 3.8x Q8_0 dequant speedup and 8.2x fused Q8_0 decode speedup"
+                 loading="lazy" />
+        </figure>
 
         <p class="caption">
             kernel benchmark, not full-model latency. full generation still pays
