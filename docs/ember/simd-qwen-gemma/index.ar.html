@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="ember simd and model support" />
+        <meta property="og:description" content="How ember's SIMD Q8_0 kernels, Qwen 3 path, and dense text-only Gemma 4 support fit into the CPU-first inference engine." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/simd-qwen-gemma/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>ember simd and model support</title>
+        <link rel="stylesheet" href="/style.css" />
+        <style>
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 0.9rem 0;
+                display: block;
+                overflow-x: auto;
+                white-space: nowrap;
+                font-size: 0.83rem;
+            }
+            th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: start; }
+            th { background: var(--surface); color: var(--accent2); }
+            td { color: var(--text); }
+            .pipeline-block {
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                padding: 1rem 1.2rem;
+                margin: 0.9rem 0;
+                font-size: 0.8rem;
+                line-height: 1.65;
+                white-space: pre;
+                overflow-x: auto;
+                color: var(--text-dim);
+            }
+            .chart {
+                display: block;
+                max-inline-size: 100%;
+                block-size: auto;
+                margin-block: 1.2rem;
+                border-radius: 6px;
+                background: #0d1117;
+            }
+            .caption {
+                color: var(--text-dim);
+                font-size: 0.82rem;
+                margin-top: -0.5rem;
+            }
+            @media (max-width: 600px) {
+                .pipeline-block { font-size: 0.62rem; padding: 0.7rem 0.8rem; }
+                table { font-size: 0.73rem; }
+                th, td { padding: 0.35rem 0.5rem; }
+            }
+        </style>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+    </head>
+    <body>
+        <a href="/ember/simd-qwen-gemma/" class="lang-toggle" title="English">en</a>
+
+        <div class="back">
+            <a href="/" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/" class="ltr">writeup</a>
+            &nbsp;&nbsp;
+            <a href="/ember/internals/" class="ltr">internals</a>
+        </div>
+
+        <h1>simd و qwen 3 و gemma 4</h1>
+
+        <p>
+            ember بدأ كمسار cpu واضح: tensors بترتيب row-major، تحميل gguf،
+            أوزان q8_0 تبقى مضغوطة، و trait للـ backend حول عمليات النموذج.
+            الشغل الأحدث يحافظ على نفس الشكل. الـ SIMD ليس backend جديد،
+            و qwen 3 / gemma 4 ليسوا تطبيقات منفصلة. هي إضافات ضيقة على
+            نفس حلقة inference.
+        </p>
+
+        <p>
+            القيد المهم ممل لكنه مفيد: مسار prompt واحد، مسار probe واحد،
+            وعقد kv-cache واحد. الشفرة الخاصة بكل architecture تدخل فقط
+            في المكان الذي تختلف فيه عائلة النموذج فعلاً.
+        </p>
+
+        <h2>مسار simd</h2>
+
+        <p>
+            أوزان q8_0 مخزنة كـ blocks من ggml: بايتين scale بصيغة fp16
+            وبعدها 32 قيمة int8 موقعة. المسار scalar القديم كان يفك block
+            إلى f32 ثم يضرب. مسار SIMD يبقي نفس layout ويغير الحلقات
+            الداخلية فقط.
+        </p>
+
+        <div class="pipeline-block">Q8_0 block:
+  [scale: f16][q0: i8][q1: i8] ... [q31: i8]
+
+decode, seq_len = 1:
+  x · dequant(w_row) directly from compressed bytes
+
+prefill, seq_len > 1:
+  dequantize output-column blocks into scratch
+  matrixmultiply::sgemm over the dense scratch block</div>
+
+        <p>
+            runtime dispatch موجود في <span class="mono">src/simd.rs</span>. على x86-64
+            يستخدم avx2 للتوسيع و fma للـ dot products. على aarch64 يستخدم
+            neon. الأجهزة غير المدعومة تأخذ المسار scalar. مواقع الاستدعاء
+            العامة تبقى في <span class="mono">CpuBackend</span>، فشفرة النموذج ما زالت
+            تستدعي <span class="mono">Linear::forward</span> فقط.
+        </p>
+
+        <table>
+            <thead>
+                <tr><th>المسار</th><th>kernel</th><th>السبب</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>q8_0 row dequant</td><td>avx2 / neon / scalar</td><td>تحويل الصفوف المضغوطة إلى f32 بدون تغيير التخزين</td></tr>
+                <tr><td>single-token decode</td><td>fused q8_0 dot product</td><td>تفادي dense temporary وتكلفة sgemm</td></tr>
+                <tr><td>prefill</td><td>block dequant + sgemm</td><td>إعادة استخدام dense matrix multiply عندما صفوف prompt كثيرة تشارك الأوزان</td></tr>
+                <tr><td>elementwise ops</td><td>sum squares, add, elemul, weighted add</td><td>تسريع rms norm وتجميع attention وربط mlp</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            مساحة unsafe صغيرة عمداً. الـ backend يتحقق من رتبة tensor
+            والأبعاد الداخلية قبل استدعاء kernels q8_0؛ و
+            <span class="mono">QuantizedWeight::try_new</span> يتحقق من block alignment
+            وطول البايتات عند تحميل بيانات gguf خارجية. داخل kernels،
+            unsafe مستخدم لأجل target-feature intrinsics و pointer loads،
+            لا لأجل حيلة ملكية أوسع.
+        </p>
+
+        <h2>benchmark</h2>
+
+        <p>
+            هذا benchmark هو سبب الأداء الأساسي وراء شغل SIMD. على intel
+            i5-1135G7 في release build مع أوزان q8_0 بحجم 4096x4096،
+            dispatch إلى kernels SIMD ينزل q8_0 row dequantization من
+            1.50 us إلى 0.40 us لكل صف، وينزل fused single-token decode
+            من 17.54 ms إلى 2.14 ms لكل استدعاء. هذا 3.8x لفك التكميم
+            الخام، و 8.2x لـ decode kernel الذي تضربه generation مع كل
+            token جديد.
+        </p>
+
+        <img class="chart" src="/plots/simd_benchmark_dark.png"
+             alt="Ember Q8_0 CPU kernel benchmark showing 3.8x Q8_0 dequant speedup and 8.2x fused Q8_0 decode speedup"
+             loading="lazy" />
+
+        <p class="caption">
+            benchmark للـ kernel، وليس latency النموذج كامل. التوليد الكامل
+            ما زال يدفع تكلفة tokenizer و attention و sampling و allocation
+            و cache، لكن quantized linear layers هي الجزء الغالي في decode.
+        </p>
+
+        <h2>qwen 3</h2>
+
+        <p>
+            qwen 3 يمر عبر transformer عائلة llama في
+            <span class="mono">src/llama.rs</span>. هذا التقسيم صحيح لأن الـ block ما زال
+            rms norm، إسقاطات q/k/v منفصلة، rope، grouped query attention،
+            و swiglu. الاختلافات في metadata و q/k normalization، وليس
+            محرك تنفيذ جديد.
+        </p>
+
+        <pre><code>cargo run --release -- \
+  --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --prompt "اكتب جملة قصيرة"</code></pre>
+
+        <p>
+            <span class="mono">LlamaConfig::from_gguf_metadata</span> يقرأ
+            <span class="mono">general.architecture</span> ويبدل metadata prefix إلى
+            <span class="mono">qwen3.*</span>. كذلك يحترم
+            <span class="mono">attention.key_length</span> الصريح عندما يكون موجوداً،
+            بدلاً من افتراض <span class="mono">embedding_length / head_count</span>.
+            tensors <span class="mono">attn_q_norm.weight</span> و
+            <span class="mono">attn_k_norm.weight</span> اختيارية لكل طبقة؛ عند وجودها،
+            مسار attention يطبق rms normalization لكل head بعد rope وقبل
+            attention.
+        </p>
+
+        <p>
+            النتيجة أن qwen 3 يستخدم نفس generation و logits dump و probe
+            modes مثل llama. علم qwen-specific يعني غالباً: اختر tokenizer
+            الافتراضي لـ qwen واقرأ metadata الخاصة به بدون ادعاء أن الملف
+            llama.
+        </p>
+
+        <h2>gemma 4</h2>
+
+        <p>
+            gemma 4 له module خاص، <span class="mono">src/gemma4.rs</span>، لأن نموذج
+            النص قريب من عائلة llama لكنه ليس مطابقاً. عنده طبقات attention
+            محلية وعامة، إعدادات rope محلية/عامة منفصلة، final-logit
+            softcapping اختياري، و per-layer input embeddings اختيارية.
+            ضغط هذا داخل <span class="mono">Llama</span> كان سيجعل المسارين أصعب
+            في القراءة.
+        </p>
+
+        <pre><code>cargo run --release -- \
+  --arch gemma4 \
+  --model models/gemma-4-E2B-it.Q8_0.gguf \
+  --tokenizer tokenizer-gemma4.json \
+  --prompt "اكتب جملة قصيرة"</code></pre>
+
+        <p>
+            الهدف المدعوم هو gemma 4 dense text-only. الـ loader يرفض metadata
+            الخاصة بـ moe، والـ cli ما زال يحصر demo و interactive mode في
+            مسار gpt-2 الأقدم. generation و last-logit dump واستخراج probes
+            تستخدم trait المشترك <span class="mono">ForwardModel</span>.
+        </p>
+
+        <table>
+            <thead>
+                <tr><th>الميزة</th><th>qwen 3</th><th>gemma 4</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>module</td><td><span class="mono">src/llama.rs</span></td><td><span class="mono">src/gemma4.rs</span></td></tr>
+                <tr><td>cli arch</td><td><span class="mono">--arch qwen3</span></td><td><span class="mono">--arch gemma4</span></td></tr>
+                <tr><td>tokenizer default</td><td><span class="mono">tokenizer-qwen3.json</span></td><td><span class="mono">tokenizer-gemma4.json</span></td></tr>
+                <tr><td>quantized weights</td><td>q8_0 path</td><td>q8_0 path</td></tr>
+                <tr><td>probe mode</td><td>shared path</td><td>shared path</td></tr>
+                <tr><td>known boundary</td><td>افتراضات عائلة llama مع q/k norm</td><td>dense text-only؛ لا moe ولا multimodal path</td></tr>
+            </tbody>
+        </table>
+
+        <h2>ليش هذا مهم</h2>
+
+        <p>
+            SIMD يغير السرعة بدون تغيير عقد النموذج. qwen 3 يغير metadata
+            و attention normalization بدون تغيير قلب عائلة llama. gemma 4
+            يغير module الـ transformer، لكنه ما زال يطبق نفس سطح
+            <span class="mono">ForwardModel</span>. هذه هي نقطة المعمارية:
+            kernels جديدة وعوائل نماذج جديدة تدخل بدون إعادة كتابة
+            generation أو sampling أو probing أو gguf loading من الصفر.
+        </p>
+    </body>
+</html>
