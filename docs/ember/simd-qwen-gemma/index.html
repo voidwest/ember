@@ -20,7 +20,7 @@
             .simd-table {
                 width: 100%;
                 border-collapse: collapse;
-                white-space: nowrap;
+                white-space: normal;
                 font-size: 0.83rem;
             }
             .simd-table th, .simd-table td {
@@ -31,6 +31,15 @@
             }
             .simd-table th { background: var(--surface); color: var(--accent2); }
             .simd-table td { color: var(--text); }
+            .scan-table td:first-child {
+                color: var(--accent2);
+                font-weight: 650;
+                white-space: nowrap;
+            }
+            .simd-table td:first-child {
+                color: var(--accent2);
+                white-space: nowrap;
+            }
             .flow-list {
                 background: var(--surface);
                 border: 1px solid var(--border);
@@ -114,6 +123,18 @@
             should enter only where the model family actually differs.
         </p>
 
+        <div class="table-wrap">
+            <table class="simd-table scan-table">
+                <tbody>
+                    <tr><td>what changed?</td><td>q8_0 decode got simd kernels; qwen 3 gained qwen metadata + q/k norm; gemma 4 gained a separate dense text model path.</td></tr>
+                    <tr><td>why did it matter?</td><td>decode is dominated by quantized linear layers, and new model families need the same generation and probe tooling.</td></tr>
+                    <tr><td>hard part</td><td>keep fast paths narrow: no new backend, no forked generation loop, no duplicated probe pipeline.</td></tr>
+                    <tr><td>same contract</td><td><span class="mono">ForwardModel</span>, q8_0 storage, gguf loading, sampling, logits dump, and probe extraction stay shared.</td></tr>
+                    <tr><td>result</td><td>8.2x fused q8_0 decode speedup in the kernel benchmark, plus qwen 3 and dense text-only gemma 4 support through the existing cli.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
         <h2>simd path</h2>
 
         <p>
@@ -125,16 +146,20 @@
 
         <ol class="flow-list">
             <li>
-                <strong>q8_0 block</strong>
-                <span><span class="mono">[scale: f16][q0: i8] ... [q31: i8]</span></span>
+                <strong>block layout</strong>
+                <span>1 fp16 scale value plus 32 signed int8 weights: <span class="mono">[scale][q0 ... q31]</span></span>
             </li>
             <li>
-                <strong>decode, seq_len = 1</strong>
-                <span><span class="mono">x · dequant(w_row)</span> directly from compressed bytes</span>
+                <strong>scalar idea</strong>
+                <span>turn each int8 into f32 with <span class="mono">q * scale</span>, then multiply by the activation value.</span>
             </li>
             <li>
-                <strong>prefill, seq_len &gt; 1</strong>
-                <span>dequantize output-column blocks into scratch, then run <span class="mono">matrixmultiply::sgemm</span> over the dense scratch block</span>
+                <strong>decode path</strong>
+                <span>compute <span class="mono">x · dequant(w_row)</span> directly from compressed bytes, accumulate into fp32, and skip the dense temporary.</span>
+            </li>
+            <li>
+                <strong>prefill path</strong>
+                <span>dequantize output-column blocks into scratch, then run <span class="mono">matrixmultiply::sgemm</span> when many prompt rows reuse the same weights.</span>
             </li>
         </ol>
 
@@ -257,11 +282,12 @@
                 </thead>
                 <tbody>
                     <tr><td>module</td><td><span class="mono">src/llama.rs</span></td><td><span class="mono">src/gemma4.rs</span></td></tr>
-                    <tr><td>cli arch</td><td><span class="mono">--arch qwen3</span></td><td><span class="mono">--arch gemma4</span></td></tr>
-                    <tr><td>tokenizer default</td><td><span class="mono">tokenizer-qwen3.json</span></td><td><span class="mono">tokenizer-gemma4.json</span></td></tr>
-                    <tr><td>quantized weights</td><td>q8_0 path</td><td>q8_0 path</td></tr>
-                    <tr><td>probe mode</td><td>shared path</td><td>shared path</td></tr>
-                    <tr><td>known boundary</td><td>llama-family assumptions plus q/k norm</td><td>dense text-only; no moe or multimodal path</td></tr>
+                    <tr><td>attention</td><td>llama-like attention with optional q/k norm</td><td>local/global attention mix with sliding windows</td></tr>
+                    <tr><td>rope</td><td>shared llama-family rope path with qwen metadata keys</td><td>separate local and global rope settings</td></tr>
+                    <tr><td>what changed</td><td>metadata prefix, explicit head dim, q/k rms norm</td><td>new block type, layer types, softcap, optional PLE</td></tr>
+                    <tr><td>what stayed same</td><td>generation, sampling, q8_0 weights, probe extraction</td><td>generation, sampling, q8_0 weights, probe extraction</td></tr>
+                    <tr><td>hard boundary</td><td>llama-family assumptions still apply</td><td>dense text-only; no moe or multimodal path</td></tr>
+                    <tr><td>cli</td><td><span class="mono">--arch qwen3</span>, <span class="mono">tokenizer-qwen3.json</span></td><td><span class="mono">--arch gemma4</span>, <span class="mono">tokenizer-gemma4.json</span></td></tr>
                 </tbody>
             </table>
         </div>
