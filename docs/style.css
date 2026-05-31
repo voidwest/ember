@@ -137,6 +137,7 @@ samp,
 [dir="rtl"] .ltr {
     direction: ltr;
     unicode-bidi: isolate;
+    font-family: var(--body-font);
 }
 
 hr {
@@ -387,7 +388,10 @@ footer {
 [dir="rtl"] .project .name,
 [dir="rtl"] .project-links,
 [dir="rtl"] .note-card .title,
-[dir="rtl"] .callout .label,
+[dir="rtl"] .callout .label {
+    font-family: var(--body-font);
+}
+
 [dir="rtl"] .lang-toggle {
     font-family: var(--mono-font);
 }
