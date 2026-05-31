@@ -1,0 +1,19 @@
+{
+  "name": "qwen3-smoke",
+  "stimuli": "stimuli/nonce_root_pattern.json",
+  "out_dir": "data/benchmarks",
+  "tasks": ["root", "pattern"],
+  "probe_kind": "linear",
+  "control": true,
+  "max_rows": 50,
+  "models": [
+    {
+      "label": "qwen3_0_6b",
+      "kind": "ember",
+      "arch": "qwen3",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "probe_limit": 50,
+      "generate_tokens": 1
+    }
+  ]
+}

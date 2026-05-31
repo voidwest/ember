@@ -6,7 +6,9 @@ reproducible without hiding the underlying commands.
 """
 
 import argparse
+import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -23,8 +25,9 @@ def parse_model(value: str) -> tuple[str, str]:
     return label, path
 
 
-def run(cmd: list[str], dry_run: bool):
+def run(cmd: list[str], dry_run: bool, manifest: list[dict]):
     print(" ".join(cmd))
+    manifest.append({"cmd": cmd, "dry_run": dry_run})
     if not dry_run:
         subprocess.run(cmd, check=True)
 
@@ -57,6 +60,7 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    manifest: list[dict] = []
 
     for label, model_path in args.model:
         extract_cmd = [
@@ -73,7 +77,7 @@ def main():
         ]
         if args.tokenizer:
             extract_cmd.extend(["--tokenizer", args.tokenizer])
-        run(extract_cmd, args.dry_run)
+        run(extract_cmd, args.dry_run, manifest)
 
         for template in args.templates:
             for position in args.positions:
@@ -93,7 +97,7 @@ def main():
                 ]
                 if args.control:
                     probe_cmd.append("--control")
-                run(probe_cmd, args.dry_run)
+                run(probe_cmd, args.dry_run, manifest)
 
                 cca_cmd = [
                     "python", "probes/cca_analysis.py",
@@ -102,19 +106,55 @@ def main():
                 ]
                 if args.probe_kind == "linear":
                     cca_cmd.extend(["--probes", probes])
-                run(cca_cmd, args.dry_run)
+                run(cca_cmd, args.dry_run, manifest)
 
-                run([
-                    "python", "probes/rsa_analysis.py",
-                    "--activations", activations,
-                    "--output", rsa,
-                ], args.dry_run)
-                run([
-                    "python", "probes/divergence_analysis.py",
-                    "--activations", activations,
-                    "--correctness", activations.replace(".npy", "_correctness.json"),
-                    "--output", divergence,
-                ], args.dry_run)
+                run(
+                    [
+                        "python",
+                        "probes/rsa_analysis.py",
+                        "--activations",
+                        activations,
+                        "--output",
+                        rsa,
+                    ],
+                    args.dry_run,
+                    manifest,
+                )
+                run(
+                    [
+                        "python",
+                        "probes/divergence_analysis.py",
+                        "--activations",
+                        activations,
+                        "--correctness",
+                        activations.replace(".npy", "_correctness.json"),
+                        "--output",
+                        divergence,
+                    ],
+                    args.dry_run,
+                    manifest,
+                )
+
+    manifest_path = out_dir / "run_probe_matrix_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "dry_run": args.dry_run,
+                "arch": args.arch,
+                "stimuli": args.stimuli,
+                "templates": args.templates,
+                "positions": args.positions,
+                "generate_tokens": args.generate_tokens,
+                "probe_kind": args.probe_kind,
+                "commands": manifest,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print(f"wrote manifest: {manifest_path}")
 
 
 if __name__ == "__main__":

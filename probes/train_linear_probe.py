@@ -35,17 +35,40 @@ def load_activations(path: str) -> np.ndarray:
         raise ValueError(f"unsupported activation format: {p.suffix}")
 
 
-def load_labels(stimuli_path: str):
-    """load root and pattern labels from stimuli json.
+def get_field(row: dict, field: str, default=None):
+    """read dotted fields from a stimulus/benchmark row."""
+    cur = row
+    for part in field.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return default
+    return cur
 
-    expects format from generate_stimuli.py: each stimulus has
-    'root' (str) and 'pattern' (str) fields.
-    """
+
+def load_rows(stimuli_path: str) -> list[dict]:
     with open(stimuli_path, encoding="utf-8") as f:
-        stimuli = json.load(f)
-    roots = [s["root"] for s in stimuli]
-    patterns = [s["pattern"] for s in stimuli]
-    return roots, patterns
+        rows = json.load(f)
+    if not isinstance(rows, list):
+        raise ValueError("stimuli/benchmark file must be a JSON list")
+    return rows
+
+
+def load_labels(rows: list[dict], field: str) -> list[str]:
+    """load labels from a dotted field path."""
+    labels = []
+    missing = []
+    for i, row in enumerate(rows):
+        value = get_field(row, field)
+        if value is None or value == "":
+            missing.append(i)
+        labels.append(str(value))
+    if missing:
+        raise ValueError(
+            f"label field '{field}' missing for {len(missing)} rows; "
+            f"first missing index: {missing[0]}"
+        )
+    return labels
 
 
 def encode_groups(values):
@@ -95,7 +118,10 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
 def make_probe(probe_kind: str):
     """build the requested probe model."""
     if probe_kind == "linear":
-        return make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+        return make_pipeline(
+            StandardScaler(),
+            LogisticRegression(max_iter=300, solver="lbfgs"),
+        )
     if probe_kind == "mlp":
         return make_pipeline(
             StandardScaler(),
@@ -222,6 +248,29 @@ def groups_for_split(split, roots, patterns):
     raise ValueError(f"unknown split policy: {split}")
 
 
+def groups_for_task(task, split, rows, group_field=None):
+    """return group ids for a task/split policy."""
+    if group_field:
+        return encode_groups([str(get_field(row, group_field, "")) for row in rows])
+    if task == "root":
+        roots = load_labels(rows, "root")
+        patterns = load_labels(rows, "pattern")
+        return groups_for_split(split, roots, patterns)
+    if task == "pattern":
+        roots = load_labels(rows, "root")
+        patterns = load_labels(rows, "pattern")
+        return groups_for_split(split, roots, patterns)
+    if split != "random":
+        raise ValueError(
+            f"task '{task}' needs --group-field for grouped split policy '{split}'"
+        )
+    return None
+
+
+def safe_key(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "_-" else "_" for c in value)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="train linear probes on llm activations"
@@ -256,6 +305,23 @@ def main():
         help="probe model: linear logistic regression or one-hidden-layer MLP",
     )
     parser.add_argument(
+        "--tasks",
+        nargs="+",
+        default=["root", "pattern"],
+        help="label fields to probe, e.g. root pattern labels.upos labels.Gender",
+    )
+    parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=None,
+        help="limit rows for fast benchmark smoke tests",
+    )
+    parser.add_argument(
+        "--group-field",
+        default=None,
+        help="dotted field used for grouped CV on generic benchmark tasks",
+    )
+    parser.add_argument(
         "--split-root",
         action="store_true",
         help="deprecated: use root-held-out CV for pattern probes only",
@@ -282,117 +348,85 @@ def main():
         args.pattern_split = "root"
 
     activations = load_activations(args.activations)
-    roots, patterns = load_labels(args.stimuli)
+    rows = load_rows(args.stimuli)
+    if args.max_rows is not None:
+        rows = rows[: args.max_rows]
+        activations = activations[: args.max_rows]
 
     print(f"activations shape: {activations.shape}")
-    print(f"stimuli: {len(roots)} roots, {len(set(roots))} unique roots, "
-          f"{len(set(patterns))} unique patterns")
+    print(f"stimuli/benchmark rows: {len(rows)}")
+    print(f"tasks: {', '.join(args.tasks)}")
     print(f"root probe split: {args.root_split}")
     print(f"pattern probe split: {args.pattern_split}")
+    if args.group_field:
+        print(f"group field: {args.group_field}")
     print(f"probe kind: {args.probe_kind}")
     if args.control:
         print(f"running random-label control ({args.control_repeats} repeats)")
 
-    root_groups = groups_for_split(args.root_split, roots, patterns)
-    pattern_groups = groups_for_split(args.pattern_split, roots, patterns)
-
-    # root probes
-    print("\n--- root probes ---")
-    root_acc, root_probes, root_le = train_probes(
-        activations,
-        roots,
-        args.folds,
-        groups=root_groups,
-        split_name=f"root-split={args.root_split}",
-        probe_kind=args.probe_kind,
-    )
-    for i, acc in enumerate(root_acc):
-        print(f"  layer {i:2d}: {acc:.3f}")
-
-    root_control_mean = None
-    root_control_std = None
-    root_selectivity = None
-    if args.control:
-        print("\n--- root: random-label control ---")
-        root_control_mean, root_control_std = run_control(
+    results = {}
+    trained = {}
+    for task in args.tasks:
+        labels = load_labels(rows, task)
+        split = args.root_split if task == "root" else args.pattern_split if task == "pattern" else "random"
+        groups = groups_for_task(task, split, rows, args.group_field)
+        print(f"\n--- {task} probes ---")
+        print(f"  labels: {len(set(labels))} classes")
+        acc, probes, le = train_probes(
             activations,
-            roots,
+            labels,
             args.folds,
-            groups=root_groups,
-            n_repeats=args.control_repeats,
+            groups=groups,
+            split_name=f"{task}-split={split}",
             probe_kind=args.probe_kind,
         )
-        chance_root = 1.0 / len(set(roots))
-        root_selectivity = compute_selectivity(root_acc, root_control_mean, chance_root)
-        for i, (real, ctrl, sel) in enumerate(
-            zip(root_acc, root_control_mean, root_selectivity)
-        ):
-            print(f"  layer {i:2d}: real={real:.3f}  control={ctrl:.3f}  "
-                  f"selectivity={sel:.3f}")
-        print(f"  mean selectivity: {root_selectivity.mean():.3f} "
-              f"(max: {root_selectivity.max():.3f} at layer {root_selectivity.argmax()})")
+        for i, layer_acc in enumerate(acc):
+            print(f"  layer {i:2d}: {layer_acc:.3f}")
+        key = safe_key(task)
+        results[f"{key}_accuracy"] = acc
+        results[f"{key}_classes"] = np.array(le.classes_, dtype=object)
+        trained[key] = probes
 
-    # pattern probes
-    print("\n--- pattern probes ---")
-    pat_acc, pat_probes, pat_le = train_probes(
-        activations,
-        patterns,
-        args.folds,
-        groups=pattern_groups,
-        split_name=f"pattern-split={args.pattern_split}",
-        probe_kind=args.probe_kind,
-    )
-    for i, acc in enumerate(pat_acc):
-        print(f"  layer {i:2d}: {acc:.3f}")
-
-    pat_control_mean = None
-    pat_control_std = None
-    pat_selectivity = None
-    if args.control:
-        print("\n--- pattern: random-label control ---")
-        pat_control_mean, pat_control_std = run_control(
-            activations,
-            patterns,
-            args.folds,
-            groups=pattern_groups,
-            n_repeats=args.control_repeats,
-            probe_kind=args.probe_kind,
-        )
-        chance_pat = 1.0 / len(set(patterns))
-        pat_selectivity = compute_selectivity(pat_acc, pat_control_mean, chance_pat)
-        for i, (real, ctrl, sel) in enumerate(
-            zip(pat_acc, pat_control_mean, pat_selectivity)
-        ):
-            print(f"  layer {i:2d}: real={real:.3f}  control={ctrl:.3f}  "
-                  f"selectivity={sel:.3f}")
-        print(f"  mean selectivity: {pat_selectivity.mean():.3f} "
-              f"(max: {pat_selectivity.max():.3f} at layer {pat_selectivity.argmax()})")
+        if args.control:
+            print(f"\n--- {task}: random-label control ---")
+            control_mean, control_std = run_control(
+                activations,
+                labels,
+                args.folds,
+                groups=groups,
+                n_repeats=args.control_repeats,
+                probe_kind=args.probe_kind,
+            )
+            chance = 1.0 / len(set(labels))
+            selectivity = compute_selectivity(acc, control_mean, chance)
+            for i, (real, ctrl, sel) in enumerate(zip(acc, control_mean, selectivity)):
+                print(
+                    f"  layer {i:2d}: real={real:.3f}  control={ctrl:.3f}  "
+                    f"selectivity={sel:.3f}"
+                )
+            print(
+                f"  mean selectivity: {selectivity.mean():.3f} "
+                f"(max: {selectivity.max():.3f} at layer {selectivity.argmax()})"
+            )
+            results[f"{key}_control_mean"] = control_mean
+            results[f"{key}_control_std"] = control_std
+            results[f"{key}_selectivity"] = selectivity
 
     # save
     if args.output:
         save_dict = {
-            "root_accuracy": root_acc,
-            "pattern_accuracy": pat_acc,
+            **results,
             "probe_kind": args.probe_kind,
             "root_split": args.root_split,
             "pattern_split": args.pattern_split,
+            "tasks": np.array(args.tasks, dtype=object),
         }
         if args.probe_kind == "linear":
-            save_dict["root_probe_weights"] = [
-                p.named_steps["logisticregression"].coef_
-                for p in root_probes
-            ]
-            save_dict["pattern_probe_weights"] = [
-                p.named_steps["logisticregression"].coef_
-                for p in pat_probes
-            ]
-        if args.control:
-            save_dict["root_control_mean"] = root_control_mean
-            save_dict["root_control_std"] = root_control_std
-            save_dict["root_selectivity"] = root_selectivity
-            save_dict["pat_control_mean"] = pat_control_mean
-            save_dict["pat_control_std"] = pat_control_std
-            save_dict["pat_selectivity"] = pat_selectivity
+            for key, probes in trained.items():
+                save_dict[f"{key}_probe_weights"] = [
+                    p.named_steps["logisticregression"].coef_
+                    for p in probes
+                ]
         np.savez(args.output, **save_dict)
         print(f"\nsaved probe weights to {args.output}")
         if args.control:

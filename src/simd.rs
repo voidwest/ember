@@ -1005,7 +1005,7 @@ fn matmul_q8_0_decode_scalar(
 pub(crate) fn sum_squares(x: &[f32]) -> f32 {
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             return unsafe { x86_64::sum_squares_avx2(x) };
         }
     }
@@ -1059,7 +1059,7 @@ pub(crate) fn silu(x: &[f32], out: &mut [f32]) {
 
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             unsafe {
                 return x86_64::silu_avx2(x, out);
             }
@@ -1085,7 +1085,7 @@ pub(crate) fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             unsafe {
                 return x86_64::dot_product_avx2(a, b);
             }
@@ -1195,7 +1195,7 @@ pub(crate) fn scale_weight_mul(x: &[f32], scale: f32, weight: &[f32], out: &mut 
 pub(crate) fn softmax_prefix(row: &mut [f32], len: usize) {
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             unsafe {
                 return x86_64::softmax_prefix_avx2(row, len);
             }
@@ -1237,6 +1237,40 @@ pub(crate) fn softmax_prefix(row: &mut [f32], len: usize) {
 mod tests {
     use super::*;
 
+    const BOUNDARY_LENGTHS: &[usize] = &[0, 1, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33];
+
+    fn patterned_vec(len: usize, phase: f32) -> Vec<f32> {
+        (0..len)
+            .map(|i| ((i as f32 + phase) * 0.37).sin() * 3.0 + (i % 5) as f32 * 0.125)
+            .collect()
+    }
+
+    fn max_diff(a: &[f32], b: &[f32]) -> (f32, f32, usize) {
+        let mut max_abs = 0.0f32;
+        let mut max_rel = 0.0f32;
+        let mut max_idx = 0usize;
+        for (i, (&x, &y)) in a.iter().zip(b).enumerate() {
+            let abs = (x - y).abs();
+            let rel = abs / x.abs().max(y.abs()).max(1.0);
+            if abs > max_abs {
+                max_abs = abs;
+                max_rel = rel;
+                max_idx = i;
+            }
+        }
+        (max_abs, max_rel, max_idx)
+    }
+
+    fn assert_close(label: &str, got: &[f32], expected: &[f32], abs_tol: f32, rel_tol: f32) {
+        let (max_abs, max_rel, max_idx) = max_diff(got, expected);
+        assert!(
+            max_abs <= abs_tol || max_rel <= rel_tol,
+            "{label}: max_abs={max_abs} max_rel={max_rel} idx={max_idx} got={} expected={}",
+            got.get(max_idx).copied().unwrap_or(0.0),
+            expected.get(max_idx).copied().unwrap_or(0.0)
+        );
+    }
+
     /// Build a single Q8_0 block (34 bytes) with known scale and quants.
     fn make_block(scale: f32, quants: &[i8; 32]) -> Vec<u8> {
         let mut buf = Vec::with_capacity(Q8_0_TYPE_SIZE);
@@ -1247,6 +1281,98 @@ mod tests {
         }
         assert_eq!(buf.len(), Q8_0_TYPE_SIZE);
         buf
+    }
+
+    #[test]
+    fn simd_helper_boundary_parity() {
+        for &len in BOUNDARY_LENGTHS {
+            let a = patterned_vec(len, 0.25);
+            let b = patterned_vec(len, 1.75);
+
+            let expected_sum_squares: f32 = a.iter().map(|v| v * v).sum();
+            let got_sum_squares = sum_squares(&a);
+            assert!(
+                (got_sum_squares - expected_sum_squares).abs() <= 1e-5 * len.max(1) as f32,
+                "sum_squares len={len}: got={got_sum_squares} expected={expected_sum_squares}"
+            );
+
+            let expected_dot: f32 = a.iter().zip(&b).map(|(x, y)| x * y).sum();
+            let got_dot = dot_product(&a, &b);
+            assert!(
+                (got_dot - expected_dot).abs() <= 1e-5 * len.max(1) as f32,
+                "dot_product len={len}: got={got_dot} expected={expected_dot}"
+            );
+
+            let mut got = vec![0.0; len];
+            let expected: Vec<f32> = a.iter().zip(&b).map(|(x, y)| x * y).collect();
+            elemul(&a, &b, &mut got);
+            assert_close(&format!("elemul len={len}"), &got, &expected, 1e-6, 1e-6);
+
+            let expected: Vec<f32> = a.iter().zip(&b).map(|(x, y)| x + y).collect();
+            add(&a, &b, &mut got);
+            assert_close(&format!("add len={len}"), &got, &expected, 1e-6, 1e-6);
+
+            let mut acc = a.clone();
+            let mut expected = a.clone();
+            for (dst, src) in expected.iter_mut().zip(&b) {
+                *dst += -0.75 * src;
+            }
+            weighted_add(&mut acc, &b, -0.75);
+            assert_close(
+                &format!("weighted_add len={len}"),
+                &acc,
+                &expected,
+                1e-5,
+                1e-6,
+            );
+
+            let expected: Vec<f32> = a.iter().zip(&b).map(|(x, y)| x * 0.5 * y).collect();
+            scale_weight_mul(&a, 0.5, &b, &mut got);
+            assert_close(
+                &format!("scale_weight_mul len={len}"),
+                &got,
+                &expected,
+                1e-6,
+                1e-6,
+            );
+
+            let silu_input: Vec<f32> = a.iter().map(|v| v.clamp(-8.0, 8.0)).collect();
+            let expected: Vec<f32> = silu_input.iter().map(|x| x / (1.0 + (-x).exp())).collect();
+            silu(&silu_input, &mut got);
+            assert_close(&format!("silu len={len}"), &got, &expected, 3e-3, 3e-3);
+
+            let mut row = patterned_vec(len + 3, 2.5);
+            let mut expected = row.clone();
+            scalar_softmax_prefix(&mut expected, len);
+            softmax_prefix(&mut row, len);
+            assert_close(
+                &format!("softmax_prefix len={len}"),
+                &row,
+                &expected,
+                3e-5,
+                3e-5,
+            );
+        }
+    }
+
+    fn scalar_softmax_prefix(row: &mut [f32], len: usize) {
+        let max_val = row[..len].iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        if max_val == f32::NEG_INFINITY {
+            let uniform = 1.0 / len as f32;
+            for slot in row.iter_mut().take(len) {
+                *slot = uniform;
+            }
+            return;
+        }
+        let mut sum = 0.0;
+        for slot in row.iter_mut().take(len) {
+            *slot = (*slot - max_val).exp();
+            sum += *slot;
+        }
+        let inv_sum = sum.recip();
+        for slot in row.iter_mut().take(len) {
+            *slot *= inv_sum;
+        }
     }
 
     /// Build `n` consecutive Q8_0 blocks with alternating scale patterns.
@@ -1569,6 +1695,47 @@ mod tests {
                 diff / max_val
             );
         }
+    }
+
+    #[test]
+    fn decode_path_matches_blockwise_prefill_path() {
+        use crate::backend::{Backend, CpuBackend};
+        use rand::Rng;
+
+        let out_features = 64;
+        let in_features = 256;
+        let data = random_q8_0_data(out_features, in_features);
+        let w = QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap();
+
+        let mut rng = rand::thread_rng();
+        let x: Vec<f32> = (0..in_features)
+            .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
+            .collect();
+
+        let mut decode_out = vec![0.0f32; out_features];
+        matmul_q8_0_decode(&x, &w, &mut decode_out);
+
+        // Force the existing block-wise prefill implementation by using two
+        // identical rows; CpuBackend only takes the fused decode branch for
+        // seq_len == 1.
+        let mut x2 = Vec::with_capacity(in_features * 2);
+        x2.extend_from_slice(&x);
+        x2.extend_from_slice(&x);
+        let backend = CpuBackend;
+        let prefill = backend
+            .matmul_q8_0(
+                &crate::tensor::CpuTensor::from_data(vec![2, in_features], x2),
+                &w,
+            )
+            .unwrap();
+        let prefill_first_row = &prefill.data()[..out_features];
+        assert_close(
+            "q8 decode vs blockwise prefill",
+            &decode_out,
+            prefill_first_row,
+            1e-3,
+            1e-3,
+        );
     }
 
     /// Full decode path benchmark: compare fused decode vs block-wise sgemm

@@ -3,13 +3,16 @@ use clap::Parser;
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::loader::load_gguf;
+use ember::loader::GgufLoader;
+use ember::loader::GgufValue;
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use ember::sampler::sample_token;
 use std::fs;
 use std::io::BufWriter;
 use std::io::{self, Write};
-use std::time::Instant;
+use std::process::Command;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// a lightweight, cpu-first llm inference engine.
 #[derive(Parser)]
@@ -67,6 +70,10 @@ struct Args {
     #[arg(long)]
     benchmark: bool,
 
+    /// write last-prompt logits for --prompt to a .npy file and exit
+    #[arg(long, conflicts_with_all = ["demo", "interactive", "probe"])]
+    dump_logits: Option<String>,
+
     /// probe mode: extract hidden states from each transformer block
     /// for every stimulus in the stimuli file, and save as .npy.
     #[arg(long, conflicts_with_all = ["demo", "interactive"])]
@@ -107,6 +114,24 @@ struct Args {
     /// number of continuation tokens to generate for probe behavioral scoring
     #[arg(long, default_value_t = 16)]
     probe_generate_tokens: usize,
+
+    /// limit probe extraction to the first N stimuli for smoke tests
+    #[arg(long)]
+    probe_limit: Option<usize>,
+
+    /// compute and record model file sha256 in probe metadata
+    #[arg(long)]
+    record_model_sha256: bool,
+
+    /// write parsed GGUF metadata to this JSON path
+    #[arg(long)]
+    dump_gguf_metadata: Option<String>,
+}
+
+struct RunMetadata {
+    gguf_metadata: serde_json::Value,
+    model_file_size_bytes: Option<u64>,
+    model_sha256: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -123,6 +148,22 @@ fn main() -> anyhow::Result<()> {
     // still use GPT-2-specific helpers.
     let loader = load_gguf(&args.model)?;
     let n_tensors = loader.tensors.len();
+    let run_metadata = RunMetadata {
+        gguf_metadata: gguf_metadata_json(&loader),
+        model_file_size_bytes: fs::metadata(&args.model).ok().map(|m| m.len()),
+        model_sha256: if args.record_model_sha256 {
+            model_sha256(&args.model)
+        } else {
+            None
+        },
+    };
+    if let Some(path) = &args.dump_gguf_metadata {
+        fs::write(
+            path,
+            serde_json::to_string_pretty(&run_metadata.gguf_metadata)?,
+        )?;
+        eprintln!("wrote GGUF metadata to {path}");
+    }
     let backend = CpuBackend;
     let tokenizer_path = args
         .tokenizer
@@ -160,8 +201,17 @@ fn main() -> anyhow::Result<()> {
                     args.top_p,
                     args.max_seq_len,
                 )?;
+            } else if let Some(path) = &args.dump_logits {
+                dump_last_logits(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    path,
+                    args.max_seq_len,
+                )?;
             } else if args.probe {
-                run_probe_jobs(&backend, &model, &tokenizer, &args)?;
+                run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -178,8 +228,17 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("demo mode not yet supported for llama");
             } else if args.interactive {
                 anyhow::bail!("interactive mode not yet supported for llama");
+            } else if let Some(path) = &args.dump_logits {
+                dump_last_logits(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    path,
+                    args.max_seq_len,
+                )?;
             } else if args.probe {
-                run_probe_jobs(&backend, &model, &tokenizer, &args)?;
+                run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -196,8 +255,17 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("demo mode not yet supported for gemma4");
             } else if args.interactive {
                 anyhow::bail!("interactive mode not yet supported for gemma4");
+            } else if let Some(path) = &args.dump_logits {
+                dump_last_logits(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    path,
+                    args.max_seq_len,
+                )?;
             } else if args.probe {
-                run_probe_jobs(&backend, &model, &tokenizer, &args)?;
+                run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -212,6 +280,7 @@ fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     match arch {
         "gpt2" => "tokenizer-gpt2.json",
         "llama" => "tokenizer.json",
+        "qwen3" => "tokenizer-qwen3.json",
         "gemma4" => "tokenizer-gemma4.json",
         _ => "tokenizer.json",
     }
@@ -757,6 +826,41 @@ where
     Ok(output)
 }
 
+fn dump_last_logits<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    prompt: &str,
+    output_path: &str,
+    max_seq_len: Option<usize>,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let token_ids = tokenizer
+        .encode(prompt)
+        .context("failed to tokenize prompt")?;
+    if token_ids.is_empty() {
+        anyhow::bail!("cannot dump logits for an empty prompt");
+    }
+    let context_limit = max_seq_len.unwrap_or_else(|| model.max_seq_len(backend));
+    ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
+    let mut cache = model.create_cache(backend, context_limit);
+    let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
+    let shape = backend.shape(&logits);
+    if shape.len() != 2 || shape[0] != 1 {
+        anyhow::bail!("expected last logits shape [1, vocab], got {:?}", shape);
+    }
+    write_npy_2d(output_path, backend.data(&logits), &[shape[0], shape[1]])?;
+    eprintln!(
+        "saved last logits for {} prompt tokens to {} with shape {:?}",
+        token_ids.len(),
+        output_path,
+        shape
+    );
+    Ok(())
+}
+
 /// greedy argmax: return the index of the largest logit value.
 #[inline]
 fn argmax_token(logits: &[f32]) -> usize {
@@ -800,6 +904,16 @@ mod tests {
                 .as_deref()
                 .unwrap_or_else(|| default_tokenizer_for_arch(&gemma4.arch)),
             "tokenizer-gemma4.json"
+        );
+
+        let qwen3 =
+            Args::try_parse_from(["ember", "--arch", "qwen3"]).expect("qwen3 args should parse");
+        assert_eq!(
+            qwen3
+                .tokenizer
+                .as_deref()
+                .unwrap_or_else(|| default_tokenizer_for_arch(&qwen3.arch)),
+            "tokenizer-qwen3.json"
         );
     }
 
@@ -898,9 +1012,27 @@ where
 ///
 /// shape is `[dim0, dim1, dim2]`, data is row-major f32 little-endian.
 fn write_npy(path: &str, data: &[f32], shape: &[usize; 3]) -> anyhow::Result<()> {
+    write_npy_shape(path, data, shape)
+}
+
+fn write_npy_2d(path: &str, data: &[f32], shape: &[usize; 2]) -> anyhow::Result<()> {
+    write_npy_shape(path, data, shape)
+}
+
+fn write_npy_shape(path: &str, data: &[f32], shape: &[usize]) -> anyhow::Result<()> {
+    let shape_text = if shape.len() == 1 {
+        format!("({},)", shape[0])
+    } else {
+        let dims = shape
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("({dims})")
+    };
     let header = format!(
-        "{{'descr': '<f4', 'fortran_order': False, 'shape': ({}, {}, {}), }}",
-        shape[0], shape[1], shape[2]
+        "{{'descr': '<f4', 'fortran_order': False, 'shape': {}, }}",
+        shape_text
     );
     // pad to 16-byte boundary (including the 10-byte prefix)
     let mut header_bytes = header.into_bytes();
@@ -943,9 +1075,12 @@ struct ProbeConfig<'a> {
     template: &'a str,
     position: ProbePosition,
     generate_tokens: usize,
+    limit: Option<usize>,
     context_limit: usize,
     model_path: &'a str,
     arch: &'a str,
+    tokenizer_path: &'a str,
+    run_metadata: &'a RunMetadata,
 }
 
 struct ProbeJob {
@@ -1060,6 +1195,7 @@ fn run_probe_jobs<B: Backend>(
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
     args: &Args,
+    run_metadata: &RunMetadata,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -1085,9 +1221,15 @@ where
                 template: &job.template,
                 position: job.position,
                 generate_tokens: args.probe_generate_tokens,
+                limit: args.probe_limit,
                 context_limit: effective_context_limit(backend, model, args),
                 model_path: &args.model,
                 arch: &args.arch,
+                tokenizer_path: args
+                    .tokenizer
+                    .as_deref()
+                    .unwrap_or_else(|| default_tokenizer_for_arch(&args.arch)),
+                run_metadata,
             },
         )?;
     }
@@ -1268,7 +1410,10 @@ where
     // -- load stimuli ------------------------------------------
     let stimuli_json = fs::read_to_string(config.stimuli_path)
         .with_context(|| format!("failed to read stimuli file: {}", config.stimuli_path))?;
-    let stimuli: Vec<serde_json::Value> = serde_json::from_str(&stimuli_json)?;
+    let mut stimuli: Vec<serde_json::Value> = serde_json::from_str(&stimuli_json)?;
+    if let Some(limit) = config.limit {
+        stimuli.truncate(limit);
+    }
     eprintln!(
         "loaded {} stimuli from {}",
         stimuli.len(),
@@ -1429,11 +1574,16 @@ where
     let metadata = serde_json::json!({
         "model_path": config.model_path,
         "architecture": config.arch,
+        "tokenizer_path": config.tokenizer_path,
+        "model_file_size_bytes": config.run_metadata.model_file_size_bytes,
+        "model_sha256": config.run_metadata.model_sha256,
+        "gguf_metadata": config.run_metadata.gguf_metadata,
         "stimuli_path": config.stimuli_path,
         "output_path": config.output_path,
         "probe_template": config.template,
         "probe_position": config.position.as_str(),
         "probe_generate_tokens": config.generate_tokens,
+        "probe_limit": config.limit,
         "context_limit": config.context_limit,
         "n_stimuli": stimuli.len(),
         "n_layers": n_layers,
@@ -1441,6 +1591,8 @@ where
         "activation_shape": shape,
         "correctness_path": correctness_path,
         "token_selections": token_selections,
+        "run_timestamp_unix": unix_timestamp(),
+        "git_commit": git_commit(),
     });
     let metadata_path = config.output_path.replace(".npy", "_metadata.json");
     fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)?;
@@ -1449,4 +1601,55 @@ where
     eprintln!("done in {:.1}s", start.elapsed().as_secs_f64());
 
     Ok(())
+}
+
+fn unix_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn gguf_metadata_json(loader: &GgufLoader) -> serde_json::Value {
+    let mut entries = serde_json::Map::new();
+    for (key, value) in &loader.metadata {
+        entries.insert(key.clone(), gguf_value_json(value));
+    }
+    serde_json::Value::Object(entries)
+}
+
+fn gguf_value_json(value: &GgufValue) -> serde_json::Value {
+    match value {
+        GgufValue::U8(v) => serde_json::json!(v),
+        GgufValue::U32(v) => serde_json::json!(v),
+        GgufValue::U64(v) => serde_json::json!(v),
+        GgufValue::I32(v) => serde_json::json!(v),
+        GgufValue::F32(v) => serde_json::json!(v),
+        GgufValue::Bool(v) => serde_json::json!(v),
+        GgufValue::Str(v) => serde_json::json!(v),
+        GgufValue::Array(values) => {
+            serde_json::Value::Array(values.iter().map(gguf_value_json).collect())
+        }
+    }
+}
+
+fn model_sha256(path: &str) -> Option<String> {
+    let output = Command::new("sha256sum").arg(path).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    stdout.split_whitespace().next().map(str::to_string)
+}
+
+fn git_commit() -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8(output.stdout).ok()?;
+    Some(commit.trim().to_string())
 }

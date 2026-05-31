@@ -28,6 +28,7 @@ pub struct Gemma4Config {
     pub local_rope_theta: f32,
     pub global_rope_theta: f32,
     pub norm_eps: f32,
+    pub attention_scale: f32,
     pub sliding_window: usize,
     pub layer_types: Vec<Gemma4AttentionType>,
     pub final_logit_softcap: Option<f32>,
@@ -135,6 +136,17 @@ impl Gemma4Config {
             ],
             1e-6,
         )?;
+        let query_pre_attn_scalar = get_f32_any(
+            loader,
+            &[
+                "gemma4.attention.query_pre_attn_scalar",
+                "gemma4.query_pre_attn_scalar",
+                "gemma3.attention.query_pre_attn_scalar",
+                "gemma3.query_pre_attn_scalar",
+            ],
+            local_head_dim as f32,
+        )?;
+        let attention_scale = query_pre_attn_scalar.sqrt().recip();
         let sliding_window = get_u32_any(
             loader,
             &[
@@ -194,6 +206,7 @@ impl Gemma4Config {
             local_rope_theta,
             global_rope_theta,
             norm_eps,
+            attention_scale,
             sliding_window,
             layer_types,
             final_logit_softcap,
@@ -252,6 +265,8 @@ struct Gemma4Attention<B: Backend> {
     n_kv_heads: usize,
     head_dim: usize,
     sliding_window: usize,
+    norm_eps: f32,
+    attention_scale: f32,
     shared_source_layer: Option<usize>,
 }
 
@@ -278,6 +293,7 @@ impl<B: Backend> Gemma4Attention<B> {
             start_pos,
             self.n_heads,
             self.head_dim,
+            self.norm_eps,
         )?;
 
         let source_layer = if let Some(source_layer) = self.shared_source_layer {
@@ -297,6 +313,7 @@ impl<B: Backend> Gemma4Attention<B> {
                 start_pos,
                 self.n_kv_heads,
                 self.head_dim,
+                self.norm_eps,
             )?;
             let v = self
                 .v_proj
@@ -340,6 +357,7 @@ impl<B: Backend> Gemma4Attention<B> {
                 } else {
                     None
                 },
+                scale: self.attention_scale,
             },
             qk_scratch,
         )?;
@@ -365,6 +383,7 @@ impl<B: Backend> Gemma4Attention<B> {
             start_pos,
             self.n_heads,
             self.head_dim,
+            self.norm_eps,
         )?;
         let k = self
             .k_proj
@@ -380,6 +399,7 @@ impl<B: Backend> Gemma4Attention<B> {
             start_pos,
             self.n_kv_heads,
             self.head_dim,
+            self.norm_eps,
         )?;
         let v = self
             .v_proj
@@ -400,6 +420,7 @@ impl<B: Backend> Gemma4Attention<B> {
                 } else {
                     None
                 },
+                scale: self.attention_scale,
             },
         )?;
         debug_assert_eq!(
@@ -678,6 +699,8 @@ impl Gemma4<CpuBackend> {
                 n_kv_heads,
                 head_dim,
                 sliding_window: config.sliding_window,
+                norm_eps: config.norm_eps,
+                attention_scale: config.attention_scale,
                 shared_source_layer,
             };
 
@@ -1003,6 +1026,7 @@ fn apply_rope_and_qk_norm<B: Backend>(
     start_pos: usize,
     n_heads: usize,
     head_dim: usize,
+    norm_eps: f32,
 ) -> Result<B::Tensor, B::Error> {
     let seq_len = backend.shape(x)[0];
     let width = n_heads * head_dim;
@@ -1018,20 +1042,20 @@ fn apply_rope_and_qk_norm<B: Backend>(
         let sin_row = &sin[pos * half..(pos + 1) * half];
         for h in 0..n_heads {
             let base = s * width + h * head_dim;
+            let mut sq_sum = 0.0;
+            for d in 0..head_dim {
+                sq_sum += data[base + d] * data[base + d];
+            }
+            let rstd = (sq_sum / head_dim as f32 + norm_eps).sqrt().recip();
+            for d in 0..head_dim {
+                data[base + d] = data[base + d] * rstd * norm_data[d];
+            }
+
             for d in 0..half {
                 let a = data[base + d];
                 let b = data[base + d + half];
                 data[base + d] = a * cos_row[d] - b * sin_row[d];
                 data[base + d + half] = a * sin_row[d] + b * cos_row[d];
-            }
-
-            let mut sq_sum = 0.0;
-            for d in 0..head_dim {
-                sq_sum += data[base + d] * data[base + d];
-            }
-            let rstd = (sq_sum / head_dim as f32 + 1e-6).sqrt().recip();
-            for d in 0..head_dim {
-                data[base + d] = data[base + d] * rstd * norm_data[d];
             }
         }
     }
@@ -1044,6 +1068,7 @@ struct Gemma4FullAttentionSpec {
     n_kv_heads: usize,
     head_dim: usize,
     sliding_window: Option<usize>,
+    scale: f32,
 }
 
 #[allow(dead_code)]
@@ -1079,7 +1104,7 @@ fn full_attention<B: Backend>(
                 *score = dot(
                     &q_data[q_idx..q_idx + spec.head_dim],
                     &k_data[k_idx..k_idx + spec.head_dim],
-                );
+                ) * spec.scale;
             }
             softmax_range(&mut scores, min_j, i + 1);
             let out_idx = i * q_width + q_head;
@@ -1105,6 +1130,7 @@ struct Gemma4CachedAttentionSpec {
     max_seq_len: usize,
     total_seq_len: usize,
     sliding_window: Option<usize>,
+    scale: f32,
 }
 
 fn cached_attention_with_scratch<B: Backend>(
@@ -1142,7 +1168,7 @@ fn cached_attention_with_scratch<B: Backend>(
                 *score = dot(
                     &q_data[q_idx..q_idx + spec.head_dim],
                     &cached_k[k_idx..k_idx + spec.head_dim],
-                );
+                ) * spec.scale;
             }
             softmax_range(scores.as_mut_slice(), min_j, max_j + 1);
             let out_idx = i * q_width + q_head;
@@ -1422,10 +1448,44 @@ mod tests {
                 n_kv_heads: 1,
                 head_dim: 1,
                 sliding_window: Some(2),
+                scale: 1.0,
             },
         )
         .unwrap();
         assert!((out.data()[2] - 25.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn attention_scale_uses_query_pre_attn_scalar() {
+        let mut metadata = HashMap::new();
+        metadata.insert("gemma4.attention.head_count".into(), GgufValue::U32(1));
+        metadata.insert("gemma4.embedding_length".into(), GgufValue::U32(4));
+        metadata.insert("gemma4.attention.key_length".into(), GgufValue::U32(4));
+        metadata.insert(
+            "gemma4.attention.query_pre_attn_scalar".into(),
+            GgufValue::F32(16.0),
+        );
+        let cfg = Gemma4Config::from_gguf_metadata(&loader_with(metadata)).unwrap();
+        assert!((cfg.attention_scale - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn qk_norm_happens_before_rope_and_uses_config_eps() {
+        let backend = CpuBackend;
+        let x = CpuTensor::from_data(vec![1, 4], vec![1.0, 2.0, 3.0, 4.0]);
+        let norm = CpuTensor::from_data(vec![4], vec![1.0, 2.0, 3.0, 4.0]);
+        let rope_cos = CpuTensor::from_data(vec![1, 2], vec![0.0, 1.0]);
+        let rope_sin = CpuTensor::from_data(vec![1, 2], vec![1.0, 0.0]);
+        let out = apply_rope_and_qk_norm(&backend, &x, &norm, &rope_cos, &rope_sin, 0, 1, 4, 0.0)
+            .unwrap();
+        // RMSNorm first: rstd = 1 / sqrt(mean([1, 4, 9, 16])).
+        // RoPE then rotates the first/second half pairs with cos=[0,1],
+        // sin=[1,0].
+        let rstd = (7.5_f32).sqrt().recip();
+        let expected = [-9.0 * rstd, 4.0 * rstd, 1.0 * rstd, 16.0 * rstd];
+        for (got, expected) in out.data().iter().zip(expected) {
+            assert!((got - expected).abs() < 1e-6);
+        }
     }
 
     #[test]
@@ -1502,6 +1562,7 @@ mod tests {
                 local_rope_theta: 10_000.0,
                 global_rope_theta: 10_000.0,
                 norm_eps: 1e-6,
+                attention_scale: 1.0,
                 sliding_window: 2,
                 layer_types: vec![Gemma4AttentionType::Local, Gemma4AttentionType::Local],
                 final_logit_softcap: None,
