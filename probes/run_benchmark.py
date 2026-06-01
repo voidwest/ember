@@ -26,6 +26,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from benchmark_summary import summarize_run
+
 
 def run(cmd: list[str], dry_run: bool, manifest: list[dict]) -> None:
     print(" ".join(cmd))
@@ -85,6 +87,47 @@ def hf_extract_cmd(model: dict, benchmark: str, out_dir: Path) -> tuple[list[str
     return cmd, str(output)
 
 
+def enabled(config: dict, key: str, default: bool) -> bool:
+    value = config.get(key, default)
+    if isinstance(value, dict):
+        return bool(value.get("enabled", default))
+    return bool(value)
+
+
+def split_policy_args(config: dict) -> list[str]:
+    policy = config.get("split_policy") or {}
+    args: list[str] = []
+    if "root" in policy:
+        args.extend(["--root-split", policy["root"]])
+    if "pattern" in policy:
+        args.extend(["--pattern-split", policy["pattern"]])
+    group_field = policy.get("group_field") or config.get("group_field")
+    if group_field:
+        args.extend(["--group-field", group_field])
+    return args
+
+
+def fertility_config(config: dict, models: list[dict]) -> tuple[list[str], list[str], str | None]:
+    fert = config.get("fertility")
+    if not fert:
+        return [], [], None
+    fert_config = fert if isinstance(fert, dict) else {}
+    output = fert_config.get("output")
+    tokenizers = list(fert_config.get("tokenizers", []))
+    labels = list(fert_config.get("labels", []))
+    if not tokenizers:
+        for model in models:
+            tokenizer = model.get("tokenizer")
+            if tokenizer:
+                tokenizers.append(tokenizer)
+                labels.append(model["label"])
+    if tokenizers and not labels:
+        labels = [Path(tokenizer).stem for tokenizer in tokenizers]
+    if len(tokenizers) != len(labels):
+        raise ValueError("fertility.tokenizers and fertility.labels must have the same length")
+    return tokenizers, labels, output
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="run an Ember benchmark manifest")
     parser.add_argument("--config", required=True)
@@ -97,6 +140,8 @@ def main() -> None:
     stimuli = config["stimuli"]
     tasks = config.get("tasks", ["root", "pattern"])
     manifest: list[dict] = []
+    model_artifacts: list[dict] = []
+    plot_paths: list[str] = []
 
     for model in config["models"]:
         kind = model.get("kind", "ember")
@@ -109,6 +154,11 @@ def main() -> None:
         run(extract_cmd, args.dry_run, manifest)
 
         prefix = out_dir / model["label"]
+        probes_path = f"{prefix}_probes.npz"
+        mdl_path = f"{prefix}_mdl.npz"
+        cca_path = f"{prefix}_cca.npz"
+        rsa_path = f"{prefix}_rsa.npz"
+        divergence_path = f"{prefix}_divergence.npz"
         probe_cmd = [
             "python",
             "probes/train_linear_probe.py",
@@ -121,46 +171,144 @@ def main() -> None:
             "--probe-kind",
             config.get("probe_kind", "linear"),
             "--output",
-            f"{prefix}_probes.npz",
+            probes_path,
         ]
         if config.get("control", True):
             probe_cmd.append("--control")
-        if config.get("group_field"):
-            probe_cmd.extend(["--group-field", config["group_field"]])
+        probe_cmd.extend(split_policy_args(config))
         if config.get("max_rows"):
             probe_cmd.extend(["--max-rows", str(config["max_rows"])])
         run(probe_cmd, args.dry_run, manifest)
 
-        mdl_cmd = [
-            "python",
-            "probes/mdl_probe.py",
-            "--activations",
-            activations,
-            "--stimuli",
-            stimuli,
-            "--tasks",
-            *tasks,
-            "--output",
-            f"{prefix}_mdl.npz",
-        ]
-        if config.get("max_rows"):
-            mdl_cmd.extend(["--max-rows", str(config["max_rows"])])
-        run(mdl_cmd, args.dry_run, manifest)
-
-        run(
-            [
+        if enabled(config, "run_mdl", True):
+            mdl_cmd = [
                 "python",
-                "probes/rsa_analysis.py",
+                "probes/mdl_probe.py",
+                "--activations",
+                activations,
+                "--stimuli",
+                stimuli,
+                "--tasks",
+                *tasks,
+                "--output",
+                mdl_path,
+            ]
+            if config.get("max_rows"):
+                mdl_cmd.extend(["--max-rows", str(config["max_rows"])])
+            run(mdl_cmd, args.dry_run, manifest)
+
+        if enabled(config, "run_cca", True):
+            cca_cmd = [
+                "python",
+                "probes/cca_analysis.py",
                 "--activations",
                 activations,
                 "--output",
-                f"{prefix}_rsa.npz",
-            ],
-            args.dry_run,
-            manifest,
+                cca_path,
+            ]
+            if (
+                config.get("probe_kind", "linear") == "linear"
+                and {"root", "pattern"}.issubset(set(tasks))
+            ):
+                cca_cmd.extend(["--probes", probes_path])
+            run(cca_cmd, args.dry_run, manifest)
+
+        if enabled(config, "run_rsa", True):
+            run(
+                [
+                    "python",
+                    "probes/rsa_analysis.py",
+                    "--activations",
+                    activations,
+                    "--output",
+                    rsa_path,
+                ],
+                args.dry_run,
+                manifest,
+            )
+
+        correctness_path = activations.replace(".npy", "_correctness.json")
+        should_run_divergence = enabled(config, "run_divergence", True)
+        if should_run_divergence and (args.dry_run or Path(correctness_path).exists()):
+            run(
+                [
+                    "python",
+                    "probes/divergence_analysis.py",
+                    "--activations",
+                    activations,
+                    "--correctness",
+                    correctness_path,
+                    "--output",
+                    divergence_path,
+                ],
+                args.dry_run,
+                manifest,
+            )
+
+        if enabled(config, "run_plots", True):
+            plot_dir = prefix.parent / f"{model['label']}_plots"
+            plot_cmd = [
+                "python",
+                "probes/plot_results.py",
+                "--probes",
+                probes_path,
+                "--cca",
+                cca_path,
+                "--rsa",
+                rsa_path,
+                "--output",
+                str(plot_dir),
+                "--title",
+                f"{config['name']} / {model['label']}",
+            ]
+            if Path(divergence_path).exists() or args.dry_run:
+                plot_cmd.extend(["--divergence", divergence_path])
+            if config.get("dark_plots", True):
+                plot_cmd.append("--dark")
+            run(plot_cmd, args.dry_run, manifest)
+            plot_paths.append(str(plot_dir / "probe_results.png"))
+
+        model_artifacts.append(
+            {
+                "label": model["label"],
+                "kind": kind,
+                "activations": activations,
+                "probes": probes_path,
+                "mdl": mdl_path,
+                "cca": cca_path,
+                "rsa": rsa_path,
+                "divergence": divergence_path,
+            }
         )
 
+    fertility_path = None
+    tokenizers, labels, configured_fertility_output = fertility_config(config, config["models"])
+    if enabled(config, "fertility", False) and tokenizers:
+        fertility_path = configured_fertility_output or str(out_dir / "fertility.json")
+        fertility_cmd = [
+            "python",
+            "probes/tokenizer_fertility.py",
+            "--stimuli",
+            stimuli,
+            "--tokenizers",
+            *tokenizers,
+            "--labels",
+            *labels,
+            "--output",
+            fertility_path,
+        ]
+        run(fertility_cmd, args.dry_run, manifest)
+
     manifest_path = out_dir / "benchmark_manifest.json"
+    summary_path = Path(config.get("summary_output") or out_dir / "benchmark_summary.json")
+    summary = summarize_run(
+        config=config,
+        dry_run=args.dry_run,
+        commands=manifest,
+        models=model_artifacts,
+        fertility_path=fertility_path,
+        plots=plot_paths,
+    )
     manifest_path.write_text(
         json.dumps(
             {
@@ -168,6 +316,10 @@ def main() -> None:
                 "config": config,
                 "dry_run": args.dry_run,
                 "commands": manifest,
+                "model_artifacts": model_artifacts,
+                "fertility_path": fertility_path,
+                "plots": plot_paths,
+                "summary_path": str(summary_path),
             },
             ensure_ascii=False,
             indent=2,
@@ -175,7 +327,13 @@ def main() -> None:
         + "\n",
         encoding="utf-8",
     )
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print(f"wrote {manifest_path}")
+    print(f"wrote {summary_path}")
 
 
 if __name__ == "__main__":
