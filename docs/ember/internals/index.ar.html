@@ -11,6 +11,7 @@
         <meta name="twitter:card" content="summary" />
         <title>ember internals</title>
         <link rel="stylesheet" href="/style.css" />
+        <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
@@ -21,9 +22,10 @@
                 });
             });
         </script>
-
+        <!-- docs:head-scripts end -->
     </head>
     <body>
+        <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
@@ -33,6 +35,7 @@
             </div>
             <a class="nav-lang" href="/ember/internals/">en</a>
         </nav>
+        <!-- docs:nav end -->
 
         <div class="back">
             <a href="/" class="ltr">← voidwest</a>
@@ -675,19 +678,23 @@ other (adds, copies, sampling):         ~4 ms    (5%)
             عنصراً متباعداً بخطوة vocab_size. التكلفة: transpose واحد عند البدء.
             الفائدة: كل خطوة inference تعمل memcpy بدل gather.
         </p>
-
+        <!-- docs:footer start -->
         <footer>
-            <p>
-                ember ·
-                <a href="https://github.com/voidwest/ember">github.com/voidwest/ember</a>
-                · MIT license
-            </p>
-            <p style="margin-top: 0.3rem">
-                <a href="/ember/">writeup</a>
-                ·
-                <a href="/">voidwest</a>
-            </p>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
         </footer>
+        <!-- docs:footer end -->
 
     </body>
 </html>

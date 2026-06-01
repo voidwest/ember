@@ -13,6 +13,7 @@
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
+        <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
             <div class="nav-links">
@@ -22,6 +23,7 @@
             </div>
             <a class="nav-lang" href="/ember/index.ar.html">عربي</a>
         </nav>
+        <!-- docs:nav end -->
 
         <div class="back">
             <a href="/">← voidwest</a>
@@ -341,10 +343,7 @@
                 weights get a <span class="mono">.transpose()</span> to restore
                 <span class="mono">[in_features, out_features]</span> for matmul.
             </div>
-            <div
-                class="symptom"
-                style="margin-top: 0.6rem; color: var(--accent2)"
-            >
+            <div class="symptom verified">
                 verified fix: correlation with pytorch reference output went
                 from
                 <strong>0.004</strong> (effectively noise) to
@@ -382,10 +381,7 @@
                 afterward in <span class="mono">Gpt2::forward_with_cache</span>, that part
                 was already correct.
             </div>
-            <div
-                class="symptom"
-                style="margin-top: 0.6rem; color: var(--accent2)"
-            >
+            <div class="symptom verified">
                 after fix: <span class="mono">"1, 2, 3, 4, 5"</span> →
                 <span class="mono">", 6, 7, 8, 9, 10, 11, 12,"</span>.
             </div>
@@ -570,16 +566,23 @@
         </p>
 
         <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
+        <!-- docs:footer start -->
         <footer>
-            <p>
-                ember ·
-                <a href="https://github.com/voidwest/ember">github.com/voidwest/ember</a>
-                · mit license
-            </p>
-            <p style="margin-top: 0.35rem">
-                written in rust. runs on cpu. no cuda. no pytorch. just tensors.
-                also a research tool — probe mode for activation extraction.
-            </p>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
         </footer>
+        <!-- docs:footer end -->
+
     </body>
 </html>

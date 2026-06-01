@@ -19,6 +19,7 @@
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
+        <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
@@ -28,6 +29,7 @@
             </div>
             <a class="nav-lang" href="/ember/">en</a>
         </nav>
+        <!-- docs:nav end -->
 
         <div class="back">
             <a href="/" class="ltr">← voidwest</a>
@@ -449,10 +451,7 @@
                 <span class="mono">[in_features, out_features]</span> للـ
                 matmul.
             </div>
-            <div
-                class="symptom"
-                style="margin-top: 0.6rem; color: var(--accent2)"
-            >
+            <div class="symptom verified">
                 التحقق: correlation مع مخرج PyTorch المرجعي انتقل من
                 <strong>0.004</strong> (عملياً تشويش) إلى
                 <strong>0.999975</strong>. commit واحد.
@@ -492,10 +491,7 @@
                 <span class="mono">Gpt2::forward_with_cache</span>، هذا الجزء
                 كان صحيح من البداية.
             </div>
-            <div
-                class="symptom"
-                style="margin-top: 0.6rem; color: var(--accent2)"
-            >
+            <div class="symptom verified">
                 بعد الإصلاح: <span class="mono">"1, 2, 3, 4, 5"</span> →
                 <span class="mono">", 6, 7, 8, 9, 10, 11, 12,"</span>.
             </div>
@@ -691,18 +687,23 @@
         </p>
 
         <!-- ═══════════════════════════ FOOTER ═══════════════════════════ -->
+        <!-- docs:footer start -->
         <footer>
-            <p>
-                ember ·
-                <a href="https://github.com/voidwest/ember"
-                    >github.com/voidwest/ember</a
-                >
-                · MIT license
-            </p>
-            <p style="margin-top: 0.35rem">
-                مكتوب بـ Rust. يعمل على المعالج. لا CUDA. لا PyTorch. فقط
-                tensors. أيضاً أداة بحثية — نمط probe لاستخراج الـ activations.
-            </p>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
         </footer>
+        <!-- docs:footer end -->
+
     </body>
 </html>

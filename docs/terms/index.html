@@ -13,6 +13,7 @@
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
+        <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
             <div class="nav-links">
@@ -22,6 +23,7 @@
             </div>
             <a class="nav-lang" href="/terms/index.ar.html">عربي</a>
         </nav>
+        <!-- docs:nav end -->
 
         <div class="back">
             <a href="/">← voidwest</a>
@@ -30,107 +32,125 @@
         <p>a glossary of terms used across the site, with brief explanations.</p>
         <hr>
 
-        <dl style="display: grid; grid-template-columns: 1fr; gap: 0.7rem; margin: 1.2rem 0;">
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">inference engine</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">The program that runs a model and produces text. It takes a prompt and returns tokens. ember is an example.</dd>
+        <dl class="terms-list">
+            <div>
+                <dt>inference engine</dt>
+                <dd>The program that runs a model and produces text. It takes a prompt and returns tokens. ember is an example.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">tokenizer</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Converts text to tokens (numbers) and back. The model doesn't read letters — it reads numbers. The tokenizer is the translator between them.</dd>
+            <div>
+                <dt>tokenizer</dt>
+                <dd>Converts text to tokens (numbers) and back. The model doesn't read letters — it reads numbers. The tokenizer is the translator between them.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">token</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A small text unit. Can be a full word, part of a word, or a single character. The model generates one token after another.</dd>
+            <div>
+                <dt>token</dt>
+                <dd>A small text unit. Can be a full word, part of a word, or a single character. The model generates one token after another.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">BPE (byte pair encoding)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A tokenization method that merges the most frequent character pairs. Builds a vocabulary from subword units. Used by GPT-2 and GPT-4.</dd>
+            <div>
+                <dt>BPE (byte pair encoding)</dt>
+                <dd>A tokenization method that merges the most frequent character pairs. Builds a vocabulary from subword units. Used by GPT-2 and GPT-4.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">embeddings</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Vectors (lists of numbers) that represent a word or token in a multi-dimensional space. Similar words end up with nearby vectors.</dd>
+            <div>
+                <dt>embeddings</dt>
+                <dd>Vectors (lists of numbers) that represent a word or token in a multi-dimensional space. Similar words end up with nearby vectors.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">transformer</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">The neural network architecture that powers GPT, LLaMA, and all modern LLMs. Built on attention instead of recurrence.</dd>
+            <div>
+                <dt>transformer</dt>
+                <dd>The neural network architecture that powers GPT, LLaMA, and all modern LLMs. Built on attention instead of recurrence.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">attention</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A mechanism that lets each token "attend" to other tokens and gather weighted information based on relevance. This is what links words together.</dd>
+            <div>
+                <dt>attention</dt>
+                <dd>A mechanism that lets each token "attend" to other tokens and gather weighted information based on relevance. This is what links words together.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">softmax</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A mathematical function that converts any set of numbers into a probability distribution (summing to 1). Used in attention and in picking the next token.</dd>
+            <div>
+                <dt>softmax</dt>
+                <dd>A mathematical function that converts any set of numbers into a probability distribution (summing to 1). Used in attention and in picking the next token.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">logits</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">The raw output from the model before conversion to probabilities. Unbounded numbers — high values mean the model is "confident" this token is correct.</dd>
+            <div>
+                <dt>logits</dt>
+                <dd>The raw output from the model before conversion to probabilities. Unbounded numbers — high values mean the model is "confident" this token is correct.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">temperature</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Controls the randomness of the output. Low values = predictable, repetitive output. High values = creative, varied output. Zero = deterministic (greedy).</dd>
+            <div>
+                <dt>temperature</dt>
+                <dd>Controls the randomness of the output. Low values = predictable, repetitive output. High values = creative, varied output. Zero = deterministic (greedy).</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">top-k sampling</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Randomly samples from the top k highest-probability tokens. Cuts off weak choices and keeps selection among the best candidates only.</dd>
+            <div>
+                <dt>top-k sampling</dt>
+                <dd>Randomly samples from the top k highest-probability tokens. Cuts off weak choices and keeps selection among the best candidates only.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">top-p (nucleus) sampling</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Samples from the smallest set of tokens whose cumulative probability exceeds p. Smarter than top-k because it adapts to the probability distribution.</dd>
+            <div>
+                <dt>top-p (nucleus) sampling</dt>
+                <dd>Samples from the smallest set of tokens whose cumulative probability exceeds p. Smarter than top-k because it adapts to the probability distribution.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">layer normalization</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Normalizes values inside the network to have mean zero and variance one. Prevents exploding and vanishing gradients during training.</dd>
+            <div>
+                <dt>layer normalization</dt>
+                <dd>Normalizes values inside the network to have mean zero and variance one. Prevents exploding and vanishing gradients during training.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">GELU</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">An activation function used in GPT-2. A smoother version of ReLU. Allows negative values to pass through partially instead of clipping to zero.</dd>
+            <div>
+                <dt>GELU</dt>
+                <dd>An activation function used in GPT-2. A smoother version of ReLU. Allows negative values to pass through partially instead of clipping to zero.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">RoPE (rotary position embeddings)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A method for encoding a token's position in the sequence by rotating its dimensions. Lets the model generalize to longer sequences than it was trained on. Used in LLaMA.</dd>
+            <div>
+                <dt>RoPE (rotary position embeddings)</dt>
+                <dd>A method for encoding a token's position in the sequence by rotating its dimensions. Lets the model generalize to longer sequences than it was trained on. Used in LLaMA.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">GQA (grouped-query attention)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">An attention optimization that reduces the number of key/value heads relative to query heads. Saves memory and improves speed with minimal quality impact.</dd>
+            <div>
+                <dt>GQA (grouped-query attention)</dt>
+                <dd>An attention optimization that reduces the number of key/value heads relative to query heads. Saves memory and improves speed with minimal quality impact.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">SwiGLU / SiLU</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Newer activation functions used in LLaMA. SiLU = x times sigmoid(x). SwiGLU = a gated version of SiLU.</dd>
+            <div>
+                <dt>SwiGLU / SiLU</dt>
+                <dd>Newer activation functions used in LLaMA. SiLU = x times sigmoid(x). SwiGLU = a gated version of SiLU.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">RMS norm</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A simplified version of layer normalization. Uses only the root mean square without centering. Faster and used in LLaMA.</dd>
+            <div>
+                <dt>RMS norm</dt>
+                <dd>A simplified version of layer normalization. Uses only the root mean square without centering. Faster and used in LLaMA.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">probing</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A research technique for understanding what a model learns internally. Trains a simple classifier on hidden states and checks whether it can predict a specific linguistic property.</dd>
+            <div>
+                <dt>probing</dt>
+                <dd>A research technique for understanding what a model learns internally. Trains a simple classifier on hidden states and checks whether it can predict a specific linguistic property.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">morphology (الصرف)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">The study of word structure. In Arabic: how a triliteral root (e.g. k-t-b) merges with patterns (e.g. faʿala, mafʿūl) to produce different words.</dd>
+            <div>
+                <dt>morphology (الصرف)</dt>
+                <dd>The study of word structure. In Arabic: how a triliteral root (e.g. k-t-b) merges with patterns (e.g. faʿala, mafʿūl) to produce different words.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">root-pattern (non-concatenative) system</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">The root-and-pattern system. The root (consonants) and pattern (vocalic templates) interleave instead of concatenating. Unlike English which glues prefix + stem + suffix in sequence.</dd>
+            <div>
+                <dt>root-pattern (non-concatenative) system</dt>
+                <dd>The root-and-pattern system. The root (consonants) and pattern (vocalic templates) interleave instead of concatenating. Unlike English which glues prefix + stem + suffix in sequence.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">nonce roots</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">Novel (invented) roots that don't exist in the language. Used in experiments to distinguish between memorization (the model memorized the word) and generalization (the model learned the pattern).</dd>
+            <div>
+                <dt>nonce roots</dt>
+                <dd>Novel (invented) roots that don't exist in the language. Used in experiments to distinguish between memorization (the model memorized the word) and generalization (the model learned the pattern).</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">clitic</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A small morpheme that attaches to a word. In Arabic: prepositions (bi-, li-, ka-) and attached pronouns (-hu, -hum). A grammatical element that clings phonologically to its host.</dd>
+            <div>
+                <dt>clitic</dt>
+                <dd>A small morpheme that attaches to a word. In Arabic: prepositions (bi-, li-, ka-) and attached pronouns (-hu, -hum). A grammatical element that clings phonologically to its host.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">finite-state transducer</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A mathematical machine that processes strings with rules. Fast and deterministic. Used by older NLP systems before neural networks.</dd>
+            <div>
+                <dt>finite-state transducer</dt>
+                <dd>A mathematical machine that processes strings with rules. Fast and deterministic. Used by older NLP systems before neural networks.</dd>
             </div>
-            <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.8rem 1rem;">
-                <dt style="color: var(--accent2); font-weight: 600;">RAG (retrieval-augmented generation)</dt>
-                <dd style="color: var(--text-dim); font-size: 0.84rem; margin-top: 0.25rem;">A technique that combines document retrieval with generation. The model searches a knowledge base before answering, instead of relying only on its internal memory.</dd>
+            <div>
+                <dt>RAG (retrieval-augmented generation)</dt>
+                <dd>A technique that combines document retrieval with generation. The model searches a knowledge base before answering, instead of relying only on its internal memory.</dd>
             </div>
         </dl>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
     </body>
 </html>

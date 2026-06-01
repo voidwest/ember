@@ -13,6 +13,7 @@
         <link rel="stylesheet" href="/style.css" />
     </head>
     <body>
+        <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
@@ -22,6 +23,7 @@
             </div>
             <a class="nav-lang" href="/research-notes/arabic-tokenization-system.html">en</a>
         </nav>
+        <!-- docs:nav end -->
 
         <div class="back">
             <a href="/" class="ltr">← voidwest</a>
@@ -66,9 +68,23 @@
         <p>الـ tokenizers العصبية استبدلت أغلب أنظمة finite-state اليدوية للعربي. لكن المشاكل الهيكلية ما تغيرت: تكديس clitics العربي للحين يخلي BPE tokenizers تقطع زيادة (boundary precision لـ GPT-4o كانت 17%)، ومعمارية guess-and-filter تستبق pipelines حديثة من مرحلتين (over-generate + rerank). آلية الكشيدة للحين تظهر في خطوط معالجة Arabic NLP.</p>
         <h3><bdi>the modularity lesson</bdi></h3>
         <p>أنظف فكرة من هالورقة مو خوارزمية محددة، بل الحجة إن الـ tokenization لازم يكون قابل للفصل عن التحليل الصرفي. الـ guesser يتعامل مع مشكلة السلسلة السطحية (وين حدود الـ clitic؟)؛ المحلل يتعامل مع المشكلة اللغوية (وش معنى هذا الجذر؟). دمجهم ينتج أنظمة تفشل على الكلمات غير المعروفة. هذا الدرس ما وصل بالكامل لـ neural NLP، حيث الـ tokenization مدمج في معماريات النماذج وما يتغير إلا بإعادة التدريب.</p>
+        <!-- docs:footer start -->
         <footer>
-            <a href="/research-notes/morphemes-without-borders.ar.html" class="ltr">morphemes without borders →</a>
-            &nbsp;·&nbsp; read 2026-05-15
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
         </footer>
+        <!-- docs:footer end -->
+
     </body>
 </html>

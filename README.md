@@ -259,6 +259,22 @@ and an in-memory gguf parser fixture. the model smoke test also runs a gpt-2
 forward pass when `gpt2.Q8_0.gguf` is present locally; otherwise it skips so ci
 does not need to download large model weights.
 
+### docs site
+
+The static site lives in `docs/`. Shared HTML fragments such as the top
+navigation and syntax-highlighting scripts are regenerated in-place:
+
+```bash
+python3 scripts/build_docs.py
+python3 scripts/check_docs.py
+```
+
+Run this after changing docs navigation, language-pair links, or code-block
+pages. The generated regions are marked with `docs:*` comments in each HTML
+file, while the visual system lives in `docs/style.css`. Optional visual
+snapshots can be captured with `python3 scripts/screenshot_docs.py` when
+Playwright is installed.
+
 ### llama models
 
 ember supports llama-compatible architectures via `--arch llama`. qwen-family

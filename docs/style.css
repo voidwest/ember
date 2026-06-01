@@ -20,10 +20,10 @@
     --red: #ff7b72;
     --yellow: #d29922;
     --prose: 74ch;
-    --prose-ar: 68ch;
-    --body-font: "Inter", "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --prose-ar: 74ch;
+    --body-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     --arabic-font: "IBM Plex Sans Arabic", "Readex Pro", "Noto Sans Arabic", "SF Arabic", "Segoe UI", Tahoma, sans-serif;
-    --mono-font: "Berkeley Mono", "JetBrains Mono", "Iosevka", "SF Mono", "Fira Code", ui-monospace, monospace;
+    --mono-font: "SF Mono", Consolas, "Liberation Mono", ui-monospace, monospace;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -47,8 +47,9 @@ body {
     direction: rtl;
     text-align: start;
     font-family: var(--arabic-font);
-    line-height: 1.9;
+    line-height: 1.84;
     max-inline-size: var(--prose-ar);
+    font-size: 1.02rem;
     letter-spacing: 0;
 }
 
@@ -321,6 +322,7 @@ hr {
     border-radius: 6px;
     padding-block: 1rem;
     padding-inline: 1.2rem;
+    position: relative;
 }
 .project:hover,
 .note-card:hover {
@@ -333,6 +335,18 @@ hr {
     font-size: 1rem;
 }
 .project .name a { color: var(--accent2); }
+.project .name a::after,
+.note-card .title a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: 6px;
+}
+.project a,
+.note-card a {
+    position: relative;
+    z-index: 1;
+}
 .project .desc {
     color: var(--text-dim);
     font-size: 0.86rem;
@@ -390,6 +404,7 @@ hr {
     border-radius: 6px;
     padding-block: 0.95rem;
     padding-inline: 1.1rem;
+    position: relative;
 }
 .note-card .title {
     font-size: 1rem;
@@ -411,6 +426,11 @@ hr {
     align-items: center;
     gap: 0.35rem;
     flex-wrap: wrap;
+}
+
+h1 + .meta {
+    margin-block-start: -0.55rem;
+    border-inline-start: 3px solid var(--accent);
 }
 
 .pipeline-block {
@@ -598,6 +618,10 @@ figcaption {
 .bug-card .symptom { color: var(--yellow); }
 .bug-card .cause { color: var(--text-dim); }
 .bug-card .fix { color: var(--green); }
+.bug-card .verified {
+    color: var(--accent2);
+    margin-block-start: 0.6rem;
+}
 .quote-block {
     padding-block: 1.2rem;
     padding-inline: 1.5rem;
@@ -678,6 +702,28 @@ figcaption {
     font-size: 0.92rem;
     margin-block: 1.2rem;
     color: var(--accent);
+}
+.terms-list {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.7rem;
+    margin-block: 1.2rem;
+}
+.terms-list > div {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding-block: 0.8rem;
+    padding-inline: 1rem;
+}
+.terms-list dt {
+    color: var(--accent2);
+    font-weight: 600;
+}
+.terms-list dd {
+    color: var(--text-dim);
+    font-size: 0.84rem;
+    margin-block-start: 0.25rem;
 }
 
 /* ── footer ─────────────────────────────────────────────── */
@@ -810,7 +856,7 @@ pre code.hljs {
         font-size: 0.94rem;
         line-height: 1.7;
     }
-    [dir="rtl"] body { line-height: 1.86; }
+    [dir="rtl"] body { font-size: 0.96rem; line-height: 1.78; }
     .site-nav {
         align-items: flex-start;
         gap: 0.7rem;
