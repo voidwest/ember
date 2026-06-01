@@ -58,6 +58,8 @@ def check_html(errors: list[str]) -> None:
             errors.append(f"{rel}: stale lang-toggle found")
         if "docs:nav start" not in text:
             errors.append(f"{rel}: missing generated nav marker")
+        if "docs:og-image start" not in text:
+            errors.append(f"{rel}: missing generated OG image marker")
         if "docs:footer start" not in text:
             errors.append(f"{rel}: missing generated footer marker")
         if ("<pre" in text) != ("highlight.min.js" in text):

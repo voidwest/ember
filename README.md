@@ -273,7 +273,11 @@ Run this after changing docs navigation, language-pair links, or code-block
 pages. The generated regions are marked with `docs:*` comments in each HTML
 file, while the visual system lives in `docs/style.css`. Optional visual
 snapshots can be captured with `python3 scripts/screenshot_docs.py` when
-Playwright is installed.
+Playwright is installed. Open Graph preview images can be regenerated with:
+
+```bash
+python3 scripts/generate_og_images.py
+```
 
 ### llama models
 

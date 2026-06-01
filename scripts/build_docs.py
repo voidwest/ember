@@ -19,6 +19,10 @@ MANAGED_HEAD_RE = re.compile(
     r"\n[ \t]*<!-- docs:head-scripts start -->.*?[ \t]*<!-- docs:head-scripts end -->\n?",
     re.DOTALL,
 )
+MANAGED_OG_RE = re.compile(
+    r"\n[ \t]*<!-- docs:og-image start -->.*?[ \t]*<!-- docs:og-image end -->\n?",
+    re.DOTALL,
+)
 MANAGED_NAV_RE = re.compile(
     r"\n[ \t]*<!-- docs:nav start -->.*?[ \t]*<!-- docs:nav end -->\n?",
     re.DOTALL,
@@ -38,6 +42,7 @@ LEGACY_HLJS_RE = re.compile(
 NAV_RE = re.compile(r"\n\s*<nav class=\"site-nav\"[\s\S]*?</nav>\s*", re.MULTILINE)
 FOOTER_RE = re.compile(r"\n\s*<footer>[\s\S]*?</footer>\s*", re.MULTILINE)
 HEAD_CLOSE_RE = re.compile(r"\n\s*</head>")
+STYLESHEET_RE = re.compile(r'(\n[ \t]*<link rel="stylesheet" href="/style\.css" />)')
 BODY_OPEN_RE = re.compile(r"(\n[ \t]*<body>)\s*\n")
 BODY_CLOSE_RE = re.compile(r"\n\s*</body>")
 
@@ -99,6 +104,33 @@ def localized_href(section: str, ar: bool) -> str:
         "terms": ("/terms/", "/terms/index.ar.html"),
     }
     return paths[section][1 if ar else 0]
+
+
+def og_slug_for(path: Path) -> str:
+    rel = path.relative_to(DOCS).as_posix()
+    if rel in {"index.html", "index.ar.html"}:
+        return "voidwest"
+    if rel.startswith("ember/simd-qwen-gemma/"):
+        return "simd-qwen-gemma"
+    if rel.startswith("ember/"):
+        return "ember"
+    if rel.startswith("research-notes/llama-probing-results"):
+        return "llama-probing-results"
+    if rel.startswith("research-notes/"):
+        return "research-notes"
+    return "voidwest"
+
+
+def og_image_html(path: Path) -> str:
+    url = f"https://voidwest.dev/og/{og_slug_for(path)}.png"
+    return f"""\
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="{url}" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="{url}" />
+        <!-- docs:og-image end -->
+"""
 
 
 def nav_html(path: Path, text: str) -> str:
@@ -166,6 +198,11 @@ def update_head_scripts(text: str) -> str:
     return HEAD_CLOSE_RE.sub("\n" + HEAD_SCRIPTS + "    </head>", text, count=1)
 
 
+def update_og_image(path: Path, text: str) -> str:
+    text = MANAGED_OG_RE.sub("\n", text)
+    return STYLESHEET_RE.sub(r"\1\n" + og_image_html(path).rstrip(), text, count=1)
+
+
 def update_nav(path: Path, text: str) -> str:
     text = MANAGED_NAV_RE.sub("\n", text)
     text = NAV_RE.sub("\n", text, count=1)
@@ -181,6 +218,7 @@ def update_footer(text: str) -> str:
 def update_file(path: Path) -> bool:
     old = path.read_text()
     new = update_head_scripts(old)
+    new = update_og_image(path, new)
     new = update_nav(path, new)
     new = update_footer(new)
     if new == old:
