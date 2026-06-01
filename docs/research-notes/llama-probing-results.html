@@ -11,131 +11,28 @@
         <meta name="twitter:card" content="summary_large_image" />
         <title>what LLaMA knows about Arabic morphology (and won't say) · research notes</title>
         <link rel="stylesheet" href="/style.css" />
-        <style>
-            /* ── chart images ────────────────────────────── */
-            .chart {
-                display: block;
-                max-inline-size: 100%;
-                block-size: auto;
-                margin-block: 1.2rem;
-                border-radius: 6px;
-                background: #0d1117;
-            }
-            .chart-full {
-                max-inline-size: 100%;
-            }
-
-            /* ── data tables ────────────────────────────── */
-            .data-table {
-                inline-size: 100%;
-                border-collapse: collapse;
-                margin-block: 1rem;
-                font-size: 0.82rem;
-                line-height: 1.5;
-            }
-            .data-table th {
-                text-align: start;
-                padding-block: 0.4rem;
-                padding-inline: 0.5rem;
-                border-block-end: 1px solid var(--border);
-                color: var(--text-dim);
-                font-weight: 600;
-                font-size: 0.76rem;
-                text-transform: uppercase;
-                letter-spacing: 0.03em;
-            }
-            .data-table td {
-                padding-block: 0.35rem;
-                padding-inline: 0.5rem;
-                border-block-end: 1px solid var(--border);
-                color: var(--text);
-                font-family: var(--mono-font);
-                font-size: 0.8rem;
-            }
-            .data-table tr:last-child td {
-                border-block-end: none;
-            }
-            .data-table .num {
-                text-align: end;
-                font-variant-numeric: tabular-nums;
-            }
-            .data-table .hi {
-                color: var(--accent);
-                font-weight: 600;
-            }
-
-            /* ── punchline ──────────────────────────────── */
-            .punchline {
-                text-align: center;
-                font-weight: 600;
-                font-size: 0.92rem;
-                margin-block: 1.2rem;
-                color: var(--accent);
-            }
-
-            /* ── comparison block ────────────────────────── */
-            .comparison {
-                display: grid;
-                grid-template-columns: 1fr 1fr 1fr;
-                gap: 0.8rem;
-                margin-block: 1rem;
-                font-size: 0.82rem;
-            }
-            @media (max-width: 700px) {
-                .comparison {
-                    grid-template-columns: 1fr;
-                }
-            }
-            .comparison .col {
-                background: var(--surface);
-                border: 1px solid var(--border);
-                border-radius: 5px;
-                padding: 0.8rem 0.9rem;
-            }
-            .comparison .col .name {
-                color: var(--accent2);
-                font-weight: 600;
-                margin-block-end: 0.5rem;
-                font-size: 0.88rem;
-            }
-            .comparison .col .stat {
-                display: flex;
-                justify-content: space-between;
-                padding-block: 0.18rem;
-                border-block-end: 1px solid var(--border);
-                font-size: 0.78rem;
-            }
-            .comparison .col .stat:last-child {
-                border-block-end: none;
-            }
-            .comparison .col .stat .label {
-                color: var(--text-dim);
-            }
-            .comparison .col .stat .value {
-                color: var(--text);
-                font-family: var(--mono-font);
-            }
-            .comparison .col .stat .bad {
-                color: var(--red);
-            }
-            .comparison .col .stat .good {
-                color: var(--green);
-            }
-        </style>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-    <script defer>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('pre code').forEach(function(el) {
-                hljs.highlightElement(el);
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
             });
-        });
-    </script>
+        </script>
 
-</head>
+    </head>
     <body>
-        <a href="/research-notes/llama-probing-results.ar.html" class="lang-toggle" title="العربية">عربي</a>
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <a class="nav-lang" href="/research-notes/llama-probing-results.ar.html">عربي</a>
+        </nav>
 
         <div class="back">
             <a href="/">← voidwest</a>

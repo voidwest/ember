@@ -11,50 +11,28 @@
         <meta name="twitter:card" content="summary" />
         <title>ember internals</title>
         <link rel="stylesheet" href="/style.css" />
-        <style>
-            .layout-block {
-                background: var(--surface);
-                border: 1px solid var(--border);
-                border-radius: 6px;
-                padding: 1rem 1.2rem;
-                margin: 0.9rem 0;
-                font-size: 0.8rem;
-                line-height: 1.65;
-                white-space: pre;
-                overflow-x: auto;
-                color: var(--text-dim);
-            }
-            table {
-                width: 100%;
-                border-collapse: collapse;
-                margin: 0.9rem 0;
-                display: block;
-                overflow-x: auto;
-                white-space: nowrap;
-                font-size: 0.83rem;
-            }
-            th, td { border: 1px solid var(--border); padding: 0.45rem 0.7rem; text-align: start; }
-            th { background: var(--surface); color: var(--accent2); }
-            td { color: var(--text); }
-
-            @media (max-width: 600px) {
-                .layout-block { font-size: 0.62rem; padding: 0.7rem 0.8rem; }
-            }
-        </style>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
-    <script defer>
-        document.addEventListener('DOMContentLoaded', function() {
-            document.querySelectorAll('pre code').forEach(function(el) {
-                hljs.highlightElement(el);
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
             });
-        });
-    </script>
+        </script>
 
-</head>
+    </head>
     <body>
-        <a href="/ember/internals/index.ar.html" class="lang-toggle" title="العربية">عربي</a>
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <a class="nav-lang" href="/ember/internals/index.ar.html">عربي</a>
+        </nav>
 
         <div class="back">
             <a href="/">← voidwest</a>
