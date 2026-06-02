@@ -115,24 +115,25 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
     )
 
 
-def make_probe(probe_kind: str):
+def make_probe(probe_kind: str, max_iter: int = 2000, scale: bool = True):
     """build the requested probe model."""
+    steps = []
+    if scale:
+        steps.append(StandardScaler())
     if probe_kind == "linear":
-        return make_pipeline(
-            StandardScaler(),
-            LogisticRegression(max_iter=300, solver="lbfgs"),
-        )
+        steps.append(LogisticRegression(max_iter=max_iter, solver="lbfgs"))
+        return make_pipeline(*steps)
     if probe_kind == "mlp":
-        return make_pipeline(
-            StandardScaler(),
+        steps.append(
             MLPClassifier(
                 hidden_layer_sizes=(64,),
                 activation="relu",
                 alpha=1e-3,
                 max_iter=500,
                 random_state=0,
-            ),
+            )
         )
+        return make_pipeline(*steps)
     raise ValueError(f"unknown probe kind: {probe_kind}")
 
 
@@ -143,6 +144,8 @@ def train_probes(
     groups=None,
     split_name="random",
     probe_kind="linear",
+    max_iter=2000,
+    scale=True,
 ):
     """train linear probes on each layer's activations.
 
@@ -167,14 +170,14 @@ def train_probes(
 
     for layer in range(n_layers):
         X = activations[:, layer, :]
-        probe = make_probe(probe_kind)
+        probe = make_probe(probe_kind, max_iter=max_iter, scale=scale)
         if splits is None:
             probe.fit(X, y)
             acc = probe.score(X, y)  # train accuracy (optimistic)
         else:
             scores = []
             for train_idx, test_idx in splits:
-                probe_clone = make_probe(probe_kind)
+                probe_clone = make_probe(probe_kind, max_iter=max_iter, scale=scale)
                 probe_clone.fit(X[train_idx], y[train_idx])
                 scores.append(probe_clone.score(X[test_idx], y[test_idx]))
             acc = np.mean(scores)
@@ -192,6 +195,8 @@ def run_control(
     groups=None,
     n_repeats=5,
     probe_kind="linear",
+    max_iter=2000,
+    scale=True,
 ):
     """run random-label control: shuffle labels, train probes, report accuracy.
 
@@ -215,6 +220,8 @@ def run_control(
             groups=groups,
             split_name="control",
             probe_kind=probe_kind,
+            max_iter=max_iter,
+            scale=scale,
         )
         all_acc[repeat] = acc
 
@@ -305,6 +312,25 @@ def main():
         help="probe model: linear logistic regression or one-hidden-layer MLP",
     )
     parser.add_argument(
+        "--max-iter",
+        type=int,
+        default=2000,
+        help="maximum iterations for linear logistic regression",
+    )
+    parser.add_argument(
+        "--scale",
+        dest="scale",
+        action="store_true",
+        default=True,
+        help="standardize activations before fitting probes",
+    )
+    parser.add_argument(
+        "--no-scale",
+        dest="scale",
+        action="store_false",
+        help="fit probes without StandardScaler",
+    )
+    parser.add_argument(
         "--tasks",
         nargs="+",
         default=["root", "pattern"],
@@ -361,6 +387,9 @@ def main():
     if args.group_field:
         print(f"group field: {args.group_field}")
     print(f"probe kind: {args.probe_kind}")
+    if args.probe_kind == "linear":
+        print(f"linear max_iter: {args.max_iter}")
+    print(f"scale activations: {args.scale}")
     if args.control:
         print(f"running random-label control ({args.control_repeats} repeats)")
 
@@ -379,6 +408,8 @@ def main():
             groups=groups,
             split_name=f"{task}-split={split}",
             probe_kind=args.probe_kind,
+            max_iter=args.max_iter,
+            scale=args.scale,
         )
         for i, layer_acc in enumerate(acc):
             print(f"  layer {i:2d}: {layer_acc:.3f}")
@@ -396,6 +427,8 @@ def main():
                 groups=groups,
                 n_repeats=args.control_repeats,
                 probe_kind=args.probe_kind,
+                max_iter=args.max_iter,
+                scale=args.scale,
             )
             chance = 1.0 / len(set(labels))
             selectivity = compute_selectivity(acc, control_mean, chance)

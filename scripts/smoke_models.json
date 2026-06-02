@@ -1,0 +1,28 @@
+{
+  "llama32_1b": {
+    "arch": "llama",
+    "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+    "tokenizer": "tokenizer.json"
+  },
+  "llama32_3b": {
+    "arch": "llama",
+    "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+    "tokenizer": "tokenizer.json"
+  },
+  "llama31_8b": {
+    "arch": "llama",
+    "model": "meta-llama-3.1-8b-instruct.Q8_0.gguf",
+    "tokenizer": "tokenizer.json"
+  },
+  "qwen3_06b": {
+    "arch": "qwen3",
+    "model": "Qwen3-0.6B-Q8_0.gguf",
+    "tokenizer": "tokenizer-qwen3.json"
+  },
+  "qwen25_15b": {
+    "arch": "qwen3",
+    "model": "qwen2.5-1.5b-instruct-q8_0.gguf",
+    "tokenizer": "tokenizer-qwen2.5.json",
+    "note": "experimental / may require qwen2.5-specific handling"
+  }
+}

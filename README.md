@@ -104,6 +104,36 @@ for deterministic, repeatable output. useful for screen recordings
 each prompt reports its completion, token counts, and per-phase timing.
 a summary table at the end shows aggregate throughput across all prompts.
 
+### smoke runs
+
+Use the smoke wrapper for local GGUF checks instead of hand-running
+`/usr/bin/time -v`. It records the command, model/tokenizer paths, arch, prompt,
+generated token count, commit hash, host, date, raw generation text, benchmark
+timing if parsed, and peak RSS under `logs/`.
+
+```bash
+python3 scripts/run_smoke.py --model qwen3_06b --tokens 32
+```
+
+Run every configured model that is available locally:
+
+```bash
+python3 scripts/run_smoke.py --all --tokens 32 --continue-on-fail
+```
+
+Inspect commands without running inference:
+
+```bash
+python3 scripts/run_smoke.py --all --dry-run
+```
+
+Smoke output is structural validation only. `smoke_pass` means the Ember command
+exited 0; `smoke_pass_with_generation_warning` means it exited 0 but a simple
+repetition heuristic flagged the raw generated text. It is not a quality
+benchmark. Quality validation requires golden-logit or reference checks against
+trusted implementations such as llama.cpp or Hugging Face for the exact model,
+tokenizer, prompt, and quantization path.
+
 ### interactive mode
 
 ```bash
@@ -327,6 +357,20 @@ python probes/check_golden_logits.py \
   --ember data/qwen3_france_logits.npy \
   --reference reference/qwen3_france_logits.npy
 ```
+
+Probe classifiers scale activations by default and use a higher logistic
+regression iteration limit to avoid premature convergence failures:
+
+```bash
+python3 probes/train_linear_probe.py \
+  --activations data/activations.npy \
+  --stimuli stimuli/nonce_root_pattern.json \
+  --max-iter 2000 \
+  --scale
+```
+
+Use `--no-scale` only when intentionally comparing against an unscaled probe
+baseline.
 
 ### gemma 4 text models
 
