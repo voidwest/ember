@@ -23,6 +23,12 @@
     "arch": "qwen3",
     "model": "qwen2.5-1.5b-instruct-q8_0.gguf",
     "tokenizer": "tokenizer-qwen2.5.json",
-    "note": "experimental / may require qwen2.5-specific handling"
+    "experimental": true,
+    "note": "experimental: currently routed through the qwen3 path",
+    "notes": [
+      "requires architecture/tokenizer validation",
+      "degenerate generation observed in smoke output"
+    ],
+    "generation_warning": "known experimental config: qwen2.5 through qwen3 path has shown degenerate smoke generation"
   }
 }

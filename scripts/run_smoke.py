@@ -100,6 +100,8 @@ def run_command(command):
 def parse_time_output(stderr):
     max_rss = None
     elapsed = None
+    prompt_tokens = None
+    decode_tokens = None
     prefill_tps = None
     decode_tps = None
 
@@ -111,15 +113,17 @@ def parse_time_output(stderr):
     if elapsed_match:
         elapsed = elapsed_match.group(1).strip()
 
-    prefill_match = re.search(r"prefill:\s+\d+ tokens in [\d.]+ms ->\s+([\d.]+) tok/s", stderr)
+    prefill_match = re.search(r"prefill:\s+(\d+) tokens in [\d.]+ms ->\s+([\d.]+) tok/s", stderr)
     if prefill_match:
-        prefill_tps = float(prefill_match.group(1))
+        prompt_tokens = int(prefill_match.group(1))
+        prefill_tps = float(prefill_match.group(2))
 
-    decode_match = re.search(r"decode:\s+\d+ tokens in [\d.]+ms ->\s+([\d.]+) tok/s", stderr)
+    decode_match = re.search(r"decode:\s+(\d+) tokens in [\d.]+ms ->\s+([\d.]+) tok/s", stderr)
     if decode_match:
-        decode_tps = float(decode_match.group(1))
+        decode_tokens = int(decode_match.group(1))
+        decode_tps = float(decode_match.group(2))
 
-    return max_rss, elapsed, prefill_tps, decode_tps
+    return max_rss, elapsed, prompt_tokens, decode_tokens, prefill_tps, decode_tps
 
 
 def generation_warning(text):
@@ -140,6 +144,19 @@ def generation_warning(text):
     return None
 
 
+def config_notes(entry):
+    notes = []
+    if entry.get("note"):
+        notes.append(entry["note"])
+    for note in entry.get("notes", []):
+        notes.append(note)
+    if entry.get("experimental"):
+        notes.append("experimental model config")
+    if entry.get("generation_warning"):
+        notes.append(entry["generation_warning"])
+    return notes
+
+
 def write_log(path, metadata, stdout, stderr):
     lines = [
         "# ember smoke run",
@@ -158,6 +175,8 @@ def write_log(path, metadata, stdout, stderr):
 
 def summarize_skip(label, entry, args, reason):
     now = datetime.now(timezone.utc).isoformat()
+    notes = config_notes(entry)
+    notes.append(reason)
     return {
         "label": label,
         "arch": entry.get("arch"),
@@ -168,11 +187,13 @@ def summarize_skip(label, entry, args, reason):
         "status": "smoke_skipped",
         "pass_fail": "skip",
         "generated_text": None,
+        "prompt_token_count": None,
+        "decode_token_count": None,
         "prefill_tps": None,
         "decode_tps": None,
         "max_rss_kb": None,
         "elapsed_time": None,
-        "notes": [reason],
+        "notes": notes,
         "generated_token_count": args.tokens,
         "commit_hash": git_commit(),
         "host": socket.gethostname(),
@@ -184,9 +205,7 @@ def run_one(label, entry, args, out_dir, commit):
     prompt = resolve_prompt(args)
     model_path = REPO_ROOT / entry["model"]
     tokenizer_path = REPO_ROOT / entry["tokenizer"]
-    notes = []
-    if entry.get("note"):
-        notes.append(entry["note"])
+    notes = config_notes(entry)
 
     missing = []
     if not model_path.exists():
@@ -246,6 +265,8 @@ def run_one(label, entry, args, out_dir, commit):
             "status": "dry_run",
             "pass_fail": "skip",
             "generated_text": None,
+            "prompt_token_count": None,
+            "decode_token_count": None,
             "prefill_tps": None,
             "decode_tps": None,
             "max_rss_kb": None,
@@ -257,20 +278,25 @@ def run_one(label, entry, args, out_dir, commit):
         return summary
 
     result = run_command(command)
-    max_rss, elapsed, prefill_tps, decode_tps = parse_time_output(result.stderr)
-    warning = generation_warning(result.stdout)
-    if warning:
+    max_rss, elapsed, prompt_tokens, decode_tokens, prefill_tps, decode_tps = parse_time_output(
+        result.stderr
+    )
+    warning = entry.get("generation_warning") or generation_warning(result.stdout)
+    if warning and warning not in notes:
         notes.append(warning)
+    output_exists = bool(result.stdout.strip())
 
-    if result.returncode == 0 and warning:
-        status = "smoke_pass_with_generation_warning"
+    if result.returncode == 0 and output_exists and warning:
+        status = "smoke_pass_generation_warning"
         pass_fail = "pass"
-    elif result.returncode == 0:
+    elif result.returncode == 0 and output_exists:
         status = "smoke_pass"
         pass_fail = "pass"
     else:
         status = "smoke_fail"
         pass_fail = "fail"
+        if result.returncode == 0 and not output_exists:
+            notes.append("missing generated output")
 
     summary = {
         **metadata,
@@ -278,6 +304,8 @@ def run_one(label, entry, args, out_dir, commit):
         "status": status,
         "pass_fail": pass_fail,
         "generated_text": result.stdout.strip(),
+        "prompt_token_count": prompt_tokens,
+        "decode_token_count": decode_tokens,
         "prefill_tps": prefill_tps,
         "decode_tps": decode_tps,
         "max_rss_kb": max_rss,

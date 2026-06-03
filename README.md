@@ -128,11 +128,72 @@ python3 scripts/run_smoke.py --all --dry-run
 ```
 
 Smoke output is structural validation only. `smoke_pass` means the Ember command
-exited 0; `smoke_pass_with_generation_warning` means it exited 0 but a simple
-repetition heuristic flagged the raw generated text. It is not a quality
-benchmark. Quality validation requires golden-logit or reference checks against
-trusted implementations such as llama.cpp or Hugging Face for the exact model,
-tokenizer, prompt, and quantization path.
+exited 0 and produced output; `smoke_pass_generation_warning` means it exited 0
+but a simple repetition heuristic, or a known experimental config marker, flagged
+the raw generated text. `smoke_fail` means the command returned nonzero or did
+not produce output. Smoke tests validate model loading, tokenization, generation
+execution, benchmark logging, and memory use. They are not quality benchmarks.
+
+Quality validation requires golden-logit or reference checks against trusted
+implementations for the exact model, tokenizer, prompt, and quantization path.
+TPS comparisons against llama.cpp require matched hardware, model, quantization,
+prompt length, decode length, thread settings, and repeated runs. Qwen2.5 is
+currently experimental in Ember: it is routed through the `qwen3` path, has shown
+degenerate smoke generation, and should not be treated as quality-compatible
+until reference checks pass.
+
+Build a Markdown benchmark table from existing smoke summaries:
+
+```bash
+python3 scripts/summarize_smokes.py --logs logs --output data/smoke_benchmark_table.md
+```
+
+### golden-logit validation
+
+Ember can dump the final-position logits for one prompt:
+
+```bash
+cargo run --release -- \
+  --arch llama \
+  --model Llama-3.2-1B-Instruct-Q8_0.gguf \
+  --tokenizer tokenizer.json \
+  --prompt "The capital of France is" \
+  --dump-logits data/golden/llama32_1b_ember_logits.npy
+
+cargo run --release -- \
+  --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" \
+  --dump-logits data/golden/qwen3_06b_ember_logits.npy
+```
+
+Compare Ember logits to a trusted `.npy` reference:
+
+```bash
+python3 probes/check_golden_logits.py \
+  --ember data/golden/qwen3_06b_ember_logits.npy \
+  --reference data/golden/qwen3_06b_reference_logits.npy \
+  --label qwen3_06b \
+  --tokenizer tokenizer-qwen3.json \
+  --top-k 10 \
+  --topk-overlap-threshold 0.8 \
+  --output data/golden/qwen3_06b_golden_report.json
+```
+
+The report classifies runs as `golden_pass`, `golden_warn`, or `golden_fail`
+using shape checks, top-1 agreement, top-k overlap, and any configured numerical
+thresholds (`--max-diff-threshold`, `--mean-diff-threshold`,
+`--topk-overlap-threshold`). Do not claim quality parity until these reports pass
+for the exact artifacts being compared.
+
+Reference logits can come from Hugging Face Transformers by loading the matching
+model/tokenizer, running the same prompt with no generation, taking
+`outputs.logits[:, -1, :]`, converting to `float32`, and saving with
+`numpy.save`. llama.cpp is also acceptable if a local, audited logit-dump command
+or patch is available for the same model and prompt. An exact llama.cpp logit
+dump command is pending in this repo; do not substitute normal generated text for
+golden-logit validation.
 
 ### interactive mode
 
@@ -330,7 +391,7 @@ dispatches through that same path while selecting qwen3 metadata keys.
 |--------------|-------|-----------|-------------|--------------------------|----------------|
 | gpt-2 | yes | yes | yes | not standard | no |
 | llama | yes | yes | yes | yes, local/cloud depending on size | no |
-| qwen2.5 | yes, via `--arch llama` | yes | yes | selected local runs | no |
+| qwen2.5 | experimental, currently via `--arch qwen3` | warning-prone | selected smoke runs | pending architecture/tokenizer validation | no |
 | qwen3 | yes, via `--arch qwen3` | yes | yes, 5-stimulus local smoke | yes, Qwen3 0.6B local run | no |
 | gemma4 | experimental | experimental | one-stimulus local smoke | pending | no |
 
@@ -355,7 +416,8 @@ Compare against trusted reference logits with:
 ```bash
 python probes/check_golden_logits.py \
   --ember data/qwen3_france_logits.npy \
-  --reference reference/qwen3_france_logits.npy
+  --reference reference/qwen3_france_logits.npy \
+  --output data/qwen3_france_golden_report.json
 ```
 
 Probe classifiers scale activations by default and use a higher logistic
