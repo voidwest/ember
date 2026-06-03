@@ -72,6 +72,59 @@ def git_commit():
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def parse_int(value):
+    if value is None:
+        return None
+    match = re.search(r"\d+", value.replace(",", ""))
+    return int(match.group(0)) if match else None
+
+
+def machine_info():
+    info = {
+        "host": socket.gethostname(),
+        "architecture": None,
+        "cpu_model": None,
+        "cpu_cores": None,
+        "cpu_threads": None,
+    }
+    result = subprocess.run(
+        ["lscpu"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode != 0:
+        return info
+
+    values = {}
+    for line in result.stdout.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        values[key.strip()] = value.strip()
+
+    threads_per_core = parse_int(values.get("Thread(s) per core"))
+    cores_per_socket = parse_int(values.get("Core(s) per socket"))
+    sockets = parse_int(values.get("Socket(s)"))
+    cpu_threads = parse_int(values.get("CPU(s)"))
+    cpu_cores = None
+    if cores_per_socket is not None and sockets is not None:
+        cpu_cores = cores_per_socket * sockets
+    elif cpu_threads is not None and threads_per_core:
+        cpu_cores = cpu_threads // threads_per_core
+
+    info.update(
+        {
+            "architecture": values.get("Architecture"),
+            "cpu_model": values.get("Model name"),
+            "cpu_cores": cpu_cores,
+            "cpu_threads": cpu_threads,
+        }
+    )
+    return info
+
+
 def ember_base_command():
     binary = REPO_ROOT / "target" / "release" / "ember"
     if binary.exists():
@@ -173,7 +226,7 @@ def write_log(path, metadata, stdout, stderr):
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def summarize_skip(label, entry, args, reason):
+def summarize_skip(label, entry, args, reason, machine):
     now = datetime.now(timezone.utc).isoformat()
     notes = config_notes(entry)
     notes.append(reason)
@@ -196,12 +249,13 @@ def summarize_skip(label, entry, args, reason):
         "notes": notes,
         "generated_token_count": args.tokens,
         "commit_hash": git_commit(),
-        "host": socket.gethostname(),
+        "host": machine["host"],
+        "machine": machine,
         "date": now,
     }
 
 
-def run_one(label, entry, args, out_dir, commit):
+def run_one(label, entry, args, out_dir, commit, machine):
     prompt = resolve_prompt(args)
     model_path = REPO_ROOT / entry["model"]
     tokenizer_path = REPO_ROOT / entry["tokenizer"]
@@ -213,7 +267,7 @@ def run_one(label, entry, args, out_dir, commit):
     if not tokenizer_path.exists():
         missing.append(f"missing tokenizer file: {entry['tokenizer']}")
     if missing:
-        summary = summarize_skip(label, entry, args, "; ".join(missing))
+        summary = summarize_skip(label, entry, args, "; ".join(missing), machine)
         if args.model:
             summary["status"] = "smoke_fail"
             summary["pass_fail"] = "fail"
@@ -251,7 +305,8 @@ def run_one(label, entry, args, out_dir, commit):
         "ember_command": ember_command_string,
         "generated_token_count": args.tokens,
         "commit_hash": commit,
-        "host": socket.gethostname(),
+        "host": machine["host"],
+        "machine": machine,
         "date": now.isoformat(),
         "prompt": prompt,
         "raw_smoke_output_note": "generation text is raw smoke output, not quality validation",
@@ -330,11 +385,12 @@ def main():
     out_dir = REPO_ROOT / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     commit = git_commit()
+    machine = machine_info()
 
     summaries = []
     failed = False
     for label in labels:
-        summary = run_one(label, config[label], args, out_dir, commit)
+        summary = run_one(label, config[label], args, out_dir, commit, machine)
         summaries.append(summary)
         print(f"{label}: {summary['status']}")
         if summary["pass_fail"] == "fail":
