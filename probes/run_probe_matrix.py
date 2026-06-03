@@ -6,6 +6,7 @@ reproducible without hiding the underlying commands.
 """
 
 import argparse
+import concurrent.futures
 import json
 import subprocess
 from datetime import datetime, timezone
@@ -32,6 +33,29 @@ def run(cmd: list[str], dry_run: bool, manifest: list[dict]):
         subprocess.run(cmd, check=True)
 
 
+def record(cmd: list[str], dry_run: bool, manifest: list[dict]):
+    print(" ".join(cmd))
+    manifest.append({"cmd": cmd, "dry_run": dry_run})
+
+
+def run_recorded_group(commands: list[list[str]]):
+    for cmd in commands:
+        subprocess.run(cmd, check=True)
+
+
+def run_recorded_groups(groups: list[list[list[str]]], dry_run: bool, jobs: int):
+    if dry_run:
+        return
+    if jobs <= 1 or len(groups) <= 1:
+        for group in groups:
+            run_recorded_group(group)
+        return
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
+        futures = [executor.submit(run_recorded_group, group) for group in groups]
+        for future in concurrent.futures.as_completed(futures):
+            future.result()
+
+
 def main():
     parser = argparse.ArgumentParser(description="run probe template/position matrix")
     parser.add_argument(
@@ -55,8 +79,16 @@ def main():
     parser.add_argument("--generate-tokens", type=int, default=16)
     parser.add_argument("--probe-kind", choices=["linear", "mlp"], default="linear")
     parser.add_argument("--control", action="store_true")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=1,
+        help="parallel analysis bundles after each model extraction (default: 1)",
+    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.jobs < 1:
+        raise ValueError("--jobs must be >= 1")
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -79,6 +111,7 @@ def main():
             extract_cmd.extend(["--tokenizer", args.tokenizer])
         run(extract_cmd, args.dry_run, manifest)
 
+        analysis_groups: list[list[list[str]]] = []
         for template in args.templates:
             for position in args.positions:
                 prefix = out_dir / f"{label}_{template}_{position}"
@@ -97,7 +130,8 @@ def main():
                 ]
                 if args.control:
                     probe_cmd.append("--control")
-                run(probe_cmd, args.dry_run, manifest)
+                group = [probe_cmd]
+                record(probe_cmd, args.dry_run, manifest)
 
                 cca_cmd = [
                     "python", "probes/cca_analysis.py",
@@ -106,34 +140,35 @@ def main():
                 ]
                 if args.probe_kind == "linear":
                     cca_cmd.extend(["--probes", probes])
-                run(cca_cmd, args.dry_run, manifest)
+                group.append(cca_cmd)
+                record(cca_cmd, args.dry_run, manifest)
 
-                run(
-                    [
-                        "python",
-                        "probes/rsa_analysis.py",
-                        "--activations",
-                        activations,
-                        "--output",
-                        rsa,
-                    ],
-                    args.dry_run,
-                    manifest,
-                )
-                run(
-                    [
-                        "python",
-                        "probes/divergence_analysis.py",
-                        "--activations",
-                        activations,
-                        "--correctness",
-                        activations.replace(".npy", "_correctness.json"),
-                        "--output",
-                        divergence,
-                    ],
-                    args.dry_run,
-                    manifest,
-                )
+                rsa_cmd = [
+                    "python",
+                    "probes/rsa_analysis.py",
+                    "--activations",
+                    activations,
+                    "--output",
+                    rsa,
+                ]
+                group.append(rsa_cmd)
+                record(rsa_cmd, args.dry_run, manifest)
+
+                divergence_cmd = [
+                    "python",
+                    "probes/divergence_analysis.py",
+                    "--activations",
+                    activations,
+                    "--correctness",
+                    activations.replace(".npy", "_correctness.json"),
+                    "--output",
+                    divergence,
+                ]
+                group.append(divergence_cmd)
+                record(divergence_cmd, args.dry_run, manifest)
+                analysis_groups.append(group)
+
+        run_recorded_groups(analysis_groups, args.dry_run, args.jobs)
 
     manifest_path = out_dir / "run_probe_matrix_manifest.json"
     manifest_path.write_text(
@@ -147,6 +182,7 @@ def main():
                 "positions": args.positions,
                 "generate_tokens": args.generate_tokens,
                 "probe_kind": args.probe_kind,
+                "jobs": args.jobs,
                 "commands": manifest,
             },
             indent=2,

@@ -1,5 +1,5 @@
 use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, Module};
-use crate::model::{ForwardModel, Linear};
+use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
 
@@ -621,6 +621,15 @@ impl<B: Backend> ForwardModel<B> for Llama<B> {
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         Llama::forward_with_activations(self, backend, token_ids)
     }
+
+    fn forward_pooled_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        Llama::forward_pooled_activations(self, backend, token_ids, token_index_groups)
+    }
 }
 
 impl Llama<CpuBackend> {
@@ -880,6 +889,44 @@ impl<B: Backend> Llama<B> {
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &x)?;
         Ok((activations, logits))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn forward_pooled_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let seq_len = token_ids.len();
+        let embed_dim = self.config.embed_dim;
+        let mut pooled = token_index_groups
+            .iter()
+            .map(|_| vec![0.0f32; self.blocks.len() * embed_dim])
+            .collect::<Vec<_>>();
+
+        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
+        for (i, &tok) in token_ids.iter().enumerate() {
+            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
+            backend.assign_row(&mut x, i, &word_vec);
+        }
+
+        for (li, block) in self.blocks.iter().enumerate() {
+            x = block.forward(backend, &x)?;
+            let data = backend.data(&x);
+            for (gi, token_indices) in token_index_groups.iter().enumerate() {
+                let offset = li * embed_dim;
+                pool_layer_activation(
+                    data,
+                    token_indices,
+                    embed_dim,
+                    &mut pooled[gi][offset..offset + embed_dim],
+                );
+            }
+        }
+        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &x)?;
+        Ok((pooled, logits))
     }
 }
 

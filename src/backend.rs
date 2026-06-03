@@ -1,8 +1,11 @@
 use crate::quant::QuantizedWeight;
 use crate::tensor::{CpuTensor, TensorError};
+use rayon::prelude::*;
 use std::cell::RefCell;
 
 const Q8_0_PREFILL_BLOCK_SIZE: usize = 256;
+const PARALLEL_ATTENTION_MIN_HEADS: usize = 4;
+const PARALLEL_ATTENTION_MIN_WORK: usize = 32_768;
 
 thread_local! {
     static Q8_0_PREFILL_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
@@ -282,6 +285,53 @@ impl Backend for CpuBackend {
         let q_data = q.data();
         let k_data = k.data();
         let v_data = v.data();
+
+        if should_parallel_attention(spec.n_heads, seq_len, seq_len, spec.head_dim) {
+            let heads = (0..spec.n_heads)
+                .into_par_iter()
+                .map(|h| {
+                    let q_head_offset = h * spec.head_dim;
+                    let kv_h = h / n_repeat;
+                    let kv_head_offset = kv_h * spec.head_dim;
+                    let mut head_out = vec![0.0f32; seq_len * spec.head_dim];
+                    let mut qk_row = vec![f32::NEG_INFINITY; seq_len];
+
+                    for i in 0..seq_len {
+                        qk_row.fill(f32::NEG_INFINITY);
+                        let q_idx = i * embed_dim + q_head_offset;
+
+                        for (j, slot) in qk_row.iter_mut().enumerate().take(i + 1) {
+                            let k_idx = j * kv_dim + kv_head_offset;
+                            let dot = crate::simd::dot_product(
+                                &q_data[q_idx..q_idx + spec.head_dim],
+                                &k_data[k_idx..k_idx + spec.head_dim],
+                            );
+                            *slot = dot * scale;
+                        }
+
+                        softmax_prefix(&mut qk_row, i + 1);
+
+                        let head_offset = i * spec.head_dim;
+                        for (j, &weight) in qk_row.iter().enumerate().take(i + 1) {
+                            if weight == 0.0 {
+                                continue;
+                            }
+                            let v_offset = j * kv_dim + kv_head_offset;
+                            crate::simd::weighted_add(
+                                &mut head_out[head_offset..head_offset + spec.head_dim],
+                                &v_data[v_offset..v_offset + spec.head_dim],
+                                weight,
+                            );
+                        }
+                    }
+                    (h, head_out)
+                })
+                .collect::<Vec<_>>();
+            let mut out = vec![0.0f32; seq_len * embed_dim];
+            scatter_attention_heads(&heads, seq_len, embed_dim, spec.head_dim, &mut out);
+            return Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out));
+        }
+
         let mut out = vec![0.0f32; seq_len * embed_dim];
         let mut qk_row = vec![f32::NEG_INFINITY; seq_len];
 
@@ -296,11 +346,10 @@ impl Backend for CpuBackend {
 
                 for (j, slot) in qk_row.iter_mut().enumerate().take(i + 1) {
                     let k_idx = j * kv_dim + kv_head_offset;
-                    let dot: f32 = q_data[q_idx..q_idx + spec.head_dim]
-                        .iter()
-                        .zip(k_data[k_idx..k_idx + spec.head_dim].iter())
-                        .map(|(a, b)| a * b)
-                        .sum();
+                    let dot = crate::simd::dot_product(
+                        &q_data[q_idx..q_idx + spec.head_dim],
+                        &k_data[k_idx..k_idx + spec.head_dim],
+                    );
                     *slot = dot * scale;
                 }
 
@@ -312,9 +361,11 @@ impl Backend for CpuBackend {
                         continue;
                     }
                     let v_offset = j * kv_dim + kv_head_offset;
-                    for d in 0..spec.head_dim {
-                        out[out_offset + d] += weight * v_data[v_offset + d];
-                    }
+                    crate::simd::weighted_add(
+                        &mut out[out_offset..out_offset + spec.head_dim],
+                        &v_data[v_offset..v_offset + spec.head_dim],
+                        weight,
+                    );
                 }
             }
         }
@@ -378,6 +429,54 @@ impl Backend for CpuBackend {
         let scale = (spec.head_dim as f32).sqrt().recip();
         let q_data = q.data();
         let cache_head_stride = spec.max_seq_len * spec.head_dim;
+
+        if should_parallel_attention(spec.n_heads, seq_len, spec.total_seq_len, spec.head_dim) {
+            let heads = (0..spec.n_heads)
+                .into_par_iter()
+                .map(|h| {
+                    let q_head_offset = h * spec.head_dim;
+                    let kv_h = h / n_repeat;
+                    let mut head_out = vec![0.0f32; seq_len * spec.head_dim];
+                    let mut qk_row = Vec::with_capacity(spec.total_seq_len);
+
+                    for i in 0..seq_len {
+                        let max_j = spec.total_seq_len - seq_len + i;
+                        qk_row.clear();
+                        qk_row.resize(spec.total_seq_len, f32::NEG_INFINITY);
+                        let q_idx = i * embed_dim + q_head_offset;
+
+                        for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
+                            let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                            let dot = crate::simd::dot_product(
+                                &q_data[q_idx..q_idx + spec.head_dim],
+                                &cached_k[k_offset..k_offset + spec.head_dim],
+                            );
+                            *slot = dot * scale;
+                        }
+
+                        softmax_prefix(qk_row.as_mut_slice(), max_j + 1);
+
+                        let head_offset = i * spec.head_dim;
+                        for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
+                            if weight == 0.0 {
+                                continue;
+                            }
+                            let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                            crate::simd::weighted_add(
+                                &mut head_out[head_offset..head_offset + spec.head_dim],
+                                &cached_v[v_offset..v_offset + spec.head_dim],
+                                weight,
+                            );
+                        }
+                    }
+                    (h, head_out)
+                })
+                .collect::<Vec<_>>();
+            let mut out = vec![0.0f32; seq_len * embed_dim];
+            scatter_attention_heads(&heads, seq_len, embed_dim, spec.head_dim, &mut out);
+            return Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out));
+        }
+
         let mut out = vec![0.0f32; seq_len * embed_dim];
         if qk_row.capacity() < spec.max_seq_len {
             qk_row.reserve(spec.max_seq_len - qk_row.capacity());
@@ -564,5 +663,37 @@ fn softmax_prefix(row: &mut [f32], len: usize) {
     let inv_sum = sum.recip();
     for slot in row.iter_mut().take(len) {
         *slot *= inv_sum;
+    }
+}
+
+fn should_parallel_attention(
+    n_heads: usize,
+    seq_len: usize,
+    total_seq_len: usize,
+    head_dim: usize,
+) -> bool {
+    n_heads >= PARALLEL_ATTENTION_MIN_HEADS
+        && rayon::current_num_threads() > 1
+        && n_heads
+            .saturating_mul(seq_len)
+            .saturating_mul(total_seq_len)
+            .saturating_mul(head_dim)
+            >= PARALLEL_ATTENTION_MIN_WORK
+}
+
+fn scatter_attention_heads(
+    heads: &[(usize, Vec<f32>)],
+    seq_len: usize,
+    embed_dim: usize,
+    head_dim: usize,
+    out: &mut [f32],
+) {
+    for (h, head_out) in heads {
+        let q_head_offset = h * head_dim;
+        for i in 0..seq_len {
+            let dst = i * embed_dim + q_head_offset;
+            let src = i * head_dim;
+            out[dst..dst + head_dim].copy_from_slice(&head_out[src..src + head_dim]);
+        }
     }
 }

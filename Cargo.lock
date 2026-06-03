@@ -282,6 +282,7 @@ dependencies = [
  "matrixmultiply",
  "memmap2",
  "rand",
+ "rayon",
  "serde",
  "serde_json",
  "thiserror",

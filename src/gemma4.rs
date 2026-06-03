@@ -1,7 +1,7 @@
 use crate::backend::{Backend, CpuBackend};
 use crate::kv_cache::KVCache;
 use crate::loader::{GgufLoader, GgufValue, LoadedTensor};
-use crate::model::{ForwardModel, Linear};
+use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::tensor::{compute_rope_freqs, CpuTensor};
 use alloc::vec::Vec;
 use std::sync::Arc;
@@ -584,6 +584,15 @@ impl<B: Backend> ForwardModel<B> for Gemma4<B> {
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         Gemma4::forward_with_activations(self, backend, token_ids)
     }
+
+    fn forward_pooled_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        Gemma4::forward_pooled_activations(self, backend, token_ids, token_index_groups)
+    }
 }
 
 impl Gemma4<CpuBackend> {
@@ -881,6 +890,51 @@ impl<B: Backend> Gemma4<B> {
         ))
     }
 
+    #[allow(clippy::type_complexity)]
+    pub fn forward_pooled_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let embed_dim = self.config.embed_dim;
+        let mut pooled = token_index_groups
+            .iter()
+            .map(|_| vec![0.0f32; self.blocks.len() * embed_dim])
+            .collect::<Vec<_>>();
+        let mut x = embed_tokens(
+            backend,
+            &self.embed_tokens,
+            token_ids,
+            self.config.embed_dim,
+        )?;
+        let ple = self.ple_vectors(backend, token_ids)?;
+        let mut cache = self.create_cache(backend, token_ids.len());
+        for (li, block) in self.blocks.iter().enumerate() {
+            let layer_ple = ple.as_ref().map(|v| &v[li]);
+            x = block.forward_with_cache(backend, &x, layer_ple, &mut cache, li, 0)?;
+            let data = backend.data(&x);
+            for (gi, token_indices) in token_index_groups.iter().enumerate() {
+                let offset = li * embed_dim;
+                pool_layer_activation(
+                    data,
+                    token_indices,
+                    embed_dim,
+                    &mut pooled[gi][offset..offset + embed_dim],
+                );
+            }
+        }
+        for _ in 0..token_ids.len() {
+            cache.advance_cursor();
+        }
+        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &x)?;
+        Ok((
+            pooled,
+            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
+        ))
+    }
+
     fn ple_vectors(
         &self,
         backend: &B,
@@ -1113,9 +1167,11 @@ fn full_attention<B: Backend>(
                     continue;
                 }
                 let v_idx = j * kv_width + kv_head;
-                for d in 0..spec.head_dim {
-                    out[out_idx + d] += weight * v_data[v_idx + d];
-                }
+                crate::simd::weighted_add(
+                    &mut out[out_idx..out_idx + spec.head_dim],
+                    &v_data[v_idx..v_idx + spec.head_dim],
+                    weight,
+                );
             }
         }
     }
@@ -1177,9 +1233,11 @@ fn cached_attention_with_scratch<B: Backend>(
                     continue;
                 }
                 let v_idx = kv_h * cache_head_stride + j * spec.cache_head_dim;
-                for d in 0..spec.head_dim {
-                    out[out_idx + d] += weight * cached_v[v_idx + d];
-                }
+                crate::simd::weighted_add(
+                    &mut out[out_idx..out_idx + spec.head_dim],
+                    &cached_v[v_idx..v_idx + spec.head_dim],
+                    weight,
+                );
             }
         }
     }
@@ -1187,7 +1245,7 @@ fn cached_attention_with_scratch<B: Backend>(
 }
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b).map(|(x, y)| x * y).sum()
+    crate::simd::dot_product(a, b)
 }
 
 fn softmax_range(row: &mut [f32], start: usize, end: usize) {

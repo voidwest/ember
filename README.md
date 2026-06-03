@@ -148,6 +148,24 @@ Build a Markdown benchmark table from existing smoke summaries:
 python3 scripts/summarize_smokes.py --logs logs --output data/smoke_benchmark_table.md
 ```
 
+Benchmark decode throughput across Rayon thread counts:
+
+```bash
+python3 scripts/benchmark_threads.py \
+  --model qwen3_06b:Qwen3-0.6B-Q8_0.gguf \
+  --arch qwen3 \
+  --tokenizer tokenizer-qwen3.json \
+  --max-seq-len 128 \
+  --threads 1,2,4,8 \
+  --tokens 16 \
+  --output data/thread_benchmarks.json
+```
+
+The script sets `RAYON_NUM_THREADS` for each run and parses Ember's
+`--benchmark` output. This is the preferred way to compare the parallel
+attention and q8 decode paths because small prompts and large vocab-head
+projections scale differently.
+
 ### golden-logit validation
 
 Ember can dump the final-position logits for one prompt:
@@ -233,6 +251,15 @@ cargo run --release -- \
   --probe-generate-tokens 1
 ```
 
+when several positions are requested for the same template, extraction groups
+them together. the prompt is tokenized once, the model forward pass runs once,
+and pooled outputs are written separately for each requested position. this
+keeps the existing file layout (`*_last_activations.npy`,
+`*_root_activations.npy`, etc.) while avoiding redundant forwards across
+`last`, `root`, `pattern`, and `prompt_mean`. probe extraction also pools
+hidden states during the forward pass, so it no longer stores full per-layer
+sequence activations just to average a selected token span.
+
 the matrix runner wraps that extraction and then runs probes, cca, rsa, and
 divergence for each emitted activation file:
 
@@ -241,9 +268,16 @@ python probes/run_probe_matrix.py \
   --model 1b:Llama-3.2-1B-Instruct-Q8_0.gguf \
   --templates en_zero en_one \
   --positions last root \
+  --jobs 2 \
   --generate-tokens 1 \
   --dry-run
 ```
+
+`--jobs` controls parallel post-extraction analysis bundles. each
+template/position bundle still runs its own probe -> CCA -> RSA -> divergence
+steps in order, but independent bundles can run concurrently after extraction
+finishes. extraction itself remains serial per model to avoid multiplying GGUF
+memory use.
 
 canonical smoke probe:
 
@@ -303,9 +337,11 @@ for hardening runs, `train_linear_probe.py --probe-kind mlp` tests whether
 features that drop under linear probing remain recoverable non-linearly, and
 `run_probe_matrix.py --dry-run` prints the full extraction/analysis command
 matrix for model, prompt-template, and probe-position ablations. the matrix
-runner uses batch probe extraction so each model is loaded once per matrix run.
-for local cpu runs, `--probe-generate-tokens 1` is the practical default for
-matrix sweeps; longer behavioral continuations should run on a larger machine.
+runner uses batch probe extraction so each model is loaded once per matrix run,
+and grouped extraction avoids rerunning the same template forward pass for
+multiple pooling positions. for local cpu runs, `--probe-generate-tokens 1` is
+the practical default for matrix sweeps; longer behavioral continuations should
+run on a larger machine.
 
 ### benchmark manifests
 
@@ -584,15 +620,47 @@ prevents the generation loop from producing NaNs on degenerate input.
 ## current limitations
 
 - attention math is abstracted behind the `Backend` trait, but the only
-  implementation today is scalar cpu code.
-- the lm head (128K output features) is the throughput bottleneck during
-  decode - each token does 501 sgemm calls for the lm head alone. batching
-  or a fused/deferred lm-head path is the next obvious optimization target.
+  implementation today is the cpu backend. it uses SIMD helpers for inner
+  dot/accumulate work and Rayon for larger per-head workloads; there is no gpu
+  backend yet.
+- the lm head (large vocab projection) is still the throughput bottleneck during
+  decode. a fused/deferred or top-k-aware lm-head path is the next obvious
+  optimization target.
 - model loader supports gpt-2, llama/qwen, and dense text-only gemma 4 ggufs
   through architecture-specific tensor names. demo and interactive modes are
   not yet wired for llama/qwen or gemma 4; single-prompt generation and probe
   mode work with those architectures.
 - not fully no_std - file i/o and mmap require std.
+
+## optimization notes
+
+the probe pipeline and CPU backend now have six CPU-friendly optimizations:
+
+- grouped extraction avoids redundant forwards across positions for the same
+  template.
+- pooled activation extraction writes only selected hidden-state spans instead
+  of storing full per-layer sequence activations.
+- `run_probe_matrix.py --jobs` parallelizes independent downstream analysis
+  bundles after extraction.
+- full and cached attention paths use the shared SIMD dot-product and
+  weighted-accumulate helpers where their head dimensions are contiguous.
+- large q8_0 single-row decode matmuls can split output rows across Rayon
+  workers, primarily targeting vocab-head-sized projections.
+- shared CPU attention can split independent heads across Rayon workers for
+  larger prefill/cached-attention workloads.
+
+the next useful optimization targets are:
+
+1. **lm-head specialization**: decode throughput is dominated by projecting the
+   final hidden state to a large vocabulary. a fused, top-k-aware, or tiled
+   lm-head path is likely higher impact than parallelizing small element-wise
+   ops.
+2. **richer thread-count benchmarks**: run `scripts/benchmark_threads.py` across
+   Qwen3 0.6B, LLaMA 1B, Gemma 4, and selected 3B slices, then use the results
+   to tune the parallelism thresholds.
+3. **persistent scratch for parallel attention**: the parallel attention path
+   currently allocates per-head scratch/output buffers. a small worker-local
+   scratch pool could reduce allocation overhead on repeated decode steps.
 
 ## license
 

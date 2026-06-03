@@ -46,6 +46,60 @@ pub trait ForwardModel<B: Backend> {
         backend: &B,
         token_ids: &[u32],
     ) -> Result<(alloc::vec::Vec<alloc::vec::Vec<f32>>, B::Tensor), B::Error>;
+
+    /// run forward pass and collect pooled hidden states after each block.
+    ///
+    /// `token_index_groups` contains one or more token-index sets to pool from
+    /// each layer. The returned vector has one flat `[n_layers * embed_dim]`
+    /// buffer per group. Implementations can override this to avoid storing
+    /// full sequence activations.
+    #[allow(clippy::type_complexity)]
+    fn forward_pooled_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[alloc::vec::Vec<usize>],
+    ) -> Result<(alloc::vec::Vec<alloc::vec::Vec<f32>>, B::Tensor), B::Error> {
+        let (layer_states, logits) = self.forward_with_activations(backend, token_ids)?;
+        let embed_dim = self.embed_dim();
+        let n_layers = self.n_layers();
+        let mut pooled = token_index_groups
+            .iter()
+            .map(|_| alloc::vec![0.0f32; n_layers * embed_dim])
+            .collect::<alloc::vec::Vec<_>>();
+        for (li, state) in layer_states.iter().enumerate() {
+            for (gi, token_indices) in token_index_groups.iter().enumerate() {
+                let offset = li * embed_dim;
+                pool_layer_activation(
+                    state,
+                    token_indices,
+                    embed_dim,
+                    &mut pooled[gi][offset..offset + embed_dim],
+                );
+            }
+        }
+        Ok((pooled, logits))
+    }
+}
+
+pub fn pool_layer_activation(
+    layer_state: &[f32],
+    token_indices: &[usize],
+    embed_dim: usize,
+    out: &mut [f32],
+) {
+    debug_assert_eq!(out.len(), embed_dim);
+    out.fill(0.0);
+    for &token_index in token_indices {
+        let row_start = token_index * embed_dim;
+        for (j, value) in out.iter_mut().enumerate() {
+            *value += layer_state[row_start + j];
+        }
+    }
+    let scale = 1.0 / token_indices.len() as f32;
+    for value in out {
+        *value *= scale;
+    }
 }
 
 /// the kind of weight backing a `Linear` layer.
@@ -491,6 +545,15 @@ impl<B: Backend> ForwardModel<B> for Gpt2<B> {
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         Gpt2::forward_with_activations(self, backend, token_ids)
     }
+
+    fn forward_pooled_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        Gpt2::forward_pooled_activations(self, backend, token_ids, token_index_groups)
+    }
 }
 
 impl<B: Backend> Gpt2<B> {
@@ -628,5 +691,38 @@ impl<B: Backend> Gpt2<B> {
         let x = self.ln_f.forward(backend, &x)?;
         let logits = self.head.forward(backend, &x)?;
         Ok((activations, logits))
+    }
+
+    #[allow(clippy::type_complexity)]
+    pub fn forward_pooled_activations(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let n_layers = self.blocks.len();
+        let embed_dim = self.embed_dim;
+        let mut pooled = token_index_groups
+            .iter()
+            .map(|_| vec![0.0f32; n_layers * embed_dim])
+            .collect::<Vec<_>>();
+
+        let mut x = self.embed(backend, token_ids)?;
+        for (li, block) in self.blocks.iter().enumerate() {
+            x = block.forward(backend, &x)?;
+            let data = backend.data(&x);
+            for (gi, token_indices) in token_index_groups.iter().enumerate() {
+                let offset = li * embed_dim;
+                pool_layer_activation(
+                    data,
+                    token_indices,
+                    embed_dim,
+                    &mut pooled[gi][offset..offset + embed_dim],
+                );
+            }
+        }
+        let x = self.ln_f.forward(backend, &x)?;
+        let logits = self.head.forward(backend, &x)?;
+        Ok((pooled, logits))
     }
 }

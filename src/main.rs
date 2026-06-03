@@ -1069,11 +1069,21 @@ enum ProbePosition {
     PromptMean,
 }
 
-struct ProbeConfig<'a> {
-    stimuli_path: &'a str,
-    output_path: &'a str,
-    template: &'a str,
+struct ProbeJob {
+    template: String,
     position: ProbePosition,
+    output_path: String,
+}
+
+struct ProbeOutput {
+    position: ProbePosition,
+    output_path: String,
+}
+
+struct ProbeGroupConfig<'a> {
+    stimuli_path: &'a str,
+    template: &'a str,
+    outputs: Vec<ProbeOutput>,
     generate_tokens: usize,
     limit: Option<usize>,
     context_limit: usize,
@@ -1081,12 +1091,6 @@ struct ProbeConfig<'a> {
     arch: &'a str,
     tokenizer_path: &'a str,
     run_metadata: &'a RunMetadata,
-}
-
-struct ProbeJob {
-    template: String,
-    position: ProbePosition,
-    output_path: String,
 }
 
 impl ProbePosition {
@@ -1202,24 +1206,48 @@ where
 {
     let jobs = build_probe_jobs(args)?;
     eprintln!("running {} probe extraction job(s)", jobs.len());
-    for (idx, job) in jobs.iter().enumerate() {
+
+    let mut grouped: Vec<(String, Vec<&ProbeJob>)> = Vec::new();
+    for job in &jobs {
+        if let Some((_, group_jobs)) = grouped
+            .iter_mut()
+            .find(|(template, _)| template == &job.template)
+        {
+            group_jobs.push(job);
+        } else {
+            grouped.push((job.template.clone(), vec![job]));
+        }
+    }
+
+    let total_groups = grouped.len();
+    for (group_idx, (template, group_jobs)) in grouped.into_iter().enumerate() {
+        let outputs = group_jobs
+            .iter()
+            .map(|job| ProbeOutput {
+                position: job.position,
+                output_path: job.output_path.clone(),
+            })
+            .collect::<Vec<_>>();
+        let positions = outputs
+            .iter()
+            .map(|output| output.position.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         eprintln!(
-            "\n=== probe job {}/{}: template={} position={} output={} ===",
-            idx + 1,
-            jobs.len(),
-            job.template,
-            job.position.as_str(),
-            job.output_path
+            "\n=== probe job group {}/{}: template={} positions={} ===",
+            group_idx + 1,
+            total_groups,
+            template,
+            positions
         );
-        probe_mode(
+        probe_group_mode(
             backend,
             model,
             tokenizer,
-            ProbeConfig {
+            ProbeGroupConfig {
                 stimuli_path: &args.probe_stimuli,
-                output_path: &job.output_path,
-                template: &job.template,
-                position: job.position,
+                template: &template,
+                outputs,
                 generate_tokens: args.probe_generate_tokens,
                 limit: args.probe_limit,
                 context_limit: effective_context_limit(backend, model, args),
@@ -1313,21 +1341,6 @@ fn select_probe_indices(
     }
 }
 
-fn pool_activation(layer_state: &[f32], token_indices: &[usize], embed_dim: usize) -> Vec<f32> {
-    let mut pooled = vec![0.0f32; embed_dim];
-    for &token_index in token_indices {
-        let row_start = token_index * embed_dim;
-        for (j, value) in pooled.iter_mut().enumerate() {
-            *value += layer_state[row_start + j];
-        }
-    }
-    let scale = 1.0 / token_indices.len() as f32;
-    for value in &mut pooled {
-        *value *= scale;
-    }
-    pooled
-}
-
 fn normalize_for_match(text: &str) -> String {
     text.trim()
         .trim_matches(|c: char| c.is_ascii_punctuation() || c.is_whitespace())
@@ -1394,19 +1407,23 @@ where
     Ok((generated, generated_text))
 }
 
-/// probe mode: feed each stimulus prompt through the model and
-/// collect pooled per-layer hidden states at the selected token position.
+/// probe mode: feed each stimulus prompt through the model and collect pooled
+/// per-layer hidden states for one or more selected token positions.
 ///
-/// writes a 3d .npy file: `(n_stimuli, n_layers, embed_dim)`.
-fn probe_mode<B: Backend>(
+/// Writes one 3d .npy file per requested position: `(n_stimuli, n_layers, embed_dim)`.
+fn probe_group_mode<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
-    config: ProbeConfig<'_>,
+    config: ProbeGroupConfig<'_>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
 {
+    if config.outputs.is_empty() {
+        anyhow::bail!("probe group has no outputs");
+    }
+
     // -- load stimuli ------------------------------------------
     let stimuli_json = fs::read_to_string(config.stimuli_path)
         .with_context(|| format!("failed to read stimuli file: {}", config.stimuli_path))?;
@@ -1426,16 +1443,29 @@ where
 
     let total_floats = stimuli.len() * n_layers * embed_dim;
     eprintln!(
-        "allocating activation buffer: {} floats ({:.1} MB)",
+        "allocating {} activation buffer(s): {} floats each ({:.1} MB each)",
+        config.outputs.len(),
         total_floats,
         total_floats as f64 * 4.0 / 1_048_576.0
     );
-    let mut activations: Vec<f32> = vec![0.0f32; total_floats];
+    let mut activation_buffers: Vec<Vec<f32>> = config
+        .outputs
+        .iter()
+        .map(|_| vec![0.0f32; total_floats])
+        .collect();
 
     // -- collect -----------------------------------------------
     let start = Instant::now();
-    let mut correctness: Vec<serde_json::Value> = Vec::with_capacity(stimuli.len());
-    let mut token_selections: Vec<serde_json::Value> = Vec::with_capacity(stimuli.len());
+    let mut correctness: Vec<Vec<serde_json::Value>> = config
+        .outputs
+        .iter()
+        .map(|_| Vec::with_capacity(stimuli.len()))
+        .collect();
+    let mut token_selections: Vec<Vec<serde_json::Value>> = config
+        .outputs
+        .iter()
+        .map(|_| Vec::with_capacity(stimuli.len()))
+        .collect();
 
     for (si, stimulus) in stimuli.iter().enumerate() {
         let prompt = stimulus["prompts"][config.template]
@@ -1458,9 +1488,15 @@ where
             continue;
         }
 
-        let probe_indices =
-            select_probe_indices(prompt, &token_ids, &offsets, stimulus, config.position)?;
-        let (layer_states, logits) = model.forward_with_activations(backend, &token_ids)?;
+        let probe_indices_by_output = config
+            .outputs
+            .iter()
+            .map(|output| {
+                select_probe_indices(prompt, &token_ids, &offsets, stimulus, output.position)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let (pooled_states, logits) =
+            model.forward_pooled_activations(backend, &token_ids, &probe_indices_by_output)?;
 
         // record correctness: argmax of logits at last position
         let logit_data = backend.data(&logits);
@@ -1494,43 +1530,53 @@ where
             .to_string();
         let (generated_exact_match, generated_contains_match) =
             match_generated_text(&generated_text, &expected);
-        correctness.push(serde_json::json!({
-            "index": si,
-            "root": stimulus["root"],
-            "pattern": stimulus["pattern"],
-            "expected": expected,
-            "predicted": predicted_text.trim().to_string(),
-            "predicted_id": predicted_id,
-            "next_token_predicted": predicted_text.trim().to_string(),
-            "next_token_id": predicted_id,
-            "generated": generated_text.trim().to_string(),
-            "generated_ids": generated_ids,
-            "generated_exact_match": generated_exact_match,
-            "generated_contains_match": generated_contains_match,
-            "correct": generated_exact_match || generated_contains_match,
-            "probe_template": config.template,
-            "probe_position": config.position.as_str(),
-            "probe_generate_tokens": config.generate_tokens,
-            "probe_token_indices": probe_indices,
-        }));
-        token_selections.push(serde_json::json!({
-            "index": si,
-            "token_count": token_ids.len(),
-            "probe_token_indices": probe_indices,
-        }));
 
-        for (li, state) in layer_states.iter().enumerate() {
-            if state.len() != token_ids.len() * embed_dim {
+        if pooled_states.len() != config.outputs.len() {
+            anyhow::bail!(
+                "pooled activation group mismatch: got {}, expected {}",
+                pooled_states.len(),
+                config.outputs.len()
+            );
+        }
+
+        for (oi, output) in config.outputs.iter().enumerate() {
+            let probe_indices = &probe_indices_by_output[oi];
+            if pooled_states[oi].len() != n_layers * embed_dim {
                 anyhow::bail!(
-                    "layer {} activation length mismatch: got {}, expected {}",
-                    li,
-                    state.len(),
-                    token_ids.len() * embed_dim
+                    "pooled activation length mismatch for {}: got {}, expected {}",
+                    output.position.as_str(),
+                    pooled_states[oi].len(),
+                    n_layers * embed_dim
                 );
             }
-            let pooled = pool_activation(state, &probe_indices, embed_dim);
-            let offset = (si * n_layers + li) * embed_dim;
-            activations[offset..offset + embed_dim].copy_from_slice(&pooled);
+            correctness[oi].push(serde_json::json!({
+                "index": si,
+                "root": stimulus["root"],
+                "pattern": stimulus["pattern"],
+                "expected": expected,
+                "predicted": predicted_text.trim().to_string(),
+                "predicted_id": predicted_id,
+                "next_token_predicted": predicted_text.trim().to_string(),
+                "next_token_id": predicted_id,
+                "generated": generated_text.trim().to_string(),
+                "generated_ids": generated_ids,
+                "generated_exact_match": generated_exact_match,
+                "generated_contains_match": generated_contains_match,
+                "correct": generated_exact_match || generated_contains_match,
+                "probe_template": config.template,
+                "probe_position": output.position.as_str(),
+                "probe_generate_tokens": config.generate_tokens,
+                "probe_token_indices": probe_indices,
+            }));
+            token_selections[oi].push(serde_json::json!({
+                "index": si,
+                "token_count": token_ids.len(),
+                "probe_token_indices": probe_indices,
+            }));
+
+            let offset = si * n_layers * embed_dim;
+            activation_buffers[oi][offset..offset + n_layers * embed_dim]
+                .copy_from_slice(&pooled_states[oi]);
         }
 
         if (si + 1) % 10 == 0 || si + 1 == stimuli.len() {
@@ -1545,58 +1591,71 @@ where
 
     // -- save --------------------------------------------------
     let shape = [stimuli.len(), n_layers, embed_dim];
-    write_npy(config.output_path, &activations, &shape)?;
-    eprintln!("saved activations to {}", config.output_path);
+    for (oi, output) in config.outputs.iter().enumerate() {
+        write_npy(&output.output_path, &activation_buffers[oi], &shape)?;
+        eprintln!("saved activations to {}", output.output_path);
 
-    let correct_count = correctness
-        .iter()
-        .filter(|c| {
-            c["correct"]
-                .as_bool()
-                .unwrap_or(c["predicted"] == c["expected"])
-        })
-        .count();
-    eprintln!(
-        "correctness: {}/{} ({:.1}%)",
-        correct_count,
-        correctness.len(),
-        correct_count as f64 / correctness.len() as f64 * 100.0
-    );
+        let correct_count = correctness[oi]
+            .iter()
+            .filter(|c| {
+                c["correct"]
+                    .as_bool()
+                    .unwrap_or(c["predicted"] == c["expected"])
+            })
+            .count();
+        let correctness_pct = if correctness[oi].is_empty() {
+            0.0
+        } else {
+            correct_count as f64 / correctness[oi].len() as f64 * 100.0
+        };
+        eprintln!(
+            "correctness [{}]: {}/{} ({:.1}%)",
+            output.position.as_str(),
+            correct_count,
+            correctness[oi].len(),
+            correctness_pct
+        );
 
-    // write correctness json alongside .npy
-    let correctness_path = config.output_path.replace(".npy", "_correctness.json");
-    fs::write(
-        &correctness_path,
-        serde_json::to_string_pretty(&correctness)?,
-    )?;
-    eprintln!("saved correctness to {}", correctness_path);
+        let correctness_path = output.output_path.replace(".npy", "_correctness.json");
+        fs::write(
+            &correctness_path,
+            serde_json::to_string_pretty(&correctness[oi])?,
+        )?;
+        eprintln!("saved correctness to {}", correctness_path);
 
-    let metadata = serde_json::json!({
-        "model_path": config.model_path,
-        "architecture": config.arch,
-        "tokenizer_path": config.tokenizer_path,
-        "model_file_size_bytes": config.run_metadata.model_file_size_bytes,
-        "model_sha256": config.run_metadata.model_sha256,
-        "gguf_metadata": config.run_metadata.gguf_metadata,
-        "stimuli_path": config.stimuli_path,
-        "output_path": config.output_path,
-        "probe_template": config.template,
-        "probe_position": config.position.as_str(),
-        "probe_generate_tokens": config.generate_tokens,
-        "probe_limit": config.limit,
-        "context_limit": config.context_limit,
-        "n_stimuli": stimuli.len(),
-        "n_layers": n_layers,
-        "embed_dim": embed_dim,
-        "activation_shape": shape,
-        "correctness_path": correctness_path,
-        "token_selections": token_selections,
-        "run_timestamp_unix": unix_timestamp(),
-        "git_commit": git_commit(),
-    });
-    let metadata_path = config.output_path.replace(".npy", "_metadata.json");
-    fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)?;
-    eprintln!("saved metadata to {}", metadata_path);
+        let metadata = serde_json::json!({
+            "model_path": config.model_path,
+            "architecture": config.arch,
+            "tokenizer_path": config.tokenizer_path,
+            "model_file_size_bytes": config.run_metadata.model_file_size_bytes,
+            "model_sha256": config.run_metadata.model_sha256,
+            "gguf_metadata": config.run_metadata.gguf_metadata,
+            "stimuli_path": config.stimuli_path,
+            "output_path": output.output_path,
+            "probe_template": config.template,
+            "probe_position": output.position.as_str(),
+            "probe_generate_tokens": config.generate_tokens,
+            "probe_limit": config.limit,
+            "context_limit": config.context_limit,
+            "n_stimuli": stimuli.len(),
+            "n_layers": n_layers,
+            "embed_dim": embed_dim,
+            "activation_shape": shape,
+            "correctness_path": correctness_path,
+            "token_selections": token_selections[oi],
+            "run_timestamp_unix": unix_timestamp(),
+            "git_commit": git_commit(),
+            "batched_probe_extraction": true,
+            "batched_probe_positions": config
+                .outputs
+                .iter()
+                .map(|output| output.position.as_str())
+                .collect::<Vec<_>>(),
+        });
+        let metadata_path = output.output_path.replace(".npy", "_metadata.json");
+        fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)?;
+        eprintln!("saved metadata to {}", metadata_path);
+    }
 
     eprintln!("done in {:.1}s", start.elapsed().as_secs_f64());
 

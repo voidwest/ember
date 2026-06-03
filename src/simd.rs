@@ -16,6 +16,10 @@
 
 use crate::quant::{Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
 use half::f16;
+use rayon::prelude::*;
+
+const PARALLEL_Q8_DECODE_MIN_OUT_FEATURES: usize = 4096;
+const PARALLEL_Q8_DECODE_MIN_WORK: usize = 8_388_608;
 // ---------------------------------------------------------------------------
 // public dispatch
 // ---------------------------------------------------------------------------
@@ -936,6 +940,10 @@ pub(crate) fn matmul_q8_0_decode(x: &[f32], w: &QuantizedWeight, out: &mut [f32]
     debug_assert_eq!(out.len(), w.out_features());
 
     let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
+    if should_parallel_q8_decode(w.out_features(), w.in_features()) {
+        matmul_q8_0_decode_parallel(x, w, blocks_per_row, out);
+        return;
+    }
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -966,6 +974,61 @@ pub(crate) fn matmul_q8_0_decode(x: &[f32], w: &QuantizedWeight, out: &mut [f32]
         }
     }
     matmul_q8_0_decode_scalar(x, &w.data, w.out_features(), blocks_per_row, out);
+}
+
+fn should_parallel_q8_decode(out_features: usize, in_features: usize) -> bool {
+    out_features >= PARALLEL_Q8_DECODE_MIN_OUT_FEATURES
+        && rayon::current_num_threads() > 1
+        && out_features.saturating_mul(in_features) >= PARALLEL_Q8_DECODE_MIN_WORK
+}
+
+fn matmul_q8_0_decode_parallel(
+    x: &[f32],
+    w: &QuantizedWeight,
+    blocks_per_row: usize,
+    out: &mut [f32],
+) {
+    let threads = rayon::current_num_threads().max(1);
+    let chunk_rows = w.out_features().div_ceil(threads).max(64);
+    out.par_chunks_mut(chunk_rows)
+        .enumerate()
+        .for_each(|(chunk_idx, out_chunk)| {
+            let row_start = chunk_idx * chunk_rows;
+            let data_start = row_start * blocks_per_row * Q8_0_TYPE_SIZE;
+            let data = &w.data[data_start..];
+            matmul_q8_0_decode_dispatch_chunk(x, data, blocks_per_row, out_chunk);
+        });
+}
+
+fn matmul_q8_0_decode_dispatch_chunk(
+    x: &[f32],
+    data: &[u8],
+    blocks_per_row: usize,
+    out: &mut [f32],
+) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            unsafe {
+                return x86_64::matmul_q8_0_decode_avx2_fma(
+                    x,
+                    data,
+                    out.len(),
+                    blocks_per_row,
+                    out,
+                );
+            }
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        if is_aarch64_feature_detected!("neon") {
+            unsafe {
+                return aarch64::matmul_q8_0_decode_neon(x, data, out.len(), blocks_per_row, out);
+            }
+        }
+    }
+    matmul_q8_0_decode_scalar(x, data, out.len(), blocks_per_row, out);
 }
 
 // -- scalar fallback --------------------------------------------------------
