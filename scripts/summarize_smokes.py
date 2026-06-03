@@ -38,6 +38,24 @@ def dedupe(rows):
     return sorted(seen.values(), key=lambda row: (row.get("date") or "", row.get("label") or ""))
 
 
+def parse_status_list(value):
+    if not value:
+        return set()
+    return {item.strip() for item in value.split(",") if item.strip()}
+
+
+def filter_statuses(rows, include_statuses, exclude_statuses):
+    filtered = []
+    for row in rows:
+        status = row.get("status") or ""
+        if include_statuses and status not in include_statuses:
+            continue
+        if exclude_statuses and status in exclude_statuses:
+            continue
+        filtered.append(row)
+    return filtered
+
+
 def infer_quant(row):
     model = row.get("model") or ""
     upper = model.upper()
@@ -108,10 +126,25 @@ def main():
     parser = argparse.ArgumentParser(description="summarize smoke JSON into a Markdown table")
     parser.add_argument("--logs", default="logs", help="directory containing smoke summary JSON files")
     parser.add_argument("--output", required=True, help="Markdown output path")
+    parser.add_argument(
+        "--status",
+        default=None,
+        help="comma-separated status allowlist, e.g. smoke_pass,smoke_pass_generation_warning",
+    )
+    parser.add_argument(
+        "--exclude-status",
+        default=None,
+        help="comma-separated status denylist, e.g. dry_run,smoke_skipped",
+    )
     args = parser.parse_args()
 
     logs_dir = Path(args.logs)
     rows = dedupe(iter_summaries(logs_dir)) if logs_dir.exists() else []
+    rows = filter_statuses(
+        rows,
+        parse_status_list(args.status),
+        parse_status_list(args.exclude_status),
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(markdown_table(rows), encoding="utf-8")
