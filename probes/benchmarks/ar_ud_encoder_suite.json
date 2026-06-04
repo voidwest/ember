@@ -1,0 +1,45 @@
+{
+  "name": "ar-ud-encoder-suite",
+  "stimuli": "data/benchmarks/arabic_padt_train.json",
+  "out_dir": "data/benchmarks",
+  "tasks": [
+    "labels.upos",
+    "labels.Gender",
+    "labels.Number",
+    "labels.Aspect",
+    "labels.Case",
+    "labels.Person",
+    "labels.Mood",
+    "labels.Voice"
+  ],
+  "probe_kind": "linear",
+  "control": true,
+  "split_policy": {
+    "group_field": "sentence_id"
+  },
+  "run_mdl": true,
+  "run_cca": true,
+  "run_rsa": true,
+  "run_divergence": false,
+  "run_plots": true,
+  "models": [
+    {
+      "label": "mbert",
+      "kind": "hf_encoder",
+      "model": "bert-base-multilingual-cased",
+      "pool": "target_mean"
+    },
+    {
+      "label": "xlmr_base",
+      "kind": "hf_encoder",
+      "model": "xlm-roberta-base",
+      "pool": "target_mean"
+    },
+    {
+      "label": "arabertv2",
+      "kind": "hf_encoder",
+      "model": "aubmindlab/bert-base-arabertv2",
+      "pool": "target_mean"
+    }
+  ]
+}

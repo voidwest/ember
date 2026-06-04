@@ -18,6 +18,9 @@ plots all analysis outputs from the probing pipeline:
 import argparse
 import json
 import os
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -45,6 +48,21 @@ CM_COLORS = [
     (DARK_GREEN, "#a5d6ff"),
     ("#e6edf3", "#f0c6c6"),
 ]
+
+
+def safe_key(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "_-" else "_" for c in value)
+
+
+def task_label(task: str) -> str:
+    return task.removeprefix("labels.")
+
+
+def npz_has_key(path, key):
+    if path is None or not os.path.exists(path):
+        return False
+    with np.load(path) as data:
+        return key in data
 
 
 def _setup_dark():
@@ -79,9 +97,9 @@ def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
     if color_root/color_pat are provided, they override dark/light defaults.
     returns True if data was plotted.
     """
-    data = np.load(probes_path)
+    data = np.load(probes_path, allow_pickle=True)
     if "root_accuracy" not in data:
-        return False
+        return plot_generic_probe_metrics(data, ax_root, ax_pattern, dark=dark)
 
     n_layers = len(data["root_accuracy"])
     layers = np.arange(n_layers)
@@ -130,6 +148,74 @@ def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
                    linestyle="--", alpha=0.6)
         ax_p2.set_ylabel("selectivity", color=sel_color, fontsize=7)
         ax_p2.tick_params(axis="y", colors=sel_color, labelsize=6)
+
+    return True
+
+
+def plot_generic_probe_metrics(data, ax_acc, ax_sel, dark=False):
+    """plot all task accuracies/selectivities from a generic probe NPZ."""
+    if "tasks" not in data:
+        return False
+    tasks = [str(t) for t in data["tasks"].tolist()]
+    colors = [pair[0] for pair in CM_COLORS] + [pair[1] for pair in CM_COLORS]
+    layers = None
+    plotted_acc = False
+    plotted_sel = False
+
+    for i, task in enumerate(tasks):
+        key = safe_key(task)
+        acc_key = f"{key}_accuracy"
+        if acc_key not in data:
+            continue
+        acc = data[acc_key]
+        if layers is None:
+            layers = np.arange(len(acc))
+        color = colors[i % len(colors)]
+        label_text = task_label(task)
+        ax_acc.plot(
+            layers,
+            acc,
+            color=color,
+            marker="o",
+            markersize=3,
+            linewidth=1.3,
+            label=label_text,
+        )
+        plotted_acc = True
+
+        sel_key = f"{key}_selectivity"
+        if sel_key in data:
+            ax_sel.plot(
+                layers,
+                data[sel_key],
+                color=color,
+                marker="s",
+                markersize=3,
+                linewidth=1.1,
+                linestyle="--",
+                label=label_text,
+            )
+            plotted_sel = True
+
+    if not plotted_acc:
+        return False
+
+    ax_acc.set_ylabel("accuracy")
+    ax_acc.set_xlabel("layer")
+    ax_acc.set_title("probe accuracy")
+    ax_acc.set_ylim(-0.02, 1.05)
+    ax_acc.grid(alpha=0.3)
+    ax_acc.legend(fontsize=7)
+
+    if plotted_sel:
+        ax_sel.set_ylabel("selectivity")
+        ax_sel.set_xlabel("layer")
+        ax_sel.set_title("random-label selectivity")
+        ax_sel.set_ylim(-0.02, 1.05)
+        ax_sel.grid(alpha=0.3)
+        ax_sel.legend(fontsize=7)
+    else:
+        ax_sel.set_visible(False)
 
     return True
 
@@ -315,7 +401,7 @@ def main():
     has_compare = compare_pairs is not None and len(compare_pairs) > 0
     has_cca = args.cca is not None
     has_rsa = args.rsa is not None
-    has_subspace = has_cca and args.probes is not None
+    has_subspace = has_cca and args.probes is not None and npz_has_key(args.cca, "root_pattern_cca")
     has_divergence = args.divergence is not None
     has_fertility = args.fertility is not None
 

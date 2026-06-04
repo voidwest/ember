@@ -14,20 +14,16 @@ import numpy as np
 from sklearn.model_selection import StratifiedShuffleSplit
 from sklearn.preprocessing import LabelEncoder
 
-from train_linear_probe import get_field, load_activations, load_rows, make_probe, safe_key
+from train_linear_probe import (
+    load_activations,
+    load_available_labels,
+    load_rows,
+    make_probe,
+    safe_key,
+)
 
 
 DEFAULT_FRACTIONS = [0.05, 0.1, 0.2, 0.4, 0.8]
-
-
-def load_labels(rows: list[dict], field: str) -> list[str]:
-    labels = []
-    for i, row in enumerate(rows):
-        value = get_field(row, field)
-        if value is None or value == "":
-            raise ValueError(f"missing label field '{field}' at row {i}")
-        labels.append(str(value))
-    return labels
 
 
 def train_size_for_fraction(y_train: np.ndarray, fraction: float) -> int:
@@ -104,7 +100,7 @@ def main() -> None:
     parser.add_argument("--stimuli", required=True)
     parser.add_argument("--tasks", nargs="+", default=["root", "pattern"])
     parser.add_argument("--fractions", nargs="+", type=float, default=DEFAULT_FRACTIONS)
-    parser.add_argument("--probe-kind", choices=["linear", "mlp"], default="linear")
+    parser.add_argument("--probe-kind", choices=["linear", "sgd", "mlp"], default="linear")
     parser.add_argument("--output", required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max-rows", type=int, default=None)
@@ -122,9 +118,13 @@ def main() -> None:
     }
 
     for task in args.tasks:
+        task_indices, labels = load_available_labels(rows, task)
+        task_activations = activations[task_indices]
+        if len(task_indices) != len(rows):
+            print(f"{task}: usable rows {len(task_indices)} / {len(rows)}")
         result = run_task(
-            activations,
-            load_labels(rows, task),
+            task_activations,
+            labels,
             args.fractions,
             args.probe_kind,
             args.seed,

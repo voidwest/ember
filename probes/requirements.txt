@@ -5,5 +5,4 @@ matplotlib>=3.7
 scipy>=1.10
 
 # Optional encoder extraction stack:
-# torch
-# transformers
+# .venv/bin/python -m pip install torch transformers datasets conllu

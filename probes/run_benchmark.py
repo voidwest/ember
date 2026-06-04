@@ -23,10 +23,14 @@ The manifest is intentionally simple JSON. Example:
 import argparse
 import json
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from benchmark_summary import summarize_run
+
+
+PYTHON = sys.executable
 
 
 def run(cmd: list[str], dry_run: bool, manifest: list[dict]) -> None:
@@ -34,6 +38,12 @@ def run(cmd: list[str], dry_run: bool, manifest: list[dict]) -> None:
     manifest.append({"cmd": cmd, "dry_run": dry_run})
     if not dry_run:
         subprocess.run(cmd, check=True)
+
+
+def reuse(cmd: list[str], manifest: list[dict], reason: str) -> None:
+    print(f"reusing existing artifact: {reason}")
+    print(" ".join(cmd))
+    manifest.append({"cmd": cmd, "dry_run": False, "skipped": True, "reason": reason})
 
 
 def ember_extract_cmd(model: dict, stimuli: str, out_dir: Path) -> tuple[list[str], str]:
@@ -67,7 +77,7 @@ def ember_extract_cmd(model: dict, stimuli: str, out_dir: Path) -> tuple[list[st
 def hf_extract_cmd(model: dict, benchmark: str, out_dir: Path) -> tuple[list[str], str]:
     output = out_dir / f"{model['label']}_activations.npy"
     cmd = [
-        "python",
+        PYTHON,
         "probes/extract_hf_encoder.py",
         "--model",
         model["model"],
@@ -151,7 +161,14 @@ def main() -> None:
             extract_cmd, activations = hf_extract_cmd(model, stimuli, out_dir)
         else:
             raise ValueError(f"unknown model kind: {kind}")
-        run(extract_cmd, args.dry_run, manifest)
+        if (
+            not args.dry_run
+            and config.get("reuse_activations", False)
+            and Path(activations).exists()
+        ):
+            reuse(extract_cmd, manifest, f"{activations} exists")
+        else:
+            run(extract_cmd, args.dry_run, manifest)
 
         prefix = out_dir / model["label"]
         probes_path = f"{prefix}_probes.npz"
@@ -160,7 +177,7 @@ def main() -> None:
         rsa_path = f"{prefix}_rsa.npz"
         divergence_path = f"{prefix}_divergence.npz"
         probe_cmd = [
-            "python",
+            PYTHON,
             "probes/train_linear_probe.py",
             "--activations",
             activations,
@@ -175,6 +192,18 @@ def main() -> None:
         ]
         if config.get("control", True):
             probe_cmd.append("--control")
+        if config.get("folds") is not None:
+            probe_cmd.extend(["--folds", str(config["folds"])])
+        if config.get("control_repeats") is not None:
+            probe_cmd.extend(["--control-repeats", str(config["control_repeats"])])
+        if config.get("probe_max_iter") is not None:
+            probe_cmd.extend(["--max-iter", str(config["probe_max_iter"])])
+        if config.get("probe_solver") is not None:
+            probe_cmd.extend(["--solver", str(config["probe_solver"])])
+        if config.get("probe_tol") is not None:
+            probe_cmd.extend(["--tol", str(config["probe_tol"])])
+        if config.get("probe_n_jobs") is not None:
+            probe_cmd.extend(["--n-jobs", str(config["probe_n_jobs"])])
         probe_cmd.extend(split_policy_args(config))
         if config.get("max_rows"):
             probe_cmd.extend(["--max-rows", str(config["max_rows"])])
@@ -182,7 +211,7 @@ def main() -> None:
 
         if enabled(config, "run_mdl", True):
             mdl_cmd = [
-                "python",
+                PYTHON,
                 "probes/mdl_probe.py",
                 "--activations",
                 activations,
@@ -190,16 +219,20 @@ def main() -> None:
                 stimuli,
                 "--tasks",
                 *tasks,
+                "--probe-kind",
+                config.get("probe_kind", "linear"),
                 "--output",
                 mdl_path,
             ]
+            if config.get("mdl_fractions"):
+                mdl_cmd.extend(["--fractions", *[str(v) for v in config["mdl_fractions"]]])
             if config.get("max_rows"):
                 mdl_cmd.extend(["--max-rows", str(config["max_rows"])])
             run(mdl_cmd, args.dry_run, manifest)
 
         if enabled(config, "run_cca", True):
             cca_cmd = [
-                "python",
+                PYTHON,
                 "probes/cca_analysis.py",
                 "--activations",
                 activations,
@@ -216,7 +249,7 @@ def main() -> None:
         if enabled(config, "run_rsa", True):
             run(
                 [
-                    "python",
+                    PYTHON,
                     "probes/rsa_analysis.py",
                     "--activations",
                     activations,
@@ -232,7 +265,7 @@ def main() -> None:
         if should_run_divergence and (args.dry_run or Path(correctness_path).exists()):
             run(
                 [
-                    "python",
+                    PYTHON,
                     "probes/divergence_analysis.py",
                     "--activations",
                     activations,
@@ -248,7 +281,7 @@ def main() -> None:
         if enabled(config, "run_plots", True):
             plot_dir = prefix.parent / f"{model['label']}_plots"
             plot_cmd = [
-                "python",
+                PYTHON,
                 "probes/plot_results.py",
                 "--probes",
                 probes_path,
@@ -286,7 +319,7 @@ def main() -> None:
     if enabled(config, "fertility", False) and tokenizers:
         fertility_path = configured_fertility_output or str(out_dir / "fertility.json")
         fertility_cmd = [
-            "python",
+            PYTHON,
             "probes/tokenizer_fertility.py",
             "--stimuli",
             stimuli,

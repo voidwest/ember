@@ -1,0 +1,38 @@
+{
+  "name": "ar-ud-mbert-smoke",
+  "stimuli": "data/benchmarks/arabic_padt_train.json",
+  "out_dir": "data/benchmarks",
+  "tasks": [
+    "labels.upos",
+    "labels.Gender",
+    "labels.Number",
+    "labels.Aspect"
+  ],
+  "probe_kind": "sgd",
+  "control": true,
+  "reuse_activations": true,
+  "max_rows": 1000,
+  "folds": 3,
+  "control_repeats": 1,
+  "probe_max_iter": 1000,
+  "probe_tol": 0.001,
+  "probe_n_jobs": 2,
+  "mdl_fractions": [0.2, 0.8],
+  "split_policy": {
+    "group_field": "sentence_id"
+  },
+  "run_mdl": true,
+  "run_cca": true,
+  "run_rsa": true,
+  "run_divergence": false,
+  "run_plots": true,
+  "models": [
+    {
+      "label": "mbert",
+      "kind": "hf_encoder",
+      "model": "bert-base-multilingual-cased",
+      "limit": 1000,
+      "pool": "target_mean"
+    }
+  ]
+}

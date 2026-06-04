@@ -12,6 +12,7 @@ import argparse
 import json
 import numpy as np
 from pathlib import Path
+from sklearn.linear_model import SGDClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import GroupKFold, StratifiedKFold
@@ -71,6 +72,21 @@ def load_labels(rows: list[dict], field: str) -> list[str]:
     return labels
 
 
+def load_available_labels(rows: list[dict], field: str) -> tuple[list[int], list[str]]:
+    """load labels and row indices for rows where a sparse field exists."""
+    indices = []
+    labels = []
+    for i, row in enumerate(rows):
+        value = get_field(row, field)
+        if value is None or value == "":
+            continue
+        indices.append(i)
+        labels.append(str(value))
+    if not labels:
+        raise ValueError(f"label field '{field}' missing for all rows")
+    return indices, labels
+
+
 def encode_groups(values):
     """encode string group labels as integers for sklearn splitters."""
     le = LabelEncoder()
@@ -115,13 +131,38 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
     )
 
 
-def make_probe(probe_kind: str, max_iter: int = 2000, scale: bool = True):
+def make_probe(
+    probe_kind: str,
+    max_iter: int = 2000,
+    scale: bool = True,
+    solver: str = "lbfgs",
+    tol: float = 1e-4,
+    n_jobs: int | None = None,
+):
     """build the requested probe model."""
     steps = []
     if scale:
         steps.append(StandardScaler())
     if probe_kind == "linear":
-        steps.append(LogisticRegression(max_iter=max_iter, solver="lbfgs"))
+        steps.append(
+            LogisticRegression(
+                max_iter=max_iter,
+                solver=solver,
+                tol=tol,
+                n_jobs=n_jobs,
+            )
+        )
+        return make_pipeline(*steps)
+    if probe_kind == "sgd":
+        steps.append(
+            SGDClassifier(
+                loss="log_loss",
+                max_iter=max_iter,
+                tol=tol,
+                random_state=0,
+                n_jobs=n_jobs,
+            )
+        )
         return make_pipeline(*steps)
     if probe_kind == "mlp":
         steps.append(
@@ -146,6 +187,10 @@ def train_probes(
     probe_kind="linear",
     max_iter=2000,
     scale=True,
+    solver="lbfgs",
+    tol=1e-4,
+    n_jobs=None,
+    splits_override=None,
 ):
     """train linear probes on each layer's activations.
 
@@ -155,7 +200,11 @@ def train_probes(
     """
     le = LabelEncoder()
     y = le.fit_transform(labels)
-    splits = make_splits(y, n_folds=n_folds, groups=groups, split_name=split_name)
+    splits = (
+        splits_override
+        if splits_override is not None
+        else make_splits(y, n_folds=n_folds, groups=groups, split_name=split_name)
+    )
 
     if splits is None:
         min_per_class = min(np.bincount(y))
@@ -170,14 +219,28 @@ def train_probes(
 
     for layer in range(n_layers):
         X = activations[:, layer, :]
-        probe = make_probe(probe_kind, max_iter=max_iter, scale=scale)
+        probe = make_probe(
+            probe_kind,
+            max_iter=max_iter,
+            scale=scale,
+            solver=solver,
+            tol=tol,
+            n_jobs=n_jobs,
+        )
         if splits is None:
             probe.fit(X, y)
             acc = probe.score(X, y)  # train accuracy (optimistic)
         else:
             scores = []
             for train_idx, test_idx in splits:
-                probe_clone = make_probe(probe_kind, max_iter=max_iter, scale=scale)
+                probe_clone = make_probe(
+                    probe_kind,
+                    max_iter=max_iter,
+                    scale=scale,
+                    solver=solver,
+                    tol=tol,
+                    n_jobs=n_jobs,
+                )
                 probe_clone.fit(X[train_idx], y[train_idx])
                 scores.append(probe_clone.score(X[test_idx], y[test_idx]))
             acc = np.mean(scores)
@@ -197,6 +260,9 @@ def run_control(
     probe_kind="linear",
     max_iter=2000,
     scale=True,
+    solver="lbfgs",
+    tol=1e-4,
+    n_jobs=None,
 ):
     """run random-label control: shuffle labels, train probes, report accuracy.
 
@@ -205,6 +271,12 @@ def run_control(
     """
     le = LabelEncoder()
     y = le.fit_transform(labels)
+    control_splits = make_splits(
+        y,
+        n_folds=n_folds,
+        groups=groups,
+        split_name="control-real-label-split",
+    )
     n_layers = activations.shape[1]
     all_acc = np.zeros((n_repeats, n_layers))
 
@@ -222,6 +294,10 @@ def run_control(
             probe_kind=probe_kind,
             max_iter=max_iter,
             scale=scale,
+            solver=solver,
+            tol=tol,
+            n_jobs=n_jobs,
+            splits_override=control_splits,
         )
         all_acc[repeat] = acc
 
@@ -241,7 +317,7 @@ def compute_selectivity(real_acc, control_acc_mean, chance):
     # avoid division by zero
     denominator = np.where(denominator < 1e-8, 1e-8, denominator)
     selectivity = (real_acc - control_acc_mean) / denominator
-    return np.maximum(selectivity, 0.0)
+    return np.clip(selectivity, 0.0, 1.0)
 
 
 def groups_for_split(split, roots, patterns):
@@ -307,15 +383,33 @@ def main():
     )
     parser.add_argument(
         "--probe-kind",
-        choices=["linear", "mlp"],
+        choices=["linear", "sgd", "mlp"],
         default="linear",
-        help="probe model: linear logistic regression or one-hidden-layer MLP",
+        help="probe model: logistic linear, SGD linear, or one-hidden-layer MLP",
     )
     parser.add_argument(
         "--max-iter",
         type=int,
         default=2000,
         help="maximum iterations for linear logistic regression",
+    )
+    parser.add_argument(
+        "--solver",
+        choices=["lbfgs", "saga", "liblinear", "newton-cg", "newton-cholesky", "sag"],
+        default="lbfgs",
+        help="solver for linear logistic regression",
+    )
+    parser.add_argument(
+        "--tol",
+        type=float,
+        default=1e-4,
+        help="tolerance for linear logistic regression convergence",
+    )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=None,
+        help="parallel workers for LogisticRegression when supported",
     )
     parser.add_argument(
         "--scale",
@@ -387,8 +481,13 @@ def main():
     if args.group_field:
         print(f"group field: {args.group_field}")
     print(f"probe kind: {args.probe_kind}")
-    if args.probe_kind == "linear":
+    if args.probe_kind in {"linear", "sgd"}:
         print(f"linear max_iter: {args.max_iter}")
+        if args.probe_kind == "linear":
+            print(f"linear solver: {args.solver}")
+        print(f"linear tol: {args.tol}")
+        if args.n_jobs is not None:
+            print(f"linear n_jobs: {args.n_jobs}")
     print(f"scale activations: {args.scale}")
     if args.control:
         print(f"running random-label control ({args.control_repeats} repeats)")
@@ -396,13 +495,17 @@ def main():
     results = {}
     trained = {}
     for task in args.tasks:
-        labels = load_labels(rows, task)
+        task_indices, labels = load_available_labels(rows, task)
+        task_rows = [rows[i] for i in task_indices]
+        task_activations = activations[task_indices]
         split = args.root_split if task == "root" else args.pattern_split if task == "pattern" else "random"
-        groups = groups_for_task(task, split, rows, args.group_field)
+        groups = groups_for_task(task, split, task_rows, args.group_field)
         print(f"\n--- {task} probes ---")
+        if len(task_rows) != len(rows):
+            print(f"  usable rows: {len(task_rows)} / {len(rows)}")
         print(f"  labels: {len(set(labels))} classes")
         acc, probes, le = train_probes(
-            activations,
+            task_activations,
             labels,
             args.folds,
             groups=groups,
@@ -410,6 +513,9 @@ def main():
             probe_kind=args.probe_kind,
             max_iter=args.max_iter,
             scale=args.scale,
+            solver=args.solver,
+            tol=args.tol,
+            n_jobs=args.n_jobs,
         )
         for i, layer_acc in enumerate(acc):
             print(f"  layer {i:2d}: {layer_acc:.3f}")
@@ -421,7 +527,7 @@ def main():
         if args.control:
             print(f"\n--- {task}: random-label control ---")
             control_mean, control_std = run_control(
-                activations,
+                task_activations,
                 labels,
                 args.folds,
                 groups=groups,
@@ -429,6 +535,9 @@ def main():
                 probe_kind=args.probe_kind,
                 max_iter=args.max_iter,
                 scale=args.scale,
+                solver=args.solver,
+                tol=args.tol,
+                n_jobs=args.n_jobs,
             )
             chance = 1.0 / len(set(labels))
             selectivity = compute_selectivity(acc, control_mean, chance)
@@ -454,10 +563,14 @@ def main():
             "pattern_split": args.pattern_split,
             "tasks": np.array(args.tasks, dtype=object),
         }
-        if args.probe_kind == "linear":
+        if args.probe_kind in {"linear", "sgd"}:
             for key, probes in trained.items():
                 save_dict[f"{key}_probe_weights"] = [
-                    p.named_steps["logisticregression"].coef_
+                    (
+                        p.named_steps["logisticregression"].coef_
+                        if "logisticregression" in p.named_steps
+                        else p.named_steps["sgdclassifier"].coef_
+                    )
                     for p in probes
                 ]
         np.savez(args.output, **save_dict)
