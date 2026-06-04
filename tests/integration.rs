@@ -69,6 +69,31 @@ fn test_cpu_backend_abstraction() {
 }
 
 #[test]
+fn test_cpu_backend_row_copy_helpers() {
+    let backend = CpuBackend;
+    let table = CpuTensor::from_data(
+        vec![4, 3],
+        vec![
+            1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
+        ],
+    );
+    let positions = CpuTensor::from_data(
+        vec![4, 3],
+        vec![0.1, 0.2, 0.3, 1.0, 1.0, 1.0, 0.4, 0.5, 0.6, 2.0, 2.0, 2.0],
+    );
+    let mut dst = CpuTensor::zeroes(&[2, 3]);
+
+    backend
+        .assign_row_from_table(&mut dst, 0, &table, 2)
+        .expect("copy row from table");
+    backend
+        .assign_row_sum_from_tables(&mut dst, 1, &table, 1, &positions, 3)
+        .expect("sum rows from tables");
+
+    assert_eq!(dst.data(), &[4.0, 5.0, 6.0, 12.0, 22.0, 32.0]);
+}
+
+#[test]
 fn test_empty_tensor() {
     let t = CpuTensor::zeroes(&[0]);
     assert!(t.is_empty());
@@ -654,13 +679,15 @@ fn test_sampler_temperature_zero() {
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    let logits = vec![-1.0, 2.0, 0.5, 1.0];
-    let mut rng = StdRng::seed_from_u64(42);
-    let token = sample_token(&logits, 0.0, None, None, &mut rng);
-    assert_eq!(
-        token, 1,
-        "temperature 0 should always pick argmax (index 1, value 2.0)"
-    );
+    let logits = vec![0.0, 0.01, 0.02, 0.03];
+    for seed in 0..64 {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let token = sample_token(&logits, 0.0, Some(2), Some(0.5), &mut rng);
+        assert_eq!(
+            token, 3,
+            "temperature 0 should always pick argmax regardless of RNG seed"
+        );
+    }
 }
 
 #[test]

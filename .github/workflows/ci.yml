@@ -34,12 +34,16 @@ jobs:
         run: cargo test --verbose
 
       - name: clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: fmt
         run: cargo fmt -- --check
 
+      - name: python dependencies
+        run: python -m pip install -r probes/requirements.txt
+
       - name: python smoke
         run: |
-          python -m compileall -q probes stimuli
+          python -m compileall -q probes stimuli scripts
           python probes/run_probe_matrix.py --model smoke:dummy.gguf --templates en_zero --positions last --generate-tokens 1 --dry-run
+          python probes/test_probe_workflows.py

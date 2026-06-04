@@ -80,6 +80,22 @@ pub trait Backend {
     /// select one row from a 2D tensor while preserving a 2D `[1, cols]` shape.
     fn row_as_2d(&self, tensor: &Self::Tensor, index: usize) -> Result<Self::Tensor, Self::Error>;
     fn assign_row(&self, dst: &mut Self::Tensor, index: usize, src: &Self::Tensor);
+    fn assign_row_from_table(
+        &self,
+        dst: &mut Self::Tensor,
+        dst_index: usize,
+        table: &Self::Tensor,
+        table_index: usize,
+    ) -> Result<(), Self::Error>;
+    fn assign_row_sum_from_tables(
+        &self,
+        dst: &mut Self::Tensor,
+        dst_index: usize,
+        lhs_table: &Self::Tensor,
+        lhs_index: usize,
+        rhs_table: &Self::Tensor,
+        rhs_index: usize,
+    ) -> Result<(), Self::Error>;
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor;
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
@@ -253,6 +269,26 @@ impl Backend for CpuBackend {
     fn assign_row(&self, dst: &mut CpuTensor, index: usize, src: &CpuTensor) {
         dst.assign_row(index, src);
     }
+    fn assign_row_from_table(
+        &self,
+        dst: &mut CpuTensor,
+        dst_index: usize,
+        table: &CpuTensor,
+        table_index: usize,
+    ) -> Result<(), Self::Error> {
+        assign_row_from_table_cpu(dst, dst_index, table, table_index)
+    }
+    fn assign_row_sum_from_tables(
+        &self,
+        dst: &mut CpuTensor,
+        dst_index: usize,
+        lhs_table: &CpuTensor,
+        lhs_index: usize,
+        rhs_table: &CpuTensor,
+        rhs_index: usize,
+    ) -> Result<(), Self::Error> {
+        assign_row_sum_from_tables_cpu(dst, dst_index, lhs_table, lhs_index, rhs_table, rhs_index)
+    }
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor {
         x.slice_cols(start, end)
     }
@@ -294,10 +330,9 @@ impl Backend for CpuBackend {
                     let kv_h = h / n_repeat;
                     let kv_head_offset = kv_h * spec.head_dim;
                     let mut head_out = vec![0.0f32; seq_len * spec.head_dim];
-                    let mut qk_row = vec![f32::NEG_INFINITY; seq_len];
+                    let mut qk_row = vec![0.0f32; seq_len];
 
                     for i in 0..seq_len {
-                        qk_row.fill(f32::NEG_INFINITY);
                         let q_idx = i * embed_dim + q_head_offset;
 
                         for (j, slot) in qk_row.iter_mut().enumerate().take(i + 1) {
@@ -333,7 +368,7 @@ impl Backend for CpuBackend {
         }
 
         let mut out = vec![0.0f32; seq_len * embed_dim];
-        let mut qk_row = vec![f32::NEG_INFINITY; seq_len];
+        let mut qk_row = vec![0.0f32; seq_len];
 
         for h in 0..spec.n_heads {
             let q_head_offset = h * spec.head_dim;
@@ -341,7 +376,6 @@ impl Backend for CpuBackend {
             let kv_head_offset = kv_h * spec.head_dim;
 
             for i in 0..seq_len {
-                qk_row.fill(f32::NEG_INFINITY);
                 let q_idx = i * embed_dim + q_head_offset;
 
                 for (j, slot) in qk_row.iter_mut().enumerate().take(i + 1) {
@@ -441,8 +475,7 @@ impl Backend for CpuBackend {
 
                     for i in 0..seq_len {
                         let max_j = spec.total_seq_len - seq_len + i;
-                        qk_row.clear();
-                        qk_row.resize(spec.total_seq_len, f32::NEG_INFINITY);
+                        qk_row.resize(max_j + 1, 0.0);
                         let q_idx = i * embed_dim + q_head_offset;
 
                         for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
@@ -488,8 +521,7 @@ impl Backend for CpuBackend {
 
             for i in 0..seq_len {
                 let max_j = spec.total_seq_len - seq_len + i;
-                qk_row.clear();
-                qk_row.resize(spec.total_seq_len, f32::NEG_INFINITY);
+                qk_row.resize(max_j + 1, 0.0);
                 let q_idx = i * embed_dim + q_head_offset;
 
                 for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
@@ -542,6 +574,87 @@ impl Backend for CpuBackend {
     ) -> Result<CpuTensor, CpuError> {
         Ok(x.apply_rotary_emb(cos, sin, start_pos))
     }
+}
+
+fn validate_row_copy_shapes(
+    op: &str,
+    dst: &CpuTensor,
+    dst_index: usize,
+    table: &CpuTensor,
+    table_index: usize,
+) -> Result<usize, CpuError> {
+    if dst.ndim() != 2 || table.ndim() != 2 {
+        return Err(CpuError::ShapeMismatch(format!(
+            "{op}: expected 2D dst/table, got dst={:?} table={:?}",
+            dst.shape(),
+            table.shape()
+        )));
+    }
+    let cols = dst.shape()[1];
+    if table.shape()[1] != cols {
+        return Err(CpuError::ShapeMismatch(format!(
+            "{op}: row width mismatch, dst cols {} != table cols {}",
+            cols,
+            table.shape()[1]
+        )));
+    }
+    if dst_index >= dst.shape()[0] || table_index >= table.shape()[0] {
+        return Err(CpuError::ShapeMismatch(format!(
+            "{op}: row index out of bounds, dst_index={} dst_rows={} table_index={} table_rows={}",
+            dst_index,
+            dst.shape()[0],
+            table_index,
+            table.shape()[0]
+        )));
+    }
+    Ok(cols)
+}
+
+fn assign_row_from_table_cpu(
+    dst: &mut CpuTensor,
+    dst_index: usize,
+    table: &CpuTensor,
+    table_index: usize,
+) -> Result<(), CpuError> {
+    let cols =
+        validate_row_copy_shapes("assign_row_from_table", dst, dst_index, table, table_index)?;
+    let dst_start = dst_index * cols;
+    let table_start = table_index * cols;
+    dst.data_mut()[dst_start..dst_start + cols]
+        .copy_from_slice(&table.data()[table_start..table_start + cols]);
+    Ok(())
+}
+
+fn assign_row_sum_from_tables_cpu(
+    dst: &mut CpuTensor,
+    dst_index: usize,
+    lhs_table: &CpuTensor,
+    lhs_index: usize,
+    rhs_table: &CpuTensor,
+    rhs_index: usize,
+) -> Result<(), CpuError> {
+    let cols = validate_row_copy_shapes(
+        "assign_row_sum_from_tables",
+        dst,
+        dst_index,
+        lhs_table,
+        lhs_index,
+    )?;
+    validate_row_copy_shapes(
+        "assign_row_sum_from_tables",
+        dst,
+        dst_index,
+        rhs_table,
+        rhs_index,
+    )?;
+    let dst_start = dst_index * cols;
+    let lhs_start = lhs_index * cols;
+    let rhs_start = rhs_index * cols;
+    let dst_row = &mut dst.data_mut()[dst_start..dst_start + cols];
+    let lhs_row = &lhs_table.data()[lhs_start..lhs_start + cols];
+    let rhs_row = &rhs_table.data()[rhs_start..rhs_start + cols];
+    crate::simd::add(lhs_row, rhs_row, dst_row);
+    Ok(())
 }
 
 fn matmul_q8_0_prefill(

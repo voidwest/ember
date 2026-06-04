@@ -9,10 +9,12 @@ use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use ember::sampler::sample_token;
 use std::fs;
-use std::io::BufWriter;
 use std::io::{self, Write};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+mod npy;
+use npy::{write_npy_2d, NpyStreamWriter};
 
 /// a lightweight, cpu-first llm inference engine.
 #[derive(Parser)]
@@ -1008,59 +1010,6 @@ where
 
 // -- probe mode -------------------------------------------------
 
-/// write a 3d f32 array as a .npy file (numpy format v1.0).
-///
-/// shape is `[dim0, dim1, dim2]`, data is row-major f32 little-endian.
-fn write_npy(path: &str, data: &[f32], shape: &[usize; 3]) -> anyhow::Result<()> {
-    write_npy_shape(path, data, shape)
-}
-
-fn write_npy_2d(path: &str, data: &[f32], shape: &[usize; 2]) -> anyhow::Result<()> {
-    write_npy_shape(path, data, shape)
-}
-
-fn write_npy_shape(path: &str, data: &[f32], shape: &[usize]) -> anyhow::Result<()> {
-    let shape_text = if shape.len() == 1 {
-        format!("({},)", shape[0])
-    } else {
-        let dims = shape
-            .iter()
-            .map(usize::to_string)
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("({dims})")
-    };
-    let header = format!(
-        "{{'descr': '<f4', 'fortran_order': False, 'shape': {}, }}",
-        shape_text
-    );
-    // pad to 16-byte boundary (including the 10-byte prefix)
-    let mut header_bytes = header.into_bytes();
-    let total_prefix = 10 + header_bytes.len();
-    let padding = (16 - (total_prefix % 16)) % 16;
-    if padding > 0 {
-        header_bytes.extend(std::iter::repeat_n(b' ', padding));
-    }
-    // header_len is the length of the header dict including padding,
-    // NOT including the 2-byte header_len field itself.
-    let header_len = header_bytes.len() as u16;
-
-    let file = fs::File::create(path)?;
-    let mut w = BufWriter::new(file);
-    use std::io::Write as _;
-    w.write_all(b"\x93NUMPY")?; // magic
-    w.write_all(&[1u8, 0u8])?; // version 1.0
-    w.write_all(&header_len.to_le_bytes())?; // header length
-    w.write_all(&header_bytes)?; // header
-
-    // data as f32 little-endian
-    let data_bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
-    w.write_all(data_bytes)?;
-    w.flush()?;
-    Ok(())
-}
-
 #[derive(Clone, Copy, Debug)]
 enum ProbePosition {
     Last,
@@ -1441,18 +1390,20 @@ where
     let embed_dim = model.embed_dim();
     eprintln!("model: {} layers, {} hidden dim", n_layers, embed_dim);
 
-    let total_floats = stimuli.len() * n_layers * embed_dim;
+    let shape = [stimuli.len(), n_layers, embed_dim];
+    let row_floats = n_layers * embed_dim;
     eprintln!(
-        "allocating {} activation buffer(s): {} floats each ({:.1} MB each)",
+        "streaming {} activation file(s): {} floats per row ({:.1} KB per row)",
         config.outputs.len(),
-        total_floats,
-        total_floats as f64 * 4.0 / 1_048_576.0
+        row_floats,
+        row_floats as f64 * 4.0 / 1024.0
     );
-    let mut activation_buffers: Vec<Vec<f32>> = config
+    let mut activation_writers = config
         .outputs
         .iter()
-        .map(|_| vec![0.0f32; total_floats])
-        .collect();
+        .map(|output| NpyStreamWriter::create(&output.output_path, &shape))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let zero_activation_row = vec![0.0f32; row_floats];
 
     // -- collect -----------------------------------------------
     let start = Instant::now();
@@ -1485,6 +1436,9 @@ where
                 si + 1,
                 stimuli.len()
             );
+            for writer in &mut activation_writers {
+                writer.write_f32s(&zero_activation_row)?;
+            }
             continue;
         }
 
@@ -1574,9 +1528,7 @@ where
                 "probe_token_indices": probe_indices,
             }));
 
-            let offset = si * n_layers * embed_dim;
-            activation_buffers[oi][offset..offset + n_layers * embed_dim]
-                .copy_from_slice(&pooled_states[oi]);
+            activation_writers[oi].write_f32s(&pooled_states[oi])?;
         }
 
         if (si + 1) % 10 == 0 || si + 1 == stimuli.len() {
@@ -1590,11 +1542,12 @@ where
     }
 
     // -- save --------------------------------------------------
-    let shape = [stimuli.len(), n_layers, embed_dim];
-    for (oi, output) in config.outputs.iter().enumerate() {
-        write_npy(&output.output_path, &activation_buffers[oi], &shape)?;
+    for (writer, output) in activation_writers.iter_mut().zip(&config.outputs) {
+        writer.finish()?;
         eprintln!("saved activations to {}", output.output_path);
+    }
 
+    for (oi, output) in config.outputs.iter().enumerate() {
         let correct_count = correctness[oi]
             .iter()
             .filter(|c| {

@@ -1529,7 +1529,7 @@ mod tests {
         data.push((-128i8) as u8);
         data.push(127i8 as u8);
         data.push(0u8);
-        data.extend(std::iter::repeat(0u8).take(29));
+        data.resize(data.len() + 29, 0);
 
         // block 1: scale=1.0, quants=[-128, 127, 0, ...]
         let s1 = f16::from_f32(1.0);
@@ -1537,7 +1537,7 @@ mod tests {
         data.push((-128i8) as u8);
         data.push(127i8 as u8);
         data.push(0u8);
-        data.extend(std::iter::repeat(0u8).take(29));
+        data.resize(data.len() + 29, 0);
 
         let blocks = 2;
         let mut scalar_out = vec![0.0f32; blocks * 32];

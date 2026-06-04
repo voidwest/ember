@@ -22,12 +22,14 @@ pub fn sample_token(
     top_p: Option<f32>,
     rng: &mut impl Rng,
 ) -> usize {
+    if temperature == 0.0 {
+        return argmax_token(logits);
+    }
+
     let mut logits: Vec<f32> = logits.to_vec();
 
-    if temperature > 0.0 {
-        for l in &mut logits {
-            *l /= temperature;
-        }
+    for l in &mut logits {
+        *l /= temperature;
     }
 
     if let Some(k) = top_k {
@@ -43,6 +45,20 @@ pub fn sample_token(
     let dist = softmax_1d(&logits);
 
     categorical_sample(&dist, rng)
+}
+
+fn argmax_token(logits: &[f32]) -> usize {
+    logits
+        .iter()
+        .enumerate()
+        .fold((0usize, f32::NEG_INFINITY), |(max_i, max_v), (i, &v)| {
+            if v > max_v {
+                (i, v)
+            } else {
+                (max_i, max_v)
+            }
+        })
+        .0
 }
 
 /// set all values below the k-th largest logit to `-inf`.

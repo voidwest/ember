@@ -591,10 +591,14 @@ impl<B: Backend> Gpt2<B> {
         let embed_dim = backend.shape(&self.wte)[1];
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &token_id) in tokens.iter().enumerate() {
-            let word_vec = backend.index_select(&self.wte, token_id as usize)?;
-            let pos_vec = backend.index_select(&self.wpe, start_pos + i)?;
-            let combined = backend.add(&word_vec, &pos_vec)?;
-            backend.assign_row(&mut x, i, &combined);
+            backend.assign_row_sum_from_tables(
+                &mut x,
+                i,
+                &self.wte,
+                token_id as usize,
+                &self.wpe,
+                start_pos + i,
+            )?;
         }
         Ok(x)
     }

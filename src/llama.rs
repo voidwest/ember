@@ -229,6 +229,64 @@ impl<B: Backend> LlamaAttention<B> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct RopeQkNormSpec {
+    start_pos: usize,
+    n_heads: usize,
+    head_dim: usize,
+}
+
+fn apply_rope_and_qk_norm<B: Backend>(
+    backend: &B,
+    x: &B::Tensor,
+    rope_cos: &B::Tensor,
+    rope_sin: &B::Tensor,
+    spec: RopeQkNormSpec,
+    norm: Option<&B::Tensor>,
+) -> Result<B::Tensor, B::Error> {
+    let seq_len = backend.shape(x)[0];
+    let width = spec.n_heads * spec.head_dim;
+    let half = spec.head_dim / 2;
+    let cos_data = backend.data(rope_cos);
+    let sin_data = backend.data(rope_sin);
+    let mut rotated = backend.data(x).to_vec();
+
+    for s in 0..seq_len {
+        let pos = spec.start_pos + s;
+        let cos_row = &cos_data[pos * half..(pos + 1) * half];
+        let sin_row = &sin_data[pos * half..(pos + 1) * half];
+        for h in 0..spec.n_heads {
+            let base = s * width + h * spec.head_dim;
+            for d in 0..half {
+                let x0 = rotated[base + d];
+                let x1 = rotated[base + d + half];
+                let c = cos_row[d];
+                let si = sin_row[d];
+                rotated[base + d] = x0 * c - x1 * si;
+                rotated[base + d + half] = x0 * si + x1 * c;
+            }
+        }
+    }
+
+    if let Some(norm) = norm {
+        let norm_data = backend.data(norm);
+        let eps = 1e-6;
+        for s in 0..seq_len {
+            for h in 0..spec.n_heads {
+                let base = s * width + h * spec.head_dim;
+                let row = &mut rotated[base..base + spec.head_dim];
+                let sq_sum = crate::simd::sum_squares(row);
+                let rstd = (sq_sum / spec.head_dim as f32 + eps).sqrt().recip();
+                for d in 0..spec.head_dim {
+                    row[d] = row[d] * rstd * norm_data[d];
+                }
+            }
+        }
+    }
+
+    backend.load_from_cpu(rotated, &[seq_len, width])
+}
+
 impl<B: Backend> Module<B> for LlamaAttention<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         // project q, k, v separately (no bias)
@@ -236,86 +294,32 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
         let k = self.k_proj.forward(backend, x)?;
         let v = self.v_proj.forward(backend, x)?;
 
-        let seq_len = backend.shape(&q)[0];
-        let embed_dim = self.n_heads * self.head_dim;
-        let kv_dim = self.n_kv_heads * self.head_dim;
         let head_dim = self.head_dim;
 
-        // apply rope inline (llama.cpp style): rotate pairs (d, d+half) within
-        // each head using precomputed cos/sin tables.
-        let half = head_dim / 2;
-        let cos_data = backend.data(&self.rope_cos);
-        let sin_data = backend.data(&self.rope_sin);
-
-        let q_raw = backend.data(&q);
-        let mut q_rope = q_raw.to_vec();
-        for s in 0..seq_len {
-            let cos_row = &cos_data[s * half..(s + 1) * half];
-            let sin_row = &sin_data[s * half..(s + 1) * half];
-            for h in 0..self.n_heads {
-                let base = s * embed_dim + h * head_dim;
-                for d in 0..half {
-                    let x = q_rope[base + d];
-                    let y = q_rope[base + d + half];
-                    q_rope[base + d] = x * cos_row[d] - y * sin_row[d];
-                    q_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
-                }
-            }
-        }
-        // apply qk norm if present (qwen3): rms_norm per-head after rope
-        if let Some(ref q_norm) = self.q_norm {
-            let q_norm_data = backend.data(q_norm);
-            let eps = 1e-6;
-            for s in 0..seq_len {
-                for h in 0..self.n_heads {
-                    let base = s * embed_dim + h * head_dim;
-                    let mut sq_sum = 0.0f32;
-                    for d in 0..head_dim {
-                        sq_sum += q_rope[base + d] * q_rope[base + d];
-                    }
-                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
-                    for d in 0..head_dim {
-                        q_rope[base + d] = q_rope[base + d] / rms * q_norm_data[d];
-                    }
-                }
-            }
-        }
-        let q = backend.load_from_cpu(q_rope, &[seq_len, embed_dim])?;
-
-        let k_raw = backend.data(&k);
-        let mut k_rope = k_raw.to_vec();
-        for s in 0..seq_len {
-            let cos_row = &cos_data[s * half..(s + 1) * half];
-            let sin_row = &sin_data[s * half..(s + 1) * half];
-            for h in 0..self.n_kv_heads {
-                let base = s * kv_dim + h * head_dim;
-                for d in 0..half {
-                    let x = k_rope[base + d];
-                    let y = k_rope[base + d + half];
-                    k_rope[base + d] = x * cos_row[d] - y * sin_row[d];
-                    k_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
-                }
-            }
-        }
-        // apply qk norm to k if present (qwen3)
-        if let Some(ref k_norm) = self.k_norm {
-            let k_norm_data = backend.data(k_norm);
-            let eps = 1e-6;
-            for s in 0..seq_len {
-                for h in 0..self.n_kv_heads {
-                    let base = s * kv_dim + h * head_dim;
-                    let mut sq_sum = 0.0f32;
-                    for d in 0..head_dim {
-                        sq_sum += k_rope[base + d] * k_rope[base + d];
-                    }
-                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
-                    for d in 0..head_dim {
-                        k_rope[base + d] = k_rope[base + d] / rms * k_norm_data[d];
-                    }
-                }
-            }
-        }
-        let k = backend.load_from_cpu(k_rope, &[seq_len, kv_dim])?;
+        let q = apply_rope_and_qk_norm(
+            backend,
+            &q,
+            &self.rope_cos,
+            &self.rope_sin,
+            RopeQkNormSpec {
+                start_pos: 0,
+                n_heads: self.n_heads,
+                head_dim,
+            },
+            self.q_norm.as_ref(),
+        )?;
+        let k = apply_rope_and_qk_norm(
+            backend,
+            &k,
+            &self.rope_cos,
+            &self.rope_sin,
+            RopeQkNormSpec {
+                start_pos: 0,
+                n_heads: self.n_kv_heads,
+                head_dim,
+            },
+            self.k_norm.as_ref(),
+        )?;
 
         let result_tensor = backend.causal_attention(
             &q,
@@ -350,87 +354,33 @@ impl<B: Backend> LlamaAttention<B> {
         let v = self.v_proj.forward(backend, x)?;
 
         let seq_len = backend.shape(&q)[0];
-        let embed_dim = self.n_heads * self.head_dim;
         let kv_dim = self.n_kv_heads * self.head_dim;
         let head_dim = self.head_dim;
 
-        // apply rope inline (llama.cpp style): rotate pairs (d, d+half) within each
-        // head using the precomputed cos/sin tables. no intermediate tensors.
-        let half = head_dim / 2;
-        let cos_data = backend.data(&self.rope_cos);
-        let sin_data = backend.data(&self.rope_sin);
-
-        let q_raw = backend.data(&q);
-        let mut q_rope = q_raw.to_vec();
-        for s in 0..seq_len {
-            let pos = start_pos + s;
-            let cos_row = &cos_data[pos * half..(pos + 1) * half];
-            let sin_row = &sin_data[pos * half..(pos + 1) * half];
-            for h in 0..self.n_heads {
-                let base = s * embed_dim + h * head_dim;
-                for d in 0..half {
-                    let x = q_rope[base + d];
-                    let y = q_rope[base + d + half];
-                    q_rope[base + d] = x * cos_row[d] - y * sin_row[d];
-                    q_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
-                }
-            }
-        }
-        // apply qk norm if present (qwen3): rms_norm per-head after rope
-        if let Some(ref q_norm) = self.q_norm {
-            let q_norm_data = backend.data(q_norm);
-            let eps = 1e-6;
-            for s in 0..seq_len {
-                for h in 0..self.n_heads {
-                    let base = s * embed_dim + h * head_dim;
-                    let mut sq_sum = 0.0f32;
-                    for d in 0..head_dim {
-                        sq_sum += q_rope[base + d] * q_rope[base + d];
-                    }
-                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
-                    for d in 0..head_dim {
-                        q_rope[base + d] = q_rope[base + d] / rms * q_norm_data[d];
-                    }
-                }
-            }
-        }
-        let q = backend.load_from_cpu(q_rope, &[seq_len, embed_dim])?;
-
-        let k_raw = backend.data(&k);
-        let mut k_rope = k_raw.to_vec();
-        for s in 0..seq_len {
-            let pos = start_pos + s;
-            let cos_row = &cos_data[pos * half..(pos + 1) * half];
-            let sin_row = &sin_data[pos * half..(pos + 1) * half];
-            for h in 0..self.n_kv_heads {
-                let base = s * kv_dim + h * head_dim;
-                for d in 0..half {
-                    let x = k_rope[base + d];
-                    let y = k_rope[base + d + half];
-                    k_rope[base + d] = x * cos_row[d] - y * sin_row[d];
-                    k_rope[base + d + half] = x * sin_row[d] + y * cos_row[d];
-                }
-            }
-        }
-        // apply qk norm to k if present (qwen3)
-        if let Some(ref k_norm) = self.k_norm {
-            let k_norm_data = backend.data(k_norm);
-            let eps = 1e-6;
-            for s in 0..seq_len {
-                for h in 0..self.n_kv_heads {
-                    let base = s * kv_dim + h * head_dim;
-                    let mut sq_sum = 0.0f32;
-                    for d in 0..head_dim {
-                        sq_sum += k_rope[base + d] * k_rope[base + d];
-                    }
-                    let rms = (sq_sum / head_dim as f32 + eps).sqrt();
-                    for d in 0..head_dim {
-                        k_rope[base + d] = k_rope[base + d] / rms * k_norm_data[d];
-                    }
-                }
-            }
-        }
-        let k = backend.load_from_cpu(k_rope, &[seq_len, kv_dim])?;
+        let q = apply_rope_and_qk_norm(
+            backend,
+            &q,
+            &self.rope_cos,
+            &self.rope_sin,
+            RopeQkNormSpec {
+                start_pos,
+                n_heads: self.n_heads,
+                head_dim,
+            },
+            self.q_norm.as_ref(),
+        )?;
+        let k = apply_rope_and_qk_norm(
+            backend,
+            &k,
+            &self.rope_cos,
+            &self.rope_sin,
+            RopeQkNormSpec {
+                start_pos,
+                n_heads: self.n_kv_heads,
+                head_dim,
+            },
+            self.k_norm.as_ref(),
+        )?;
 
         let k_data = backend.data(&k);
         let v_data = backend.data(&v);
@@ -805,8 +755,7 @@ impl<B: Backend> Llama<B> {
         let embed_dim = self.config.embed_dim;
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &tok) in token_ids.iter().enumerate() {
-            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
-            backend.assign_row(&mut x, i, &word_vec);
+            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
         }
 
         for (layer, block) in self.blocks.iter().enumerate() {
@@ -831,8 +780,7 @@ impl<B: Backend> Llama<B> {
         let embed_dim = self.config.embed_dim;
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &tok) in token_ids.iter().enumerate() {
-            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
-            backend.assign_row(&mut x, i, &word_vec);
+            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
         }
 
         for (layer, block) in self.blocks.iter().enumerate() {
@@ -853,8 +801,7 @@ impl<B: Backend> Llama<B> {
         let embed_dim = self.config.embed_dim;
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &tok) in token_ids.iter().enumerate() {
-            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
-            backend.assign_row(&mut x, i, &word_vec);
+            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
         }
 
         for block in &self.blocks {
@@ -875,8 +822,7 @@ impl<B: Backend> Llama<B> {
         let embed_dim = self.config.embed_dim;
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &tok) in token_ids.iter().enumerate() {
-            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
-            backend.assign_row(&mut x, i, &word_vec);
+            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
         }
 
         let mut activations = Vec::with_capacity(self.blocks.len());
@@ -907,8 +853,7 @@ impl<B: Backend> Llama<B> {
 
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
         for (i, &tok) in token_ids.iter().enumerate() {
-            let word_vec = backend.index_select(&self.embed_tokens, tok as usize)?;
-            backend.assign_row(&mut x, i, &word_vec);
+            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
         }
 
         for (li, block) in self.blocks.iter().enumerate() {
