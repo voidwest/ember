@@ -308,12 +308,12 @@ the `probes/` directory contains python scripts for downstream analysis:
 
 | script | purpose |
 |--------|---------|
-| `train_linear_probe.py` | linear and small-MLP probes with task-specific CV splits, control tasks, and selectivity |
+| `train_linear_probe.py` | logistic linear, SGD linear, and small-MLP probes with task-specific CV splits, sparse label filtering, control tasks, and selectivity |
 | `cca_analysis.py` | canonical correlation analysis, layer similarity matrices |
 | `rsa_analysis.py` | representational similarity analysis, distance metrics |
 | `divergence_analysis.py` | correct-vs-incorrect hidden state divergence |
 | `tokenizer_fertility.py` | subword tokenization comparison across tokenizers |
-| `plot_results.py` | visualization: probe accuracy, CCA/RSA heatmaps, cross-model comparison, fertility |
+| `plot_results.py` | visualization: generic probe accuracy/selectivity, CCA/RSA heatmaps, cross-model comparison, fertility |
 | `plot_root_scale_comparison.py` | compact root-accuracy comparison across Llama model scales |
 | `run_probe_matrix.py` | repeatable model/template/position probe matrix runner |
 | `build_conllu_benchmark.py` | convert CoNLL-U morphology annotations into token-level benchmark JSON |
@@ -329,26 +329,30 @@ pass `--include-ablations` to add masked-root, masked-pattern, both-masked, and
 fake-pattern control prompts without changing the default stimulus output.
 
 generated probe outputs (`*_activations.npy`, `*_activations_correctness.json`,
-`*_activations_metadata.json`, `.npz` bundles, ad hoc plots, logs, and Python
-bytecode caches) are ignored.
+`*_activations_metadata.json`, `.npz` bundles, benchmark outputs, golden-logit
+artifacts, UD downloads, ad hoc plots, logs, and Python bytecode caches) are
+ignored.
 checked-in fixtures and published figures are kept small and explicit.
 
-for hardening runs, `train_linear_probe.py --probe-kind mlp` tests whether
-features that drop under linear probing remain recoverable non-linearly, and
-`run_probe_matrix.py --dry-run` prints the full extraction/analysis command
-matrix for model, prompt-template, and probe-position ablations. the matrix
-runner uses batch probe extraction so each model is loaded once per matrix run,
-and grouped extraction avoids rerunning the same template forward pass for
-multiple pooling positions. for local cpu runs, `--probe-generate-tokens 1` is
-the practical default for matrix sweeps; longer behavioral continuations should
-run on a larger machine.
+for smoke runs, `train_linear_probe.py --probe-kind sgd` gives a fast linear
+classifier for pipeline validation. for headline results, use the full
+logistic `linear` probe and report random-label selectivity/MDL. for hardening
+runs, `--probe-kind mlp` tests whether features that drop under linear probing
+remain recoverable non-linearly. `run_probe_matrix.py --dry-run` prints the
+full extraction/analysis command matrix for model, prompt-template, and
+probe-position ablations. the matrix runner uses batch probe extraction so each
+model is loaded once per matrix run, and grouped extraction avoids rerunning the
+same template forward pass for multiple pooling positions. for local cpu runs,
+`--probe-generate-tokens 1` is the practical default for matrix sweeps; longer
+behavioral continuations should run on a larger machine.
 
 ### benchmark manifests
 
 `probes/run_benchmark.py` is the higher-level benchmark entry point. It runs a
 JSON manifest that can mix Ember GGUF decoder extraction and optional Hugging
 Face encoder extraction, then trains generic label-field probes, MDL-style
-data-efficiency curves, and RSA.
+data-efficiency curves, CCA/RSA, plots, optional divergence, optional fertility,
+and a canonical `benchmark_summary.json`.
 
 ```bash
 python probes/run_benchmark.py \
@@ -369,16 +373,39 @@ python probes/extract_hf_encoder.py \
   --output data/benchmarks/bert_ar_ud_activations.npy
 ```
 
-The encoder extractor requires the optional `torch` and `transformers` stack.
+The encoder extractor requires the optional encoder stack:
+
+```bash
+.venv/bin/python -m pip install torch transformers datasets conllu
+```
+
 The generic probe runner can target fields such as `labels.upos`,
-`labels.Gender`, `root`, or `pattern`.
+`labels.Gender`, `root`, or `pattern`. Sparse fields are filtered per task so
+UD features such as `Gender` and `Aspect` do not need to exist on every token.
+
+Current encoder benchmark manifests:
+
+| manifest | purpose |
+|----------|---------|
+| `probes/benchmarks/ar_ud_mbert_smoke.json` | 1000-row PADT mBERT smoke using fast SGD linear probes |
+| `probes/benchmarks/ar_ud_mbert_full.json` | full PADT mBERT run |
+| `probes/benchmarks/ar_ud_encoder_suite.json` | mBERT, XLM-R, and AraBERTv2 encoder suite |
+
+The first local mBERT smoke completed on Arabic UD PADT with activation shape
+`(1000, 13, 768)`. Its `benchmark_summary.json` reported best probe accuracies
+of `0.915` for `labels.upos`, `0.862` for `labels.Gender`, `0.900` for
+`labels.Number`, and `0.895` for `labels.Aspect`. Treat this as a pipeline
+smoke result; publishable claims need the full encoder suite and trusted
+golden/reference checks.
 
 ## testing
 
 ```bash
 cargo fmt -- --check
 cargo test
-cargo clippy -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
+python3 -m compileall -q probes stimuli scripts
+python3 probes/test_probe_workflows.py
 ```
 
 the integration suite covers tensor operations, sampling, tokenizer loading,
