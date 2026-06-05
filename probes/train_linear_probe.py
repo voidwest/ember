@@ -20,6 +20,31 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import make_pipeline
 
 
+SPLIT_ALIASES = {
+    "random": "random",
+    "random-stratified": "random",
+    "stratified": "random",
+    "root": "root-heldout",
+    "root-heldout": "root-heldout",
+    "pattern": "pattern-heldout",
+    "pattern-heldout": "pattern-heldout",
+    "combination": "combination-heldout",
+    "combination-heldout": "combination-heldout",
+    "root-pattern": "combination-heldout",
+    "root-pattern-heldout": "combination-heldout",
+    "template": "template-heldout",
+    "template-heldout": "template-heldout",
+}
+SPLIT_CHOICES = sorted(SPLIT_ALIASES)
+TEMPLATE_FIELDS = [
+    "prompt_template",
+    "probe_template",
+    "template",
+    "metadata.prompt_template",
+    "metadata.probe_template",
+]
+
+
 def load_activations(path: str) -> np.ndarray:
     """load activation tensor.
 
@@ -55,6 +80,21 @@ def load_rows(stimuli_path: str) -> list[dict]:
     return rows
 
 
+def metadata_path_for_activations(path: str) -> Path:
+    p = Path(path)
+    return p.with_name(f"{p.stem}_metadata.json")
+
+
+def load_activation_metadata(path: str) -> dict:
+    metadata_path = metadata_path_for_activations(path)
+    if not metadata_path.exists():
+        return {}
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(metadata, dict):
+        raise ValueError(f"activation metadata must be a JSON object: {metadata_path}")
+    return metadata
+
+
 def load_labels(rows: list[dict], field: str) -> list[str]:
     """load labels from a dotted field path."""
     labels = []
@@ -87,10 +127,54 @@ def load_available_labels(rows: list[dict], field: str) -> tuple[list[int], list
     return indices, labels
 
 
+def require_field_values(rows: list[dict], field: str, policy: str) -> list[str]:
+    values = []
+    missing = []
+    for i, row in enumerate(rows):
+        value = get_field(row, field)
+        if value is None or value == "":
+            missing.append(i)
+        else:
+            values.append(str(value))
+    if missing:
+        raise ValueError(
+            f"split policy '{policy}' requires field '{field}', missing for "
+            f"{len(missing)} rows; first missing index: {missing[0]}"
+        )
+    return values
+
+
+def template_values(
+    rows: list[dict],
+    activation_metadata: dict,
+    policy: str,
+) -> tuple[list[str], str]:
+    for field in TEMPLATE_FIELDS:
+        if any(get_field(row, field) not in (None, "") for row in rows):
+            return require_field_values(rows, field, policy), field
+    for field in ("probe_template", "prompt_template", "template"):
+        value = activation_metadata.get(field)
+        if value not in (None, ""):
+            return [str(value)] * len(rows), f"activation_metadata.{field}"
+    raise ValueError(
+        "split policy 'template-heldout' requires prompt template metadata. "
+        f"Expected one of row fields {TEMPLATE_FIELDS} or an activation metadata sidecar."
+    )
+
+
 def encode_groups(values):
     """encode string group labels as integers for sklearn splitters."""
     le = LabelEncoder()
     return le.fit_transform(values)
+
+
+def normalize_split_policy(split: str) -> str:
+    try:
+        return SPLIT_ALIASES[split]
+    except KeyError as exc:
+        raise ValueError(
+            f"unknown split policy: {split}. Choices: {', '.join(SPLIT_CHOICES)}"
+        ) from exc
 
 
 def make_splits(y, n_folds=5, groups=None, split_name="random"):
@@ -112,11 +196,19 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
 
     groups = np.asarray(groups)
     n_groups = len(set(groups))
+    if n_groups < 2:
+        raise ValueError(f"{split_name} requires at least 2 groups; found {n_groups}")
     for effective_folds in range(min(n_folds, n_groups), 1, -1):
         splitter = GroupKFold(n_splits=effective_folds)
         splits = list(splitter.split(np.zeros(len(y)), y, groups=groups))
         valid = True
         for train_idx, test_idx in splits:
+            group_overlap = set(groups[train_idx]) & set(groups[test_idx])
+            if group_overlap:
+                raise ValueError(
+                    f"{split_name} produced train/test group overlap: "
+                    f"{sorted(group_overlap)[:5]}"
+                )
             train_labels = set(y[train_idx])
             test_labels = set(y[test_idx])
             if not test_labels.issubset(train_labels):
@@ -129,6 +221,44 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
         f"{split_name} creates test labels that are absent from training. "
         "Choose a split whose groups are independent of the target label."
     )
+
+
+def prepare_splits(
+    labels,
+    n_folds=5,
+    groups=None,
+    group_values=None,
+    split_name="random",
+):
+    le = LabelEncoder()
+    y = le.fit_transform(labels)
+    splits = make_splits(y, n_folds=n_folds, groups=groups, split_name=split_name)
+    metadata = {
+        "split_name": split_name,
+        "requested_folds": int(n_folds),
+        "effective_folds": len(splits) if splits is not None else None,
+        "n_samples": int(len(labels)),
+        "n_classes": int(len(le.classes_)),
+        "classes": [str(value) for value in le.classes_],
+        "uses_train_accuracy": splits is None,
+    }
+    if groups is not None:
+        values = (
+            [str(value) for value in group_values]
+            if group_values is not None
+            else [str(v) for v in groups]
+        )
+        metadata["n_groups"] = len(set(values))
+        metadata["groups"] = sorted(set(values))
+    if splits is not None:
+        metadata["folds"] = [
+            {
+                "train_size": int(len(train_idx)),
+                "test_size": int(len(test_idx)),
+            }
+            for train_idx, test_idx in splits
+        ]
+    return splits, metadata
 
 
 def make_probe(
@@ -263,6 +393,7 @@ def run_control(
     solver="lbfgs",
     tol=1e-4,
     n_jobs=None,
+    splits_override=None,
 ):
     """run random-label control: shuffle labels, train probes, report accuracy.
 
@@ -271,11 +402,15 @@ def run_control(
     """
     le = LabelEncoder()
     y = le.fit_transform(labels)
-    control_splits = make_splits(
-        y,
-        n_folds=n_folds,
-        groups=groups,
-        split_name="control-real-label-split",
+    control_splits = (
+        splits_override
+        if splits_override is not None
+        else make_splits(
+            y,
+            n_folds=n_folds,
+            groups=groups,
+            split_name="control-real-label-split",
+        )
     )
     n_layers = activations.shape[1]
     all_acc = np.zeros((n_repeats, n_layers))
@@ -320,34 +455,58 @@ def compute_selectivity(real_acc, control_acc_mean, chance):
     return np.clip(selectivity, 0.0, 1.0)
 
 
-def groups_for_split(split, roots, patterns):
-    """return group ids for a split policy."""
-    if split == "random":
-        return None
-    if split == "root":
-        return encode_groups(roots)
-    if split == "pattern":
-        return encode_groups(patterns)
-    raise ValueError(f"unknown split policy: {split}")
+def group_values_for_policy(policy, rows, activation_metadata=None):
+    """return string group labels and metadata for a normalized split policy."""
+    activation_metadata = activation_metadata or {}
+    if policy == "random":
+        return None, {"effective_policy": "random", "group_field": None}
+    if policy == "root-heldout":
+        values = require_field_values(rows, "root", policy)
+        return values, {"effective_policy": policy, "group_field": "root"}
+    if policy == "pattern-heldout":
+        values = require_field_values(rows, "pattern", policy)
+        return values, {"effective_policy": policy, "group_field": "pattern"}
+    if policy == "combination-heldout":
+        roots = require_field_values(rows, "root", policy)
+        patterns = require_field_values(rows, "pattern", policy)
+        values = [f"{root}::{pattern}" for root, pattern in zip(roots, patterns)]
+        return values, {"effective_policy": policy, "group_field": "root+pattern"}
+    if policy == "template-heldout":
+        values, source = template_values(rows, activation_metadata, policy)
+        return values, {"effective_policy": policy, "group_field": source}
+    raise ValueError(f"unknown split policy: {policy}")
 
 
-def groups_for_task(task, split, rows, group_field=None):
-    """return group ids for a task/split policy."""
+def groups_for_task(task, split, rows, group_field=None, activation_metadata=None):
+    """return group ids and metadata for a task/split policy."""
+    requested_policy = split
+    normalized_policy = normalize_split_policy(split)
     if group_field:
-        return encode_groups([str(get_field(row, group_field, "")) for row in rows])
-    if task == "root":
-        roots = load_labels(rows, "root")
-        patterns = load_labels(rows, "pattern")
-        return groups_for_split(split, roots, patterns)
-    if task == "pattern":
-        roots = load_labels(rows, "root")
-        patterns = load_labels(rows, "pattern")
-        return groups_for_split(split, roots, patterns)
-    if split != "random":
-        raise ValueError(
-            f"task '{task}' needs --group-field for grouped split policy '{split}'"
-        )
-    return None
+        values = require_field_values(rows, group_field, "group-field")
+        metadata = {
+            "requested_policy": requested_policy,
+            "normalized_policy": normalized_policy,
+            "effective_policy": "group-field",
+            "group_field": group_field,
+            "n_groups": len(set(values)),
+        }
+        return encode_groups(values), values, metadata
+
+    values, metadata = group_values_for_policy(
+        normalized_policy,
+        rows,
+        activation_metadata=activation_metadata,
+    )
+    metadata = {
+        "requested_policy": requested_policy,
+        "normalized_policy": normalized_policy,
+        **metadata,
+    }
+    if values is None:
+        metadata["n_groups"] = None
+        return None, None, metadata
+    metadata["n_groups"] = len(set(values))
+    return encode_groups(values), values, metadata
 
 
 def safe_key(value: str) -> str:
@@ -439,7 +598,17 @@ def main():
     parser.add_argument(
         "--group-field",
         default=None,
-        help="dotted field used for grouped CV on generic benchmark tasks",
+        help="dotted field used for grouped CV; overrides task-specific split grouping",
+    )
+    parser.add_argument(
+        "--split-policy",
+        choices=SPLIT_CHOICES,
+        default="random",
+        help=(
+            "split policy for tasks without a task-specific default. "
+            "Use root-heldout, pattern-heldout, combination-heldout, "
+            "template-heldout, or random."
+        ),
     )
     parser.add_argument(
         "--split-root",
@@ -448,15 +617,21 @@ def main():
     )
     parser.add_argument(
         "--root-split",
-        choices=["pattern", "random"],
+        choices=SPLIT_CHOICES,
         default="pattern",
-        help="CV split for root probes. 'pattern' tests roots on held-out patterns.",
+        help=(
+            "CV split for root probes. Default 'pattern' means pattern-heldout, "
+            "testing roots on held-out patterns."
+        ),
     )
     parser.add_argument(
         "--pattern-split",
-        choices=["root", "random"],
+        choices=SPLIT_CHOICES,
         default="root",
-        help="CV split for pattern probes. 'root' tests patterns on held-out roots.",
+        help=(
+            "CV split for pattern probes. Default 'root' means root-heldout, "
+            "testing patterns on held-out roots."
+        ),
     )
     args = parser.parse_args()
 
@@ -468,6 +643,7 @@ def main():
         args.pattern_split = "root"
 
     activations = load_activations(args.activations)
+    activation_metadata = load_activation_metadata(args.activations)
     rows = load_rows(args.stimuli)
     if args.max_rows is not None:
         rows = rows[: args.max_rows]
@@ -478,6 +654,7 @@ def main():
     print(f"tasks: {', '.join(args.tasks)}")
     print(f"root probe split: {args.root_split}")
     print(f"pattern probe split: {args.pattern_split}")
+    print(f"default split policy: {args.split_policy}")
     if args.group_field:
         print(f"group field: {args.group_field}")
     print(f"probe kind: {args.probe_kind}")
@@ -494,28 +671,64 @@ def main():
 
     results = {}
     trained = {}
+    split_policy_records = []
     for task in args.tasks:
         task_indices, labels = load_available_labels(rows, task)
         task_rows = [rows[i] for i in task_indices]
         task_activations = activations[task_indices]
-        split = args.root_split if task == "root" else args.pattern_split if task == "pattern" else "random"
-        groups = groups_for_task(task, split, task_rows, args.group_field)
+        split = (
+            args.root_split
+            if task == "root"
+            else args.pattern_split
+            if task == "pattern"
+            else args.split_policy
+        )
+        groups, group_values, split_metadata = groups_for_task(
+            task,
+            split,
+            task_rows,
+            args.group_field,
+            activation_metadata=activation_metadata,
+        )
+        splits, cv_metadata = prepare_splits(
+            labels,
+            args.folds,
+            groups=groups,
+            group_values=group_values,
+            split_name=f"{task}-split={split_metadata['effective_policy']}",
+        )
+        split_metadata = {
+            "task": task,
+            "label_field": task,
+            "row_count": len(task_rows),
+            "usable_indices": task_indices,
+            **split_metadata,
+            **cv_metadata,
+        }
+        split_policy_records.append(split_metadata)
         print(f"\n--- {task} probes ---")
         if len(task_rows) != len(rows):
             print(f"  usable rows: {len(task_rows)} / {len(rows)}")
         print(f"  labels: {len(set(labels))} classes")
+        print(f"  split policy: {split_metadata['effective_policy']}")
+        if split_metadata.get("group_field"):
+            print(
+                f"  grouped by: {split_metadata['group_field']} "
+                f"({split_metadata.get('n_groups')} groups)"
+            )
         acc, probes, le = train_probes(
             task_activations,
             labels,
             args.folds,
             groups=groups,
-            split_name=f"{task}-split={split}",
+            split_name=f"{task}-split={split_metadata['effective_policy']}",
             probe_kind=args.probe_kind,
             max_iter=args.max_iter,
             scale=args.scale,
             solver=args.solver,
             tol=args.tol,
             n_jobs=args.n_jobs,
+            splits_override=splits,
         )
         for i, layer_acc in enumerate(acc):
             print(f"  layer {i:2d}: {layer_acc:.3f}")
@@ -538,6 +751,7 @@ def main():
                 solver=args.solver,
                 tol=args.tol,
                 n_jobs=args.n_jobs,
+                splits_override=splits,
             )
             chance = 1.0 / len(set(labels))
             selectivity = compute_selectivity(acc, control_mean, chance)
@@ -561,6 +775,12 @@ def main():
             "probe_kind": args.probe_kind,
             "root_split": args.root_split,
             "pattern_split": args.pattern_split,
+            "split_policy": args.split_policy,
+            "split_policy_json": json.dumps(
+                split_policy_records,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             "tasks": np.array(args.tasks, dtype=object),
         }
         if args.probe_kind in {"linear", "sgd"}:
@@ -575,6 +795,14 @@ def main():
                 ]
         np.savez(args.output, **save_dict)
         print(f"\nsaved probe weights to {args.output}")
+        split_sidecar = Path(args.output).with_name(
+            f"{Path(args.output).stem}_split_policy.json"
+        )
+        split_sidecar.write_text(
+            json.dumps(split_policy_records, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"saved split policy metadata to {split_sidecar}")
         if args.control:
             print("  (includes control and selectivity arrays)")
 

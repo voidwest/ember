@@ -46,9 +46,12 @@ def summarize_probe(path: str | None) -> dict:
         "probe_kind": str(data["probe_kind"]) if "probe_kind" in data else None,
         "root_split": str(data["root_split"]) if "root_split" in data else None,
         "pattern_split": str(data["pattern_split"]) if "pattern_split" in data else None,
+        "split_policy": str(data["split_policy"]) if "split_policy" in data else None,
         "tasks": tasks,
         "task_metrics": {},
     }
+    if "split_policy_json" in data:
+        summary["split_policy_metadata"] = json.loads(str(data["split_policy_json"]))
     for task in tasks:
         key = "".join(c if c.isalnum() or c in "_-" else "_" for c in task)
         acc_key = f"{key}_accuracy"

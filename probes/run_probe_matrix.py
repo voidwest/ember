@@ -15,6 +15,21 @@ from pathlib import Path
 
 DEFAULT_TEMPLATES = ["en_zero", "en_one", "ar_zero", "ar_one"]
 DEFAULT_POSITIONS = ["last", "root", "pattern", "prompt_mean"]
+SPLIT_CHOICES = [
+    "combination",
+    "combination-heldout",
+    "pattern",
+    "pattern-heldout",
+    "random",
+    "random-stratified",
+    "root",
+    "root-heldout",
+    "root-pattern",
+    "root-pattern-heldout",
+    "stratified",
+    "template",
+    "template-heldout",
+]
 
 
 def parse_model(value: str) -> tuple[str, str]:
@@ -80,6 +95,29 @@ def main():
     parser.add_argument("--probe-kind", choices=["linear", "mlp"], default="linear")
     parser.add_argument("--control", action="store_true")
     parser.add_argument(
+        "--split-policy",
+        choices=SPLIT_CHOICES,
+        default="random",
+        help="split policy for non-root/non-pattern tasks passed to train_linear_probe.py",
+    )
+    parser.add_argument(
+        "--root-split",
+        choices=SPLIT_CHOICES,
+        default="pattern",
+        help="split policy for root probes; default holds out patterns",
+    )
+    parser.add_argument(
+        "--pattern-split",
+        choices=SPLIT_CHOICES,
+        default="root",
+        help="split policy for pattern probes; default holds out roots",
+    )
+    parser.add_argument(
+        "--group-field",
+        default=None,
+        help="optional dotted field for grouped CV; overrides task-specific grouping",
+    )
+    parser.add_argument(
         "--jobs",
         type=int,
         default=1,
@@ -127,7 +165,12 @@ def main():
                     "--stimuli", args.stimuli,
                     "--probe-kind", args.probe_kind,
                     "--output", probes,
+                    "--split-policy", args.split_policy,
+                    "--root-split", args.root_split,
+                    "--pattern-split", args.pattern_split,
                 ]
+                if args.group_field:
+                    probe_cmd.extend(["--group-field", args.group_field])
                 if args.control:
                     probe_cmd.append("--control")
                 group = [probe_cmd]
@@ -182,6 +225,10 @@ def main():
                 "positions": args.positions,
                 "generate_tokens": args.generate_tokens,
                 "probe_kind": args.probe_kind,
+                "split_policy": args.split_policy,
+                "root_split": args.root_split,
+                "pattern_split": args.pattern_split,
+                "group_field": args.group_field,
                 "jobs": args.jobs,
                 "commands": manifest,
             },

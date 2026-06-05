@@ -7,6 +7,10 @@ The manifest is intentionally simple JSON. Example:
   "stimuli": "stimuli/nonce_root_pattern.json",
   "out_dir": "data/benchmarks/qwen3_smoke",
   "tasks": ["root", "pattern"],
+  "split_policy": {
+    "root": "pattern-heldout",
+    "pattern": "root-heldout"
+  },
   "models": [
     {
       "label": "qwen3_0_6b",
@@ -106,11 +110,18 @@ def enabled(config: dict, key: str, default: bool) -> bool:
 
 def split_policy_args(config: dict) -> list[str]:
     policy = config.get("split_policy") or {}
+    if isinstance(policy, str):
+        return ["--split-policy", policy]
     args: list[str] = []
+    default_policy = policy.get("default") or policy.get("all")
+    if default_policy:
+        args.extend(["--split-policy", default_policy])
     if "root" in policy:
         args.extend(["--root-split", policy["root"]])
     if "pattern" in policy:
         args.extend(["--pattern-split", policy["pattern"]])
+    if "template" in policy:
+        args.extend(["--split-policy", policy["template"]])
     group_field = policy.get("group_field") or config.get("group_field")
     if group_field:
         args.extend(["--group-field", group_field])
