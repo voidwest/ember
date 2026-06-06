@@ -1,0 +1,217 @@
+{
+  "created_at": "2026-06-06T19:49:23.006555+00:00",
+  "arch": "gemma4",
+  "tokenizer": "tokenizer-gemma4.json",
+  "prompt": "The capital of France is",
+  "tokens": 16,
+  "max_seq_len": 128,
+  "threads": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "repeats": 2,
+  "results": [
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 1,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 29.894387098989682,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 5391.9,
+          "tok_s": 1.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 7825.0,
+          "tok_s": 2.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 5391.9ms -> 1 tok/s",
+        "decode:  16 tokens in 7825.0ms -> 2 tok/s"
+      ]
+    },
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 1,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 23.664168105999124,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 2697.2,
+          "tok_s": 2.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 10607.0,
+          "tok_s": 2.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 2697.2ms -> 2 tok/s",
+        "decode:  16 tokens in 10607.0ms -> 2 tok/s"
+      ]
+    },
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 2,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 18.556569397987914,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 2459.8,
+          "tok_s": 2.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 6171.3,
+          "tok_s": 3.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 2459.8ms -> 2 tok/s",
+        "decode:  16 tokens in 6171.3ms -> 3 tok/s"
+      ]
+    },
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 2,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 19.308489054994425,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 2467.5,
+          "tok_s": 2.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 6141.9,
+          "tok_s": 3.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 2467.5ms -> 2 tok/s",
+        "decode:  16 tokens in 6141.9ms -> 3 tok/s"
+      ]
+    },
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 4,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 18.749466947003384,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 2749.8,
+          "tok_s": 2.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 5861.1,
+          "tok_s": 3.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 2749.8ms -> 2 tok/s",
+        "decode:  16 tokens in 5861.1ms -> 3 tok/s"
+      ]
+    },
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 4,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 18.790976137999678,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 2826.3,
+          "tok_s": 2.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 5869.5,
+          "tok_s": 3.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 2826.3ms -> 2 tok/s",
+        "decode:  16 tokens in 5869.5ms -> 3 tok/s"
+      ]
+    },
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 8,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 33.83435685100267,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 9100.0,
+          "tok_s": 1.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 6095.1,
+          "tok_s": 3.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 9100.0ms -> 1 tok/s",
+        "decode:  16 tokens in 6095.1ms -> 3 tok/s"
+      ]
+    },
+    {
+      "label": "gemma4_e2b",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "threads": 8,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 16.318631578003988,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 2366.5,
+          "tok_s": 2.0
+        },
+        "decode": {
+          "tokens": 16,
+          "ms": 6222.6,
+          "tok_s": 3.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 2366.5ms -> 2 tok/s",
+        "decode:  16 tokens in 6222.6ms -> 3 tok/s"
+      ]
+    }
+  ]
+}

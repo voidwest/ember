@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="ember engineering update" />
+        <meta property="og:description" content="Recent Ember engineering work after SIMD, Qwen3, and Gemma support: CPU runtime paths, streamed probe extraction, benchmark manifests, validation summaries, and conservative reporting." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/engineering/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>ember engineering update</title>
+        <link rel="stylesheet" href="/style.css" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <!-- docs:og-image end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <a class="nav-lang" href="/ember/engineering/index.ar.html">عربي</a>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">writeup</a>
+            &nbsp;&nbsp;
+            <a href="/ember/internals/">internals</a>
+            &nbsp;&nbsp;
+            <a href="/ember/simd-qwen-gemma/">simd + qwen/gemma</a>
+        </div>
+
+        <h1>ember engineering update</h1>
+
+        <div class="meta">
+            2026-06-06 · post-SIMD/Qwen3/Gemma support · engineering status, not
+            a research-result claim
+        </div>
+
+        <p>
+            the recent ember work moved the project from "model support works in
+            a narrow demo" toward an inspectable research pipeline. the main
+            changes are runtime plumbing, streamed activation extraction,
+            benchmark manifests, golden-logit summaries, smoke reports, and
+            conservative causal-intervention reporting. the point is not broader
+            model coverage for its own sake; it is making every run easier to
+            reproduce, compare, and distrust productively.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table scan-table">
+                <tbody>
+                    <tr><td>runtime</td><td>CPU backend helpers, q8_0 scratch reuse, Rayon attention paths, deterministic greedy sampling, and pooled activation extraction.</td></tr>
+                    <tr><td>artifacts</td><td>streamed <span class="mono">.npy</span> activation files, sidecar metadata, smoke summaries, benchmark summaries, and Markdown reports.</td></tr>
+                    <tr><td>validation</td><td>golden-logit comparison scripts and activation-reference design docs, with independent references still required for strong claims.</td></tr>
+                    <tr><td>research pipeline</td><td>split-policy metadata, benchmark manifests, encoder extraction, MDL curves, and conservative intervention summaries.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>engineering pages</h2>
+
+        <div class="project-list">
+            <div class="project featured">
+                <div class="name">
+                    <a href="#thread-count-benchmark">thread-count benchmark</a>
+                </div>
+                <div class="desc">
+                    local post-SIMD benchmark for Rayon thread counts across
+                    Qwen3, LLaMA, and Gemma Q8_0 models. useful as runtime
+                    evidence, not as a cloud-speed prediction.
+                </div>
+                <div class="tags">
+                    <span>runtime</span><span>rayon</span><span>q8_0</span><span>local benchmark</span>
+                </div>
+            </div>
+
+            <div class="project">
+                <div class="name">
+                    <a href="/ember/engineering/simd-qwen-gemma/">simd kernels, qwen 3, and gemma 4</a>
+                </div>
+                <div class="desc">
+                    the earlier engineering writeup on q8_0 SIMD kernels and
+                    narrow model-family support. linked here as part of the
+                    engineering track.
+                </div>
+                <div class="tags">
+                    <span>simd</span><span>qwen3</span><span>gemma4</span><span>model support</span>
+                </div>
+            </div>
+
+            <div class="project">
+                <div class="name">
+                    <a href="/ember/internals/">internals</a>
+                </div>
+                <div class="desc">
+                    lower-level notes on tensors, the backend trait, KV cache,
+                    GGUF loading, sampling, and the original probing pipeline.
+                </div>
+                <div class="tags">
+                    <span>architecture</span><span>memory</span><span>backend</span>
+                </div>
+            </div>
+        </div>
+
+        <h2>runtime changes</h2>
+
+        <p>
+            the CPU backend now carries more of the execution contract. row
+            helpers, q8_0 prefill scratch, cached attention helpers, and Rayon
+            parallelism reduce repeated hot-path work without changing the
+            public model contract. the SIMD kernel benchmark is covered in the
+            separate SIMD/Qwen3/Gemma page; the local benchmark below is only
+            about post-SIMD thread-count behavior.
+        </p>
+
+        <p>
+            probe extraction also changed shape. instead of treating probe mode
+            as a large in-memory dump, ember streams activation rows to
+            <span class="mono">.npy</span> and records pooled per-layer states for the
+            selected token positions. that makes cloud pullback and repeated
+            benchmark runs less dependent on raw activation transfer.
+        </p>
+
+        <h2 id="thread-count-benchmark">thread-count benchmark</h2>
+
+        <p>
+            i ran <span class="mono">scripts/benchmark_threads.py</span> locally on an
+            Intel i5-1135G7 laptop CPU with 4 physical cores and 8 hardware
+            threads. all rows use Q8_0 GGUF files and Ember's own
+            <span class="mono">--benchmark</span> decode timer. the runs reload the model
+            for each thread count, so wall time is useful operational context,
+            but the table below uses decode milliseconds from the benchmark
+            output.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart" src="/plots/thread_benchmarks_dark.png"
+                 alt="Local Ember thread-count benchmark showing decode tokens per second for Qwen3 0.6B, LLaMA 3.2 1B, LLaMA 3.2 3B, Gemma 4 E2B, and LLaMA 3.1 8B across 1, 2, 4, and 8 Rayon threads"
+                 loading="lazy" />
+        </figure>
+
+        <p class="caption">
+            local smoke benchmark only. Qwen3 0.6B used 32 generated tokens and
+            3 repeats; LLaMA 1B/3B and Gemma E2B used 16 tokens and 2 repeats;
+            LLaMA 8B used 8 tokens and 1 repeat.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>model</th><th>repeats</th><th>1 thread decode</th><th>best local decode</th><th>best threads</th><th>read</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Qwen3 0.6B</td><td>3</td><td>6.70 tok/s</td><td>6.70 tok/s</td><td>1</td><td>no local threading gain in this small run</td></tr>
+                    <tr><td>LLaMA 3.2 1B</td><td>2</td><td>2.63 tok/s</td><td>3.23 tok/s</td><td>4</td><td>modest decode improvement</td></tr>
+                    <tr><td>LLaMA 3.2 3B</td><td>2</td><td>1.09 tok/s</td><td>1.53 tok/s</td><td>8</td><td>clearer local decode improvement</td></tr>
+                    <tr><td>Gemma 4 E2B</td><td>2</td><td>1.74 tok/s</td><td>2.73 tok/s</td><td>4</td><td>best local thread count was not the maximum</td></tr>
+                    <tr><td>LLaMA 3.1 8B</td><td>1</td><td>0.59 tok/s</td><td>1.24 tok/s</td><td>8</td><td>directional smoke result only</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            the careful conclusion is narrow: on this machine, larger dense
+            Q8_0 models benefited from the threaded runtime paths, while the
+            small Qwen3 0.6B run did not. this does not predict a specific cloud
+            speedup; it only says the threading work has measurable local effect
+            once the model is large enough for the overhead to pay back.
+        </p>
+
+        <h2>benchmark and probe pipeline</h2>
+
+        <p>
+            the Python side now has a clearer benchmark surface:
+            <span class="mono">run_benchmark.py</span> runs manifest-defined jobs,
+            <span class="mono">benchmark_summary.py</span> records artifact status, and
+            <span class="mono">render_benchmark_report.py</span> turns summaries into
+            human-readable Markdown. the report language is intentionally about
+            decodability and artifact status, not scientific conclusions.
+        </p>
+
+        <p>
+            probe training gained stricter split-policy handling for grouped
+            experiments. random stratified splits still exist, but root-heldout,
+            pattern-heldout, root-pattern combination-heldout, sentence-heldout,
+            and template-heldout policies can now be recorded instead of being
+            implicit. requested grouped splits fail when the required field is
+            missing; they do not silently fall back to random.
+        </p>
+
+        <h2>validation and reporting</h2>
+
+        <p>
+            smoke reports now record more of the machine and command context.
+            golden-logit reports can be summarized into compact JSON and
+            Markdown. causal-intervention reports can also render Markdown, but
+            their interpretation is deliberately narrow: probe-direction removal
+            can affect decodability, while behavioral causality requires changed
+            logits or continuations.
+        </p>
+
+        <p>
+            the activation-reference design doc is the next important validation
+            step. golden logits say the output surface matches a reference for a
+            prompt. hidden-state probing also needs layer-by-layer activation
+            checks for the same prompt, tokenizer, model, layer, and token
+            position before treating representational geometry as numerically
+            validated.
+        </p>
+
+        <h2>docs and site</h2>
+
+        <p>
+            the docs were split into clearer lanes. the main ember page now
+            separates engineering from research/results. the SIMD/Qwen3/Gemma
+            page explains narrow runtime and model-family changes. the research
+            notes remain responsible for Arabic morphology interpretation, and
+            those claims should stay tied to actual validation artifacts.
+        </p>
+
+        <h2>what this does not prove</h2>
+
+        <ul>
+            <li>it does not prove quality parity with llama.cpp or Hugging Face.</li>
+            <li>it does not turn a kernel benchmark into a full-model speedup claim.</li>
+            <li>it does not validate hidden-state geometry without activation-reference checks.</li>
+            <li>it does not make probe decodability equivalent to causal model use.</li>
+            <li>it does not make smoke generation a benchmark of behavioral competence.</li>
+        </ul>
+
+        <h2>next engineering pressure</h2>
+
+        <p>
+            the most useful next work is boring: independent golden-logit
+            references for Qwen3 and LLaMA, activation reference checks for one
+            small model and one prompt, full encoder benchmark reports, compact
+            cloud artifact pullback, and continued cleanup of stale docs that
+            overstate what has been validated.
+        </p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

@@ -46,7 +46,9 @@
         <div class="back">
             <a href="/" class="ltr">← voidwest</a>
             &nbsp;&nbsp;
-            <a href="/ember/" class="ltr">writeup</a>
+            <a href="/ember/index.ar.html" class="ltr">writeup</a>
+            &nbsp;&nbsp;
+            <a href="/ember/engineering/index.ar.html" class="ltr">engineering</a>
         </div>
 
         <h1>ember internals</h1>
@@ -54,8 +56,79 @@
         <p>
             هذا تفكيك قريب لهياكل البيانات والخوارزميات وتخطيطات الذاكرة
             التي تشغّل ember. يفترض إنك قريت
-            <a href="/ember/">الـ architecture writeup</a> وترغب التفاصيل التقنية.
+            <a href="/ember/index.ar.html">الـ architecture writeup</a> وترغب التفاصيل التقنية.
         </p>
+
+        <h2>architecture</h2>
+
+        <p>
+            المشروع صغير بما يكفي لتتبعه من CLI إلى logits.
+            <span class="mono">main.rs</span> يملك generation وlogits dump وprobe
+            modes. عوائل النماذج تنفذ <span class="mono">ForwardModel</span>.
+            عمليات compute تمر عبر <span class="mono">Backend</span>، و
+            <span class="mono">CpuBackend</span> هو runtime الحالي.
+        </p>
+
+        <div class="arch-tree">
+            <div class="arch-row root"><span class="arch-file">main.rs</span><span class="arch-desc">cli args، generation، logits dump، probe modes</span></div>
+            <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">loader.rs</span><span class="arch-desc">gguf v3 parser، metadata، tensor loading</span></div>
+            <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">model.rs</span><span class="arch-desc">gpt-2 blocks و ForwardModel trait</span></div>
+            <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">llama.rs</span><span class="arch-desc">مسار llama/qwen-family</span></div>
+            <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">gemma4.rs</span><span class="arch-desc">مسار gemma 4 dense text-only</span></div>
+            <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">backend.rs</span><span class="arch-desc">backend trait، cpu backend، q8_0، attention helpers</span></div>
+            <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">tensor.rs</span><span class="arch-desc">row-major f32 tensor operations</span></div>
+            <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">kv_cache.rs</span><span class="arch-desc">flat k/v cache و scratch buffers</span></div>
+            <div class="arch-row"><span class="arch-branch">└─ </span><span class="arch-file">probes/</span><span class="arch-desc">probing، validation، reports</span></div>
+        </div>
+
+        <h2>design decisions</h2>
+
+        <div class="table-wrap">
+            <table class="simd-table scan-table">
+                <tbody>
+                    <tr><td>backend trait</td><td>واجهة compute محدودة بدلاً من نشر تفاصيل CPU داخل كل architecture.</td></tr>
+                    <tr><td>row-major tensors</td><td>الصفوف متجاورة؛ embeddings وoutput rows slices مباشرة.</td></tr>
+                    <tr><td>gguf mmap</td><td>ملف النموذج mapped، والـ tensors تنسخ أو تفك ضغطها إلى buffers صريحة.</td></tr>
+                    <tr><td>flat kv cache</td><td>تخصيص واحد مع stride math ثابت: <span class="mono">[layer][head][pos][head_dim]</span>.</td></tr>
+                    <tr><td>artifacts over claims</td><td>scripts تكتب summaries قابلة للقراءة آلياً قبل التفسير.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>math primitives</h2>
+
+        <p>
+            الحسابات الأساسية عادية لكنها حساسة: softmax يحتاج fallback للصفوف
+            masked بالكامل، وlayer norm/RMS norm يجب أن يرجعوا إلى block stream،
+            وRoPE conventions إذا اختلفت تنتج نصاً يبدو ممكناً لكنه خطأ.
+        </p>
+
+        <h2>attention</h2>
+
+        <p>
+            attention ينقسم إلى q/k/v projections، positional handling أو RoPE،
+            causal mask، softmax، ثم weighted value accumulation. الـ cache يحول
+            decode إلى prefill واحد وخطوة cached لكل token جديد.
+        </p>
+
+        <h2>bugs and first light</h2>
+
+        <p>
+            أكثر الأخطاء فائدة لم تكن crashes. layout خاطئ في GGUF أنتج نصاً
+            عشوائياً، وbug في KV-cache prefill جعل النموذج يرى آخر token فقط.
+            أول output متماسك كان smoke evidence فقط، وليس golden validation.
+        </p>
+
+        <div class="quote-block">
+            <div class="text">
+                The cheese snowball Cheese Cheese Cheese Cheese Cheese Cheese
+                Cheese Cheese Cheese Cheese Cheese Cheese Cheese Cheese Cheese
+                Cheese
+            </div>
+            <div class="caption">
+                ember v0.1، greedy GPT-2 output بعد إصلاح column-major layout
+            </div>
+        </div>
 
         <!-- ══ TENSOR ══ -->
         <h2>tensor</h2>

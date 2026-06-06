@@ -1,0 +1,117 @@
+{
+  "created_at": "2026-06-06T19:43:01.590691+00:00",
+  "arch": "llama",
+  "tokenizer": "tokenizer.json",
+  "prompt": "The capital of France is",
+  "tokens": 8,
+  "max_seq_len": 64,
+  "threads": [
+    1,
+    2,
+    4,
+    8
+  ],
+  "repeats": 1,
+  "results": [
+    {
+      "label": "llama31_8b",
+      "model": "meta-llama-3.1-8b-instruct.Q8_0.gguf",
+      "threads": 1,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 88.0900034869992,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 22845.2,
+          "tok_s": 0.0
+        },
+        "decode": {
+          "tokens": 8,
+          "ms": 13594.2,
+          "tok_s": 1.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 22845.2ms -> 0 tok/s",
+        "decode:  8 tokens in 13594.2ms -> 1 tok/s"
+      ]
+    },
+    {
+      "label": "llama31_8b",
+      "model": "meta-llama-3.1-8b-instruct.Q8_0.gguf",
+      "threads": 2,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 73.62400218300172,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 18055.1,
+          "tok_s": 0.0
+        },
+        "decode": {
+          "tokens": 8,
+          "ms": 9207.1,
+          "tok_s": 1.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 18055.1ms -> 0 tok/s",
+        "decode:  8 tokens in 9207.1ms -> 1 tok/s"
+      ]
+    },
+    {
+      "label": "llama31_8b",
+      "model": "meta-llama-3.1-8b-instruct.Q8_0.gguf",
+      "threads": 4,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 73.33568220499728,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 18549.8,
+          "tok_s": 0.0
+        },
+        "decode": {
+          "tokens": 8,
+          "ms": 7164.6,
+          "tok_s": 1.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 18549.8ms -> 0 tok/s",
+        "decode:  8 tokens in 7164.6ms -> 1 tok/s"
+      ]
+    },
+    {
+      "label": "llama31_8b",
+      "model": "meta-llama-3.1-8b-instruct.Q8_0.gguf",
+      "threads": 8,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 66.41012849200342,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 15222.7,
+          "tok_s": 0.0
+        },
+        "decode": {
+          "tokens": 8,
+          "ms": 6468.4,
+          "tok_s": 1.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 15222.7ms -> 0 tok/s",
+        "decode:  8 tokens in 6468.4ms -> 1 tok/s"
+      ]
+    }
+  ]
+}

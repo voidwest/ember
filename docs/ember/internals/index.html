@@ -47,6 +47,8 @@
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/ember/">writeup</a>
+            &nbsp;&nbsp;
+            <a href="/ember/engineering/">engineering</a>
         </div>
 
         <h1>ember internals</h1>
@@ -54,8 +56,119 @@
         <p>
             this is a line-by-line walkthrough of the data structures, algorithms,
             and memory layouts that make ember work. it assumes you've read the
-            <a href="/ember/">architectural overview</a> and want the raw details.
+            <a href="/ember/">portal page</a> and want the raw details.
         </p>
+
+        <h2>architecture</h2>
+
+        <p>
+            the project is intentionally small enough to follow from entry point
+            to logits. <span class="mono">main.rs</span> owns CLI dispatch, generation,
+            logits dump, and probe modes. model families implement
+            <span class="mono">ForwardModel</span>. compute operations go through the
+            <span class="mono">Backend</span> trait, with <span class="mono">CpuBackend</span>
+            as the current runtime.
+        </p>
+
+        <div class="arch-tree">
+          <div class="arch-row root"><span class="arch-file">main.rs</span><span class="arch-desc">entry point, cli args, generation, logits dump, probe modes</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">loader.rs</span><span class="arch-desc">gguf v3 parser, metadata, tensor loading</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">model.rs</span><span class="arch-desc">gpt-2 blocks and ForwardModel trait</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">llama.rs</span><span class="arch-desc">llama/qwen-family transformer path</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">gemma4.rs</span><span class="arch-desc">dense text-only gemma 4 path</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">backend.rs</span><span class="arch-desc">backend trait, cpu backend, q8_0 and attention helpers</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">tensor.rs</span><span class="arch-desc">row-major f32 tensor operations</span></div>
+          <div class="arch-row"><span class="arch-branch">├─ </span><span class="arch-file">kv_cache.rs</span><span class="arch-desc">flat k/v cache and scratch buffers</span></div>
+          <div class="arch-row"><span class="arch-branch">└─ </span><span class="arch-file">probes/</span><span class="arch-desc">python probing, validation, and report scripts</span></div>
+        </div>
+
+        <h2>design decisions</h2>
+
+        <div class="table-wrap">
+            <table class="simd-table scan-table">
+                <tbody>
+                    <tr><td>backend trait</td><td>model code talks to a bounded compute interface instead of scattering CPU details through every architecture.</td></tr>
+                    <tr><td>row-major tensors</td><td>rows are contiguous, so embeddings and output rows are direct slices; column slices are explicit gathers.</td></tr>
+                    <tr><td>gguf mmap</td><td>model files are mapped and tensors are copied/dequantized into explicit runtime buffers.</td></tr>
+                    <tr><td>flat kv cache</td><td>single allocation with fixed stride math: <span class="mono">[layer][head][pos][head_dim]</span>.</td></tr>
+                    <tr><td>artifacts over claims</td><td>probe, benchmark, and validation scripts write machine-readable summaries before interpretation.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>math primitives</h2>
+
+        <p>
+            the low-level math is ordinary but unforgiving: softmax needs an
+            all-masked-row fallback, layer norm and RMS norm must write their
+            result back into the block stream, and activation functions must be
+            numerically stable enough not to silently deform logits.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>primitive</th><th>where it matters</th><th>failure mode</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>softmax</td><td>attention and sampling</td><td>all <span class="mono">-inf</span> rows produce NaN without a fallback</td></tr>
+                    <tr><td>GELU / SiLU</td><td>MLP blocks</td><td>wrong activation changes logits without crashing</td></tr>
+                    <tr><td>layer norm / RMS norm</td><td>before attention and MLP blocks</td><td>forgetting to bind the returned tensor leaves stale activations</td></tr>
+                    <tr><td>RoPE</td><td>llama/qwen/gemma attention</td><td>position convention mistakes show up as plausible but wrong text</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>attention</h2>
+
+        <p>
+            attention is split into q/k/v projections, RoPE or positional
+            handling, causal masking, softmax, and weighted value accumulation.
+            the cache turns decode from recomputing the whole sequence every
+            token into a prefill pass plus one cached step per generated token.
+        </p>
+
+        <h2>bugs and first light</h2>
+
+        <p>
+            the most useful early failures were not crashes. they were coherent
+            enough to mislead: scrambled GGUF layouts produced nonsense text,
+            and the first KV-cache prefill bug let the model attend only to the
+            final prompt token.
+        </p>
+
+        <div class="bug-card">
+            <div class="title">column-major gguf layout</div>
+            <div class="cause">
+                q8_0 and f16 tensors needed layout handling before runtime
+                matmul. after fixing the loader/transpose path, correlation with
+                a PyTorch reference went from near-noise to near-identical.
+            </div>
+        </div>
+
+        <div class="bug-card">
+            <div class="title">kv cache prefill overwrite</div>
+            <div class="cause">
+                cache writes originally reused the same cursor position during
+                prefill. passing the explicit absolute token position fixed
+                prompt-token retention.
+            </div>
+        </div>
+
+        <p>
+            first coherent output was still a smoke result, not full validation:
+        </p>
+
+        <div class="quote-block">
+            <div class="text">
+                The cheese snowball Cheese Cheese Cheese Cheese Cheese Cheese
+                Cheese Cheese Cheese Cheese Cheese Cheese Cheese Cheese Cheese
+                Cheese
+            </div>
+            <div class="caption">
+                ember v0.1, greedy GPT-2 output after the column-major layout fix
+            </div>
+        </div>
 
         <!-- ══ TENSOR ══ -->
         <h2>tensor</h2>

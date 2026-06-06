@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="ember engineering update" />
+        <meta property="og:description" content="Recent Ember engineering work after SIMD, Qwen3, and Gemma support: CPU runtime paths, streamed probe extraction, benchmark manifests, validation summaries, and conservative reporting." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/engineering/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>ember engineering update</title>
+        <link rel="stylesheet" href="/style.css" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <!-- docs:og-image end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <a class="nav-lang" href="/ember/engineering/">en</a>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/index.ar.html" class="ltr">writeup</a>
+            &nbsp;&nbsp;
+            <a href="/ember/internals/index.ar.html" class="ltr">internals</a>
+            &nbsp;&nbsp;
+            <a href="/ember/simd-qwen-gemma/index.ar.html" class="ltr">simd + qwen/gemma</a>
+        </div>
+
+        <h1>ember engineering update</h1>
+
+        <div class="meta">
+            2026-06-06 · بعد دعم SIMD و Qwen3 و Gemma · حالة هندسية، وليست claim
+            بحثية
+        </div>
+
+        <p>
+            التغييرات الأخيرة في ember نقلت المشروع من مسار تشغيل ضيق إلى
+            pipeline أوضح للتجارب. التركيز هنا على runtime، استخراج activations
+            بشكل streamed، manifests للـ benchmarks، تقارير golden logits، smoke
+            reports، وتقارير تدخل causal محافظة. الهدف ليس توسيع دعم النماذج
+            فقط، بل جعل كل run أسهل في الإعادة والمراجعة.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table scan-table">
+                <tbody>
+                    <tr><td>runtime</td><td>مساعدات CPU backend، إعادة استخدام scratch في q8_0، مسارات Rayon للـ attention، greedy sampling حتمي، واستخراج activations pooled.</td></tr>
+                    <tr><td>artifacts</td><td>ملفات <span class="mono">.npy</span> streamed، metadata جانبية، smoke summaries، benchmark summaries، وتقارير Markdown.</td></tr>
+                    <tr><td>validation</td><td>سكريبتات golden-logit وتصميم activation-reference checks. المراجع المستقلة ما زالت مطلوبة للادعاءات القوية.</td></tr>
+                    <tr><td>research pipeline</td><td>metadata للـ split policies، manifests، استخراج encoder، MDL curves، وتقارير interventions محافظة.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>engineering pages</h2>
+
+        <div class="project-list">
+            <div class="project featured">
+                <div class="name">
+                    <a href="#thread-count-benchmark">thread-count benchmark</a>
+                </div>
+                <div class="desc">
+                    benchmark محلي بعد SIMD لعدد Rayon threads عبر Qwen3 وLLaMA
+                    وGemma Q8_0. مفيد كدليل runtime، وليس كتنبؤ بسرعة cloud.
+                </div>
+                <div class="tags">
+                    <span>runtime</span><span>rayon</span><span>q8_0</span><span>local benchmark</span>
+                </div>
+            </div>
+
+            <div class="project">
+                <div class="name">
+                    <a href="/ember/engineering/simd-qwen-gemma/index.ar.html">simd kernels و qwen 3 و gemma 4</a>
+                </div>
+                <div class="desc">
+                    writeup الهندسي السابق عن q8_0 SIMD kernels ودعم عوائل
+                    Qwen3 وGemma بشكل ضيق. موجود هنا ضمن مسار engineering.
+                </div>
+                <div class="tags">
+                    <span>simd</span><span>qwen3</span><span>gemma4</span><span>model support</span>
+                </div>
+            </div>
+
+            <div class="project">
+                <div class="name">
+                    <a href="/ember/internals/index.ar.html">internals</a>
+                </div>
+                <div class="desc">
+                    ملاحظات أعمق عن tensors، backend trait، KV cache، GGUF،
+                    sampling، ونسخة probing pipeline الأولى.
+                </div>
+                <div class="tags">
+                    <span>architecture</span><span>memory</span><span>backend</span>
+                </div>
+            </div>
+        </div>
+
+        <h2>runtime changes</h2>
+
+        <p>
+            الـ CPU backend صار يحمل جزء أكبر من عقد التنفيذ: row helpers،
+            scratch للـ q8_0 prefill، cached attention helpers، وRayon
+            parallelism. هذا يقلل شغل hot path المتكرر بدون تغيير عقد النموذج
+            العام. benchmark الـ SIMD موجود في صفحة SIMD/Qwen3/Gemma؛ القسم
+            أدناه يقيس فقط سلوك thread counts بعد ذلك العمل.
+        </p>
+
+        <p>
+            probe extraction تغير أيضاً. بدلاً من dump كبير في الذاكرة، ember
+            يكتب activation rows إلى <span class="mono">.npy</span> بشكل streamed
+            ويسجل pooled per-layer states للمواقع المطلوبة. هذا يجعل سحب
+            artifacts من السحابة أسهل من نقل activations الخام دائماً.
+        </p>
+
+        <h2 id="thread-count-benchmark">thread-count benchmark</h2>
+
+        <p>
+            شغلت <span class="mono">scripts/benchmark_threads.py</span> محلياً على
+            Intel i5-1135G7 مع 4 cores فعلية و8 hardware threads. كل الصفوف
+            تستخدم GGUF من نوع Q8_0 وعداد decode من
+            <span class="mono">--benchmark</span> داخل ember. كل thread count يعيد
+            تحميل النموذج، لذلك wall time مفيد كسياق تشغيلي، أما الجدول فيستخدم
+            decode milliseconds من benchmark output.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart" src="/plots/thread_benchmarks_dark.png"
+                 alt="Local Ember thread-count benchmark showing decode tokens per second for Qwen3 0.6B, LLaMA 3.2 1B, LLaMA 3.2 3B, Gemma 4 E2B, and LLaMA 3.1 8B across 1, 2, 4, and 8 Rayon threads"
+                 loading="lazy" />
+        </figure>
+
+        <p class="caption">
+            benchmark محلي فقط. Qwen3 0.6B استخدم 32 generated tokens و3 repeats؛
+            LLaMA 1B/3B وGemma E2B استخدموا 16 tokens و2 repeats؛ LLaMA 8B
+            استخدم 8 tokens وrepeat واحد فقط.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>model</th><th>repeats</th><th>1 thread decode</th><th>best local decode</th><th>best threads</th><th>read</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Qwen3 0.6B</td><td>3</td><td>6.70 tok/s</td><td>6.70 tok/s</td><td>1</td><td>لا يوجد gain محلي من threading في هذا التشغيل الصغير</td></tr>
+                    <tr><td>LLaMA 3.2 1B</td><td>2</td><td>2.63 tok/s</td><td>3.23 tok/s</td><td>4</td><td>تحسن decode محدود</td></tr>
+                    <tr><td>LLaMA 3.2 3B</td><td>2</td><td>1.09 tok/s</td><td>1.53 tok/s</td><td>8</td><td>تحسن decode أوضح محلياً</td></tr>
+                    <tr><td>Gemma 4 E2B</td><td>2</td><td>1.74 tok/s</td><td>2.73 tok/s</td><td>4</td><td>أفضل thread count محلي لم يكن الأعلى</td></tr>
+                    <tr><td>LLaMA 3.1 8B</td><td>1</td><td>0.59 tok/s</td><td>1.24 tok/s</td><td>8</td><td>smoke result اتجاهي فقط</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            الاستنتاج المحافظ ضيق: على هذا الجهاز، النماذج الأكبر dense Q8_0
+            استفادت من مسارات threading، بينما Qwen3 0.6B الصغير لم يستفد. هذا
+            لا يتنبأ بسرعة محددة على cloud؛ فقط يوضح أن threading له أثر محلي
+            قابل للقياس عندما يكون النموذج كبيراً بما يكفي لتعويض overhead.
+        </p>
+
+        <h2>benchmark and probe pipeline</h2>
+
+        <p>
+            جهة Python صارت أوضح: <span class="mono">run_benchmark.py</span>
+            يشغل jobs من manifest، و<span class="mono">benchmark_summary.py</span>
+            يسجل حالة artifacts، و<span class="mono">render_benchmark_report.py</span>
+            يحول summary إلى Markdown. لغة التقرير تتكلم عن decodability وحالة
+            artifacts، وليس conclusions علمية.
+        </p>
+
+        <p>
+            تدريب probes صار يسجل split policies بشكل أوضح. random stratified
+            موجود، لكن root-heldout وpattern-heldout وcombination-heldout
+            وsentence-heldout وtemplate-heldout يمكن تسجيلها. إذا كان الحقل
+            المطلوب غير موجود، يفشل الطلب بدلاً من الرجوع بصمت إلى random.
+        </p>
+
+        <h2>validation and reporting</h2>
+
+        <p>
+            smoke reports تسجل سياق الجهاز والأوامر. golden-logit reports يمكن
+            تلخيصها إلى JSON وMarkdown. تقارير causal intervention أيضاً تنتج
+            Markdown، لكن تفسيرها ضيق: إزالة اتجاه probe قد تؤثر على
+            decodability، أما behavioral causality فتحتاج تغير logits أو
+            continuations.
+        </p>
+
+        <p>
+            activation-reference checks هي الخطوة المهمة التالية. golden logits
+            تتحقق من سطح الخرج، لكن hidden-state probing يحتاج مقارنة طبقة بطبقة
+            لنفس prompt وtokenizer وmodel وlayer وtoken position قبل اعتبار
+            geometry ممثلة عددياً بشكل موثوق.
+        </p>
+
+        <h2>docs and site</h2>
+
+        <p>
+            صفحة ember الرئيسية صارت تفصل engineering عن research/results. صفحة
+            SIMD/Qwen3/Gemma تشرح التغييرات الضيقة في runtime ودعم عائلات
+            النماذج. أما تفسير Arabic morphology فيبقى في research notes، ومعه
+            يجب ربط أي claim بالأدلة الموجودة فعلاً.
+        </p>
+
+        <h2>what this does not prove</h2>
+
+        <ul>
+            <li>لا يثبت quality parity مع llama.cpp أو Hugging Face.</li>
+            <li>لا يحول kernel benchmark إلى claim عن full-model speedup.</li>
+            <li>لا يثبت hidden-state geometry بدون activation-reference checks.</li>
+            <li>لا يجعل probe decodability مساوية للاستخدام السببي داخل النموذج.</li>
+            <li>لا يجعل smoke generation benchmark للسلوك أو الجودة.</li>
+        </ul>
+
+        <h2>next engineering pressure</h2>
+
+        <p>
+            أكثر عمل مفيد الآن هو العمل الممل: golden-logit references مستقلة
+            لـ Qwen3 وLLaMA، activation reference check لنموذج صغير وprompt واحد،
+            تقارير encoder benchmarks كاملة، compact cloud artifacts، وتنظيف أي
+            نص قديم يبالغ فيما تم التحقق منه.
+        </p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
