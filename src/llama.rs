@@ -3,6 +3,18 @@ use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RopeLayout {
+    AdjacentPair,
+    SplitHalf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QkNormOrder {
+    BeforeRope,
+    AfterRope,
+}
+
 #[derive(Debug, Clone)]
 pub struct LlamaConfig {
     /// number of transformer layers
@@ -22,6 +34,10 @@ pub struct LlamaConfig {
     pub rope_theta: f32,
     /// epsilon for rms normalization (typically 1e-5)
     pub norm_eps: f32,
+    /// RoPE pairing convention for this architecture.
+    pub rope_layout: RopeLayout,
+    /// Q/K RMSNorm placement relative to RoPE for architectures that use it.
+    pub qk_norm_order: QkNormOrder,
     /// token vocabulary size
     pub vocab_size: usize,
 }
@@ -60,6 +76,14 @@ impl LlamaConfig {
             "qwen2" => "qwen2",
             "qwen3" => "qwen3",
             _ => "llama",
+        };
+
+        let (rope_layout, qk_norm_order) = match prefix {
+            // Qwen-family GGUFs use the split-half RoPE convention and apply
+            // Q/K RMSNorm before RoPE. This was validated against llama.cpp
+            // with golden-logit prompt ladders.
+            "qwen2" | "qwen3" => (RopeLayout::SplitHalf, QkNormOrder::BeforeRope),
+            _ => (RopeLayout::AdjacentPair, QkNormOrder::AfterRope),
         };
 
         let get_u32 = |key: &str, default: u32| -> u32 {
@@ -109,6 +133,8 @@ impl LlamaConfig {
             max_seq_len,
             rope_theta,
             norm_eps,
+            rope_layout,
+            qk_norm_order,
             vocab_size,
         }
     }
@@ -188,6 +214,10 @@ pub struct LlamaAttention<B: Backend> {
     n_kv_heads: usize,
     /// dimension per head
     head_dim: usize,
+    /// RoPE pairing convention used by this architecture.
+    rope_layout: RopeLayout,
+    /// Q/K RMSNorm placement relative to RoPE.
+    qk_norm_order: QkNormOrder,
     /// precomputed rope cos table, shape [max_seq_len, head_dim]
     rope_cos: B::Tensor,
     /// precomputed rope sin table, shape [max_seq_len, head_dim]
@@ -210,6 +240,8 @@ impl<B: Backend> LlamaAttention<B> {
         n_heads: usize,
         n_kv_heads: usize,
         head_dim: usize,
+        rope_layout: RopeLayout,
+        qk_norm_order: QkNormOrder,
         q_norm: Option<B::Tensor>,
         k_norm: Option<B::Tensor>,
     ) -> Self {
@@ -223,6 +255,8 @@ impl<B: Backend> LlamaAttention<B> {
             n_heads,
             n_kv_heads,
             head_dim,
+            rope_layout,
+            qk_norm_order,
             q_norm,
             k_norm,
         }
@@ -234,6 +268,30 @@ struct RopeQkNormSpec {
     start_pos: usize,
     n_heads: usize,
     head_dim: usize,
+    rope_layout: RopeLayout,
+    qk_norm_order: QkNormOrder,
+}
+
+fn apply_headwise_rms_norm(
+    data: &mut [f32],
+    seq_len: usize,
+    n_heads: usize,
+    head_dim: usize,
+    norm_data: &[f32],
+    eps: f32,
+) {
+    let width = n_heads * head_dim;
+    for s in 0..seq_len {
+        for h in 0..n_heads {
+            let base = s * width + h * head_dim;
+            let row = &mut data[base..base + head_dim];
+            let sq_sum = crate::simd::sum_squares(row);
+            let rstd = (sq_sum / head_dim as f32 + eps).sqrt().recip();
+            for d in 0..head_dim {
+                row[d] = row[d] * rstd * norm_data[d];
+            }
+        }
+    }
 }
 
 fn apply_rope_and_qk_norm<B: Backend>(
@@ -249,25 +307,18 @@ fn apply_rope_and_qk_norm<B: Backend>(
     let half = spec.head_dim / 2;
     let cos_data = backend.data(rope_cos);
     let sin_data = backend.data(rope_sin);
-
     let mut data = backend.data(x).to_vec();
 
-    if let Some(norm) = norm {
-        let norm_data = backend.data(norm);
-        let eps = 1e-6;
-
-        for s in 0..seq_len {
-            for h in 0..spec.n_heads {
-                let base = s * width + h * spec.head_dim;
-                let row = &mut data[base..base + spec.head_dim];
-
-                let sq_sum = crate::simd::sum_squares(row);
-                let rstd = (sq_sum / spec.head_dim as f32 + eps).sqrt().recip();
-
-                for d in 0..spec.head_dim {
-                    row[d] = row[d] * rstd * norm_data[d];
-                }
-            }
+    if spec.qk_norm_order == QkNormOrder::BeforeRope {
+        if let Some(norm) = norm {
+            apply_headwise_rms_norm(
+                &mut data,
+                seq_len,
+                spec.n_heads,
+                spec.head_dim,
+                backend.data(norm),
+                1e-6,
+            );
         }
     }
 
@@ -280,18 +331,32 @@ fn apply_rope_and_qk_norm<B: Backend>(
             let base = s * width + h * spec.head_dim;
 
             for d in 0..half {
-                let i0 = base + d;
-                let i1 = base + d + half;
+                let (i0, i1) = match spec.rope_layout {
+                    RopeLayout::AdjacentPair => (base + 2 * d, base + 2 * d + 1),
+                    RopeLayout::SplitHalf => (base + d, base + d + half),
+                };
 
                 let x0 = data[i0];
                 let x1 = data[i1];
-
                 let c = cos_row[d];
                 let si = sin_row[d];
 
                 data[i0] = x0 * c - x1 * si;
                 data[i1] = x0 * si + x1 * c;
             }
+        }
+    }
+
+    if spec.qk_norm_order == QkNormOrder::AfterRope {
+        if let Some(norm) = norm {
+            apply_headwise_rms_norm(
+                &mut data,
+                seq_len,
+                spec.n_heads,
+                spec.head_dim,
+                backend.data(norm),
+                1e-6,
+            );
         }
     }
 
@@ -315,6 +380,8 @@ impl<B: Backend> LlamaAttention<B> {
                 start_pos: 0,
                 n_heads: self.n_heads,
                 head_dim,
+                rope_layout: self.rope_layout,
+                qk_norm_order: self.qk_norm_order,
             },
             self.q_norm.as_ref(),
         )?;
@@ -328,6 +395,8 @@ impl<B: Backend> LlamaAttention<B> {
                 start_pos: 0,
                 n_heads: self.n_kv_heads,
                 head_dim,
+                rope_layout: self.rope_layout,
+                qk_norm_order: self.qk_norm_order,
             },
             self.k_norm.as_ref(),
         )?;
@@ -345,9 +414,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         self.o_proj.forward(backend, &result_tensor)
     }
-}
 
-impl<B: Backend> LlamaAttention<B> {
     /// forward with kv cache.
     ///
     /// the cache is allocated for `n_kv_heads` (not `n_heads`).
@@ -378,6 +445,8 @@ impl<B: Backend> LlamaAttention<B> {
                 start_pos,
                 n_heads: self.n_heads,
                 head_dim,
+                rope_layout: self.rope_layout,
+                qk_norm_order: self.qk_norm_order,
             },
             self.q_norm.as_ref(),
         )?;
@@ -390,6 +459,8 @@ impl<B: Backend> LlamaAttention<B> {
                 start_pos,
                 n_heads: self.n_kv_heads,
                 head_dim,
+                rope_layout: self.rope_layout,
+                qk_norm_order: self.qk_norm_order,
             },
             self.k_norm.as_ref(),
         )?;
@@ -689,14 +760,6 @@ impl Llama<CpuBackend> {
                     _ => None,
                 });
 
-            if i == 0 {
-                eprintln!(
-                    "qk norms loaded: q_norm={}, k_norm={}",
-                    qk_q_norm.is_some(),
-                    qk_k_norm.is_some()
-                );
-            }
-
             let attn = LlamaAttention::new(
                 get_linear(&format!("blk.{}.attn_q.weight", i))?,
                 get_linear(&format!("blk.{}.attn_k.weight", i))?,
@@ -707,6 +770,8 @@ impl Llama<CpuBackend> {
                 config.n_heads,
                 config.n_kv_heads,
                 config.head_dim,
+                config.rope_layout,
+                config.qk_norm_order,
                 qk_q_norm,
                 qk_k_norm,
             );
