@@ -255,15 +255,22 @@ fn apply_rope_and_qk_norm<B: Backend>(
         let pos = spec.start_pos + s;
         let cos_row = &cos_data[pos * half..(pos + 1) * half];
         let sin_row = &sin_data[pos * half..(pos + 1) * half];
+
         for h in 0..spec.n_heads {
             let base = s * width + h * spec.head_dim;
+
             for d in 0..half {
-                let x0 = rotated[base + d];
-                let x1 = rotated[base + d + half];
+                let i0 = base + d;
+                let i1 = base + d + half;
+
+                let x0 = rotated[i0];
+                let x1 = rotated[i1];
+
                 let c = cos_row[d];
                 let si = sin_row[d];
-                rotated[base + d] = x0 * c - x1 * si;
-                rotated[base + d + half] = x0 * si + x1 * c;
+
+                rotated[i0] = x0 * c - x1 * si;
+                rotated[i1] = x0 * si + x1 * c;
             }
         }
     }
@@ -271,12 +278,15 @@ fn apply_rope_and_qk_norm<B: Backend>(
     if let Some(norm) = norm {
         let norm_data = backend.data(norm);
         let eps = 1e-6;
+
         for s in 0..seq_len {
             for h in 0..spec.n_heads {
                 let base = s * width + h * spec.head_dim;
                 let row = &mut rotated[base..base + spec.head_dim];
+
                 let sq_sum = crate::simd::sum_squares(row);
                 let rstd = (sq_sum / spec.head_dim as f32 + eps).sqrt().recip();
+
                 for d in 0..spec.head_dim {
                     row[d] = row[d] * rstd * norm_data[d];
                 }
@@ -287,9 +297,8 @@ fn apply_rope_and_qk_norm<B: Backend>(
     backend.load_from_cpu(rotated, &[seq_len, width])
 }
 
-impl<B: Backend> Module<B> for LlamaAttention<B> {
-    fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        // project q, k, v separately (no bias)
+impl<B: Backend> LlamaAttention<B> {
+    pub fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         let q = self.q_proj.forward(backend, x)?;
         let k = self.k_proj.forward(backend, x)?;
         let v = self.v_proj.forward(backend, x)?;
@@ -308,6 +317,7 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
             },
             self.q_norm.as_ref(),
         )?;
+
         let k = apply_rope_and_qk_norm(
             backend,
             &k,
@@ -331,6 +341,7 @@ impl<B: Backend> Module<B> for LlamaAttention<B> {
                 head_dim,
             },
         )?;
+
         self.o_proj.forward(backend, &result_tensor)
     }
 }
@@ -676,6 +687,14 @@ impl Llama<CpuBackend> {
                     LoadedTensor::F32(t) => Some(t.clone()),
                     _ => None,
                 });
+
+            if i == 0 {
+                eprintln!(
+                    "qk norms loaded: q_norm={}, k_norm={}",
+                    qk_q_norm.is_some(),
+                    qk_k_norm.is_some()
+                );
+            }
 
             let attn = LlamaAttention::new(
                 get_linear(&format!("blk.{}.attn_q.weight", i))?,

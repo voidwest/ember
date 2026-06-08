@@ -358,12 +358,17 @@ impl CpuTensor {
                 let offset = (b * seq_len + s) * head_dim;
 
                 for d in 0..half {
-                    let x = out[offset + d];
-                    let y = out[offset + d + half];
+                    let i0 = offset + 2 * d;
+                    let i1 = offset + 2 * d + 1;
+
+                    let x = out[i0];
+                    let y = out[i1];
+
                     let c = cos_row[d];
                     let si = sin_row[d];
-                    out[offset + d] = x * c - y * si;
-                    out[offset + d + half] = x * si + y * c;
+
+                    out[i0] = x * c - y * si;
+                    out[i1] = x * si + y * c;
                 }
             }
         }
