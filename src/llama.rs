@@ -249,7 +249,27 @@ fn apply_rope_and_qk_norm<B: Backend>(
     let half = spec.head_dim / 2;
     let cos_data = backend.data(rope_cos);
     let sin_data = backend.data(rope_sin);
-    let mut rotated = backend.data(x).to_vec();
+
+    let mut data = backend.data(x).to_vec();
+
+    if let Some(norm) = norm {
+        let norm_data = backend.data(norm);
+        let eps = 1e-6;
+
+        for s in 0..seq_len {
+            for h in 0..spec.n_heads {
+                let base = s * width + h * spec.head_dim;
+                let row = &mut data[base..base + spec.head_dim];
+
+                let sq_sum = crate::simd::sum_squares(row);
+                let rstd = (sq_sum / spec.head_dim as f32 + eps).sqrt().recip();
+
+                for d in 0..spec.head_dim {
+                    row[d] = row[d] * rstd * norm_data[d];
+                }
+            }
+        }
+    }
 
     for s in 0..seq_len {
         let pos = spec.start_pos + s;
@@ -263,38 +283,19 @@ fn apply_rope_and_qk_norm<B: Backend>(
                 let i0 = base + d;
                 let i1 = base + d + half;
 
-                let x0 = rotated[i0];
-                let x1 = rotated[i1];
+                let x0 = data[i0];
+                let x1 = data[i1];
 
                 let c = cos_row[d];
                 let si = sin_row[d];
 
-                rotated[i0] = x0 * c - x1 * si;
-                rotated[i1] = x0 * si + x1 * c;
+                data[i0] = x0 * c - x1 * si;
+                data[i1] = x0 * si + x1 * c;
             }
         }
     }
 
-    if let Some(norm) = norm {
-        let norm_data = backend.data(norm);
-        let eps = 1e-6;
-
-        for s in 0..seq_len {
-            for h in 0..spec.n_heads {
-                let base = s * width + h * spec.head_dim;
-                let row = &mut rotated[base..base + spec.head_dim];
-
-                let sq_sum = crate::simd::sum_squares(row);
-                let rstd = (sq_sum / spec.head_dim as f32 + eps).sqrt().recip();
-
-                for d in 0..spec.head_dim {
-                    row[d] = row[d] * rstd * norm_data[d];
-                }
-            }
-        }
-    }
-
-    backend.load_from_cpu(rotated, &[seq_len, width])
+    backend.load_from_cpu(data, &[seq_len, width])
 }
 
 impl<B: Backend> LlamaAttention<B> {
