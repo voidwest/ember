@@ -243,11 +243,18 @@ struct Gemma4Mlp<B: Backend> {
 
 impl<B: Backend> Gemma4Mlp<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+    
         let gate = self.gate_proj.forward(backend, x)?;
+    
         let gate = gelu_tanh(backend, &gate)?;
+
         let up = self.up_proj.forward(backend, x)?;
+    
         let gated = backend.elemul(&gate, &up)?;
-        self.down_proj.forward(backend, &gated)
+    
+        let out = self.down_proj.forward(backend, &gated)?;
+    
+        Ok(out)
     }
 }
 
@@ -426,6 +433,10 @@ impl<B: Backend> Gemma4Attention<B> {
         debug_assert_eq!(
             backend.shape(&out),
             &[seq_len, self.n_heads * self.head_dim]
+        );
+        eprintln!(
+            "GEMMA DEBUG layer before o_proj out shape={:?}",
+            backend.shape(&out)
         );
         self.o_proj.forward(backend, &out)
     }
@@ -623,6 +634,13 @@ impl Gemma4<CpuBackend> {
                 None => anyhow::bail!("Missing tensor: {}", name),
             }
         };
+        let get_linear_no_transpose = |name: &str| -> anyhow::Result<Linear<CpuBackend>> {
+            match loader.tensors.get(name) {
+                Some(LoadedTensor::F32(t)) => Ok(Linear::new(t.clone(), None)),
+                Some(LoadedTensor::Q8_0(qw)) => Ok(Linear::new(qw.dequantize_all(), None)),
+                None => anyhow::bail!("Missing tensor: {}", name),
+            }
+        };
 
         let embed_tokens = Arc::new(get_f32("token_embd.weight")?);
         let local_rope = {
@@ -728,7 +746,7 @@ impl Gemma4<CpuBackend> {
                 input_norm: get_f32(&format!("blk.{}.attn_norm.weight", i))?,
                 attn,
                 ple_proj: match loader.tensors.get(&format!("blk.{}.proj.weight", i)) {
-                    Some(_) => Some(get_linear(&format!("blk.{}.proj.weight", i))?),
+                    Some(_) => Some(get_linear_no_transpose(&format!("blk.{}.proj.weight", i))?),
                     None => None,
                 },
                 post_attn_norm,
@@ -828,7 +846,7 @@ impl<B: Backend> Gemma4<B> {
         }
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &x)?;
-        softcap_logits(backend, &logits, self.config.final_logit_softcap)
+        softcap_logits(backend, &logits, Some(15.0)) // DEBUG: manual final softcap 15
     }
 
     pub fn forward_last_logits_with_cache(
@@ -856,7 +874,7 @@ impl<B: Backend> Gemma4<B> {
         let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &last)?;
-        softcap_logits(backend, &logits, self.config.final_logit_softcap)
+        softcap_logits(backend, &logits, Some(15.0)) // DEBUG: manual final softcap 15
     }
 
     #[allow(clippy::type_complexity)]
@@ -886,7 +904,7 @@ impl<B: Backend> Gemma4<B> {
         let logits = self.head.forward(backend, &x)?;
         Ok((
             activations,
-            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
+            softcap_logits(backend, &logits, Some(15.0))?, // DEBUG: manual final softcap 15?,
         ))
     }
 
@@ -931,7 +949,7 @@ impl<B: Backend> Gemma4<B> {
         let logits = self.head.forward(backend, &x)?;
         Ok((
             pooled,
-            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
+            softcap_logits(backend, &logits, Some(15.0))?, // DEBUG: manual final softcap 15?,
         ))
     }
 
@@ -1050,6 +1068,15 @@ fn gelu_tanh<B: Backend>(backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Err
             let inner = 0.797_884_6 * (v + 0.044_715 * v * v * v);
             0.5 * v * (1.0 + inner.tanh())
         })
+        .collect();
+    backend.load_from_cpu(data, backend.shape(x))
+}
+
+fn silu<B: Backend>(backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+    let data = backend
+        .data(x)
+        .iter()
+        .map(|&v| v / (1.0 + (-v).exp()))
         .collect();
     backend.load_from_cpu(data, backend.shape(x))
 }
@@ -1383,6 +1410,10 @@ fn get_f32_any(loader: &GgufLoader, keys: &[&str], default: f32) -> anyhow::Resu
 fn get_optional_f32(loader: &GgufLoader, keys: &[&str]) -> Option<f32> {
     keys.iter().find_map(|key| match loader.metadata.get(*key) {
         Some(GgufValue::F32(v)) => Some(*v),
+        Some(GgufValue::U8(v)) => Some(*v as f32),
+        Some(GgufValue::U32(v)) => Some(*v as f32),
+        Some(GgufValue::U64(v)) => Some(*v as f32),
+        Some(GgufValue::I32(v)) => Some(*v as f32),
         _ => None,
     })
 }
