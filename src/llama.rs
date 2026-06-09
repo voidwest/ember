@@ -714,7 +714,7 @@ impl Llama<CpuBackend> {
 
         // precompute rope tables once, shared across all attention layers
         let (rope_cos, rope_sin) =
-            compute_rope_freqs(config.max_seq_len, config.head_dim, config.rope_theta);
+            compute_rope_freqs(config.max_seq_len, config.head_dim, config.rope_theta, None);
         log::debug!(
             "rope_cos shape: {:?}, rope_sin shape: {:?}",
             rope_cos.shape(),

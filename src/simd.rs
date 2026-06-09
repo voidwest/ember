@@ -1889,4 +1889,52 @@ mod tests {
         println!("\n  speedup: {speedup:.2}×");
         assert!(speedup >= 1.0, "SIMD path should not be slower than scalar");
     }
+
+    #[test]
+    fn scale_weight_mul_simd_matches_scalar() {
+        let n = 1536; // embed_dim
+        let mut x = vec![0.0f32; n];
+        let mut weight = vec![0.0f32; n];
+        let scale = 0.5_f32.sqrt().recip(); // typical rstd value
+
+        // Realistic values: x ~ N(0, 1), weight from output_norm (0..118)
+        for i in 0..n {
+            x[i] = (i as f32).sin() * 2.0;
+            weight[i] = (i as f32 / n as f32) * 118.0; // max weight seen in GGUF
+        }
+
+        let mut simd_out = vec![0.0f32; n];
+        let mut scalar_out = vec![0.0f32; n];
+
+        // SIMD path
+        crate::simd::scale_weight_mul(&x, scale, &weight, &mut simd_out);
+
+        // Scalar path
+        for i in 0..n {
+            scalar_out[i] = x[i] * scale * weight[i];
+        }
+
+        for i in 0..n {
+            assert!(
+                (simd_out[i] - scalar_out[i]).abs() < 1e-6,
+                "mismatch at {i}: simd={} scalar={}",
+                simd_out[i],
+                scalar_out[i]
+            );
+        }
+    }
+
+    #[test]
+    fn sum_squares_simd_matches_scalar() {
+        let n = 1536;
+        let mut x = vec![0.0f32; n];
+        for i in 0..n {
+            x[i] = (i as f32).sin() * 100.0;
+        }
+        let simd = super::sum_squares(&x);
+        let scalar: f32 = x.iter().map(|v| v * v).sum();
+        let diff = (simd - scalar).abs();
+        let rel = if scalar > 0.0 { diff / scalar } else { diff };
+        assert!(rel < 1e-6, "sum_squares mismatch: simd={}, scalar={}, diff={}", simd, scalar, diff);
+    }
 }

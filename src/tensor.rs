@@ -530,12 +530,22 @@ pub fn compute_rope_freqs(
     max_seq_len: usize,
     head_dim: usize,
     theta_base: f32,
+    freq_factors: Option<&[f32]>,
 ) -> (CpuTensor, CpuTensor) {
     let half = head_dim / 2;
     let mut cos = vec![0.0f32; max_seq_len * half];
     let mut sin = vec![0.0f32; max_seq_len * half];
     for i in 0..half {
-        let freq = theta_base.powf(-(2.0 * i as f32) / head_dim as f32);
+        let base_freq = theta_base.powf(-(2.0 * i as f32) / head_dim as f32);
+        // freq_factors gate specific frequency pairs:
+        // factor==1.0 → full RoPE; factor is large (1e30) → freq→0 (no rotation)
+        // freq_factors has one scalar per frequency pair (half elements of freq_factors tensor)
+        // factor is 1e30 for pairs that should NOT rotate, 1.0 for pairs that should
+        let factor = freq_factors.map_or(1.0, |f| {
+            let ff = f.get(i).copied().unwrap_or(1.0);
+            if ff > 1e10 { 0.0 } else { 1.0 }
+        });
+        let freq = base_freq * factor;
         for p in 0..max_seq_len {
             let angle = p as f32 * freq;
             cos[p * half + i] = angle.cos();

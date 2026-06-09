@@ -23,7 +23,22 @@ impl EmberTokenizer {
             .encode(text, true)
             .map_err(anyhow::Error::msg)
             .context("encode failed")?;
-        Ok(encoding.get_ids().to_vec())
+        let ids = encoding.get_ids().to_vec();
+        // Prepend BOS if the tokenizer config says to but the post_processor
+        // template doesn't include it (common for Gemma tokenizer.json configs).
+        if let Some(bos) = self.bos_token_id() {
+            if ids.first() != Some(&bos) {
+                let mut with_bos = Vec::with_capacity(ids.len() + 1);
+                with_bos.push(bos);
+                with_bos.extend(ids);
+                return Ok(with_bos);
+            }
+        }
+        Ok(ids)
+    }
+    
+    pub fn bos_token_id(&self) -> Option<u32> {
+        self.inner.token_to_id("<bos>")
     }
 
     pub fn encode_with_offsets(&self, text: &str) -> Result<(Vec<u32>, TokenOffsets)> {

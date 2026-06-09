@@ -34,6 +34,7 @@ pub struct GgufLoader {
 }
 
 /// a typed value from GGUF metadata.
+#[derive(Debug)]
 pub enum GgufValue {
     U8(u8),
     U32(u32),
@@ -148,6 +149,22 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                 let mut dims = info.dims;
                 dims.reverse();
                 LoadedTensor::Q8_0(QuantizedWeight::try_new(raw, dims)?)
+            }
+            30 => {
+                // bf16: brain floating point — upper 16 bits of f32.
+                let mut buf = vec![0u8; element_count * 2];
+                reader.read_exact(&mut buf)?;
+                let mut data = vec![0.0f32; element_count];
+                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
+                    let start = i * 2;
+                    let bits = u16::from_le_bytes(
+                        buf[start..start + 2]
+                            .try_into()
+                            .map_err(|_| anyhow::anyhow!("failed to read bf16 at index {}", i))?,
+                    );
+                    *dst = f32::from_bits((bits as u32) << 16);
+                }
+                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             _ => {
                 log::warn!(

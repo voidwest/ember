@@ -136,6 +136,7 @@ impl Gemma4Config {
             ],
             1e-6,
         )?;
+
         let query_pre_attn_scalar = get_f32_any(
             loader,
             &[
@@ -445,7 +446,14 @@ impl<B: Backend> Gemma4Attention<B> {
 struct Gemma4Block<B: Backend> {
     input_norm: B::Tensor,
     attn: Gemma4Attention<B>,
+    /// PLE gate: projects hidden 1536→256 (before GELU)
+    inp_gate: Option<Linear<B>>,
+    /// PLE projection: projects gated PLE 256→1536
     ple_proj: Option<Linear<B>>,
+    /// RMS norm after PLE projection
+    post_ple_norm: Option<B::Tensor>,
+    /// Learned scalar applied to entire block output
+    layer_output_scale: Option<B::Tensor>,
     post_attn_norm: B::Tensor,
     pre_ffn_norm: B::Tensor,
     mlp: Gemma4Mlp<B>,
@@ -454,6 +462,11 @@ struct Gemma4Block<B: Backend> {
 }
 
 impl<B: Backend> Gemma4Block<B> {
+    /// Forward pass matching llama.cpp's gemma4 graph build exactly:
+    ///   1. attn_norm → attention → post_attn_norm → + residual
+    ///   2. ffn_norm → FFN → post_ffn_norm → + residual
+    ///   3. PLE: inp_gate → gelu → × ple → proj → post_ple_norm → + residual
+    ///   4. × layer_output_scale
     fn forward_with_cache(
         &self,
         backend: &B,
@@ -463,17 +476,31 @@ impl<B: Backend> Gemma4Block<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        let x = self.add_ple(backend, x, ple)?;
+        // 1. Self-attention
+        let residual = x.clone();
         let normed = backend.rms_norm(&x, &self.input_norm, self.norm_eps)?;
         let attn_out = self
             .attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
         let attn_out = backend.rms_norm(&attn_out, &self.post_attn_norm, self.norm_eps)?;
-        let x = backend.add(&x, &attn_out)?;
+        let x = backend.add(&residual, &attn_out)?;
+        // 2. Feed-forward network
+        let residual = x.clone();
         let normed = backend.rms_norm(&x, &self.pre_ffn_norm, self.norm_eps)?;
         let mlp_out = self.mlp.forward(backend, &normed)?;
         let mlp_out = backend.rms_norm(&mlp_out, &self.post_ffn_norm, self.norm_eps)?;
-        backend.add(&x, &mlp_out)
+        let x = backend.add(&residual, &mlp_out)?;
+
+        // 3. Per-layer embedding (PLE)
+        let x = self.add_ple(backend, &x, ple)?;
+
+        // 4. Layer output scaling
+        if let Some(ref scale) = self.layer_output_scale {
+            let scale_val = backend.data(scale)[0];
+            let scaled: Vec<f32> = backend.data(&x).iter().map(|v| v * scale_val).collect();
+            return backend.load_from_cpu(scaled, backend.shape(&x));
+        }
+        Ok(x)
     }
 
     #[allow(dead_code)]
@@ -494,6 +521,8 @@ impl<B: Backend> Gemma4Block<B> {
         backend.add(&x, &mlp_out)
     }
 
+    /// Apply per-layer input following HF pathway:
+    /// gate(hidden)→gelu→*PLE→proj→rms_norm→+residual
     fn add_ple(
         &self,
         backend: &B,
@@ -503,15 +532,29 @@ impl<B: Backend> Gemma4Block<B> {
         let Some(ple) = ple else {
             return Ok(x.clone());
         };
-        if backend.shape(ple)[1] == backend.shape(x)[1] {
-            return backend.add(x, ple);
-        }
-        let projected = self
+        let gate = self
+            .inp_gate
+            .as_ref()
+            .expect("Gemma 4 PLE requires inp_gate");
+        let proj = self
             .ple_proj
             .as_ref()
-            .expect("Gemma 4 packed PLE requires per-layer projection")
-            .forward(backend, ple)?;
-        backend.add(x, &projected)
+            .expect("Gemma 4 PLE requires ple_proj");
+        let norm = self
+            .post_ple_norm
+            .as_ref()
+            .expect("Gemma 4 PLE requires post_ple_norm");
+
+        // Gate: hidden (1536) → per_layer_dim (256), then GELU (tanh approx matching llama.cpp)
+        let gated = gelu_tanh(backend, &gate.forward(backend, x)?)?;
+        // Multiply gated hidden by PLE token embedding (both 256-dim)
+        let multiplied = backend.elemul(&gated, ple)?;
+        // Project back to hidden dim (256 → 1536)
+        let projected = proj.forward(backend, &multiplied)?;
+        // RMS norm
+        let normed = backend.rms_norm(&projected, norm, self.norm_eps)?;
+        // Add to residual
+        backend.add(x, &normed)
     }
 }
 
@@ -543,6 +586,10 @@ pub struct Gemma4<B: Backend> {
     norm: B::Tensor,
     head: Gemma4Head<B>,
     ple: Option<Gemma4Ple<B>>,
+    /// Global PLE projection: hidden 1536→8960 (256×35 layers)
+    per_layer_model_proj: Option<Linear<B>>,
+    /// RMS norm weight for global PLE projection
+    per_layer_proj_norm: Option<B::Tensor>,
     config: Gemma4Config,
 }
 
@@ -642,12 +689,21 @@ impl Gemma4<CpuBackend> {
             }
         };
 
+
         let embed_tokens = Arc::new(get_f32("token_embd.weight")?);
+
+        // Load rope_freqs for partial RoPE application (global layers)
+        let rope_freqs: Option<Vec<f32>> = match loader.tensors.get("rope_freqs.weight") {
+            Some(LoadedTensor::F32(t)) => Some(t.data().to_vec()),
+            _ => None,
+        };
+
         let local_rope = {
             let (cos, sin) = compute_rope_freqs(
                 config.max_seq_len,
                 config.local_head_dim,
                 config.local_rope_theta,
+                rope_freqs.as_deref(),
             );
             (Arc::new(cos), Arc::new(sin))
         };
@@ -656,6 +712,7 @@ impl Gemma4<CpuBackend> {
                 config.max_seq_len,
                 config.global_head_dim,
                 config.global_rope_theta,
+                rope_freqs.as_deref(),
             );
             (Arc::new(cos), Arc::new(sin))
         };
@@ -742,13 +799,36 @@ impl Gemma4<CpuBackend> {
             ])
             .ok_or_else(|| anyhow::anyhow!("Missing tensor: blk.{}.ffn_post_norm.weight", i))?;
 
+            let proj_name = format!("blk.{}.proj.weight", i);
+            let has_ple = loader.tensors.contains_key(&proj_name);
+            let inp_gate = if has_ple {
+                Some(get_linear_no_transpose(&format!("blk.{}.inp_gate.weight", i))?)
+            } else {
+                None
+            };
+            let ple_proj = if has_ple {
+                Some(get_linear_no_transpose(&proj_name)?)
+            } else {
+                None
+            };
+            let post_ple_norm = if has_ple {
+                Some(get_f32(&format!("blk.{}.post_norm.weight", i))?)
+            } else {
+                None
+            };
+            let layer_output_scale = if has_ple {
+                Some(get_f32(&format!("blk.{}.layer_output_scale.weight", i))?)
+            } else {
+                None
+            };
+
             blocks.push(Gemma4Block {
                 input_norm: get_f32(&format!("blk.{}.attn_norm.weight", i))?,
                 attn,
-                ple_proj: match loader.tensors.get(&format!("blk.{}.proj.weight", i)) {
-                    Some(_) => Some(get_linear_no_transpose(&format!("blk.{}.proj.weight", i))?),
-                    None => None,
-                },
+                inp_gate,
+                ple_proj,
+                post_ple_norm,
+                layer_output_scale,
                 post_attn_norm,
                 pre_ffn_norm: get_f32(&format!("blk.{}.ffn_norm.weight", i))?,
                 mlp: Gemma4Mlp {
@@ -811,12 +891,29 @@ impl Gemma4<CpuBackend> {
             None => Gemma4Head::TiedEmbedding(Arc::clone(&embed_tokens)),
         };
 
+        // Global PLE projection (llama.cpp pathway): combines hidden state
+        // with per-layer token embeddings before the per-layer gate.
+        let (per_layer_model_proj, per_layer_proj_norm) =
+            if let Some(t) = loader.tensors.get("per_layer_model_proj.weight") {
+                let proj = match t {
+                    LoadedTensor::F32(t) => Linear::new(t.clone(), None),
+                    LoadedTensor::Q8_0(qw) => Linear::new(qw.dequantize_all(), None),
+                    _ => anyhow::bail!("per_layer_model_proj: unsupported tensor type"),
+                };
+                let norm = get_f32("per_layer_proj_norm.weight")?;
+                (Some(proj), Some(norm))
+            } else {
+                (None, None)
+            };
+
         Ok(Self {
             embed_tokens,
             blocks,
             norm: get_f32("output_norm.weight")?,
             head,
             ple,
+            per_layer_model_proj,
+            per_layer_proj_norm,
             config,
         })
     }
@@ -836,17 +933,23 @@ impl<B: Backend> Gemma4<B> {
             token_ids,
             self.config.embed_dim,
         )?;
-        let ple = self.ple_vectors(backend, token_ids)?;
+        let ple = self.ple_vectors(backend, token_ids, &x)?;
         for (layer, block) in self.blocks.iter().enumerate() {
             let layer_ple = ple.as_ref().map(|v| &v[layer]);
             x = block.forward_with_cache(backend, &x, layer_ple, cache, layer, start_pos)?;
+            if layer == 3 {
+                let d = backend.data(&x);
+                let o = (token_ids.len()-1) * self.config.embed_dim;
+                std::fs::write("/tmp/ember_l3_out.bin",
+                    unsafe{std::slice::from_raw_parts(d[o..].as_ptr() as *const u8, self.config.embed_dim*4)}).ok();
+            }
         }
         for _ in 0..token_ids.len() {
             cache.advance_cursor();
         }
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &x)?;
-        softcap_logits(backend, &logits, Some(15.0)) // DEBUG: manual final softcap 15
+        softcap_logits(backend, &logits, self.config.final_logit_softcap)
     }
 
     pub fn forward_last_logits_with_cache(
@@ -862,7 +965,7 @@ impl<B: Backend> Gemma4<B> {
             token_ids,
             self.config.embed_dim,
         )?;
-        let ple = self.ple_vectors(backend, token_ids)?;
+        let ple = self.ple_vectors(backend, token_ids, &x)?;
         for (layer, block) in self.blocks.iter().enumerate() {
             let layer_ple = ple.as_ref().map(|v| &v[layer]);
             x = block.forward_with_cache(backend, &x, layer_ple, cache, layer, start_pos)?;
@@ -870,11 +973,10 @@ impl<B: Backend> Gemma4<B> {
         for _ in 0..token_ids.len() {
             cache.advance_cursor();
         }
-
         let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &last)?;
-        softcap_logits(backend, &logits, Some(15.0)) // DEBUG: manual final softcap 15
+        softcap_logits(backend, &logits, self.config.final_logit_softcap)
     }
 
     #[allow(clippy::type_complexity)]
@@ -889,7 +991,7 @@ impl<B: Backend> Gemma4<B> {
             token_ids,
             self.config.embed_dim,
         )?;
-        let ple = self.ple_vectors(backend, token_ids)?;
+        let ple = self.ple_vectors(backend, token_ids, &x)?;
         let mut activations = Vec::with_capacity(self.blocks.len());
         let mut cache = self.create_cache(backend, token_ids.len());
         for (layer, block) in self.blocks.iter().enumerate() {
@@ -904,7 +1006,7 @@ impl<B: Backend> Gemma4<B> {
         let logits = self.head.forward(backend, &x)?;
         Ok((
             activations,
-            softcap_logits(backend, &logits, Some(15.0))?, // DEBUG: manual final softcap 15?,
+            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
         ))
     }
 
@@ -926,7 +1028,7 @@ impl<B: Backend> Gemma4<B> {
             token_ids,
             self.config.embed_dim,
         )?;
-        let ple = self.ple_vectors(backend, token_ids)?;
+        let ple = self.ple_vectors(backend, token_ids, &x)?;
         let mut cache = self.create_cache(backend, token_ids.len());
         for (li, block) in self.blocks.iter().enumerate() {
             let layer_ple = ple.as_ref().map(|v| &v[li]);
@@ -949,7 +1051,7 @@ impl<B: Backend> Gemma4<B> {
         let logits = self.head.forward(backend, &x)?;
         Ok((
             pooled,
-            softcap_logits(backend, &logits, Some(15.0))?, // DEBUG: manual final softcap 15?,
+            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
         ))
     }
 
@@ -957,11 +1059,20 @@ impl<B: Backend> Gemma4<B> {
         &self,
         backend: &B,
         token_ids: &[u32],
+        hidden: &B::Tensor,
     ) -> Result<Option<Vec<B::Tensor>>, B::Error> {
         let Some(ref ple) = self.ple else {
             return Ok(None);
         };
-        match ple {
+
+        // 1. Look up raw per-layer token embeddings, scaled by sqrt(per_layer_dim)
+        let per_layer_dim = match ple {
+            Gemma4Ple::Hidden(t) => backend.shape(t)[2],
+            Gemma4Ple::PackedQ8 { per_layer_dim, .. } => *per_layer_dim,
+        };
+        let ple_scale = (per_layer_dim as f32).sqrt();
+
+        let raw_ple = match ple {
             Gemma4Ple::Hidden(ple) => {
                 let shape = backend.shape(ple);
                 let layer_stride = shape[1] * shape[2];
@@ -974,20 +1085,22 @@ impl<B: Backend> Gemma4<B> {
                         let token = (tok as usize).min(shape[1] - 1);
                         let src = layer * layer_stride + token * dim;
                         let dst = pos * dim;
-                        data[dst..dst + dim].copy_from_slice(&ple_data[src..src + dim]);
+                        for d in 0..dim {
+                            data[dst + d] = ple_data[src + d] * ple_scale;
+                        }
                     }
-                    out.push(backend.load_from_cpu(data, &[token_ids.len(), dim])?);
+                    out.push(data);
                 }
-                Ok(Some(out))
+                out
             }
             Gemma4Ple::PackedQ8 {
                 embeddings,
                 per_layer_dim,
             } => {
-                let mut out = Vec::with_capacity(self.config.n_layers);
                 let packed_dim = embeddings.in_features();
                 let expected = self.config.n_layers * *per_layer_dim;
                 debug_assert_eq!(packed_dim, expected);
+                let mut out = Vec::with_capacity(self.config.n_layers);
                 for layer in 0..self.config.n_layers {
                     let mut data = vec![0.0; token_ids.len() * *per_layer_dim];
                     let layer_start = layer * *per_layer_dim;
@@ -996,14 +1109,62 @@ impl<B: Backend> Gemma4<B> {
                         let token = (tok as usize).min(embeddings.out_features() - 1);
                         embeddings.dequantize_row(token, &mut row);
                         let dst = pos * *per_layer_dim;
-                        data[dst..dst + *per_layer_dim]
-                            .copy_from_slice(&row[layer_start..layer_start + *per_layer_dim]);
+                        for d in 0..*per_layer_dim {
+                            data[dst + d] = row[layer_start + d] * ple_scale;
+                        }
                     }
-                    out.push(backend.load_from_cpu(data, &[token_ids.len(), *per_layer_dim])?);
+                    out.push(data);
                 }
-                Ok(Some(out))
+                out
             }
+        };
+
+        // 2. Global projection: hidden (1536) → per_layer_dim * n_layers (8960)
+        let proj = if let Some(ref proj_layer) = self.per_layer_model_proj {
+            let projected = proj_layer.forward(backend, hidden)?;
+            let proj_scale = (self.config.embed_dim as f32).sqrt().recip();
+            let proj_data: Vec<f32> = backend.data(&projected).iter().map(|v| v * proj_scale).collect();
+            Some(backend.load_from_cpu(proj_data, backend.shape(&projected))?)
+        } else { None };
+
+        // 3. Combine global projection with raw PLE (llama.cpp pathway)
+        let n_tokens = token_ids.len();
+        let mut out = Vec::with_capacity(self.config.n_layers);
+        let combine_scale: f32 = 2.0_f32.sqrt().recip(); // 1/sqrt(2)
+
+        for layer in 0..self.config.n_layers {
+            let mut data = raw_ple[layer].clone();
+
+            if let Some(ref proj) = proj {
+                let proj_data = backend.data(proj);
+                let layer_offset = layer * per_layer_dim;
+                let proj_stride = self.config.n_layers * per_layer_dim;
+                let norm_weight = self
+                    .per_layer_proj_norm
+                    .as_ref()
+                    .expect("per_layer_proj_norm missing");
+                let norm_data = backend.data(norm_weight);
+                for t in 0..n_tokens {
+                    let mut sq_sum = 0.0f32;
+                    let base = t * proj_stride + layer_offset;
+                    for d in 0..per_layer_dim {
+                        sq_sum += proj_data[base + d] * proj_data[base + d];
+                    }
+                    let rstd = (sq_sum / per_layer_dim as f32 + self.config.norm_eps)
+                        .sqrt()
+                        .recip();
+                    for d in 0..per_layer_dim {
+                        let proj_val = proj_data[base + d] * rstd * norm_data[d];
+                        data[t * per_layer_dim + d] =
+                            (data[t * per_layer_dim + d] + proj_val) * combine_scale;
+                    }
+                }
+            }
+
+            out.push(backend.load_from_cpu(data, &[n_tokens, per_layer_dim])?);
         }
+
+        Ok(Some(out))
     }
 }
 
@@ -1018,7 +1179,10 @@ fn embed_tokens<B: Backend>(
         let word_vec = backend.index_select(table, tok as usize)?;
         backend.assign_row(&mut x, i, &word_vec);
     }
-    Ok(x)
+    // Matching llama.cpp: scale token embeddings by sqrt(n_embd)
+    let emb_scale = (embed_dim as f32).sqrt();
+    let scaled: Vec<f32> = backend.data(&x).iter().map(|v| v * emb_scale).collect();
+    backend.load_from_cpu(scaled, backend.shape(&x))
 }
 
 #[allow(dead_code)]
@@ -1068,15 +1232,6 @@ fn gelu_tanh<B: Backend>(backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Err
             let inner = 0.797_884_6 * (v + 0.044_715 * v * v * v);
             0.5 * v * (1.0 + inner.tanh())
         })
-        .collect();
-    backend.load_from_cpu(data, backend.shape(x))
-}
-
-fn silu<B: Backend>(backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-    let data = backend
-        .data(x)
-        .iter()
-        .map(|&v| v / (1.0 + (-v).exp()))
         .collect();
     backend.load_from_cpu(data, backend.shape(x))
 }
@@ -1659,9 +1814,14 @@ mod tests {
                 hidden_size_per_layer_input: Some(2),
                 num_kv_shared_layers: 0,
             },
+            per_layer_model_proj: None,
+            per_layer_proj_norm: None,
         };
-        let ple = model.ple_vectors(&backend, &[2, 1]).unwrap().unwrap();
-        assert_eq!(ple[0].data(), &[5.0, 6.0, 3.0, 4.0]);
-        assert_eq!(ple[1].data(), &[50.0, 60.0, 30.0, 40.0]);
+        let dummy_hidden = CpuTensor::zeroes(&[2, 2]);
+        let ple = model.ple_vectors(&backend, &[2, 1], &dummy_hidden).unwrap().unwrap();
+        // With per_layer_dim=2 and ple_scale=sqrt(2), raw PLE values are scaled.
+        let s = 2.0f32.sqrt();
+        assert_eq!(ple[0].data(), &[5.0 * s, 6.0 * s, 3.0 * s, 4.0 * s]);
+        assert_eq!(ple[1].data(), &[50.0 * s, 60.0 * s, 30.0 * s, 40.0 * s]);
     }
 }
