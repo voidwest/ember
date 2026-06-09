@@ -76,6 +76,11 @@ struct Args {
     #[arg(long, conflicts_with_all = ["demo", "interactive", "probe"])]
     dump_logits: Option<String>,
 
+    /// dump per-layer hidden states (last prompt token) to a binary file and exit.
+    /// format: f32 flat array, [n_layers * embed_dim], layer-major, native endian.
+    #[arg(long, conflicts_with_all = ["demo", "interactive", "probe"])]
+    dump_layers: Option<String>,
+
     /// probe mode: extract hidden states from each transformer block
     /// for every stimulus in the stimuli file, and save as .npy.
     #[arg(long, conflicts_with_all = ["demo", "interactive"])]
@@ -259,6 +264,15 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("interactive mode not yet supported for gemma4");
             } else if let Some(path) = &args.dump_logits {
                 dump_last_logits(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args.prompt,
+                    path,
+                    args.max_seq_len,
+                )?;
+            } else if let Some(path) = &args.dump_layers {
+                dump_layers_gemma4(
                     &backend,
                     &model,
                     &tokenizer,
@@ -859,6 +873,58 @@ where
         token_ids.len(),
         output_path,
         shape
+    );
+    Ok(())
+}
+
+/// Dump per-layer hidden states (last prompt token) directly to a binary file.
+///
+/// ## Binary output format
+///
+///   dtype:      f32 (native endian)
+///   shape:      [n_layers * embed_dim] flat, layer-major
+///   layer count: model n_layers
+///   hidden size: model embed_dim
+///   row order:   layer 0 first, layer (n_layers-1) last
+///
+/// Boundary: after each block's final residual add and layer_output_scale.
+/// Matches llama.cpp per-layer dump point (after `build_cvec` in gemma4.cpp).
+fn dump_layers_gemma4<B: Backend>(
+    backend: &B,
+    model: &ember::gemma4::Gemma4<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    prompt: &str,
+    output_path: &str,
+    max_seq_len: Option<usize>,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let token_ids = tokenizer
+        .encode(prompt)
+        .context("failed to tokenize prompt")?;
+    if token_ids.is_empty() {
+        anyhow::bail!("cannot dump layers for an empty prompt");
+    }
+    let context_limit = max_seq_len.unwrap_or_else(|| model.max_seq_len(backend));
+    ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
+    let mut cache = model.create_cache(backend, context_limit);
+    let (layer_states, _logits) =
+        model.forward_last_logits_with_layer_dump(backend, &token_ids, &mut cache, 0)?;
+    let embed_dim = model.config.embed_dim;
+    let n_layers = layer_states.len();
+    let flat: Vec<f32> = layer_states.into_iter().flatten().collect();
+    assert_eq!(flat.len(), n_layers * embed_dim);
+    let bytes = unsafe {
+        std::slice::from_raw_parts(flat.as_ptr() as *const u8, flat.len() * 4)
+    };
+    std::fs::write(output_path, bytes)?;
+    eprintln!(
+        "saved {} layers × {} hidden = {} floats to {}",
+        n_layers,
+        embed_dim,
+        flat.len(),
+        output_path
     );
     Ok(())
 }

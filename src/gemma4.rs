@@ -435,10 +435,6 @@ impl<B: Backend> Gemma4Attention<B> {
             backend.shape(&out),
             &[seq_len, self.n_heads * self.head_dim]
         );
-        eprintln!(
-            "GEMMA DEBUG layer before o_proj out shape={:?}",
-            backend.shape(&out)
-        );
         self.o_proj.forward(backend, &out)
     }
 }
@@ -590,7 +586,7 @@ pub struct Gemma4<B: Backend> {
     per_layer_model_proj: Option<Linear<B>>,
     /// RMS norm weight for global PLE projection
     per_layer_proj_norm: Option<B::Tensor>,
-    config: Gemma4Config,
+    pub config: Gemma4Config,
 }
 
 impl<B: Backend> ForwardModel<B> for Gemma4<B> {
@@ -977,6 +973,43 @@ impl<B: Backend> Gemma4<B> {
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &last)?;
         softcap_logits(backend, &logits, self.config.final_logit_softcap)
+    }
+
+    /// Run a forward pass and return (per-layer states, logits).
+    ///
+    /// Per-layer states are taken from the last prompt token after each
+    /// block's final residual add and layer_output_scale. This boundary
+    /// matches the llama.cpp per-layer dump (after `build_cvec` in gemma4.cpp).
+    pub fn forward_last_logits_with_layer_dump(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut KVCache,
+        start_pos: usize,
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let mut x = embed_tokens(
+            backend,
+            &self.embed_tokens,
+            token_ids,
+            self.config.embed_dim,
+        )?;
+        let ple = self.ple_vectors(backend, token_ids, &x)?;
+        let mut layer_states: Vec<Vec<f32>> = Vec::with_capacity(self.blocks.len());
+        for (layer, block) in self.blocks.iter().enumerate() {
+            let layer_ple = ple.as_ref().map(|v| &v[layer]);
+            x = block.forward_with_cache(backend, &x, layer_ple, cache, layer, start_pos)?;
+            let data = backend.data(&x);
+            let off = (token_ids.len() - 1) * self.config.embed_dim;
+            layer_states.push(data[off..off + self.config.embed_dim].to_vec());
+        }
+        for _ in 0..token_ids.len() {
+            cache.advance_cursor();
+        }
+        let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
+        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &last)?;
+        let logits = softcap_logits(backend, &logits, self.config.final_logit_softcap)?;
+        Ok((layer_states, logits))
     }
 
     #[allow(clippy::type_complexity)]
