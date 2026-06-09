@@ -36,7 +36,7 @@ impl EmberTokenizer {
         }
         Ok(ids)
     }
-    
+
     pub fn bos_token_id(&self) -> Option<u32> {
         self.inner.token_to_id("<bos>")
     }

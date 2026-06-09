@@ -543,7 +543,11 @@ pub fn compute_rope_freqs(
         // factor is 1e30 for pairs that should NOT rotate, 1.0 for pairs that should
         let factor = freq_factors.map_or(1.0, |f| {
             let ff = f.get(i).copied().unwrap_or(1.0);
-            if ff > 1e10 { 0.0 } else { 1.0 }
+            if ff > 1e10 {
+                0.0
+            } else {
+                1.0
+            }
         });
         let freq = base_freq * factor;
         for p in 0..max_seq_len {

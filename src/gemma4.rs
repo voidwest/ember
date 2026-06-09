@@ -244,17 +244,16 @@ struct Gemma4Mlp<B: Backend> {
 
 impl<B: Backend> Gemma4Mlp<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-    
         let gate = self.gate_proj.forward(backend, x)?;
-    
+
         let gate = gelu_tanh(backend, &gate)?;
 
         let up = self.up_proj.forward(backend, x)?;
-    
+
         let gated = backend.elemul(&gate, &up)?;
-    
+
         let out = self.down_proj.forward(backend, &gated)?;
-    
+
         Ok(out)
     }
 }
@@ -474,7 +473,7 @@ impl<B: Backend> Gemma4Block<B> {
     ) -> Result<B::Tensor, B::Error> {
         // 1. Self-attention
         let residual = x.clone();
-        let normed = backend.rms_norm(&x, &self.input_norm, self.norm_eps)?;
+        let normed = backend.rms_norm(x, &self.input_norm, self.norm_eps)?;
         let attn_out = self
             .attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
@@ -685,7 +684,6 @@ impl Gemma4<CpuBackend> {
             }
         };
 
-
         let embed_tokens = Arc::new(get_f32("token_embd.weight")?);
 
         // Load rope_freqs for partial RoPE application (global layers)
@@ -798,7 +796,10 @@ impl Gemma4<CpuBackend> {
             let proj_name = format!("blk.{}.proj.weight", i);
             let has_ple = loader.tensors.contains_key(&proj_name);
             let inp_gate = if has_ple {
-                Some(get_linear_no_transpose(&format!("blk.{}.inp_gate.weight", i))?)
+                Some(get_linear_no_transpose(&format!(
+                    "blk.{}.inp_gate.weight",
+                    i
+                ))?)
             } else {
                 None
             };
@@ -894,7 +895,6 @@ impl Gemma4<CpuBackend> {
                 let proj = match t {
                     LoadedTensor::F32(t) => Linear::new(t.clone(), None),
                     LoadedTensor::Q8_0(qw) => Linear::new(qw.dequantize_all(), None),
-                    _ => anyhow::bail!("per_layer_model_proj: unsupported tensor type"),
                 };
                 let norm = get_f32("per_layer_proj_norm.weight")?;
                 (Some(proj), Some(norm))
@@ -935,9 +935,14 @@ impl<B: Backend> Gemma4<B> {
             x = block.forward_with_cache(backend, &x, layer_ple, cache, layer, start_pos)?;
             if layer == 3 {
                 let d = backend.data(&x);
-                let o = (token_ids.len()-1) * self.config.embed_dim;
-                std::fs::write("/tmp/ember_l3_out.bin",
-                    unsafe{std::slice::from_raw_parts(d[o..].as_ptr() as *const u8, self.config.embed_dim*4)}).ok();
+                let o = (token_ids.len() - 1) * self.config.embed_dim;
+                std::fs::write("/tmp/ember_l3_out.bin", unsafe {
+                    std::slice::from_raw_parts(
+                        d[o..].as_ptr() as *const u8,
+                        self.config.embed_dim * 4,
+                    )
+                })
+                .ok();
             }
         }
         for _ in 0..token_ids.len() {
@@ -980,6 +985,7 @@ impl<B: Backend> Gemma4<B> {
     /// Per-layer states are taken from the last prompt token after each
     /// block's final residual add and layer_output_scale. This boundary
     /// matches the llama.cpp per-layer dump (after `build_cvec` in gemma4.cpp).
+    #[allow(clippy::type_complexity)]
     pub fn forward_last_logits_with_layer_dump(
         &self,
         backend: &B,
@@ -1156,17 +1162,23 @@ impl<B: Backend> Gemma4<B> {
         let proj = if let Some(ref proj_layer) = self.per_layer_model_proj {
             let projected = proj_layer.forward(backend, hidden)?;
             let proj_scale = (self.config.embed_dim as f32).sqrt().recip();
-            let proj_data: Vec<f32> = backend.data(&projected).iter().map(|v| v * proj_scale).collect();
+            let proj_data: Vec<f32> = backend
+                .data(&projected)
+                .iter()
+                .map(|v| v * proj_scale)
+                .collect();
             Some(backend.load_from_cpu(proj_data, backend.shape(&projected))?)
-        } else { None };
+        } else {
+            None
+        };
 
         // 3. Combine global projection with raw PLE (llama.cpp pathway)
         let n_tokens = token_ids.len();
         let mut out = Vec::with_capacity(self.config.n_layers);
         let combine_scale: f32 = 2.0_f32.sqrt().recip(); // 1/sqrt(2)
 
-        for layer in 0..self.config.n_layers {
-            let mut data = raw_ple[layer].clone();
+        for (layer, raw_row) in raw_ple.iter().enumerate() {
+            let mut data = raw_row.clone();
 
             if let Some(ref proj) = proj {
                 let proj_data = backend.data(proj);
@@ -1851,7 +1863,10 @@ mod tests {
             per_layer_proj_norm: None,
         };
         let dummy_hidden = CpuTensor::zeroes(&[2, 2]);
-        let ple = model.ple_vectors(&backend, &[2, 1], &dummy_hidden).unwrap().unwrap();
+        let ple = model
+            .ple_vectors(&backend, &[2, 1], &dummy_hidden)
+            .unwrap()
+            .unwrap();
         // With per_layer_dim=2 and ple_scale=sqrt(2), raw PLE values are scaled.
         let s = 2.0f32.sqrt();
         assert_eq!(ple[0].data(), &[5.0 * s, 6.0 * s, 3.0 * s, 4.0 * s]);

@@ -1928,13 +1928,19 @@ mod tests {
     fn sum_squares_simd_matches_scalar() {
         let n = 1536;
         let mut x = vec![0.0f32; n];
-        for i in 0..n {
-            x[i] = (i as f32).sin() * 100.0;
+        for (i, v) in x.iter_mut().enumerate() {
+            *v = (i as f32).sin() * 100.0;
         }
         let simd = super::sum_squares(&x);
         let scalar: f32 = x.iter().map(|v| v * v).sum();
         let diff = (simd - scalar).abs();
         let rel = if scalar > 0.0 { diff / scalar } else { diff };
-        assert!(rel < 1e-6, "sum_squares mismatch: simd={}, scalar={}, diff={}", simd, scalar, diff);
+        assert!(
+            rel < 1e-6,
+            "sum_squares mismatch: simd={}, scalar={}, diff={}",
+            simd,
+            scalar,
+            diff
+        );
     }
 }

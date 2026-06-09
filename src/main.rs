@@ -915,9 +915,7 @@ where
     let n_layers = layer_states.len();
     let flat: Vec<f32> = layer_states.into_iter().flatten().collect();
     assert_eq!(flat.len(), n_layers * embed_dim);
-    let bytes = unsafe {
-        std::slice::from_raw_parts(flat.as_ptr() as *const u8, flat.len() * 4)
-    };
+    let bytes = unsafe { std::slice::from_raw_parts(flat.as_ptr() as *const u8, flat.len() * 4) };
     std::fs::write(output_path, bytes)?;
     eprintln!(
         "saved {} layers × {} hidden = {} floats to {}",
