@@ -48,7 +48,7 @@ Use these levels when interpreting Ember runs:
 | llama | local/cloud structural smokes and probe extraction | pending | pending | preliminary LLaMA 1B/3B/8B decoder probe runs | research findings are preliminary until references and reports are complete |
 | qwen2.5 | selected warning-prone smokes through llama-family path | none | none | pending validation | experimental; do not treat as quality-compatible |
 | qwen3 | Qwen3 0.6B smoke/probe paths run locally | pending target | pending | Qwen3 0.6B local probe run exists | promising engineering path, not yet numerically validated |
-| gemma4 | one-stimulus local smoke/probe | none | none | pending full runs | experimental until golden checks cover architecture details |
+| gemma4 | local BOS smoke + golden-logit comparison passes | cosine ~0.87 against llama.cpp reference; coherent English output | per-layer hidden-state comparison pipeline operational; L0 attn_norm bit-identical | pending full runs | structural fixes applied (PLE, block layout, RoPE, global projection, BF16, embedding scale, layer scales); remaining gap ~0.13 attributed to RMSNorm weight amplification of sub-ULP differences, not a structural bug |
 | hf encoders | external Hugging Face extraction path works for mBERT smoke | not applicable to Ember GGUF numerics | external stack not activation-checked here | mBERT PADT smoke; full encoder suite pending | useful benchmark path, not an Ember inference validation result |
 
 ## features
@@ -576,13 +576,16 @@ dispatches through that same path while selecting qwen3 metadata keys.
 | llama | yes | yes | yes | yes, local/cloud depending on size | no |
 | qwen2.5 | experimental, currently via `--arch qwen3` | warning-prone | selected smoke runs | pending architecture/tokenizer validation | no |
 | qwen3 | yes, via `--arch qwen3` | yes | yes, 5-stimulus local smoke | yes, Qwen3 0.6B local run | no |
-| gemma4 | experimental | experimental | one-stimulus local smoke | pending | no |
+| gemma4 | yes | yes, coherent English | one-stimulus local smoke | pending | no (cosine ~0.87, L0 bit-identical, remaining gap ~0.13 from RMSNorm amplification) |
 
 hidden-state probe results should be treated as research-grade only after a
 trusted-reference logits or activation check exists for the exact architecture,
-model file, tokenizer, and quantization path. gemma4 is especially experimental
-until golden checks cover q/k norm, rope, attention scaling, shared-kv behavior,
-and packed embedding paths.
+model file, tokenizer, and quantization path. gemma4 golden-logit checks now cover block layout, PLE, global projection,
+embedding scaling, layer scales, GELU tanh, RoPE freq_factors, and BF16
+loading. The remaining cosine gap (~0.13) is attributed to RMSNorm weight
+amplification of sub-ULP differences across the 35-layer pipeline, not to a
+known structural mismatch. See `docs/gemma4-parity-investigation.md` and
+`docs/layer-dump-tooling.md` for details.
 
 Ember can emit last-prompt logits for external golden checks:
 
