@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta property="og:title" content="when the logits lie: gemma 4 gguf debugging" />
+    <meta property="og:description" content="Arabic went in. English and Japanese came out. Tracking down the Gemma 4 GGUF parity gap in Ember, from flat logits through the ablation graveyard to the discovery that RMSNorm weights were amplifying small numerical drift across 35 layers." />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://voidwest.dev/ember/gemma4-parity-debugging/" />
+    <meta property="og:site_name" content="voidwest" />
+    <meta name="twitter:card" content="summary" />
+    <title>when the logits lie · gemma 4 gguf debugging</title>
+    <link rel="stylesheet" href="/style.css" />
+    <!-- docs:og-image start -->
+    <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+    <!-- docs:og-image end -->
+    <!-- docs:head-scripts start -->
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+    <script defer>
+      document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('pre code').forEach(function(el) {
+          hljs.highlightElement(el);
+        });
+      });
+    </script>
+    <!-- docs:head-scripts end -->
+  </head>
+  <body>
+    <!-- docs:nav start -->
+    <nav class="site-nav" aria-label="Primary">
+      <a class="brand" href="/">voidwest</a>
+      <div class="nav-links">
+        <a href="/ember/" aria-current="page">ember</a>
+        <a href="/research-notes/">research notes</a>
+        <a href="/terms/">terms</a>
+      </div>
+      <a class="nav-lang" href="/ember/gemma4-parity-debugging/index.ar.html">عربي</a>
+    </nav>
+    <!-- docs:nav end -->
+
+    <div class="back">
+      <a href="/">← voidwest</a>
+      &nbsp;&nbsp;
+      <a href="/ember/">writeup</a>
+      &nbsp;&nbsp;
+      <a href="/ember/engineering/">engineering</a>
+      &nbsp;&nbsp;
+      <a href="/ember/internals/">internals</a>
+    </div>
+
+    <h1>when the logits lie: gemma 4 gguf debugging</h1>
+
+    <div class="meta">
+      2026-06-10 · golden-logit parity · gemma 4 · llama.cpp reference
+    </div>
+
+    <div class="quote-block">
+      <div class="text">
+        arabic went in. english and japanese came out. that was the first sign something was deeply wrong.
+      </div>
+    </div>
+
+    <p>
+      llama and qwen3 both landed golden-logit parity against llama.cpp within a
+      few days each. cosine ~0.9998, top-1 matched across english and arabic
+      prompts, the pipeline was clean. gemma 4 was supposed to be the third one.
+    </p>
+
+    <p>
+      the model loaded. dimensions checked out, 35 layers, hidden dim 1536,
+      vocab 262144. the forward pass ran. didn't crash. the logits weren't nan.
+      first prompt i tried was arabic,
+      <span class="mono">"كتب الطالب"</span>.
+    </p>
+
+    <p>
+      the output was english. sometimes japanese. entropy 3.6 out of 12.48,
+      nearly uniform. llama.cpp on the same prompt had entropy 0.06. the logits
+      were so flat that the model couldn't pick a token with any confidence.
+      it just... emitted things. coherent things, wrong language, like a
+      multilingual slot machine.
+    </p>
+
+    <p>
+      this is what it took to figure out why.
+    </p>
+
+    <hr>
+
+    <h2>llama: the sanity check</h2>
+
+    <p>
+      this matters because it set expectations. llama 3.2 1b hit cosine
+      0.99947–0.99992 across 7 prompts, top-1 matched every time, top-5 overlap
+      was 5/5, top-10 was 9–10/10. max abs diff 0.36. the bugs along the way were
+      real but diagnosable, kv cache recreated every decode step, entire token
+      sequence passed during decode instead of just the new token, logits sliced
+      with <span class="mono">embed_dim</span> instead of
+      <span class="mono">vocab_size</span>. all fixable in an afternoon each.
+    </p>
+
+    <p>
+      qwen3 0.6b was similar. cosine 0.99955–0.99979, all top-1 match, max abs
+      diff 0.59. arabic prompts dropped slightly, 0.99955 vs 0.99975, but
+      still matched. different tokenizer, qk norm, slightly different rope config,
+      but the architecture was close enough to llama's that the port was mostly
+      swapping metadata.
+    </p>
+
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr><th>prompt</th><th>llama cosine</th><th>qwen3 cosine</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>"Hello"</td><td class="num hi">0.99991</td><td class="num">—</td></tr>
+          <tr><td>"Hello world"</td><td class="num hi">0.99986</td><td class="num hi">0.99979</td></tr>
+          <tr><td>"كتب الطالب"</td><td class="num hi">0.99984</td><td class="num hi">0.99974</td></tr>
+          <tr><td>"الطالبات كتبن"</td><td class="num">—</td><td class="num hi">0.99955</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="caption">
+      llama: 7 prompts, max abs diff 0.36, mean 0.040 · qwen3: 5 prompts, max abs diff 0.59, mean 0.079
+    </p>
+
+    <p>
+      after two clean ports i had exactly the wrong amount of confidence for
+      gemma 4. i expected a weekend. it took two weeks and the answer is still
+      not really satisfying.
+    </p>
+
+    <hr>
+
+    <h2>gemma 4: the play</h2>
+
+    <h3>act i: the shapes matched, which meant almost nothing</h3>
+
+    <p>
+      gemma 4 is weirder than llama. per-layer embeddings (ple), global projection
+      layers, layer output scales, a separate <span class="mono">rope_freqs.weight</span>
+      tensor for partial rope, bf16 weights in the gguf, tied embeddings for the
+      lm head, final logit softcapping at 30.0. the block layout has three
+      sub-pathways per layer instead of two. none of this is exotic, exactly, but
+      there are more places to get things wrong.
+    </p>
+
+    <p>
+      the shapes matched. the model ran. the logits were flat garbage.
+
+      <span class="mono">"كتب الطالب"</span> went in. english came out.
+      sometimes japanese. i started trying things.
+    </p>
+
+    <div class="quote-block">
+      <div class="text">
+        the shapes matched, which meant almost nothing.
+      </div>
+    </div>
+
+    <h3>act ii: the ablation graveyard</h3>
+
+    <p>
+      each of these was a hypothesis. build, run golden-logit comparison against
+      llama.cpp, check cosine. most took a few hours. some took a day.
+    </p>
+
+    <div class="table-wrap">
+      <table class="simd-table">
+        <thead>
+          <tr><th>what i changed</th><th>cosine vs llama.cpp</th><th>verdict</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>disable ple entirely</td><td>0.08</td><td>nope</td></tr>
+          <tr><td>disable final softcap</td><td>no real change</td><td>nope</td></tr>
+          <tr><td>move ple to end of block</td><td>0.10</td><td>nope</td></tr>
+          <tr><td>move ple to start of block</td><td>0.72</td><td class="hi">this one helped</td></tr>
+          <tr><td>disable embedding scaling (sqrt(1536))</td><td>0.86</td><td>minor, kept it</td></tr>
+          <tr><td>disable layer output scales</td><td>−0.54</td><td>essential, don't touch</td></tr>
+          <tr><td>unweighted rms norm on v</td><td>0.70 (worse)</td><td>nope</td></tr>
+          <tr><td>flip post-norm ordering</td><td>0.92 → 0.13</td><td>nope, and concerning</td></tr>
+          <tr><td>scale ple by sqrt(per_layer_dim)</td><td>0.88 → 0.82</td><td>nope</td></tr>
+          <tr><td>replace q8_0 matmul with f32</td><td>identical</td><td>not quantization</td></tr>
+          <tr><td>force scalar sum_squares (no simd)</td><td>identical</td><td>not simd</td></tr>
+          <tr><td>check rmsnorm weights vs gguf</td><td>cosine 1.0, diff 0.0</td><td>not weight loading</td></tr>
+          <tr><td>add rope freq_factors to global layers</td><td>minimal change</td><td>correct, kept it</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure class="chart-wrap">
+      <img class="chart" src="/plots/gemma_ablation_graveyard.png"
+         alt="Ablation graveyard: horizontal bar chart showing attempted fixes and their impact on cosine similarity"
+         loading="lazy" />
+    </figure>
+
+    <p>
+      the ple placement move from end-of-block to start-of-block was the first
+      real jump, 0.10 to 0.72. but 0.72 is still wrong. a cosine of 0.72 on a
+      vocabulary of 262k tokens means the model is in roughly the right
+      neighborhood but not producing the right answer.
+    </p>
+
+    <p>
+      the post-norm ordering one was interesting in a bad way. llama.cpp applies
+      norm before the residual add, that's the standard transformer formulation.
+      when i flipped ember to match, cosine dropped from 0.92 to 0.13. that meant
+      something else in the block was wrong in the opposite direction, and the
+      two errors were accidentally cancelling. this kind of thing makes you
+      question every assumption you have about the code.
+    </p>
+
+    <p>
+      after maybe ten rejected hypotheses the pattern was becoming visible. this
+      wasn't going to be one clean bug with a satisfying one-line fix.
+    </p>
+
+    <hr>
+
+    <h3>act iii: cosine, the beautiful liar</h3>
+
+    <p>
+      at one point cosine improved from 0.84 to 0.92. i thought i was making
+      progress. top-5 overlap was still zero. top-1 was still wrong. the model
+      was still producing english from arabic.
+    </p>
+
+    <p>
+      what cosine measures: the angle between two vectors in 262k-dimensional
+      space. a vector where most entries are medium-valued (flat distribution)
+      can have high cosine with a sharply peaked vector if they point in roughly
+      the same direction. softmax doesn't care about the angle, it cares about
+      the relative differences between entries. so cosine can go up while the
+      model stays broken.
+    </p>
+
+    <div class="quote-block">
+      <div class="text">
+        cosine improved. top-k stayed at zero. cosine was lying.
+      </div>
+    </div>
+
+    <figure class="chart-wrap">
+      <img class="chart" src="/plots/gemma_cosine_vs_topk.png"
+         alt="Cosine vs top-k overlap: dual-axis chart showing cosine similarity improving while top-5 overlap stayed at zero"
+         loading="lazy" />
+    </figure>
+
+    <p>
+      the metric that actually tracks correctness is top-k overlap with the
+      reference. if llama.cpp's top-5 tokens don't appear in ember's top-5,
+      cosine 0.99 is meaningless. you're sampling from a different distribution.
+    </p>
+
+    <p>
+      i burned at least two days chasing cosine improvements that turned out to
+      be noise. don't do that. watch top-k.
+    </p>
+
+    <hr>
+
+    <h3>act iv: the layerwise oracle</h3>
+
+    <p>
+      at some point comparing final logits wasn't giving enough signal. a final
+      cosine of 0.87 could mean one layer is catastrophically wrong, or every
+      layer is slightly wrong and the errors compound. you can't tell from the
+      output alone.
+    </p>
+
+    <p>
+      so i patched llama.cpp to dump per-layer hidden states. three source files
+      modified, <span class="mono">llama-graph.h</span>,
+      <span class="mono">llama-graph.cpp</span>,
+      <span class="mono">llama-context.cpp</span>, plus
+      <span class="mono">gemma4.cpp</span> to push each block output onto a vector.
+      compiled a small c++ helper that evaluates a bos token and writes 35 × 1536
+      floats to a binary file. ember already had a
+      <span class="mono">--dump-layers</span> flag from earlier work, same format.
+      python script reads both, computes per-layer cosine and l2 norms.
+    </p>
+
+    <div class="layout-block">
+layer 0 (attn_norm):    cosine 1.000 , bit-identical
+layer 1:          cosine 0.998
+layer 2:          cosine 0.994
+layer 3:          cosine 0.990
+layer 5 (global attention): cosine 0.82 , first real drop
+layer 10 (global attention): cosine 0.62
+layer 15 (global attention): cosine 0.096 , worst single layer
+layer 23:          cosine 0.031
+layer 34 (final hidden):   cosine 0.51 , before lm head
+final logits:        cosine 0.87 , after output projection
+    </div>
+
+    <figure class="chart-wrap">
+      <img class="chart" src="/plots/gemma_layerwise_cosine.png"
+         alt="Layerwise cosine: bar chart showing per-layer cosine similarity between Ember and llama.cpp hidden states, highlighting global attention layers and the final logit recovery"
+         loading="lazy" />
+    </figure>
+
+    <p>
+      three things stood out.
+    </p>
+
+    <p>
+      first: layer 0 is bit-identical. the <span class="mono">attn_norm</span>
+      output has the same floating-point values in both implementations. that
+      means the embedding lookup, tokenization, and initial normalization are
+      all correct. the pipeline starts exactly where it should.
+    </p>
+
+    <p>
+      second: the divergence is gradual. there's no single cliff where cosine
+      drops from 0.99 to 0.10 in one layer. each layer loses a little more
+      alignment. the global attention layers hit harder, every 5th layer has
+      head_dim 512 instead of 256 and a different rope theta, so there's more
+      surface area for numerical differences to accumulate.
+    </p>
+
+    <p>
+      third: the lm head recovers cosine from 0.51 to 0.87. the final hidden
+      state is pretty divergent from llama.cpp's, but after multiplying by the
+      tied <span class="mono">token_embd.weight</span> matrix, the resulting
+      logit vector happens to point more toward the reference. this is not the
+      model "getting better", it's an artefact of the projection matrix. and
+      it's part of why cosine on final logits was misleading: it looked better
+      than the hidden states actually were.
+    </p>
+
+    <hr>
+
+    <h2>finale: the structural bugs were loud</h2>
+
+    <p>
+      with the layerwise pipeline working, i could actually see which changes
+      helped and which didn't. the structural bugs, where ember was doing a
+      fundamentally different computation from llama.cpp, were loud. fixing one
+      moved cosine visibly.
+    </p>
+
+    <p>
+      <strong>ple pathway.</strong> gemma's per-layer embedding uses
+      <span class="mono">blk.{i}.inp_gate.weight</span> (1536 → 256) and
+      <span class="mono">blk.{i}.proj.weight</span> (256 → 1536). the proj
+      weight was loaded with a transpose. additionally, there's a global ple
+      projection: <span class="mono">per_layer_model_proj</span> [1536, 8960]
+      combined with raw ple lookup, scaled by 1/sqrt(2). the global proj is
+      stored as bf16 in the gguf, ember had no bf16 loader. added one.
+    </p>
+
+    <p>
+      <strong>block layout.</strong> the order of operations per block had to
+      exactly match llama.cpp's graph: attn_norm → attention → post_attn_norm
+      → residual, then ffn_norm → gate/gelu/up/down → post_ffn_norm → residual,
+      then ple → post_ple_norm → residual, then multiply by layer_output_scale.
+      getting one norm in the wrong place shifts everything downstream.
+    </p>
+
+    <p>
+      <strong>embedding scaling.</strong> token embeddings get multiplied by
+      sqrt(1536). this is in the reference, i had missed it. minor impact on
+      cosine (~0.02) but it's correct.
+    </p>
+
+    <p>
+      <strong>layer output scales.</strong> each block has a learned scalar with
+      geometric mean ~0.42. disabling this gave cosine <em>negative</em> 0.54.
+      not optional.
+    </p>
+
+    <p>
+      <strong>gelu.</strong> both mlp and ple use the tanh approximation
+      (<span class="mono">ggml_gelu</span>), not exact gelu. this matters for
+      matching numerics.
+    </p>
+
+    <p>
+      <strong>rope freq_factors.</strong> the
+      <span class="mono">rope_freqs.weight</span> tensor (256 values) controls
+      partial rope: 64 frequency pairs get rotation, 192 pairs get identity
+      (factor ~1e30 → freq = 0). this is different from llama where all pairs
+      get rotated.
+    </p>
+
+    <p>
+      <strong>final softcap.</strong> gguf metadata key
+      <span class="mono">gemma4.final_logit_softcapping</span> says 30.0.
+      i had it hardcoded to 15.0. halved the effective range.
+    </p>
+
+    <p>
+      <strong>tied embeddings.</strong> no separate
+      <span class="mono">output.weight</span>, the lm head reuses
+      <span class="mono">token_embd.weight</span>. path is hidden → output_norm
+      → tied logits → softcap(30.0). not complicated, just different from llama.
+    </p>
+
+    <div class="table-wrap">
+      <table class="simd-table">
+        <thead>
+          <tr><th>fix</th><th>rough impact</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>ple placement at start of block</td><td>cosine 0.10 → 0.72</td></tr>
+          <tr><td>global ple projection + bf16 loader</td><td>correct pre-projection</td></tr>
+          <tr><td>block layout aligned to llama.cpp</td><td>operations match</td></tr>
+          <tr><td>embedding scale sqrt(1536)</td><td>~0.02</td></tr>
+          <tr><td>layer output scales</td><td>essential (disabled → −0.54)</td></tr>
+          <tr><td>gelu tanh approximation</td><td>matches ggml_gelu</td></tr>
+          <tr><td>rope freq_factors</td><td>partial rope correct</td></tr>
+          <tr><td>final softcap 30.0</td><td>doubled effective range</td></tr>
+          <tr><td>tied embeddings</td><td>no missing output.weight</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <figure class="chart-wrap">
+      <img class="chart" src="/plots/gemma_structural_fixes_timeline.png"
+         alt="Structural fixes timeline: line chart showing cosine improvement as each fix was applied"
+         loading="lazy" />
+    </figure>
+
+    <p>
+      after all of these landed, final logit cosine settled around 0.87. the
+      model produced coherent english. arabic still diverged, but it was no
+      longer producing japanese from arabic prompts. the remaining gap was
+      about 0.13.
+    </p>
+
+    <hr>
+
+    <h2>curtain call: the last 0.13</h2>
+
+    <p>
+      at this point i had fixed every structural mismatch i could find. the
+      pipeline started bit-identical at layer 0. rmsnorm was verified six ways:
+      manual computation matched the backend, weights matched gguf exactly
+      (cosine 1.0, l2 diff 0.0), simd sum_squares matched scalar, and 26 tests
+      passed. the code was correct as far as i could tell.
+    </p>
+
+    <p>
+      and the final cosine was still 0.87.
+    </p>
+
+    <div class="quote-block">
+      <div class="text">
+        the structural bugs were loud. the last bug was quiet.
+      </div>
+    </div>
+
+    <p>
+      what i eventually understood, by dumping and comparing l4
+      <span class="mono">attn_norm</span> inputs from both implementations,
+      was that the remaining gap isn't a bug. it's numerical sensitivity.
+    </p>
+
+    <div class="layout-block">
+raw input cosine (before rmsnorm):  0.997 ← looks basically fine
+rmsnorm output cosine (after):    0.477 ← what
+
+rmsnorm weight stats for this layer:
+ rms of weights: 41
+ max weight:   323
+
+an input that still looked almost aligned by cosine became
+heavily misaligned after rmsnorm, because the weight vector
+scales certain dimensions much more than others. this happens
+at every layer's normalization step.
+    </div>
+
+    <p>
+      gemma 4's rmsnorm weights are just large. the max value in some layers is
+      over 200. that means even a tiny angular difference in the input, from
+      gelu precision, matmul accumulation order, attention softmax numerics,
+      whatever, gets amplified into a visible divergence. this does not look like a simple bug in Rust, C, or the high-level
+      implementation. it's a property of the model architecture
+      interacting with floating-point non-associativity.
+    </p>
+
+    <div class="quote-block">
+      <div class="text">
+        the final boss was not a transpose. it was sensitivity.
+      </div>
+    </div>
+
+    <figure class="chart-wrap">
+      <img class="chart chart-full" src="/plots/gemma_rmsnorm_autopsy.png"
+         alt="RMSNorm amplification: three-panel figure showing nearly identical inputs, large RMSNorm weights, and the resulting amplified output divergence"
+         loading="lazy" />
+    </figure>
+
+    <p>
+      closing the remaining gap would likely require matching llama.cpp's
+      numerical execution path much more closely: accumulation order,
+      approximations, quantized matmul details, and attention/softmax precision.
+      the practical answer is: after structural bugs are resolved, cosine ~0.87
+      with coherent output is a reasonable stopping point, matching llama.cpp's
+      structure and behavior without cloning its exact numerical execution path.
+    </p>
+
+    <p>
+      i spent about a week on this conclusion and i'm still not entirely happy
+      with it. but the evidence is consistent. l0 is bit-identical. the divergence
+      is gradual, not catastrophic. rmsnorm weights are the amplifier. i
+      couldn't find evidence of a remaining structural mismatch.
+    </p>
+
+    <hr>
+
+    <h2>things i learned</h2>
+
+    <ul>
+      <li>
+        do not trust cosine alone in early-stage debugging. it went up while
+        top-k stayed at zero. watch top-k overlap with the reference.
+      </li>
+      <li>
+        do not treat matching shapes as evidence of correctness. the model ran.
+        the dimensions lined up. the output was wrong.
+      </li>
+      <li>
+        build the layerwise comparison pipeline earlier than you think you need
+        it. comparing final logits is like debugging a 35-stage pipeline by
+        looking only at the output.
+      </li>
+      <li>
+        keep the ablation graveyard. every rejected hypothesis ruled out a
+        class of issues. by the time i knew what the problem
+        <em>wasn't</em>, the space of what it could be was much smaller.
+      </li>
+      <li>
+        some gaps are numerical drift, not structural bugs. the correct
+        response is to document the mechanism, not to chase ulp-level
+        equivalence.
+      </li>
+    </ul>
+
+    <hr>
+
+    <h2>current status</h2>
+
+    <ol class="flow-list">
+      <li>
+        <strong>llama/qwen parity</strong>
+        <span>validated, golden-logit cosine 0.9995+</span>
+      </li>
+      <li>
+        <strong>gemma structural parity</strong>
+        <span>fixed, block layout, ple, rope, gelu, softcap, tied embeddings</span>
+      </li>
+      <li>
+        <strong>gemma exact numerical parity</strong>
+        <span>not bit-identical, cosine ~0.87, l0 starts perfect, divergence is gradual</span>
+      </li>
+      <li>
+        <strong>remaining gap</strong>
+        <span>small numerical drift amplified by rmsnorm weights across 35 layers</span>
+      </li>
+      <li>
+        <strong>next step</strong>
+        <span>dump and compare l4 ffn intermediates (gate_proj → gelu → up_proj → down_proj) to isolate the operation where cosine first drops below 0.99</span>
+      </li>
+    </ol>
+
+    <hr>
+
+    <h2>appendix: commands and numbers</h2>
+
+    <h3>golden-logit comparison</h3>
+
+    <pre><code class="language-bash">target/release/ember --model gemma-4-E2B-it-Q8_0.gguf --arch gemma4 \
+ --prompt "Hello world" --max-seq-len 128 --temperature 0 \
+ --dump-logits /tmp/test.npy
+
+python3 -c "
+import numpy as np
+e = np.load('/tmp/test.npy')[0]
+r = np.load('artifacts/golden_logits_gemma/llamacpp_logits.npz')['logits'][0]
+cos = np.dot(e,r)/(np.linalg.norm(e)*np.linalg.norm(r))
+print(f'cosine={cos:.6f}')
+"</code></pre>
+
+    <h3>layerwise comparison</h3>
+
+    <pre><code class="language-bash"># requires patched llama.cpp (see docs/layer-dump-tooling.md)
+# 1. dump llama.cpp layers
+./dump_llamacpp_layers gemma-4-E2B-it-Q8_0.gguf "" llama_layers.bin 16
+
+# 2. dump ember layers
+target/release/ember --model gemma-4-E2B-it-Q8_0.gguf --arch gemma4 \
+ --prompt "" --max-seq-len 16 --temperature 0 \
+ --dump-layers ember_layers.bin
+
+# 3. compare
+python3 scripts/compare_layer_dumps.py \
+ --ember ember_layers.bin --reference llama_layers.bin \
+ --layers 35 --hidden-size 1536 \
+ --out-md report.md --out-json report.json</code></pre>
+
+    <h3>tests</h3>
+
+    <pre><code class="language-bash">cargo test --lib</code></pre>
+
+    <h3>summary numbers</h3>
+
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr><th>model</th><th>prompts</th><th>cosine range</th><th>top-1 match</th><th>max abs diff</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>llama 3.2 1b</td><td class="num">7</td><td class="num hi">0.99947–0.99992</td><td>yes</td><td class="num">0.36</td></tr>
+          <tr><td>qwen3 0.6b</td><td class="num">5</td><td class="num hi">0.99955–0.99979</td><td>yes</td><td class="num">0.59</td></tr>
+          <tr><td>gemma 4 e2b (early, flat logits)</td><td class="num">1</td><td class="num">0.18</td><td>no</td><td class="num">—</td></tr>
+          <tr><td>gemma 4 e2b (intermediate)</td><td class="num">1</td><td class="num">0.67</td><td>no</td><td class="num">31.7</td></tr>
+          <tr><td>gemma 4 e2b (after fixes)</td><td class="num">1</td><td class="num">~0.87</td><td>no</td><td class="num">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>key files</h3>
+
+    <div class="table-wrap">
+      <table class="simd-table">
+        <thead>
+          <tr><th>file</th><th>what</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="mono">src/gemma4.rs</span></td><td>full gemma 4 forward pass (~1980 lines)</td></tr>
+          <tr><td><span class="mono">src/tensor.rs</span></td><td>compute_rope_freqs, rms_norm, softmax</td></tr>
+          <tr><td><span class="mono">src/loader.rs</span></td><td>gguf parsing, bf16 (type 30)</td></tr>
+          <tr><td><span class="mono">src/simd.rs</span></td><td>avx2/neon kernels, sum_squares check</td></tr>
+          <tr><td><span class="mono">src/quant.rs</span></td><td>q8_0 dequantization</td></tr>
+          <tr><td><span class="mono">tools/dump_llamacpp_layers.cpp</span></td><td>llama.cpp layer dump helper</td></tr>
+          <tr><td><span class="mono">scripts/compare_layer_dumps.py</span></td><td>layerwise comparison</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- docs:footer start -->
+    <footer>
+      <a href="/">voidwest</a>
+      &nbsp;·&nbsp;
+      <a href="https://github.com/voidwest">github</a>
+      &nbsp;·&nbsp;
+      <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+      &nbsp;·&nbsp;
+      <a href="mailto:mthobaiti@outlook.com">email</a>
+      &nbsp;·&nbsp;
+      <a href="/ember/">ember</a>
+      &nbsp;·&nbsp;
+      <a href="/research-notes/">research notes</a>
+      &nbsp;·&nbsp;
+      <a href="/terms/">terms</a>
+    </footer>
+    <!-- docs:footer end -->
+
+  </body>
+</html>
