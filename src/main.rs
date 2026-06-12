@@ -217,6 +217,8 @@ fn main() -> anyhow::Result<()> {
                     path,
                     args.max_seq_len,
                 )?;
+            } else if args.dump_layers.is_some() {
+                bail_dump_layers_unsupported(&args.arch)?;
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
             } else {
@@ -244,6 +246,8 @@ fn main() -> anyhow::Result<()> {
                     path,
                     args.max_seq_len,
                 )?;
+            } else if args.dump_layers.is_some() {
+                bail_dump_layers_unsupported(&args.arch)?;
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
             } else {
@@ -875,6 +879,10 @@ where
         shape
     );
     Ok(())
+}
+
+fn bail_dump_layers_unsupported(arch: &str) -> anyhow::Result<()> {
+    anyhow::bail!("--dump-layers is only supported with --arch gemma4, got --arch {arch}")
 }
 
 /// Dump per-layer hidden states (last prompt token) directly to a binary file.

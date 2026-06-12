@@ -933,17 +933,6 @@ impl<B: Backend> Gemma4<B> {
         for (layer, block) in self.blocks.iter().enumerate() {
             let layer_ple = ple.as_ref().map(|v| &v[layer]);
             x = block.forward_with_cache(backend, &x, layer_ple, cache, layer, start_pos)?;
-            if layer == 3 {
-                let d = backend.data(&x);
-                let o = (token_ids.len() - 1) * self.config.embed_dim;
-                std::fs::write("/tmp/ember_l3_out.bin", unsafe {
-                    std::slice::from_raw_parts(
-                        d[o..].as_ptr() as *const u8,
-                        self.config.embed_dim * 4,
-                    )
-                })
-                .ok();
-            }
         }
         for _ in 0..token_ids.len() {
             cache.advance_cursor();
