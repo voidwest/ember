@@ -46,11 +46,16 @@ def summarize_probe(path: str | None) -> dict:
         "probe_kind": str(data["probe_kind"]) if "probe_kind" in data else None,
         "root_split": str(data["root_split"]) if "root_split" in data else None,
         "pattern_split": str(data["pattern_split"]) if "pattern_split" in data else None,
+        "default_split_policy": (
+            str(data["default_split_policy"]) if "default_split_policy" in data else None
+        ),
         "split_policy": str(data["split_policy"]) if "split_policy" in data else None,
         "tasks": tasks,
         "task_metrics": {},
     }
-    if "split_policy_json" in data:
+    if "task_split_policy_json" in data:
+        summary["split_policy_metadata"] = json.loads(str(data["task_split_policy_json"]))
+    elif "split_policy_json" in data:
         summary["split_policy_metadata"] = json.loads(str(data["split_policy_json"]))
     for task in tasks:
         key = "".join(c if c.isalnum() or c in "_-" else "_" for c in task)
@@ -62,11 +67,32 @@ def summarize_probe(path: str | None) -> dict:
             "best_layer": int(np.argmax(acc)),
             "best_accuracy": float(np.max(acc)),
             "mean_accuracy": float(np.mean(acc)),
+            "final_layer_accuracy": float(acc[-1]),
             "n_layers": int(len(acc)),
         }
         class_key = f"{key}_classes"
         if class_key in data:
-            task_summary["n_classes"] = int(len(data[class_key]))
+            classes = [str(value) for value in data[class_key].tolist()]
+            task_summary["n_classes"] = int(len(classes))
+            task_summary["classes"] = classes
+        count_key = f"{key}_class_counts"
+        if class_key in data and count_key in data:
+            counts = [int(value) for value in data[count_key].tolist()]
+            task_summary["class_counts"] = dict(zip(task_summary["classes"], counts))
+            task_summary["min_class_count"] = int(min(counts)) if counts else None
+            task_summary["max_class_count"] = int(max(counts)) if counts else None
+        chance_key = f"{key}_chance"
+        if chance_key in data:
+            task_summary["chance"] = float(data[chance_key])
+        confusion_key = f"{key}_confusion_matrices"
+        if confusion_key in data:
+            confusions = data[confusion_key]
+            best_layer = task_summary["best_layer"]
+            final_layer = int(len(acc) - 1)
+            task_summary["confusion_matrices"] = {
+                "best_layer": confusions[best_layer].astype(int).tolist(),
+                "final_layer": confusions[final_layer].astype(int).tolist(),
+            }
         sel_key = f"{key}_selectivity"
         if sel_key in data:
             sel = data[sel_key]

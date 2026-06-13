@@ -1,0 +1,46 @@
+{
+  "name": "gemma-nonce-v05",
+  "stimuli": "stimuli/nonce_root_pattern.json",
+  "out_dir": "data/benchmarks",
+  "tasks": ["root", "pattern"],
+  "probe_kind": "sgd",
+  "control": true,
+  "reuse_activations": true,
+  "folds": 5,
+  "control_repeats": 5,
+  "probe_max_iter": 2000,
+  "probe_tol": 0.0001,
+  "split_policy": {
+    "root": "pattern-heldout",
+    "pattern": "root-heldout"
+  },
+  "run_mdl": true,
+  "run_cca": true,
+  "run_rsa": true,
+  "run_divergence": true,
+  "run_plots": true,
+  "dark_plots": true,
+  "fertility": {
+    "enabled": true,
+    "tokenizers": ["tokenizer-gemma4.json"],
+    "labels": ["gemma4"]
+  },
+  "models": [
+    {
+      "label": "gemma_e2b",
+      "kind": "ember",
+      "arch": "gemma4",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "tokenizer": "tokenizer-gemma4.json",
+      "generate_tokens": 1
+    },
+    {
+      "label": "gemma_12b",
+      "kind": "ember",
+      "arch": "gemma4",
+      "model": "models/gemma-4-12B-it-Q8_0.gguf",
+      "tokenizer": "tokenizer-gemma4.json",
+      "generate_tokens": 1
+    }
+  ]
+}

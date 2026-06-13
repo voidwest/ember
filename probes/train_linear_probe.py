@@ -15,6 +15,7 @@ from pathlib import Path
 from sklearn.linear_model import SGDClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
+from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import GroupKFold, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import make_pipeline
@@ -321,6 +322,7 @@ def train_probes(
     tol=1e-4,
     n_jobs=None,
     splits_override=None,
+    collect_confusion=False,
 ):
     """train linear probes on each layer's activations.
 
@@ -345,7 +347,9 @@ def train_probes(
 
     n_layers = activations.shape[1]
     accuracies = []
+    confusion_matrices = []
     probes = []
+    class_ids = np.arange(len(le.classes_))
 
     for layer in range(n_layers):
         X = activations[:, layer, :]
@@ -359,9 +363,11 @@ def train_probes(
         )
         if splits is None:
             probe.fit(X, y)
+            pred = probe.predict(X)
             acc = probe.score(X, y)  # train accuracy (optimistic)
         else:
             scores = []
+            pred = np.full_like(y, fill_value=-1)
             for train_idx, test_idx in splits:
                 probe_clone = make_probe(
                     probe_kind,
@@ -373,11 +379,16 @@ def train_probes(
                 )
                 probe_clone.fit(X[train_idx], y[train_idx])
                 scores.append(probe_clone.score(X[test_idx], y[test_idx]))
+                pred[test_idx] = probe_clone.predict(X[test_idx])
             acc = np.mean(scores)
         accuracies.append(acc)
+        if collect_confusion:
+            confusion_matrices.append(confusion_matrix(y, pred, labels=class_ids))
         probe.fit(X, y)  # refit on all data for export
         probes.append(probe)
 
+    if collect_confusion:
+        return np.array(accuracies), probes, le, np.array(confusion_matrices)
     return np.array(accuracies), probes, le
 
 
@@ -716,7 +727,7 @@ def main():
                 f"  grouped by: {split_metadata['group_field']} "
                 f"({split_metadata.get('n_groups')} groups)"
             )
-        acc, probes, le = train_probes(
+        acc, probes, le, confusions = train_probes(
             task_activations,
             labels,
             args.folds,
@@ -729,12 +740,24 @@ def main():
             tol=args.tol,
             n_jobs=args.n_jobs,
             splits_override=splits,
+            collect_confusion=True,
         )
         for i, layer_acc in enumerate(acc):
             print(f"  layer {i:2d}: {layer_acc:.3f}")
         key = safe_key(task)
+        class_values, class_counts = np.unique(labels, return_counts=True)
+        class_count_map = {
+            str(value): int(count)
+            for value, count in zip(class_values, class_counts)
+        }
         results[f"{key}_accuracy"] = acc
         results[f"{key}_classes"] = np.array(le.classes_, dtype=object)
+        results[f"{key}_class_counts"] = np.array(
+            [class_count_map[str(cls)] for cls in le.classes_],
+            dtype=np.int64,
+        )
+        results[f"{key}_chance"] = np.array(1.0 / len(le.classes_))
+        results[f"{key}_confusion_matrices"] = confusions.astype(np.int64)
         trained[key] = probes
 
         if args.control:
@@ -775,7 +798,13 @@ def main():
             "probe_kind": args.probe_kind,
             "root_split": args.root_split,
             "pattern_split": args.pattern_split,
-            "split_policy": args.split_policy,
+            "default_split_policy": args.split_policy,
+            "split_policy": "task-specific",
+            "task_split_policy_json": json.dumps(
+                split_policy_records,
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
             "split_policy_json": json.dumps(
                 split_policy_records,
                 ensure_ascii=False,

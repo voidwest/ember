@@ -95,23 +95,65 @@ def probe_metric_rows(summary: dict[str, Any]) -> list[list[Any]]:
         label = model.get("label")
         probe = model.get("probe")
         if not isinstance(probe, dict) or not probe.get("exists"):
-            rows.append([label, "missing", "missing", "missing", "missing", "missing", "missing"])
+            rows.append([label, "missing", "missing", "missing", "missing", "missing", "missing", "missing", "missing", "missing"])
             continue
         metrics = probe.get("task_metrics")
         if not isinstance(metrics, dict) or not metrics:
-            rows.append([label, "missing", "missing", "missing", "missing", "missing", "missing"])
+            rows.append([label, "missing", "missing", "missing", "missing", "missing", "missing", "missing", "missing", "missing"])
             continue
         for task in sorted(metrics):
             task_metrics = metrics[task] if isinstance(metrics[task], dict) else {}
+            count_range = "missing"
+            if task_metrics.get("min_class_count") is not None:
+                count_range = (
+                    f"{task_metrics.get('min_class_count')}-"
+                    f"{task_metrics.get('max_class_count')}"
+                )
             rows.append(
                 [
                     label,
                     task,
                     task_metrics.get("best_layer"),
                     task_metrics.get("best_accuracy"),
+                    task_metrics.get("final_layer_accuracy"),
                     task_metrics.get("mean_accuracy"),
                     task_metrics.get("n_classes"),
+                    count_range,
+                    task_metrics.get("chance"),
                     task_metrics.get("best_selectivity"),
+                ]
+            )
+    return rows
+
+
+def confusion_rows(summary: dict[str, Any]) -> list[list[Any]]:
+    rows = []
+    for model in sorted(summary.get("models") or [], key=model_sort_key):
+        label = model.get("label")
+        probe = model.get("probe")
+        if not isinstance(probe, dict) or not probe.get("exists"):
+            continue
+        metrics = probe.get("task_metrics")
+        if not isinstance(metrics, dict):
+            continue
+        for task in sorted(metrics):
+            task_metrics = metrics[task] if isinstance(metrics[task], dict) else {}
+            matrices = task_metrics.get("confusion_matrices")
+            if not isinstance(matrices, dict):
+                continue
+            rows.append(
+                [
+                    label,
+                    task,
+                    task_metrics.get("classes"),
+                    task_metrics.get("best_layer"),
+                    matrices.get("best_layer"),
+                    (
+                        task_metrics.get("n_layers") - 1
+                        if task_metrics.get("n_layers") is not None
+                        else "missing"
+                    ),
+                    matrices.get("final_layer"),
                 ]
             )
     return rows
@@ -292,13 +334,36 @@ def render_report(summary: dict[str, Any]) -> str:
                 "task",
                 "best layer",
                 "best accuracy",
+                "final accuracy",
                 "mean accuracy",
                 "n classes",
+                "class count range",
+                "chance",
                 "best selectivity",
             ],
             probe_metric_rows(summary),
         )
     )
+    lines.extend(["", "## Peak/final confusion matrices", ""])
+    conf_rows = confusion_rows(summary)
+    if conf_rows:
+        lines.extend(
+            table(
+                [
+                    "model",
+                    "task",
+                    "class order",
+                    "best layer",
+                    "best-layer confusion",
+                    "final layer",
+                    "final-layer confusion",
+                ],
+                conf_rows,
+            )
+        )
+    else:
+        lines.append("missing")
+
     lines.extend(["", "## MDL metrics", ""])
     mdl_rows = mdl_metric_rows(summary)
     if mdl_rows:

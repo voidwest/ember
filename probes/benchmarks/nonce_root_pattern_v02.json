@@ -1,0 +1,86 @@
+{
+  "name": "nonce-root-pattern-v02",
+  "stimuli": "stimuli/nonce_root_pattern.json",
+  "out_dir": "data/benchmarks",
+  "tasks": ["root", "pattern"],
+  "probe_kind": "sgd",
+  "control": true,
+  "reuse_activations": true,
+  "folds": 5,
+  "control_repeats": 5,
+  "probe_max_iter": 2000,
+  "probe_tol": 0.0001,
+  "split_policy": {
+    "root": "pattern-heldout",
+    "pattern": "root-heldout"
+  },
+  "run_mdl": true,
+  "run_cca": true,
+  "run_rsa": true,
+  "run_divergence": true,
+  "run_plots": true,
+  "dark_plots": true,
+  "fertility": {
+    "enabled": true,
+    "tokenizers": ["tokenizer-qwen3.json", "tokenizer-qwen2.5.json", "tokenizer.json", "tokenizer-gemma4.json"],
+    "labels": ["qwen3", "qwen2.5", "llama", "gemma4"]
+  },
+  "models": [
+    {
+      "label": "qwen3_06b",
+      "kind": "ember",
+      "arch": "qwen3",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "tokenizer": "tokenizer-qwen3.json",
+      "generate_tokens": 1
+    },
+    {
+      "label": "qwen25_15b",
+      "kind": "ember",
+      "arch": "qwen3",
+      "model": "qwen2.5-1.5b-instruct-q8_0.gguf",
+      "tokenizer": "tokenizer-qwen2.5.json",
+      "generate_tokens": 1
+    },
+    {
+      "label": "qwen3_8b",
+      "kind": "ember",
+      "arch": "qwen3",
+      "model": "Qwen3-8B-Q8_0.gguf",
+      "tokenizer": "tokenizer-qwen3.json",
+      "generate_tokens": 1
+    },
+    {
+      "label": "llama_1b",
+      "kind": "ember",
+      "arch": "llama",
+      "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+      "tokenizer": "tokenizer.json",
+      "generate_tokens": 1
+    },
+    {
+      "label": "llama_3b",
+      "kind": "ember",
+      "arch": "llama",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "tokenizer": "tokenizer.json",
+      "generate_tokens": 1
+    },
+    {
+      "label": "llama_8b",
+      "kind": "ember",
+      "arch": "llama",
+      "model": "meta-llama-3.1-8b-instruct.Q8_0.gguf",
+      "tokenizer": "tokenizer.json",
+      "generate_tokens": 1
+    },
+    {
+      "label": "gemma_e2b",
+      "kind": "ember",
+      "arch": "gemma4",
+      "model": "models/gemma-4-E2B-it.Q8_0.gguf",
+      "tokenizer": "tokenizer-gemma4.json",
+      "generate_tokens": 1
+    }
+  ]
+}

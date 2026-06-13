@@ -62,6 +62,16 @@ class ProbeWorkflowTests(unittest.TestCase):
                 root_classes=np.array(["a", "b"], dtype=object),
                 labels_Gender_accuracy=np.array([0.6, 0.7, 0.65]),
                 labels_Gender_classes=np.array(["Fem", "Masc"], dtype=object),
+                labels_Gender_class_counts=np.array([3, 5]),
+                labels_Gender_chance=np.array(0.5),
+                labels_Gender_confusion_matrices=np.array(
+                    [
+                        [[2, 1], [1, 4]],
+                        [[3, 0], [1, 4]],
+                        [[2, 1], [2, 3]],
+                    ],
+                    dtype=np.int64,
+                ),
             )
             summary = summarize_probe(str(path))
 
@@ -69,6 +79,15 @@ class ProbeWorkflowTests(unittest.TestCase):
         self.assertEqual(summary["task_metrics"]["root"]["best_layer"], 1)
         self.assertAlmostEqual(summary["task_metrics"]["root"]["best_accuracy"], 0.8)
         self.assertEqual(summary["task_metrics"]["labels.Gender"]["n_classes"], 2)
+        self.assertEqual(
+            summary["task_metrics"]["labels.Gender"]["class_counts"],
+            {"Fem": 3, "Masc": 5},
+        )
+        self.assertEqual(summary["task_metrics"]["labels.Gender"]["chance"], 0.5)
+        self.assertEqual(
+            summary["task_metrics"]["labels.Gender"]["confusion_matrices"]["best_layer"],
+            [[3, 0], [1, 4]],
+        )
 
     def test_nonce_grouped_split_policies_keep_groups_disjoint(self):
         rows = [
@@ -170,11 +189,17 @@ class ProbeWorkflowTests(unittest.TestCase):
                 check=True,
             )
             data = np.load(output, allow_pickle=True)
-            metadata = json.loads(str(data["split_policy_json"]))
+            metadata = json.loads(str(data["task_split_policy_json"]))
+            split_policy = str(data["split_policy"])
+            has_confusions = "pattern_confusion_matrices" in data
+            has_class_counts = "pattern_class_counts" in data
             summary = summarize_probe(str(output))
             sidecar = tmp_path / "probes_split_policy.json"
             sidecar_exists = sidecar.exists()
 
+        self.assertEqual(split_policy, "task-specific")
+        self.assertTrue(has_confusions)
+        self.assertTrue(has_class_counts)
         self.assertEqual(metadata[0]["effective_policy"], "root-heldout")
         self.assertEqual(metadata[0]["group_field"], "root")
         self.assertEqual(

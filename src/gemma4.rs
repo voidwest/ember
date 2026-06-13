@@ -720,7 +720,7 @@ impl Gemma4<CpuBackend> {
             let v_name = format!("blk.{}.attn_v.weight", i);
             let has_own_kv =
                 loader.tensors.contains_key(&k_name) && loader.tensors.contains_key(&v_name);
-            let is_shared = !has_own_kv && i + config.num_kv_shared_layers >= config.n_layers;
+            let is_shared = !has_own_kv;
             let shared_source_layer = if is_shared {
                 match layer_type {
                     Gemma4AttentionType::Local => last_local_source,
@@ -1645,6 +1645,40 @@ mod tests {
         LoadedTensor::F32(CpuTensor::from_data(shape.to_vec(), data))
     }
 
+    fn insert_tiny_gemma4_block_tensors(
+        tensors: &mut HashMap<String, LoadedTensor>,
+        layer: usize,
+        include_kv: bool,
+    ) {
+        for name in ["attn_q", "attn_output", "ffn_gate", "ffn_up", "ffn_down"] {
+            tensors.insert(
+                format!("blk.{}.{}.weight", layer, name),
+                tiny_weight(&[2, 2]),
+            );
+        }
+        if include_kv {
+            for name in ["attn_k", "attn_v"] {
+                tensors.insert(
+                    format!("blk.{}.{}.weight", layer, name),
+                    tiny_weight(&[2, 2]),
+                );
+            }
+        }
+        for name in [
+            "attn_q_norm",
+            "attn_k_norm",
+            "attn_norm",
+            "attn_post_norm",
+            "ffn_norm",
+            "ffn_post_norm",
+        ] {
+            tensors.insert(
+                format!("blk.{}.{}.weight", layer, name),
+                tiny_tensor(&[2], 1.0),
+            );
+        }
+    }
+
     fn insert_tiny_gemma4_tensors(tensors: &mut HashMap<String, LoadedTensor>) {
         tensors.insert(
             "token_embd.weight".to_string(),
@@ -1655,28 +1689,7 @@ mod tests {
         );
         tensors.insert("output_norm.weight".to_string(), tiny_tensor(&[2], 1.0));
         tensors.insert("output.weight".to_string(), tiny_weight(&[4, 2]));
-
-        for name in [
-            "attn_q",
-            "attn_k",
-            "attn_v",
-            "attn_output",
-            "ffn_gate",
-            "ffn_up",
-            "ffn_down",
-        ] {
-            tensors.insert(format!("blk.0.{}.weight", name), tiny_weight(&[2, 2]));
-        }
-        for name in [
-            "attn_q_norm",
-            "attn_k_norm",
-            "attn_norm",
-            "attn_post_norm",
-            "ffn_norm",
-            "ffn_post_norm",
-        ] {
-            tensors.insert(format!("blk.0.{}.weight", name), tiny_tensor(&[2], 1.0));
-        }
+        insert_tiny_gemma4_block_tensors(tensors, 0, true);
     }
 
     #[test]
@@ -1809,6 +1822,31 @@ mod tests {
             .unwrap();
         assert_eq!(logits.shape(), &[2, 4]);
         assert!(logits.data().iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn loader_accepts_shared_kv_layers_without_own_kv_tensors() {
+        let mut metadata = HashMap::new();
+        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
+        metadata.insert(
+            "gemma4.attention.head_count_kv".to_string(),
+            GgufValue::U32(1),
+        );
+        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
+        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+
+        let mut tensors = HashMap::new();
+        insert_tiny_gemma4_tensors(&mut tensors);
+        insert_tiny_gemma4_block_tensors(&mut tensors, 1, false);
+        let loader = GgufLoader { metadata, tensors };
+        let model = Gemma4::from_loader(loader).unwrap();
+
+        assert_eq!(model.blocks.len(), 2);
+        assert_eq!(model.blocks[1].attn.shared_source_layer, Some(0));
     }
 
     #[test]
