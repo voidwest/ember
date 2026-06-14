@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="cross-family Arabic morphology probes" />
+        <meta property="og:description" content="ملاحظة أولية عن probing للصرف العربي عبر LLaMA وQwen وGemma." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/cross-family-arabic-morphology-probes.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>cross-family Arabic morphology probes · research notes</title>
+        <link rel="stylesheet" href="/style.css" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <a class="nav-lang" href="/research-notes/cross-family-arabic-morphology-probes.html">en</a>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1><bdi>cross-family Arabic morphology probes</bdi></h1>
+
+        <div class="meta">
+            تحليل أولي للطبقات عبر <bdi>LLaMA</bdi> و<bdi>Qwen</bdi> و<bdi>Gemma</bdi><br>
+            mohammed al-thobaiti · 2026-06-14<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">ember</span>
+            <span class="tag model">LLaMA</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">Gemma</span>
+        </div>
+
+        <p>
+            هذه ملاحظة قياس أولية على محفزات صرف عربي من نوع
+            <bdi>nonce root-pattern</bdi>. السؤال محدود: هل يمكن استرجاع
+            هوية الجذر والوزن بخطية من <bdi>hidden states</bdi> المحفوظة؟
+        </p>
+
+        <p>
+            النتائج وصفية فقط. الـ <bdi>probes</bdi> تقيس قابلية الاسترجاع
+            من التمثيلات الداخلية، ولا تثبت أن النموذج يفهم الصرف العربي أو
+            يستخدم هذه المعلومات سببياً في التوليد.
+        </p>
+
+        <div class="callout hypothesis">
+            <div class="label">status</div>
+            <p>
+                نتائج الوزن مشبعة في هذا الإعداد، لذلك لا تصلح لمقارنات
+                عائلية أو مقارنات حجم. نتائج <bdi>Gemma E2B</bdi> في
+                الطبقات المتأخرة تحتاج حذر إضافي لأن تحقق <bdi>golden-logit</bdi>
+                وصل فقط إلى <bdi>cosine ~0.87</bdi> مقابل <bdi>llama.cpp</bdi>.
+            </p>
+        </div>
+
+        <h2>الإعداد</h2>
+
+        <p>
+            استخرجت التمثيلات باستخدام <a href="/ember/index.ar.html"><bdi>ember</bdi></a>
+            عبر <code>--probe</code> على <code>stimuli/nonce_root_pattern.json</code>.
+            البيانات تحتوي 20 جذر افتراضي و10 أوزان، أي 200 محفز. هذه الصفحة
+            تستخدم ملفات التشغيل المحفوظة في
+            <code>artifacts/morphology_runs/20260613_022050</code>.
+        </p>
+
+        <ul>
+            <li><strong><bdi>root</bdi></strong>: تصنيف 20 فئة، مع تقسيم <code>pattern-heldout</code>.</li>
+            <li><strong><bdi>pattern</bdi></strong>: تصنيف 10 فئات، مع تقسيم <code>root-heldout</code>.</li>
+            <li><strong>النماذج</strong>: <bdi>Qwen 0.6B/1.5B/8B</bdi>، <bdi>LLaMA 1B/3B/8B</bdi>، و<bdi>Gemma E2B</bdi>.</li>
+        </ul>
+
+        <p>
+            ملفات الـ <bdi>NPZ</bdi> تحتوي أيضاً على <code>split_policy=random</code>.
+            في هذه الملاحظة، الحقول الخاصة بكل مهمة هي المرجع، والحقل العام
+            يعامل كأثر تسجيل لا كسياسة التقسيم الفعلية.
+        </p>
+
+        <h2>نتائج الجذر</h2>
+
+        <p>
+            الجذر هو المهمة الأكثر إفادة هنا لأنه يختلف بين النماذج والطبقات.
+            خمسة نماذج تصل إلى قمة 1.000، بينما <bdi>Qwen 1.5B</bdi> يصل
+            إلى 0.940 و<bdi>Gemma E2B</bdi> إلى 0.970.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_root_layerwise.png"
+             alt="Root probe accuracy across layers for seven completed models"
+             loading="lazy" />
+
+        <p>
+            الهبوط في الطبقة النهائية يظهر في مهمة الجذر: كل نماذج
+            <bdi>Qwen</bdi> تهبط عن القمة، و<bdi>LLaMA 8B</bdi> يهبط،
+            و<bdi>Gemma E2B</bdi> يملك أكبر هبوط. بالمقابل، <bdi>LLaMA 1B</bdi>
+            و<bdi>LLaMA 3B</bdi> يبقيان عند التشبع في الطبقة الأخيرة.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_root_final_drop.png"
+             alt="Final-layer minus peak-layer root probe accuracy"
+             loading="lazy" />
+
+        <div class="callout observation">
+            <div class="label">observation</div>
+            <p>
+                فرق الطبقة النهائية بين <bdi>LLaMA</bdi> و<bdi>Qwen</bdi>
+                هو أكثر إشارة عائلية مثيرة في الجدول، لكنه يظل ملاحظة لتوليد
+                فرضيات فقط. التشغيل الحالي لا يثبت سبب الفرق ولا أنه سيصمد
+                بعد إعادة التشغيل والضوابط.
+            </p>
+        </div>
+
+        <h2><bdi>Gemma E2B</bdi></h2>
+
+        <p>
+            <bdi>Gemma E2B</bdi> يبلغ قمة الجذر في الطبقة 14 ثم يهبط من
+            0.970 إلى 0.210 في الطبقة النهائية. هذا واضح بصرياً، لكنه ليس
+            دليلاً نظيفاً على تمثيل صرفي خاص بـ <bdi>Gemma</bdi>.
+        </p>
+
+        <p>
+            تحقق <bdi>golden-logit</bdi> وصل إلى <bdi>cosine ~0.87</bdi>
+            مقابل <bdi>llama.cpp</bdi>، مع انجراف تدريجي من الطبقة 5 فما
+            بعدها. لذلك قد تكون التمثيلات المتأخرة متأثرة بتراكم عددي في
+            التنفيذ، وليس فقط ببنية صرفية داخلية.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_peak_layer_summary.png"
+             alt="First peak layer for root and pattern probe accuracy by model"
+             loading="lazy" />
+
+        <h2>تشبع الوزن</h2>
+
+        <p>
+            الوزن يصل إلى 1.000 في القمة والطبقة النهائية لكل النماذج السبعة.
+            هذا يحد من التفسير: المهمة 10 فئات فقط، وقد تكون المحفزات سهلة
+            جداً لهذا الإعداد. لذلك لا أستخدم نتائج الوزن لدعم مقارنات عائلية
+            أو مقارنات حجم في هذا التشغيل.
+        </p>
+
+        <h2>رسوم استكشافية</h2>
+
+        <p>
+            رسوم <bdi>RSA</bdi> و<bdi>CCA</bdi> و<bdi>PCA</bdi> هنا
+            استكشافية فقط. الملفات الحالية داخل كل نموذج، وليست مقارنات
+            هندسية مباشرة بين النماذج.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_gemma_rsa.png"
+             alt="Within-model RSA layer-by-layer similarity heatmap for Gemma E2B"
+             loading="lazy" />
+
+        <img class="chart" src="/plots/morphology_cross_family_llama8b_cca.png"
+             alt="Within-model CCA layer-by-layer similarity heatmap for LLaMA 8B"
+             loading="lazy" />
+
+        <img class="chart" src="/plots/morphology_cross_family_gemma_pca_root.png"
+             alt="PCA projection of Gemma E2B layer 14 hidden states colored by root label"
+             loading="lazy" />
+
+        <h2>تحفظات</h2>
+
+        <ul>
+            <li>هذه بيانات أولية، وقد تعكس سهولة البيانات أو إعداد الـ <bdi>probe</bdi>.</li>
+            <li>النتائج عن قابلية الاسترجاع الخطي، لا عن الكفاءة اللغوية أو التوليد.</li>
+            <li>المهام هنا فقط جذر ووزن؛ لا توجد مهام جنس أو عدد أو زمن أو شخص أو إعراب.</li>
+            <li><bdi>Gemma E2B</bdi> نقطة واحدة فقط، ولا تدعم اتجاه عائلي أو اتجاه حجم.</li>
+            <li>دقة القمة وحدها مقياس ضعيف للحجم لأن الوزن مشبع وكثير من قمم الجذر مشبعة أيضاً.</li>
+        </ul>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

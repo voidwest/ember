@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="cross-family Arabic morphology probes" />
+        <meta property="og:description" content="A preliminary layerwise probe note across LLaMA, Qwen, and Gemma on Arabic nonce root-pattern stimuli." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/cross-family-arabic-morphology-probes.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>cross-family Arabic morphology probes · research notes</title>
+        <link rel="stylesheet" href="/style.css" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <a class="nav-lang" href="/research-notes/cross-family-arabic-morphology-probes.ar.html">عربي</a>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>cross-family Arabic morphology probes</h1>
+
+        <div class="meta">
+            preliminary layerwise probe analysis across LLaMA, Qwen, and Gemma<br>
+            mohammed al-thobaiti · 2026-06-14<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">ember</span>
+            <span class="tag model">LLaMA</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">Gemma</span>
+        </div>
+
+        <p>
+            this note summarizes a preliminary layerwise probe run over Arabic
+            nonce root-pattern stimuli. the question is narrow: are root and
+            pattern labels linearly recoverable from saved hidden states across
+            LLaMA, Qwen, and one completed Gemma model?
+        </p>
+
+        <p>
+            the answer is descriptive, not behavioral. these probes measure
+            recoverability from hidden states under this dataset and split
+            policy. they do not show that a model understands Arabic morphology,
+            generates correct forms, or causally uses the probed features.
+        </p>
+
+        <div class="callout hypothesis">
+            <div class="label">status</div>
+            <p>
+                treat this as a measurement note. pattern labels are saturated
+                in this setup; root labels carry most of the visible variation.
+                Gemma E2B later layers need extra skepticism because golden-logit
+                validation reached only cosine ~0.87 against llama.cpp.
+            </p>
+        </div>
+
+        <h2>setup</h2>
+
+        <p>
+            hidden states were extracted with <a href="/ember/">ember</a> using
+            <code>--probe</code> over <code>stimuli/nonce_root_pattern.json</code>.
+            the run crossed 20 nonce roots with 10 Arabic morphological patterns,
+            yielding 200 stimuli. this page uses the saved artifacts from
+            <code>artifacts/morphology_runs/20260613_022050</code>; extraction
+            and probe training were not rerun for this note.
+        </p>
+
+        <ul>
+            <li><strong>root</strong>: 20-way root classification, task-specific split <code>pattern-heldout</code>.</li>
+            <li><strong>pattern</strong>: 10-way pattern classification, task-specific split <code>root-heldout</code>.</li>
+            <li><strong>completed models</strong>: Qwen 0.6B, Qwen 1.5B, Qwen 8B, LLaMA 1B, LLaMA 3B, LLaMA 8B, and Gemma E2B.</li>
+        </ul>
+
+        <p>
+            the probe files also contain scalar <code>split_policy=random</code>.
+            in this note, that scalar field is treated as a recording artifact:
+            the task-specific <code>root_split</code>, <code>pattern_split</code>,
+            and <code>split_policy_json</code> fields take precedence.
+        </p>
+
+        <h2>summary table</h2>
+
+        <p>
+            peak entries are formatted as <code>layer / score</code>. layer
+            numbers are zero-based NPZ array indices. when layers tie for peak
+            score, the first peak layer is reported.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>family</th>
+                    <th>root peak</th>
+                    <th>root final</th>
+                    <th>pattern peak</th>
+                    <th>pattern final</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><code>qwen3_06b</code></td><td>Qwen 0.6B</td><td>0 / 1.000</td><td>0.830</td><td>0 / 1.000</td><td>1.000</td></tr>
+                <tr><td><code>qwen25_15b</code></td><td>Qwen 1.5B</td><td>1 / 0.940</td><td>0.845</td><td>0 / 1.000</td><td>1.000</td></tr>
+                <tr><td><code>qwen3_8b</code></td><td>Qwen 8B</td><td>0 / 1.000</td><td>0.950</td><td>0 / 1.000</td><td>1.000</td></tr>
+                <tr><td><code>llama_1b</code></td><td>LLaMA 1B</td><td>2 / 1.000</td><td>1.000</td><td>1 / 1.000</td><td>1.000</td></tr>
+                <tr><td><code>llama_3b</code></td><td>LLaMA 3B</td><td>1 / 1.000</td><td>1.000</td><td>0 / 1.000</td><td>1.000</td></tr>
+                <tr><td><code>llama_8b</code></td><td>LLaMA 8B</td><td>1 / 1.000</td><td>0.930</td><td>1 / 1.000</td><td>1.000</td></tr>
+                <tr><td><code>gemma_e2b</code></td><td>Gemma E2B</td><td>14 / 0.970</td><td>0.210</td><td>1 / 1.000</td><td>1.000</td></tr>
+            </tbody>
+        </table>
+
+        <h2>root behavior</h2>
+
+        <p>
+            root labels are the more informative task in this run because they
+            vary across models and layers. five models reach a peak root score
+            of 1.000. Qwen 1.5B peaks lower at 0.940, and Gemma E2B peaks at
+            0.970.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_root_layerwise.png"
+             alt="Root probe accuracy across layers for seven completed models"
+             loading="lazy" />
+
+        <p>
+            final-layer drops are concentrated in root classification. all three
+            Qwen models end below their peak, LLaMA 8B ends below peak, and
+            Gemma E2B shows the largest drop. LLaMA 1B and LLaMA 3B remain
+            saturated at the final layer.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_root_final_drop.png"
+             alt="Final-layer minus peak-layer root probe accuracy"
+             loading="lazy" />
+
+        <img class="chart" src="/plots/morphology_cross_family_root_peak_vs_final.png"
+             alt="Root peak accuracy compared with final-layer root accuracy"
+             loading="lazy" />
+
+        <div class="callout observation">
+            <div class="label">observation</div>
+            <p>
+                the LLaMA-vs-Qwen final-layer contrast is the most interesting
+                cross-family signal in the table: LLaMA 1B and 3B stay saturated,
+                while all Qwen models drop below peak. this is hypothesis-generating
+                only. the current run does not establish why the contrast appears
+                or whether it survives reruns.
+            </p>
+        </div>
+
+        <h2>Gemma E2B caveat</h2>
+
+        <p>
+            Gemma E2B has the latest root peak at layer 14 and the largest
+            final-layer root drop, from 0.970 to 0.210. that is visually
+            distinctive, but it should not be read as a clean Gemma-specific
+            representational result.
+        </p>
+
+        <p>
+            the Gemma E2B golden-logit validation reached only cosine ~0.87
+            against llama.cpp, with gradual layerwise drift from layer 5 onward.
+            later hidden states may therefore be affected by numerical
+            accumulation in the implementation rather than only by model-internal
+            morphology representations. the layer 14 root peak and final-layer
+            drop are potentially confounded by this.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_peak_layer_summary.png"
+             alt="First peak layer for root and pattern probe accuracy by model"
+             loading="lazy" />
+
+        <h2>pattern saturation</h2>
+
+        <p>
+            pattern labels are linearly recoverable at ceiling for all seven
+            completed models. every model reaches a peak score of 1.000, and
+            every model also has a final-layer score of 1.000.
+        </p>
+
+        <p>
+            this is a strong interpretability limit. pattern is only a 10-way
+            classification task here, and ceiling performance leaves little room
+            to interpret family differences, scale differences, or layer timing.
+            the stimuli may simply be too easy for this task under the current
+            probe setup. pattern results should not be used to support
+            cross-family or scale comparisons in this run.
+        </p>
+
+        <h2>exploratory geometry</h2>
+
+        <p>
+            the RSA, CCA, and PCA figures are included as exploratory checks,
+            not primary evidence. the saved geometry files are within-model
+            matrices; they are not pairwise cross-model CCA or RSA.
+        </p>
+
+        <img class="chart" src="/plots/morphology_cross_family_gemma_rsa.png"
+             alt="Within-model RSA layer-by-layer similarity heatmap for Gemma E2B"
+             loading="lazy" />
+
+        <img class="chart" src="/plots/morphology_cross_family_llama8b_cca.png"
+             alt="Within-model CCA layer-by-layer similarity heatmap for LLaMA 8B"
+             loading="lazy" />
+
+        <img class="chart" src="/plots/morphology_cross_family_gemma_pca_root.png"
+             alt="PCA projection of Gemma E2B layer 14 hidden states colored by root label"
+             loading="lazy" />
+
+        <p>
+            the PCA projection is illustrative only. root silhouette scores in
+            the PCA package are weak, so this figure should not be used to claim
+            strong clustering or linguistic competence.
+        </p>
+
+        <h2>caveats</h2>
+
+        <ul>
+            <li>the dataset is preliminary, and the current results may reflect dataset difficulty or probe setup rather than robust morphology behavior.</li>
+            <li>the results support statements about linear recoverability from hidden states, not claims about linguistic competence or generation.</li>
+            <li>only root and pattern were probed. no gender, number, tense, person, case, or agreement tasks are included.</li>
+            <li>Gemma E2B is one completed Gemma point and cannot support a Gemma family or scale trend by itself.</li>
+            <li>Gemma 12B was unsupported in this run and excluded after a recorded missing tensor failure.</li>
+            <li>peak accuracy alone is a weak scaling metric because pattern is fully saturated and many root peaks are also saturated.</li>
+        </ul>
+
+        <h2>next steps</h2>
+
+        <ol>
+            <li>inspect dataset difficulty, especially whether pattern classification is too easy under the current stimuli and split setup.</li>
+            <li>add morphology tasks beyond root and pattern, including gender, number, tense, and person.</li>
+            <li>clean up split metadata so scalar and task-specific split policy fields do not appear contradictory.</li>
+            <li>rerun or further validate Gemma before interpreting later-layer Gemma probe behavior.</li>
+            <li>compare pairwise cross-model CCA/RSA only through a planned geometry pass, not by reinterpreting current within-model files.</li>
+        </ol>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
