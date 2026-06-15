@@ -71,12 +71,12 @@ representation extraction and label decoding.
 
 ## Split Strategies
 
-Splits are deterministic with a seed. All strategies keep every inflected form
-of the same lemma in the same split.
+Splits are deterministic with a seed. Held-out strategies keep every inflected
+form of the same lemma in the same split.
 
-- `random`: random over lemma-connected groups for debugging. It is not
-  per-record random when lemmas are present, because the pipeline keeps all
-  forms of a lemma in one split.
+- `random`: true per-record random split for debugging. This can leak lemmas
+  across splits and should not be used for the main experiments.
+- `lemma_random`: random over lemma-connected groups for debugging.
 - `root_heldout`: roots assigned wholly to train/dev/test.
 - `abstract_pattern_heldout`: abstract patterns assigned wholly to splits.
 - `concrete_pattern_heldout`: concrete patterns assigned wholly to splits.

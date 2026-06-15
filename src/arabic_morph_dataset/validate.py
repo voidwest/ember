@@ -13,14 +13,27 @@ LABEL_FIELDS = ["surface", "lemma", "root", "abstract_pattern", "concrete_patter
 
 def validate_canonical_rows(rows: list[dict[str, Any]], split_strategy: str | None = None) -> dict[str, Any]:
     missing_required = []
+    row_errors = []
+    records = []
     for idx, row in enumerate(rows):
         row_id = row.get("id", f"<row:{idx}>")
         for field in REQUIRED_CANONICAL_FIELDS:
             if field not in row:
                 missing_required.append({"id": row_id, "field": field})
-    report = validate_canonical([MorphRecord.from_dict(row) for row in rows], split_strategy)
+        try:
+            records.append(MorphRecord.from_dict(row))
+        except (TypeError, ValueError) as exc:
+            row_errors.append({"id": row_id, "error": str(exc)})
+    report = validate_canonical(records, split_strategy)
     report["missing_required"] = missing_required
-    report["passed"] = bool(rows) and not missing_required and not report["duplicate_ids"] and not report["missing_labels"] and not (report["leakage"] and not report["leakage"].get("passed"))
+    report["row_errors"] = row_errors
+    report["passed"] = (
+        not missing_required
+        and not row_errors
+        and not report["duplicate_ids"]
+        and not report["missing_labels"]
+        and not (report["leakage"] and not report["leakage"].get("passed"))
+    )
     return report
 
 
@@ -40,8 +53,7 @@ def validate_canonical(records: list[MorphRecord], split_strategy: str | None = 
             missing_required.append({"id": record.id, "field": "metadata"})
     leakage = leakage_report(records, split_strategy) if split_strategy and any(r.split for r in records) else None
     passed = (
-        bool(records)
-        and not duplicate_ids
+        not duplicate_ids
         and not missing_required
         and not missing_labels
         and not (leakage and not leakage.get("passed"))
@@ -79,7 +91,7 @@ def validate_sft_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:
             errors.append({"index": idx, "error": "invalid or missing task"})
             continue
         errors.extend(_validate_sft_payload(idx, task, payload))
-    return {"type": "sft", "passed": bool(rows) and not errors, "num_records": len(rows), "empty": not rows, "errors": errors}
+    return {"type": "sft", "passed": not errors, "num_records": len(rows), "empty": not rows, "errors": errors}
 
 
 def _validate_sft_payload(idx: int, task: str, payload: Any) -> list[dict[str, Any]]:
@@ -111,4 +123,4 @@ def validate_probe_records(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 errors.append({"index": idx, "error": f"null {field}"})
         if "features" in row and not isinstance(row["features"], dict):
             errors.append({"index": idx, "error": "features must be an object"})
-    return {"type": "probes", "passed": bool(rows) and not errors, "num_records": len(rows), "empty": not rows, "errors": errors}
+    return {"type": "probes", "passed": not errors, "num_records": len(rows), "empty": not rows, "errors": errors}

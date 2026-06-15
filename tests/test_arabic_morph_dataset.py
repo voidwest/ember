@@ -15,6 +15,7 @@ from arabic_morph_dataset.split import leakage_report, split_records
 from arabic_morph_dataset.stats import dataset_stats
 from arabic_morph_dataset.validate import validate_canonical, validate_canonical_rows, validate_probe_records, validate_sft_examples
 from arabic_morph_dataset.cli import entrypoint
+from arabic_morph_dataset.models import MorphRecord
 
 
 SAMPLE = ROOT / "data/arabic_morph_sample/camelmorph_sample.jsonl"
@@ -55,6 +56,20 @@ def test_normalization_preserves_not_applicable_features():
     assert records[0].features["gender"] == "na"
 
 
+def test_normalization_rejects_malformed_features():
+    try:
+        normalize_records([{"word": "باب", "lex": "بَاب_1", "features": "gender"}], "unit")
+    except ValueError as exc:
+        assert "features must be an object" in str(exc)
+    else:
+        raise AssertionError("malformed features should fail")
+
+
+def test_num_analyses_zero_is_not_ambiguous():
+    records, _ = normalize_records([{"word": "x", "lex": "x", "num_analyses": 0}], "unit")
+    assert records[0].is_ambiguous is False
+
+
 def test_schema_validation_catches_duplicate_ids():
     records = sample_records()
     duplicated = [records[0], records[0]]
@@ -71,10 +86,15 @@ def test_schema_validation_catches_missing_raw_fields():
     assert "features" in missing_fields
 
 
+def test_from_dict_parses_false_string_boolean():
+    assert MorphRecord.from_dict({"id": "x", "surface": "x", "is_ambiguous": "false"}).is_ambiguous is False
+
+
 def test_each_split_strategy_has_no_required_leakage():
     records = sample_records()
     for strategy in [
         "random",
+        "lemma_random",
         "root_heldout",
         "abstract_pattern_heldout",
         "concrete_pattern_heldout",
@@ -84,8 +104,19 @@ def test_each_split_strategy_has_no_required_leakage():
         split, report = split_records(records, strategy=strategy, seed=3, ratios={"train": 0.6, "dev": 0.2, "test": 0.2})
         assert len(split) == len(records)
         assert report["leakage"]["passed"], strategy
+        if strategy == "random":
+            assert report["leakage"]["checks"] == {}
         if strategy == "lemma_heldout":
             assert set(report["leakage"]["checks"]) == {"lemma"}
+
+
+def test_filter_rejects_string_pos_allowlist():
+    try:
+        apply_filters(sample_records(), {"pos_allowlist": "NOUN"})
+    except ValueError as exc:
+        assert "pos_allowlist must be a list" in str(exc)
+    else:
+        raise AssertionError("string pos_allowlist should fail")
 
 
 def test_leakage_detection_reports_root_overlap():
@@ -131,6 +162,15 @@ def test_probe_formatting_and_validation():
     assert "messages" not in probes[0]
     assert validate_probe_records(probes)["passed"]
     assert not validate_probe_records([{**probes[0], "root": None}])["passed"]
+
+
+def test_empty_outputs_are_valid_but_marked_empty():
+    assert validate_canonical([])["passed"]
+    assert validate_canonical([])["empty"]
+    assert validate_sft_examples([])["passed"]
+    assert validate_sft_examples([])["empty"]
+    assert validate_probe_records([])["passed"]
+    assert validate_probe_records([])["empty"]
 
 
 def test_stats_generation_on_sample_data():

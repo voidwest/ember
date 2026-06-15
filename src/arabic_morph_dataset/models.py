@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 
-REQUIRED_CANONICAL_FIELDS = [
+REQUIRED_CANONICAL_FIELDS = (
     "id",
     "surface",
     "surface_dediac",
@@ -19,7 +19,7 @@ REQUIRED_CANONICAL_FIELDS = [
     "analysis_id",
     "is_ambiguous",
     "metadata",
-]
+)
 
 
 @dataclass(frozen=True)
@@ -73,13 +73,27 @@ class MorphRecord:
             abstract_pattern=str(data.get("abstract_pattern", "")),
             concrete_pattern=str(data.get("concrete_pattern", "")),
             pos=str(data.get("pos", "")),
-            features=dict(data.get("features") or {}),
+            features=_dict_field(data.get("features"), "features"),
             source=str(data.get("source", "")),
             analysis_id=str(data.get("analysis_id", "")),
-            is_ambiguous=bool(data.get("is_ambiguous", False)),
-            metadata=dict(data.get("metadata") or {}),
+            is_ambiguous=_bool_field(data.get("is_ambiguous", False)),
+            metadata=_dict_field(data.get("metadata"), "metadata"),
             split=data.get("split"),
         )
 
     def with_split(self, split: str) -> "MorphRecord":
         return replace(self, split=split)
+
+
+def _dict_field(value: Any, field_name: str) -> dict[str, Any]:
+    if value in (None, ""):
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} must be an object")
+    return dict(value)
+
+
+def _bool_field(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return bool(value)

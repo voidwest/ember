@@ -10,6 +10,7 @@ from .models import MorphRecord
 
 SPLIT_STRATEGIES = {
     "random",
+    "lemma_random",
     "root_heldout",
     "abstract_pattern_heldout",
     "concrete_pattern_heldout",
@@ -21,9 +22,11 @@ SPLIT_STRATEGIES = {
 @dataclass
 class UnionFind:
     parent: dict[str, str]
+    size: dict[str, int]
 
     def find(self, item: str) -> str:
         self.parent.setdefault(item, item)
+        self.size.setdefault(item, 1)
         root = item
         while self.parent[root] != root:
             root = self.parent[root]
@@ -35,8 +38,12 @@ class UnionFind:
 
     def union(self, a: str, b: str) -> None:
         ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.parent[max(ra, rb)] = min(ra, rb)
+        if ra == rb:
+            return
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
 
 
 def split_records(
@@ -96,7 +103,7 @@ def _choose_split(counts: dict[str, int], targets: dict[str, float], split_names
 
 
 def _components(records: list[MorphRecord], strategy: str) -> dict[str, list[MorphRecord]]:
-    uf = UnionFind(parent={})
+    uf = UnionFind(parent={}, size={})
     for record in records:
         rid = f"record:{record.id}"
         uf.find(rid)
@@ -111,9 +118,11 @@ def _components(records: list[MorphRecord], strategy: str) -> dict[str, list[Mor
 
 def _group_keys(record: MorphRecord, strategy: str) -> list[str]:
     keys = []
-    if record.lemma:
+    if strategy != "random" and record.lemma:
         keys.append(f"lemma:{record.lemma}")
-    if strategy == "random" or strategy == "lemma_heldout":
+    if strategy == "random":
+        return [f"record:{record.id}"]
+    if strategy == "lemma_random" or strategy == "lemma_heldout":
         return keys or [f"record:{record.id}"]
     if strategy == "root_heldout" and record.root:
         keys.append(f"root:{record.root}")
@@ -135,7 +144,8 @@ def leakage_report(records: Iterable[MorphRecord], strategy: str) -> dict[str, o
 
     report: dict[str, object] = {"strategy": strategy, "checks": {}}
     checks: dict[str, object] = {}
-    checks["lemma"] = _intersection_check(by_split, lambda r: r.lemma)
+    if strategy != "random":
+        checks["lemma"] = _intersection_check(by_split, lambda r: r.lemma)
     if strategy == "root_heldout":
         checks["root"] = _intersection_check(by_split, lambda r: r.root)
     elif strategy == "abstract_pattern_heldout":

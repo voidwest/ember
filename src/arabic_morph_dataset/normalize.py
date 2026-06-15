@@ -96,7 +96,8 @@ def _is_ambiguous(raw: dict[str, Any]) -> bool:
             return explicit.strip().lower() in {"1", "true", "yes", "y"}
         return bool(explicit)
     try:
-        return int(raw.get("num_analyses", 1)) != 1
+        num_analyses = int(raw.get("num_analyses", 1))
+        return num_analyses > 1
     except (TypeError, ValueError):
         return bool(raw.get("num_analyses"))
 
@@ -111,7 +112,8 @@ def _stable_id(raw: dict[str, Any], source_name: str, analysis_id: str, surface:
         _first(raw, FIELD_ALIASES["abstract_pattern"]),
         _first(raw, FIELD_ALIASES["concrete_pattern"]),
         _first(raw, FIELD_ALIASES["pos"]),
-        str(sorted((raw.get("features") or {}).items())),
+        _canonical_raw_features(raw),
+        _canonical_raw_record(raw),
         str(idx),
     ]
     seed = "|".join(fields)
@@ -149,7 +151,10 @@ def normalize_raw_record(raw: dict[str, Any], idx: int, source_name: str) -> Mor
     analysis_id = _first(raw, FIELD_ALIASES["analysis_id"])
     record_id = str(raw.get("canonical_id") or raw.get("record_id") or _stable_id(raw, source_name, analysis_id, surface, lemma, idx))
 
-    features = dict(raw.get("features") or {})
+    raw_features = raw.get("features") or {}
+    if not isinstance(raw_features, dict):
+        raise ValueError("features must be an object if provided")
+    features = dict(raw_features)
     for canonical, aliases in FEATURE_ALIASES.items():
         if canonical in features and features[canonical] not in (None, ""):
             features[canonical] = _normalize_value(features[canonical])
@@ -180,6 +185,17 @@ def normalize_raw_record(raw: dict[str, Any], idx: int, source_name: str) -> Mor
         is_ambiguous=_is_ambiguous(raw),
         metadata=metadata,
     )
+
+
+def _canonical_raw_features(raw: dict[str, Any]) -> str:
+    features = raw.get("features") or {}
+    if not isinstance(features, dict):
+        return repr(features)
+    return repr(sorted(features.items()))
+
+
+def _canonical_raw_record(raw: dict[str, Any]) -> str:
+    return repr(sorted((str(k), repr(v)) for k, v in raw.items() if k not in {"metadata"}))
 
 
 def normalize_records(raw_records: list[dict[str, Any]], source_name: str) -> tuple[list[MorphRecord], dict[str, Any]]:

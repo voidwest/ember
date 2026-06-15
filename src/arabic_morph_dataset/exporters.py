@@ -59,7 +59,7 @@ def _sft_for_task(record: MorphRecord, task: str) -> dict[str, Any] | None:
     return {
         "messages": [
             {"role": "user", "content": user},
-            {"role": "assistant", "content": json.dumps(assistant, ensure_ascii=False, sort_keys=True, separators=(",", ":"))},
+            {"role": "assistant", "content": json.dumps(assistant, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)},
         ],
         "metadata": {
             "task": task,

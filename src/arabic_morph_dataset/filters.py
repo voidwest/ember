@@ -11,7 +11,14 @@ def apply_filters(records: list[MorphRecord], filters: dict[str, Any] | None) ->
     kept: list[MorphRecord] = []
     reasons: Counter[str] = Counter()
 
-    pos_allowlist = {str(p).upper() for p in filters.get("pos_allowlist", [])}
+    raw_pos_allowlist = filters.get("pos_allowlist", [])
+    if isinstance(raw_pos_allowlist, str):
+        raise ValueError("pos_allowlist must be a list, not a string")
+    if raw_pos_allowlist is None:
+        raw_pos_allowlist = []
+    if not isinstance(raw_pos_allowlist, list):
+        raise ValueError("pos_allowlist must be a list")
+    pos_allowlist = {str(p).upper() for p in raw_pos_allowlist}
     for record in records:
         dropped = False
         if filters.get("drop_missing_root", False) and not record.root:
