@@ -238,13 +238,15 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    &args.prompt,
-                    path,
-                    args.max_seq_len,
-                    &args.model,
-                    &args.arch,
-                    tokenizer_path,
-                    &run_metadata,
+                    LogitDumpConfig {
+                        prompt: &args.prompt,
+                        output_path: path,
+                        max_seq_len: args.max_seq_len,
+                        model_path: &args.model,
+                        arch: &args.arch,
+                        tokenizer_path,
+                        run_metadata: &run_metadata,
+                    },
                 )?;
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
@@ -279,13 +281,15 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    &args.prompt,
-                    path,
-                    args.max_seq_len,
-                    &args.model,
-                    &args.arch,
-                    tokenizer_path,
-                    &run_metadata,
+                    LogitDumpConfig {
+                        prompt: &args.prompt,
+                        output_path: path,
+                        max_seq_len: args.max_seq_len,
+                        model_path: &args.model,
+                        arch: &args.arch,
+                        tokenizer_path,
+                        run_metadata: &run_metadata,
+                    },
                 )?;
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
@@ -320,13 +324,15 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    &args.prompt,
-                    path,
-                    args.max_seq_len,
-                    &args.model,
-                    &args.arch,
-                    tokenizer_path,
-                    &run_metadata,
+                    LogitDumpConfig {
+                        prompt: &args.prompt,
+                        output_path: path,
+                        max_seq_len: args.max_seq_len,
+                        model_path: &args.model,
+                        arch: &args.arch,
+                        tokenizer_path,
+                        run_metadata: &run_metadata,
+                    },
                 )?;
             } else if let Some(path) = &args.dump_layers {
                 dump_layers_gemma4(
@@ -900,22 +906,16 @@ fn dump_last_logits<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
-    prompt: &str,
-    output_path: &str,
-    max_seq_len: Option<usize>,
-    model_path: &str,
-    arch: &str,
-    tokenizer_path: &str,
-    run_metadata: &RunMetadata,
+    config: LogitDumpConfig<'_>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
 {
     let token_ids = tokenizer
-        .encode(prompt)
+        .encode(config.prompt)
         .context("failed to tokenize prompt")?;
     let (offset_ids, offsets) = tokenizer
-        .encode_with_offsets(prompt)
+        .encode_with_offsets(config.prompt)
         .context("failed to tokenize prompt with offsets")?;
     if offset_ids != token_ids {
         anyhow::bail!("token audit failed: encode and encode_with_offsets emitted different ids");
@@ -923,7 +923,9 @@ where
     if token_ids.is_empty() {
         anyhow::bail!("cannot dump logits for an empty prompt");
     }
-    let context_limit = max_seq_len.unwrap_or_else(|| model.max_seq_len(backend));
+    let context_limit = config
+        .max_seq_len
+        .unwrap_or_else(|| model.max_seq_len(backend));
     ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
     let mut cache = model.create_cache(backend, context_limit);
     let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
@@ -931,35 +933,39 @@ where
     if shape.len() != 2 || shape[0] != 1 {
         anyhow::bail!("expected last logits shape [1, vocab], got {:?}", shape);
     }
-    write_npy_2d(output_path, backend.data(&logits), &[shape[0], shape[1]])?;
-    let metadata_path = output_path.replace(".npy", "_metadata.json");
+    write_npy_2d(
+        config.output_path,
+        backend.data(&logits),
+        &[shape[0], shape[1]],
+    )?;
+    let metadata_path = config.output_path.replace(".npy", "_metadata.json");
     let metadata = serde_json::json!({
-        "model_path": model_path,
-        "architecture": arch,
-        "tokenizer_path": tokenizer_path,
-        "tokenizer_sha256": run_metadata.tokenizer_sha256,
-        "model_file_size_bytes": run_metadata.model_file_size_bytes,
-        "model_sha256": run_metadata.model_sha256,
-        "gguf_metadata": run_metadata.gguf_metadata,
-        "output_path": output_path,
-        "prompt": prompt,
+        "model_path": config.model_path,
+        "architecture": config.arch,
+        "tokenizer_path": config.tokenizer_path,
+        "tokenizer_sha256": config.run_metadata.tokenizer_sha256,
+        "model_file_size_bytes": config.run_metadata.model_file_size_bytes,
+        "model_sha256": config.run_metadata.model_sha256,
+        "gguf_metadata": config.run_metadata.gguf_metadata,
+        "output_path": config.output_path,
+        "prompt": config.prompt,
         "context_limit": context_limit,
         "logits_shape": [shape[0], shape[1]],
         "token_audit": token_audit_json(
-            prompt,
-            tokenizer_path,
-            run_metadata.tokenizer_sha256.as_deref(),
+            config.prompt,
+            config.tokenizer_path,
+            config.run_metadata.tokenizer_sha256.as_deref(),
             tokenizer.bos_token_id(),
             &token_ids,
             &offsets,
         ),
-        "run_manifest": run_metadata.run_manifest,
+        "run_manifest": config.run_metadata.run_manifest,
     });
     write_json_file(&metadata_path, &metadata)?;
     eprintln!(
         "saved last logits for {} prompt tokens to {} with shape {:?}",
         token_ids.len(),
-        output_path,
+        config.output_path,
         shape
     );
     eprintln!("saved logits metadata to {}", metadata_path);
@@ -1193,6 +1199,16 @@ struct ProbeGroupConfig<'a> {
     generate_tokens: usize,
     limit: Option<usize>,
     context_limit: usize,
+    model_path: &'a str,
+    arch: &'a str,
+    tokenizer_path: &'a str,
+    run_metadata: &'a RunMetadata,
+}
+
+struct LogitDumpConfig<'a> {
+    prompt: &'a str,
+    output_path: &'a str,
+    max_seq_len: Option<usize>,
     model_path: &'a str,
     arch: &'a str,
     tokenizer_path: &'a str,
