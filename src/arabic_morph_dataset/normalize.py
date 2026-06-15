@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections import Counter
 from typing import Any
@@ -67,9 +68,7 @@ def dediacritize(text: str) -> str:
 
 def clean_lemma(text: str) -> str:
     text = str(text or "").strip()
-    if re.search(r"[\u0600-\u06ff].*_\d+$", text):
-        text = re.sub(r"_\d+$", "", text)
-    return text
+    return re.sub(r"_\d+$", "", text)
 
 
 def _first(data: dict[str, Any], aliases: list[str]) -> str:
@@ -117,7 +116,7 @@ def _stable_id(raw: dict[str, Any], source_name: str, analysis_id: str, surface:
         str(idx),
     ]
     seed = "|".join(fields)
-    return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
 
 
 def expand_analysis_records(raw_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -189,13 +188,17 @@ def normalize_raw_record(raw: dict[str, Any], idx: int, source_name: str) -> Mor
 
 def _canonical_raw_features(raw: dict[str, Any]) -> str:
     features = raw.get("features") or {}
-    if not isinstance(features, dict):
-        return repr(features)
-    return repr(sorted(features.items()))
+    return json.dumps(features, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
 
 
 def _canonical_raw_record(raw: dict[str, Any]) -> str:
-    return repr(sorted((str(k), repr(v)) for k, v in raw.items() if k not in {"metadata"}))
+    return json.dumps(
+        {str(k): v for k, v in raw.items() if k not in {"metadata"}},
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+        separators=(",", ":"),
+    )
 
 
 def normalize_records(raw_records: list[dict[str, Any]], source_name: str) -> tuple[list[MorphRecord], dict[str, Any]]:

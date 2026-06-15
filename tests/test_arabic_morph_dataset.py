@@ -11,7 +11,7 @@ from arabic_morph_dataset.filters import apply_filters
 from arabic_morph_dataset.io import read_raw_records
 from arabic_morph_dataset.normalize import dediacritize, normalize_records
 from arabic_morph_dataset.report import make_summary_report
-from arabic_morph_dataset.split import leakage_report, split_records
+from arabic_morph_dataset.split import _choose_split, leakage_report, split_records
 from arabic_morph_dataset.stats import dataset_stats
 from arabic_morph_dataset.validate import validate_canonical, validate_canonical_rows, validate_probe_records, validate_sft_examples
 from arabic_morph_dataset.cli import entrypoint
@@ -49,6 +49,12 @@ def test_normalization_maps_camel_style_fields():
     assert report["output_records"] == 1
     assert dediacritize("كَتَبَ") == "كتب"
     assert dediacritize("كـَتَبَ") == "كتب"
+    assert len(record.id) == 64
+
+
+def test_clean_lemma_strips_trailing_sense_number_for_latin_aliases():
+    records, _ = normalize_records([{"word": "iso", "lex": "ISO_8859_1", "root": "iso", "pattern": "x", "pattern_concrete": "x", "pos": "noun"}], "unit")
+    assert records[0].lemma == "ISO_8859"
 
 
 def test_normalization_preserves_not_applicable_features():
@@ -110,6 +116,12 @@ def test_each_split_strategy_has_no_required_leakage():
             assert set(report["leakage"]["checks"]) == {"lemma"}
 
 
+def test_choose_split_minimizes_projected_global_error():
+    counts = {"train": 80, "dev": 9, "test": 9}
+    targets = {"train": 80.0, "dev": 10.0, "test": 10.0}
+    assert _choose_split(counts, targets, ["train", "dev", "test"], group_size=8) in {"dev", "test"}
+
+
 def test_filter_rejects_string_pos_allowlist():
     try:
         apply_filters(sample_records(), {"pos_allowlist": "NOUN"})
@@ -126,6 +138,15 @@ def test_leakage_detection_reports_root_overlap():
     report = leakage_report([a, b], "root_heldout")
     assert not report["passed"]
     assert a.root in report["checks"]["root"]["train_test"]
+
+
+def test_leakage_report_ignores_unsplit_records():
+    records = sample_records()
+    train = records[0].with_split("train")
+    unsplit = next(record for record in records if record.root == train.root and record.id != train.id)
+    report = leakage_report([train, unsplit], "root_heldout")
+    assert report["passed"]
+    assert report["ignored_unsplit_records"] == 1
 
 
 def test_sft_formatting_has_json_assistant_content():
@@ -153,6 +174,12 @@ def test_sft_validation_checks_task_schema():
     )
     assert not report["passed"]
     assert "missing keys" in report["errors"][0]["error"]
+
+
+def test_sft_validation_rejects_non_object_messages_without_crashing():
+    report = validate_sft_examples([{"messages": [{"role": "user", "content": "x"}, 3], "metadata": {"task": "analyze_form"}}])
+    assert not report["passed"]
+    assert report["errors"][0]["error"] == "messages must contain objects"
 
 
 def test_probe_formatting_and_validation():

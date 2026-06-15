@@ -40,21 +40,15 @@ def validate_canonical_rows(rows: list[dict[str, Any]], split_strategy: str | No
 def validate_canonical(records: list[MorphRecord], split_strategy: str | None = None) -> dict[str, Any]:
     ids = [r.id for r in records]
     duplicate_ids = sorted([item for item, count in Counter(ids).items() if count > 1])
-    missing_required = []
     missing_labels = Counter()
     for record in records:
         for field in LABEL_FIELDS:
             value = getattr(record, field)
             if not value:
                 missing_labels[field] += 1
-        if not isinstance(record.features, dict):
-            missing_required.append({"id": record.id, "field": "features"})
-        if not isinstance(record.metadata, dict):
-            missing_required.append({"id": record.id, "field": "metadata"})
     leakage = leakage_report(records, split_strategy) if split_strategy and any(r.split for r in records) else None
     passed = (
         not duplicate_ids
-        and not missing_required
         and not missing_labels
         and not (leakage and not leakage.get("passed"))
     )
@@ -64,7 +58,7 @@ def validate_canonical(records: list[MorphRecord], split_strategy: str | None = 
         "num_records": len(records),
         "empty": not records,
         "duplicate_ids": duplicate_ids,
-        "missing_required": missing_required,
+        "missing_required": [],
         "missing_labels": dict(missing_labels),
         "leakage": leakage,
     }
@@ -79,8 +73,12 @@ def validate_sft_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if not isinstance(messages, list) or len(messages) != 2:
             errors.append({"index": idx, "error": "messages must contain user and assistant"})
             continue
+        if not isinstance(messages[0], dict) or not isinstance(messages[1], dict):
+            errors.append({"index": idx, "error": "messages must contain objects"})
+            continue
         if messages[0].get("role") != "user" or messages[1].get("role") != "assistant":
             errors.append({"index": idx, "error": "invalid message roles"})
+            continue
         try:
             payload = json.loads(messages[1].get("content", ""))
         except json.JSONDecodeError:

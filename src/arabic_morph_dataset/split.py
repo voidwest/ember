@@ -91,15 +91,27 @@ def split_records(
 
 
 def _choose_split(counts: dict[str, int], targets: dict[str, float], split_names: list[str], group_size: int = 1) -> str:
-    return max(
+    return min(
         split_names,
         key=lambda name: (
-            targets[name] - counts[name],
-            -(max(0.0, counts[name] + group_size - targets[name])),
-            -counts[name],
-            -split_names.index(name),
+            _projected_error(counts, targets, split_names, name, group_size),
+            abs((counts[name] + group_size) - targets[name]),
+            counts[name],
+            split_names.index(name),
         ),
     )
+
+
+def _projected_error(
+    counts: dict[str, int],
+    targets: dict[str, float],
+    split_names: list[str],
+    candidate: str,
+    group_size: int,
+) -> float:
+    projected = dict(counts)
+    projected[candidate] += group_size
+    return sum((projected[name] - targets[name]) ** 2 for name in split_names)
 
 
 def _components(records: list[MorphRecord], strategy: str) -> dict[str, list[MorphRecord]]:
@@ -140,7 +152,8 @@ def _group_keys(record: MorphRecord, strategy: str) -> list[str]:
 def leakage_report(records: Iterable[MorphRecord], strategy: str) -> dict[str, object]:
     by_split: dict[str, list[MorphRecord]] = defaultdict(list)
     for record in records:
-        by_split[record.split or "unsplit"].append(record)
+        if record.split in {"train", "dev", "test"}:
+            by_split[record.split].append(record)
 
     report: dict[str, object] = {"strategy": strategy, "checks": {}}
     checks: dict[str, object] = {}
@@ -156,6 +169,7 @@ def leakage_report(records: Iterable[MorphRecord], strategy: str) -> dict[str, o
         checks["root_pattern"] = _intersection_check(by_split, lambda r: f"{r.root}|{r.abstract_pattern or r.concrete_pattern}" if r.root and (r.abstract_pattern or r.concrete_pattern) else "")
     report["checks"] = checks
     report["passed"] = all(bool(check.get("passed", False)) for check in checks.values() if isinstance(check, dict))
+    report["ignored_unsplit_records"] = sum(1 for record in records if record.split not in {"train", "dev", "test"})
     return report
 
 
