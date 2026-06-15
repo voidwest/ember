@@ -1,0 +1,87 @@
+{
+  "examples_per_abstract_pattern": {
+    "فَاعِل": 3,
+    "فَعَلَ": 4,
+    "فَعِلَ": 1,
+    "فِعَالَة": 2,
+    "مَفْعَلَة": 1,
+    "مَفْعُولَة": 1,
+    "مُفَعِّل": 1,
+    "مِفْعَال": 1,
+    "يَفْعَلُ": 2,
+    "يَفْعُلُ": 1,
+    "يَفْعُلُونَ": 1
+  },
+  "examples_per_concrete_pattern": {
+    "دارس": 1,
+    "دراسة": 1,
+    "درس": 1,
+    "علم": 1,
+    "فتح": 1,
+    "قارئ": 1,
+    "قرأ": 1,
+    "قراءة": 1,
+    "كاتب": 1,
+    "كتب": 1,
+    "معلم": 1,
+    "معلومة": 1,
+    "مفتاح": 1,
+    "مكتبة": 1,
+    "يدرسون": 1,
+    "يعلم": 1,
+    "يفتح": 1,
+    "يكتب": 1
+  },
+  "examples_per_root": {
+    "درس": 4,
+    "علم": 4,
+    "فتح": 3,
+    "قرأ": 3,
+    "كتب": 4
+  },
+  "feature_distribution": {
+    "aspect": {
+      "impf": 4,
+      "perf": 5
+    },
+    "case": {
+      "nom": 9
+    },
+    "gender": {
+      "fem": 4,
+      "masc": 14
+    },
+    "mood": {
+      "ind": 4
+    },
+    "number": {
+      "pl": 3,
+      "sg": 15
+    },
+    "person": {
+      "3": 9
+    },
+    "state": {
+      "def": 5,
+      "indef": 4
+    },
+    "voice": {
+      "act": 9
+    }
+  },
+  "num_records": 18,
+  "pos_distribution": {
+    "NOUN": 9,
+    "VERB": 9
+  },
+  "split_counts": {
+    "dev": 4,
+    "test": 3,
+    "train": 11
+  },
+  "unique_abstract_patterns": 11,
+  "unique_concrete_patterns": 18,
+  "unique_lemmas": 14,
+  "unique_roots": 5,
+  "unique_surfaces": 18
+}

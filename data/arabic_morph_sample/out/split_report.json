@@ -1,0 +1,37 @@
+{
+  "component_counts": {
+    "dev": 1,
+    "test": 1,
+    "train": 3
+  },
+  "leakage": {
+    "checks": {
+      "lemma": {
+        "dev_test": [],
+        "passed": true,
+        "train_dev": [],
+        "train_test": []
+      },
+      "root": {
+        "dev_test": [],
+        "passed": true,
+        "train_dev": [],
+        "train_test": []
+      }
+    },
+    "passed": true,
+    "strategy": "root_heldout"
+  },
+  "ratios": {
+    "dev": 0.2,
+    "test": 0.2,
+    "train": 0.6
+  },
+  "record_counts": {
+    "dev": 4,
+    "test": 3,
+    "train": 11
+  },
+  "seed": 7,
+  "strategy": "root_heldout"
+}

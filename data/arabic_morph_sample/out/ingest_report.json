@@ -1,0 +1,16 @@
+{
+  "expanded_records": 19,
+  "input_records": 19,
+  "missing": {
+    "abstract_pattern": 1,
+    "concrete_pattern": 1,
+    "lemma": 0,
+    "root": 1,
+    "surface": 0
+  },
+  "output_records": 19,
+  "pos_distribution": {
+    "NOUN": 10,
+    "VERB": 9
+  }
+}

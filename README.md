@@ -24,6 +24,32 @@ validation artifacts, and hidden-state access for research workflows.
 
 The current research direction is Arabic morphology probing and validation.
 
+## Arabic morphology dataset pipeline
+
+This repo includes a local Python pipeline for preparing CAMELMORPH/CAMeL-style
+Arabic morphology exports for root/pattern probing and later SFT experiments.
+It produces canonical morphology JSONL, SFT chat JSONL, probing JSONL,
+deterministic held-out splits, stats, and leakage validation reports without
+requiring CAMeL Tools at runtime.
+
+Run the tiny bundled sample:
+
+```bash
+python3 scripts/arabic_morph_dataset.py run-config --config configs/arabic_morph_sample.toml
+```
+
+To use real data, export CAMELMORPH/CAMeL/CALIMAStar analyses to JSONL, CSV, or
+TSV with fields such as `word`, `diac`, `lex`, `root`, `pattern`,
+`pattern_concrete`, `pos`, and feature columns like `gen`, `num`, `per`, `asp`,
+`vox`, `mod`, `cas`, and `stt`. Then copy
+`configs/arabic_morph_sample.toml`, point `input_path`, `output_dir`, and
+`source_name` at the export, and choose a split strategy such as
+`root_heldout`, `abstract_pattern_heldout`, `concrete_pattern_heldout`,
+`root_pattern_heldout`, or `lemma_heldout`.
+
+See [docs/dataset_pipeline.md](docs/dataset_pipeline.md) for the full input
+format, output schemas, split guarantees, CLI commands, and validation reports.
+
 ## validation ladder
 
 Use these levels when interpreting Ember runs:

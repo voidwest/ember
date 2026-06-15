@@ -1,0 +1,23 @@
+input_path = "data/arabic_morph_sample/camelmorph_sample.jsonl"
+output_dir = "data/arabic_morph_sample/out"
+source_name = "synthetic_camelmorph_msa"
+seed = 7
+split_strategy = "root_heldout"
+sft_tasks = ["analyze_form", "root_pattern", "feature_bundle"]
+output_formats = ["canonical", "sft", "probes", "stats", "validation"]
+
+[filters]
+drop_missing_root = true
+drop_missing_pattern = true
+drop_missing_lemma = true
+drop_ambiguous = true
+pos_allowlist = ["NOUN", "VERB", "ADJ"]
+min_examples_per_root = 1
+min_examples_per_pattern = 1
+max_examples_per_root = 0
+max_examples_per_pattern = 0
+
+[split_ratios]
+train = 0.6
+dev = 0.2
+test = 0.2

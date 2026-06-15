@@ -25,3 +25,6 @@ docs/plots/root_probe_scale_comparison.png
 # only README.md is tracked — design notes and logs stay local
 *.md
 !README.md
+!docs/dataset_pipeline.md
+__pycache__/
+.pytest_cache/
