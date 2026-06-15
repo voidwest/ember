@@ -48,7 +48,9 @@ representation extraction and label decoding.
 Splits are deterministic with a seed. All strategies keep every inflected form
 of the same lemma in the same split.
 
-- `random`: lemma-grouped random split for debugging.
+- `random`: random over lemma-connected groups for debugging. It is not
+  per-record random when lemmas are present, because the pipeline keeps all
+  forms of a lemma in one split.
 - `root_heldout`: roots assigned wholly to train/dev/test.
 - `abstract_pattern_heldout`: abstract patterns assigned wholly to splits.
 - `concrete_pattern_heldout`: concrete patterns assigned wholly to splits.
@@ -73,6 +75,7 @@ This writes:
 - `data/arabic_morph_sample/out/sft.jsonl`
 - `data/arabic_morph_sample/out/probes.jsonl`
 - `data/arabic_morph_sample/out/stats.json`
+- `data/arabic_morph_sample/out/summary_report.json`
 - `data/arabic_morph_sample/out/validation.json`
 
 Equivalent step-by-step commands:
@@ -113,6 +116,32 @@ python3 scripts/arabic_morph_dataset.py validate \
   --split-strategy root_heldout \
   --output data/arabic_morph_sample/out/validation.json
 ```
+
+## Imbalanced Sample
+
+The repo also includes a deterministic generator for a larger, real-ish
+CAMeL-style fixture with root imbalance, POS skew, ambiguous analyses, missing
+roots, missing patterns, and missing lemmas:
+
+```bash
+python3 scripts/generate_arabic_morph_fixture.py \
+  --output data/arabic_morph_sample/camelmorph_imbalanced_sample.jsonl \
+  --seed 17
+
+python3 scripts/arabic_morph_dataset.py run-config \
+  --config configs/arabic_morph_imbalanced_sample.toml
+```
+
+The generated fixture currently has 393 raw records and the sample filters keep
+343. The run writes `data/arabic_morph_sample/out_imbalanced/summary_report.json`
+with:
+
+- records kept and dropped by reason
+- unique root, abstract-pattern, and concrete-pattern counts
+- root-heldout, abstract-pattern-heldout, and concrete-pattern-heldout leakage
+  pass/fail checks
+- top 20 roots by count
+- top 20 abstract and concrete patterns by count
 
 ## Replacing The Sample
 

@@ -1,0 +1,284 @@
+{
+  "records": {
+    "dropped": 50,
+    "dropped_by_reason": {
+      "ambiguous_analysis": 20,
+      "missing_lemma": 7,
+      "missing_pattern": 15,
+      "missing_root": 15,
+      "pos_not_allowed": 8
+    },
+    "input": 393,
+    "kept": 343
+  },
+  "split_leakage": {
+    "abstract_pattern_heldout": true,
+    "concrete_pattern_heldout": true,
+    "details": {
+      "abstract_pattern_heldout": {
+        "checks": {
+          "abstract_pattern": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 47,
+          "test": 44,
+          "train": 252
+        }
+      },
+      "concrete_pattern_heldout": {
+        "checks": {
+          "concrete_pattern": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 52,
+          "test": 53,
+          "train": 238
+        }
+      },
+      "root_heldout": {
+        "checks": {
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "root": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 34,
+          "test": 50,
+          "train": 259
+        }
+      }
+    },
+    "root_heldout": true
+  },
+  "top_20_abstract_patterns": [
+    {
+      "count": 87,
+      "pattern": "فَاعِل"
+    },
+    {
+      "count": 47,
+      "pattern": "مَفْعَلَة"
+    },
+    {
+      "count": 44,
+      "pattern": "مَفْعَل"
+    },
+    {
+      "count": 42,
+      "pattern": "يَفْعَلُ"
+    },
+    {
+      "count": 42,
+      "pattern": "تَفْعِيل"
+    },
+    {
+      "count": 41,
+      "pattern": "فَعَلَ"
+    },
+    {
+      "count": 40,
+      "pattern": "مَفْعُول"
+    }
+  ],
+  "top_20_concrete_patterns": [
+    {
+      "count": 10,
+      "pattern": "كاتب"
+    },
+    {
+      "count": 9,
+      "pattern": "دارس"
+    },
+    {
+      "count": 8,
+      "pattern": "عالم"
+    },
+    {
+      "count": 6,
+      "pattern": "كتب"
+    },
+    {
+      "count": 6,
+      "pattern": "يكتب"
+    },
+    {
+      "count": 6,
+      "pattern": "فاتح"
+    },
+    {
+      "count": 5,
+      "pattern": "مكتب"
+    },
+    {
+      "count": 5,
+      "pattern": "مكتبة"
+    },
+    {
+      "count": 5,
+      "pattern": "تكتيب"
+    },
+    {
+      "count": 5,
+      "pattern": "مكتوب"
+    },
+    {
+      "count": 5,
+      "pattern": "يدرس"
+    },
+    {
+      "count": 5,
+      "pattern": "قارأ"
+    },
+    {
+      "count": 5,
+      "pattern": "خارج"
+    },
+    {
+      "count": 4,
+      "pattern": "مدرس"
+    },
+    {
+      "count": 4,
+      "pattern": "مدرسة"
+    },
+    {
+      "count": 4,
+      "pattern": "تدريس"
+    },
+    {
+      "count": 4,
+      "pattern": "مدروس"
+    },
+    {
+      "count": 4,
+      "pattern": "درس"
+    },
+    {
+      "count": 4,
+      "pattern": "معلم"
+    },
+    {
+      "count": 4,
+      "pattern": "معلمة"
+    }
+  ],
+  "top_20_roots": [
+    {
+      "count": 42,
+      "root": "كتب"
+    },
+    {
+      "count": 34,
+      "root": "درس"
+    },
+    {
+      "count": 29,
+      "root": "علم"
+    },
+    {
+      "count": 24,
+      "root": "فتح"
+    },
+    {
+      "count": 21,
+      "root": "قرأ"
+    },
+    {
+      "count": 18,
+      "root": "خرج"
+    },
+    {
+      "count": 16,
+      "root": "دخل"
+    },
+    {
+      "count": 14,
+      "root": "عمل"
+    },
+    {
+      "count": 13,
+      "root": "سكن"
+    },
+    {
+      "count": 12,
+      "root": "جلس"
+    },
+    {
+      "count": 11,
+      "root": "حمل"
+    },
+    {
+      "count": 10,
+      "root": "حكم"
+    },
+    {
+      "count": 9,
+      "root": "طلب"
+    },
+    {
+      "count": 9,
+      "root": "سمع"
+    },
+    {
+      "count": 8,
+      "root": "نصر"
+    },
+    {
+      "count": 8,
+      "root": "حفظ"
+    },
+    {
+      "count": 7,
+      "root": "فهم"
+    },
+    {
+      "count": 7,
+      "root": "وصف"
+    },
+    {
+      "count": 6,
+      "root": "رسم"
+    },
+    {
+      "count": 6,
+      "root": "زرع"
+    }
+  ],
+  "unique_abstract_patterns": 7,
+  "unique_concrete_patterns": 174,
+  "unique_roots": 30
+}

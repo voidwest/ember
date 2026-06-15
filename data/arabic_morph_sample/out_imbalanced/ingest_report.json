@@ -1,0 +1,18 @@
+{
+  "expanded_records": 393,
+  "input_records": 393,
+  "missing": {
+    "abstract_pattern": 15,
+    "concrete_pattern": 15,
+    "lemma": 7,
+    "root": 15,
+    "surface": 0
+  },
+  "output_records": 393,
+  "pos_distribution": {
+    "ADJ": 44,
+    "NOUN": 253,
+    "PART": 8,
+    "VERB": 88
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "canonical": {
+    "duplicate_ids": [],
+    "empty": false,
+    "leakage": {
+      "checks": {
+        "lemma": {
+          "dev_test": [],
+          "passed": true,
+          "train_dev": [],
+          "train_test": []
+        },
+        "root": {
+          "dev_test": [],
+          "passed": true,
+          "train_dev": [],
+          "train_test": []
+        }
+      },
+      "passed": true,
+      "strategy": "root_heldout"
+    },
+    "missing_labels": {},
+    "missing_required": [],
+    "num_records": 343,
+    "passed": true,
+    "type": "canonical"
+  },
+  "passed": true,
+  "probes": {
+    "empty": false,
+    "errors": [],
+    "num_records": 343,
+    "passed": true,
+    "type": "probes"
+  },
+  "sft": {
+    "empty": false,
+    "errors": [],
+    "num_records": 1029,
+    "passed": true,
+    "type": "sft"
+  }
+}

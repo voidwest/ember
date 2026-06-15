@@ -1,0 +1,230 @@
+{
+  "records": {
+    "dropped": 1,
+    "dropped_by_reason": {
+      "ambiguous_analysis": 1,
+      "missing_pattern": 1,
+      "missing_root": 1
+    },
+    "input": 19,
+    "kept": 18
+  },
+  "split_leakage": {
+    "abstract_pattern_heldout": true,
+    "concrete_pattern_heldout": true,
+    "details": {
+      "abstract_pattern_heldout": {
+        "checks": {
+          "abstract_pattern": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 0,
+          "test": 9,
+          "train": 9
+        }
+      },
+      "concrete_pattern_heldout": {
+        "checks": {
+          "concrete_pattern": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 3,
+          "test": 4,
+          "train": 11
+        }
+      },
+      "root_heldout": {
+        "checks": {
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "root": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 4,
+          "test": 3,
+          "train": 11
+        }
+      }
+    },
+    "root_heldout": true
+  },
+  "top_20_abstract_patterns": [
+    {
+      "count": 4,
+      "pattern": "فَعَلَ"
+    },
+    {
+      "count": 3,
+      "pattern": "فَاعِل"
+    },
+    {
+      "count": 2,
+      "pattern": "فِعَالَة"
+    },
+    {
+      "count": 2,
+      "pattern": "يَفْعَلُ"
+    },
+    {
+      "count": 1,
+      "pattern": "يَفْعُلُ"
+    },
+    {
+      "count": 1,
+      "pattern": "مَفْعَلَة"
+    },
+    {
+      "count": 1,
+      "pattern": "يَفْعُلُونَ"
+    },
+    {
+      "count": 1,
+      "pattern": "فَعِلَ"
+    },
+    {
+      "count": 1,
+      "pattern": "مُفَعِّل"
+    },
+    {
+      "count": 1,
+      "pattern": "مَفْعُولَة"
+    },
+    {
+      "count": 1,
+      "pattern": "مِفْعَال"
+    }
+  ],
+  "top_20_concrete_patterns": [
+    {
+      "count": 1,
+      "pattern": "كتب"
+    },
+    {
+      "count": 1,
+      "pattern": "يكتب"
+    },
+    {
+      "count": 1,
+      "pattern": "كاتب"
+    },
+    {
+      "count": 1,
+      "pattern": "مكتبة"
+    },
+    {
+      "count": 1,
+      "pattern": "درس"
+    },
+    {
+      "count": 1,
+      "pattern": "يدرسون"
+    },
+    {
+      "count": 1,
+      "pattern": "دراسة"
+    },
+    {
+      "count": 1,
+      "pattern": "دارس"
+    },
+    {
+      "count": 1,
+      "pattern": "علم"
+    },
+    {
+      "count": 1,
+      "pattern": "يعلم"
+    },
+    {
+      "count": 1,
+      "pattern": "معلم"
+    },
+    {
+      "count": 1,
+      "pattern": "معلومة"
+    },
+    {
+      "count": 1,
+      "pattern": "فتح"
+    },
+    {
+      "count": 1,
+      "pattern": "يفتح"
+    },
+    {
+      "count": 1,
+      "pattern": "مفتاح"
+    },
+    {
+      "count": 1,
+      "pattern": "قراءة"
+    },
+    {
+      "count": 1,
+      "pattern": "قرأ"
+    },
+    {
+      "count": 1,
+      "pattern": "قارئ"
+    }
+  ],
+  "top_20_roots": [
+    {
+      "count": 4,
+      "root": "كتب"
+    },
+    {
+      "count": 4,
+      "root": "درس"
+    },
+    {
+      "count": 4,
+      "root": "علم"
+    },
+    {
+      "count": 3,
+      "root": "فتح"
+    },
+    {
+      "count": 3,
+      "root": "قرأ"
+    }
+  ],
+  "unique_abstract_patterns": 11,
+  "unique_concrete_patterns": 18,
+  "unique_roots": 5
+}

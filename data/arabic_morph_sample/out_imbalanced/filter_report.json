@@ -1,0 +1,27 @@
+{
+  "drop_reasons": {
+    "ambiguous_analysis": 20,
+    "missing_lemma": 7,
+    "missing_pattern": 15,
+    "missing_root": 15,
+    "pos_not_allowed": 8
+  },
+  "dropped_records": 50,
+  "filters": {
+    "drop_ambiguous": true,
+    "drop_missing_lemma": true,
+    "drop_missing_pattern": true,
+    "drop_missing_root": true,
+    "max_examples_per_pattern": 0,
+    "max_examples_per_root": 0,
+    "min_examples_per_pattern": 1,
+    "min_examples_per_root": 1,
+    "pos_allowlist": [
+      "NOUN",
+      "VERB",
+      "ADJ"
+    ]
+  },
+  "input_records": 393,
+  "output_records": 343
+}

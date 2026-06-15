@@ -38,6 +38,15 @@ Run the tiny bundled sample:
 python3 scripts/arabic_morph_dataset.py run-config --config configs/arabic_morph_sample.toml
 ```
 
+Run the larger imbalanced fixture:
+
+```bash
+python3 scripts/generate_arabic_morph_fixture.py \
+  --output data/arabic_morph_sample/camelmorph_imbalanced_sample.jsonl \
+  --seed 17
+python3 scripts/arabic_morph_dataset.py run-config --config configs/arabic_morph_imbalanced_sample.toml
+```
+
 To use real data, export CAMELMORPH/CAMeL/CALIMAStar analyses to JSONL, CSV, or
 TSV with fields such as `word`, `diac`, `lex`, `root`, `pattern`,
 `pattern_concrete`, `pos`, and feature columns like `gen`, `num`, `per`, `asp`,

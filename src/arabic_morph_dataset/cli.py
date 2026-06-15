@@ -8,6 +8,7 @@ from .exporters import DEFAULT_SFT_TASKS, make_probe_records, make_sft_examples
 from .filters import apply_filters
 from .io import load_config, read_jsonl, read_morph_records, read_raw_records, write_json, write_jsonl, write_morph_records
 from .normalize import normalize_records
+from .report import make_summary_report
 from .split import SPLIT_STRATEGIES, split_records
 from .stats import dataset_stats
 from .validate import validate_canonical, validate_probe_records, validate_sft_examples
@@ -60,6 +61,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--input", required=True)
     p.add_argument("--output")
 
+    p = sub.add_parser("report")
+    p.add_argument("--input", required=True)
+    p.add_argument("--filter-report")
+    p.add_argument("--output")
+    p.add_argument("--seed", type=int, default=13)
+    p.add_argument("--train-ratio", type=float, default=0.8)
+    p.add_argument("--dev-ratio", type=float, default=0.1)
+    p.add_argument("--test-ratio", type=float, default=0.1)
+
     p = sub.add_parser("run-config")
     p.add_argument("--config", required=True)
 
@@ -104,6 +114,18 @@ def main(argv: list[str] | None = None) -> int:
             write_json(args.output, report)
         else:
             print_report(report)
+    elif args.command == "report":
+        filter_report = read_jsonl(args.filter_report)[0] if args.filter_report and args.filter_report.endswith(".jsonl") else None
+        if args.filter_report and not filter_report:
+            import json
+
+            filter_report = json.loads(Path(args.filter_report).read_text(encoding="utf-8"))
+        ratios = {"train": args.train_ratio, "dev": args.dev_ratio, "test": args.test_ratio}
+        report = make_summary_report(read_morph_records(args.input), filter_report, args.seed, ratios)
+        if args.output:
+            write_json(args.output, report)
+        else:
+            print_report(report)
     elif args.command == "run-config":
         run_config(args.config)
     return 0
@@ -129,6 +151,7 @@ def run_config(config_path: str) -> None:
     write_jsonl(sft_path, make_sft_examples(split_records_out, cfg.get("sft_tasks", DEFAULT_SFT_TASKS)))
     write_jsonl(probes_path, make_probe_records(split_records_out, cfg.get("split_strategy", "root_heldout")))
     stats_report = dataset_stats(split_records_out)
+    summary_report = make_summary_report(records, filter_report, int(cfg.get("seed", 13)), cfg.get("split_ratios", {"train": 0.8, "dev": 0.1, "test": 0.1}))
     validation_report = {
         "canonical": validate_canonical(split_records_out, cfg.get("split_strategy")),
         "sft": validate_sft_examples(read_jsonl(sft_path)),
@@ -139,6 +162,7 @@ def run_config(config_path: str) -> None:
     write_json(output_dir / "filter_report.json", filter_report)
     write_json(output_dir / "split_report.json", split_report)
     write_json(output_dir / "stats.json", stats_report)
+    write_json(output_dir / "summary_report.json", summary_report)
     write_json(output_dir / "validation.json", validation_report)
 
 

@@ -9,12 +9,14 @@ from arabic_morph_dataset.exporters import make_probe_records, make_sft_examples
 from arabic_morph_dataset.filters import apply_filters
 from arabic_morph_dataset.io import read_raw_records
 from arabic_morph_dataset.normalize import dediacritize, normalize_records
+from arabic_morph_dataset.report import make_summary_report
 from arabic_morph_dataset.split import leakage_report, split_records
 from arabic_morph_dataset.stats import dataset_stats
 from arabic_morph_dataset.validate import validate_canonical, validate_probe_records, validate_sft_examples
 
 
 SAMPLE = ROOT / "data/arabic_morph_sample/camelmorph_sample.jsonl"
+IMBALANCED_SAMPLE = ROOT / "data/arabic_morph_sample/camelmorph_imbalanced_sample.jsonl"
 
 
 def sample_records():
@@ -103,3 +105,27 @@ def test_stats_generation_on_sample_data():
     assert stats["unique_roots"] == 5
     assert stats["pos_distribution"]["VERB"] > 0
     assert sum(stats["split_counts"].values()) == 18
+
+
+def test_summary_report_on_imbalanced_fixture():
+    records, _ = normalize_records(read_raw_records(IMBALANCED_SAMPLE), "imbalanced_test")
+    filtered, filter_report = apply_filters(
+        records,
+        {
+            "drop_missing_root": True,
+            "drop_missing_pattern": True,
+            "drop_missing_lemma": True,
+            "drop_ambiguous": True,
+            "pos_allowlist": ["NOUN", "VERB", "ADJ"],
+        },
+    )
+    report = make_summary_report(filtered, filter_report, seed=17, ratios={"train": 0.7, "dev": 0.15, "test": 0.15})
+    assert report["records"]["input"] == 393
+    assert report["records"]["kept"] == 343
+    assert report["records"]["dropped"] == 50
+    assert report["unique_roots"] == 30
+    assert report["unique_abstract_patterns"] == 7
+    assert report["split_leakage"]["root_heldout"]
+    assert report["split_leakage"]["abstract_pattern_heldout"]
+    assert report["split_leakage"]["concrete_pattern_heldout"]
+    assert report["top_20_roots"][0] == {"root": "كتب", "count": 42}
