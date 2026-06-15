@@ -23,18 +23,7 @@ impl EmberTokenizer {
             .encode(text, true)
             .map_err(anyhow::Error::msg)
             .context("encode failed")?;
-        let ids = encoding.get_ids().to_vec();
-        // Prepend BOS if the tokenizer config says to but the post_processor
-        // template doesn't include it (common for Gemma tokenizer.json configs).
-        if let Some(bos) = self.bos_token_id() {
-            if ids.first() != Some(&bos) {
-                let mut with_bos = Vec::with_capacity(ids.len() + 1);
-                with_bos.push(bos);
-                with_bos.extend(ids);
-                return Ok(with_bos);
-            }
-        }
-        Ok(ids)
+        Ok(self.ensure_bos(encoding.get_ids().to_vec()))
     }
 
     pub fn bos_token_id(&self) -> Option<u32> {
@@ -47,7 +36,9 @@ impl EmberTokenizer {
             .encode(text, true)
             .map_err(anyhow::Error::msg)
             .context("encode failed")?;
-        Ok((encoding.get_ids().to_vec(), encoding.get_offsets().to_vec()))
+        let ids = encoding.get_ids().to_vec();
+        let offsets = encoding.get_offsets().to_vec();
+        Ok(self.ensure_bos_with_offsets(ids, offsets))
     }
 
     pub fn decode(&self, ids: &[u32]) -> Result<String> {
@@ -76,5 +67,42 @@ impl EmberTokenizer {
             }
         }
         ids
+    }
+
+    fn ensure_bos(&self, ids: Vec<u32>) -> Vec<u32> {
+        let Some(bos) = self.bos_token_id() else {
+            return ids;
+        };
+        if ids.first() == Some(&bos) {
+            return ids;
+        }
+
+        let mut with_bos = Vec::with_capacity(ids.len() + 1);
+        with_bos.push(bos);
+        with_bos.extend(ids);
+        with_bos
+    }
+
+    fn ensure_bos_with_offsets(
+        &self,
+        ids: Vec<u32>,
+        offsets: TokenOffsets,
+    ) -> (Vec<u32>, TokenOffsets) {
+        let Some(bos) = self.bos_token_id() else {
+            return (ids, offsets);
+        };
+        if ids.first() == Some(&bos) {
+            return (ids, offsets);
+        }
+
+        let mut with_bos = Vec::with_capacity(ids.len() + 1);
+        with_bos.push(bos);
+        with_bos.extend(ids);
+
+        let mut with_offsets = Vec::with_capacity(offsets.len() + 1);
+        with_offsets.push((0, 0));
+        with_offsets.extend(offsets);
+
+        (with_bos, with_offsets)
     }
 }

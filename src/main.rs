@@ -8,6 +8,7 @@ use ember::loader::GgufValue;
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use ember::sampler::sample_token;
+use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::process::Command;
@@ -133,12 +134,18 @@ struct Args {
     /// write parsed GGUF metadata to this JSON path
     #[arg(long)]
     dump_gguf_metadata: Option<String>,
+
+    /// write a reproducibility manifest that pins model, tokenizer, runtime, and environment
+    #[arg(long)]
+    write_run_manifest: Option<String>,
 }
 
 struct RunMetadata {
     gguf_metadata: serde_json::Value,
     model_file_size_bytes: Option<u64>,
     model_sha256: Option<String>,
+    tokenizer_sha256: Option<String>,
+    run_manifest: serde_json::Value,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -150,32 +157,49 @@ fn main() -> anyhow::Result<()> {
         log::set_max_level(log::LevelFilter::Off);
     }
 
-    // Dispatch to the selected architecture. The single-prompt generation and
-    // probe paths are generic over `ForwardModel`; demo and interactive mode
-    // still use GPT-2-specific helpers.
+    // Dispatch to the selected architecture. Generation, demo, and probe paths
+    // are generic over `ForwardModel`; interactive mode is still GPT-2-specific.
     let loader = load_gguf(&args.model)?;
     let n_tensors = loader.tensors.len();
-    let run_metadata = RunMetadata {
-        gguf_metadata: gguf_metadata_json(&loader),
-        model_file_size_bytes: fs::metadata(&args.model).ok().map(|m| m.len()),
-        model_sha256: if args.record_model_sha256 {
-            model_sha256(&args.model)
-        } else {
-            None
-        },
-    };
-    if let Some(path) = &args.dump_gguf_metadata {
-        fs::write(
-            path,
-            serde_json::to_string_pretty(&run_metadata.gguf_metadata)?,
-        )?;
-        eprintln!("wrote GGUF metadata to {path}");
-    }
-    let backend = CpuBackend;
     let tokenizer_path = args
         .tokenizer
         .as_deref()
         .unwrap_or_else(|| default_tokenizer_for_arch(&args.arch));
+    let record_model_sha256 = args.record_model_sha256
+        || args.write_run_manifest.is_some()
+        || args.probe
+        || args.dump_logits.is_some()
+        || args.dump_layers.is_some();
+    let model_sha256 = if record_model_sha256 {
+        sha256_file(&args.model)
+    } else {
+        None
+    };
+    let tokenizer_sha256 = sha256_file(tokenizer_path);
+    let gguf_metadata = gguf_metadata_json(&loader);
+    let run_manifest = build_run_manifest(
+        &args,
+        tokenizer_path,
+        model_sha256.as_deref(),
+        tokenizer_sha256.as_deref(),
+        &gguf_metadata,
+    );
+    let run_metadata = RunMetadata {
+        gguf_metadata,
+        model_file_size_bytes: fs::metadata(&args.model).ok().map(|m| m.len()),
+        model_sha256,
+        tokenizer_sha256,
+        run_manifest,
+    };
+    if let Some(path) = &args.write_run_manifest {
+        write_json_file(path, &run_metadata.run_manifest)?;
+        eprintln!("wrote run manifest to {path}");
+    }
+    if let Some(path) = &args.dump_gguf_metadata {
+        write_json_file(path, &run_metadata.gguf_metadata)?;
+        eprintln!("wrote GGUF metadata to {path}");
+    }
+    let backend = CpuBackend;
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(tokenizer_path)?;
 
     match args.arch.as_str() {
@@ -195,6 +219,7 @@ fn main() -> anyhow::Result<()> {
                     args.max_tokens,
                     &args.model,
                     args.delay_ms,
+                    effective_context_limit(&backend, &model, &args),
                 )?;
             } else if args.interactive {
                 interactive_mode(
@@ -216,6 +241,10 @@ fn main() -> anyhow::Result<()> {
                     &args.prompt,
                     path,
                     args.max_seq_len,
+                    &args.model,
+                    &args.arch,
+                    tokenizer_path,
+                    &run_metadata,
                 )?;
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
@@ -234,7 +263,15 @@ fn main() -> anyhow::Result<()> {
             log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
 
             if args.demo {
-                anyhow::bail!("demo mode not yet supported for llama");
+                demo_mode(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    args.max_tokens,
+                    &args.model,
+                    args.delay_ms,
+                    effective_context_limit(&backend, &model, &args),
+                )?;
             } else if args.interactive {
                 anyhow::bail!("interactive mode not yet supported for llama");
             } else if let Some(path) = &args.dump_logits {
@@ -245,6 +282,10 @@ fn main() -> anyhow::Result<()> {
                     &args.prompt,
                     path,
                     args.max_seq_len,
+                    &args.model,
+                    &args.arch,
+                    tokenizer_path,
+                    &run_metadata,
                 )?;
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
@@ -263,7 +304,15 @@ fn main() -> anyhow::Result<()> {
             log::info!("tokenizer loaded, vocab size: {}", tokenizer.vocab_size());
 
             if args.demo {
-                anyhow::bail!("demo mode not yet supported for gemma4");
+                demo_mode(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    args.max_tokens,
+                    &args.model,
+                    args.delay_ms,
+                    effective_context_limit(&backend, &model, &args),
+                )?;
             } else if args.interactive {
                 anyhow::bail!("interactive mode not yet supported for gemma4");
             } else if let Some(path) = &args.dump_logits {
@@ -274,6 +323,10 @@ fn main() -> anyhow::Result<()> {
                     &args.prompt,
                     path,
                     args.max_seq_len,
+                    &args.model,
+                    &args.arch,
+                    tokenizer_path,
+                    &run_metadata,
                 )?;
             } else if let Some(path) = &args.dump_layers {
                 dump_layers_gemma4(
@@ -418,11 +471,12 @@ where
 /// terminal detection can be added to toggle).
 fn demo_mode<B: Backend>(
     backend: &B,
-    model: &Gpt2<B>,
+    model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
     max_tokens: usize,
     model_path: &str,
     delay_ms: u64,
+    context_limit: usize,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -454,8 +508,7 @@ where
         let _ = io::stdout().flush();
     }}; }
 
-    let embed_dim = backend.shape(&model.wte)[1];
-    let head_dim = embed_dim / model.n_heads;
+    let embed_dim = model.embed_dim();
 
     // -- header ------------------------------------------------------
     let header_border = s2(
@@ -488,10 +541,8 @@ where
         );
     };
     kv("model     ", &model_path);
-    kv("layers    ", &model.blocks.len());
-    kv("heads     ", &model.n_heads);
+    kv("layers    ", &model.n_layers());
     kv("embed_dim ", &embed_dim);
-    kv("head_dim  ", &head_dim);
     kv("vocab     ", &tokenizer.vocab_size());
     kv("sampling  ", &"greedy (temp=0)");
 
@@ -537,7 +588,7 @@ where
     for (i, (prompt, category)) in prompts.iter().enumerate() {
         let prompt_tokens = tokenizer.encode(prompt)?;
         let prompt_len = prompt_tokens.len();
-        let max_seq_len = prompt_len + max_tokens;
+        let max_seq_len = ensure_sequence_fits(prompt_len, max_tokens, context_limit)?;
 
         // -- prefill with spinner ----------------------------------
         let prefill_start = std::time::Instant::now();
@@ -549,7 +600,8 @@ where
         );
 
         let mut cache = model.create_cache(backend, max_seq_len);
-        let mut logits = model.forward_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
+        let mut logits =
+            model.forward_last_logits_with_cache(backend, &prompt_tokens, &mut cache, 0)?;
         let vocab_size = backend.shape(&logits)[1];
 
         let prefill_ms = prefill_start.elapsed().as_secs_f64() * 1000.0;
@@ -557,8 +609,8 @@ where
 
         // -- decode with typewriter streaming ----------------------
         let decode_start = std::time::Instant::now();
-        let mut all_tokens = prompt_tokens.clone();
         let mut generated = Vec::with_capacity(max_tokens);
+        let eos_ids = tokenizer.eos_token_ids();
 
         // print prompt card
         println!();
@@ -578,20 +630,14 @@ where
 
         for step in 0..max_tokens {
             let logit_data = backend.data(&logits);
-            let last_logits = if step == 0 {
-                let last_offset = (all_tokens.len() - 1) * vocab_size;
-                &logit_data[last_offset..last_offset + vocab_size]
-            } else {
-                &logit_data[..vocab_size]
-            };
+            let last_logits = &logit_data[..vocab_size];
 
             let next = argmax_token(last_logits);
 
-            if next == 50256 {
+            if eos_ids.contains(&(next as u32)) {
                 break;
             }
 
-            all_tokens.push(next as u32);
             generated.push(next as u32);
 
             // stream this single token now, before computing the next.
@@ -608,8 +654,12 @@ where
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
 
-            logits =
-                model.forward_with_cache(backend, &[next as u32], &mut cache, prompt_len + step)?;
+            logits = model.forward_last_logits_with_cache(
+                backend,
+                &[next as u32],
+                &mut cache,
+                prompt_len + step,
+            )?;
         }
         // reset color after completion
         println!("{RST}");
@@ -853,6 +903,10 @@ fn dump_last_logits<B: Backend>(
     prompt: &str,
     output_path: &str,
     max_seq_len: Option<usize>,
+    model_path: &str,
+    arch: &str,
+    tokenizer_path: &str,
+    run_metadata: &RunMetadata,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -860,6 +914,12 @@ where
     let token_ids = tokenizer
         .encode(prompt)
         .context("failed to tokenize prompt")?;
+    let (offset_ids, offsets) = tokenizer
+        .encode_with_offsets(prompt)
+        .context("failed to tokenize prompt with offsets")?;
+    if offset_ids != token_ids {
+        anyhow::bail!("token audit failed: encode and encode_with_offsets emitted different ids");
+    }
     if token_ids.is_empty() {
         anyhow::bail!("cannot dump logits for an empty prompt");
     }
@@ -872,12 +932,37 @@ where
         anyhow::bail!("expected last logits shape [1, vocab], got {:?}", shape);
     }
     write_npy_2d(output_path, backend.data(&logits), &[shape[0], shape[1]])?;
+    let metadata_path = output_path.replace(".npy", "_metadata.json");
+    let metadata = serde_json::json!({
+        "model_path": model_path,
+        "architecture": arch,
+        "tokenizer_path": tokenizer_path,
+        "tokenizer_sha256": run_metadata.tokenizer_sha256,
+        "model_file_size_bytes": run_metadata.model_file_size_bytes,
+        "model_sha256": run_metadata.model_sha256,
+        "gguf_metadata": run_metadata.gguf_metadata,
+        "output_path": output_path,
+        "prompt": prompt,
+        "context_limit": context_limit,
+        "logits_shape": [shape[0], shape[1]],
+        "token_audit": token_audit_json(
+            prompt,
+            tokenizer_path,
+            run_metadata.tokenizer_sha256.as_deref(),
+            tokenizer.bos_token_id(),
+            &token_ids,
+            &offsets,
+        ),
+        "run_manifest": run_metadata.run_manifest,
+    });
+    write_json_file(&metadata_path, &metadata)?;
     eprintln!(
         "saved last logits for {} prompt tokens to {} with shape {:?}",
         token_ids.len(),
         output_path,
         shape
     );
+    eprintln!("saved logits metadata to {}", metadata_path);
     Ok(())
 }
 
@@ -1652,9 +1737,11 @@ where
             "model_path": config.model_path,
             "architecture": config.arch,
             "tokenizer_path": config.tokenizer_path,
+            "tokenizer_sha256": config.run_metadata.tokenizer_sha256,
             "model_file_size_bytes": config.run_metadata.model_file_size_bytes,
             "model_sha256": config.run_metadata.model_sha256,
             "gguf_metadata": config.run_metadata.gguf_metadata,
+            "run_manifest": config.run_metadata.run_manifest,
             "stimuli_path": config.stimuli_path,
             "output_path": output.output_path,
             "probe_template": config.template,
@@ -1717,13 +1804,144 @@ fn gguf_value_json(value: &GgufValue) -> serde_json::Value {
     }
 }
 
-fn model_sha256(path: &str) -> Option<String> {
+fn write_json_file(path: &str, value: &serde_json::Value) -> anyhow::Result<()> {
+    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    Ok(())
+}
+
+fn sha256_file(path: &str) -> Option<String> {
     let output = Command::new("sha256sum").arg(path).output().ok()?;
     if !output.status.success() {
         return None;
     }
     let stdout = String::from_utf8(output.stdout).ok()?;
     stdout.split_whitespace().next().map(str::to_string)
+}
+
+fn build_run_manifest(
+    args: &Args,
+    tokenizer_path: &str,
+    model_sha256: Option<&str>,
+    tokenizer_sha256: Option<&str>,
+    gguf_metadata: &serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "created_at_unix": unix_timestamp(),
+        "command_argv": env::args().collect::<Vec<_>>(),
+        "source": {
+            "git_commit": git_commit(),
+        },
+        "compiler": {
+            "rustc_version_verbose": command_output("rustc", &["--version", "--verbose"]),
+        },
+        "runtime": {
+            "rayon_num_threads_env": env::var("RAYON_NUM_THREADS").ok(),
+            "rayon_current_num_threads": rayon::current_num_threads(),
+            "cpu_features_detected": cpu_features_detected(),
+        },
+        "model": {
+            "path": args.model,
+            "sha256": model_sha256,
+            "file_size_bytes": fs::metadata(&args.model).ok().map(|m| m.len()),
+            "architecture": args.arch,
+            "gguf_metadata": gguf_metadata,
+        },
+        "tokenizer": {
+            "path": tokenizer_path,
+            "sha256": tokenizer_sha256,
+        },
+        "execution": {
+            "max_seq_len": args.max_seq_len,
+            "max_tokens": args.max_tokens,
+            "temperature": args.temperature,
+            "top_k": args.top_k,
+            "top_p": args.top_p,
+            "probe": args.probe,
+            "probe_stimuli": args.probe_stimuli,
+            "probe_template": args.probe_template,
+            "probe_templates": args.probe_templates,
+            "probe_position": args.probe_position,
+            "probe_positions": args.probe_positions,
+            "probe_generate_tokens": args.probe_generate_tokens,
+            "probe_limit": args.probe_limit,
+        },
+    })
+}
+
+fn command_output(program: &str, args: &[&str]) -> Option<String> {
+    let output = Command::new(program).args(args).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|s| s.trim().to_string())
+}
+
+fn cpu_features_detected() -> Vec<&'static str> {
+    let mut features = Vec::new();
+
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        if std::arch::is_x86_feature_detected!("sse2") {
+            features.push("sse2");
+        }
+        if std::arch::is_x86_feature_detected!("ssse3") {
+            features.push("ssse3");
+        }
+        if std::arch::is_x86_feature_detected!("sse4.1") {
+            features.push("sse4.1");
+        }
+        if std::arch::is_x86_feature_detected!("avx") {
+            features.push("avx");
+        }
+        if std::arch::is_x86_feature_detected!("avx2") {
+            features.push("avx2");
+        }
+        if std::arch::is_x86_feature_detected!("fma") {
+            features.push("fma");
+        }
+        if std::arch::is_x86_feature_detected!("avx512f") {
+            features.push("avx512f");
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        if std::arch::is_aarch64_feature_detected!("neon") {
+            features.push("neon");
+        }
+        if std::arch::is_aarch64_feature_detected!("fp16") {
+            features.push("fp16");
+        }
+        if std::arch::is_aarch64_feature_detected!("sve") {
+            features.push("sve");
+        }
+    }
+
+    features
+}
+
+fn token_audit_json(
+    prompt: &str,
+    tokenizer_path: &str,
+    tokenizer_sha256: Option<&str>,
+    bos_token_id: Option<u32>,
+    token_ids: &[u32],
+    offsets: &[(usize, usize)],
+) -> serde_json::Value {
+    serde_json::json!({
+        "schema_version": 1,
+        "prompt": prompt,
+        "tokenizer_path": tokenizer_path,
+        "tokenizer_sha256": tokenizer_sha256,
+        "bos_token_id": bos_token_id,
+        "token_ids": token_ids,
+        "token_count": token_ids.len(),
+        "offsets": offsets,
+        "encode_with_offsets_matches_encode": true,
+    })
 }
 
 fn git_commit() -> Option<String> {

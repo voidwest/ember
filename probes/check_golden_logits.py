@@ -16,6 +16,103 @@ from pathlib import Path
 import numpy as np
 
 
+def load_json(path: str | None) -> dict | None:
+    if not path:
+        return None
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def nested_get(obj: dict | None, path: list[str]):
+    cur = obj
+    for key in path:
+        if not isinstance(cur, dict) or key not in cur:
+            return None
+        cur = cur[key]
+    return cur
+
+
+def extract_token_ids(obj: dict | None, role: str) -> list[int] | None:
+    role_paths = {
+        "ember": [
+            ["ember_token_ids"],
+            ["ember", "token_ids"],
+            ["token_audit", "ember_token_ids"],
+            ["token_audit", "ember", "token_ids"],
+            ["token_audit", "token_ids"],
+            ["token_ids"],
+        ],
+        "reference": [
+            ["reference_token_ids"],
+            ["reference", "token_ids"],
+            ["token_audit", "reference_token_ids"],
+            ["token_audit", "reference", "token_ids"],
+            ["token_audit", "token_ids"],
+            ["token_ids"],
+        ],
+    }
+    for path in role_paths[role]:
+        value = nested_get(obj, path)
+        if isinstance(value, list) and all(isinstance(v, int) for v in value):
+            return value
+    return None
+
+
+def extract_tokenizer_sha256(obj: dict | None) -> str | None:
+    for path in [
+        ["tokenizer_sha256"],
+        ["tokenizer", "sha256"],
+        ["token_audit", "tokenizer_sha256"],
+        ["run_manifest", "tokenizer", "sha256"],
+    ]:
+        value = nested_get(obj, path)
+        if isinstance(value, str):
+            return value
+    return None
+
+
+def token_audit_gate(
+    token_audit: dict | None,
+    ember_metadata: dict | None,
+    reference_metadata: dict | None,
+) -> dict:
+    ember_ids = extract_token_ids(token_audit, "ember") or extract_token_ids(
+        ember_metadata, "ember"
+    )
+    reference_ids = extract_token_ids(token_audit, "reference") or extract_token_ids(
+        reference_metadata, "reference"
+    )
+    ember_tokenizer_sha256 = extract_tokenizer_sha256(token_audit) or extract_tokenizer_sha256(
+        ember_metadata
+    )
+    reference_tokenizer_sha256 = extract_tokenizer_sha256(reference_metadata)
+
+    failures = []
+    if ember_ids is None:
+        failures.append("missing Ember token ids")
+    if reference_ids is None:
+        failures.append("missing reference token ids")
+    if ember_ids is not None and reference_ids is not None and ember_ids != reference_ids:
+        failures.append("token ids differ")
+    if (
+        ember_tokenizer_sha256
+        and reference_tokenizer_sha256
+        and ember_tokenizer_sha256 != reference_tokenizer_sha256
+    ):
+        failures.append("tokenizer SHA-256 differs")
+
+    return {
+        "required": True,
+        "passed": not failures,
+        "failures": failures,
+        "ember_token_count": len(ember_ids) if ember_ids is not None else None,
+        "reference_token_count": len(reference_ids) if reference_ids is not None else None,
+        "ember_token_ids": ember_ids,
+        "reference_token_ids": reference_ids,
+        "ember_tokenizer_sha256": ember_tokenizer_sha256,
+        "reference_tokenizer_sha256": reference_tokenizer_sha256,
+    }
+
+
 def top_token(logits: np.ndarray) -> int:
     return int(np.argmax(logits.reshape(-1)))
 
@@ -82,7 +179,9 @@ def main() -> None:
     parser.add_argument("--model-sha256", default=None, help="precomputed model SHA-256")
     parser.add_argument("--tokenizer", default=None, help="tokenizer path/name used for the prompt")
     parser.add_argument("--gguf-metadata", default=None, help="optional GGUF metadata JSON sidecar")
-    parser.add_argument("--metadata", default=None, help="optional tokenizer/model metadata JSON sidecar")
+    parser.add_argument("--metadata", default=None, help="Ember tokenizer/model metadata JSON sidecar")
+    parser.add_argument("--reference-metadata", default=None, help="reference tokenizer/model metadata JSON sidecar")
+    parser.add_argument("--token-audit", default=None, help="combined token audit JSON with Ember and reference token ids")
     parser.add_argument("--max-diff-threshold", type=float, default=None)
     parser.add_argument("--mean-diff-threshold", type=float, default=None)
     parser.add_argument("--topk-overlap-threshold", type=float, default=0.8)
@@ -90,6 +189,29 @@ def main() -> None:
     parser.add_argument("--rtol", type=float, default=None, help="optional np.allclose relative tolerance")
     parser.add_argument("--output", required=True, help="JSON report path")
     args = parser.parse_args()
+
+    gguf_metadata = load_json(args.gguf_metadata)
+    metadata = load_json(args.metadata)
+    reference_metadata = load_json(args.reference_metadata)
+    combined_token_audit = load_json(args.token_audit)
+    token_audit = token_audit_gate(combined_token_audit, metadata, reference_metadata)
+    if not token_audit["passed"]:
+        report = {
+            "label": args.label,
+            "ember": args.ember,
+            "reference": args.reference,
+            "classification": "token_audit_fail",
+            "token_audit": token_audit,
+            "metadata": metadata,
+            "reference_metadata": reference_metadata,
+            "gguf_metadata": gguf_metadata,
+            "notes": ["token audit failed before numeric comparison"],
+        }
+        print(json.dumps(report, indent=2))
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        raise SystemExit(1)
 
     ember = np.load(args.ember).astype(np.float32)
     reference = np.load(args.reference).astype(np.float32)
@@ -108,12 +230,6 @@ def main() -> None:
     reference_top_k = top_k(reference, args.top_k)
     top_k_overlap_count = len(set(ember_top_k) & set(reference_top_k))
     top_k_overlap_ratio = top_k_overlap_count / max(len(reference_top_k), 1)
-    gguf_metadata = None
-    if args.gguf_metadata:
-        gguf_metadata = json.loads(Path(args.gguf_metadata).read_text(encoding="utf-8"))
-    metadata = None
-    if args.metadata:
-        metadata = json.loads(Path(args.metadata).read_text(encoding="utf-8"))
     within_tolerance = None
     if shapes_match and args.atol is not None and args.rtol is not None:
         within_tolerance = bool(np.allclose(ember, reference, atol=args.atol, rtol=args.rtol))
@@ -151,7 +267,9 @@ def main() -> None:
         "model": args.model,
         "model_sha256": args.model_sha256 or sha256_file(args.model),
         "tokenizer": args.tokenizer,
+        "token_audit": token_audit,
         "metadata": metadata,
+        "reference_metadata": reference_metadata,
         "gguf_metadata": gguf_metadata,
         "notes": [],
     }

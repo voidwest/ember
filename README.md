@@ -117,6 +117,7 @@ cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 | `--delay-ms` | `0` | delay between tokens in demo mode (0 = instant) |
 | `--benchmark` | (none) | print prefill/decode timing to stderr |
 | `--dump-logits` | (none) | write last-prompt logits for `--prompt` to `.npy` and exit |
+| `--write-run-manifest` | (none) | write a reproducibility manifest with model/tokenizer hashes, git commit, compiler, Rayon, and CPU feature data |
 | `--record-model-sha256` | (none) | compute and record model file sha256 in probe metadata |
 | `--dump-gguf-metadata` | (none) | write parsed GGUF metadata to JSON |
 | `--probe` | (none) | run probe mode: extract hidden states from each block |
@@ -226,12 +227,18 @@ cargo run --release -- \
   --dump-logits data/golden/qwen3_06b_ember_logits.npy
 ```
 
+`--dump-logits` also writes `*_metadata.json` with Ember's token audit. The
+trusted reference must provide matching token IDs, either as a reference
+metadata sidecar or as a combined token audit JSON.
+
 Compare Ember logits to a trusted `.npy` reference:
 
 ```bash
 python3 probes/check_golden_logits.py \
   --ember data/golden/qwen3_06b_ember_logits.npy \
   --reference data/golden/qwen3_06b_reference_logits.npy \
+  --metadata data/golden/qwen3_06b_ember_logits_metadata.json \
+  --reference-metadata data/golden/qwen3_06b_reference_logits_metadata.json \
   --label qwen3_06b \
   --tokenizer tokenizer-qwen3.json \
   --top-k 10 \
@@ -597,12 +604,14 @@ cargo run --release -- \
   --dump-logits data/qwen3_france_logits.npy
 ```
 
-Compare against trusted reference logits with:
+Compare against trusted reference logits with token metadata from both sides:
 
 ```bash
 python probes/check_golden_logits.py \
   --ember data/qwen3_france_logits.npy \
   --reference reference/qwen3_france_logits.npy \
+  --metadata data/qwen3_france_logits_metadata.json \
+  --reference-metadata reference/qwen3_france_logits_metadata.json \
   --output data/qwen3_france_golden_report.json
 ```
 

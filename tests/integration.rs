@@ -392,6 +392,39 @@ fn test_tokenizer_empty_string() {
     }
 }
 
+#[test]
+fn test_tokenizer_offsets_match_encode_bos_policy() {
+    for path in [
+        "tokenizer.json",
+        "tokenizer-gpt2.json",
+        "tokenizer-qwen3.json",
+        "tokenizer-gemma4.json",
+    ] {
+        if !std::path::Path::new(path).exists() {
+            continue;
+        }
+
+        let tok = ember::tokenizer::EmberTokenizer::from_file(path)
+            .unwrap_or_else(|err| panic!("failed to load {path}: {err}"));
+        let ids = tok
+            .encode("hello world")
+            .unwrap_or_else(|err| panic!("encode failed for {path}: {err}"));
+        let (offset_ids, offsets) = tok
+            .encode_with_offsets("hello world")
+            .unwrap_or_else(|err| panic!("encode_with_offsets failed for {path}: {err}"));
+
+        assert_eq!(offset_ids, ids, "ids diverged for {path}");
+        assert_eq!(
+            offsets.len(),
+            offset_ids.len(),
+            "offset count diverged for {path}"
+        );
+        if tok.bos_token_id().is_some() {
+            assert_eq!(offsets.first(), Some(&(0, 0)), "BOS offset for {path}");
+        }
+    }
+}
+
 /// build a minimal valid GGUF v3 file in memory, suitable for testing the parser.
 /// contains one metadata key-value and one f32 tensor.
 fn build_minimal_gguf() -> Vec<u8> {
