@@ -46,7 +46,7 @@ def _sft_for_task(record: MorphRecord, task: str) -> dict[str, Any] | None:
         user = f"استخرج نوع الكلمة والسمات الصرفية بصيغة JSON فقط: {record.surface}"
         assistant = {"pos": record.pos, "features": dict(sorted(record.features.items()))}
     elif task == "reinflect":
-        if not record.lemma or not record.features or not record.surface:
+        if not record.lemma or not record.surface:
             return None
         user = (
             "صرّف ال lemma حسب السمات الهدف وأرجع JSON فقط: "

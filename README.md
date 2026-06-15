@@ -32,6 +32,14 @@ It produces canonical morphology JSONL, SFT chat JSONL, probing JSONL,
 deterministic held-out splits, stats, and leakage validation reports without
 requiring CAMeL Tools at runtime.
 
+Optional local install:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/pytest -q
+```
+
 Run the tiny bundled sample:
 
 ```bash

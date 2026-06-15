@@ -10,6 +10,32 @@ It does not install CAMeL Tools, run model training, or add LoRA code. The
 expected workflow is to export analyses separately, then run this pipeline on the
 exported records.
 
+## Installation
+
+The script wrapper works without installing the package:
+
+```bash
+python3 scripts/arabic_morph_dataset.py --help
+```
+
+For development, install the package in a local environment:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/pytest -q
+```
+
+After installation, both entrypoints work:
+
+```bash
+.venv/bin/python -m arabic_morph_dataset --help
+.venv/bin/arabic-morph-dataset --help
+```
+
+TOML configs use the Python standard library. YAML configs are optional and
+require the `yaml` extra or `dev` extra, both of which install PyYAML.
+
 ## Expected Input
 
 JSONL is the primary format. CSV and TSV with equivalent columns are also
@@ -59,7 +85,22 @@ of the same lemma in the same split.
 - `lemma_heldout`: lemmas assigned wholly to splits.
 
 Validation reports include leakage intersections such as `train_dev` and
-`train_test`.
+`train_test`. Split assignment is size-aware: larger lemma/root/pattern
+components are placed first, then assigned to the split with the largest
+remaining target deficit. A component larger than a target split can still force
+overshoot; the report records the resulting counts.
+
+## Filtering
+
+Filters run in this order:
+
+1. label, ambiguity, and POS filters
+2. minimum examples per root/pattern on the filtered set
+3. maximum examples per root/pattern caps on the filtered set
+
+That means `min_examples_per_root = 5` is interpreted as at least five examples
+remaining after earlier filters such as `pos_allowlist` and `drop_ambiguous`.
+Dropped records are counted by reason in `filter_report.json`.
 
 ## Tiny Sample
 
@@ -109,6 +150,11 @@ python3 scripts/arabic_morph_dataset.py stats \
   --input data/arabic_morph_sample/out/canonical.jsonl \
   --output data/arabic_morph_sample/out/stats.json
 
+python3 scripts/arabic_morph_dataset.py report \
+  --input data/arabic_morph_sample/out/canonical.jsonl \
+  --filter-report data/arabic_morph_sample/out/filter_report.json \
+  --output data/arabic_morph_sample/out/summary_report.json
+
 python3 scripts/arabic_morph_dataset.py validate \
   --input data/arabic_morph_sample/out/canonical.jsonl \
   --sft data/arabic_morph_sample/out/sft.jsonl \
@@ -142,6 +188,9 @@ with:
   pass/fail checks
 - top 20 roots by count
 - top 20 abstract and concrete patterns by count
+
+The `report --filter-report` option expects either a single JSON object or a
+single-row JSONL file containing the filter report.
 
 ## Replacing The Sample
 

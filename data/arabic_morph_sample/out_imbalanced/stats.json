@@ -253,9 +253,9 @@
     "VERB": 83
   },
   "split_counts": {
-    "dev": 34,
-    "test": 50,
-    "train": 259
+    "dev": 50,
+    "test": 52,
+    "train": 241
   },
   "unique_abstract_patterns": 7,
   "unique_concrete_patterns": 174,

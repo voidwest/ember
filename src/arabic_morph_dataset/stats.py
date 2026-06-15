@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Any
 
 from .models import MorphRecord
 
 
 def dataset_stats(records: list[MorphRecord]) -> dict[str, Any]:
-    feature_distribution: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    feature_distribution: dict[str, Counter[str]] = {}
     for record in records:
         for key, value in record.features.items():
-            feature_distribution[str(key)][str(value)] += 1
+            feature_distribution.setdefault(str(key), Counter())[str(value)] += 1
     return {
         "num_records": len(records),
         "unique_surfaces": len({r.surface for r in records if r.surface}),

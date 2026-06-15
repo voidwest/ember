@@ -32,9 +32,9 @@
         },
         "passed": true,
         "record_counts": {
-          "dev": 47,
-          "test": 44,
-          "train": 252
+          "dev": 44,
+          "test": 42,
+          "train": 257
         }
       },
       "concrete_pattern_heldout": {
@@ -55,8 +55,8 @@
         "passed": true,
         "record_counts": {
           "dev": 52,
-          "test": 53,
-          "train": 238
+          "test": 51,
+          "train": 240
         }
       },
       "root_heldout": {
@@ -76,9 +76,9 @@
         },
         "passed": true,
         "record_counts": {
-          "dev": 34,
-          "test": 50,
-          "train": 259
+          "dev": 50,
+          "test": 52,
+          "train": 241
         }
       }
     },

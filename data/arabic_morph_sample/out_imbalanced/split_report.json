@@ -1,8 +1,8 @@
 {
   "component_counts": {
-    "dev": 4,
-    "test": 3,
-    "train": 23
+    "dev": 7,
+    "test": 8,
+    "train": 15
   },
   "leakage": {
     "checks": {
@@ -28,9 +28,9 @@
     "train": 0.7
   },
   "record_counts": {
-    "dev": 34,
-    "test": 50,
-    "train": 259
+    "dev": 50,
+    "test": 52,
+    "train": 241
   },
   "seed": 17,
   "strategy": "root_heldout"

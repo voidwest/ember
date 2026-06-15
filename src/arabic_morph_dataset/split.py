@@ -24,9 +24,14 @@ class UnionFind:
 
     def find(self, item: str) -> str:
         self.parent.setdefault(item, item)
-        if self.parent[item] != item:
-            self.parent[item] = self.find(self.parent[item])
-        return self.parent[item]
+        root = item
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[item] != item:
+            parent = self.parent[item]
+            self.parent[item] = root
+            item = parent
+        return root
 
     def union(self, a: str, b: str) -> None:
         ra, rb = self.find(a), self.find(b)
@@ -51,15 +56,17 @@ def split_records(
 
     components = _components(records, strategy)
     rng = random.Random(seed)
-    ordered = sorted(components.values(), key=lambda group: (group[0].lemma, group[0].root, group[0].id))
-    rng.shuffle(ordered)
+    ordered = sorted(
+        components.values(),
+        key=lambda group: (-len(group), rng.random(), group[0].lemma, group[0].root, group[0].id),
+    )
 
     targets = {name: normalized[name] * len(records) for name in split_names}
     counts = {name: 0 for name in split_names}
     assigned: list[MorphRecord] = []
     component_assignments: dict[str, int] = defaultdict(int)
     for group in ordered:
-        split = _choose_split(counts, targets, split_names)
+        split = _choose_split(counts, targets, split_names, len(group))
         counts[split] += len(group)
         component_assignments[split] += 1
         assigned.extend(record.with_split(split) for record in group)
@@ -76,10 +83,16 @@ def split_records(
     return assigned, report
 
 
-def _choose_split(counts: dict[str, int], targets: dict[str, float], split_names: list[str]) -> str:
-    deficits = [(targets[name] - counts[name], -counts[name], name) for name in split_names]
-    deficits.sort(reverse=True)
-    return deficits[0][2]
+def _choose_split(counts: dict[str, int], targets: dict[str, float], split_names: list[str], group_size: int = 1) -> str:
+    return max(
+        split_names,
+        key=lambda name: (
+            targets[name] - counts[name],
+            -(max(0.0, counts[name] + group_size - targets[name])),
+            -counts[name],
+            -split_names.index(name),
+        ),
+    )
 
 
 def _components(records: list[MorphRecord], strategy: str) -> dict[str, list[MorphRecord]]:
@@ -131,8 +144,6 @@ def leakage_report(records: Iterable[MorphRecord], strategy: str) -> dict[str, o
         checks["concrete_pattern"] = _intersection_check(by_split, lambda r: r.concrete_pattern)
     elif strategy == "root_pattern_heldout":
         checks["root_pattern"] = _intersection_check(by_split, lambda r: f"{r.root}|{r.abstract_pattern or r.concrete_pattern}" if r.root and (r.abstract_pattern or r.concrete_pattern) else "")
-    elif strategy == "lemma_heldout":
-        checks["lemma_heldout"] = checks["lemma"]
     report["checks"] = checks
     report["passed"] = all(bool(check.get("passed", False)) for check in checks.values() if isinstance(check, dict))
     return report

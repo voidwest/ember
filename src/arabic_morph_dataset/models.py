@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 
@@ -82,6 +82,4 @@ class MorphRecord:
         )
 
     def with_split(self, split: str) -> "MorphRecord":
-        data = self.to_dict()
-        data["split"] = split
-        return MorphRecord.from_dict(data)
+        return replace(self, split=split)

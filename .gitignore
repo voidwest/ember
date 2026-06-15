@@ -28,3 +28,4 @@ docs/plots/root_probe_scale_comparison.png
 !docs/dataset_pipeline.md
 __pycache__/
 .pytest_cache/
+*.egg-info/

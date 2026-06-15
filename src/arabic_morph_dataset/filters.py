@@ -78,7 +78,18 @@ def _cap_group(records: list[MorphRecord], field: str, maximum: int, reasons: Co
             no_group.append(record)
     kept = list(no_group)
     for value in sorted(by_group):
-        group = sorted(by_group[value], key=lambda r: r.id)
+        group = sorted(by_group[value], key=_content_sort_key)
         kept.extend(group[:maximum])
         reasons[f"max_examples_per_{field}"] += max(0, len(group) - maximum)
-    return sorted(kept, key=lambda r: r.id)
+    return sorted(kept, key=_content_sort_key)
+
+
+def _content_sort_key(record: MorphRecord) -> tuple[str, str, str, str, str, str]:
+    return (
+        record.lemma,
+        record.root,
+        record.abstract_pattern,
+        record.concrete_pattern,
+        record.surface,
+        record.id,
+    )

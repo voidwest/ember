@@ -9,6 +9,7 @@ from .models import MorphRecord
 
 
 ARABIC_DIACRITICS = re.compile(r"[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]")
+ARABIC_FORMATTING_MARKS = re.compile(r"[\u0640\u0674]")
 
 FIELD_ALIASES = {
     "surface": ["surface", "word", "form", "token"],
@@ -44,8 +45,8 @@ VALUE_ALIASES = {
     "a": "acc",
     "g": "gen",
     "p": "pl",
-    "na": "",
-    "none": "",
+    "na": "na",
+    "none": "none",
     "-": "",
 }
 
@@ -61,12 +62,13 @@ POS_ALIASES = {
 
 
 def dediacritize(text: str) -> str:
-    return ARABIC_DIACRITICS.sub("", text or "")
+    return ARABIC_FORMATTING_MARKS.sub("", ARABIC_DIACRITICS.sub("", text or ""))
 
 
 def clean_lemma(text: str) -> str:
     text = str(text or "").strip()
-    text = re.sub(r"_\d+$", "", text)
+    if re.search(r"[\u0600-\u06ff].*_\d+$", text):
+        text = re.sub(r"_\d+$", "", text)
     return text
 
 
@@ -99,8 +101,20 @@ def _is_ambiguous(raw: dict[str, Any]) -> bool:
         return bool(raw.get("num_analyses"))
 
 
-def _stable_id(source_name: str, analysis_id: str, surface: str, lemma: str, idx: int) -> str:
-    seed = "|".join([source_name, analysis_id, surface, lemma, str(idx)])
+def _stable_id(raw: dict[str, Any], source_name: str, analysis_id: str, surface: str, lemma: str, idx: int) -> str:
+    fields = [
+        source_name,
+        analysis_id,
+        surface,
+        lemma,
+        _first(raw, FIELD_ALIASES["root"]),
+        _first(raw, FIELD_ALIASES["abstract_pattern"]),
+        _first(raw, FIELD_ALIASES["concrete_pattern"]),
+        _first(raw, FIELD_ALIASES["pos"]),
+        str(sorted((raw.get("features") or {}).items())),
+        str(idx),
+    ]
+    seed = "|".join(fields)
     return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
 
 
@@ -109,8 +123,9 @@ def expand_analysis_records(raw_records: list[dict[str, Any]]) -> list[dict[str,
     for raw in raw_records:
         analyses = raw.get("analyses")
         if isinstance(analyses, list):
+            base = {k: v for k, v in raw.items() if k != "analyses"}
             for i, analysis in enumerate(analyses):
-                merged = {k: v for k, v in raw.items() if k != "analyses"}
+                merged = dict(base)
                 if isinstance(analysis, dict):
                     merged.update(analysis)
                 merged["is_ambiguous"] = len(analyses) > 1
@@ -132,7 +147,7 @@ def normalize_raw_record(raw: dict[str, Any], idx: int, source_name: str) -> Mor
 
     lemma = clean_lemma(_first(raw, FIELD_ALIASES["lemma"]))
     analysis_id = _first(raw, FIELD_ALIASES["analysis_id"])
-    record_id = str(raw.get("canonical_id") or raw.get("record_id") or _stable_id(source_name, analysis_id, surface, lemma, idx))
+    record_id = str(raw.get("canonical_id") or raw.get("record_id") or _stable_id(raw, source_name, analysis_id, surface, lemma, idx))
 
     features = dict(raw.get("features") or {})
     for canonical, aliases in FEATURE_ALIASES.items():

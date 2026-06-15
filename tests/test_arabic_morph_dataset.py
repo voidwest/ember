@@ -1,4 +1,5 @@
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -12,7 +13,8 @@ from arabic_morph_dataset.normalize import dediacritize, normalize_records
 from arabic_morph_dataset.report import make_summary_report
 from arabic_morph_dataset.split import leakage_report, split_records
 from arabic_morph_dataset.stats import dataset_stats
-from arabic_morph_dataset.validate import validate_canonical, validate_probe_records, validate_sft_examples
+from arabic_morph_dataset.validate import validate_canonical, validate_canonical_rows, validate_probe_records, validate_sft_examples
+from arabic_morph_dataset.cli import entrypoint
 
 
 SAMPLE = ROOT / "data/arabic_morph_sample/camelmorph_sample.jsonl"
@@ -45,6 +47,12 @@ def test_normalization_maps_camel_style_fields():
     assert record.features["state"] == "def"
     assert report["output_records"] == 1
     assert dediacritize("كَتَبَ") == "كتب"
+    assert dediacritize("كـَتَبَ") == "كتب"
+
+
+def test_normalization_preserves_not_applicable_features():
+    records, _ = normalize_records([{"word": "باب", "lex": "بَاب_1", "root": "بوب", "pattern": "فَعَل", "pattern_concrete": "باب", "pos": "noun", "gen": "NA"}], "unit")
+    assert records[0].features["gender"] == "na"
 
 
 def test_schema_validation_catches_duplicate_ids():
@@ -53,6 +61,14 @@ def test_schema_validation_catches_duplicate_ids():
     report = validate_canonical(duplicated)
     assert not report["passed"]
     assert duplicated[0].id in report["duplicate_ids"]
+
+
+def test_schema_validation_catches_missing_raw_fields():
+    report = validate_canonical_rows([{"id": "bad", "surface": "كتب"}])
+    assert not report["passed"]
+    missing_fields = {item["field"] for item in report["missing_required"]}
+    assert "metadata" in missing_fields
+    assert "features" in missing_fields
 
 
 def test_each_split_strategy_has_no_required_leakage():
@@ -68,6 +84,8 @@ def test_each_split_strategy_has_no_required_leakage():
         split, report = split_records(records, strategy=strategy, seed=3, ratios={"train": 0.6, "dev": 0.2, "test": 0.2})
         assert len(split) == len(records)
         assert report["leakage"]["passed"], strategy
+        if strategy == "lemma_heldout":
+            assert set(report["leakage"]["checks"]) == {"lemma"}
 
 
 def test_leakage_detection_reports_root_overlap():
@@ -90,12 +108,29 @@ def test_sft_formatting_has_json_assistant_content():
     assert validate_sft_examples(examples)["passed"]
 
 
+def test_sft_validation_checks_task_schema():
+    report = validate_sft_examples(
+        [
+            {
+                "messages": [
+                    {"role": "user", "content": "x"},
+                    {"role": "assistant", "content": "{\"foo\":\"bar\"}"},
+                ],
+                "metadata": {"task": "analyze_form"},
+            }
+        ]
+    )
+    assert not report["passed"]
+    assert "missing keys" in report["errors"][0]["error"]
+
+
 def test_probe_formatting_and_validation():
     split, _ = split_records(sample_records(), "root_pattern_heldout", seed=5)
     probes = make_probe_records(split, "root_pattern_heldout")
     assert probes[0]["split_type"] == "root_pattern_heldout"
     assert "messages" not in probes[0]
     assert validate_probe_records(probes)["passed"]
+    assert not validate_probe_records([{**probes[0], "root": None}])["passed"]
 
 
 def test_stats_generation_on_sample_data():
@@ -129,3 +164,28 @@ def test_summary_report_on_imbalanced_fixture():
     assert report["split_leakage"]["abstract_pattern_heldout"]
     assert report["split_leakage"]["concrete_pattern_heldout"]
     assert report["top_20_roots"][0] == {"root": "كتب", "count": 42}
+
+
+def test_cli_rejects_empty_task_list(tmp_path):
+    output = tmp_path / "sft.jsonl"
+    assert entrypoint(["make-sft", "--input", str(ROOT / "data/arabic_morph_sample/out/canonical.jsonl"), "--output", str(output), "--tasks", ""]) == 1
+
+
+def test_package_module_entrypoint_runs_stats():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "arabic_morph_dataset",
+            "stats",
+            "--input",
+            str(ROOT / "data/arabic_morph_sample/out/canonical.jsonl"),
+        ],
+        cwd=ROOT,
+        env={"PYTHONPATH": str(ROOT / "src")},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["num_records"] == 18
