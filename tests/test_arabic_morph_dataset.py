@@ -52,6 +52,22 @@ def test_normalization_maps_camel_style_fields():
     assert len(record.id) == 64
 
 
+def test_stable_ids_do_not_depend_on_row_index():
+    raw = {"word": "كتب", "lex": "كَتَب_1", "root": "كتب", "pattern": "فَعَلَ", "pattern_concrete": "كتب", "pos": "verb"}
+    one, report_one = normalize_records([raw], "unit")
+    two, report_two = normalize_records([{"word": "سبق", "lex": "سَبَق_1"}, raw], "unit")
+    assert one[0].id == two[1].id
+    assert report_one["id_collisions_resolved"] == 0
+    assert report_two["id_collisions_resolved"] == 0
+
+
+def test_stable_id_collisions_are_suffixed_deterministically():
+    raw = {"word": "كتب", "lex": "كَتَب_1", "root": "كتب", "pattern": "فَعَلَ", "pattern_concrete": "كتب", "pos": "verb"}
+    records, report = normalize_records([raw, raw], "unit")
+    assert records[0].id != records[1].id
+    assert report["id_collisions_resolved"] == 1
+
+
 def test_clean_lemma_strips_trailing_sense_number_for_latin_aliases():
     records, _ = normalize_records([{"word": "iso", "lex": "ISO_8859_1", "root": "iso", "pattern": "x", "pattern_concrete": "x", "pos": "noun"}], "unit")
     assert records[0].lemma == "ISO_8859"
@@ -131,6 +147,16 @@ def test_filter_rejects_string_pos_allowlist():
         raise AssertionError("string pos_allowlist should fail")
 
 
+def test_pattern_specific_filters():
+    records = sample_records()
+    no_concrete = records[0].__class__.from_dict({**records[0].to_dict(), "concrete_pattern": ""})
+    no_abstract = records[1].__class__.from_dict({**records[1].to_dict(), "abstract_pattern": ""})
+    filtered, report = apply_filters([no_concrete, no_abstract, records[2]], {"require_abstract_pattern": True, "require_concrete_pattern": True})
+    assert [record.id for record in filtered] == [records[2].id]
+    assert report["drop_reasons"]["missing_abstract_pattern"] == 1
+    assert report["drop_reasons"]["missing_concrete_pattern"] == 1
+
+
 def test_leakage_detection_reports_root_overlap():
     records = sample_records()
     a = records[0].with_split("train")
@@ -158,6 +184,13 @@ def test_sft_formatting_has_json_assistant_content():
     assert first["messages"][1]["role"] == "assistant"
     assert json.loads(first["messages"][1]["content"])
     assert validate_sft_examples(examples)["passed"]
+
+
+def test_reinflect_prompt_is_arabic_and_allows_empty_features():
+    record = MorphRecord(id="x", surface="كتب", lemma="كتب", features={}, root="كتب", abstract_pattern="فعل", concrete_pattern="كتب", pos="VERB")
+    example = make_sft_examples([record], ["reinflect"])[0]
+    assert "اللمّة" in example["messages"][0]["content"]
+    assert json.loads(example["messages"][1]["content"]) == {"surface": "كتب"}
 
 
 def test_sft_validation_checks_task_schema():
@@ -189,6 +222,7 @@ def test_probe_formatting_and_validation():
     assert "messages" not in probes[0]
     assert validate_probe_records(probes)["passed"]
     assert not validate_probe_records([{**probes[0], "root": None}])["passed"]
+    assert not validate_probe_records([{**probes[0], "root": ""}])["passed"]
 
 
 def test_empty_outputs_are_valid_but_marked_empty():
@@ -207,6 +241,15 @@ def test_stats_generation_on_sample_data():
     assert stats["unique_roots"] == 5
     assert stats["pos_distribution"]["VERB"] > 0
     assert sum(stats["split_counts"].values()) == 18
+    assert stats["splits"]["train"]["num_records"] == stats["split_counts"]["train"]
+    assert "unique_roots" in stats["splits"]["test"]
+
+
+def test_split_report_includes_deviation_metrics():
+    _, report = split_records(sample_records(), "root_heldout", seed=7, ratios={"train": 0.6, "dev": 0.2, "test": 0.2})
+    assert "target_counts" in report
+    assert report["deviation"]["train"]["actual"] == report["record_counts"]["train"]
+    assert "relative_error" in report["deviation"]["dev"]
 
 
 def test_summary_report_on_imbalanced_fixture():

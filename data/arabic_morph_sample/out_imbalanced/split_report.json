@@ -4,6 +4,29 @@
     "test": 8,
     "train": 15
   },
+  "deviation": {
+    "dev": {
+      "absolute_error": -1.4499999999999957,
+      "absolute_error_abs": 1.4499999999999957,
+      "actual": 50,
+      "relative_error": -0.028182701652089328,
+      "target": 51.449999999999996
+    },
+    "test": {
+      "absolute_error": 0.5500000000000043,
+      "absolute_error_abs": 0.5500000000000043,
+      "actual": 52,
+      "relative_error": 0.0106899902818271,
+      "target": 51.449999999999996
+    },
+    "train": {
+      "absolute_error": 0.9000000000000057,
+      "absolute_error_abs": 0.9000000000000057,
+      "actual": 241,
+      "relative_error": 0.003748438150770536,
+      "target": 240.1
+    }
+  },
   "leakage": {
     "checks": {
       "lemma": {
@@ -34,5 +57,10 @@
     "train": 241
   },
   "seed": 17,
-  "strategy": "root_heldout"
+  "strategy": "root_heldout",
+  "target_counts": {
+    "dev": 51.449999999999996,
+    "test": 51.449999999999996,
+    "train": 240.1
+  }
 }

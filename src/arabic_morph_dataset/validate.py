@@ -112,6 +112,7 @@ def _validate_sft_payload(idx: int, task: str, payload: Any) -> list[dict[str, A
 
 def validate_probe_records(rows: list[dict[str, Any]]) -> dict[str, Any]:
     required = ["surface", "lemma", "root", "abstract_pattern", "concrete_pattern", "pos", "features", "source", "split", "split_type"]
+    required_scalars = ["surface", "lemma", "root", "abstract_pattern", "concrete_pattern", "pos", "source", "split", "split_type"]
     errors = []
     for idx, row in enumerate(rows):
         for field in required:
@@ -119,6 +120,8 @@ def validate_probe_records(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 errors.append({"index": idx, "error": f"missing {field}"})
             elif row[field] is None:
                 errors.append({"index": idx, "error": f"null {field}"})
+            elif field in required_scalars and str(row[field]).strip() == "":
+                errors.append({"index": idx, "error": f"empty {field}"})
         if "features" in row and not isinstance(row["features"], dict):
             errors.append({"index": idx, "error": "features must be an object"})
     return {"type": "probes", "passed": not errors, "num_records": len(rows), "empty": not rows, "errors": errors}

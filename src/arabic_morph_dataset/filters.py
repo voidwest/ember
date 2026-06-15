@@ -27,6 +27,12 @@ def apply_filters(records: list[MorphRecord], filters: dict[str, Any] | None) ->
         if filters.get("drop_missing_pattern", False) and not (record.abstract_pattern or record.concrete_pattern):
             reasons["missing_pattern"] += 1
             dropped = True
+        if filters.get("require_abstract_pattern", False) and not record.abstract_pattern:
+            reasons["missing_abstract_pattern"] += 1
+            dropped = True
+        if filters.get("require_concrete_pattern", False) and not record.concrete_pattern:
+            reasons["missing_concrete_pattern"] += 1
+            dropped = True
         if filters.get("drop_missing_lemma", False) and not record.lemma:
             reasons["missing_lemma"] += 1
             dropped = True

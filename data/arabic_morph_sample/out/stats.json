@@ -79,6 +79,53 @@
     "test": 3,
     "train": 11
   },
+  "splits": {
+    "<unsplit>": {
+      "num_records": 0,
+      "pos_distribution": {},
+      "unique_abstract_patterns": 0,
+      "unique_concrete_patterns": 0,
+      "unique_lemmas": 0,
+      "unique_roots": 0,
+      "unique_surfaces": 0
+    },
+    "dev": {
+      "num_records": 4,
+      "pos_distribution": {
+        "NOUN": 2,
+        "VERB": 2
+      },
+      "unique_abstract_patterns": 4,
+      "unique_concrete_patterns": 4,
+      "unique_lemmas": 3,
+      "unique_roots": 1,
+      "unique_surfaces": 4
+    },
+    "test": {
+      "num_records": 3,
+      "pos_distribution": {
+        "NOUN": 1,
+        "VERB": 2
+      },
+      "unique_abstract_patterns": 3,
+      "unique_concrete_patterns": 3,
+      "unique_lemmas": 2,
+      "unique_roots": 1,
+      "unique_surfaces": 3
+    },
+    "train": {
+      "num_records": 11,
+      "pos_distribution": {
+        "NOUN": 6,
+        "VERB": 5
+      },
+      "unique_abstract_patterns": 6,
+      "unique_concrete_patterns": 11,
+      "unique_lemmas": 9,
+      "unique_roots": 3,
+      "unique_surfaces": 11
+    }
+  },
   "unique_abstract_patterns": 11,
   "unique_concrete_patterns": 18,
   "unique_lemmas": 14,

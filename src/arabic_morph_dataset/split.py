@@ -83,7 +83,9 @@ def split_records(
         "strategy": strategy,
         "seed": seed,
         "ratios": normalized,
+        "target_counts": targets,
         "record_counts": counts,
+        "deviation": _deviation_report(counts, targets, split_names),
         "component_counts": dict(component_assignments),
         "leakage": leakage_report(assigned, strategy),
     }
@@ -112,6 +114,22 @@ def _projected_error(
     projected = dict(counts)
     projected[candidate] += group_size
     return sum((projected[name] - targets[name]) ** 2 for name in split_names)
+
+
+def _deviation_report(counts: dict[str, int], targets: dict[str, float], split_names: list[str]) -> dict[str, dict[str, float]]:
+    report = {}
+    for name in split_names:
+        target = targets[name]
+        actual = counts[name]
+        absolute_error = actual - target
+        report[name] = {
+            "target": target,
+            "actual": actual,
+            "absolute_error": absolute_error,
+            "absolute_error_abs": abs(absolute_error),
+            "relative_error": absolute_error / target if target else 0.0,
+        }
+    return report
 
 
 def _components(records: list[MorphRecord], strategy: str) -> dict[str, list[MorphRecord]]:

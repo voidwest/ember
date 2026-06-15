@@ -48,10 +48,8 @@ def _sft_for_task(record: MorphRecord, task: str) -> dict[str, Any] | None:
     elif task == "reinflect":
         if not record.lemma or not record.surface:
             return None
-        user = (
-            "صرّف ال lemma حسب السمات الهدف وأرجع JSON فقط: "
-            + json.dumps({"lemma": record.lemma, "features": record.features}, ensure_ascii=False, sort_keys=True)
-        )
+        target = json.dumps({"lemma": record.lemma, "features": record.features}, ensure_ascii=False, sort_keys=True)
+        user = f"صرّف اللمّة حسب السمات الهدف وأرجع JSON فقط: {target}"
         assistant = {"surface": record.surface}
     else:
         raise ValueError(f"Unknown SFT task {task}")

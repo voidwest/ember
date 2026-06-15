@@ -257,6 +257,56 @@
     "test": 52,
     "train": 241
   },
+  "splits": {
+    "<unsplit>": {
+      "num_records": 0,
+      "pos_distribution": {},
+      "unique_abstract_patterns": 0,
+      "unique_concrete_patterns": 0,
+      "unique_lemmas": 0,
+      "unique_roots": 0,
+      "unique_surfaces": 0
+    },
+    "dev": {
+      "num_records": 50,
+      "pos_distribution": {
+        "ADJ": 5,
+        "NOUN": 31,
+        "VERB": 14
+      },
+      "unique_abstract_patterns": 7,
+      "unique_concrete_patterns": 40,
+      "unique_lemmas": 35,
+      "unique_roots": 7,
+      "unique_surfaces": 44
+    },
+    "test": {
+      "num_records": 52,
+      "pos_distribution": {
+        "ADJ": 7,
+        "NOUN": 35,
+        "VERB": 10
+      },
+      "unique_abstract_patterns": 7,
+      "unique_concrete_patterns": 42,
+      "unique_lemmas": 38,
+      "unique_roots": 8,
+      "unique_surfaces": 46
+    },
+    "train": {
+      "num_records": 241,
+      "pos_distribution": {
+        "ADJ": 28,
+        "NOUN": 154,
+        "VERB": 59
+      },
+      "unique_abstract_patterns": 7,
+      "unique_concrete_patterns": 92,
+      "unique_lemmas": 80,
+      "unique_roots": 15,
+      "unique_surfaces": 103
+    }
+  },
   "unique_abstract_patterns": 7,
   "unique_concrete_patterns": 174,
   "unique_lemmas": 153,

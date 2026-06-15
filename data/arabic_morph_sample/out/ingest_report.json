@@ -1,5 +1,6 @@
 {
   "expanded_records": 19,
+  "id_collisions_resolved": 0,
   "input_records": 19,
   "missing": {
     "abstract_pattern": 1,

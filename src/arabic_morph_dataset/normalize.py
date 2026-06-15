@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from typing import Any
 
 from .models import MorphRecord
@@ -101,7 +101,7 @@ def _is_ambiguous(raw: dict[str, Any]) -> bool:
         return bool(raw.get("num_analyses"))
 
 
-def _stable_id(raw: dict[str, Any], source_name: str, analysis_id: str, surface: str, lemma: str, idx: int) -> str:
+def _stable_id(raw: dict[str, Any], source_name: str, analysis_id: str, surface: str, lemma: str) -> str:
     fields = [
         source_name,
         analysis_id,
@@ -113,7 +113,6 @@ def _stable_id(raw: dict[str, Any], source_name: str, analysis_id: str, surface:
         _first(raw, FIELD_ALIASES["pos"]),
         _canonical_raw_features(raw),
         _canonical_raw_record(raw),
-        str(idx),
     ]
     seed = "|".join(fields)
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()
@@ -148,7 +147,7 @@ def normalize_raw_record(raw: dict[str, Any], idx: int, source_name: str) -> Mor
 
     lemma = clean_lemma(_first(raw, FIELD_ALIASES["lemma"]))
     analysis_id = _first(raw, FIELD_ALIASES["analysis_id"])
-    record_id = str(raw.get("canonical_id") or raw.get("record_id") or _stable_id(raw, source_name, analysis_id, surface, lemma, idx))
+    record_id = str(raw.get("canonical_id") or raw.get("record_id") or _stable_id(raw, source_name, analysis_id, surface, lemma))
 
     raw_features = raw.get("features") or {}
     if not isinstance(raw_features, dict):
@@ -204,10 +203,12 @@ def _canonical_raw_record(raw: dict[str, Any]) -> str:
 def normalize_records(raw_records: list[dict[str, Any]], source_name: str) -> tuple[list[MorphRecord], dict[str, Any]]:
     expanded = expand_analysis_records(raw_records)
     records = [normalize_raw_record(raw, idx, source_name) for idx, raw in enumerate(expanded)]
+    records, collision_count = _deduplicate_ids(records)
     report = {
         "input_records": len(raw_records),
         "expanded_records": len(expanded),
         "output_records": len(records),
+        "id_collisions_resolved": collision_count,
         "missing": {
             "surface": sum(1 for r in records if not r.surface),
             "lemma": sum(1 for r in records if not r.lemma),
@@ -218,3 +219,20 @@ def normalize_records(raw_records: list[dict[str, Any]], source_name: str) -> tu
         "pos_distribution": dict(Counter(r.pos or "<missing>" for r in records)),
     }
     return records, report
+
+
+def _deduplicate_ids(records: list[MorphRecord]) -> tuple[list[MorphRecord], int]:
+    seen: defaultdict[str, int] = defaultdict(int)
+    output: list[MorphRecord] = []
+    collisions = 0
+    for record in records:
+        count = seen[record.id]
+        seen[record.id] += 1
+        if count == 0:
+            output.append(record)
+            continue
+        collisions += 1
+        suffix_seed = f"{record.id}:{count}:{record.surface}:{record.lemma}:{record.analysis_id}"
+        new_id = hashlib.sha256(suffix_seed.encode("utf-8")).hexdigest()
+        output.append(record.__class__.from_dict({**record.to_dict(), "id": new_id}))
+    return output, collisions
