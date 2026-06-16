@@ -37,6 +37,7 @@
             <div class="nav-links">
                 <a href="/ember/">ember</a>
                 <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
                 <a href="/terms/">terms</a>
             </div>
             <a class="nav-lang" href="/research-notes/llama-probing-results.ar.html">عربي</a>
@@ -107,9 +108,11 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <!-- ── 1B chart ────────────────────────────────────── -->
         <h3>LLaMA 3.2 1B (16 layers, 2048-dim hidden)</h3>
 
+        <figure class="chart-wrap">
         <img class="chart" src="/plots/llama1b_probe_results.png"
              alt="LLaMA 3.2 1B probing results: 3x2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
              loading="lazy" />
+        </figure>
 
         <p><strong>root identity</strong> is trivially decodable at every layer (96-100% accuracy, nearly flat curve). root information remains linearly recoverable across the full depth of the model.</p>
 
@@ -124,9 +127,11 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <!-- ── 3B chart ────────────────────────────────────── -->
         <h3>LLaMA 3.2 3B (28 layers, 3072-dim hidden)</h3>
 
+        <figure class="chart-wrap">
         <img class="chart" src="/plots/llama3b_probe_results.png"
              alt="LLaMA 3.2 3B probing results: note the U-shaped root accuracy dip and flat 100% pattern accuracy"
              loading="lazy" />
+        </figure>
 
         <p>this is where things get strange.</p>
 
@@ -148,9 +153,11 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <!-- ── 8B chart ────────────────────────────────────── -->
         <h3>LLaMA 3.1 8B (archived first pass, not rerun)</h3>
 
+        <figure class="chart-wrap">
         <img class="chart" src="/plots/llama8b_probe_results.png"
              alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
              loading="lazy" />
+        </figure>
 
         <p><strong>archival caveat:</strong> this 8B section uses the first-pass probe files and has not been rerun with the corrected split logic. do not compare its exact numbers to the corrected 1B/3B results yet.</p>
 
@@ -302,6 +309,8 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <a href="/ember/">ember</a>
             &nbsp;·&nbsp;
             <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/">tools</a>
             &nbsp;·&nbsp;
             <a href="/terms/">terms</a>
         </footer>
