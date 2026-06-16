@@ -75,8 +75,6 @@ def section_for(path: Path) -> str:
         return "ember"
     if rel.startswith("research-notes/"):
         return "research"
-    if rel.startswith("tools/"):
-        return "tools"
     if rel.startswith("terms/"):
         return "terms"
     return "home"
@@ -94,12 +92,8 @@ def alternate_href(path: Path, ar: bool) -> str:
     if rel == "index.html":
         return "/index.ar.html"
     if rel.endswith("/index.html"):
-        alternate = rel.removesuffix("index.html") + "index.ar.html"
-    else:
-        alternate = rel.replace(".html", ".ar.html")
-    if not (DOCS / alternate).exists():
-        return "/index.ar.html"
-    return "/" + alternate
+        return "/" + rel.removesuffix("index.html") + "index.ar.html"
+    return "/" + rel.replace(".html", ".ar.html")
 
 
 def localized_href(section: str, ar: bool) -> str:
@@ -107,7 +101,6 @@ def localized_href(section: str, ar: bool) -> str:
         "home": ("/", "/index.ar.html"),
         "ember": ("/ember/", "/ember/index.ar.html"),
         "research": ("/research-notes/", "/research-notes/index.ar.html"),
-        "tools": ("/tools/", "/tools/index.ar.html"),
         "terms": ("/terms/", "/terms/index.ar.html"),
     }
     return paths[section][1 if ar else 0]
@@ -147,7 +140,6 @@ def nav_html(path: Path, text: str) -> str:
     links = [
         ("ember", "ember", localized_href("ember", ar)),
         ("research", "research notes", localized_href("research", ar)),
-        ("tools", "tools", localized_href("tools", ar)),
         ("terms", "terms", localized_href("terms", ar)),
     ]
 
@@ -176,7 +168,6 @@ def footer_html(text: str) -> str:
     home = localized_href("home", ar)
     ember = localized_href("ember", ar)
     research = localized_href("research", ar)
-    tools = localized_href("tools", ar)
     terms = localized_href("terms", ar)
     return f"""\
         <!-- docs:footer start -->
@@ -192,8 +183,6 @@ def footer_html(text: str) -> str:
             <a href="{ember}">ember</a>
             &nbsp;·&nbsp;
             <a href="{research}">research notes</a>
-            &nbsp;·&nbsp;
-            <a href="{tools}">tools</a>
             &nbsp;·&nbsp;
             <a href="{terms}">terms</a>
         </footer>

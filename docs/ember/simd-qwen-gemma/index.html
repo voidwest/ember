@@ -37,7 +37,6 @@
             <div class="nav-links">
                 <a href="/ember/" aria-current="page">ember</a>
                 <a href="/research-notes/">research notes</a>
-                <a href="/tools/">tools</a>
                 <a href="/terms/">terms</a>
             </div>
             <a class="nav-lang" href="/ember/simd-qwen-gemma/index.ar.html">عربي</a>
@@ -47,7 +46,7 @@
         <div class="back">
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
-            <a href="/ember/">research</a>
+            <a href="/ember/">writeup</a>
             &nbsp;&nbsp;
             <a href="/ember/engineering/">engineering</a>
             &nbsp;&nbsp;
@@ -156,12 +155,13 @@
             <img class="chart" src="/plots/simd_benchmark_dark.png"
                  alt="Ember Q8_0 CPU kernel benchmark showing 3.8x Q8_0 dequant speedup and 8.2x fused Q8_0 decode speedup"
                  loading="lazy" />
-            <figcaption>
-                kernel benchmark, not full-model latency. full generation still pays
-                tokenizer, attention, sampling, allocation, and cache costs, but the
-                quantized linear layers are the expensive part of decode.
-            </figcaption>
         </figure>
+
+        <p class="caption">
+            kernel benchmark, not full-model latency. full generation still pays
+            tokenizer, attention, sampling, allocation, and cache costs, but the
+            quantized linear layers are the expensive part of decode.
+        </p>
 
         <h2>qwen 3</h2>
 
@@ -262,8 +262,6 @@
             <a href="/ember/">ember</a>
             &nbsp;·&nbsp;
             <a href="/research-notes/">research notes</a>
-            &nbsp;·&nbsp;
-            <a href="/tools/">tools</a>
             &nbsp;·&nbsp;
             <a href="/terms/">terms</a>
         </footer>
