@@ -37,6 +37,7 @@
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
                 <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <a class="nav-lang" href="/research-notes/llama-probing-results.html">en</a>
@@ -103,9 +104,11 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <h3><bdi>LLaMA 3.2 1B</bdi> (16 طبقة، <bdi>hidden dim</bdi> 2048)</h3>
 
+        <figure class="chart-wrap">
         <img class="chart" src="/plots/llama1b_probe_results.png"
              alt="LLaMA 3.2 1B probing results: 3x2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
              loading="lazy" />
+        </figure>
 
         <p><strong>هوية الجذر</strong> قابلة للفك بسهولة في كل طبقة (دقة 96-100%، منحنى شبه مسطح). معلومة الجذر تبقى قابلة للاسترجاع خطياً عبر عمق النموذج كامل.</p>
 
@@ -119,9 +122,11 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <h3><bdi>LLaMA 3.2 3B</bdi> (28 طبقة، <bdi>hidden dim</bdi> 3072)</h3>
 
+        <figure class="chart-wrap">
         <img class="chart" src="/plots/llama3b_probe_results.png"
              alt="LLaMA 3.2 3B probing results: note the U-shaped root accuracy dip and flat 100% pattern accuracy"
              loading="lazy" />
+        </figure>
 
         <p>هنا تبدأ الغرابة.</p>
 
@@ -142,9 +147,11 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <h3><bdi>LLaMA 3.1 8B</bdi> (تشغيل أول مؤرشف، لم يُعد)</h3>
 
+        <figure class="chart-wrap">
         <img class="chart" src="/plots/llama8b_probe_results.png"
              alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
              loading="lazy" />
+        </figure>
 
         <p><strong>تنبيه أرشيفي:</strong> هذا القسم يستخدم ملفات التشغيل الأول لـ <bdi>8B</bdi> ولم يُعد بمنطق التقسيم المصحح. لا تقارن أرقامه الدقيقة مباشرة بنتائج <bdi>1B/3B</bdi> المصححة بعد.</p>
 
@@ -292,6 +299,8 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <a href="/ember/index.ar.html">ember</a>
             &nbsp;·&nbsp;
             <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/index.ar.html">tools</a>
             &nbsp;·&nbsp;
             <a href="/terms/index.ar.html">terms</a>
         </footer>
