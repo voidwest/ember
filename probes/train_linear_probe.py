@@ -16,7 +16,7 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import confusion_matrix
-from sklearn.model_selection import GroupKFold, StratifiedKFold
+from sklearn.model_selection import GroupKFold, StratifiedGroupKFold, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import make_pipeline
 
@@ -33,6 +33,14 @@ SPLIT_ALIASES = {
     "combination-heldout": "combination-heldout",
     "root-pattern": "combination-heldout",
     "root-pattern-heldout": "combination-heldout",
+    "lemma": "lemma-heldout",
+    "lemma-heldout": "lemma-heldout",
+    "surface": "surface-heldout",
+    "surface-heldout": "surface-heldout",
+    "abstract-pattern": "abstract-pattern-heldout",
+    "abstract-pattern-heldout": "abstract-pattern-heldout",
+    "concrete-pattern": "concrete-pattern-heldout",
+    "concrete-pattern-heldout": "concrete-pattern-heldout",
     "template": "template-heldout",
     "template-heldout": "template-heldout",
 }
@@ -200,28 +208,85 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
     if n_groups < 2:
         raise ValueError(f"{split_name} requires at least 2 groups; found {n_groups}")
     for effective_folds in range(min(n_folds, n_groups), 1, -1):
-        splitter = GroupKFold(n_splits=effective_folds)
-        splits = list(splitter.split(np.zeros(len(y)), y, groups=groups))
-        valid = True
-        for train_idx, test_idx in splits:
-            group_overlap = set(groups[train_idx]) & set(groups[test_idx])
-            if group_overlap:
-                raise ValueError(
-                    f"{split_name} produced train/test group overlap: "
-                    f"{sorted(group_overlap)[:5]}"
-                )
-            train_labels = set(y[train_idx])
-            test_labels = set(y[test_idx])
-            if not test_labels.issubset(train_labels):
-                valid = False
-                break
-        if valid:
+        splitters = [
+            StratifiedGroupKFold(n_splits=effective_folds, shuffle=True, random_state=0),
+            GroupKFold(n_splits=effective_folds),
+        ]
+        for splitter in splitters:
+            splits = list(splitter.split(np.zeros(len(y)), y, groups=groups))
+            if _closed_set_splits_are_valid(y, groups, splits, split_name):
+                return splits
+        splits = _make_closed_set_group_splits(y, groups, effective_folds)
+        if splits is not None and _closed_set_splits_are_valid(y, groups, splits, split_name):
             return splits
 
     raise ValueError(
         f"{split_name} creates test labels that are absent from training. "
         "Choose a split whose groups are independent of the target label."
     )
+
+
+def _closed_set_splits_are_valid(y, groups, splits, split_name="grouped") -> bool:
+    for train_idx, test_idx in splits:
+        group_overlap = set(groups[train_idx]) & set(groups[test_idx])
+        if group_overlap:
+            raise ValueError(
+                f"{split_name} produced train/test group overlap: "
+                f"{sorted(group_overlap)[:5]}"
+            )
+        train_labels = set(y[train_idx])
+        test_labels = set(y[test_idx])
+        if not test_labels.issubset(train_labels):
+            return False
+    return True
+
+
+def _make_closed_set_group_splits(y, groups, n_folds):
+    """Greedy grouped CV that keeps every test label visible in training."""
+    y = np.asarray(y)
+    groups = np.asarray(groups)
+    unique_groups = sorted(set(groups))
+    group_indices = {g: np.where(groups == g)[0] for g in unique_groups}
+    group_labels = {g: set(y[group_indices[g]]) for g in unique_groups}
+
+    label_groups = {}
+    for group, labels in group_labels.items():
+        for label in labels:
+            label_groups.setdefault(label, set()).add(group)
+    if any(len(groups_for_label) < 2 for groups_for_label in label_groups.values()):
+        return None
+
+    fold_groups = [set() for _ in range(n_folds)]
+    fold_sizes = [0 for _ in range(n_folds)]
+    ordered_groups = sorted(
+        unique_groups,
+        key=lambda g: (-len(group_labels[g]), -len(group_indices[g]), str(g)),
+    )
+    for group in ordered_groups:
+        candidates = []
+        for fold_idx in range(n_folds):
+            proposed = fold_groups[fold_idx] | {group}
+            if all(label_groups[label] - proposed for label in group_labels[group]):
+                candidates.append(fold_idx)
+        if not candidates:
+            return None
+        chosen = min(candidates, key=lambda i: (fold_sizes[i], len(fold_groups[i]), i))
+        fold_groups[chosen].add(group)
+        fold_sizes[chosen] += len(group_indices[group])
+
+    if any(not fold for fold in fold_groups):
+        return None
+
+    all_indices = np.arange(len(y))
+    splits = []
+    for fold in fold_groups:
+        test_mask = np.isin(groups, list(fold))
+        test_idx = all_indices[test_mask]
+        train_idx = all_indices[~test_mask]
+        if len(test_idx) == 0 or len(train_idx) == 0:
+            return None
+        splits.append((train_idx, test_idx))
+    return splits
 
 
 def prepare_splits(
@@ -482,6 +547,18 @@ def group_values_for_policy(policy, rows, activation_metadata=None):
         patterns = require_field_values(rows, "pattern", policy)
         values = [f"{root}::{pattern}" for root, pattern in zip(roots, patterns)]
         return values, {"effective_policy": policy, "group_field": "root+pattern"}
+    if policy == "lemma-heldout":
+        values = require_field_values(rows, "lemma", policy)
+        return values, {"effective_policy": policy, "group_field": "lemma"}
+    if policy == "surface-heldout":
+        values = require_field_values(rows, "surface", policy)
+        return values, {"effective_policy": policy, "group_field": "surface"}
+    if policy == "abstract-pattern-heldout":
+        values = require_field_values(rows, "abstract_pattern", policy)
+        return values, {"effective_policy": policy, "group_field": "abstract_pattern"}
+    if policy == "concrete-pattern-heldout":
+        values = require_field_values(rows, "concrete_pattern", policy)
+        return values, {"effective_policy": policy, "group_field": "concrete_pattern"}
     if policy == "template-heldout":
         values, source = template_values(rows, activation_metadata, policy)
         return values, {"effective_policy": policy, "group_field": source}
@@ -717,10 +794,17 @@ def main():
             **cv_metadata,
         }
         split_policy_records.append(split_metadata)
+        class_values, class_counts = np.unique(labels, return_counts=True)
+        class_count_map = {
+            str(value): int(count)
+            for value, count in zip(class_values, class_counts)
+        }
+        majority_baseline = max(class_count_map.values()) / len(labels)
         print(f"\n--- {task} probes ---")
         if len(task_rows) != len(rows):
             print(f"  usable rows: {len(task_rows)} / {len(rows)}")
         print(f"  labels: {len(set(labels))} classes")
+        print(f"  majority baseline: {majority_baseline:.3f}")
         print(f"  split policy: {split_metadata['effective_policy']}")
         if split_metadata.get("group_field"):
             print(
@@ -745,11 +829,6 @@ def main():
         for i, layer_acc in enumerate(acc):
             print(f"  layer {i:2d}: {layer_acc:.3f}")
         key = safe_key(task)
-        class_values, class_counts = np.unique(labels, return_counts=True)
-        class_count_map = {
-            str(value): int(count)
-            for value, count in zip(class_values, class_counts)
-        }
         results[f"{key}_accuracy"] = acc
         results[f"{key}_classes"] = np.array(le.classes_, dtype=object)
         results[f"{key}_class_counts"] = np.array(
@@ -757,6 +836,8 @@ def main():
             dtype=np.int64,
         )
         results[f"{key}_chance"] = np.array(1.0 / len(le.classes_))
+        results[f"{key}_majority_baseline"] = np.array(majority_baseline)
+        results[f"{key}_accuracy_minus_majority"] = acc - majority_baseline
         results[f"{key}_confusion_matrices"] = confusions.astype(np.int64)
         trained[key] = probes
 

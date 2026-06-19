@@ -1591,6 +1591,13 @@ where
         .map(|_| Vec::with_capacity(stimuli.len()))
         .collect();
 
+    // batched extraction: concatenate all stimuli into one sequence
+    // with block-diagonal attention masking for independent processing.
+    let mut all_token_ids: Vec<u32> = Vec::new();
+    let mut block_boundaries: Vec<usize> = Vec::new();
+    let mut block_token_counts: Vec<usize> = Vec::new();
+    let mut stimulus_info: Vec<(String, serde_json::Value)> = Vec::new();
+
     for (si, stimulus) in stimuli.iter().enumerate() {
         let prompt = stimulus["prompts"][config.template]
             .as_str()
@@ -1601,35 +1608,117 @@ where
                 )
             })?;
 
-        let (token_ids, offsets) = tokenizer.encode_with_offsets(prompt)?;
-        ensure_sequence_fits(token_ids.len(), 0, config.context_limit)?;
+        let (token_ids, _offsets) = tokenizer.encode_with_offsets(prompt)?;
         if token_ids.is_empty() {
             eprintln!(
                 "  [{}/{}] WARNING: empty tokenization, skipping",
                 si + 1,
                 stimuli.len()
             );
+            // write zero activation row for this stimulus
             for writer in &mut activation_writers {
                 writer.write_f32s(&zero_activation_row)?;
             }
             continue;
         }
 
-        let probe_indices_by_output = config
-            .outputs
-            .iter()
-            .map(|output| {
-                select_probe_indices(prompt, &token_ids, &offsets, stimulus, output.position)
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let (pooled_states, logits) =
-            model.forward_pooled_activations(backend, &token_ids, &probe_indices_by_output)?;
+        block_boundaries.push(all_token_ids.len());
+        block_token_counts.push(token_ids.len());
+        all_token_ids.extend_from_slice(&token_ids);
+        stimulus_info.push((prompt.to_string(), stimulus.clone()));
+    }
 
-        // record correctness: argmax of logits at last position
+    if block_boundaries.is_empty() {
+        eprintln!("no valid stimuli to process");
+        return Ok(());
+    }
+    let total_tokens = all_token_ids.len();
+    let context_limit = config.context_limit;
+    eprintln!(
+        "batched {} stimuli into {} total tokens ({} blocks), context limit {}",
+        stimulus_info.len(),
+        total_tokens,
+        block_boundaries.len(),
+        context_limit
+    );
+
+    // split into chunks that fit within the context limit
+    let n_outputs = config.outputs.len();
+    let n_stimuli = stimulus_info.len();
+    let mut chunk_start = 0usize; // stimulus index
+    let mut global_stimulus_idx = 0usize;
+
+    while chunk_start < n_stimuli {
+        // find how many stimuli fit in this chunk
+        let mut chunk_end = chunk_start;
+        let mut chunk_tokens = 0usize;
+        while chunk_end < n_stimuli {
+            let next_tokens = chunk_tokens + block_token_counts[chunk_end];
+            if next_tokens > context_limit && chunk_tokens > 0 {
+                break;
+            }
+            chunk_tokens = next_tokens;
+            chunk_end += 1;
+        }
+
+        let chunk_boundaries = &block_boundaries[chunk_start..chunk_end];
+        // remap boundaries relative to chunk start token position
+        let chunk_base = chunk_boundaries[0];
+        let chunk_token_ids = &all_token_ids[chunk_base..chunk_base + chunk_tokens];
+        let remapped_boundaries: Vec<usize> = chunk_boundaries
+            .iter()
+            .map(|b| b - chunk_base)
+            .collect();
+
+        // build probe index groups for this chunk only
+        let mut chunk_probe_indices: Vec<Vec<usize>> =
+            Vec::with_capacity((chunk_end - chunk_start) * n_outputs);
+
+        for bi in chunk_start..chunk_end {
+            let base = block_boundaries[bi];
+            let token_slice = &all_token_ids[base..base + block_token_counts[bi]];
+
+            let (_, offsets) = tokenizer.encode_with_offsets(&stimulus_info[bi].0)?;
+
+            for output in &config.outputs {
+                let local_indices = select_probe_indices(
+                    &stimulus_info[bi].0,
+                    token_slice,
+                    &offsets,
+                    &stimulus_info[bi].1,
+                    output.position,
+                )?;
+                let absolute: Vec<usize> =
+                    local_indices.iter().map(|i| (base - chunk_base) + i).collect();
+                chunk_probe_indices.push(absolute);
+            }
+        }
+
+        eprintln!(
+            "  chunk [{}-{}]: {} stimuli, {} tokens",
+            chunk_start, chunk_end - 1, chunk_end - chunk_start, chunk_tokens
+        );
+
+        // batched forward pass for this chunk
+        let (pooled_states, logits) = model.forward_pooled_with_blocks(
+            backend,
+            chunk_token_ids,
+            &remapped_boundaries,
+            &chunk_probe_indices,
+        )?;
+
+        // write pooled states and correctness for each stimulus in this chunk
+        for (local_bi, bi) in (chunk_start..chunk_end).enumerate() {
+            let base = chunk_boundaries[local_bi];
+            let n_tokens = block_token_counts[bi];
+            let token_slice = &all_token_ids[base..base + n_tokens];
+
+        // extract per-stimulus logits slice (chunk-relative positions)
         let logit_data = backend.data(&logits);
         let logit_shape = backend.shape(&logits);
         let vocab_size = logit_shape[1];
-        let last_row_start = (token_ids.len() - 1) * vocab_size;
+        let rel_base = remapped_boundaries[local_bi];
+        let last_row_start = (rel_base + n_tokens - 1) * vocab_size;
         let last_logits = &logit_data[last_row_start..];
         let predicted_id = last_logits
             .iter()
@@ -1647,10 +1736,11 @@ where
             backend,
             model,
             tokenizer,
-            &token_ids,
+            token_slice,
             config.generate_tokens,
             config.context_limit,
         )?;
+        let stimulus = &stimulus_info[bi].1;
         let expected = stimulus["expected_surface"]
             .as_str()
             .unwrap_or("")
@@ -1658,26 +1748,26 @@ where
         let (generated_exact_match, generated_contains_match) =
             match_generated_text(&generated_text, &expected);
 
-        if pooled_states.len() != config.outputs.len() {
-            anyhow::bail!(
-                "pooled activation group mismatch: got {}, expected {}",
-                pooled_states.len(),
-                config.outputs.len()
-            );
-        }
-
         for (oi, output) in config.outputs.iter().enumerate() {
-            let probe_indices = &probe_indices_by_output[oi];
-            if pooled_states[oi].len() != n_layers * embed_dim {
-                anyhow::bail!(
-                    "pooled activation length mismatch for {}: got {}, expected {}",
-                    output.position.as_str(),
-                    pooled_states[oi].len(),
-                    n_layers * embed_dim
-                );
-            }
+            // extract pooled states: index = local_bi * n_outputs + oi
+            let pool_idx = local_bi * n_outputs + oi;
+            let pooled_slice = &pooled_states[pool_idx];
+
+            // re-tokenize for offsets
+            let prompt_str = stimulus["prompts"][config.template]
+                .as_str()
+                .unwrap_or("");
+            let (_, offsets) = tokenizer.encode_with_offsets(prompt_str)?;
+            let probe_indices = select_probe_indices(
+                prompt_str,
+                token_slice,
+                &offsets,
+                stimulus,
+                output.position,
+            )?;
+
             correctness[oi].push(serde_json::json!({
-                "index": si,
+                "index": bi,
                 "root": stimulus["root"],
                 "pattern": stimulus["pattern"],
                 "expected": expected,
@@ -1696,23 +1786,26 @@ where
                 "probe_token_indices": probe_indices,
             }));
             token_selections[oi].push(serde_json::json!({
-                "index": si,
-                "token_count": token_ids.len(),
+                "index": bi,
+                "token_count": n_tokens,
                 "probe_token_indices": probe_indices,
             }));
 
-            activation_writers[oi].write_f32s(&pooled_states[oi])?;
+            activation_writers[oi].write_f32s(pooled_slice)?;
         }
 
-        if (si + 1) % 10 == 0 || si + 1 == stimuli.len() {
+        global_stimulus_idx += 1;
+        if global_stimulus_idx % 100 == 0 || global_stimulus_idx == n_stimuli {
             eprintln!(
-                "  [{:3}/{}] collected in {:.1}s",
-                si + 1,
-                stimuli.len(),
+                "  [{:4}/{}] saved in {:.1}s",
+                global_stimulus_idx,
+                n_stimuli,
                 start.elapsed().as_secs_f64()
             );
         }
     }
+    chunk_start = chunk_end;
+    } // end while chunk_start < n_stimuli
 
     // -- save --------------------------------------------------
     for (writer, output) in activation_writers.iter_mut().zip(&config.outputs) {

@@ -98,7 +98,10 @@ def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
     returns True if data was plotted.
     """
     data = np.load(probes_path, allow_pickle=True)
-    if "root_accuracy" not in data:
+    # route to generic task rendering when a modern "tasks" manifest exists
+    if "tasks" in data:
+        return plot_generic_probe_metrics(data, ax_root, ax_pattern, dark=dark)
+    if "root_accuracy" not in data or "pattern_accuracy" not in data:
         return plot_generic_probe_metrics(data, ax_root, ax_pattern, dark=dark)
 
     n_layers = len(data["root_accuracy"])
@@ -161,6 +164,7 @@ def plot_generic_probe_metrics(data, ax_acc, ax_sel, dark=False):
     layers = None
     plotted_acc = False
     plotted_sel = False
+    plotted_margin = False
 
     for i, task in enumerate(tasks):
         key = safe_key(task)
@@ -183,17 +187,30 @@ def plot_generic_probe_metrics(data, ax_acc, ax_sel, dark=False):
         )
         plotted_acc = True
 
+        margin_key = f"{key}_accuracy_minus_majority"
+        if margin_key in data:
+            ax_sel.plot(
+                layers,
+                data[margin_key],
+                color=color,
+                marker="s",
+                markersize=3,
+                linewidth=1.2,
+                label=label_text,
+            )
+            plotted_margin = True
+
         sel_key = f"{key}_selectivity"
         if sel_key in data:
             ax_sel.plot(
                 layers,
                 data[sel_key],
                 color=color,
-                marker="s",
-                markersize=3,
-                linewidth=1.1,
+                marker=None,
+                linewidth=0.9,
                 linestyle="--",
-                label=label_text,
+                alpha=0.45,
+                label=f"{label_text} selectivity" if not plotted_margin else None,
             )
             plotted_sel = True
 
@@ -207,11 +224,11 @@ def plot_generic_probe_metrics(data, ax_acc, ax_sel, dark=False):
     ax_acc.grid(alpha=0.3)
     ax_acc.legend(fontsize=7)
 
-    if plotted_sel:
-        ax_sel.set_ylabel("selectivity")
+    if plotted_margin or plotted_sel:
+        ax_sel.axhline(0.0, color=DARK_DIM if dark else "gray", linestyle="--", alpha=0.5)
+        ax_sel.set_ylabel("score")
         ax_sel.set_xlabel("layer")
-        ax_sel.set_title("random-label selectivity")
-        ax_sel.set_ylim(-0.02, 1.05)
+        ax_sel.set_title("accuracy - majority baseline")
         ax_sel.grid(alpha=0.3)
         ax_sel.legend(fontsize=7)
     else:

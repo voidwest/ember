@@ -80,6 +80,22 @@ pub trait ForwardModel<B: Backend> {
         }
         Ok((pooled, logits))
     }
+
+    /// batched forward pass with block-diagonal attention for independent sequences.
+    ///
+    /// default implementation falls back to per-group `forward_pooled_activations`.
+    /// models with native block-masking support (e.g. Llama) override this for
+    /// substantially better throughput when processing many short independent prompts.
+    #[allow(clippy::type_complexity)]
+    fn forward_pooled_with_blocks(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        _block_boundaries: &[usize],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        self.forward_pooled_activations(backend, token_ids, token_index_groups)
+    }
 }
 
 pub fn pool_layer_activation(
@@ -285,6 +301,7 @@ impl<B: Backend> Module<B> for Attention<B> {
                 n_heads: self.n_heads,
                 n_kv_heads: self.n_heads,
                 head_dim,
+                block_boundaries: None,
             },
         )?;
         self.c_proj.forward(backend, &result_tensor)
@@ -728,5 +745,21 @@ impl<B: Backend> Gpt2<B> {
         let x = self.ln_f.forward(backend, &x)?;
         let logits = self.head.forward(backend, &x)?;
         Ok((pooled, logits))
+    }
+
+    /// batched forward pass with block-diagonal attention for independent sequences.
+    ///
+    /// default implementation falls back to per-group `forward_pooled_activations`.
+    /// models with native block-masking support (e.g. Llama) override this for
+    /// substantially better throughput when processing many short independent prompts.
+    #[allow(clippy::type_complexity)]
+    fn forward_pooled_with_blocks(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        _block_boundaries: &[usize],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        self.forward_pooled_activations(backend, token_ids, token_index_groups)
     }
 }

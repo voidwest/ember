@@ -13,10 +13,15 @@ thread_local! {
 
 /// shape metadata for standard causal self-attention.
 #[derive(Debug, Clone, Copy)]
-pub struct AttentionSpec {
+pub struct AttentionSpec<'a> {
     pub n_heads: usize,
     pub n_kv_heads: usize,
     pub head_dim: usize,
+    /// optional block boundaries for batched independent sequences.
+    /// when set, token i can only attend to positions in the same block.
+    /// boundaries[i] is the first token index of the i-th block.
+    /// the last implicit boundary is seq_len.
+    pub block_boundaries: Option<&'a [usize]>,
 }
 
 /// shape metadata for cached causal self-attention.
@@ -322,6 +327,24 @@ impl Backend for CpuBackend {
         let k_data = k.data();
         let v_data = v.data();
 
+        // precompute per-position block start for block-diagonal masking
+        let block_start: Vec<usize> = if let Some(boundaries) = spec.block_boundaries {
+            let mut starts = vec![0usize; seq_len];
+            let mut current_start = 0usize;
+            let mut bi = 0usize;
+            for i in 0..seq_len {
+                while bi < boundaries.len() && boundaries[bi] <= i {
+                    current_start = boundaries[bi];
+                    bi += 1;
+                }
+                starts[i] = current_start;
+            }
+            starts
+        } else {
+            vec![0usize; seq_len]
+        };
+        let use_blocks = spec.block_boundaries.is_some();
+
         if should_parallel_attention(spec.n_heads, seq_len, seq_len, spec.head_dim) {
             let heads = (0..spec.n_heads)
                 .into_par_iter()
@@ -334,20 +357,23 @@ impl Backend for CpuBackend {
 
                     for i in 0..seq_len {
                         let q_idx = i * embed_dim + q_head_offset;
+                        let start = if use_blocks { block_start[i] } else { 0 };
+                        let ctx_len = i - start + 1;
 
-                        for (j, slot) in qk_row.iter_mut().enumerate().take(i + 1) {
+                        for j in start..=i {
                             let k_idx = j * kv_dim + kv_head_offset;
                             let dot = crate::simd::dot_product(
                                 &q_data[q_idx..q_idx + spec.head_dim],
                                 &k_data[k_idx..k_idx + spec.head_dim],
                             );
-                            *slot = dot * scale;
+                            qk_row[j - start] = dot * scale;
                         }
 
-                        softmax_prefix(&mut qk_row, i + 1);
+                        softmax_prefix(&mut qk_row, ctx_len);
 
                         let head_offset = i * spec.head_dim;
-                        for (j, &weight) in qk_row.iter().enumerate().take(i + 1) {
+                        for j in start..=i {
+                            let weight = qk_row[j - start];
                             if weight == 0.0 {
                                 continue;
                             }
@@ -377,20 +403,23 @@ impl Backend for CpuBackend {
 
             for i in 0..seq_len {
                 let q_idx = i * embed_dim + q_head_offset;
+                let start = if use_blocks { block_start[i] } else { 0 };
+                let ctx_len = i - start + 1;
 
-                for (j, slot) in qk_row.iter_mut().enumerate().take(i + 1) {
+                for j in start..=i {
                     let k_idx = j * kv_dim + kv_head_offset;
                     let dot = crate::simd::dot_product(
                         &q_data[q_idx..q_idx + spec.head_dim],
                         &k_data[k_idx..k_idx + spec.head_dim],
                     );
-                    *slot = dot * scale;
+                    qk_row[j - start] = dot * scale;
                 }
 
-                softmax_prefix(&mut qk_row, i + 1);
+                softmax_prefix(&mut qk_row, ctx_len);
 
                 let out_offset = i * embed_dim + q_head_offset;
-                for (j, &weight) in qk_row.iter().enumerate().take(i + 1) {
+                for j in start..=i {
+                    let weight = qk_row[j - start];
                     if weight == 0.0 {
                         continue;
                     }
@@ -684,11 +713,6 @@ fn matmul_q8_0_prefill(
 
         // x [seq_len, in_features] @ w_block [in_features, block_len]
         // -> write to out[:, j..j+block_len]
-        //
-        // sgemm(m, k, n, alpha, A, rsa, csa, B, rsb, csb, beta, C, rsc, csc)
-        //   A: row-major [m, k] -> rsa=k, csa=1
-        //   B: column-major [k, n] -> rsb=1, csb=k
-        //   C: row-major [m, n] -> rsc=n_full, csc=1
         unsafe {
             matrixmultiply::sgemm(
                 seq_len,

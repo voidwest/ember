@@ -409,6 +409,66 @@ impl<B: Backend> LlamaAttention<B> {
                 n_heads: self.n_heads,
                 n_kv_heads: self.n_kv_heads,
                 head_dim,
+                block_boundaries: None,
+            },
+        )?;
+
+        self.o_proj.forward(backend, &result_tensor)
+    }
+
+    /// forward with block-diagonal attention mask for batched independent sequences.
+    /// `block_boundaries` marks the start position of each independent block.
+    pub fn forward_with_blocks(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        block_boundaries: &[usize],
+    ) -> Result<B::Tensor, B::Error> {
+        let q = self.q_proj.forward(backend, x)?;
+        let k = self.k_proj.forward(backend, x)?;
+        let v = self.v_proj.forward(backend, x)?;
+
+        let head_dim = self.head_dim;
+
+        let q = apply_rope_and_qk_norm(
+            backend,
+            &q,
+            &self.rope_cos,
+            &self.rope_sin,
+            RopeQkNormSpec {
+                start_pos: 0,
+                n_heads: self.n_heads,
+                head_dim,
+                rope_layout: self.rope_layout,
+                qk_norm_order: self.qk_norm_order,
+            },
+            self.q_norm.as_ref(),
+        )?;
+
+        let k = apply_rope_and_qk_norm(
+            backend,
+            &k,
+            &self.rope_cos,
+            &self.rope_sin,
+            RopeQkNormSpec {
+                start_pos: 0,
+                n_heads: self.n_kv_heads,
+                head_dim,
+                rope_layout: self.rope_layout,
+                qk_norm_order: self.qk_norm_order,
+            },
+            self.k_norm.as_ref(),
+        )?;
+
+        let result_tensor = backend.causal_attention(
+            &q,
+            &k,
+            &v,
+            AttentionSpec {
+                n_heads: self.n_heads,
+                n_kv_heads: self.n_kv_heads,
+                head_dim,
+                block_boundaries: Some(block_boundaries),
             },
         )?;
 
@@ -566,6 +626,25 @@ impl<B: Backend> LlamaBlock<B> {
         let x = backend.add(x, &attn_out)?;
 
         // rms_norm -> swiglu mlp -> residual add
+        let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
+        let mlp_out = self.mlp.forward(backend, &normed)?;
+        backend.add(&x, &mlp_out)
+    }
+}
+
+impl<B: Backend> LlamaBlock<B> {
+    /// forward with block-diagonal attention mask.
+    pub fn forward_with_blocks(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        block_boundaries: &[usize],
+    ) -> Result<B::Tensor, B::Error> {
+        let normed = backend.rms_norm(x, &self.input_layernorm, self.norm_eps)?;
+        let attn_out = self
+            .self_attn
+            .forward_with_blocks(backend, &normed, block_boundaries)?;
+        let x = backend.add(x, &attn_out)?;
         let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
         let mlp_out = self.mlp.forward(backend, &normed)?;
         backend.add(&x, &mlp_out)
@@ -943,6 +1022,52 @@ impl<B: Backend> Llama<B> {
 
         for (li, block) in self.blocks.iter().enumerate() {
             x = block.forward(backend, &x)?;
+            let data = backend.data(&x);
+            for (gi, token_indices) in token_index_groups.iter().enumerate() {
+                let offset = li * embed_dim;
+                pool_layer_activation(
+                    data,
+                    token_indices,
+                    embed_dim,
+                    &mut pooled[gi][offset..offset + embed_dim],
+                );
+            }
+        }
+        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &x)?;
+        Ok((pooled, logits))
+    }
+
+    /// batched forward pass with block-diagonal attention for independent sequences.
+    ///
+    /// `token_ids` is a concatenation of all stimuli tokens.
+    /// `block_boundaries` marks the start position of each stimulus block
+    /// (the first boundary is always 0, each subsequent boundary is the
+    /// cumulative token count after the previous stimulus).
+    /// `token_index_groups` maps each output group to the token position(s)
+    /// to pool from within its stimulus block.
+    #[allow(clippy::type_complexity)]
+    pub fn forward_pooled_with_blocks(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        block_boundaries: &[usize],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let seq_len = token_ids.len();
+        let embed_dim = self.config.embed_dim;
+        let mut pooled = token_index_groups
+            .iter()
+            .map(|_| vec![0.0f32; self.blocks.len() * embed_dim])
+            .collect::<Vec<_>>();
+
+        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
+        for (i, &tok) in token_ids.iter().enumerate() {
+            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
+        }
+
+        for (li, block) in self.blocks.iter().enumerate() {
+            x = block.forward_with_blocks(backend, &x, block_boundaries)?;
             let data = backend.data(&x);
             for (gi, token_indices) in token_index_groups.iter().enumerate() {
                 let offset = li * embed_dim;

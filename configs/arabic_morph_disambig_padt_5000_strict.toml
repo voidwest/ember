@@ -1,0 +1,24 @@
+input_path = "data/arabic_morph_real/camel_disambig_msa_padt_5000.jsonl"
+output_dir = "data/arabic_morph_real/out_disambig_padt_5000_strict"
+source_name = "camel_tools_disambig_mle_calima_msa_r13"
+seed = 17
+split_strategy = "root_heldout"
+sft_tasks = ["analyze_form", "root_pattern", "feature_bundle"]
+output_formats = ["canonical", "sft", "probes", "stats", "validation", "summary_report"]
+
+[filters]
+drop_missing_root = true
+require_abstract_pattern = true
+require_concrete_pattern = true
+drop_missing_lemma = true
+drop_ambiguous = true
+pos_allowlist = ["NOUN", "VERB", "ADJ"]
+min_examples_per_root = 1
+min_examples_per_pattern = 1
+max_examples_per_root = 0
+max_examples_per_pattern = 0
+
+[split_ratios]
+train = 0.7
+dev = 0.15
+test = 0.15
