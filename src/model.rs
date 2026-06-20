@@ -86,6 +86,7 @@ pub trait ForwardModel<B: Backend> {
     /// default implementation falls back to per-group `forward_pooled_activations`.
     /// models with native block-masking support (e.g. Llama) override this for
     /// substantially better throughput when processing many short independent prompts.
+    #[allow(dead_code)]
     #[allow(clippy::type_complexity)]
     fn forward_pooled_with_blocks(
         &self,
@@ -752,6 +753,7 @@ impl<B: Backend> Gpt2<B> {
     /// default implementation falls back to per-group `forward_pooled_activations`.
     /// models with native block-masking support (e.g. Llama) override this for
     /// substantially better throughput when processing many short independent prompts.
+    #[allow(dead_code)]
     #[allow(clippy::type_complexity)]
     fn forward_pooled_with_blocks(
         &self,

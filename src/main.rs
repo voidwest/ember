@@ -1665,10 +1665,8 @@ where
         // remap boundaries relative to chunk start token position
         let chunk_base = chunk_boundaries[0];
         let chunk_token_ids = &all_token_ids[chunk_base..chunk_base + chunk_tokens];
-        let remapped_boundaries: Vec<usize> = chunk_boundaries
-            .iter()
-            .map(|b| b - chunk_base)
-            .collect();
+        let remapped_boundaries: Vec<usize> =
+            chunk_boundaries.iter().map(|b| b - chunk_base).collect();
 
         // build probe index groups for this chunk only
         let mut chunk_probe_indices: Vec<Vec<usize>> =
@@ -1688,15 +1686,20 @@ where
                     &stimulus_info[bi].1,
                     output.position,
                 )?;
-                let absolute: Vec<usize> =
-                    local_indices.iter().map(|i| (base - chunk_base) + i).collect();
+                let absolute: Vec<usize> = local_indices
+                    .iter()
+                    .map(|i| (base - chunk_base) + i)
+                    .collect();
                 chunk_probe_indices.push(absolute);
             }
         }
 
         eprintln!(
             "  chunk [{}-{}]: {} stimuli, {} tokens",
-            chunk_start, chunk_end - 1, chunk_end - chunk_start, chunk_tokens
+            chunk_start,
+            chunk_end - 1,
+            chunk_end - chunk_start,
+            chunk_tokens
         );
 
         // batched forward pass for this chunk
@@ -1713,98 +1716,96 @@ where
             let n_tokens = block_token_counts[bi];
             let token_slice = &all_token_ids[base..base + n_tokens];
 
-        // extract per-stimulus logits slice (chunk-relative positions)
-        let logit_data = backend.data(&logits);
-        let logit_shape = backend.shape(&logits);
-        let vocab_size = logit_shape[1];
-        let rel_base = remapped_boundaries[local_bi];
-        let last_row_start = (rel_base + n_tokens - 1) * vocab_size;
-        let last_logits = &logit_data[last_row_start..];
-        let predicted_id = last_logits
-            .iter()
-            .enumerate()
-            .fold((0usize, f32::NEG_INFINITY), |(max_i, max_v), (i, &v)| {
-                if v > max_v {
-                    (i, v)
-                } else {
-                    (max_i, max_v)
-                }
-            })
-            .0;
-        let predicted_text = tokenizer.decode(&[predicted_id as u32])?;
-        let (generated_ids, generated_text) = generate_probe_continuation(
-            backend,
-            model,
-            tokenizer,
-            token_slice,
-            config.generate_tokens,
-            config.context_limit,
-        )?;
-        let stimulus = &stimulus_info[bi].1;
-        let expected = stimulus["expected_surface"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        let (generated_exact_match, generated_contains_match) =
-            match_generated_text(&generated_text, &expected);
-
-        for (oi, output) in config.outputs.iter().enumerate() {
-            // extract pooled states: index = local_bi * n_outputs + oi
-            let pool_idx = local_bi * n_outputs + oi;
-            let pooled_slice = &pooled_states[pool_idx];
-
-            // re-tokenize for offsets
-            let prompt_str = stimulus["prompts"][config.template]
-                .as_str()
-                .unwrap_or("");
-            let (_, offsets) = tokenizer.encode_with_offsets(prompt_str)?;
-            let probe_indices = select_probe_indices(
-                prompt_str,
+            // extract per-stimulus logits slice (chunk-relative positions)
+            let logit_data = backend.data(&logits);
+            let logit_shape = backend.shape(&logits);
+            let vocab_size = logit_shape[1];
+            let rel_base = remapped_boundaries[local_bi];
+            let last_row_start = (rel_base + n_tokens - 1) * vocab_size;
+            let last_logits = &logit_data[last_row_start..];
+            let predicted_id = last_logits
+                .iter()
+                .enumerate()
+                .fold((0usize, f32::NEG_INFINITY), |(max_i, max_v), (i, &v)| {
+                    if v > max_v {
+                        (i, v)
+                    } else {
+                        (max_i, max_v)
+                    }
+                })
+                .0;
+            let predicted_text = tokenizer.decode(&[predicted_id as u32])?;
+            let (generated_ids, generated_text) = generate_probe_continuation(
+                backend,
+                model,
+                tokenizer,
                 token_slice,
-                &offsets,
-                stimulus,
-                output.position,
+                config.generate_tokens,
+                config.context_limit,
             )?;
+            let stimulus = &stimulus_info[bi].1;
+            let expected = stimulus["expected_surface"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            let (generated_exact_match, generated_contains_match) =
+                match_generated_text(&generated_text, &expected);
 
-            correctness[oi].push(serde_json::json!({
-                "index": bi,
-                "root": stimulus["root"],
-                "pattern": stimulus["pattern"],
-                "expected": expected,
-                "predicted": predicted_text.trim().to_string(),
-                "predicted_id": predicted_id,
-                "next_token_predicted": predicted_text.trim().to_string(),
-                "next_token_id": predicted_id,
-                "generated": generated_text.trim().to_string(),
-                "generated_ids": generated_ids,
-                "generated_exact_match": generated_exact_match,
-                "generated_contains_match": generated_contains_match,
-                "correct": generated_exact_match || generated_contains_match,
-                "probe_template": config.template,
-                "probe_position": output.position.as_str(),
-                "probe_generate_tokens": config.generate_tokens,
-                "probe_token_indices": probe_indices,
-            }));
-            token_selections[oi].push(serde_json::json!({
-                "index": bi,
-                "token_count": n_tokens,
-                "probe_token_indices": probe_indices,
-            }));
+            for (oi, output) in config.outputs.iter().enumerate() {
+                // extract pooled states: index = local_bi * n_outputs + oi
+                let pool_idx = local_bi * n_outputs + oi;
+                let pooled_slice = &pooled_states[pool_idx];
 
-            activation_writers[oi].write_f32s(pooled_slice)?;
+                // re-tokenize for offsets
+                let prompt_str = stimulus["prompts"][config.template].as_str().unwrap_or("");
+                let (_, offsets) = tokenizer.encode_with_offsets(prompt_str)?;
+                let probe_indices = select_probe_indices(
+                    prompt_str,
+                    token_slice,
+                    &offsets,
+                    stimulus,
+                    output.position,
+                )?;
+
+                correctness[oi].push(serde_json::json!({
+                    "index": bi,
+                    "root": stimulus["root"],
+                    "pattern": stimulus["pattern"],
+                    "expected": expected,
+                    "predicted": predicted_text.trim().to_string(),
+                    "predicted_id": predicted_id,
+                    "next_token_predicted": predicted_text.trim().to_string(),
+                    "next_token_id": predicted_id,
+                    "generated": generated_text.trim().to_string(),
+                    "generated_ids": generated_ids,
+                    "generated_exact_match": generated_exact_match,
+                    "generated_contains_match": generated_contains_match,
+                    "correct": generated_exact_match || generated_contains_match,
+                    "probe_template": config.template,
+                    "probe_position": output.position.as_str(),
+                    "probe_generate_tokens": config.generate_tokens,
+                    "probe_token_indices": probe_indices,
+                }));
+                token_selections[oi].push(serde_json::json!({
+                    "index": bi,
+                    "token_count": n_tokens,
+                    "probe_token_indices": probe_indices,
+                }));
+
+                activation_writers[oi].write_f32s(pooled_slice)?;
+            }
+
+            global_stimulus_idx += 1;
+            if global_stimulus_idx.is_multiple_of(100) || global_stimulus_idx == n_stimuli {
+                eprintln!(
+                    "  [{:4}/{}] saved in {:.1}s",
+                    global_stimulus_idx,
+                    n_stimuli,
+                    start.elapsed().as_secs_f64()
+                );
+            }
         }
-
-        global_stimulus_idx += 1;
-        if global_stimulus_idx % 100 == 0 || global_stimulus_idx == n_stimuli {
-            eprintln!(
-                "  [{:4}/{}] saved in {:.1}s",
-                global_stimulus_idx,
-                n_stimuli,
-                start.elapsed().as_secs_f64()
-            );
-        }
-    }
-    chunk_start = chunk_end;
+        chunk_start = chunk_end;
     } // end while chunk_start < n_stimuli
 
     // -- save --------------------------------------------------

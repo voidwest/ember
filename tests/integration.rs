@@ -646,6 +646,7 @@ fn test_backend_causal_attention_shapes() {
                 n_heads: 1,
                 n_kv_heads: 1,
                 head_dim: 2,
+                block_boundaries: None,
             },
         )
         .expect("attention should run");

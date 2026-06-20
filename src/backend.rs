@@ -332,12 +332,12 @@ impl Backend for CpuBackend {
             let mut starts = vec![0usize; seq_len];
             let mut current_start = 0usize;
             let mut bi = 0usize;
-            for i in 0..seq_len {
+            for (i, s) in starts.iter_mut().enumerate() {
                 while bi < boundaries.len() && boundaries[bi] <= i {
                     current_start = boundaries[bi];
                     bi += 1;
                 }
-                starts[i] = current_start;
+                *s = current_start;
             }
             starts
         } else {
@@ -355,9 +355,9 @@ impl Backend for CpuBackend {
                     let mut head_out = vec![0.0f32; seq_len * spec.head_dim];
                     let mut qk_row = vec![0.0f32; seq_len];
 
-                    for i in 0..seq_len {
+                    for (i, &start) in block_start.iter().enumerate() {
                         let q_idx = i * embed_dim + q_head_offset;
-                        let start = if use_blocks { block_start[i] } else { 0 };
+                        let start = if use_blocks { start } else { 0 };
                         let ctx_len = i - start + 1;
 
                         for j in start..=i {
@@ -401,9 +401,9 @@ impl Backend for CpuBackend {
             let kv_h = h / n_repeat;
             let kv_head_offset = kv_h * spec.head_dim;
 
-            for i in 0..seq_len {
+            for (i, &start) in block_start.iter().enumerate() {
                 let q_idx = i * embed_dim + q_head_offset;
-                let start = if use_blocks { block_start[i] } else { 0 };
+                let start = if use_blocks { start } else { 0 };
                 let ctx_len = i - start + 1;
 
                 for j in start..=i {
