@@ -1,9 +1,9 @@
 \begin{tabular}{lccccc}
 \toprule
-Model & Random CV & Lemma-heldout & Lift & 95\% CI & Tokenization \\
+Model & Random CV & Lemma-heldout & Lift & Tokenization \\
 \midrule
-  Qwen3-0.6B & 0.927 & 0.860 / 0.694 & \textbf{+0.165} & [0.819--0.857] & 15.9\% single, 2.42 tok/word \\
-  Llama-3.2-1B & 0.936 & 0.840 / 0.694 & \textbf{+0.145} & [0.806--0.820] & 0\% single, 3.68 tok/word \\
-  Qwen2.5-1.5B & 0.902 & 0.781 / 0.694 & \textbf{+0.087} & [0.765--0.776] & 15.9\% single, 2.42 tok/word \\
+  Qwen3-0.6B & 0.934 & 0.885 / 0.672 & \textbf{+0.213} & 15.9\% single, 2.42 tok/word \\
+  Llama-3.2-1B & 0.942 & 0.846 / 0.693 & \textbf{+0.152} & 0\% single, 3.68 tok/word \\
+  Qwen2.5-1.5B & \multicolumn{4}{c}{excluded — tokenizer/architecture mismatch} \\
 \bottomrule
 \end{tabular}
