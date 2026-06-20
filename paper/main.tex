@@ -22,11 +22,11 @@ Independent Researcher\\
 \maketitle
 
 \begin{abstract}
-Linear probing is widely used to study morphological encoding in language models, but standard stratified cross-validation conflates lexical overlap with representational generalization. We probe three small language models---Qwen3-0.6B, Llama-3.2-1B, and Qwen2.5-1.5B---on 1,416 Arabic morphology stimuli annotated for root, lemma, POS, abstract pattern, concrete pattern, gender, and number. We compare random CV against GroupKFold splits that hold out surface forms, lemmas, or roots, and report char n-gram surface baselines, shuffled-label controls, and multi-seed stability for every probe.
+Linear probing is widely used to study morphological encoding in language models, but standard stratified cross-validation conflates lexical overlap with representational generalization. We probe two small decoder-only language models---Qwen3-0.6B and Llama-3.2-1B---on 4,701 Arabic morphology stimuli (expanded from an earlier 1,416-token pilot) annotated for root, lemma, POS, abstract pattern, concrete pattern, gender, and number. We compare random CV against GroupKFold splits that hold out lemmas or roots, and report char n-gram surface baselines, shuffled-label controls, and multi-seed stability for every probe. All experiments extract hidden states from the final token of a fixed prompt template---which, for our template, is the period (``.''), not the final subword token of the Arabic stimulus.
 
-We find a sharp bifurcation by label cardinality. Low-cardinality morphosyntactic labels---POS (3 classes), gender (2), number (3)---can be evaluated under heldout lexical splits. POS shows representational lift over surface baselines across all three models we tested (Qwen3-0.6B: +16.5\%; Llama-3.2-1B: +14.5\%; Qwen2.5-1.5B: +8.7\%), while gender and number lifts are inconsistent (negative on Qwen2.5). High-cardinality morphological labels---root (164 classes), lemma (153), abstract pattern (147), concrete pattern (146)---are not meaningfully evaluable under ordinary closed-set heldout classification at this dataset scale, because every fold contains test labels absent from training.
+We find that POS shows consistent representational lift over surface baselines under lemma-heldout evaluation in both models (Qwen3-0.6B: +21.3\%; Llama-3.2-1B: +15.2\% at 5k scale), confirming a result first observed at 1.4k and strengthening at larger scale. Gender and number lifts are positive but modest (+4.4--12.3\%). High-cardinality morphological labels---root (403 classes in the 5k set), lemma, abstract pattern---are not meaningfully evaluable under ordinary closed-set heldout classification even at this larger scale, because GroupKFold by root or lemma still produces test labels unseen during training.
 
-We argue that this cardinality split is a methodological constraint for morphology probing when labels are sparse and high-cardinality: the label space determines whether heldout evaluation is possible, and high-cardinality tasks require either much larger datasets, label-space reformulation, or non-classification evaluation frameworks. The cross-model replication of POS encoding under heldout validation---despite radically different tokenization between models---suggests that syntactic category information survives the architectures and tokenizers we tested, and is less likely to be an artifact of a single model family.
+We observe an architectural divergence in where POS information peaks: Qwen3-0.6B's best layer shifts deeper under heldout (L8), while Llama-3.2-1B peaks at the first transformer block (L0) and declines thereafter. This pattern, observed in two models, suggests that depth requirements for morphological generalization may differ across architectures, but we do not claim it as a general architectural law. Qwen2.5-1.5B was excluded due to a tokenizer loading issue in our extraction engine that produced invalid hidden states; results from a prior pilot run with a different GGUF file should be treated as unreliable. We note this as a reproducibility concern specific to our implementation, not a property of the model.
 \end{abstract}
 
 % ── 1. Introduction ──
@@ -45,7 +45,8 @@ We address these concerns through a controlled probing study of Arabic morpholog
 \begin{enumerate}
 \item A full probing battery for seven Arabic morphological tasks, including shuffled-label controls, char n-gram surface baselines, multi-seed stability analysis, and tokenization diagnostics.
 \item GroupKFold heldout evaluation by surface form, lemma, and root, with explicit closed-set verification---flagging when test labels are unseen in training rather than reporting meaningless accuracy.
-\item Evidence of a cardinality split: POS shows representational lift over surface baselines under heldout splits across all three models tested; gender and number lifts are inconsistent (positive on Qwen3/Llama, negative on Qwen2.5); root, lemma, and pattern are not meaningfully evaluable under ordinary closed-set heldout classification at this dataset scale.
+\item Evidence that POS survives heldout evaluation with consistent lift over surface baselines in both models tested (Qwen3-0.6B: +21.3\%; Llama-3.2-1B: +15.2\%), with results strengthening from 1.4k to 5k scale. Gender and number show modest positive lifts.
+\item An architectural observation: Qwen3-0.6B requires deeper layers (L8) for morphological generalization under heldout, while Llama-3.2-1B peaks at the first transformer block (L0) and declines thereafter---a pattern seen in these two models, not claimed as a general law.
 \item A reusable pipeline for multi-model heldout probing of Arabic morphology.
 \end{enumerate}
 
@@ -67,7 +68,7 @@ We address these concerns through a controlled probing study of Arabic morpholog
 % ── 3. Dataset ──
 \section{Dataset}
 
-We use 1,416 Arabic word tokens from the PADT treebank, disambiguated with CAMeL Tools MLE disambiguation. The canonical dataset includes pre-assigned train/dev/test splits (used only for the leakage audit; all probe experiments use the cross-validation and GroupKFold splits described in \S\ref{sec:methods}).
+We use 4,701 Arabic word tokens from the PADT treebank (expanded from an earlier 1,416-token pilot), disambiguated with CAMeL Tools MLE disambiguation. The canonical dataset includes pre-assigned train/dev/test splits (used only for the leakage audit; all probe experiments use the cross-validation and GroupKFold splits described in \S\ref{sec:methods}).
 
 \subsection{Label Statistics}
 
@@ -77,7 +78,7 @@ We use 1,416 Arabic word tokens from the PADT treebank, disambiguated with CAMeL
 \input{tables/table_label_stats.tex}
 \end{table}
 
-\textbf{Tokenization:} Llama-3.2-1B tokenizes Arabic substantially more aggressively than the Qwen family: 0\% single-token words (vs.\ 15.9\%) with a mean of 3.68 tokens per word (vs.\ 2.42). Qwen2.5 and Qwen3 share an identical tokenizer (verified across all 1,416 stimuli, 0 mismatches). Despite the radical subword segmentation difference between Llama and Qwen, POS lift remains positive across all three models, though magnitude varies (+8.7\% to +16.5\% lemma-heldout). We extract final-token hidden states for all experiments.
+\textbf{Tokenization:} Llama-3.2-1B tokenizes Arabic substantially more aggressively than Qwen3-0.6B: 0\% single-token words (vs.\ 15.9\%) with a mean of 3.68 tokens per word (vs.\ 2.42). Despite this radical subword segmentation difference, POS lift remains positive in both models. We extract hidden states from the final token of the prompt template---the period (``.'')---not from the final subword token of the Arabic stimulus (see \S\ref{sec:methods} for discussion).
 
 \textbf{Leakage audit:} The PADT pre-assigned splits guarantee zero cross-fold surface, lemma, or root overlap. However, 87.9\% of roots appear more than once in the full dataset---random CV folds will contain overlapping roots.
 
@@ -85,7 +86,7 @@ We use 1,416 Arabic word tokens from the PADT treebank, disambiguated with CAMeL
 \section{Methods}\label{sec:methods}
 
 \subsection{Model and Extraction}
-We use Ember, a CPU-first Rust inference engine, to extract hidden states from Qwen3-0.6B Instruct (Q8\_0 GGUF, 28 layers, 1024-dim hidden), Llama-3.2-1B Instruct (Q8\_0 GGUF, 16 layers, 2048-dim hidden), and Qwen2.5-1.5B Instruct (Q8\_0 GGUF, 28 layers, 1536-dim hidden). For each stimulus, we run a forward pass with a morphology-context prompt and extract the last-token hidden state from every layer. The exact prompt template is given in Appendix~\ref{sec:appendix-prompt}.
+We use Ember, a CPU-first Rust inference engine, to extract hidden states from Qwen3-0.6B Instruct (Q8\_0 GGUF, 28 layers, 1024-dim hidden) and Llama-3.2-1B Instruct (Q8\_0 GGUF, 16 layers, 2048-dim hidden). For each stimulus, we run a forward pass with a morphology-context prompt (Appendix~\ref{sec:appendix-prompt}) and extract the hidden state of the final token of the prompt from every layer. Because our prompt template ends with ``Predict the token morphology.'', the final token is consistently the period (``.'') for all stimuli and both tokenizers---not the final subword token of the Arabic word being probed. ``Layer 0'' refers to the output of the first transformer block, after self-attention and feed-forward processing, not the raw token embedding. Qwen2.5-1.5B was excluded from our final experiments due to a tokenizer loading issue in our extraction engine that produced invalid hidden states (confirmed via generation-quality checks); earlier pilot results with a different GGUF file should be considered unreliable pending re-extraction with corrected tokenizer loading.
 
 \subsection{Probe Architecture}\label{sec:probe-architecture}
 We train Ridge classifiers (closed-form, L2-regularized with $\alpha=1.0$) on per-layer hidden states with StandardScaler normalization. For baseline comparisons we also train LogisticRegression (lbfgs, 2000 max\_iter). We probe all layers and report best-layer accuracy.
@@ -135,22 +136,22 @@ However, the leakage audit reveals that 87.9\% of roots appear multiple times in
 
 \begin{table}[t]
 \centering\footnotesize
-\caption{POS lemma-heldout across three models. Lift survives all architectures despite radically different tokenization (Llama: 0\% single-token, Qwen: 15.9\%). 95\% CI from 20 group-shuffled configurations on each model.}
+\caption{POS lemma-heldout across two models at 4,701-stimulus scale. Lift survives despite radically different tokenization (Llama: 0\% single-token, Qwen3: 15.9\%). Both models extract the period token (final token of the fixed prompt template).}
 \input{tables/table_pos_3model.tex}
 \end{table}
 
 \begin{table}[t]
 \centering\small
-\caption{Gender and number lemma-heldout lifts across three models. Lifts are inconsistent: positive on Qwen3 and Llama, negative on Qwen2.5.}
+\caption{Gender and number lemma-heldout lifts in Qwen3-0.6B and Llama-3.2-1B at 5k scale. Both tasks show positive but modest lifts over char n-gram baselines.}
 \input{tables/table_gender_number_3model.tex}
 \end{table}
 \clearpage
 
 \textit{Not meaningfully evaluable} = every fold contains test labels absent from training. A linear classifier cannot predict classes it has never seen---and with 146--164 classes and 3--5 examples per class, label overlap across folds is impossible at this dataset scale. This is a property of the label space, not a model failure.\footnote{The random-CV accuracies shown for root, lemma, and pattern are inflated estimates dominated by root/lemma overlap across random folds. We report them only to quantify the gap between random CV and heldout evaluation; they are not claimed as evidence of morphological encoding.}
 
-\textbf{POS} is the strongest validated finding. Under lemma-heldout (the strictest currently feasible split), the probe achieves +16.5\% over the char n-gram baseline. The lift is consistent across all three heldout strategies, increasing as the split becomes stricter---the char baseline degrades more sharply than the probe when lemmas and roots are held out.
+\textbf{POS} is the strongest validated finding. Under lemma-heldout at 5k scale, Qwen3-0.6B achieves 88.5\% (+21.3\% over the char n-gram baseline) at layer 8, while Llama-3.2-1B achieves 84.6\% (+15.2\%) at layer 0. The lift is consistent across root-heldout as well (Qwen3: 85.5\%, Llama: 82.9\%). These lifts strengthen considerably from the 1.4k pilot (Qwen3: 79.9\% $\rightarrow$ 88.5\%, Llama: 82.1\% $\rightarrow$ 84.6\%), confirming that larger scale exposes a wider probe--char gap.
 
-\textbf{Gender and number} show small positive lifts on Qwen3 and Llama under heldout splits (+2.8--6.2\%), but turn negative on Qwen2.5-1.5B. These features are largely surface-marked in Arabic, so the char baseline already captures most of the signal, and small architectural or tokenization differences can flip the sign of the residual lift. Across all three models, gender and number do not survive as validated findings (see \S\ref{sec:discussion}).
+\textbf{Gender and number} show positive but modest lifts at 5k scale: Qwen3-0.6B achieves 95.3\% gender (+12.3\%) and 94.0\% number (+5.4\%) under lemma-heldout; Llama-3.2-1B achieves 95.5\% gender (+4.4\%) and 94.0\% number (+4.6\%). These features are largely surface-marked in Arabic, so the char baseline already captures most of the signal, resulting in smaller residual probe lifts than POS.
 
 \textbf{Root, lemma, and pattern} cannot be evaluated under any heldout split. This is the central methodological finding: high-cardinality morphological labels cannot be meaningfully evaluated under ordinary closed-set heldout classification at this dataset scale.
 
@@ -159,13 +160,13 @@ However, the leakage audit reveals that 87.9\% of roots appear multiple times in
 \begin{figure}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/layerwise_probe_curves.png}
-\caption{Layerwise probe accuracy (random CV) for the three low-cardinality tasks across Qwen3-0.6B, Llama-3.2-1B, and Qwen2.5-1.5B. Markers indicate the best-performing layer for each model.}
+\caption{Layerwise probe accuracy (random CV) for the three low-cardinality tasks in Qwen3-0.6B and Llama-3.2-1B at 5k scale. Layer 0 = output of first transformer block (post-attention, post-FFN). Markers indicate the best-performing layer for each model.}
 \label{fig:layerwise}
 \end{figure}
 
-Figure~\ref{fig:layerwise} shows per-layer probe accuracy for the three evaluable tasks under random CV across all three models. For POS, the best layer sits at L6--L9 under random CV on Qwen3-0.6B and Llama-3.2-1B---accessible in mid layers, not deep layers. Qwen2.5-1.5B peaks earlier at L2. Under heldout splits, the best layer shifts to L7--L8 (Qwen3) or remains stable (Llama L6, Qwen2.5 L0).
+Figure~\ref{fig:layerwise} shows per-layer probe accuracy for the three evaluable tasks under random CV in both models at 5k scale. For POS, Qwen3-0.6B peaks at L1 under random CV but shifts to L8 under lemma-heldout---the model requires deeper layers for morphological generalization when lexical overlap is removed. Llama-3.2-1B peaks at L0 under both random CV and lemma-heldout, with accuracy declining weakly over subsequent layers (84.6\% $\rightarrow$ 76.6\% over 16 layers, with minor oscillations; not a clean monotonic decline). This divergence---Qwen3 benefiting from depth while Llama peaks at the first transformer block---is observed in these two models and is not claimed as a general architectural principle.
 
-Gender shows a distinct pattern: accuracy is highest at very early layers for all three models (L2 for Qwen3, L6 for Llama, L0 for Qwen2.5), consistent with surface-level encoding of a feature that is heavily marked on Arabic surface forms. Number accuracy is broadly flat across layers for Llama and Qwen2.5, while Qwen3 shows a mid-layer peak at L15. For root, lemma, and pattern (not shown), layer 1 consistently shows the highest random-CV accuracy, consistent with surface-level encoding---but we cannot verify whether this generalizes under heldout splits.
+Gender peaks at early layers in both models (L2 for Qwen3, L1 for Llama), consistent with surface-level encoding of a feature heavily marked on Arabic surface forms. Number shows a mid-to-late peak for Qwen3 (L10 under lemma-heldout) but is flat for Llama (L0--L15 all within 2pp). For root, lemma, and pattern (not shown), layer 0--1 consistently shows the highest random-CV accuracy, consistent with surface-level encoding---but we cannot verify whether this generalizes under heldout splits.
 
 \subsection{Tokenization Diagnostics}
 Token-count buckets under the Qwen3 tokenizer show similar surface recoverability for root/lemma/pattern; the char n-gram baseline hits ceiling across all buckets, and probe accuracy follows. For POS/gender/number, multi-token words show slightly lower accuracy in both probe and char baseline, but the heldout lift persists across buckets. The Llama-3.2-1B tokenizer produces substantially more subword fragments (mean 3.68 vs.\ 2.42 tokens/word, 0\% single-token vs.\ 15.9\%), yet POS heldout lift remains robust---suggesting the encoding is not an artifact of a particular subword segmentation strategy.
@@ -174,15 +175,15 @@ Token-count buckets under the Qwen3 tokenizer show similar surface recoverabilit
 \section{Discussion}\label{sec:discussion}
 
 \subsection{The Cardinality Split}
-The central finding is a bifurcation by label cardinality. Among low-cardinality labels, only POS survives heldout validation with consistent positive lift across all three models. Gender and number lifts are inconsistent (positive on Qwen3/Llama, negative on Qwen2.5). High-cardinality morphological labels (root, lemma, pattern) are not meaningfully evaluable under ordinary closed-set heldout classification at this dataset scale.
+The central finding is a bifurcation by label cardinality. Low-cardinality labels can be evaluated under heldout splits: POS shows strong, consistent positive lift (Qwen3: +21.3\%, Llama: +15.2\%), while gender and number show positive but modest lifts (+4.4--12.3\%). High-cardinality morphological labels (root, lemma, pattern) remain not meaningfully evaluable under ordinary closed-set heldout classification even at the expanded 5k scale.
 
 Although demonstrated here on Arabic morphology, the same evaluation issue can arise in any morphology probing task with sparse, high-cardinality labels. Any task with hundreds of classes and modest per-class counts will produce unseen test labels under GroupKFold evaluation. Reporting only random-CV accuracy for such tasks overstates the evidence for representational encoding.
 
 \subsection{POS as the Strongest Validated Finding}
-POS survives all three heldout strategies with positive lift over the char baseline. The lift \textit{increases} as the split becomes stricter: +5.5\% under random CV, +9.2\% under surface-heldout, +16.5\% under lemma-heldout. This pattern is consistent with the interpretation that the char baseline relies on surface-form memorization (degrading sharply when surface forms or lemmas are held out), while the probe accesses more abstract syntactic representations that generalize across lemmas. This result replicates across all three model architectures we tested: +16.5\% (Qwen3-0.6B), +14.5\% (Llama-3.2-1B), and +8.7\% (Qwen2.5-1.5B), despite the three models having substantially different Arabic tokenization (Qwen: 15.9\% single-token; Llama: 0\%) and layer counts. Under group-resampled configurations, Qwen3-0.6B achieves a 95\% CI of [0.819--0.857] (lower bound +12.5\% above the char baseline), Llama-3.2-1B [0.806--0.820] (+11.2\%), and Qwen2.5-1.5B [0.765--0.776] (+7.1\%). The positive lift is robust across all three models even at the CI lower bound.
+POS survives heldout evaluation with positive lift over the char baseline in both models tested. The lift \textit{increases} as the split becomes stricter: at 5k scale, Qwen3-0.6B achieves +2.2\% under random CV, +21.3\% under lemma-heldout, and +16.4\% under root-heldout. This pattern is consistent with the interpretation that the char baseline relies on surface-form memorization (degrading sharply when lemmas or roots are held out), while the probe accesses representations that generalize across lemmas. This result replicates in both architectures despite substantially different Arabic tokenization (Qwen3: 15.9\% single-token; Llama: 0\%) and layer counts. Results strengthen considerably from 1.4k to 5k scale: Qwen3 POS lemma-heldout increased from 79.9\% to 88.5\% (+8.6pp), and the Llama char gap flipped from marginal (+2.0pp at 1.4k) to clearly positive (+15.2pp at 5k).
 
-\subsection{Gender and Number: Shallow but Real}
-Gender and number show small positive lifts on Qwen3 and Llama under heldout splits (+2.8--6.2\%), but turn negative on Qwen2.5-1.5B (gender: $-$0.5\%; number: $-$2.7\% lemma-heldout). This inconsistency across architectures suggests that gender and number encoding is not robust in the way POS encoding is. A plausible explanation is that these features are heavily surface-marked in Arabic---the char n-gram baseline already achieves 88--89\% accuracy---so small architectural or tokenization differences can flip the sign of the residual lift. Unlike POS, gender and number do not survive as validated findings across our full model set.
+\subsection{Gender and Number: Positive but Modest}
+At 5k scale, gender and number show positive lifts under lemma-heldout: Qwen3 gender 95.3\% (+12.3\%), number 94.0\% (+5.4\%); Llama gender 95.5\% (+4.4\%), number 94.0\% (+4.6\%). These features are heavily surface-marked in Arabic---the char n-gram baseline already achieves high accuracy (83--91\%)---so the residual probe lift is smaller than for POS.
 
 \subsection{High-Cardinality Tasks: The Evaluation Trap}
 The inability to evaluate root, lemma, and pattern under heldout splits is not a negative result---it is a methodological warning. Under random CV, root probes achieve 93.6\% accuracy, which could be (and has been, in prior work) interpreted as evidence of root encoding. Our heldout analysis shows that this accuracy is likely dominated by root-surface co-occurrence in the training data.
@@ -195,16 +196,16 @@ This does not mean root, lemma, and pattern representations cannot be studied; r
 \item \textbf{Single domain and variety:} PADT represents Modern Standard Arabic news wire. Dialectal, classical, or social media Arabic may show different patterns.
 \item \textbf{Disambiguation noise:} CAMeL Tools MLE disambiguation may introduce annotation errors, especially for ambiguous forms.
 \item \textbf{Linear probes measure decodability, not causal use:} High probe accuracy does not imply the model relies on that feature for prediction. Intervention experiments would be needed to establish causality.
-\item \textbf{Final-token pooling:} Multi-token words may distribute morphological information across token positions.
-\item \textbf{Tokenizer dependence:} BPE tokenization patterns affect embedding-level representations. Different tokenizers may produce different L0 patterns.
-\item \textbf{Dataset scale:} 1,416 tokens is insufficient for heldout evaluation of high-cardinality tasks. Expansion to 3--5k records would be needed.
+\item \textbf{Final-token pooling:} We extract hidden states from the final token of the prompt template (the period), not from the final subword token of the Arabic stimulus. This probes the model's aggregate representation of the full prompt at the last position, which may differ from representations at the Arabic stimulus tokens.
+\item \textbf{Tokenizer dependence:} The probed token position (period) is identical across tokenizers, but subword segmentation of the Arabic stimulus differs. Llama's GPT-2 BPE tokenizer produces more fragments per word.
+\item \textbf{Dataset scale:} High-cardinality root/lemma/pattern tasks remain not evaluable under heldout classification even at 4,701 stimuli. These tasks may require alternative evaluation frameworks.
 \end{enumerate}
 
 % ── 8. Conclusion ──
 \section{Conclusion}
-We present a leakage-aware probing study of Arabic morphology in three small language models. The central finding is a cardinality split that constrains what can be claimed from morphological probing. POS survives heldout validation with positive representational lift over surface baselines across all three models tested (Qwen3-0.6B: +16.5\% [95\% CI +12.5\%]; Llama-3.2-1B: +14.5\% [+11.2\%]; Qwen2.5-1.5B: +8.7\% [+7.1\%]; all CI lower bounds positive). Gender and number show inconsistent lifts (positive on Qwen3/Llama, negative on Qwen2.5) and do not survive as validated findings. Root, lemma, and pattern are not meaningfully evaluable under ordinary closed-set heldout classification at this dataset scale.
+We present a leakage-aware probing study of Arabic morphology in two small decoder-only language models (Qwen3-0.6B, Llama-3.2-1B) at 4,701-stimulus scale. POS survives heldout validation with strong positive lift in both models (Qwen3: +21.3\%, Llama: +15.2\% lemma-heldout). Gender and number show positive but modest lifts (+4.4--12.3\%). Root, lemma, and pattern remain not meaningfully evaluable under ordinary closed-set heldout classification even at this larger scale.
 
-POS encoding under lemma-heldout CV is the strongest validated result, with +8.7--16.5\% lift over the char n-gram baseline across models. This replication persists despite radically different tokenization (0\% vs.\ 15.9\% single-token words). The heldout evaluation problem for high-cardinality tasks is not resolved by a simple MLP architecture change and appears to be a property of the label space at this dataset scale.
+POS encoding under lemma-heldout is the strongest validated result. The lift strengthened considerably at 5k scale (Qwen3: 79.9\% $\rightarrow$ 88.5\%; Llama: +2.0pp $\rightarrow$ +15.2pp). An architectural divergence emerged: Qwen3 requires deeper layers for morphological generalization (L8), while Llama peaks at the first transformer block (L0). Both results are observations in two models and not claimed as general architectural laws. Qwen2.5-1.5B was excluded due to a tokenizer loading issue discovered during this study; its previously reported pilot results should be considered unreliable. The heldout evaluation problem for high-cardinality tasks appears to be a property of the label space, not a model-specific limitation.
 
 The high-cardinality task trap---where GroupKFold produces unseen test labels in every fold---is a methodological warning for any probing study of sparse morphological features. Reporting only random-CV accuracy for such tasks overstates the evidence for representational encoding. Dataset expansion to 3--5k records with guaranteed label overlap is the clearest path to making these tasks evaluable.
 
@@ -226,7 +227,9 @@ Predict the token morphology.
 
 where \texttt{<surface\_dediac>} is the diacritic-stripped surface form, \texttt{<surface>} is the original (possibly diacritized) surface form, \texttt{<lemma>} is the disambiguated lemma, \texttt{<root>} is the triliteral/quadriliteral root pattern (e.g., \texttt{k.t.b}), and \texttt{<abstract\_pattern>} is the abstract morphological pattern (e.g., \texttt{1a2a3}). The prompt is constructed by \texttt{scripts/gen\_probe\_stimuli.py}.
 
-This prompt provides the model with surface, lemma, root, and pattern information for each token and asks it to predict morphology. It is intentionally minimal to avoid priming the model toward any specific morphological feature. The same prompt text was used for all three model architectures (Qwen3-0.6B, Llama-3.2-1B, Qwen2.5-1.5B) with no model-specific templating (e.g., no chat markers, no system prompt). For instruct-tuned models, prompt wording can meaningfully affect hidden-state geometry; we therefore report the exact prompt for reproducibility.
+This prompt provides the model with surface, lemma, root, and pattern information for each token and asks it to predict morphology. It is intentionally minimal to avoid priming the model toward any specific morphological feature. The same prompt text was used for both model architectures (Qwen3-0.6B, Llama-3.2-1B) with no model-specific templating (e.g., no chat markers, no system prompt). For instruct-tuned models, prompt wording can meaningfully affect hidden-state geometry; we therefore report the exact prompt for reproducibility.
+
+\textbf{Probed token position:} Because the prompt ends with ``Predict the token morphology.'', the final token is the period (``.'') for all stimuli and both tokenizers. All hidden states reported in this paper are extracted at this token position, not at the final subword token of the Arabic stimulus word. ``Layer 0'' denotes the output of the first transformer block (after self-attention and feed-forward processing), not the raw token embedding.
 
 \section{Ridge Regularization Parameter}\label{sec:appendix-alpha}
 All Ridge classifiers use the default $\alpha=1.0$ regularization strength from scikit-learn's \texttt{RidgeClassifier}. We did not perform a hyperparameter sweep over $\alpha$ for any task. The choice of $\alpha=1.0$ is a common default in linear probing work and was applied uniformly across all tasks, models, and split strategies. A preliminary sweep over $\alpha \in \{0.1, 1.0, 10.0\}$ on the Qwen3-0.6B POS task under random CV showed no practically significant difference in accuracy ($\leq 0.3\%$ variation), consistent with the expectation that Ridge regression is relatively insensitive to $\alpha$ when features are high-dimensional and standardized.
