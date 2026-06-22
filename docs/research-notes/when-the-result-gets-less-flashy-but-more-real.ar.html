@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="When the Result Gets Less Flashy but More Real" />
+        <meta property="og:description" content="هذا الأسبوع تحول Ember من استخراج hidden states إلى probing أكثر وعياً بالتسرب في الصرف العربي." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/when-the-result-gets-less-flashy-but-more-real.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>When the Result Gets Less Flashy but More Real · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260616" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <a class="nav-lang" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.html">en</a>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1><bdi>When the Result Gets Less Flashy but More Real</bdi></h1>
+
+        <div class="meta">
+            تقدم هذا الأسبوع في <bdi>leakage-aware probing</bdi> للصرف العربي داخل <bdi>Ember</bdi><br>
+            mohammed al-thobaiti · 2026-06-22<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">ember</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>الأسبوع الماضي كان الموضوع لسه يشبه مشروع هندسي أكثر من كونه دراسة منهجية.</p>
+
+        <p>
+            <bdi>Ember</bdi> يحمّل نماذج <bdi>GGUF</bdi>، يشغل inference على
+            المعالج، يسحب <bdi>hidden states</bdi>، ويحفظ activations تكفي
+            لتدريب <bdi>probes</bdi>. هذا كان هدف واضح: خلّيني أوصل لداخل
+            النموذج من كود <bdi>Rust</bdi> أتحكم فيه.
+        </p>
+
+        <p>
+            هذا الأسبوع تغير السؤال. مو بس: هل أقدر أستخرج <bdi>hidden states</bdi>؟
+            صار: هل أقدر أثق إن الـ <bdi>probe</bdi> يقيس الشيء اللي أقول إنه يقيسه؟
+        </p>
+
+        <p>النتيجة صارت أقل لمعاناً. لكنها صارت أصدق.</p>
+
+        <div class="callout observation">
+            <div class="label">status</div>
+            <p>
+                الورقة الحالية ما زالت <bdi>preprint draft</bdi>، مو منشور
+                محكّم نهائي. لكن الادعاء الأساسي صار أضيق بما يكفي إني أقدر
+                أدافع عنه: بعض إشارات الصرف تبقى بعد ما نصعّب التسرب.
+            </p>
+        </div>
+
+        <p>
+            عنوان المسودة الآن:
+            <strong><bdi>Leakage-Aware Probing of Arabic Morphology in Small Language Models</bdi></strong>.
+            الاسم مناسب أكثر. الشغل ما عاد مجرد جدول probes على وسوم صرفية.
+            صار عن سياسة التقسيم، وموضع التوكن، ومحتوى الـ <bdi>prompt</bdi>،
+            والـ <bdi>baseline</bdi>، وصحة مسار التشغيل.
+        </p>
+
+        <blockquote>
+            <p>نتيجة الـ <bdi>probe</bdi> ما لها قيمة كبيرة إذا كان التقسيم ما يختبر نوع التعميم اللي ندّعيه.</p>
+        </blockquote>
+
+        <h2><bdi>From extraction to measurement</bdi></h2>
+
+        <p>الـ pipeline الأول كان بسيط:</p>
+
+        <ol>
+            <li>حمّل نموذج <bdi>GGUF</bdi>،</li>
+            <li>شغّل <bdi>prompts</bdi>،</li>
+            <li>اسحب <bdi>hidden states</bdi>،</li>
+            <li>درّب <bdi>linear probes</bdi>،</li>
+            <li>قارن الطبقات والوسوم.</li>
+        </ol>
+
+        <p>
+            هذا ما زال الخط الأساسي، لكن تفسيره تغير. استخراج
+            <bdi>hidden states</bdi> مو ميزة جانبية. هو أداة القياس.
+        </p>
+
+        <p>
+            البيانات الحالية فيها <strong>4,701 محفز صرفي عربي</strong> من
+            <bdi>PADT / CAMeL-style annotations</bdi>. الوسوم تشمل:
+            الجذر، اللمّة، <bdi>POS</bdi>، الوزن المجرد، الوزن المحسوس،
+            الجنس، والعدد.
+        </p>
+
+        <p>لكن مو كل وسم ينقاس بنفس الطريقة. بعض الوسوم قليلة الفئات. بعضها عنده مئات الفئات. وبعضها موجود تقريباً داخل الـ <bdi>prompt</bdi> إذا ما سوّيت <bdi>ablation</bdi>.</p>
+
+        <p>النماذج الصالحة الآن اثنين فقط:</p>
+
+        <ul>
+            <li><strong><bdi>Qwen3-0.6B</bdi></strong></li>
+            <li><strong><bdi>Llama-3.2-1B</bdi></strong></li>
+        </ul>
+
+        <p>
+            أزلت نتائج <bdi>Qwen2.5</bdi>. هذا مو فشل من النموذج في العربي.
+            التصحيح أبسط: مسار التشغيل وتحميل الـ <bdi>tokenizer</bdi> عندي
+            أنتجوا <bdi>hidden states</bdi> غير صالحة. إذن ما تدخل الورقة.
+            الجدول يصير أصغر، لكنه أنظف.
+        </p>
+
+        <h2><bdi>The leakage problem</bdi></h2>
+
+        <p>
+            النسخة الأولى استخدمت <bdi>random CV</bdi> في أماكن ما كان ينفع
+            فيها العشوائي. في الصرف العربي، كلمات كثيرة تشترك في جذر أو لمّة.
+            إذا دخلت عائلة معجمية في التدريب والاختبار معاً، الـ
+            <bdi>probe</bdi> ممكن يطلع قوي لأنه عرف العائلة، مو لأنه عمّم صرفياً.
+        </p>
+
+        <p>
+            هذا مهم تحديداً مع نظام الجذر والوزن. لو شاف النموذج عدة صيغ من
+            نفس الجذر في التدريب، وبعدها شاف صيغة قريبة في الاختبار، النجاح
+            يصير ملتبس: هل استرجع بنية صرفية؟ أو استفاد من overlap معجمي؟
+        </p>
+
+        <p>لذلك التقييم الأشد يستخدم <bdi>GroupKFold</bdi>:</p>
+
+        <ul>
+            <li>تجميع حسب اللمّة لاختبار <bdi>lemma-heldout</bdi>،</li>
+            <li>تجميع حسب الجذر لاختبار <bdi>root-heldout</bdi>،</li>
+            <li>ومقارنة ضد <bdi>character n-gram baselines</bdi>.</li>
+        </ul>
+
+        <p>هذا يخفض بعض الأرقام. ممتاز. هذا هو الاختبار الحقيقي.</p>
+
+        <blockquote>
+            <p>ادعاء أضيق ممكن يكون نتيجة أقوى.</p>
+        </blockquote>
+
+        <h2><bdi>What survived heldout evaluation</bdi></h2>
+
+        <p>أقوى نتيجة الآن هي <bdi>POS</bdi>.</p>
+
+        <p>
+            <bdi>POS</bdi> يصمد تحت تقييم <bdi>lemma/root-heldout</bdi> في
+            <bdi>Qwen3-0.6B</bdi> و <bdi>Llama-3.2-1B</bdi>. وعنده
+            <bdi>lift</bdi> فوق baseline سطحي من <bdi>character n-grams</bdi>:
+            <strong>+19.2 نقطة</strong> لـ <bdi>Qwen3</bdi> تحت
+            <bdi>lemma-heldout</bdi>، و <strong>+15.2 نقطة</strong> لـ
+            <bdi>Llama</bdi> تحت نفس التقسيم.
+        </p>
+
+        <p>
+            هذا لا يعني إن النماذج "تفهم الصرف العربي". يعني شيء أضيق:
+            التمثيلات تحتوي معلومة قابلة للاسترجاع خطياً عن الفئة النحوية/الصرفية،
+            حتى بعد تقليل طريق التسرب المعجمي السهل.
+        </p>
+
+        <p>
+            الجنس والعدد أيضاً عندهم <bdi>lift</bdi> موجب، لكن أهدأ. مفيد،
+            بس ما أبغى أحمّله أكثر مما يحتمل.
+        </p>
+
+        <h2><bdi>The high-cardinality trap</bdi></h2>
+
+        <p>
+            هنا صار عندي تصحيح مهم. الجذر واللمّة والوزن مو مثل
+            <bdi>POS</bdi> والجنس والعدد.
+        </p>
+
+        <p>
+            <bdi>POS</bdi> والجنس والعدد فئات قليلة. غالباً كل الفئات موجودة
+            في التدريب والاختبار. مصنف مغلق يقدر يتنبأ بها بشكل منطقي.
+        </p>
+
+        <p>
+            الجذر واللمّة والوزن عندهم مئات الفئات. تحت <bdi>heldout splits</bdi>،
+            الاختبار ممكن يحتوي labels ما ظهرت أبداً في التدريب. مصنف
+            <bdi>closed-set</bdi> ما يقدر يتنبأ بفئة ما شافها.
+        </p>
+
+        <p>
+            لذلك فشل <bdi>root probe</bdi> تحت تقسيم صارم لا يعني تلقائياً إن
+            النموذج ما يمثل الجذر. ممكن يعني إن التقييم يطلب من مصنف مغلق يحل
+            مسألة مفتوحة الفئات.
+        </p>
+
+        <p>
+            الجذر واللمّة والوزن يحتاجون إطار ثاني: <bdi>retrieval</bdi>،
+            هندسة تمثيلات، <bdi>nearest neighbors</bdi>، اختبارات
+            <bdi>contrastive</bdi>، أو محفزات <bdi>nonce</bdi> مصممة للتعميم.
+            النسخة الحالية من الورقة ما تتظاهر إن نفس المصنف يصلح لكل الوسوم.
+        </p>
+
+        <h2><bdi>Prompt-final representation probing</bdi></h2>
+
+        <p>
+            تصحيح ثاني: موضع التوكن. التمثيلات هنا مأخوذة من توكن النقطة في
+            نهاية الـ <bdi>prompt</bdi>، مو من آخر <bdi>subword</bdi> للكلمة العربية.
+        </p>
+
+        <p>
+            هذا مقصود. توكن النقطة ثابت أكثر بين النماذج، ويأتي بعد ما يقرأ
+            النموذج كل الـ <bdi>prompt</bdi>. هذا يخلي المقارنة بين
+            <bdi>Qwen</bdi> و <bdi>Llama</bdi> أنظف من اختيار توكن عربي يختلف
+            حسب الـ <bdi>tokenizer</bdi>.
+        </p>
+
+        <p>
+            لكنه يغير الادعاء. هذا مو <bdi>direct word-token probing</bdi>.
+            أنا أقيس تمثيل نهاية الـ <bdi>prompt</bdi> بعد ما شاف النموذج كل
+            الحقول، لا تمثيل الكلمة العربية نفسها فقط.
+        </p>
+
+        <h2><bdi>Prompt ablation: when the prompt becomes part of the result</bdi></h2>
+
+        <p>الـ <bdi>prompt</bdi> الأصلي كان يحتوي:</p>
+
+        <ul>
+            <li><bdi>Surface</bdi></li>
+            <li><bdi>Token</bdi></li>
+            <li><bdi>Lemma</bdi></li>
+            <li><bdi>Root</bdi></li>
+            <li><bdi>Pattern</bdi></li>
+        </ul>
+
+        <p>
+            هذا <bdi>prompt</bdi> غني جداً. ممكن يكون مناسب لسؤال معين، لكنه
+            مو محايد. إذا أعطيت النموذج اللمّة والجذر والوزن، فالـ
+            <bdi>probe</bdi> يمكن يقيس تمثيل التحليل المعطى، مو فقط ما استخرجه
+            النموذج من الكلمة السطحية.
+        </p>
+
+        <p>لذلك شغلت نسخة ablated تحذف <bdi>Lemma</bdi> و <bdi>Root</bdi> و <bdi>Pattern</bdi>.</p>
+
+        <ul>
+            <li><bdi>Qwen3 POS</bdi> شبه ما يتأثر.</li>
+            <li><bdi>Llama POS</bdi> يهبط بوضوح. يعتمد أكثر على الـ <bdi>morphological scaffolding</bdi>.</li>
+            <li>الجنس يهبط في النموذجين، غالباً لأن الوزن المجرد يحمل علامة التأنيث بقوة.</li>
+        </ul>
+
+        <p>
+            الدرس: الـ <bdi>task-informative prompts</bdi> تحتاج
+            <bdi>ablation checks</bdi>. والاعتماد على الـ <bdi>prompt</bdi>
+            ممكن يختلف حسب النموذج والوسم.
+        </p>
+
+        <h2><bdi>Engineering corrections that changed the paper</bdi></h2>
+
+        <p>في أشياء كثيرة هذا الأسبوع كانت تصحيحات، لكنها مهمة:</p>
+
+        <ul>
+            <li>إزالة نتائج <bdi>Qwen2.5</bdi> غير الصالحة.</li>
+            <li>توضيح إن موضع القياس هو توكن النقطة النهائية.</li>
+            <li>تصحيح فهرسة الطبقات: <bdi>layer 0</bdi> هو خرج أول <bdi>transformer block</bdi>، مو <bdi>embedding</bdi>.</li>
+            <li>تثبيت <bdi>char n-gram baseline</bdi>.</li>
+            <li>إصلاح انجراف الأرقام بين التشغيلات.</li>
+            <li>إصلاح تنسيق <bdi>Table 5</bdi>.</li>
+        </ul>
+
+        <p>هذه مو أشياء لامعة. لكنها هي اللي تخلي الأرقام الباقية قابلة للثقة.</p>
+
+        <blockquote>
+            <p>كود الأنظمة جزء من أداة القياس.</p>
+        </blockquote>
+
+        <p>
+            إذا مسار الـ <bdi>tokenizer</bdi> غلط، الـ <bdi>hidden states</bdi>
+            غلط. إذا فهرس الطبقة غلط، التفسير غلط. إذا الـ <bdi>baseline</bdi>
+            يتحرك بين التشغيلات، الـ <bdi>lift</bdi> ما عاد traceable. هذا
+            هو الشيء اللي صار واضح أكثر مع <bdi>Ember</bdi>.
+        </p>
+
+        <h2><bdi>What this means for Ember</bdi></h2>
+
+        <p>
+            <bdi>Ember</bdi> بدأ كمحرك inference بـ <bdi>Rust</bdi> لنماذج
+            <bdi>GGUF</bdi> على المعالج. هذا ما زال الأساس. لكن الآن صار واضح
+            إنه يتحول إلى <bdi>reproducible probing pipeline</bdi>.
+        </p>
+
+        <p>
+            الهندسة هنا مو منفصلة عن البحث. استخراج <bdi>hidden states</bdi>
+            هو القياس نفسه. لازم أعرف النموذج، والـ <bdi>tokenizer</bdi>،
+            والـ <bdi>prompt</bdi>، وموضع التوكن، والتقسيم، والـ
+            <bdi>baseline</bdi> لكل رقم في الجدول.
+        </p>
+
+        <h2><bdi>Next steps</bdi></h2>
+
+        <p>
+            الخطوات الجاية: نماذج أكثر، <bdi>confidence intervals</bdi> أقوى،
+            وتقييم أفضل للجذر والوزن واللمّة. أحتاج أيضاً
+            <bdi>direct-token probing</bdi> كدليل مكمّل، عشان أفصل تمثيل الكلمة
+            نفسها عن تمثيل نهاية الـ <bdi>prompt</bdi>.
+        </p>
+
+        <p>
+            الادعاء الآن أضيق. <bdi>POS</bdi> يصمد في نموذجين صغيرين تحت
+            تقييم أشد، مع <bdi>lift</bdi> موجب فوق <bdi>surface baselines</bdi>.
+            الجنس والعدد إشارتهم أهدأ. الجذر واللمّة والوزن ما زالت مركزية في
+            اتجاه البحث، لكنها تحتاج إطار تقييم أفضل قبل ما أتعامل معها كنتائج مثبتة.
+        </p>
+
+        <p>النتيجة أقل لمعاناً. وهذا غالباً أفضل شيء صار لها هذا الأسبوع.</p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/index.ar.html">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

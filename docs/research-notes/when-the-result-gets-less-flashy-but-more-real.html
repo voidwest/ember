@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="When the Result Gets Less Flashy but More Real" />
+        <meta property="og:description" content="This week Ember's Arabic morphology probing work shifted from hidden-state extraction into leakage-aware measurement." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/when-the-result-gets-less-flashy-but-more-real.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>When the Result Gets Less Flashy but More Real · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260616" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <a class="nav-lang" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.ar.html">عربي</a>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>When the Result Gets Less Flashy but More Real</h1>
+
+        <div class="meta">
+            leakage-aware probing progress for Arabic morphology in Ember<br>
+            mohammed al-thobaiti · 2026-06-22<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">ember</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>Last week, this still felt mostly like an engineering project.</p>
+
+        <p>
+            Ember could load GGUF models, run small CPU-first inference, extract
+            hidden states, and save enough activation data to train probes. That
+            was already useful. It meant I could stop treating model internals
+            as something locked behind a Python stack and start building the
+            measurement path myself in Rust.
+        </p>
+
+        <p>
+            This week, the center of the work moved. The hard question is no
+            longer only whether Ember can extract hidden states. It is whether I
+            can trust what the probe is measuring.
+        </p>
+
+        <p>
+            That sounds like a small shift, but it changed the whole study. The
+            result became less flashy, but more real.
+        </p>
+
+        <p>
+            The current paper draft is now titled
+            <strong>Leakage-Aware Probing of Arabic Morphology in Small Language Models</strong>.
+            That title is a better description of what the work has become. It
+            is not just a probe run over Arabic morphology labels. It is a probe
+            run where the split policy, token position, prompt content,
+            baseline, and runtime validity all matter.
+        </p>
+
+        <p>
+            The paper is still a preprint draft, but the core claim has finally
+            become narrow enough that I can defend it.
+        </p>
+
+        <blockquote>
+            <p>A probe result is only useful if the split tests the kind of generalization it claims to test.</p>
+        </blockquote>
+
+        <h2>From extraction to measurement</h2>
+
+        <p>The original Ember probing loop was straightforward:</p>
+
+        <ol>
+            <li>load a GGUF model,</li>
+            <li>run prompts,</li>
+            <li>extract hidden states,</li>
+            <li>train linear probes,</li>
+            <li>compare layers and labels.</li>
+        </ol>
+
+        <p>
+            That is still the core pipeline, but the interpretation is
+            different now. Hidden-state extraction is not just an engineering
+            feature. It is the measurement instrument.
+        </p>
+
+        <p>
+            The current study uses <strong>4,701 Arabic morphology stimuli</strong>
+            derived from PADT / CAMeL-style annotations. The labels include root,
+            lemma, part of speech, abstract pattern, concrete pattern, gender,
+            and number. These are not all equally easy to evaluate. Some are
+            small closed sets. Some are high-cardinality lexical or
+            quasi-lexical labels. Some are directly visible in the prompt unless
+            the prompt is ablated.
+        </p>
+
+        <p>This week also narrowed the model set to two valid runs:</p>
+
+        <ul>
+            <li><strong>Qwen3-0.6B</strong></li>
+            <li><strong>Llama-3.2-1B</strong></li>
+        </ul>
+
+        <p>
+            I removed the Qwen2.5 results. This is not a claim that Qwen2.5
+            failed at Arabic morphology. It is a correction to my measurement
+            path: the runtime path and tokenizer loading I used for that run
+            produced invalid hidden states, so those activations should not be
+            part of the study. Removing them makes the result smaller, but
+            cleaner.
+        </p>
+
+        <p>That is the theme of the week. The table got less exciting. The methodology got stronger.</p>
+
+        <h2>The leakage problem</h2>
+
+        <p>
+            The first version used random cross-validation in places where
+            random splits were too forgiving.
+        </p>
+
+        <p>
+            For many classification tasks, random CV is fine. For Arabic
+            morphology, it can be misleading. Related surface forms can share a
+            lemma or root. If related lexical items appear in both train and
+            test, a probe can look strong because it has learned lexical
+            families rather than a more general morphological representation.
+        </p>
+
+        <p>
+            This matters especially for Arabic because the root and pattern
+            system creates structured overlap. If a model sees several forms
+            built around the same root during training, and another related form
+            appears during testing, success may partly reflect memorized or
+            surface-correlated information. That may still be interesting, but
+            it is not the same as generalizing to unseen lexical groups.
+        </p>
+
+        <p>So the stricter evaluation uses grouped splits:</p>
+
+        <ul>
+            <li>group by lemma when testing lemma-heldout generalization,</li>
+            <li>group by root when testing root-heldout generalization,</li>
+            <li>compare against surface baselines such as character n-grams.</li>
+        </ul>
+
+        <p>
+            This makes the task harder. It also makes some numbers less
+            impressive. That is the point.
+        </p>
+
+        <blockquote>
+            <p>A smaller claim can be a stronger result.</p>
+        </blockquote>
+
+        <h2>What survived heldout evaluation</h2>
+
+        <p>The strongest result right now is part of speech.</p>
+
+        <p>
+            POS survives lemma/root-heldout evaluation in both Qwen3-0.6B and
+            Llama-3.2-1B. It also shows positive lift over character n-gram
+            surface baselines: +19.2pp for Qwen3 under lemma-heldout evaluation,
+            and +15.2pp for Llama under the same split. That does not prove the
+            models have a complete theory of Arabic morphology. It does show
+            that, under stricter splits, the hidden states contain linearly
+            recoverable syntactic/morphological category information beyond what
+            the simple surface baseline captures.
+        </p>
+
+        <p>
+            Gender and number also show positive lift, but the evidence is more
+            modest. They are lower-cardinality labels, so they can be evaluated
+            more naturally under heldout splits, but they are also more exposed
+            to prompt and pattern effects. The result is useful, but I would not
+            frame it as a dramatic finding.
+        </p>
+
+        <p>The important part is that some signal remains after the easy leakage path is made harder.</p>
+
+        <h2>The high-cardinality trap</h2>
+
+        <p>
+            The stricter split exposed a second issue: root, lemma, and pattern
+            are not like POS, gender, and number.
+        </p>
+
+        <p>
+            POS, gender, and number are low-cardinality labels. Their classes
+            are mostly present in both train and test. A closed-set classifier
+            can reasonably be asked to predict them under heldout lexical
+            groups.
+        </p>
+
+        <p>
+            Root, lemma, abstract pattern, and concrete pattern have many more
+            classes. Under lemma-heldout or root-heldout splits, the test set
+            can contain labels that never appeared during training. A standard
+            closed-set classifier cannot predict a class it has never seen.
+        </p>
+
+        <p>
+            That sounds obvious, but it matters for interpretation. If the root
+            probe fails under a strict heldout split, that does not automatically
+            mean the model lacks root information. It may mean the evaluation
+            setup is asking a closed-set classifier to do an open-set problem.
+        </p>
+
+        <p>
+            So root, lemma, and pattern need a different evaluation framework.
+            Possibilities include retrieval-style evaluation, representation
+            geometry, nearest-neighbor structure, contrastive tests, or
+            controlled nonce stimuli where the label space is designed around
+            generalization. The current paper now treats high-cardinality labels
+            more carefully instead of pretending the same classifier setup works
+            for every feature.
+        </p>
+
+        <p>
+            This is one of the places where the result became less flashy. The
+            earlier version could show more labels in a table. The revised
+            version says: some of those labels are not validly evaluated by this
+            method yet.
+        </p>
+
+        <p>That is a better paper.</p>
+
+        <h2>Prompt-final representation probing</h2>
+
+        <p>Another correction is token position.</p>
+
+        <p>
+            The hidden states in this study are extracted from the final period
+            token of the prompt, not from the final subword of the Arabic word.
+            That was implicit before; now it is explicit.
+        </p>
+
+        <p>The current framing is <strong>prompt-final representation probing</strong>.</p>
+
+        <p>
+            This position is intentional. The final period token is
+            tokenizer-stable across models and sits after the full prompt. It
+            can aggregate information from the surface word and the
+            morphological fields included in the prompt. That makes cross-model
+            comparison cleaner than choosing a model-specific Arabic subword
+            position.
+        </p>
+
+        <p>
+            But it also changes the interpretation. This is not direct
+            word-token probing. I am not claiming that the Arabic word's own
+            final subword contains the measured information. I am probing the
+            representation at a stable prompt-final position after the model has
+            read the whole formatted stimulus.
+        </p>
+
+        <p>That is a narrower claim, and it needs to be said plainly.</p>
+
+        <h2>Prompt ablation: when the prompt becomes part of the result</h2>
+
+        <p>The original prompt included:</p>
+
+        <ul>
+            <li>Surface,</li>
+            <li>Token,</li>
+            <li>Lemma,</li>
+            <li>Root,</li>
+            <li>Pattern.</li>
+        </ul>
+
+        <p>
+            That is task-informative. It may be appropriate for some
+            measurement questions, but it cannot be treated as neutral. If the
+            prompt gives the model lemma, root, and pattern fields, then a probe
+            trained on the final prompt representation may partly measure how
+            the model encodes the provided analysis, not only what it recovers
+            from the surface word.
+        </p>
+
+        <p>So I added an ablated prompt that removes Lemma, Root, and Pattern.</p>
+
+        <p>The ablation is informative:</p>
+
+        <ul>
+            <li>Qwen3 POS is mostly unaffected by removing those fields.</li>
+            <li>Llama POS drops substantially, which suggests it depends more on the explicit morphological scaffolding in this setup.</li>
+            <li>Gender drops in both models, likely because the abstract pattern field encodes feminine marking strongly.</li>
+        </ul>
+
+        <p>
+            This is not a clean "one model is better" result. It is a
+            prompt-dependence result. The same probing setup can mean different
+            things across architectures, even for the same label.
+        </p>
+
+        <p>
+            The lesson is simple: task-informative prompts need ablation checks.
+            If the prompt contains the answer, or contains features close to the
+            answer, the probe may still be measuring something real, but it is
+            measuring the representation of the whole prompt context.
+        </p>
+
+        <h2>Engineering corrections that changed the paper</h2>
+
+        <p>
+            Several changes this week were not conceptual discoveries. They were
+            corrections. But they changed the paper because they changed what
+            can be trusted.
+        </p>
+
+        <p>
+            I removed the invalid Qwen2.5 results. I clarified that the probed
+            position is the final period token. I fixed layer indexing: layer 0
+            is the first transformer block output, not the embedding layer. I
+            pinned the character n-gram baseline so comparisons are traceable. I
+            fixed number drift across runs and made the table values easier to
+            audit. I also fixed Table 5 formatting so it no longer hides
+            important distinctions.
+        </p>
+
+        <p>None of this is glamorous, but it is the work that makes the remaining claims usable.</p>
+
+        <blockquote>
+            <p>The systems code is part of the measurement instrument.</p>
+        </blockquote>
+
+        <p>
+            That sentence has become more true as the project has matured. If
+            the tokenizer path is wrong, the hidden states are wrong. If the
+            layer index is mislabeled, the interpretation is wrong. If the
+            baseline drifts, the lift is not traceable. If the split leaks
+            lexical families, the result can look stronger than it is.
+        </p>
+
+        <p>
+            The Rust code, dataset builder, probe scripts, metadata, and paper
+            tables are not separate pieces anymore. They are one measurement
+            pipeline.
+        </p>
+
+        <h2>What this means for Ember</h2>
+
+        <p>
+            Ember started as a CPU-first Rust inference engine for GGUF models.
+            That is still the base. But this week made it clearer that Ember is
+            becoming something more specific: a reproducible probing pipeline.
+        </p>
+
+        <p>
+            The engineering matters because hidden-state extraction is the
+            measurement instrument. The probe is only as meaningful as the
+            activations, metadata, tokenizer handling, prompt construction,
+            split policy, and baseline around it.
+        </p>
+
+        <p>
+            That changes how I think about the project. Speed and model support
+            still matter, but correctness and traceability matter more. A
+            probing engine should make it hard to confuse invalid activations
+            with results. It should record enough metadata that a table can be
+            traced back to the exact model, prompt, token position, split
+            policy, and baseline.
+        </p>
+
+        <p>
+            That is less exciting than a big accuracy number, but it is the
+            foundation for results I can stand behind.
+        </p>
+
+        <h2>Next steps</h2>
+
+        <p>
+            The immediate next steps are straightforward: add more valid models,
+            strengthen confidence intervals, and design better evaluation for
+            root, pattern, and lemma. Direct-token probing should be added as
+            complementary evidence, especially to separate word-local
+            representations from prompt-final aggregated representations.
+            Representation-geometry methods also look more appropriate for
+            high-cardinality morphology than plain closed-set classifiers under
+            heldout lexical splits.
+        </p>
+
+        <p>
+            The claim is narrower now. POS survives stricter evaluation in two
+            small models, with positive lift over surface baselines. Gender and
+            number show more modest signal. Root, lemma, and pattern remain
+            central to the larger research direction, but need a better
+            evaluation setup before I treat them as established.
+        </p>
+
+        <p>That is where the work is now: less flashy, more careful, and more real.</p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
