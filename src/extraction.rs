@@ -6,6 +6,18 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub const ARTIFACT_CONTRACT_VERSION: u32 = 2;
+pub const ARTIFACT_LAYOUT: &str = "ember.layer_sharded_npy.v1";
+pub const MANIFEST_FILENAME: &str = "manifest.json";
+pub const CONFIG_FILENAME: &str = "config.toml";
+pub const SAMPLES_FILENAME: &str = "samples.jsonl";
+pub const TOKENIZATION_FILENAME: &str = "tokenization.jsonl";
+pub const POSITIONS_FILENAME: &str = "positions.jsonl";
+pub const CHECKSUMS_FILENAME: &str = "checksums.json";
+pub const REPORT_FILENAME: &str = "report.json";
+pub const LAYERS_DIRNAME: &str = "layers";
+pub const LOGITS_FILENAME: &str = "logits.npy";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExecutionBackendName {
@@ -72,6 +84,8 @@ impl ArtifactOutputFormat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractionConfig {
+    #[serde(default)]
+    pub run_id: Option<String>,
     pub model_path: String,
     #[serde(default)]
     pub architecture: Option<String>,
@@ -98,6 +112,10 @@ pub struct ExtractionConfig {
     pub output_format: ArtifactOutputFormat,
     #[serde(default)]
     pub prompt_hashes_only: bool,
+    #[serde(default)]
+    pub write_logits: bool,
+    #[serde(default)]
+    pub resume: bool,
     #[serde(default)]
     pub max_seq_len: Option<usize>,
     #[serde(default)]
@@ -127,6 +145,12 @@ impl ExtractionConfig {
         require_non_empty(&self.input_jsonl_path, "input_jsonl_path")?;
         require_non_empty(&self.output_dir, "output_dir")?;
         require_non_empty(&self.sample_id_field, "sample_id_field")?;
+        if let Some(run_id) = &self.run_id {
+            require_non_empty(run_id, "run_id")?;
+            if run_id.contains('/') || run_id.contains('\\') {
+                anyhow::bail!("run_id must be a single path component");
+            }
+        }
         if self.batch_size == 0 {
             anyhow::bail!("batch_size must be greater than 0");
         }
@@ -204,36 +228,88 @@ pub struct ModelMetadata {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ArtifactMetadata {
+pub struct ArtifactManifest {
     pub schema_version: u32,
+    pub layout: String,
     pub artifact_kind: String,
     pub created_at_unix: u64,
-    pub output_dir: String,
-    pub hidden_states_path: String,
+    pub run_id: Option<String>,
+    pub run_dir: String,
+    pub config_path: String,
     pub samples_path: String,
-    pub hidden_states_shape: Vec<usize>,
+    pub tokenization_path: String,
+    pub positions_path: String,
+    pub checksums_path: String,
+    pub report_path: String,
+    pub logits_path: Option<String>,
+    pub tensor_contract: TensorContract,
+    pub sample_count: usize,
+    pub sample_order_hash: String,
+    pub config_hash: String,
     pub dtype: String,
     pub output_format: String,
-    pub layers: Vec<usize>,
-    pub token_position: String,
     pub model: ModelMetadata,
     pub backend: BackendMetadata,
     pub extraction_config: ExtractionConfig,
-    pub checksums: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TensorContract {
+    pub storage: String,
+    pub dtype: String,
+    pub byte_order: String,
+    pub sample_axis: usize,
+    pub hidden_axis: usize,
+    pub layers: Vec<LayerArtifact>,
+    pub logits: Option<LogitsArtifact>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LayerArtifact {
+    pub layer_index: usize,
+    pub layer_name: String,
+    pub path: String,
+    pub shape: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogitsArtifact {
+    pub path: String,
+    pub shape: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SampleArtifactRecord {
     pub schema_version: u32,
+    pub sample_index: usize,
     pub sample_id: String,
     pub input_index: usize,
-    pub token_ids: Vec<u32>,
-    pub selected_token_positions: Vec<usize>,
-    pub token_count: usize,
     pub prompt: Option<String>,
     pub prompt_hash: String,
-    pub logits_available: bool,
-    pub logits_shape: Option<Vec<usize>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TokenizationArtifactRecord {
+    pub schema_version: u32,
+    pub sample_index: usize,
+    pub sample_id: String,
+    pub token_ids: Vec<u32>,
+    pub token_count: usize,
+    pub prompt_hash: String,
+    pub offsets: Vec<(usize, usize)>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PositionArtifactRecord {
+    pub schema_version: u32,
+    pub sample_index: usize,
+    pub sample_id: String,
+    pub position_mode: String,
+    pub pooling: String,
+    pub selected_token_positions: Vec<usize>,
+    pub source_field: Option<String>,
+    pub source_value: Option<String>,
+    pub source_byte_span: Option<[usize; 2]>,
 }
 
 #[derive(Debug, Clone)]
@@ -253,12 +329,15 @@ pub struct BackendHiddenStateOutput {
 
 #[derive(Debug, Clone)]
 pub struct ExtractionRunOutput {
-    pub output_dir: String,
-    pub hidden_states_path: String,
+    pub run_dir: String,
+    pub manifest_path: String,
     pub samples_path: String,
-    pub metadata_path: String,
+    pub tokenization_path: String,
+    pub positions_path: String,
+    pub checksums_path: String,
+    pub report_path: String,
     pub sample_count: usize,
-    pub hidden_states_shape: Vec<usize>,
+    pub layer_paths: Vec<String>,
 }
 
 pub fn load_input_samples(config: &ExtractionConfig) -> Result<Vec<ExtractionInputSample>> {
@@ -310,6 +389,143 @@ pub fn render_prompt(template: &str, object: &Map<String, Value>) -> Result<Stri
         }
     }
     Ok(rendered)
+}
+
+pub fn run_dir(config: &ExtractionConfig) -> std::path::PathBuf {
+    match &config.run_id {
+        Some(run_id) => Path::new(&config.output_dir).join(run_id),
+        None => Path::new(&config.output_dir).to_path_buf(),
+    }
+}
+
+pub fn layer_name(layer: usize) -> String {
+    format!("layer_{layer:04}")
+}
+
+pub fn layer_filename(layer: usize) -> String {
+    format!("{}.npy", layer_name(layer))
+}
+
+pub fn layer_relative_path(layer: usize) -> String {
+    format!("{LAYERS_DIRNAME}/{}", layer_filename(layer))
+}
+
+pub fn pooling_for_mode(mode: TokenPositionMode) -> &'static str {
+    match mode {
+        TokenPositionMode::PromptFinal | TokenPositionMode::WordFinalSubtoken => "single",
+        TokenPositionMode::WordMean | TokenPositionMode::FullPromptMean => "mean",
+    }
+}
+
+pub fn source_span_for_position(
+    prompt: &str,
+    config: &ExtractionConfig,
+    word_value: Option<&str>,
+) -> Option<[usize; 2]> {
+    match config.token_position {
+        TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean => {
+            let value = word_value?;
+            let start = prompt.find(value)?;
+            Some([start, start + value.len()])
+        }
+        TokenPositionMode::PromptFinal | TokenPositionMode::FullPromptMean => None,
+    }
+}
+
+pub fn source_field_for_position(config: &ExtractionConfig) -> Option<String> {
+    match config.token_position {
+        TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean => {
+            Some(config.word_field.clone())
+        }
+        TokenPositionMode::PromptFinal | TokenPositionMode::FullPromptMean => None,
+    }
+}
+
+pub fn source_value_for_position(
+    config: &ExtractionConfig,
+    word_value: Option<&str>,
+) -> Option<String> {
+    match config.token_position {
+        TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean => {
+            word_value.map(str::to_string)
+        }
+        TokenPositionMode::PromptFinal | TokenPositionMode::FullPromptMean => None,
+    }
+}
+
+pub fn sample_order_hash(records: &[(String, String)]) -> String {
+    let mut payload = String::new();
+    for (sample_id, prompt_hash) in records {
+        payload.push_str(sample_id);
+        payload.push('\t');
+        payload.push_str(prompt_hash);
+        payload.push('\n');
+    }
+    stable_prompt_hash(&payload)
+}
+
+pub fn canonical_config_toml(config: &ExtractionConfig) -> Result<String> {
+    let mut lines = Vec::new();
+    if let Some(run_id) = &config.run_id {
+        lines.push(toml_string_line("run_id", run_id));
+    }
+    lines.push(toml_string_line("model_path", &config.model_path));
+    if let Some(architecture) = &config.architecture {
+        lines.push(toml_string_line("architecture", architecture));
+    }
+    if let Some(tokenizer_path) = &config.tokenizer_path {
+        lines.push(toml_string_line("tokenizer_path", tokenizer_path));
+    }
+    lines.push(toml_string_line("backend", config.backend.as_str()));
+    lines.push(toml_string_line("prompt_template", &config.prompt_template));
+    lines.push(toml_string_line(
+        "input_jsonl_path",
+        &config.input_jsonl_path,
+    ));
+    lines.push(toml_string_line("output_dir", &config.output_dir));
+    lines.push(format!(
+        "layers = [{}]",
+        config
+            .layers
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    lines.push(toml_string_line(
+        "token_position",
+        config.token_position.as_str(),
+    ));
+    lines.push(toml_string_line("word_field", &config.word_field));
+    lines.push(toml_string_line("sample_id_field", &config.sample_id_field));
+    lines.push(format!("batch_size = {}", config.batch_size));
+    lines.push(toml_string_line("dtype", config.dtype.as_str()));
+    lines.push(toml_string_line(
+        "output_format",
+        config.output_format.as_str(),
+    ));
+    lines.push(format!(
+        "prompt_hashes_only = {}",
+        config.prompt_hashes_only
+    ));
+    lines.push(format!("write_logits = {}", config.write_logits));
+    lines.push(format!("resume = {}", config.resume));
+    if let Some(max_seq_len) = config.max_seq_len {
+        lines.push(format!("max_seq_len = {max_seq_len}"));
+    }
+    lines.push(format!(
+        "record_model_sha256 = {}",
+        config.record_model_sha256
+    ));
+    if let Some(binary) = &config.llama_cpp_binary {
+        lines.push(toml_string_line("llama_cpp_binary", binary));
+    }
+    if !config.run_metadata.is_null() {
+        let run_metadata_json = serde_json::to_string(&config.run_metadata)?;
+        lines.push(toml_string_line("run_metadata_json", &run_metadata_json));
+    }
+    lines.push(String::new());
+    Ok(lines.join("\n"))
 }
 
 pub fn select_token_positions(
@@ -369,6 +585,15 @@ pub fn select_token_positions(
 pub fn stable_prompt_hash(prompt: &str) -> String {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in prompt.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
+pub fn stable_bytes_hash(bytes: &[u8]) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
         hash ^= *byte as u64;
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
@@ -437,6 +662,24 @@ fn require_non_empty(value: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
+fn toml_string_line(key: &str, value: &str) -> String {
+    format!("{key} = \"{}\"", escape_toml_string(value))
+}
+
+fn escape_toml_string(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|c| match c {
+            '\\' => "\\\\".chars().collect::<Vec<_>>(),
+            '"' => "\\\"".chars().collect::<Vec<_>>(),
+            '\n' => "\\n".chars().collect::<Vec<_>>(),
+            '\r' => "\\r".chars().collect::<Vec<_>>(),
+            '\t' => "\\t".chars().collect::<Vec<_>>(),
+            c => vec![c],
+        })
+        .collect()
+}
+
 fn default_backend() -> ExecutionBackendName {
     ExecutionBackendName::Native
 }
@@ -472,6 +715,7 @@ mod tests {
     #[test]
     fn config_defaults_validate() {
         let config = ExtractionConfig {
+            run_id: None,
             model_path: "model.gguf".to_string(),
             architecture: Some("llama".to_string()),
             tokenizer_path: None,
@@ -487,6 +731,8 @@ mod tests {
             dtype: ArtifactDType::F32,
             output_format: ArtifactOutputFormat::Npy,
             prompt_hashes_only: false,
+            write_logits: false,
+            resume: false,
             max_seq_len: None,
             record_model_sha256: false,
             llama_cpp_binary: None,
@@ -505,8 +751,29 @@ mod tests {
     }
 
     #[test]
+    fn contract_names_layers_and_pooling_stably() {
+        assert_eq!(ARTIFACT_CONTRACT_VERSION, 2);
+        assert_eq!(ARTIFACT_LAYOUT, "ember.layer_sharded_npy.v1");
+        assert_eq!(layer_name(4), "layer_0004");
+        assert_eq!(layer_relative_path(4), "layers/layer_0004.npy");
+        assert_eq!(pooling_for_mode(TokenPositionMode::PromptFinal), "single");
+        assert_eq!(pooling_for_mode(TokenPositionMode::WordMean), "mean");
+
+        let order_a = sample_order_hash(&[
+            ("a".to_string(), "fnv1a64:1111".to_string()),
+            ("b".to_string(), "fnv1a64:2222".to_string()),
+        ]);
+        let order_b = sample_order_hash(&[
+            ("b".to_string(), "fnv1a64:2222".to_string()),
+            ("a".to_string(), "fnv1a64:1111".to_string()),
+        ]);
+        assert_ne!(order_a, order_b);
+    }
+
+    #[test]
     fn prompt_final_skips_zero_width_offsets() {
         let config = ExtractionConfig {
+            run_id: None,
             model_path: "model.gguf".to_string(),
             architecture: None,
             tokenizer_path: None,
@@ -522,6 +789,8 @@ mod tests {
             dtype: ArtifactDType::F32,
             output_format: ArtifactOutputFormat::Npy,
             prompt_hashes_only: false,
+            write_logits: false,
+            resume: false,
             max_seq_len: None,
             record_model_sha256: false,
             llama_cpp_binary: None,

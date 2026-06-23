@@ -1,8 +1,14 @@
 use crate::backend::{Backend, CpuBackend};
 use crate::extraction::{
-    load_input_samples, select_token_positions, sha256_file, stable_prompt_hash, unix_timestamp,
-    ArtifactMetadata, BackendHiddenStateOutput, BackendMetadata, ExecutionBackendName,
-    ExtractionConfig, ExtractionRunOutput, ModelMetadata, SampleArtifactRecord, TokenizedPrompt,
+    canonical_config_toml, layer_relative_path, load_input_samples, pooling_for_mode, run_dir,
+    sample_order_hash, select_token_positions, sha256_file, source_field_for_position,
+    source_span_for_position, source_value_for_position, stable_bytes_hash, stable_prompt_hash,
+    unix_timestamp, ArtifactManifest, BackendHiddenStateOutput, BackendMetadata,
+    ExecutionBackendName, ExtractionConfig, ExtractionRunOutput, LayerArtifact, LogitsArtifact,
+    ModelMetadata, PositionArtifactRecord, SampleArtifactRecord, TensorContract,
+    TokenizationArtifactRecord, TokenizedPrompt, ARTIFACT_CONTRACT_VERSION, ARTIFACT_LAYOUT,
+    CHECKSUMS_FILENAME, CONFIG_FILENAME, LAYERS_DIRNAME, LOGITS_FILENAME, MANIFEST_FILENAME,
+    POSITIONS_FILENAME, REPORT_FILENAME, SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
 use crate::model::ForwardModel;
 use crate::npy::NpyStreamWriter;
@@ -245,25 +251,81 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
     let layers = config.effective_layers(model_metadata.n_layers)?;
     let samples = load_input_samples(config)?;
 
-    fs::create_dir_all(&config.output_dir)
-        .with_context(|| format!("failed to create output directory: {}", config.output_dir))?;
-    let hidden_states_path = Path::new(&config.output_dir).join("hidden_states.npy");
-    let samples_path = Path::new(&config.output_dir).join("samples.jsonl");
-    let metadata_path = Path::new(&config.output_dir).join("metadata.json");
+    let run_dir = run_dir(config);
+    let layers_dir = run_dir.join(LAYERS_DIRNAME);
+    fs::create_dir_all(&layers_dir).with_context(|| {
+        format!(
+            "failed to create layers directory: {}",
+            layers_dir.display()
+        )
+    })?;
 
-    let hidden_states_shape = vec![samples.len(), layers.len(), model_metadata.embed_dim];
-    let hidden_states_path_str = path_to_string(&hidden_states_path)?;
+    let config_path = run_dir.join(CONFIG_FILENAME);
+    let manifest_path = run_dir.join(MANIFEST_FILENAME);
+    let samples_path = run_dir.join(SAMPLES_FILENAME);
+    let tokenization_path = run_dir.join(TOKENIZATION_FILENAME);
+    let positions_path = run_dir.join(POSITIONS_FILENAME);
+    let checksums_path = run_dir.join(CHECKSUMS_FILENAME);
+    let report_path = run_dir.join(REPORT_FILENAME);
+    let logits_path = run_dir.join(LOGITS_FILENAME);
+
+    let config_path_str = path_to_string(&config_path)?;
+    let manifest_path_str = path_to_string(&manifest_path)?;
     let samples_path_str = path_to_string(&samples_path)?;
-    let metadata_path_str = path_to_string(&metadata_path)?;
+    let tokenization_path_str = path_to_string(&tokenization_path)?;
+    let positions_path_str = path_to_string(&positions_path)?;
+    let checksums_path_str = path_to_string(&checksums_path)?;
+    let report_path_str = path_to_string(&report_path)?;
+    let logits_path_str = path_to_string(&logits_path)?;
 
-    let mut hidden_writer = NpyStreamWriter::create(&hidden_states_path_str, &hidden_states_shape)?;
+    let canonical_config = canonical_config_toml(config)?;
+    fs::write(&config_path, &canonical_config)
+        .with_context(|| format!("failed to write canonical config: {}", config_path_str))?;
+    let config_hash = stable_bytes_hash(canonical_config.as_bytes());
+
+    let mut layer_writers = layers
+        .iter()
+        .map(|&layer| {
+            let path = run_dir.join(layer_relative_path(layer));
+            let path = path_to_string(&path)?;
+            NpyStreamWriter::create(&path, &[samples.len(), model_metadata.embed_dim])
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let layer_artifacts = layers
+        .iter()
+        .map(|&layer| LayerArtifact {
+            layer_index: layer,
+            layer_name: crate::extraction::layer_name(layer),
+            path: layer_relative_path(layer),
+            shape: vec![samples.len(), model_metadata.embed_dim],
+        })
+        .collect::<Vec<_>>();
+
     let mut sample_writer = fs::File::create(&samples_path)
         .with_context(|| format!("failed to create samples artifact: {}", samples_path_str))?;
+    let mut tokenization_writer = fs::File::create(&tokenization_path).with_context(|| {
+        format!(
+            "failed to create tokenization artifact: {}",
+            tokenization_path_str
+        )
+    })?;
+    let mut positions_writer = fs::File::create(&positions_path).with_context(|| {
+        format!(
+            "failed to create positions artifact: {}",
+            positions_path_str
+        )
+    })?;
 
-    for sample in &samples {
+    let mut logits_writer: Option<NpyStreamWriter> = None;
+    let mut logits_shape: Option<Vec<usize>> = None;
+    let mut logits_written = false;
+    let mut order_hash_inputs = Vec::with_capacity(samples.len());
+
+    for (sample_index, sample) in samples.iter().enumerate() {
         let tokenized = backend
             .tokenize(&sample.prompt)
             .with_context(|| format!("failed to tokenize sample '{}'", sample.sample_id))?;
+        let prompt_hash = stable_prompt_hash(&sample.prompt);
         let selected_token_positions = select_token_positions(
             &sample.prompt,
             &tokenized.token_ids,
@@ -290,68 +352,217 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
                 vec![layers.len(), model_metadata.embed_dim]
             );
         }
-        hidden_writer.write_f32s(&output.hidden_states)?;
-        let token_count = tokenized.token_ids.len();
+        for (layer_offset, writer) in layer_writers.iter_mut().enumerate() {
+            let row_start = layer_offset * model_metadata.embed_dim;
+            let row_end = row_start + model_metadata.embed_dim;
+            writer.write_f32s(&output.hidden_states[row_start..row_end])?;
+        }
 
-        let record = SampleArtifactRecord {
-            schema_version: 1,
+        if config.write_logits {
+            let logits = output
+                .logits
+                .as_ref()
+                .context("config requested write_logits but backend did not return logits")?;
+            let shape = output
+                .logits_shape
+                .as_ref()
+                .context("backend returned logits without logits_shape")?;
+            if shape.len() != 2 || shape[0] != 1 {
+                anyhow::bail!(
+                    "expected per-sample logits shape [1, vocab], got {:?}",
+                    shape
+                );
+            }
+            let vocab_size = shape[1];
+            if logits.len() != vocab_size {
+                anyhow::bail!(
+                    "logits payload has {} values but logits_shape expects {}",
+                    logits.len(),
+                    vocab_size
+                );
+            }
+            if logits_writer.is_none() {
+                logits_writer = Some(NpyStreamWriter::create(
+                    &logits_path_str,
+                    &[samples.len(), vocab_size],
+                )?);
+                logits_shape = Some(vec![samples.len(), vocab_size]);
+            }
+            logits_writer
+                .as_mut()
+                .expect("logits writer initialized above")
+                .write_f32s(logits)?;
+            logits_written = true;
+        }
+
+        let token_count = tokenized.token_ids.len();
+        order_hash_inputs.push((sample.sample_id.clone(), prompt_hash.clone()));
+
+        let sample_record = SampleArtifactRecord {
+            schema_version: ARTIFACT_CONTRACT_VERSION,
+            sample_index,
             sample_id: sample.sample_id.clone(),
             input_index: sample.input_index,
-            token_ids: tokenized.token_ids,
-            selected_token_positions,
-            token_count,
             prompt: if config.prompt_hashes_only {
                 None
             } else {
                 Some(sample.prompt.clone())
             },
-            prompt_hash: stable_prompt_hash(&sample.prompt),
-            logits_available: output.logits_available,
-            logits_shape: output.logits_shape,
+            prompt_hash: prompt_hash.clone(),
         };
-        serde_json::to_writer(&mut sample_writer, &record)?;
+        serde_json::to_writer(&mut sample_writer, &sample_record)?;
         sample_writer.write_all(b"\n")?;
+
+        let tokenization_record = TokenizationArtifactRecord {
+            schema_version: ARTIFACT_CONTRACT_VERSION,
+            sample_index,
+            sample_id: sample.sample_id.clone(),
+            token_ids: tokenized.token_ids,
+            token_count,
+            prompt_hash,
+            offsets: tokenized.offsets,
+        };
+        serde_json::to_writer(&mut tokenization_writer, &tokenization_record)?;
+        tokenization_writer.write_all(b"\n")?;
+
+        let position_record = PositionArtifactRecord {
+            schema_version: ARTIFACT_CONTRACT_VERSION,
+            sample_index,
+            sample_id: sample.sample_id.clone(),
+            position_mode: config.token_position.as_str().to_string(),
+            pooling: pooling_for_mode(config.token_position).to_string(),
+            selected_token_positions,
+            source_field: source_field_for_position(config),
+            source_value: source_value_for_position(config, sample.word_value.as_deref()),
+            source_byte_span: source_span_for_position(
+                &sample.prompt,
+                config,
+                sample.word_value.as_deref(),
+            ),
+        };
+        serde_json::to_writer(&mut positions_writer, &position_record)?;
+        positions_writer.write_all(b"\n")?;
     }
 
-    hidden_writer.finish()?;
+    for writer in &mut layer_writers {
+        writer.finish()?;
+    }
+    if let Some(writer) = &mut logits_writer {
+        writer.finish()?;
+    }
     sample_writer.flush()?;
+    tokenization_writer.flush()?;
+    positions_writer.flush()?;
 
-    let mut checksums = BTreeMap::new();
-    if let Some(sum) = sha256_file(&hidden_states_path) {
-        checksums.insert("hidden_states.npy".to_string(), sum);
-    }
-    if let Some(sum) = sha256_file(&samples_path) {
-        checksums.insert("samples.jsonl".to_string(), sum);
-    }
+    let sample_order_hash = sample_order_hash(&order_hash_inputs);
+    let logits_artifact = if logits_written {
+        Some(LogitsArtifact {
+            path: LOGITS_FILENAME.to_string(),
+            shape: logits_shape.expect("logits shape recorded when logits are written"),
+        })
+    } else {
+        None
+    };
 
-    let metadata = ArtifactMetadata {
-        schema_version: 1,
+    let manifest = ArtifactManifest {
+        schema_version: ARTIFACT_CONTRACT_VERSION,
+        layout: ARTIFACT_LAYOUT.to_string(),
         artifact_kind: "ember_hidden_states".to_string(),
         created_at_unix: unix_timestamp(),
-        output_dir: config.output_dir.clone(),
-        hidden_states_path: hidden_states_path_str.clone(),
-        samples_path: samples_path_str.clone(),
-        hidden_states_shape: hidden_states_shape.clone(),
+        run_id: config.run_id.clone(),
+        run_dir: path_to_string(&run_dir)?,
+        config_path: CONFIG_FILENAME.to_string(),
+        samples_path: SAMPLES_FILENAME.to_string(),
+        tokenization_path: TOKENIZATION_FILENAME.to_string(),
+        positions_path: POSITIONS_FILENAME.to_string(),
+        checksums_path: CHECKSUMS_FILENAME.to_string(),
+        report_path: REPORT_FILENAME.to_string(),
+        logits_path: logits_written.then(|| LOGITS_FILENAME.to_string()),
+        tensor_contract: TensorContract {
+            storage: "layer-sharded-npy".to_string(),
+            dtype: config.dtype.as_str().to_string(),
+            byte_order: "little-endian".to_string(),
+            sample_axis: 0,
+            hidden_axis: 1,
+            layers: layer_artifacts,
+            logits: logits_artifact,
+        },
+        sample_count: samples.len(),
+        sample_order_hash,
+        config_hash,
         dtype: config.dtype.as_str().to_string(),
         output_format: config.output_format.as_str().to_string(),
-        layers,
-        token_position: config.token_position.as_str().to_string(),
         model: model_metadata,
         backend: backend_metadata,
         extraction_config: config.clone(),
-        checksums,
     };
-    fs::write(&metadata_path, serde_json::to_string_pretty(&metadata)?)
-        .with_context(|| format!("failed to write metadata artifact: {}", metadata_path_str))?;
+    fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)
+        .with_context(|| format!("failed to write manifest artifact: {}", manifest_path_str))?;
+
+    let report = serde_json::json!({
+        "schema_version": ARTIFACT_CONTRACT_VERSION,
+        "layout": ARTIFACT_LAYOUT,
+        "status": "complete",
+        "sample_count": samples.len(),
+        "layer_count": layers.len(),
+        "layers": layers,
+        "logits_written": logits_written,
+        "resume": {
+            "supported_by_contract": true,
+            "native_runner_policy": "fresh-run",
+            "rule": "resume only when existing JSONL line counts, layer row counts, config_hash, and sample_order_hash agree"
+        },
+        "stale_or_corrupt_detection": {
+            "checksums": CHECKSUMS_FILENAME,
+            "manifest": MANIFEST_FILENAME,
+            "sample_order_hash": manifest.sample_order_hash,
+            "config_hash": manifest.config_hash
+        },
+    });
+    fs::write(&report_path, serde_json::to_string_pretty(&report)?)
+        .with_context(|| format!("failed to write report artifact: {}", report_path_str))?;
+
+    let mut checksums = BTreeMap::new();
+    checksum_insert(&mut checksums, &config_path, CONFIG_FILENAME);
+    checksum_insert(&mut checksums, &manifest_path, MANIFEST_FILENAME);
+    checksum_insert(&mut checksums, &samples_path, SAMPLES_FILENAME);
+    checksum_insert(&mut checksums, &tokenization_path, TOKENIZATION_FILENAME);
+    checksum_insert(&mut checksums, &positions_path, POSITIONS_FILENAME);
+    checksum_insert(&mut checksums, &report_path, REPORT_FILENAME);
+    for &layer in &layers {
+        let rel = layer_relative_path(layer);
+        checksum_insert(&mut checksums, &run_dir.join(&rel), &rel);
+    }
+    if logits_written {
+        checksum_insert(&mut checksums, &logits_path, LOGITS_FILENAME);
+    }
+    fs::write(&checksums_path, serde_json::to_string_pretty(&checksums)?)
+        .with_context(|| format!("failed to write checksums artifact: {}", checksums_path_str))?;
 
     Ok(ExtractionRunOutput {
-        output_dir: config.output_dir.clone(),
-        hidden_states_path: hidden_states_path_str,
+        run_dir: path_to_string(&run_dir)?,
+        manifest_path: manifest_path_str,
         samples_path: samples_path_str,
-        metadata_path: metadata_path_str,
+        tokenization_path: tokenization_path_str,
+        positions_path: positions_path_str,
+        checksums_path: checksums_path_str,
+        report_path: report_path_str,
         sample_count: samples.len(),
-        hidden_states_shape,
+        layer_paths: layers
+            .iter()
+            .map(|&layer| path_to_string(&run_dir.join(layer_relative_path(layer))))
+            .collect::<Result<Vec<_>>>()?,
     })
+}
+
+fn checksum_insert(
+    checksums: &mut BTreeMap<String, String>,
+    absolute_path: &Path,
+    relative_path: &str,
+) {
+    if let Some(sum) = sha256_file(absolute_path) {
+        checksums.insert(relative_path.to_string(), sum);
+    }
 }
 
 fn path_to_string(path: &Path) -> Result<String> {
@@ -393,6 +604,7 @@ mod tests {
     #[test]
     fn llama_cpp_placeholder_reports_not_implemented() {
         let config = ExtractionConfig {
+            run_id: None,
             model_path: "model.gguf".to_string(),
             architecture: Some("llama".to_string()),
             tokenizer_path: None,
@@ -408,6 +620,8 @@ mod tests {
             dtype: crate::extraction::ArtifactDType::F32,
             output_format: crate::extraction::ArtifactOutputFormat::Npy,
             prompt_hashes_only: false,
+            write_logits: false,
+            resume: false,
             max_seq_len: None,
             record_model_sha256: false,
             llama_cpp_binary: None,

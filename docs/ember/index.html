@@ -70,6 +70,14 @@
             native rust backend for inspectability and validation.
         </p>
 
+        <p>
+            the extraction artifact contract is backend-neutral: native ember
+            and future llama.cpp extractors write the same manifest, samples,
+            tokenization, positions, layer shards, checksums, and report files.
+            downstream probes read that contract instead of backend-specific
+            output.
+        </p>
+
         <h2>start here</h2>
 
         <div class="project-list">

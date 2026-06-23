@@ -159,12 +159,13 @@ cargo run --release -- extract --backend native --config configs/extract.example
 Minimal config shape:
 
 ```toml
+run_id = "qwen3_word_probe_smoke"
 model_path = "model.gguf"
 architecture = "llama"
 backend = "native"
 prompt_template = "Analyze the word: {word}"
 input_jsonl_path = "data/prompts.jsonl"
-output_dir = "data/extract_run"
+output_dir = "runs"
 layers = [0, 8, 16]
 token_position = "word_final_subtoken"
 batch_size = 1
@@ -172,9 +173,15 @@ dtype = "f32"
 output_format = "npy"
 ```
 
-The run writes `hidden_states.npy`, `samples.jsonl`, and `metadata.json`.
+The run writes the frozen Ember artifact contract under
+`runs/qwen3_word_probe_smoke/`: `manifest.json`, `samples.jsonl`,
+`tokenization.jsonl`, `positions.jsonl`, per-layer `layers/layer_XXXX.npy`
+files, `checksums.json`, and `report.json`. See
+[docs/artifact_contract.md](docs/artifact_contract.md).
+
 `llama-cpp` config validation is wired, but hidden-state extraction still needs
-the external patched/custom llama.cpp binary integration.
+the external patched/custom llama.cpp binary integration. That backend must
+write the same artifact contract as `native`.
 
 ### flags
 

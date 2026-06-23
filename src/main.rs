@@ -508,12 +508,17 @@ where
     );
     let output = run_extraction_with_backend(&mut backend, config)?;
     eprintln!(
-        "wrote {} sample(s) to {} with hidden-state shape {:?}",
-        output.sample_count, output.output_dir, output.hidden_states_shape
+        "wrote {} sample(s) to {} with {} layer shard(s)",
+        output.sample_count,
+        output.run_dir,
+        output.layer_paths.len()
     );
-    eprintln!("hidden states: {}", output.hidden_states_path);
+    eprintln!("manifest: {}", output.manifest_path);
     eprintln!("samples: {}", output.samples_path);
-    eprintln!("metadata: {}", output.metadata_path);
+    eprintln!("tokenization: {}", output.tokenization_path);
+    eprintln!("positions: {}", output.positions_path);
+    eprintln!("checksums: {}", output.checksums_path);
+    eprintln!("report: {}", output.report_path);
     Ok(())
 }
 
