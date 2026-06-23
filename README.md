@@ -4,23 +4,27 @@
 [![ci](https://github.com/voidwest/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/voidwest/ember/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-a lightweight cpu-first llm inference engine in rust. runs quantized models
-without heavy framework dependencies. also serves as a **hidden-state probing
-platform** for linguistics research - extracting and analyzing per-layer
-representations from decoder-only language models.
+a lightweight research layer for hidden-state extraction, leakage-aware probing,
+and reproducible morphology experiments over GGUF models. Ember keeps an
+inspectable Rust inference path for validation, and is being refactored to use
+external execution backends such as llama.cpp when scale and model coverage
+matter.
 
 research write-up: https://voidwest.dev/ember
 
 ## what ember is / is not
 
-Ember is a CPU-first Rust inference and probing engine for small-to-medium GGUF
-language models. It is built to make model loading, quantized CPU inference,
-per-layer hidden-state extraction, and benchmark artifacts inspectable.
+Ember is a research layer for hidden-state extraction, leakage-aware probing,
+and reproducible morphology experiments over GGUF models. The native Rust path
+remains an inspectable reference backend for small-to-medium models and
+validation work.
 
 Ember is not trying to beat llama.cpp on throughput, model coverage, or
 production readiness. llama.cpp is the better default if the goal is broad,
-high-performance local inference. Ember prioritizes explicit implementation,
-validation artifacts, and hidden-state access for research workflows.
+high-performance local inference. Ember should use llama.cpp as an execution
+backend where that is the right tool, while keeping dataset handling, prompt
+construction, token-position selection, hidden-state artifact schemas, probes,
+baselines, metrics, reports, and validation in Ember.
 
 The current research direction is Arabic morphology probing and validation.
 
@@ -106,6 +110,10 @@ Use these levels when interpreting Ember runs:
 - **backend trait**: model code is generic over a `Backend` trait for linear ops,
   embeddings, and element-wise math - swap cpu for gpu later without rewriting
   those paths. (attention is cpu-scalar for now; see design notes.)
+- **execution backend interface**: extraction can now be routed through a model
+  execution backend. `native` wraps Ember's Rust inference path; `llama-cpp` is
+  reserved for a patched/custom external extraction binary and currently errors
+  clearly as not implemented.
 - **explicit memory**: pre-allocated kv caches and explicit tensor ownership make
   inference memory use visible and easy to profile.
 - **alloc-first design**: core tensor types and model code avoid `std` where practical, using `alloc` for vec-backed storage.
@@ -141,6 +149,32 @@ Use these levels when interpreting Ember runs:
 ```bash
 cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 ```
+
+Backend-ready hidden-state extraction uses a declarative config:
+
+```bash
+cargo run --release -- extract --backend native --config configs/extract.example.toml
+```
+
+Minimal config shape:
+
+```toml
+model_path = "model.gguf"
+architecture = "llama"
+backend = "native"
+prompt_template = "Analyze the word: {word}"
+input_jsonl_path = "data/prompts.jsonl"
+output_dir = "data/extract_run"
+layers = [0, 8, 16]
+token_position = "word_final_subtoken"
+batch_size = 1
+dtype = "f32"
+output_format = "npy"
+```
+
+The run writes `hidden_states.npy`, `samples.jsonl`, and `metadata.json`.
+`llama-cpp` config validation is wired, but hidden-state extraction still needs
+the external patched/custom llama.cpp binary integration.
 
 ### flags
 

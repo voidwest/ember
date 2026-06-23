@@ -1,12 +1,18 @@
 use anyhow::Context;
-use clap::Parser;
+use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
+use ember::extraction::ExecutionBackendName;
+use ember::extraction::ExtractionConfig;
 use ember::loader::load_gguf;
 use ember::loader::GgufLoader;
 use ember::loader::GgufValue;
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
+use ember::model_backend::run_extraction_with_backend;
+use ember::model_backend::LlamaCppBackend;
+use ember::model_backend::NativeModelBackend;
+use ember::npy::{write_npy_2d, NpyStreamWriter};
 use ember::sampler::sample_token;
 use std::env;
 use std::fs;
@@ -14,13 +20,13 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-mod npy;
-use npy::{write_npy_2d, NpyStreamWriter};
-
 /// a lightweight, cpu-first llm inference engine.
 #[derive(Parser)]
 #[command(name = "ember", version)]
 struct Args {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// path to gguf model file
     #[arg(short, long, default_value = "gpt2.Q8_0.gguf")]
     model: String,
@@ -140,6 +146,55 @@ struct Args {
     write_run_manifest: Option<String>,
 }
 
+#[derive(Subcommand)]
+enum Commands {
+    /// extract hidden-state artifacts through a selected execution backend
+    Extract(ExtractCommand),
+    /// compare native and llama.cpp backend outputs where comparable
+    ValidateBackends(ValidateBackendsCommand),
+}
+
+#[derive(ClapArgs)]
+struct ExtractCommand {
+    /// extraction config path (.toml or .json)
+    #[arg(long)]
+    config: String,
+
+    /// backend override; defaults to the backend in the config
+    #[arg(long, value_enum)]
+    backend: Option<BackendArg>,
+}
+
+#[derive(ClapArgs)]
+struct ValidateBackendsCommand {
+    /// path to GGUF model file
+    #[arg(long)]
+    model: Option<String>,
+
+    /// path to prompt JSONL/text fixture
+    #[arg(long)]
+    prompts: Option<String>,
+
+    /// comma-separated layers to compare
+    #[arg(long)]
+    layers: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BackendArg {
+    Native,
+    LlamaCpp,
+}
+
+impl From<BackendArg> for ExecutionBackendName {
+    fn from(value: BackendArg) -> Self {
+        match value {
+            BackendArg::Native => Self::Native,
+            BackendArg::LlamaCpp => Self::LlamaCpp,
+        }
+    }
+}
+
 struct RunMetadata {
     gguf_metadata: serde_json::Value,
     model_file_size_bytes: Option<u64>,
@@ -151,6 +206,13 @@ struct RunMetadata {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let args = Args::parse();
+
+    if let Some(command) = &args.command {
+        return match command {
+            Commands::Extract(command) => run_extract_command(command),
+            Commands::ValidateBackends(command) => run_validate_backends_command(command),
+        };
+    }
 
     // demo mode: suppress log noise for clean recordable output
     if args.demo {
@@ -363,6 +425,112 @@ fn default_tokenizer_for_arch(arch: &str) -> &'static str {
         "gemma4" => "tokenizer-gemma4.json",
         _ => "tokenizer.json",
     }
+}
+
+fn run_extract_command(command: &ExtractCommand) -> anyhow::Result<()> {
+    let backend_override = command.backend.map(ExecutionBackendName::from);
+    let config =
+        ExtractionConfig::from_path(&command.config)?.with_backend_override(backend_override);
+    config.validate()?;
+
+    match config.backend {
+        ExecutionBackendName::Native => run_native_extract_command(&config),
+        ExecutionBackendName::LlamaCpp => {
+            let _backend = LlamaCppBackend::from_config(&config)?;
+            anyhow::bail!(
+                "llama-cpp backend not implemented for hidden-state extraction yet; \
+                 config '{}' is valid, but Ember still needs the external patched/custom \
+                 llama.cpp extraction binary integration",
+                command.config
+            )
+        }
+    }
+}
+
+fn run_validate_backends_command(command: &ValidateBackendsCommand) -> anyhow::Result<()> {
+    let _ = (&command.model, &command.prompts, &command.layers);
+    anyhow::bail!(
+        "validate-backends not implemented yet; Milestone 1 only adds the backend-ready \
+         extraction interface and llama-cpp placeholder"
+    )
+}
+
+fn run_native_extract_command(config: &ExtractionConfig) -> anyhow::Result<()> {
+    let loader = load_gguf(&config.model_path)?;
+    let gguf_metadata = gguf_metadata_json(&loader);
+    let arch = infer_extraction_architecture(config, &gguf_metadata);
+    let tokenizer_path = config
+        .tokenizer_path
+        .as_deref()
+        .unwrap_or_else(|| default_tokenizer_for_arch(&arch));
+    let tokenizer = ember::tokenizer::EmberTokenizer::from_file(tokenizer_path)?;
+
+    match arch.as_str() {
+        "gpt2" => {
+            let model = Gpt2::from_loader(loader)?;
+            run_native_extract_for_model(model, tokenizer, config, &arch, gguf_metadata)
+        }
+        "llama" | "qwen3" => {
+            use ember::model::Llama;
+            let model = Llama::from_loader_with_max_seq_len(loader, config.max_seq_len)?;
+            run_native_extract_for_model(model, tokenizer, config, &arch, gguf_metadata)
+        }
+        "gemma4" => {
+            use ember::gemma4::Gemma4;
+            let model = Gemma4::from_loader(loader)?;
+            run_native_extract_for_model(model, tokenizer, config, &arch, gguf_metadata)
+        }
+        _ => anyhow::bail!(
+            "unsupported native extraction architecture '{}'; set architecture to gpt2, llama, qwen3, or gemma4",
+            arch
+        ),
+    }
+}
+
+fn run_native_extract_for_model<M>(
+    model: M,
+    tokenizer: ember::tokenizer::EmberTokenizer,
+    config: &ExtractionConfig,
+    arch: &str,
+    gguf_metadata: serde_json::Value,
+) -> anyhow::Result<()>
+where
+    M: ForwardModel<CpuBackend>,
+    <CpuBackend as Backend>::Error: Send + Sync + 'static,
+{
+    let mut backend = NativeModelBackend::new(
+        model,
+        tokenizer,
+        &config.model_path,
+        Some(arch.to_string()),
+        gguf_metadata,
+        config.record_model_sha256,
+    );
+    let output = run_extraction_with_backend(&mut backend, config)?;
+    eprintln!(
+        "wrote {} sample(s) to {} with hidden-state shape {:?}",
+        output.sample_count, output.output_dir, output.hidden_states_shape
+    );
+    eprintln!("hidden states: {}", output.hidden_states_path);
+    eprintln!("samples: {}", output.samples_path);
+    eprintln!("metadata: {}", output.metadata_path);
+    Ok(())
+}
+
+fn infer_extraction_architecture(
+    config: &ExtractionConfig,
+    gguf_metadata: &serde_json::Value,
+) -> String {
+    config
+        .architecture
+        .clone()
+        .or_else(|| {
+            gguf_metadata
+                .get("general.architecture")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "gpt2".to_string())
 }
 
 fn parse_temperature(value: &str) -> Result<f32, String> {

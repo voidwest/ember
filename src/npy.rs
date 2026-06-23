@@ -2,7 +2,7 @@ use anyhow::Context;
 use std::fs;
 use std::io::{BufWriter, Write};
 
-pub(crate) fn write_npy_2d(path: &str, data: &[f32], shape: &[usize; 2]) -> anyhow::Result<()> {
+pub fn write_npy_2d(path: &str, data: &[f32], shape: &[usize; 2]) -> anyhow::Result<()> {
     write_npy_shape(path, data, shape)
 }
 
@@ -52,14 +52,14 @@ fn write_f32_slice(w: &mut impl Write, data: &[f32]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) struct NpyStreamWriter {
+pub struct NpyStreamWriter {
     writer: BufWriter<fs::File>,
     expected_floats: usize,
     written_floats: usize,
 }
 
 impl NpyStreamWriter {
-    pub(crate) fn create(path: &str, shape: &[usize]) -> anyhow::Result<Self> {
+    pub fn create(path: &str, shape: &[usize]) -> anyhow::Result<Self> {
         let file = fs::File::create(path)?;
         let mut writer = BufWriter::new(file);
         write_npy_header(&mut writer, shape)?;
@@ -70,7 +70,7 @@ impl NpyStreamWriter {
         })
     }
 
-    pub(crate) fn write_f32s(&mut self, data: &[f32]) -> anyhow::Result<()> {
+    pub fn write_f32s(&mut self, data: &[f32]) -> anyhow::Result<()> {
         let next = self
             .written_floats
             .checked_add(data.len())
@@ -88,7 +88,7 @@ impl NpyStreamWriter {
         Ok(())
     }
 
-    pub(crate) fn finish(&mut self) -> anyhow::Result<()> {
+    pub fn finish(&mut self) -> anyhow::Result<()> {
         if self.written_floats != self.expected_floats {
             anyhow::bail!(
                 "npy stream length mismatch: wrote {} floats, expected {}",

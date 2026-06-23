@@ -3,13 +3,13 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="ember, a cpu-first llm inference engine in rust" />
-        <meta property="og:description" content="A CPU-first Rust inference and probing engine for inspectable GGUF loading, quantized CPU inference, hidden-state extraction, and conservative validation workflows." />
+        <meta property="og:title" content="ember, a GGUF hidden-state research layer" />
+        <meta property="og:description" content="A research layer for hidden-state extraction, leakage-aware probing, and reproducible morphology experiments over GGUF models." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/ember/" />
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary" />
-        <title>ember, a cpu-first llm inference engine in rust</title>
+        <title>ember, a GGUF hidden-state research layer</title>
         <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
@@ -49,24 +49,25 @@
         <div class="hero">
             <div class="logo">ember</div>
             <div class="tagline">
-                cpu-first rust inference and probing. gguf loading,
-                hidden-state extraction, and validation artifacts.
+                hidden-state extraction, leakage-aware probing, and
+                reproducible morphology experiments over GGUF models.
             </div>
             <div class="meta">
                 <span>rust 1.92</span>
                 <span>&#9679;</span>
                 <span>mit</span>
                 <span>&#9679;</span>
-                <span>cpu-first</span>
+                <span>backend-ready</span>
             </div>
         </div>
 
         <p>
-            ember is a small, inspectable inference and probing engine. it runs
-            quantized GGUF models on CPU, exposes per-layer hidden states for
-            research workflows, and keeps benchmark/validation artifacts close
-            to the code that produced them. it is not trying to replace
-            llama.cpp; the priority is legibility and auditability.
+            ember is a research layer over GGUF models. it owns dataset
+            handling, prompt construction, token-position selection,
+            hidden-state artifacts, probes, baselines, metrics, reports, and
+            validation. it is not trying to replace llama.cpp; ember uses
+            llama.cpp when scale and model coverage matter, while keeping a
+            native rust backend for inspectability and validation.
         </p>
 
         <h2>start here</h2>

@@ -1,10 +1,13 @@
 extern crate alloc;
 pub mod backend;
+pub mod extraction;
 pub mod gemma4;
 pub mod kv_cache;
 pub mod llama;
 pub mod loader;
 pub mod model;
+pub mod model_backend;
+pub mod npy;
 pub mod quant;
 pub mod sampler;
 pub mod simd;
