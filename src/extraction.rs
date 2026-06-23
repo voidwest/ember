@@ -17,12 +17,14 @@ pub const CHECKSUMS_FILENAME: &str = "checksums.json";
 pub const REPORT_FILENAME: &str = "report.json";
 pub const LAYERS_DIRNAME: &str = "layers";
 pub const LOGITS_FILENAME: &str = "logits.npy";
+pub const LLAMA_CPP_REQUEST_FILENAME: &str = "llama_cpp_request.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExecutionBackendName {
     Native,
     LlamaCpp,
+    LlamaCppExternal,
 }
 
 impl ExecutionBackendName {
@@ -30,6 +32,7 @@ impl ExecutionBackendName {
         match self {
             Self::Native => "native",
             Self::LlamaCpp => "llama-cpp",
+            Self::LlamaCppExternal => "llama-cpp-external",
         }
     }
 }
@@ -206,7 +209,7 @@ pub struct ExtractionInputSample {
     pub word_value: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackendMetadata {
     pub name: String,
     pub version: Option<String>,
@@ -215,7 +218,7 @@ pub struct BackendMetadata {
     pub details: Value,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetadata {
     pub path: String,
     pub architecture: Option<String>,
@@ -227,7 +230,7 @@ pub struct ModelMetadata {
     pub gguf_metadata: Value,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactManifest {
     pub schema_version: u32,
     pub layout: String,
@@ -253,7 +256,7 @@ pub struct ArtifactManifest {
     pub extraction_config: ExtractionConfig,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TensorContract {
     pub storage: String,
     pub dtype: String,
@@ -264,7 +267,7 @@ pub struct TensorContract {
     pub logits: Option<LogitsArtifact>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LayerArtifact {
     pub layer_index: usize,
     pub layer_name: String,
@@ -272,13 +275,13 @@ pub struct LayerArtifact {
     pub shape: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogitsArtifact {
     pub path: String,
     pub shape: Vec<usize>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SampleArtifactRecord {
     pub schema_version: u32,
     pub sample_index: usize,
@@ -288,7 +291,7 @@ pub struct SampleArtifactRecord {
     pub prompt_hash: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenizationArtifactRecord {
     pub schema_version: u32,
     pub sample_index: usize,
@@ -299,7 +302,7 @@ pub struct TokenizationArtifactRecord {
     pub offsets: Vec<(usize, usize)>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionArtifactRecord {
     pub schema_version: u32,
     pub sample_index: usize,
@@ -338,6 +341,43 @@ pub struct ExtractionRunOutput {
     pub report_path: String,
     pub sample_count: usize,
     pub layer_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlamaCppExternalRequest {
+    pub schema_version: u32,
+    pub contract_version: u32,
+    pub layout: String,
+    pub backend: String,
+    pub model_path: String,
+    pub input_jsonl_path: String,
+    pub output_dir: String,
+    pub config_path: String,
+    pub manifest_path: String,
+    pub samples_path: String,
+    pub tokenization_path: String,
+    pub positions_path: String,
+    pub checksums_path: String,
+    pub report_path: String,
+    pub logits_path: Option<String>,
+    pub prompt_template: String,
+    pub sample_id_field: String,
+    pub word_field: String,
+    pub token_position: String,
+    pub layers: Vec<usize>,
+    pub write_logits: bool,
+    pub prompt_hashes_only: bool,
+    pub max_seq_len: Option<usize>,
+    pub run_metadata: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArtifactValidationSummary {
+    pub run_dir: String,
+    pub sample_count: usize,
+    pub layer_count: usize,
+    pub logits_present: bool,
+    pub sample_order_hash: String,
 }
 
 pub fn load_input_samples(config: &ExtractionConfig) -> Result<Vec<ExtractionInputSample>> {
@@ -462,6 +502,197 @@ pub fn sample_order_hash(records: &[(String, String)]) -> String {
         payload.push('\n');
     }
     stable_prompt_hash(&payload)
+}
+
+pub fn validate_artifact_contract(
+    run_dir: impl AsRef<Path>,
+    allow_missing_layers: bool,
+) -> Result<ArtifactValidationSummary> {
+    let run_dir = run_dir.as_ref();
+    let manifest_path = run_dir.join(MANIFEST_FILENAME);
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read manifest: {}", manifest_path.display()))?;
+    let manifest: ArtifactManifest = serde_json::from_str(&manifest_text)
+        .with_context(|| format!("failed to parse manifest: {}", manifest_path.display()))?;
+
+    if manifest.schema_version != ARTIFACT_CONTRACT_VERSION {
+        anyhow::bail!(
+            "manifest schema_version {} does not match expected {}",
+            manifest.schema_version,
+            ARTIFACT_CONTRACT_VERSION
+        );
+    }
+    if manifest.layout != ARTIFACT_LAYOUT {
+        anyhow::bail!(
+            "manifest layout '{}' does not match expected '{}'",
+            manifest.layout,
+            ARTIFACT_LAYOUT
+        );
+    }
+    if manifest.tensor_contract.layers.is_empty() && !allow_missing_layers {
+        anyhow::bail!("manifest has no layer shards");
+    }
+
+    let samples: Vec<SampleArtifactRecord> =
+        read_jsonl_records(run_dir.join(&manifest.samples_path))?;
+    let tokenization: Vec<TokenizationArtifactRecord> =
+        read_jsonl_records(run_dir.join(&manifest.tokenization_path))?;
+    let positions: Vec<PositionArtifactRecord> =
+        read_jsonl_records(run_dir.join(&manifest.positions_path))?;
+
+    if samples.len() != manifest.sample_count {
+        anyhow::bail!(
+            "samples.jsonl has {} rows but manifest sample_count is {}",
+            samples.len(),
+            manifest.sample_count
+        );
+    }
+    if tokenization.len() != samples.len() || positions.len() != samples.len() {
+        anyhow::bail!(
+            "artifact row count mismatch: samples={}, tokenization={}, positions={}",
+            samples.len(),
+            tokenization.len(),
+            positions.len()
+        );
+    }
+
+    let mut order = Vec::with_capacity(samples.len());
+    for (index, sample) in samples.iter().enumerate() {
+        if sample.schema_version != ARTIFACT_CONTRACT_VERSION {
+            anyhow::bail!(
+                "sample row {index} has schema_version {}",
+                sample.schema_version
+            );
+        }
+        if sample.sample_index != index {
+            anyhow::bail!(
+                "samples.jsonl row {index} has sample_index {}",
+                sample.sample_index
+            );
+        }
+        let token_row = &tokenization[index];
+        let position_row = &positions[index];
+        if token_row.sample_index != index || position_row.sample_index != index {
+            anyhow::bail!("sample_index mismatch at row {index}");
+        }
+        if token_row.sample_id != sample.sample_id || position_row.sample_id != sample.sample_id {
+            anyhow::bail!("sample_id mismatch at sample_index {index}");
+        }
+        if token_row.prompt_hash != sample.prompt_hash {
+            anyhow::bail!("prompt_hash mismatch at sample_index {index}");
+        }
+        if token_row.token_count != token_row.token_ids.len() {
+            anyhow::bail!(
+                "token_count mismatch at sample_index {index}: {} vs {} token_ids",
+                token_row.token_count,
+                token_row.token_ids.len()
+            );
+        }
+        if position_row.selected_token_positions.is_empty() {
+            anyhow::bail!("empty selected_token_positions at sample_index {index}");
+        }
+        order.push((sample.sample_id.clone(), sample.prompt_hash.clone()));
+    }
+
+    let computed_order_hash = sample_order_hash(&order);
+    if computed_order_hash != manifest.sample_order_hash {
+        anyhow::bail!(
+            "sample_order_hash mismatch: manifest {}, computed {}",
+            manifest.sample_order_hash,
+            computed_order_hash
+        );
+    }
+
+    for layer in &manifest.tensor_contract.layers {
+        if layer.shape.len() != 2 {
+            anyhow::bail!("layer {} shape must be rank 2", layer.layer_name);
+        }
+        if layer.shape[0] != manifest.sample_count {
+            anyhow::bail!(
+                "layer {} first dimension {} does not match sample_count {}",
+                layer.layer_name,
+                layer.shape[0],
+                manifest.sample_count
+            );
+        }
+        let path = run_dir.join(&layer.path);
+        if !path.is_file() {
+            anyhow::bail!("missing layer shard: {}", path.display());
+        }
+    }
+    if let Some(logits_path) = &manifest.logits_path {
+        let path = run_dir.join(logits_path);
+        if !path.is_file() {
+            anyhow::bail!(
+                "manifest declares logits but file is missing: {}",
+                path.display()
+            );
+        }
+    }
+
+    let report_path = run_dir.join(&manifest.report_path);
+    let report_text = fs::read_to_string(&report_path)
+        .with_context(|| format!("failed to read report: {}", report_path.display()))?;
+    let report: Value = serde_json::from_str(&report_text)
+        .with_context(|| format!("failed to parse report: {}", report_path.display()))?;
+    if report.get("status").and_then(Value::as_str) != Some("complete") {
+        anyhow::bail!("report status is not complete");
+    }
+
+    let checksums_path = run_dir.join(&manifest.checksums_path);
+    let checksums_text = fs::read_to_string(&checksums_path)
+        .with_context(|| format!("failed to read checksums: {}", checksums_path.display()))?;
+    let checksums: BTreeMap<String, String> = serde_json::from_str(&checksums_text)
+        .with_context(|| format!("failed to parse checksums: {}", checksums_path.display()))?;
+    for (relative_path, expected) in checksums {
+        let path = run_dir.join(&relative_path);
+        if !path.is_file() {
+            anyhow::bail!("checksums.json references missing file: {relative_path}");
+        }
+        if let Some(actual) = sha256_file(&path) {
+            if actual != expected {
+                anyhow::bail!(
+                    "checksum mismatch for {relative_path}: expected {expected}, got {actual}"
+                );
+            }
+        }
+    }
+
+    Ok(ArtifactValidationSummary {
+        run_dir: run_dir
+            .to_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| run_dir.display().to_string()),
+        sample_count: manifest.sample_count,
+        layer_count: manifest.tensor_contract.layers.len(),
+        logits_present: manifest.logits_path.is_some(),
+        sample_order_hash: manifest.sample_order_hash,
+    })
+}
+
+pub fn read_jsonl_records<T>(path: impl AsRef<Path>) -> Result<Vec<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let path = path.as_ref();
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("failed to read JSONL artifact: {}", path.display()))?;
+    let mut records = Vec::new();
+    for (line_index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let record = serde_json::from_str(line).with_context(|| {
+            format!(
+                "failed to parse JSONL line {} from {}",
+                line_index + 1,
+                path.display()
+            )
+        })?;
+        records.push(record);
+    }
+    Ok(records)
 }
 
 pub fn canonical_config_toml(config: &ExtractionConfig) -> Result<String> {

@@ -183,6 +183,21 @@ files, `checksums.json`, and `report.json`. See
 the external patched/custom llama.cpp binary integration. That backend must
 write the same artifact contract as `native`.
 
+The external-process backend is available as backend plumbing:
+
+```bash
+cargo run --release -- extract \
+  --backend llama-cpp-external \
+  --llama-bin ./build/bin/llama-ember-extract \
+  --model ./models/qwen3-0.6b-q8_0.gguf \
+  --samples ./data/samples.jsonl \
+  --out runs/test-qwen-llama-backend
+```
+
+For now `llama-cpp-external` supports the tokenization/logits artifact skeleton
+only. Hidden-state layer requests are rejected until the patched extractor
+contract is implemented.
+
 ### flags
 
 | flag | default | description |

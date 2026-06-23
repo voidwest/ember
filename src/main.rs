@@ -9,7 +9,9 @@ use ember::loader::GgufLoader;
 use ember::loader::GgufValue;
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
+use ember::model_backend::compare_backend_artifacts;
 use ember::model_backend::run_extraction_with_backend;
+use ember::model_backend::run_llama_cpp_external_backend;
 use ember::model_backend::LlamaCppBackend;
 use ember::model_backend::NativeModelBackend;
 use ember::npy::{write_npy_2d, NpyStreamWriter};
@@ -158,11 +160,59 @@ enum Commands {
 struct ExtractCommand {
     /// extraction config path (.toml or .json)
     #[arg(long)]
-    config: String,
+    config: Option<String>,
 
     /// backend override; defaults to the backend in the config
     #[arg(long, value_enum)]
     backend: Option<BackendArg>,
+
+    /// llama.cpp-compatible external extractor binary
+    #[arg(long)]
+    llama_bin: Option<String>,
+
+    /// GGUF model path override or direct-mode model path
+    #[arg(long)]
+    model: Option<String>,
+
+    /// input samples JSONL path override or direct-mode samples path
+    #[arg(long)]
+    samples: Option<String>,
+
+    /// output run directory override or direct-mode output path
+    #[arg(long)]
+    out: Option<String>,
+
+    /// prompt template override; direct mode defaults to "{prompt}"
+    #[arg(long)]
+    prompt_template: Option<String>,
+
+    /// architecture hint for native direct mode
+    #[arg(long)]
+    arch: Option<String>,
+
+    /// tokenizer path override
+    #[arg(long)]
+    tokenizer: Option<String>,
+
+    /// comma-separated layer indices; external mode currently requires this empty
+    #[arg(long)]
+    layers: Option<String>,
+
+    /// token position / pooling mode
+    #[arg(long, value_enum)]
+    token_position: Option<TokenPositionArg>,
+
+    /// sample id field in the input JSONL
+    #[arg(long)]
+    sample_id_field: Option<String>,
+
+    /// word field for word-based position modes
+    #[arg(long)]
+    word_field: Option<String>,
+
+    /// request optional logits from the backend
+    #[arg(long)]
+    write_logits: bool,
 }
 
 #[derive(ClapArgs)]
@@ -178,12 +228,21 @@ struct ValidateBackendsCommand {
     /// comma-separated layers to compare
     #[arg(long)]
     layers: Option<String>,
+
+    /// existing native Ember artifact run directory
+    #[arg(long)]
+    native_run: Option<String>,
+
+    /// existing llama-cpp-external artifact run directory
+    #[arg(long)]
+    external_run: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum BackendArg {
     Native,
     LlamaCpp,
+    LlamaCppExternal,
 }
 
 impl From<BackendArg> for ExecutionBackendName {
@@ -191,6 +250,30 @@ impl From<BackendArg> for ExecutionBackendName {
         match value {
             BackendArg::Native => Self::Native,
             BackendArg::LlamaCpp => Self::LlamaCpp,
+            BackendArg::LlamaCppExternal => Self::LlamaCppExternal,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TokenPositionArg {
+    #[value(name = "prompt_final")]
+    PromptFinal,
+    #[value(name = "word_final_subtoken")]
+    WordFinalSubtoken,
+    #[value(name = "word_mean")]
+    WordMean,
+    #[value(name = "full_prompt_mean")]
+    FullPromptMean,
+}
+
+impl From<TokenPositionArg> for ember::extraction::TokenPositionMode {
+    fn from(value: TokenPositionArg) -> Self {
+        match value {
+            TokenPositionArg::PromptFinal => Self::PromptFinal,
+            TokenPositionArg::WordFinalSubtoken => Self::WordFinalSubtoken,
+            TokenPositionArg::WordMean => Self::WordMean,
+            TokenPositionArg::FullPromptMean => Self::FullPromptMean,
         }
     }
 }
@@ -428,9 +511,7 @@ fn default_tokenizer_for_arch(arch: &str) -> &'static str {
 }
 
 fn run_extract_command(command: &ExtractCommand) -> anyhow::Result<()> {
-    let backend_override = command.backend.map(ExecutionBackendName::from);
-    let config =
-        ExtractionConfig::from_path(&command.config)?.with_backend_override(backend_override);
+    let config = build_extraction_config(command)?;
     config.validate()?;
 
     match config.backend {
@@ -441,18 +522,118 @@ fn run_extract_command(command: &ExtractCommand) -> anyhow::Result<()> {
                 "llama-cpp backend not implemented for hidden-state extraction yet; \
                  config '{}' is valid, but Ember still needs the external patched/custom \
                  llama.cpp extraction binary integration",
-                command.config
+                command.config.as_deref().unwrap_or("<direct>")
             )
         }
+        ExecutionBackendName::LlamaCppExternal => run_llama_cpp_external_extract_command(&config),
     }
 }
 
 fn run_validate_backends_command(command: &ValidateBackendsCommand) -> anyhow::Result<()> {
+    if let (Some(native_run), Some(external_run)) = (&command.native_run, &command.external_run) {
+        let report = compare_backend_artifacts(native_run, external_run)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     let _ = (&command.model, &command.prompts, &command.layers);
-    anyhow::bail!(
-        "validate-backends not implemented yet; Milestone 1 only adds the backend-ready \
-         extraction interface and llama-cpp placeholder"
-    )
+    anyhow::bail!("validate-backends requires --native-run and --external-run for Milestone 3")
+}
+
+fn build_extraction_config(command: &ExtractCommand) -> anyhow::Result<ExtractionConfig> {
+    let mut config = if let Some(path) = &command.config {
+        ExtractionConfig::from_path(path)?
+    } else {
+        ExtractionConfig {
+            run_id: None,
+            model_path: command
+                .model
+                .clone()
+                .context("extract direct mode requires --model")?,
+            architecture: command.arch.clone(),
+            tokenizer_path: command.tokenizer.clone(),
+            backend: command
+                .backend
+                .map(ExecutionBackendName::from)
+                .unwrap_or(ExecutionBackendName::Native),
+            prompt_template: command
+                .prompt_template
+                .clone()
+                .unwrap_or_else(|| "{prompt}".to_string()),
+            input_jsonl_path: command
+                .samples
+                .clone()
+                .context("extract direct mode requires --samples")?,
+            output_dir: command
+                .out
+                .clone()
+                .context("extract direct mode requires --out")?,
+            layers: parse_layers_list(command.layers.as_deref())?,
+            token_position: command
+                .token_position
+                .map(ember::extraction::TokenPositionMode::from)
+                .unwrap_or(ember::extraction::TokenPositionMode::PromptFinal),
+            word_field: command
+                .word_field
+                .clone()
+                .unwrap_or_else(|| "word".to_string()),
+            sample_id_field: command
+                .sample_id_field
+                .clone()
+                .unwrap_or_else(|| "id".to_string()),
+            batch_size: 1,
+            dtype: ember::extraction::ArtifactDType::F32,
+            output_format: ember::extraction::ArtifactOutputFormat::Npy,
+            prompt_hashes_only: false,
+            write_logits: command.write_logits,
+            resume: false,
+            max_seq_len: None,
+            record_model_sha256: false,
+            llama_cpp_binary: command.llama_bin.clone(),
+            run_metadata: serde_json::Value::Null,
+        }
+    };
+
+    if let Some(backend) = command.backend {
+        config.backend = ExecutionBackendName::from(backend);
+    }
+    if let Some(llama_bin) = &command.llama_bin {
+        config.llama_cpp_binary = Some(llama_bin.clone());
+    }
+    if let Some(model) = &command.model {
+        config.model_path = model.clone();
+    }
+    if let Some(samples) = &command.samples {
+        config.input_jsonl_path = samples.clone();
+    }
+    if let Some(out) = &command.out {
+        config.output_dir = out.clone();
+        config.run_id = None;
+    }
+    if let Some(template) = &command.prompt_template {
+        config.prompt_template = template.clone();
+    }
+    if let Some(arch) = &command.arch {
+        config.architecture = Some(arch.clone());
+    }
+    if let Some(tokenizer) = &command.tokenizer {
+        config.tokenizer_path = Some(tokenizer.clone());
+    }
+    if command.layers.is_some() {
+        config.layers = parse_layers_list(command.layers.as_deref())?;
+    }
+    if let Some(position) = command.token_position {
+        config.token_position = ember::extraction::TokenPositionMode::from(position);
+    }
+    if let Some(sample_id_field) = &command.sample_id_field {
+        config.sample_id_field = sample_id_field.clone();
+    }
+    if let Some(word_field) = &command.word_field {
+        config.word_field = word_field.clone();
+    }
+    if command.write_logits {
+        config.write_logits = true;
+    }
+    Ok(config)
 }
 
 fn run_native_extract_command(config: &ExtractionConfig) -> anyhow::Result<()> {
@@ -520,6 +701,36 @@ where
     eprintln!("checksums: {}", output.checksums_path);
     eprintln!("report: {}", output.report_path);
     Ok(())
+}
+
+fn run_llama_cpp_external_extract_command(config: &ExtractionConfig) -> anyhow::Result<()> {
+    let output = run_llama_cpp_external_backend(config)?;
+    eprintln!(
+        "llama-cpp-external wrote {} sample(s) to {}",
+        output.sample_count, output.run_dir
+    );
+    eprintln!("manifest: {}", output.manifest_path);
+    eprintln!("samples: {}", output.samples_path);
+    eprintln!("tokenization: {}", output.tokenization_path);
+    eprintln!("positions: {}", output.positions_path);
+    eprintln!("checksums: {}", output.checksums_path);
+    eprintln!("report: {}", output.report_path);
+    Ok(())
+}
+
+fn parse_layers_list(value: Option<&str>) -> anyhow::Result<Vec<usize>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            s.parse::<usize>()
+                .with_context(|| format!("invalid layer index '{s}'"))
+        })
+        .collect()
 }
 
 fn infer_extraction_architecture(

@@ -1,14 +1,16 @@
 use crate::backend::{Backend, CpuBackend};
 use crate::extraction::{
-    canonical_config_toml, layer_relative_path, load_input_samples, pooling_for_mode, run_dir,
-    sample_order_hash, select_token_positions, sha256_file, source_field_for_position,
-    source_span_for_position, source_value_for_position, stable_bytes_hash, stable_prompt_hash,
-    unix_timestamp, ArtifactManifest, BackendHiddenStateOutput, BackendMetadata,
-    ExecutionBackendName, ExtractionConfig, ExtractionRunOutput, LayerArtifact, LogitsArtifact,
+    canonical_config_toml, layer_relative_path, load_input_samples, pooling_for_mode,
+    read_jsonl_records, run_dir, sample_order_hash, select_token_positions, sha256_file,
+    source_field_for_position, source_span_for_position, source_value_for_position,
+    stable_bytes_hash, stable_prompt_hash, unix_timestamp, validate_artifact_contract,
+    ArtifactManifest, BackendHiddenStateOutput, BackendMetadata, ExecutionBackendName,
+    ExtractionConfig, ExtractionRunOutput, LayerArtifact, LlamaCppExternalRequest, LogitsArtifact,
     ModelMetadata, PositionArtifactRecord, SampleArtifactRecord, TensorContract,
     TokenizationArtifactRecord, TokenizedPrompt, ARTIFACT_CONTRACT_VERSION, ARTIFACT_LAYOUT,
-    CHECKSUMS_FILENAME, CONFIG_FILENAME, LAYERS_DIRNAME, LOGITS_FILENAME, MANIFEST_FILENAME,
-    POSITIONS_FILENAME, REPORT_FILENAME, SAMPLES_FILENAME, TOKENIZATION_FILENAME,
+    CHECKSUMS_FILENAME, CONFIG_FILENAME, LAYERS_DIRNAME, LLAMA_CPP_REQUEST_FILENAME,
+    LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME, SAMPLES_FILENAME,
+    TOKENIZATION_FILENAME,
 };
 use crate::model::ForwardModel;
 use crate::npy::NpyStreamWriter;
@@ -19,6 +21,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::process::Command;
 
 pub trait ModelBackend {
     fn backend_metadata(&self) -> BackendMetadata;
@@ -238,6 +241,215 @@ impl ModelBackend for LlamaCppBackend {
              expected a patched/custom external extraction binary"
         )
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct LlamaCppExternalBackend {
+    executable: String,
+}
+
+impl LlamaCppExternalBackend {
+    pub fn from_config(config: &ExtractionConfig) -> Result<Self> {
+        config.validate()?;
+        let executable = config
+            .llama_cpp_binary
+            .as_deref()
+            .context("llama-cpp-external requires llama_cpp_binary or --llama-bin")?;
+        validate_executable_path(executable)?;
+        validate_model_path(&config.model_path)?;
+        validate_input_path(&config.input_jsonl_path)?;
+        if !config.layers.is_empty() {
+            anyhow::bail!(
+                "unsupported llama-cpp-external config: hidden-state layer extraction is not wired yet; leave layers empty for tokenization/logits plumbing"
+            );
+        }
+        Ok(Self {
+            executable: executable.to_string(),
+        })
+    }
+
+    pub fn backend_metadata(&self) -> BackendMetadata {
+        BackendMetadata {
+            name: ExecutionBackendName::LlamaCppExternal.as_str().to_string(),
+            version: llama_cpp_version(Some(&self.executable)),
+            executable: Some(self.executable.clone()),
+            commit: None,
+            details: serde_json::json!({
+                "integration": "external-process",
+                "interface": "--request <json>",
+                "supports_hidden_states": false,
+            }),
+        }
+    }
+}
+
+pub fn run_llama_cpp_external_backend(config: &ExtractionConfig) -> Result<ExtractionRunOutput> {
+    let backend = LlamaCppExternalBackend::from_config(config)?;
+    let run_dir = run_dir(config);
+    fs::create_dir_all(&run_dir)
+        .with_context(|| format!("failed to create run directory: {}", run_dir.display()))?;
+
+    let config_path = run_dir.join(CONFIG_FILENAME);
+    let request_path = run_dir.join(LLAMA_CPP_REQUEST_FILENAME);
+    let manifest_path = run_dir.join(MANIFEST_FILENAME);
+    let samples_path = run_dir.join(SAMPLES_FILENAME);
+    let tokenization_path = run_dir.join(TOKENIZATION_FILENAME);
+    let positions_path = run_dir.join(POSITIONS_FILENAME);
+    let checksums_path = run_dir.join(CHECKSUMS_FILENAME);
+    let report_path = run_dir.join(REPORT_FILENAME);
+    let logits_path = run_dir.join(LOGITS_FILENAME);
+
+    let canonical_config = canonical_config_toml(config)?;
+    fs::write(&config_path, canonical_config).with_context(|| {
+        format!(
+            "failed to write external backend config: {}",
+            config_path.display()
+        )
+    })?;
+
+    let request = LlamaCppExternalRequest {
+        schema_version: 1,
+        contract_version: ARTIFACT_CONTRACT_VERSION,
+        layout: ARTIFACT_LAYOUT.to_string(),
+        backend: ExecutionBackendName::LlamaCppExternal.as_str().to_string(),
+        model_path: config.model_path.clone(),
+        input_jsonl_path: config.input_jsonl_path.clone(),
+        output_dir: path_to_string(&run_dir)?,
+        config_path: path_to_string(&config_path)?,
+        manifest_path: path_to_string(&manifest_path)?,
+        samples_path: path_to_string(&samples_path)?,
+        tokenization_path: path_to_string(&tokenization_path)?,
+        positions_path: path_to_string(&positions_path)?,
+        checksums_path: path_to_string(&checksums_path)?,
+        report_path: path_to_string(&report_path)?,
+        logits_path: config
+            .write_logits
+            .then(|| path_to_string(&logits_path))
+            .transpose()?,
+        prompt_template: config.prompt_template.clone(),
+        sample_id_field: config.sample_id_field.clone(),
+        word_field: config.word_field.clone(),
+        token_position: config.token_position.as_str().to_string(),
+        layers: config.layers.clone(),
+        write_logits: config.write_logits,
+        prompt_hashes_only: config.prompt_hashes_only,
+        max_seq_len: config.max_seq_len,
+        run_metadata: config.run_metadata.clone(),
+    };
+    fs::write(&request_path, serde_json::to_string_pretty(&request)?).with_context(|| {
+        format!(
+            "failed to write llama-cpp external request: {}",
+            request_path.display()
+        )
+    })?;
+
+    let output = Command::new(&backend.executable)
+        .arg("--request")
+        .arg(&request_path)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to spawn llama-cpp external backend: {}",
+                backend.executable
+            )
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        anyhow::bail!(
+            "llama-cpp external backend failed with status {}:\nstderr:\n{}\nstdout:\n{}",
+            output.status,
+            stderr.trim(),
+            stdout.trim()
+        );
+    }
+
+    let summary = validate_artifact_contract(&run_dir, true)?;
+    Ok(ExtractionRunOutput {
+        run_dir: summary.run_dir,
+        manifest_path: path_to_string(&manifest_path)?,
+        samples_path: path_to_string(&samples_path)?,
+        tokenization_path: path_to_string(&tokenization_path)?,
+        positions_path: path_to_string(&positions_path)?,
+        checksums_path: path_to_string(&checksums_path)?,
+        report_path: path_to_string(&report_path)?,
+        sample_count: summary.sample_count,
+        layer_paths: Vec::new(),
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BackendParityReport {
+    pub native_run_dir: String,
+    pub external_run_dir: String,
+    pub sample_count: usize,
+    pub token_id_mismatches: Vec<usize>,
+    pub position_mismatches: Vec<usize>,
+    pub logits_status: String,
+}
+
+pub fn compare_backend_artifacts(
+    native_run_dir: impl AsRef<Path>,
+    external_run_dir: impl AsRef<Path>,
+) -> Result<BackendParityReport> {
+    let native_summary = validate_artifact_contract(&native_run_dir, true)?;
+    let external_summary = validate_artifact_contract(&external_run_dir, true)?;
+    if native_summary.sample_count != external_summary.sample_count {
+        anyhow::bail!(
+            "sample_count mismatch: native={}, external={}",
+            native_summary.sample_count,
+            external_summary.sample_count
+        );
+    }
+
+    let native_tokens: Vec<TokenizationArtifactRecord> =
+        read_jsonl_records(native_run_dir.as_ref().join(TOKENIZATION_FILENAME))?;
+    let external_tokens: Vec<TokenizationArtifactRecord> =
+        read_jsonl_records(external_run_dir.as_ref().join(TOKENIZATION_FILENAME))?;
+    let native_positions: Vec<PositionArtifactRecord> =
+        read_jsonl_records(native_run_dir.as_ref().join(POSITIONS_FILENAME))?;
+    let external_positions: Vec<PositionArtifactRecord> =
+        read_jsonl_records(external_run_dir.as_ref().join(POSITIONS_FILENAME))?;
+
+    let mut token_id_mismatches = Vec::new();
+    let mut position_mismatches = Vec::new();
+    for i in 0..native_tokens.len() {
+        if native_tokens[i].sample_id != external_tokens[i].sample_id {
+            anyhow::bail!(
+                "sample_id mismatch at row {}: native={}, external={}",
+                i,
+                native_tokens[i].sample_id,
+                external_tokens[i].sample_id
+            );
+        }
+        if native_tokens[i].token_ids != external_tokens[i].token_ids {
+            token_id_mismatches.push(i);
+        }
+        if native_positions[i].selected_token_positions
+            != external_positions[i].selected_token_positions
+        {
+            position_mismatches.push(i);
+        }
+    }
+
+    let logits_status = match (
+        native_summary.logits_present,
+        external_summary.logits_present,
+    ) {
+        (false, false) => "not_exposed".to_string(),
+        (true, false) => "native_only".to_string(),
+        (false, true) => "external_only".to_string(),
+        (true, true) => "both_exposed_shape_check_only".to_string(),
+    };
+
+    Ok(BackendParityReport {
+        native_run_dir: native_summary.run_dir,
+        external_run_dir: external_summary.run_dir,
+        sample_count: native_summary.sample_count,
+        token_id_mismatches,
+        position_mismatches,
+        logits_status,
+    })
 }
 
 pub fn run_extraction_with_backend<B: ModelBackend>(
@@ -565,6 +777,44 @@ fn checksum_insert(
     }
 }
 
+fn validate_executable_path(path: &str) -> Result<()> {
+    let path = Path::new(path);
+    if !path.is_file() {
+        anyhow::bail!("invalid llama.cpp external binary path: {}", path.display());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(path)
+            .with_context(|| format!("failed to stat binary: {}", path.display()))?
+            .permissions()
+            .mode();
+        if mode & 0o111 == 0 {
+            anyhow::bail!(
+                "invalid llama.cpp external binary path: {} is not executable",
+                path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_model_path(path: &str) -> Result<()> {
+    let path = Path::new(path);
+    if !path.is_file() {
+        anyhow::bail!("invalid GGUF model path: {}", path.display());
+    }
+    Ok(())
+}
+
+fn validate_input_path(path: &str) -> Result<()> {
+    let path = Path::new(path);
+    if !path.is_file() {
+        anyhow::bail!("invalid samples JSONL path: {}", path.display());
+    }
+    Ok(())
+}
+
 fn path_to_string(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_string)
@@ -600,6 +850,8 @@ fn llama_cpp_version(executable: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn llama_cpp_placeholder_reports_not_implemented() {
@@ -632,5 +884,242 @@ mod tests {
             .tokenize("hello")
             .expect_err("placeholder should fail");
         assert!(err.to_string().contains("not implemented"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn llama_cpp_external_rejects_invalid_binary_path() {
+        let dir = temp_test_dir("invalid_bin");
+        let model = write_file(&dir, "model.gguf", "dummy");
+        let samples = write_file(
+            &dir,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let mut config = external_config(&dir, &model, &samples, &dir.join("missing-bin"));
+        config.layers.clear();
+        let err = LlamaCppExternalBackend::from_config(&config).expect_err("invalid binary");
+        assert!(err
+            .to_string()
+            .contains("invalid llama.cpp external binary path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn llama_cpp_external_rejects_invalid_model_path() {
+        let dir = temp_test_dir("invalid_model");
+        let script = write_executable(&dir, "extract.sh", "#!/bin/sh\nexit 0\n");
+        let samples = write_file(
+            &dir,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let config = external_config(&dir, &dir.join("missing.gguf"), &samples, &script);
+        let err = LlamaCppExternalBackend::from_config(&config).expect_err("invalid model");
+        assert!(err.to_string().contains("invalid GGUF model path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn llama_cpp_external_rejects_unsupported_layers() {
+        let dir = temp_test_dir("unsupported_layers");
+        let script = write_executable(&dir, "extract.sh", "#!/bin/sh\nexit 0\n");
+        let model = write_file(&dir, "model.gguf", "dummy");
+        let samples = write_file(
+            &dir,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let mut config = external_config(&dir, &model, &samples, &script);
+        config.layers = vec![0];
+        let err = LlamaCppExternalBackend::from_config(&config).expect_err("unsupported layers");
+        assert!(err
+            .to_string()
+            .contains("hidden-state layer extraction is not wired yet"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn llama_cpp_external_captures_process_stderr() {
+        let dir = temp_test_dir("process_failure");
+        let script = write_executable(
+            &dir,
+            "extract.sh",
+            "#!/bin/sh\necho external extractor failed >&2\nexit 23\n",
+        );
+        let model = write_file(&dir, "model.gguf", "dummy");
+        let samples = write_file(
+            &dir,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let config = external_config(&dir, &model, &samples, &script);
+        let err = run_llama_cpp_external_backend(&config).expect_err("external failure");
+        let text = err.to_string();
+        assert!(text.contains("external extractor failed"));
+        assert!(text.contains("status"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn llama_cpp_external_validates_produced_manifest_skeleton() {
+        let dir = temp_test_dir("manifest_skeleton");
+        let run_dir = dir.join("run");
+        let model = write_file(&dir, "model.gguf", "dummy");
+        let samples = write_file(
+            &dir,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let prompt_hash = stable_prompt_hash("hello");
+        let order_hash = sample_order_hash(&[("s0".to_string(), prompt_hash.clone())]);
+        let config = external_config(&run_dir, &model, &samples, &dir.join("extract.sh"));
+
+        let manifest = serde_json::json!({
+            "schema_version": ARTIFACT_CONTRACT_VERSION,
+            "layout": ARTIFACT_LAYOUT,
+            "artifact_kind": "ember_hidden_states",
+            "created_at_unix": 0,
+            "run_id": null,
+            "run_dir": run_dir.to_string_lossy(),
+            "config_path": CONFIG_FILENAME,
+            "samples_path": SAMPLES_FILENAME,
+            "tokenization_path": TOKENIZATION_FILENAME,
+            "positions_path": POSITIONS_FILENAME,
+            "checksums_path": CHECKSUMS_FILENAME,
+            "report_path": REPORT_FILENAME,
+            "logits_path": null,
+            "tensor_contract": {
+                "storage": "layer-sharded-npy",
+                "dtype": "f32",
+                "byte_order": "little-endian",
+                "sample_axis": 0,
+                "hidden_axis": 1,
+                "layers": [],
+                "logits": null
+            },
+            "sample_count": 1,
+            "sample_order_hash": order_hash,
+            "config_hash": "fnv1a64:0000000000000000",
+            "dtype": "f32",
+            "output_format": "npy",
+            "model": {
+                "path": model.to_string_lossy(),
+                "architecture": null,
+                "n_layers": 0,
+                "embed_dim": 0,
+                "max_seq_len": 0,
+                "file_size_bytes": null,
+                "sha256": null,
+                "gguf_metadata": null
+            },
+            "backend": {
+                "name": "llama-cpp-external",
+                "version": null,
+                "executable": null,
+                "commit": null,
+                "details": {}
+            },
+            "extraction_config": config
+        });
+        let script_body = format!(
+            r#"#!/bin/sh
+cat > '{samples_path}' <<'JSON'
+{{"schema_version":2,"sample_index":0,"sample_id":"s0","input_index":0,"prompt":"hello","prompt_hash":"{prompt_hash}"}}
+JSON
+cat > '{tokenization_path}' <<'JSON'
+{{"schema_version":2,"sample_index":0,"sample_id":"s0","token_ids":[1,2,3],"token_count":3,"prompt_hash":"{prompt_hash}","offsets":[[0,0],[0,2],[2,5]]}}
+JSON
+cat > '{positions_path}' <<'JSON'
+{{"schema_version":2,"sample_index":0,"sample_id":"s0","position_mode":"prompt_final","pooling":"single","selected_token_positions":[2],"source_field":null,"source_value":null,"source_byte_span":null}}
+JSON
+cat > '{manifest_path}' <<'JSON'
+{manifest_json}
+JSON
+cat > '{report_path}' <<'JSON'
+{{"schema_version":2,"layout":"ember.layer_sharded_npy.v1","status":"complete"}}
+JSON
+cat > '{checksums_path}' <<'JSON'
+{{}}
+JSON
+"#,
+            samples_path = run_dir.join(SAMPLES_FILENAME).display(),
+            tokenization_path = run_dir.join(TOKENIZATION_FILENAME).display(),
+            positions_path = run_dir.join(POSITIONS_FILENAME).display(),
+            manifest_path = run_dir.join(MANIFEST_FILENAME).display(),
+            report_path = run_dir.join(REPORT_FILENAME).display(),
+            checksums_path = run_dir.join(CHECKSUMS_FILENAME).display(),
+            manifest_json = serde_json::to_string_pretty(&manifest).unwrap(),
+        );
+        let script = write_executable(&dir, "extract.sh", &script_body);
+        let mut config = config;
+        config.llama_cpp_binary = Some(script.to_string_lossy().to_string());
+
+        let output = run_llama_cpp_external_backend(&config).expect("external skeleton validates");
+        assert_eq!(output.sample_count, 1);
+        assert!(output.layer_paths.is_empty());
+        assert!(run_dir.join(LLAMA_CPP_REQUEST_FILENAME).is_file());
+    }
+
+    #[cfg(unix)]
+    fn external_config(
+        out_dir: &std::path::Path,
+        model: &std::path::Path,
+        samples: &std::path::Path,
+        binary: &std::path::Path,
+    ) -> ExtractionConfig {
+        ExtractionConfig {
+            run_id: None,
+            model_path: model.to_string_lossy().to_string(),
+            architecture: None,
+            tokenizer_path: None,
+            backend: ExecutionBackendName::LlamaCppExternal,
+            prompt_template: "{prompt}".to_string(),
+            input_jsonl_path: samples.to_string_lossy().to_string(),
+            output_dir: out_dir.to_string_lossy().to_string(),
+            layers: Vec::new(),
+            token_position: crate::extraction::TokenPositionMode::PromptFinal,
+            word_field: "word".to_string(),
+            sample_id_field: "id".to_string(),
+            batch_size: 1,
+            dtype: crate::extraction::ArtifactDType::F32,
+            output_format: crate::extraction::ArtifactOutputFormat::Npy,
+            prompt_hashes_only: false,
+            write_logits: false,
+            resume: false,
+            max_seq_len: None,
+            record_model_sha256: false,
+            llama_cpp_binary: Some(binary.to_string_lossy().to_string()),
+            run_metadata: Value::Null,
+        }
+    }
+
+    #[cfg(unix)]
+    fn temp_test_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("ember_{}_{}_{}", name, std::process::id(), unique));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[cfg(unix)]
+    fn write_file(dir: &std::path::Path, name: &str, content: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, content).expect("write temp file");
+        path
+    }
+
+    #[cfg(unix)]
+    fn write_executable(dir: &std::path::Path, name: &str, content: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = write_file(dir, name, content);
+        let mut perms = fs::metadata(&path).expect("stat script").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).expect("chmod script");
+        path
     }
 }

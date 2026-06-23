@@ -48,6 +48,12 @@ The requested layer list and every layer shard path are recorded in
 `manifest.json`. A backend must write rows in the same `sample_index` order as
 `samples.jsonl`, `tokenization.jsonl`, and `positions.jsonl`.
 
+For Milestone 3, `llama-cpp-external` may write no layer shards. In that case
+`tensor_contract.layers` is an empty array and downstream code may use only
+`samples.jsonl`, `tokenization.jsonl`, `positions.jsonl`, optional logits, and
+metadata. A backend must not claim hidden-state support unless it writes valid
+layer shard entries and files.
+
 `logits.npy` is optional. When present:
 
 ```text
@@ -140,6 +146,42 @@ per-token hidden states in this contract.
 
 Tokenizer metadata belongs in `manifest.json` under backend/model/config
 metadata and token IDs belong in `tokenization.jsonl`.
+
+## External Backend Request
+
+Ember calls an external llama.cpp-compatible extractor with:
+
+```text
+llama-ember-extract --request <request.json>
+```
+
+The request JSON is written by Ember in the run directory as
+`llama_cpp_request.json`. It contains:
+
+- `model_path`
+- `input_jsonl_path`
+- `output_dir`
+- `config_path`
+- `manifest_path`
+- `samples_path`
+- `tokenization_path`
+- `positions_path`
+- `checksums_path`
+- `report_path`
+- optional `logits_path`
+- `prompt_template`
+- `sample_id_field`
+- `word_field`
+- `token_position`
+- requested `layers`
+- `write_logits`
+- `prompt_hashes_only`
+- `max_seq_len`
+- `run_metadata`
+
+The external extractor is responsible for writing Ember-compatible artifacts to
+those paths and exiting nonzero with useful stderr when it cannot. Ember
+validates the produced contract after the process exits.
 
 ## Ordering
 
