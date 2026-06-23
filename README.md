@@ -4,11 +4,19 @@
 [![ci](https://github.com/voidwest/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/voidwest/ember/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+**Paper 1 artifact status.** This repository is preserved as the research
+artifact for “Leakage-Aware Probing of Arabic Morphology in Small Language
+Models.” Treat paper outputs, figures, tables, datasets, and probe reports as
+citable artifacts; do not change them casually. Future Ember backend/refactor
+work, including further llama.cpp integration, should happen in a separate
+repository. See [ARTIFACT_STATUS.md](ARTIFACT_STATUS.md) and
+[REPRODUCIBILITY.md](REPRODUCIBILITY.md).
+
 a lightweight research layer for hidden-state extraction, leakage-aware probing,
 and reproducible morphology experiments over GGUF models. Ember keeps an
-inspectable Rust inference path for validation, and is being refactored to use
-external execution backends such as llama.cpp when scale and model coverage
-matter.
+inspectable Rust inference path for validation. This Paper 1 artifact includes
+some backend-ready scaffolding, but ongoing external-backend work should happen
+outside this repository.
 
 research write-up: https://voidwest.dev/ember
 
@@ -21,8 +29,8 @@ validation work.
 
 Ember is not trying to beat llama.cpp on throughput, model coverage, or
 production readiness. llama.cpp is the better default if the goal is broad,
-high-performance local inference. Ember should use llama.cpp as an execution
-backend where that is the right tool, while keeping dataset handling, prompt
+high-performance local inference. Future Ember backend work should use
+llama.cpp where that is the right tool, while keeping dataset handling, prompt
 construction, token-position selection, hidden-state artifact schemas, probes,
 baselines, metrics, reports, and validation in Ember.
 
