@@ -10,13 +10,16 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary" />
         <title>voidwest</title>
-        <link rel="stylesheet" href="/style.css" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/voidwest.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
         <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png" />
         <!-- docs:og-image end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
     </head>
     <body>
         <!-- docs:nav start -->
@@ -28,7 +31,10 @@
                 <a href="/tools/index.ar.html">tools</a>
                 <a href="/terms/index.ar.html">terms</a>
             </div>
-            <a class="nav-lang" href="/">en</a>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
         </nav>
         <!-- docs:nav end -->
 
@@ -71,8 +77,8 @@
             </div>
         </div>
 
-        <!-- ── SYSTEMS ── -->
-        <h2>systems &amp; embedded</h2>
+        <!-- ── EMBER ── -->
+        <h2>ember</h2>
         <div class="project-list">
             <div class="project featured">
                 <div class="name">
@@ -96,6 +102,30 @@
                 </div>
             </div>
 
+        </div>
+
+        <!-- ── RESEARCH NOTES ── -->
+        <h2>research notes</h2>
+        <div class="project-list">
+            <div class="project featured">
+                <div class="name">
+                    <a href="/research-notes/">research notes</a>
+                </div>
+                <div class="desc">
+                    ملاحظات على أوراق بحثية وتجارب وأفكار أولية. التركيز
+                    الحالي: Arabic NLP، tokenization، و mechanistic
+                    interpretability.
+                </div>
+                <div class="tags">
+                    <span>papers</span><span>notes</span><span>arabic nlp</span
+                    ><span>probing</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── OTHER PROJECTS ── -->
+        <h2>other projects</h2>
+        <div class="project-list">
             <div class="project">
                 <div class="name">
                     <a href="https://github.com/voidwest/mini-os">mini-os</a>
@@ -110,11 +140,6 @@
                     ><span>no_std</span>
                 </div>
             </div>
-        </div>
-
-        <!-- ── ML & INFERENCE ── -->
-        <h2>ml &amp; inference</h2>
-        <div class="project-list">
             <div class="project">
                 <div class="name">
                     <a href="https://github.com/voidwest/devdocs-v2"
@@ -130,25 +155,6 @@
                 <div class="tags">
                     <span>python</span><span>rag</span><span>chromadb</span
                     ><span>ollama</span><span>fastapi</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- ── RESEARCH NOTES ── -->
-        <h2>research notes</h2>
-        <div class="project-list">
-            <div class="project">
-                <div class="name">
-                    <a href="/research-notes/">research notes</a>
-                </div>
-                <div class="desc">
-                    ملاحظات على أوراق بحثية وتجارب وأفكار أولية. التركيز
-                    الحالي: Arabic NLP، tokenization، و mechanistic
-                    interpretability.
-                </div>
-                <div class="tags">
-                    <span>papers</span><span>notes</span><span>arabic nlp</span
-                    ><span>probing</span>
                 </div>
             </div>
         </div>

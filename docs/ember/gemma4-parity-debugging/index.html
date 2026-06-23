@@ -10,7 +10,7 @@
     <meta property="og:site_name" content="voidwest" />
     <meta name="twitter:card" content="summary" />
     <title>when the logits lie · gemma 4 gguf debugging</title>
-    <link rel="stylesheet" href="/style.css" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
         <meta property="og:image:width" content="1200" />
@@ -29,6 +29,9 @@
             });
         </script>
         <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
     </head>
   <body>
         <!-- docs:nav start -->
@@ -40,7 +43,10 @@
                 <a href="/tools/">tools</a>
                 <a href="/terms/">terms</a>
             </div>
-            <a class="nav-lang" href="/index.ar.html">عربي</a>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/index.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
         </nav>
         <!-- docs:nav end -->
 

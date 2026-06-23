@@ -14,9 +14,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
+STYLESHEET_VERSION = "20260623"
 
 MANAGED_HEAD_RE = re.compile(
     r"\n[ \t]*<!-- docs:head-scripts start -->.*?[ \t]*<!-- docs:head-scripts end -->\n?",
+    re.DOTALL,
+)
+MANAGED_THEME_RE = re.compile(
+    r"\n[ \t]*<!-- docs:theme-script start -->.*?[ \t]*<!-- docs:theme-script end -->\n?",
     re.DOTALL,
 )
 MANAGED_OG_RE = re.compile(
@@ -42,9 +47,16 @@ LEGACY_HLJS_RE = re.compile(
 NAV_RE = re.compile(r"\n\s*<nav class=\"site-nav\"[\s\S]*?</nav>\s*", re.MULTILINE)
 FOOTER_RE = re.compile(r"\n\s*<footer>[\s\S]*?</footer>\s*", re.MULTILINE)
 HEAD_CLOSE_RE = re.compile(r"\n\s*</head>")
-STYLESHEET_RE = re.compile(r'(\n[ \t]*<link rel="stylesheet" href="/style\.css" />)')
+STYLESHEET_RE = re.compile(r'(\n[ \t]*<link rel="stylesheet" href="/style\.css(?:\?v=\d+)?" />)')
 BODY_OPEN_RE = re.compile(r"(\n[ \t]*<body>)\s*\n")
 BODY_CLOSE_RE = re.compile(r"\n\s*</body>")
+
+
+THEME_SCRIPT = """\
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+"""
 
 
 HEAD_SCRIPTS = """\
@@ -165,7 +177,10 @@ def nav_html(path: Path, text: str) -> str:
             <div class="nav-links">
 {link_lines}
             </div>
-            <a class="nav-lang" href="{alternate_href(path, ar)}">{lang_text}</a>
+            <div class="nav-actions">
+                <a class="nav-lang" href="{alternate_href(path, ar)}">{lang_text}</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
         </nav>
         <!-- docs:nav end -->
 """
@@ -209,9 +224,19 @@ def update_head_scripts(text: str) -> str:
     return HEAD_CLOSE_RE.sub("\n" + HEAD_SCRIPTS + "    </head>", text, count=1)
 
 
+def update_theme_script(text: str) -> str:
+    text = MANAGED_THEME_RE.sub("\n", text)
+    return HEAD_CLOSE_RE.sub("\n" + THEME_SCRIPT + "    </head>", text, count=1)
+
+
 def update_og_image(path: Path, text: str) -> str:
     text = MANAGED_OG_RE.sub("\n", text)
     return STYLESHEET_RE.sub(r"\1\n" + og_image_html(path).rstrip(), text, count=1)
+
+
+def update_stylesheet(text: str) -> str:
+    href = f'\n        <link rel="stylesheet" href="/style.css?v={STYLESHEET_VERSION}" />'
+    return STYLESHEET_RE.sub(href, text, count=1)
 
 
 def update_nav(path: Path, text: str) -> str:
@@ -229,6 +254,8 @@ def update_footer(text: str) -> str:
 def update_file(path: Path) -> bool:
     old = path.read_text()
     new = update_head_scripts(old)
+    new = update_theme_script(new)
+    new = update_stylesheet(new)
     new = update_og_image(path, new)
     new = update_nav(path, new)
     new = update_footer(new)
