@@ -572,6 +572,18 @@ pub fn validate_artifact_contract(
         }
         let token_row = &tokenization[index];
         let position_row = &positions[index];
+        if token_row.schema_version != ARTIFACT_CONTRACT_VERSION {
+            anyhow::bail!(
+                "tokenization row {index} has schema_version {}",
+                token_row.schema_version
+            );
+        }
+        if position_row.schema_version != ARTIFACT_CONTRACT_VERSION {
+            anyhow::bail!(
+                "position row {index} has schema_version {}",
+                position_row.schema_version
+            );
+        }
         if token_row.sample_index != index || position_row.sample_index != index {
             anyhow::bail!("sample_index mismatch at row {index}");
         }
@@ -590,6 +602,27 @@ pub fn validate_artifact_contract(
         }
         if position_row.selected_token_positions.is_empty() {
             anyhow::bail!("empty selected_token_positions at sample_index {index}");
+        }
+        match position_row.pooling.as_str() {
+            "single" => {
+                if position_row.selected_token_positions.len() != 1 {
+                    anyhow::bail!(
+                        "single pooling at sample_index {index} selected {} positions",
+                        position_row.selected_token_positions.len()
+                    );
+                }
+            }
+            "mean" => {}
+            other => anyhow::bail!("unsupported pooling '{other}' at sample_index {index}"),
+        }
+        for position in &position_row.selected_token_positions {
+            if *position >= token_row.token_count {
+                anyhow::bail!(
+                    "selected token position {} out of bounds for token_count {} at sample_index {index}",
+                    position,
+                    token_row.token_count
+                );
+            }
         }
         order.push((sample.sample_id.clone(), sample.prompt_hash.clone()));
     }

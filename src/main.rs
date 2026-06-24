@@ -2,8 +2,9 @@ use anyhow::Context;
 use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
-use ember::extraction::ExecutionBackendName;
-use ember::extraction::ExtractionConfig;
+use ember::extraction::{
+    validate_artifact_contract, ArtifactManifest, ExecutionBackendName, ExtractionConfig,
+};
 use ember::loader::load_gguf;
 use ember::loader::GgufLoader;
 use ember::loader::GgufValue;
@@ -152,6 +153,8 @@ struct Args {
 enum Commands {
     /// extract hidden-state artifacts through a selected execution backend
     Extract(ExtractCommand),
+    /// validate one Ember artifact run directory
+    ValidateRun(ValidateRunCommand),
     /// compare native and llama.cpp backend outputs where comparable
     ValidateBackends(ValidateBackendsCommand),
 }
@@ -238,6 +241,16 @@ struct ValidateBackendsCommand {
     external_run: Option<String>,
 }
 
+#[derive(ClapArgs)]
+struct ValidateRunCommand {
+    /// existing Ember artifact run directory
+    run_dir: String,
+
+    /// require at least one hidden-state layer shard
+    #[arg(long)]
+    require_layers: bool,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum BackendArg {
     Native,
@@ -293,6 +306,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(command) = &args.command {
         return match command {
             Commands::Extract(command) => run_extract_command(command),
+            Commands::ValidateRun(command) => run_validate_run_command(command),
             Commands::ValidateBackends(command) => run_validate_backends_command(command),
         };
     }
@@ -537,6 +551,187 @@ fn run_validate_backends_command(command: &ValidateBackendsCommand) -> anyhow::R
     }
     let _ = (&command.model, &command.prompts, &command.layers);
     anyhow::bail!("validate-backends requires --native-run and --external-run for Milestone 3")
+}
+
+fn run_validate_run_command(command: &ValidateRunCommand) -> anyhow::Result<()> {
+    let summary = validate_artifact_contract(&command.run_dir, !command.require_layers)?;
+    let manifest_path = std::path::Path::new(&command.run_dir).join("manifest.json");
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read manifest: {}", manifest_path.display()))?;
+    let manifest_value: serde_json::Value = serde_json::from_str(&manifest_text)
+        .with_context(|| format!("failed to parse manifest: {}", manifest_path.display()))?;
+    let manifest: ArtifactManifest = serde_json::from_str(&manifest_text)
+        .with_context(|| format!("failed to parse manifest: {}", manifest_path.display()))?;
+
+    if manifest.backend.name.trim().is_empty() {
+        anyhow::bail!("manifest backend.name is empty");
+    }
+    if manifest.artifact_kind.trim().is_empty() {
+        anyhow::bail!("manifest artifact_kind is empty");
+    }
+    let config_path = std::path::Path::new(&command.run_dir).join(&manifest.config_path);
+    if !config_path.is_file() {
+        anyhow::bail!("manifest config_path is missing: {}", config_path.display());
+    }
+
+    let report_path = std::path::Path::new(&command.run_dir).join(&manifest.report_path);
+    let report_text = fs::read_to_string(&report_path)
+        .with_context(|| format!("failed to read report: {}", report_path.display()))?;
+    let report_value: serde_json::Value = serde_json::from_str(&report_text)
+        .with_context(|| format!("failed to parse report: {}", report_path.display()))?;
+    validate_report_fields(&manifest, &report_value)?;
+
+    let markers = collect_run_markers(&manifest_value, &report_value);
+    validate_run_markers(&summary, &markers)?;
+
+    let output = serde_json::json!({
+        "kind": "validate_run",
+        "status": "pass",
+        "run_dir": summary.run_dir,
+        "artifact_kind": manifest.artifact_kind,
+        "backend": {
+            "name": manifest.backend.name,
+            "version": manifest.backend.version,
+            "executable": manifest.backend.executable,
+        },
+        "sample_count": summary.sample_count,
+        "layer_count": summary.layer_count,
+        "logits_present": summary.logits_present,
+        "sample_order_hash": summary.sample_order_hash,
+        "markers": markers,
+    });
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
+fn validate_report_fields(
+    manifest: &ArtifactManifest,
+    report: &serde_json::Value,
+) -> anyhow::Result<()> {
+    if report.get("status").and_then(serde_json::Value::as_str) != Some("complete") {
+        anyhow::bail!("report status is not complete");
+    }
+    if let Some(schema_version) = report
+        .get("schema_version")
+        .and_then(serde_json::Value::as_u64)
+    {
+        if schema_version != u64::from(manifest.schema_version) {
+            anyhow::bail!(
+                "report schema_version {} does not match manifest schema_version {}",
+                schema_version,
+                manifest.schema_version
+            );
+        }
+    }
+    if let Some(layout) = report.get("layout").and_then(serde_json::Value::as_str) {
+        if layout != manifest.layout {
+            anyhow::bail!(
+                "report layout '{}' does not match manifest layout '{}'",
+                layout,
+                manifest.layout
+            );
+        }
+    }
+    Ok(())
+}
+
+fn collect_run_markers(
+    manifest: &serde_json::Value,
+    report: &serde_json::Value,
+) -> serde_json::Map<String, serde_json::Value> {
+    let marker_names = [
+        "mock",
+        "mock_backend",
+        "no_inference",
+        "real_llama_cpp",
+        "real_tokenization",
+        "no_generation",
+        "no_logits",
+        "no_hidden_states",
+        "not_research_output",
+    ];
+    let mut markers = serde_json::Map::new();
+    for name in marker_names {
+        let mut observed = Vec::new();
+        collect_marker_values(manifest, name, &mut observed);
+        collect_marker_values(report, name, &mut observed);
+        if observed.is_empty() {
+            continue;
+        }
+        let first = observed[0];
+        if observed.iter().any(|value| *value != first) {
+            markers.insert(
+                name.to_string(),
+                serde_json::Value::String("conflict".to_string()),
+            );
+        } else {
+            markers.insert(name.to_string(), serde_json::Value::Bool(first));
+        }
+    }
+    markers
+}
+
+fn collect_marker_values(value: &serde_json::Value, name: &str, observed: &mut Vec<bool>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(marker) = map.get(name) {
+                if let Some(bool_value) = marker.as_bool() {
+                    observed.push(bool_value);
+                }
+            }
+            for key in [
+                "provenance",
+                "run_metadata",
+                "details",
+                "backend",
+                "extraction_config",
+            ] {
+                if let Some(child) = map.get(key) {
+                    collect_marker_values(child, name, observed);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_marker_values(item, name, observed);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_run_markers(
+    summary: &ember::extraction::ArtifactValidationSummary,
+    markers: &serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<()> {
+    for (name, value) in markers {
+        if value.as_bool().is_none() {
+            anyhow::bail!("metadata marker '{name}' has conflicting values");
+        }
+    }
+    if marker_is_true(markers, "no_logits") && summary.logits_present {
+        anyhow::bail!("metadata marker no_logits=true conflicts with present logits artifact");
+    }
+    if marker_is_true(markers, "no_hidden_states") && summary.layer_count > 0 {
+        anyhow::bail!(
+            "metadata marker no_hidden_states=true conflicts with {} layer shard(s)",
+            summary.layer_count
+        );
+    }
+    if marker_is_true(markers, "mock") && !marker_is_true(markers, "not_research_output") {
+        anyhow::bail!("mock run must be marked not_research_output=true");
+    }
+    if marker_is_true(markers, "mock_backend") && !marker_is_true(markers, "not_research_output") {
+        anyhow::bail!("mock backend run must be marked not_research_output=true");
+    }
+    Ok(())
+}
+
+fn marker_is_true(markers: &serde_json::Map<String, serde_json::Value>, name: &str) -> bool {
+    markers
+        .get(name)
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn build_extraction_config(command: &ExtractCommand) -> anyhow::Result<ExtractionConfig> {
