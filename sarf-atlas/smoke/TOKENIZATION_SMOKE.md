@@ -170,3 +170,32 @@ This smoke uses two of Ember's validation layers plus one external audit layer:
   compatibility claim.
 - Hidden-state extraction remains intentionally unimplemented for
   `llama-cpp-external`.
+
+## Related Logits Smoke
+
+The logits smoke is separate from this tokenization parity smoke. It uses
+`scripts/llama_cpp_python_logits_extract.py`, which is a llama-cpp-python /
+libllama binding path, not the standalone `llama-tokenize` binary path.
+
+Run it only as a tiny local plumbing check:
+
+```bash
+MODEL_PATH=/path/to/model.gguf \
+OUT_ROOT=/tmp/sarf-atlas-ember-smoke \
+bash sarf-atlas/smoke/run_logits_python_smoke.sh
+```
+
+It requests `write_logits = true`, writes `logits.npy`, runs `validate-run`, and
+marks `real_logits = true`, `no_generation = true`, `no_hidden_states = true`,
+and `not_research_output = true`. It does not establish logits parity unless a
+separate reference logits artifact is available for `gguf-parity-tools
+compare-logits`.
+
+The native reference runner for that comparison is:
+
+```bash
+MODEL_PATH=/path/to/model.gguf \
+TOKENIZER_JSON=/path/to/tokenizer.json \
+OUT_ROOT=/tmp/sarf-atlas-ember-smoke \
+bash sarf-atlas/smoke/run_native_logits_reference_smoke.sh
+```

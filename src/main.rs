@@ -3,7 +3,14 @@ use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::extraction::{
-    validate_artifact_contract, ArtifactManifest, ExecutionBackendName, ExtractionConfig,
+    canonical_config_toml, load_input_samples, pooling_for_mode, run_dir, sample_order_hash,
+    select_token_positions, source_field_for_position, source_span_for_position,
+    source_value_for_position, stable_bytes_hash, stable_prompt_hash, validate_artifact_contract,
+    ArtifactManifest, BackendMetadata, ExecutionBackendName, ExtractionConfig, LogitsArtifact,
+    ModelMetadata, PositionArtifactRecord, SampleArtifactRecord, TensorContract,
+    TokenizationArtifactRecord, ARTIFACT_CONTRACT_VERSION, ARTIFACT_LAYOUT, CHECKSUMS_FILENAME,
+    CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME,
+    SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
 use ember::loader::load_gguf;
 use ember::loader::GgufLoader;
@@ -17,9 +24,11 @@ use ember::model_backend::LlamaCppBackend;
 use ember::model_backend::NativeModelBackend;
 use ember::npy::{write_npy_2d, NpyStreamWriter};
 use ember::sampler::sample_token;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -153,6 +162,8 @@ struct Args {
 enum Commands {
     /// extract hidden-state artifacts through a selected execution backend
     Extract(ExtractCommand),
+    /// write a native logits-only artifact run without generation or hidden states
+    NativeLogitsReference(NativeLogitsReferenceCommand),
     /// validate one Ember artifact run directory
     ValidateRun(ValidateRunCommand),
     /// compare native and llama.cpp backend outputs where comparable
@@ -251,6 +262,13 @@ struct ValidateRunCommand {
     require_layers: bool,
 }
 
+#[derive(ClapArgs)]
+struct NativeLogitsReferenceCommand {
+    /// extraction config path (.toml or .json); must use backend = "native"
+    #[arg(long)]
+    config: String,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum BackendArg {
     Native,
@@ -306,6 +324,9 @@ fn main() -> anyhow::Result<()> {
     if let Some(command) = &args.command {
         return match command {
             Commands::Extract(command) => run_extract_command(command),
+            Commands::NativeLogitsReference(command) => {
+                run_native_logits_reference_command(command)
+            }
             Commands::ValidateRun(command) => run_validate_run_command(command),
             Commands::ValidateBackends(command) => run_validate_backends_command(command),
         };
@@ -553,6 +574,323 @@ fn run_validate_backends_command(command: &ValidateBackendsCommand) -> anyhow::R
     anyhow::bail!("validate-backends requires --native-run and --external-run for Milestone 3")
 }
 
+fn run_native_logits_reference_command(
+    command: &NativeLogitsReferenceCommand,
+) -> anyhow::Result<()> {
+    let config = ExtractionConfig::from_path(&command.config)?;
+    config.validate()?;
+    if config.backend != ExecutionBackendName::Native {
+        anyhow::bail!("native-logits-reference requires backend = \"native\"");
+    }
+    if !config.layers.is_empty() {
+        anyhow::bail!("native-logits-reference is logits-only; set layers = []");
+    }
+    if !config.write_logits {
+        anyhow::bail!("native-logits-reference requires write_logits = true");
+    }
+
+    let loader = load_gguf(&config.model_path)?;
+    let gguf_metadata = gguf_metadata_json(&loader);
+    let arch = infer_extraction_architecture(&config, &gguf_metadata);
+    let tokenizer_path = config
+        .tokenizer_path
+        .as_deref()
+        .unwrap_or_else(|| default_tokenizer_for_arch(&arch));
+    let tokenizer = ember::tokenizer::EmberTokenizer::from_file(tokenizer_path)?;
+    let backend = CpuBackend;
+
+    match arch.as_str() {
+        "gpt2" => {
+            let model = Gpt2::from_loader(loader)?;
+            run_native_logits_reference_for_model(model, &backend, &tokenizer, &config, &arch, gguf_metadata)
+        }
+        "llama" | "qwen3" => {
+            use ember::model::Llama;
+            let model = Llama::from_loader_with_max_seq_len(loader, config.max_seq_len)?;
+            run_native_logits_reference_for_model(model, &backend, &tokenizer, &config, &arch, gguf_metadata)
+        }
+        "gemma4" => {
+            use ember::gemma4::Gemma4;
+            let model = Gemma4::from_loader(loader)?;
+            run_native_logits_reference_for_model(model, &backend, &tokenizer, &config, &arch, gguf_metadata)
+        }
+        _ => anyhow::bail!(
+            "unsupported native logits reference architecture '{}'; set architecture to gpt2, llama, qwen3, or gemma4",
+            arch
+        ),
+    }
+}
+
+fn run_native_logits_reference_for_model<M>(
+    model: M,
+    backend: &CpuBackend,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    config: &ExtractionConfig,
+    arch: &str,
+    gguf_metadata: serde_json::Value,
+) -> anyhow::Result<()>
+where
+    M: ForwardModel<CpuBackend>,
+    <CpuBackend as Backend>::Error: Send + Sync + 'static,
+{
+    let samples = load_input_samples(config)?;
+    let run_dir = run_dir(config);
+    fs::create_dir_all(&run_dir)
+        .with_context(|| format!("failed to create run directory: {}", run_dir.display()))?;
+
+    let config_path = run_dir.join(CONFIG_FILENAME);
+    let manifest_path = run_dir.join(MANIFEST_FILENAME);
+    let samples_path = run_dir.join(SAMPLES_FILENAME);
+    let tokenization_path = run_dir.join(TOKENIZATION_FILENAME);
+    let positions_path = run_dir.join(POSITIONS_FILENAME);
+    let checksums_path = run_dir.join(CHECKSUMS_FILENAME);
+    let report_path = run_dir.join(REPORT_FILENAME);
+    let logits_path = run_dir.join(LOGITS_FILENAME);
+
+    let canonical_config = canonical_config_toml(config)?;
+    fs::write(&config_path, &canonical_config)
+        .with_context(|| format!("failed to write config: {}", config_path.display()))?;
+    let config_hash = stable_bytes_hash(canonical_config.as_bytes());
+
+    let mut sample_writer = fs::File::create(&samples_path)
+        .with_context(|| format!("failed to create {}", samples_path.display()))?;
+    let mut tokenization_writer = fs::File::create(&tokenization_path)
+        .with_context(|| format!("failed to create {}", tokenization_path.display()))?;
+    let mut positions_writer = fs::File::create(&positions_path)
+        .with_context(|| format!("failed to create {}", positions_path.display()))?;
+
+    let mut logits_writer: Option<NpyStreamWriter> = None;
+    let mut logits_shape: Option<Vec<usize>> = None;
+    let mut order_hash_inputs = Vec::with_capacity(samples.len());
+    let model_context_limit = model.max_seq_len(backend);
+    let context_limit = config
+        .max_seq_len
+        .unwrap_or(model_context_limit)
+        .min(model_context_limit);
+
+    for (sample_index, sample) in samples.iter().enumerate() {
+        let (token_ids, offsets) = tokenizer
+            .encode_with_offsets(&sample.prompt)
+            .with_context(|| format!("failed to tokenize sample '{}'", sample.sample_id))?;
+        if token_ids.is_empty() {
+            anyhow::bail!("sample '{}' produced no token IDs", sample.sample_id);
+        }
+        let token_count = token_ids.len();
+        ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
+        let selected_token_positions = select_token_positions(
+            &sample.prompt,
+            &token_ids,
+            &offsets,
+            config,
+            sample.word_value.as_deref(),
+        )?;
+        if selected_token_positions != vec![token_ids.len() - 1] {
+            anyhow::bail!(
+                "native logits reference only supports final-token logits; sample '{}' selected {:?}",
+                sample.sample_id,
+                selected_token_positions
+            );
+        }
+
+        let mut cache = model.create_cache(backend, context_limit);
+        let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
+        let shape = backend.shape(&logits);
+        if shape.len() != 2 || shape[0] != 1 {
+            anyhow::bail!("expected last logits shape [1, vocab], got {:?}", shape);
+        }
+        let vocab_size = shape[1];
+        if logits_writer.is_none() {
+            logits_writer = Some(NpyStreamWriter::create(
+                &path_to_string(&logits_path)?,
+                &[samples.len(), vocab_size],
+            )?);
+            logits_shape = Some(vec![samples.len(), vocab_size]);
+        }
+        logits_writer
+            .as_mut()
+            .expect("logits writer initialized above")
+            .write_f32s(backend.data(&logits))?;
+
+        let prompt_hash = stable_prompt_hash(&sample.prompt);
+        order_hash_inputs.push((sample.sample_id.clone(), prompt_hash.clone()));
+        serde_json::to_writer(
+            &mut sample_writer,
+            &SampleArtifactRecord {
+                schema_version: ARTIFACT_CONTRACT_VERSION,
+                sample_index,
+                sample_id: sample.sample_id.clone(),
+                input_index: sample.input_index,
+                prompt: if config.prompt_hashes_only {
+                    None
+                } else {
+                    Some(sample.prompt.clone())
+                },
+                prompt_hash: prompt_hash.clone(),
+            },
+        )?;
+        sample_writer.write_all(b"\n")?;
+        serde_json::to_writer(
+            &mut tokenization_writer,
+            &TokenizationArtifactRecord {
+                schema_version: ARTIFACT_CONTRACT_VERSION,
+                sample_index,
+                sample_id: sample.sample_id.clone(),
+                token_ids,
+                token_count,
+                prompt_hash: prompt_hash.clone(),
+                offsets,
+            },
+        )?;
+        tokenization_writer.write_all(b"\n")?;
+        serde_json::to_writer(
+            &mut positions_writer,
+            &PositionArtifactRecord {
+                schema_version: ARTIFACT_CONTRACT_VERSION,
+                sample_index,
+                sample_id: sample.sample_id.clone(),
+                position_mode: config.token_position.as_str().to_string(),
+                pooling: pooling_for_mode(config.token_position).to_string(),
+                selected_token_positions,
+                source_field: source_field_for_position(config),
+                source_value: source_value_for_position(config, sample.word_value.as_deref()),
+                source_byte_span: source_span_for_position(
+                    &sample.prompt,
+                    config,
+                    sample.word_value.as_deref(),
+                ),
+            },
+        )?;
+        positions_writer.write_all(b"\n")?;
+    }
+
+    if let Some(writer) = &mut logits_writer {
+        writer.finish()?;
+    }
+    sample_writer.flush()?;
+    tokenization_writer.flush()?;
+    positions_writer.flush()?;
+
+    let logits_shape = logits_shape.context("no logits were written")?;
+    let provenance = serde_json::json!({
+        "real_logits": true,
+        "no_generation": true,
+        "no_hidden_states": true,
+        "not_research_output": true,
+        "purpose": "native logits reference smoke test",
+    });
+    let manifest = ArtifactManifest {
+        schema_version: ARTIFACT_CONTRACT_VERSION,
+        layout: ARTIFACT_LAYOUT.to_string(),
+        artifact_kind: "ember_hidden_states".to_string(),
+        created_at_unix: unix_timestamp(),
+        run_id: config.run_id.clone(),
+        run_dir: path_to_string(&run_dir)?,
+        config_path: CONFIG_FILENAME.to_string(),
+        samples_path: SAMPLES_FILENAME.to_string(),
+        tokenization_path: TOKENIZATION_FILENAME.to_string(),
+        positions_path: POSITIONS_FILENAME.to_string(),
+        checksums_path: CHECKSUMS_FILENAME.to_string(),
+        report_path: REPORT_FILENAME.to_string(),
+        logits_path: Some(LOGITS_FILENAME.to_string()),
+        tensor_contract: TensorContract {
+            storage: "layer-sharded-npy".to_string(),
+            dtype: config.dtype.as_str().to_string(),
+            byte_order: "little-endian".to_string(),
+            sample_axis: 0,
+            hidden_axis: 1,
+            layers: Vec::new(),
+            logits: Some(LogitsArtifact {
+                path: LOGITS_FILENAME.to_string(),
+                shape: logits_shape.clone(),
+            }),
+        },
+        sample_count: samples.len(),
+        sample_order_hash: sample_order_hash(&order_hash_inputs),
+        config_hash,
+        dtype: config.dtype.as_str().to_string(),
+        output_format: config.output_format.as_str().to_string(),
+        model: ModelMetadata {
+            path: config.model_path.clone(),
+            architecture: Some(arch.to_string()),
+            n_layers: model.n_layers(),
+            embed_dim: model.embed_dim(),
+            max_seq_len: model_context_limit,
+            file_size_bytes: fs::metadata(&config.model_path).ok().map(|m| m.len()),
+            sha256: if config.record_model_sha256 {
+                sha256_file(&config.model_path)
+            } else {
+                None
+            },
+            gguf_metadata,
+        },
+        backend: BackendMetadata {
+            name: ExecutionBackendName::Native.as_str().to_string(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            executable: None,
+            commit: git_commit(),
+            details: serde_json::json!({
+                "compute_backend": "CpuBackend",
+                "crate": env!("CARGO_PKG_NAME"),
+                "real_logits": true,
+                "no_generation": true,
+                "no_hidden_states": true,
+                "not_research_output": true,
+                "purpose": "native logits reference smoke test",
+            }),
+        },
+        extraction_config: config.clone(),
+    };
+    fs::write(&manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+    let report = serde_json::json!({
+        "schema_version": ARTIFACT_CONTRACT_VERSION,
+        "layout": ARTIFACT_LAYOUT,
+        "status": "complete",
+        "sample_count": samples.len(),
+        "layer_count": 0,
+        "logits_written": true,
+        "logits_shape": logits_shape,
+        "provenance": provenance,
+        "real_logits": true,
+        "no_generation": true,
+        "no_hidden_states": true,
+        "not_research_output": true,
+        "purpose": "native logits reference smoke test",
+    });
+    fs::write(&report_path, serde_json::to_string_pretty(&report)?)?;
+
+    let mut checksums = BTreeMap::new();
+    checksum_insert(&mut checksums, &config_path, CONFIG_FILENAME);
+    checksum_insert(&mut checksums, &manifest_path, MANIFEST_FILENAME);
+    checksum_insert(&mut checksums, &samples_path, SAMPLES_FILENAME);
+    checksum_insert(&mut checksums, &tokenization_path, TOKENIZATION_FILENAME);
+    checksum_insert(&mut checksums, &positions_path, POSITIONS_FILENAME);
+    checksum_insert(&mut checksums, &report_path, REPORT_FILENAME);
+    checksum_insert(&mut checksums, &logits_path, LOGITS_FILENAME);
+    fs::write(&checksums_path, serde_json::to_string_pretty(&checksums)?)?;
+
+    eprintln!(
+        "native logits reference wrote {} sample(s) to {}",
+        samples.len(),
+        run_dir.display()
+    );
+    eprintln!("logits: {}", logits_path.display());
+    Ok(())
+}
+
+fn path_to_string(path: &Path) -> anyhow::Result<String> {
+    path.to_str()
+        .map(str::to_string)
+        .with_context(|| format!("path is not valid UTF-8: {}", path.display()))
+}
+
+fn checksum_insert(checksums: &mut BTreeMap<String, String>, absolute_path: &Path, relative: &str) {
+    if let Some(path) = absolute_path.to_str() {
+        if let Some(sum) = sha256_file(path) {
+            checksums.insert(relative.to_string(), sum);
+        }
+    }
+}
+
 fn run_validate_run_command(command: &ValidateRunCommand) -> anyhow::Result<()> {
     let summary = validate_artifact_contract(&command.run_dir, !command.require_layers)?;
     let manifest_path = std::path::Path::new(&command.run_dir).join("manifest.json");
@@ -645,6 +983,7 @@ fn collect_run_markers(
         "no_inference",
         "real_llama_cpp",
         "real_tokenization",
+        "real_logits",
         "no_generation",
         "no_logits",
         "no_hidden_states",
