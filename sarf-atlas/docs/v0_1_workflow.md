@@ -1,0 +1,31 @@
+# Sarf v0.1 Workflow
+
+Sarf v0.1 is backend-agnostic workflow scaffolding for Arabic morphology
+probing. It does not extract hidden states and does not reproduce Paper 1.
+
+Boundary:
+
+- Sarf organizes toy data, prompts, split metadata, experiment configs,
+  expected artifact schemas, adapter imports, and workflow manifests.
+- Backends extract logits or hidden states.
+- Auditors such as `gguf-parity-tools` compare backend agreement.
+
+Run the toy workflow scaffold:
+
+```bash
+bash sarf-atlas/examples/run_v0_1_example.sh /tmp/sarf-atlas-v0.1-example
+```
+
+This writes:
+
+- `toy_morphology.jsonl`
+- `prompts.jsonl`
+- `split_metadata.json`
+- `ember_native_logits.placeholder.toml`
+- `sarf_artifact_manifest.placeholder.json`
+- `workflow.json`
+
+The generated Ember config uses placeholder model paths. Replace them before
+running extraction. The Sarf artifact manifest shows the backend-agnostic shape
+that adapters should produce or import. The output is a tiny workflow scaffold,
+not research output.
