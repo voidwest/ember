@@ -1,0 +1,28 @@
+# Example Sarf Atlas research config for Paper 1.
+# Paths are placeholders and should be replaced for a real local run.
+
+[paper]
+id = "paper1-leakage-aware-probing"
+title = "Leakage-Aware Probing of Arabic Morphology in Small Language Models"
+
+[workspace]
+data_dir = "PATH/TO/arabic-morphology-data"
+artifact_dir = "PATH/TO/ember-artifacts/paper1"
+notes_dir = "sarf-atlas/papers/paper1-leakage-aware-probing"
+
+[models]
+names = [
+  "Qwen3-0.6B-Instruct-Q8_0",
+  "Llama-3.2-1B-Instruct-Q8_0",
+]
+
+[evaluation]
+splits = ["random-cv", "lemma-heldout", "root-heldout"]
+target_labels = ["pos", "gender", "number", "root", "lemma", "pattern"]
+baselines = ["majority", "char-ngram"]
+controls = ["prompt-ablation", "shuffled-labels"]
+
+[reporting]
+write_manifest = true
+write_prompt_record = true
+write_artifact_index = true

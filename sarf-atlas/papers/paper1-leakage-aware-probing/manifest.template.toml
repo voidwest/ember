@@ -1,0 +1,18 @@
+[paper]
+title = "Leakage-Aware Probing of Arabic Morphology in Small Language Models"
+status = "working-draft"
+primary_claim = "Leakage-aware evaluation changes which Arabic morphology probing claims remain defensible."
+
+[models]
+names = ["Qwen3-0.6B-Instruct-Q8_0", "Llama-3.2-1B-Instruct-Q8_0"]
+
+[evaluation]
+splits = ["random-cv", "lemma-heldout", "root-heldout"]
+baselines = ["char-ngram"]
+controls = ["prompt-ablation", "shuffled-labels"]
+
+[artifacts]
+prompts_documented = true
+pipeline_documented = true
+data_documented = true
+results_documented = true
