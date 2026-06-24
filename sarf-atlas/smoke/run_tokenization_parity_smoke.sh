@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SMOKE_DIR="${ROOT_DIR}/sarf-atlas/smoke"
 PROMPTS_PATH="${SMOKE_DIR}/prompts.small.jsonl"
-HELPER_PATH="${SMOKE_DIR}/llama_cpp_tokenize_extract.py"
+HELPER_PATH="${ROOT_DIR}/scripts/llama_cpp_tokenize_extract.py"
 EXPORTER_PATH="${SMOKE_DIR}/export_tokenizer_json_metadata.py"
 
 require_env() {
@@ -68,6 +68,7 @@ require_file "tokenizer metadata exporter" "${EXPORTER_PATH}"
 mkdir -p "${OUT_ROOT}/runs"
 
 RUN_ID="tokenization-parity-smoke"
+MODEL_ARCH="${MODEL_ARCH:-qwen3}"
 CONFIG_PATH="${OUT_ROOT}/llama_cpp_tokenization_smoke.local.toml"
 LLAMA_RUN_DIR="${OUT_ROOT}/runs/${RUN_ID}"
 TOKENIZER_OUT_DIR="${OUT_ROOT}/runs/tokenizer-json"
@@ -81,7 +82,7 @@ cat > "${CONFIG_PATH}" <<EOF
 
 run_id = "${RUN_ID}"
 model_path = $(toml_string "${MODEL_PATH}")
-architecture = "qwen3"
+architecture = $(toml_string "${MODEL_ARCH}")
 backend = "llama-cpp-external"
 prompt_template = "{prompt}"
 input_jsonl_path = $(toml_string "${PROMPTS_PATH}")
@@ -103,6 +104,7 @@ llama_cpp_binary = $(toml_string "${HELPER_PATH}")
 workspace = "sarf-atlas"
 purpose = "real llama.cpp tokenization smoke test for Ember external backend plumbing"
 llama_tokenize_bin = $(toml_string "${LLAMA_TOKENIZE_BIN}")
+model_arch = $(toml_string "${MODEL_ARCH}")
 real_llama_cpp = true
 real_tokenization = true
 no_generation = true

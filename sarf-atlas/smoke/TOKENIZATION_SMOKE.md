@@ -52,7 +52,7 @@ The Ember config uses:
 backend = "llama-cpp-external"
 layers = []
 write_logits = false
-llama_cpp_binary = "sarf-atlas/smoke/llama_cpp_tokenize_extract.py"
+llama_cpp_binary = "scripts/llama_cpp_tokenize_extract.py"
 ```
 
 `llama-cpp-external` currently rejects hidden-state extraction unless
@@ -60,7 +60,7 @@ llama_cpp_binary = "sarf-atlas/smoke/llama_cpp_tokenize_extract.py"
 spawns the helper as:
 
 ```bash
-sarf-atlas/smoke/llama_cpp_tokenize_extract.py --request /tmp/sarf-atlas-ember-smoke/runs/tokenization-parity-smoke/llama_cpp_request.json
+scripts/llama_cpp_tokenize_extract.py --request /tmp/sarf-atlas-ember-smoke/runs/tokenization-parity-smoke/llama_cpp_request.json
 ```
 
 The helper reads the request, renders prompts from

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real llama.cpp tokenization extractor for Ember external-backend smoke tests.
+"""Real llama.cpp tokenization adapter for Ember external-backend smoke tests.
 
 This helper implements Ember's `llama-cpp-external` request contract by calling
 llama.cpp's `llama-tokenize` binary for each prompt. It performs real
@@ -84,13 +84,12 @@ def main() -> int:
 
     request = json.loads(Path(args.request).read_text(encoding="utf-8"))
     metadata = request.get("run_metadata") or {}
-    tokenize_bin = (
-        os.environ.get("LLAMA_TOKENIZE_BIN")
-        or metadata.get("llama_tokenize_bin")
-        or "/tmp/llama.cpp-master/build/bin/llama-tokenize"
-    )
+    tokenize_bin = os.environ.get("LLAMA_TOKENIZE_BIN") or metadata.get("llama_tokenize_bin")
+    if not tokenize_bin:
+        raise ValueError("llama-tokenize path required via LLAMA_TOKENIZE_BIN or run_metadata.llama_tokenize_bin")
     if not Path(tokenize_bin).is_file():
         raise FileNotFoundError(f"llama-tokenize binary not found: {tokenize_bin}")
+    model_arch = metadata.get("model_arch") or metadata.get("arch") or "unknown"
 
     run_dir = Path(request["output_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -165,7 +164,7 @@ def main() -> int:
     extraction_config = {
         "run_id": None,
         "model_path": request["model_path"],
-        "architecture": "qwen3",
+        "architecture": model_arch,
         "tokenizer_path": None,
         "backend": request["backend"],
         "prompt_template": request["prompt_template"],
@@ -216,7 +215,7 @@ def main() -> int:
         "output_format": "npy",
         "model": {
             "path": request["model_path"],
-            "architecture": "qwen3",
+            "architecture": model_arch,
             "n_layers": 0,
             "embed_dim": 0,
             "max_seq_len": 0,
@@ -248,7 +247,7 @@ def main() -> int:
         "engine": "llama.cpp",
         "adapter": "llama-tokenize",
         "model": request["model_path"],
-        "arch": "qwen3",
+        "arch": model_arch,
         "prompts": parity_prompts,
         **provenance,
     }
