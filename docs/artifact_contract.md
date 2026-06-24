@@ -221,3 +221,22 @@ tensors.
 checksummed, and the manifest has been written. Missing report, non-complete
 status, checksum mismatch, config hash mismatch, or sample-order mismatch means
 the artifact is stale or corrupted.
+
+## Validation Layers
+
+Ember separates artifact validation into three layers:
+
+1. `validate-run` checks one Ember artifact run for structural honesty. It
+   validates manifest layout and schema, JSONL row order, tokenization records,
+   selected positions, report status, checksum references, backend identity,
+   and provenance markers such as `mock`, `no_logits`, `no_hidden_states`, and
+   `not_research_output`.
+2. `validate-backends` compares two Ember artifact runs, usually native versus
+   external, after each run individually satisfies the artifact contract.
+3. `gguf-parity-tools` is the external audit harness for token IDs, logits, and
+   eventually layer tensors. It is where tokenizer parity, logits parity, and
+   future hidden-state parity comparisons belong.
+
+Use `validate-run` before interpreting a single run, `validate-backends` before
+claiming two Ember backends agree, and `gguf-parity-tools` when comparing Ember
+or llama.cpp metadata/tensors against an external parity reference.

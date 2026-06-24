@@ -187,6 +187,11 @@ The run writes the frozen Ember artifact contract under
 files, `checksums.json`, and `report.json`. See
 [docs/artifact_contract.md](docs/artifact_contract.md).
 
+Validate a single artifact run with `cargo run -- validate-run <run-dir>`.
+Backend-to-backend comparisons use `validate-backends`, and external parity
+audits use `gguf-parity-tools`; see
+[docs/backend_validation.md](docs/backend_validation.md).
+
 `llama-cpp` config validation is wired, but hidden-state extraction still needs
 the external patched/custom llama.cpp binary integration. That backend must
 write the same artifact contract as `native`.
@@ -202,9 +207,9 @@ cargo run --release -- extract \
   --out runs/test-qwen-llama-backend
 ```
 
-For now `llama-cpp-external` supports the tokenization/logits artifact skeleton
-only. Hidden-state layer requests are rejected until the patched extractor
-contract is implemented.
+For now `llama-cpp-external` supports tokenization-only smoke plumbing when
+paired with an external helper. Hidden-state layer requests are rejected until
+the patched extractor contract is implemented.
 
 ### flags
 

@@ -118,6 +118,9 @@ Equivalent expanded commands:
 cargo run -- extract \
   --config /tmp/sarf-atlas-ember-smoke/llama_cpp_tokenization_smoke.local.toml
 
+cargo run -- validate-run \
+  /tmp/sarf-atlas-ember-smoke/runs/tokenization-parity-smoke
+
 python3 sarf-atlas/smoke/export_tokenizer_json_metadata.py \
   --tokenizer /path/to/tokenizer.json \
   --prompts sarf-atlas/smoke/prompts.small.jsonl \
@@ -135,12 +138,27 @@ python3 -m json.tool \
 
 ## Expected Pass Condition
 
-The expected pass condition is that `gguf-parity-tools token-audit` exits
-successfully and its report shows matching token IDs for every prompt in
-`prompts.small.jsonl`.
+The expected pass condition is:
+
+1. `cargo run -- validate-run` exits successfully for the Ember artifact run.
+2. `gguf-parity-tools token-audit` exits successfully and its report shows
+   matching token IDs for every prompt in `prompts.small.jsonl`.
 
 If the audit reports mismatches, treat the run as a tokenizer parity failure or
 configuration mismatch. Do not reinterpret a mismatch as model behavior.
+
+## Validation Layers
+
+This smoke uses two of Ember's validation layers plus one external audit layer:
+
+- `validate-run` checks this one Ember artifact run for structural honesty:
+  manifest, report, tokenization rows, positions, backend identity, and
+  provenance markers.
+- `validate-backends` compares two Ember artifact runs. It is not required for
+  this tokenization-only smoke unless a second comparable Ember run exists.
+- `gguf-parity-tools` performs the external token-ID audit here. The same
+  external harness is the intended place for logits and future layer parity
+  checks.
 
 ## Known Limitations
 
