@@ -2,7 +2,7 @@
 
 Sarf is a backend-agnostic research framework for Arabic morphology probing
 experiments. It organizes datasets, prompts, splits, extraction metadata, and
-evaluation artifacts, while allowing hidden states or logits to come from
+evaluation artifacts, and is designed to let hidden states or logits come from
 Ember, llama.cpp, Transformers, or precomputed files.
 
 Architecture slogan:
