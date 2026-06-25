@@ -20,6 +20,18 @@ outside this repository.
 
 research write-up: https://voidwest.dev/ember
 
+## Sarf Atlas
+
+Sarf Atlas has moved to its own repository:
+https://github.com/voidwest/sarf-atlas
+
+Use the standalone package for backend-agnostic Arabic morphology workflow
+scaffolding:
+
+```bash
+pip install sarf-atlas
+```
+
 ## what ember is / is not
 
 Ember is a research layer for hidden-state extraction, leakage-aware probing,
