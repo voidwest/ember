@@ -245,3 +245,78 @@ All passed at the end of the session.
    stable llama.cpp CLI/API path can write logits without patching.
 4. Only then implement or adopt a patched/custom llama.cpp hidden-state
    extractor that writes Ember's artifact contract for layer shards.
+
+## 2026-06-25 Current State
+
+The original next steps above have mostly advanced. Current committed local
+state:
+
+- Sarf Atlas tokenization smoke is committed.
+- Ember `validate-run` is committed.
+- Validation layer docs are committed.
+- The llama.cpp tokenization adapter has been promoted into `scripts/`.
+- Experimental llama-cpp-python/libllama logits smoke exists and passes
+  `validate-run`.
+- A native Ember logits reference smoke exists and passes `validate-run`.
+- Sarf v0.1 workflow scaffold is committed.
+- Sarf package metadata cleanup is committed as
+  `b849879 Prepare Sarf Atlas package metadata`.
+
+Sarf v0.1 scope:
+
+- Package/distribution name: `sarf-atlas`.
+- Import/CLI package name: `sarf`.
+- Console script: `sarf`.
+- Sarf organizes datasets, tasks, prompts, splits, labels, positions, runs,
+  manifests, reports, and backend-agnostic validation scaffolding.
+- Backends extract. Auditors compare.
+- Ember is a strong backend, not the parent framework.
+
+Packaging readiness result:
+
+- Editable install passed in a temporary virtual environment.
+- Built wheel and sdist under `/tmp/sarf-dist-check/`.
+- `twine check` passed for both built artifacts.
+- Wheel install smoke passed from a clean temporary directory.
+- Toy example workflow and manifest validation ran from a clean temporary
+  directory.
+- Built artifacts contain only package code and metadata; local smoke configs
+  and private paths were not included.
+
+TestPyPI status:
+
+- `sarf-atlas==0.1.0` is live on TestPyPI.
+- TestPyPI JSON metadata confirmed both artifacts:
+  - `sarf_atlas-0.1.0-py3-none-any.whl`
+  - `sarf_atlas-0.1.0.tar.gz`
+- Fresh virtualenv install from TestPyPI passed.
+- Installed CLI checks passed without `PYTHONPATH`:
+  - `sarf --help`
+  - `sarf backends list`
+  - `python -m sarf backend llama-cpp doctor`
+  - `python -m sarf backend ember doctor`
+
+The successful TestPyPI upload used artifacts built under:
+
+```bash
+/tmp/sarf-atlas-dist/
+```
+
+- No real PyPI upload was attempted.
+- No push or tag was made.
+
+Important current truth:
+
+- Tokenization smoke is real backend plumbing and token metadata validation,
+  not research output.
+- Logits smokes are tiny local engineering checks, not research output.
+- No generation is run by these smokes.
+- No hidden states are run by these smokes.
+- Hidden-state extraction remains planned work, not implemented support.
+
+Suggested next action after this checkpoint:
+
+1. Polish package README wording so PyPI reads like an installed package, not a
+   repository-local scaffold.
+2. Rebuild, run `twine check`, and install the wheel in a clean environment.
+3. Publish `sarf-atlas==0.1.0` to real PyPI if that version is unused there.

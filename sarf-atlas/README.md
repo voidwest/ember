@@ -13,7 +13,7 @@ Backends extract.
 Auditors compare.
 ```
 
-This directory is not replacing Ember. Ember is currently the strongest local
+Sarf Atlas is not replacing Ember. Ember is currently the strongest local
 backend path, but Sarf should not depend on one inference engine. Sarf owns
 Arabic morphology schemas, task definitions, prompt templates, split
 strategies, experiment configs, expected artifact schemas, report scaffolding,
@@ -31,23 +31,24 @@ The current split is:
   planning.
 - `gguf-parity-tools`: validation and parity harness.
 
-This directory is experimental and local to the Ember repository for now. If the
-shape proves useful, Sarf Atlas may later become a separate repository.
+## Quickstart
 
-## Sarf v0.1 Scaffold
-
-The initial `sarf` package skeleton lives under `sarf-atlas/src/sarf`. It can
-generate a toy morphology dataset, prompts, split metadata, Ember config
-placeholders, a Sarf artifact manifest, and an example workflow manifest
-without installing dependencies:
+Install Sarf Atlas:
 
 ```bash
-PYTHONPATH=sarf-atlas/src python3 -m sarf example-workflow \
-  --out-dir /tmp/sarf-atlas-v0.1-example
+pip install sarf-atlas
 ```
 
-This is framework scaffolding only. It is not hidden-state extraction, Paper 1
-reproduction, or research output.
+Generate the v0.1 toy workflow scaffold:
+
+```bash
+sarf example-workflow --out-dir /tmp/sarf-atlas-v0.1-example
+```
+
+This writes a toy morphology dataset, prompts, split metadata, Ember config
+placeholders, a Sarf artifact manifest, and an example workflow manifest. It is
+framework scaffolding only, not hidden-state extraction, Paper 1 reproduction,
+or research output.
 
 Current adapter namespace:
 
@@ -65,9 +66,9 @@ does not make llama.cpp, Ember, Transformers/HF, or hidden-state extraction part
 of the base package:
 
 ```bash
-PYTHONPATH=sarf-atlas/src python3 -m sarf backends list
-PYTHONPATH=sarf-atlas/src python3 -m sarf backend llama-cpp doctor
-PYTHONPATH=sarf-atlas/src python3 -m sarf backend ember doctor
+sarf backends list
+sarf backend llama-cpp doctor
+sarf backend ember doctor
 ```
 
 llama.cpp detection checks `LLAMA_TOKENIZE_BIN`, `LLAMA_CLI_BIN`,
