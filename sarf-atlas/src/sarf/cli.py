@@ -11,8 +11,75 @@ from .toy import toy_records
 from .validation import validate_run
 from .workflow import DEFAULT_TEMPLATE, write_example_workflow
 from .artifacts import validate_manifest
+from .backends import llama_cpp
+from .backends import ember as ember_backend
 from .backends.ember import import_ember_run
 from .backends.files import import_files
+
+
+def _yes_no(value: bool) -> str:
+    return "yes" if value else "no"
+
+
+def _print_capabilities(capabilities: dict[str, bool]) -> None:
+    print("capabilities:")
+    for name in ["tokenization", "logits", "hidden_states", "validate_run"]:
+        if name in capabilities:
+            print(f"  {name}: {_yes_no(bool(capabilities[name]))}")
+
+
+def _print_llama_cpp_status(status: dict[str, object]) -> None:
+    print("llama.cpp")
+    print(f"available: {_yes_no(bool(status['available']))}")
+    print("binaries:")
+    for name in ["tokenize", "cli", "simple"]:
+        binary = status["binaries"][name]  # type: ignore[index]
+        path = binary["path"] or "missing"
+        source = f" ({binary['source']})" if binary["source"] else ""
+        env_path = f", {binary['env_var']}={binary['env_path']}" if binary["env_path"] else ""
+        print(f"  {name}: {path}{source}{env_path}")
+    missing = status["missing_binaries"]
+    print(f"missing binaries: {', '.join(missing) if missing else 'none'}")  # type: ignore[arg-type]
+    _print_capabilities(status["capabilities"])  # type: ignore[arg-type]
+    print("caveats:")
+    for caveat in status["caveats"]:  # type: ignore[union-attr]
+        print(f"  - {caveat}")
+
+
+def _print_ember_status(status: dict[str, object]) -> None:
+    print("Ember")
+    print(f"available: {_yes_no(bool(status['available']))}")
+    binary = status["binary"]  # type: ignore[assignment]
+    path = binary["path"] or "missing"
+    source = f" ({binary['source']})" if binary["source"] else ""
+    env_path = f", {binary['env_var']}={binary['env_path']}" if binary["env_path"] else ""
+    print(f"binary: {path}{source}{env_path}")
+    missing = status["missing_binaries"]
+    print(f"missing binaries: {', '.join(missing) if missing else 'none'}")  # type: ignore[arg-type]
+    validate_run = status["validate_run"]  # type: ignore[assignment]
+    print(
+        "validate-run help: "
+        f"{'callable' if validate_run['callable'] else 'not callable'}"
+        f"{' (not checked)' if not validate_run['checked'] else ''}"
+    )
+    if validate_run["error"]:
+        print(f"validate-run error: {validate_run['error']}")
+    _print_capabilities(status["capabilities"])  # type: ignore[arg-type]
+    print("caveats:")
+    for caveat in status["caveats"]:  # type: ignore[union-attr]
+        print(f"  - {caveat}")
+
+
+def _print_backends_list() -> None:
+    llama_status = llama_cpp.detect()
+    ember_status = ember_backend.detect()
+    print("Sarf backend availability")
+    print(f"llama.cpp: {_yes_no(bool(llama_status['available']))}")
+    print(f"Ember: {_yes_no(bool(ember_status['available']))}")
+    print()
+    _print_llama_cpp_status(llama_status)
+    print()
+    _print_ember_status(ember_status)
 
 
 def entrypoint(argv: list[str] | None = None) -> int:
@@ -77,6 +144,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--manifest", required=True, help="Sarf artifact manifest JSON")
     p.add_argument("--out", help="optional validation report JSON")
 
+    p = sub.add_parser("backends", help="inspect optional local backend availability")
+    backends_sub = p.add_subparsers(dest="backends_command", required=True)
+    backends_sub.add_parser("list", help="list optional backend detection results")
+
+    p = sub.add_parser("backend", help="inspect one optional local backend")
+    backend_sub = p.add_subparsers(dest="backend_name", required=True)
+    llama_parser = backend_sub.add_parser("llama-cpp", help="inspect llama.cpp availability")
+    llama_sub = llama_parser.add_subparsers(dest="backend_command", required=True)
+    llama_sub.add_parser("doctor", help="show llama.cpp detection details")
+    ember_parser = backend_sub.add_parser("ember", help="inspect Ember availability")
+    ember_sub = ember_parser.add_subparsers(dest="backend_command", required=True)
+    ember_sub.add_parser("doctor", help="show Ember detection details")
+
     p = sub.add_parser("example-workflow", help="write the complete toy v0.1 workflow scaffold")
     p.add_argument("--out-dir", required=True, help="output workflow directory")
 
@@ -128,6 +208,14 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["passed"] else 1
+    elif args.command == "backends":
+        if args.backends_command == "list":
+            _print_backends_list()
+    elif args.command == "backend":
+        if args.backend_name == "llama-cpp" and args.backend_command == "doctor":
+            _print_llama_cpp_status(llama_cpp.detect())
+        elif args.backend_name == "ember" and args.backend_command == "doctor":
+            _print_ember_status(ember_backend.detect())
     elif args.command == "example-workflow":
         write_example_workflow(args.out_dir)
     return 0

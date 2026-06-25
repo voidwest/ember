@@ -21,7 +21,7 @@ backend-agnostic validation, and adapters for importing backend outputs.
 
 Sarf does not own model execution internals, hidden-state extraction
 implementation, llama.cpp compilation as a required behavior, or Ember
-internals.
+internals. Base Sarf works without local extraction backends installed.
 
 The current split is:
 
@@ -53,6 +53,33 @@ Current adapter namespace:
 
 - `sarf.backends.ember`
 - `sarf.backends.files`
+- `sarf.backends.llama_cpp`
 
-Future optional adapters may cover llama.cpp, Transformers/HF, vLLM, and
+Future optional adapters may cover Transformers/HF, vLLM, and additional
 precomputed hidden-state formats.
+
+## Optional Backends
+
+Sarf v0.1 can inspect local backend availability, but detection is optional and
+does not make llama.cpp, Ember, Transformers/HF, or hidden-state extraction part
+of the base package:
+
+```bash
+PYTHONPATH=sarf-atlas/src python3 -m sarf backends list
+PYTHONPATH=sarf-atlas/src python3 -m sarf backend llama-cpp doctor
+PYTHONPATH=sarf-atlas/src python3 -m sarf backend ember doctor
+```
+
+llama.cpp detection checks `LLAMA_TOKENIZE_BIN`, `LLAMA_CLI_BIN`,
+`LLAMA_SIMPLE_BIN`, and common PATH names. Default llama.cpp is useful for some
+local tokenization/logits workflows, but it should not be treated as emitting
+Sarf-compatible hidden-state artifacts.
+
+Ember detection checks `EMBER_BIN`, PATH `ember`, and whether
+`ember validate-run --help` is callable when an Ember binary is found. Ember is
+optional; Sarf can still organize workflows and import artifacts from files.
+
+Users may bring artifacts from llama.cpp, Ember, HF/Transformers, or
+precomputed files. Hidden-state extraction is not built into base Sarf and
+requires an emitting backend such as Ember, patched llama.cpp, HF/Transformers,
+or precomputed Sarf-compatible artifacts.

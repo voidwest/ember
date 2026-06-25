@@ -1,9 +1,71 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 from pathlib import Path
+from typing import Any
 
 from sarf.artifacts import BackendDescriptor, SarfArtifactManifest
+
+
+def detect(*, check_validate_run: bool = True, timeout_seconds: float = 2.0) -> dict[str, Any]:
+    env_path = os.environ.get("EMBER_BIN")
+    if env_path:
+        found = shutil.which(env_path)
+        path = found or env_path if found or Path(env_path).is_file() else None
+        source = "EMBER_BIN"
+    else:
+        path = shutil.which("ember")
+        source = "PATH" if path else None
+    validate_run = {
+        "checked": False,
+        "callable": False,
+        "error": None,
+    }
+
+    if check_validate_run and path:
+        validate_run["checked"] = True
+        try:
+            result = subprocess.run(
+                [path, "validate-run", "--help"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+            )
+            validate_run["callable"] = result.returncode == 0
+            if result.returncode != 0:
+                validate_run["error"] = f"exit status {result.returncode}"
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            validate_run["error"] = str(exc)
+
+    available = bool(path)
+    return {
+        "backend": "Ember",
+        "available": available,
+        "binary": {
+            "name": "ember",
+            "env_var": "EMBER_BIN",
+            "env_path": env_path,
+            "path": path,
+            "source": source,
+            "missing": not available,
+        },
+        "missing_binaries": [] if available else ["ember"],
+        "validate_run": validate_run,
+        "capabilities": {
+            "tokenization": available,
+            "logits": available,
+            "hidden_states": available,
+            "validate_run": validate_run["callable"],
+        },
+        "caveats": [
+            "Ember is optional; Sarf can import artifacts without Ember installed.",
+            "Hidden-state extraction requires an emitting backend such as Ember, patched llama.cpp, HF/Transformers, or precomputed artifacts.",
+        ],
+    }
 
 
 def import_ember_run(run_dir: str | Path, *, run_id: str | None = None) -> SarfArtifactManifest:

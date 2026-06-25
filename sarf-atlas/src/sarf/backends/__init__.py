@@ -4,4 +4,4 @@ Adapters convert backend-specific outputs into the Sarf artifact contract. They
 do not implement model execution internals.
 """
 
-__all__ = ["ember", "files"]
+__all__ = ["ember", "files", "llama_cpp"]
