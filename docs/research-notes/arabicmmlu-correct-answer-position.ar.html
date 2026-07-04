@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="متى تتغير دقة ArabicMMLU مع موضع الإجابة" />
+        <meta property="og:description" content="تدقيق صغير في متانة ArabicMMLU يوضح أن صياغة prompt وموضع الخيار الصحيح يمكن أن يؤثرا في دقة الاختيار من متعدد في نماذج decoder-only صغيرة." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/arabicmmlu-correct-answer-position.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>متى تتغير دقة ArabicMMLU مع موضع الإجابة · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/arabicmmlu-correct-answer-position.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1><bdi>متى تتغير دقة ArabicMMLU مع موضع الإجابة</bdi></h1>
+
+        <div class="meta">
+            تدقيق صغير في متانة تقييم الاختيار من متعدد في <bdi>ArabicMMLU</bdi><br>
+            mohammed al-thobaiti · 2026-07-04<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">robustness</span>
+            <span class="tag key">ArabicMMLU</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>
+            المقاييس العربية مهمة. تعطينا طريقة لمقارنة الأنظمة، وتتبع التقدم،
+            وسؤال ما إذا كانت النماذج تتعامل مع مهام عربية خارج التقييم
+            المتمركز حول الإنجليزية. لكن رقم الدقة المجمل ممكن يخفي آثاراً من
+            واجهة القياس نفسها.
+        </p>
+
+        <p>
+            هذه ملاحظة قياس صغيرة على تقييم <bdi>ArabicMMLU</bdi> بصيغة
+            الاختيار من متعدد. السؤال هنا ليس: هل <bdi>ArabicMMLU</bdi> سيئ؟
+            السؤال هو: ما الذي يجب أن نعرضه مع رقم الدقة، خصوصاً عند تقييم
+            نماذج <bdi>decoder-only</bdi> صغيرة ومحلية؟
+        </p>
+
+        <p>
+            في أوضح حالة، نموذج <bdi>Qwen3-0.6B</bdi> حصل على 0.680 عندما
+            كانت الإجابة الصحيحة تحت الوسم <bdi>A</bdi>، لكنه حصل على 0.020
+            عندما وُضعت الإجابة الصحيحة تحت <bdi>B</bdi> في نفس الإعداد. هذا لا
+            يجعل <bdi>ArabicMMLU</bdi> غير صالح، لكنه يوضح لماذا رقم الدقة وحده
+            غير كافٍ.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">status</div>
+            <p>
+                تعامل مع هذه الصفحة كملاحظة قياس، لا كترتيب نماذج. عدد العناصر
+                صغير، والنماذج هنا صغيرة ومحلية، وتشغيل <bdi>3B</bdi> هو
+                <bdi>scale-check</bdi> لا دراسة توسع كاملة.
+            </p>
+        </div>
+
+        <p>
+            النتيجة الأساسية محدودة: في هذه التشغيلات، صياغة الـ <bdi>prompt</bdi>،
+            وتحليل الإجابة، وتفضيل وسوم الخيارات، وموضع الإجابة الصحيحة كانت
+            مرتبطة بتغيرات كبيرة في الدقة المقاسة. الانتقال من حوالي
+            <bdi>0.6B/1B</bdi> إلى <bdi>3B</bdi> حسّن الدقة والمتانة، لكنه لم
+            يلغِ حساسية موضع الخيار.
+        </p>
+
+        <p>
+            في تقييم الاختيار من متعدد، النموذج لا يحل المهمة فقط. هو أيضاً
+            يتبع صيغة الجواب، يختار بين وسوم، ويتفاعل مع <bdi>parser</bdi>.
+        </p>
+
+        <h2>لماذا تقييم الاختيار من متعدد قد يكون هشاً</h2>
+
+        <p>
+            التقييم يبدو بسيطاً: اسأل سؤالاً، اعرض خيارات <bdi>A/B/C/D</bdi>،
+            استخرج حرفاً واحداً، واحسب الدقة. عملياً، عدة سلوكيات في الواجهة
+            قد تدخل في القياس.
+        </p>
+
+        <ul>
+            <li><strong>الالتزام بصيغة الجواب</strong>: النموذج قد يشرح، ينسخ نص الخيار، يجيب بوسوم عربية، أو ينتج نصاً لا يحتوي حرفاً واضحاً.</li>
+            <li><strong>فشل التحليل</strong>: المخرج قد يكون مفيداً دلالياً لكنه يفشل عند الـ <bdi>parser</bdi>، أو ينجح في التحليل رغم أن السلوك ضعيف.</li>
+            <li><strong>تحيز وسم الخيار</strong>: النموذج قد يفضل وسماً مثل <bdi>A</bdi> أو <bdi>C</bdi> بغض النظر عن محتوى الإجابة.</li>
+            <li><strong>حساسية الموضع</strong>: الدقة قد تتغير عندما توضع نفس الإجابة الصحيحة تحت وسم مختلف.</li>
+            <li><strong>عدم الثبات الدلالي</strong>: تعديلات شكلية في الـ <bdi>prompt</bdi> قد تعطي اختياراً دلالياً مختلفاً لنفس السؤال.</li>
+        </ul>
+
+        <p>
+            هذه ليست أسباباً لرفض اختبارات الاختيار من متعدد. هي أسباب لعرض
+            بيانات تشخيصية بجانب الدقة الخام.
+        </p>
+
+        <h2><bdi>pilot 1</bdi>: حساسية صيغة الـ <bdi>prompt</bdi></h2>
+
+        <p>
+            استخدم <bdi>pilot 1</bdi> خمسين سؤالاً من <bdi>ArabicMMLU</bdi>،
+            وست صيغ <bdi>prompt</bdi> لكل سؤال: 300 <bdi>prompt</bdi> لكل نموذج.
+            النماذج هي <bdi>Qwen3-0.6B</bdi>، <bdi>Llama-3.2-1B</bdi>،
+            و<bdi>Llama-3.2-3B</bdi>. المقاييس تشمل الدقة الكلية، الدقة على
+            المخرجات القابلة للتحليل، معدل فشل التحليل، الثبات الدلالي، دقة
+            <bdi>strict-output</bdi>، وفشل التحليل في <bdi>strict-output</bdi>،
+            وتوزيع وسوم التنبؤ.
+        </p>
+
+        <p>
+            هنا، الثبات الدلالي يعني نسبة الأسئلة التي تعود إجاباتها القابلة
+            للتحليل إلى نفس الاختيار الأصلي عبر صيغ الـ <bdi>prompt</bdi> أو
+            تبديلات الخيارات.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج</th>
+                    <th><bdi>acc all</bdi></th>
+                    <th><bdi>acc parseable</bdi></th>
+                    <th><bdi>parse fail</bdi></th>
+                    <th>الثبات الدلالي</th>
+                    <th><bdi>strict acc</bdi></th>
+                    <th><bdi>strict parse fail</bdi></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>Qwen3-0.6B</bdi></td><td>0.273</td><td>0.381</td><td>0.283</td><td>0.200</td><td>0.380</td><td>0.000</td></tr>
+                <tr><td><bdi>Llama-3.2-1B</bdi></td><td>0.303</td><td>0.313</td><td>0.030</td><td>0.080</td><td>0.300</td><td>0.000</td></tr>
+                <tr><td><bdi>Llama-3.2-3B</bdi></td><td>0.430</td><td>0.433</td><td>0.007</td><td>0.340</td><td>0.400</td><td>0.000</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            <bdi>Qwen3-0.6B</bdi> كان عنده فشل تحليل مرتفع في الصيغ غير
+            الصارمة. صيغة <bdi>strict-output</bdi> أزالت فشل التحليل في كل
+            النماذج، لكن إصلاح قابلية التحليل لم يحل المتانة بالكامل.
+            <bdi>Llama-3.2-3B</bdi> حسّن الدقة وقابلية التحليل والثبات
+            الدلالي، وهذا يوحي بأن الحجم يساعد في هذا الإعداد. مع ذلك، الثبات
+            الدلالي بقي 0.340، أي أن أغلب الأسئلة لم تحصل على إجابة دلالية
+            ثابتة عبر كل الصيغ.
+        </p>
+
+        <p>
+            في تشغيل <bdi>Llama-3.2-3B</bdi> لـ <bdi>pilot 1</bdi>، كان توزيع
+            التنبؤات الكلي <bdi>A/B/C/D/E/PF = 59/87/92/58/2/2</bdi>. التوزيع
+            لا ينهار إلى وسم واحد، لكنه يظل سياقاً مهماً لتفسير الدقة.
+        </p>
+
+        <h2><bdi>pilot 2</bdi>: وسم الخيار وموضع الإجابة الصحيحة</h2>
+
+        <p>
+            استخدم <bdi>pilot 2</bdi> خمسين سؤالاً، مع أربع تبديلات لكل سؤال:
+            200 <bdi>prompt</bdi> لكل نموذج. التعليمات كانت صارمة فقط:
+        </p>
+
+        <pre><code>Answer with exactly one character: A, B, C, or D. Do not explain.</code></pre>
+
+        <p>
+            كل سؤال تم تبديله بحيث تظهر الإجابة الصحيحة مرة واحدة تحت
+            <bdi>A</bdi>، ومرة تحت <bdi>B</bdi>، ومرة تحت <bdi>C</bdi>، ومرة
+            تحت <bdi>D</bdi>. محتوى السؤال ونصوص الخيارات محفوظة؛ الذي يتغير هو
+            الوسم والترتيب فقط. هذا يعزل أثر وسم الخيار وموضع الإجابة بعد أن
+            ضبطنا قابلية التحليل.
+        </p>
+
+        <p>
+            <bdi>label-bias score</bdi> يحسب كأكبر نسبة وسم متنبأ بها ناقص
+            0.25، حيث 0.25 تعني توزيعاً منتظماً على <bdi>A/B/C/D</bdi>.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج</th>
+                    <th><bdi>acc all</bdi></th>
+                    <th><bdi>parse fail</bdi></th>
+                    <th><bdi>label-bias</bdi></th>
+                    <th>الثبات الدلالي</th>
+                    <th>مدى الموضع</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>Qwen3-0.6B</bdi></td><td>0.275</td><td>0.000</td><td>0.380</td><td>0.120</td><td>0.660</td></tr>
+                <tr><td><bdi>Llama-3.2-1B</bdi></td><td>0.300</td><td>0.000</td><td>0.120</td><td>0.160</td><td>0.220</td></tr>
+                <tr><td><bdi>Llama-3.2-3B</bdi></td><td>0.410</td><td>0.000</td><td>0.145</td><td>0.260</td><td>0.320</td></tr>
+            </tbody>
+        </table>
+
+        <h3>الدقة حسب موضع الإجابة الصحيحة</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج</th>
+                    <th><bdi>correct=A</bdi></th>
+                    <th><bdi>correct=B</bdi></th>
+                    <th><bdi>correct=C</bdi></th>
+                    <th><bdi>correct=D</bdi></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>Qwen3-0.6B</bdi></td><td>0.680</td><td>0.020</td><td>0.060</td><td>0.340</td></tr>
+                <tr><td><bdi>Llama-3.2-1B</bdi></td><td>0.200</td><td>0.380</td><td>0.200</td><td>0.420</td></tr>
+                <tr><td><bdi>Llama-3.2-3B</bdi></td><td>0.300</td><td>0.460</td><td>0.600</td><td>0.280</td></tr>
+            </tbody>
+        </table>
+
+        <h3>توزيع التنبؤات</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج</th>
+                    <th>A</th>
+                    <th>B</th>
+                    <th>C</th>
+                    <th>D</th>
+                    <th>PF</th>
+                    <th>other</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>Qwen3-0.6B</bdi></td><td>126</td><td>4</td><td>9</td><td>61</td><td>0</td><td>0</td></tr>
+                <tr><td><bdi>Llama-3.2-1B</bdi></td><td>29</td><td>57</td><td>40</td><td>74</td><td>0</td><td>0</td></tr>
+                <tr><td><bdi>Llama-3.2-3B</bdi></td><td>25</td><td>62</td><td>79</td><td>34</td><td>0</td><td>0</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            <bdi>strict-output</bdi> أزال فشل التحليل في كل النماذج. هذا مفيد،
+            لكنه يجعل عدم الثبات المتبقي أوضح. <bdi>Qwen3-0.6B</bdi> أظهر
+            تفضيلاً قوياً للوسم <bdi>A</bdi>: 126 من 200 تنبؤ كانت <bdi>A</bdi>.
+            ودقته تغيرت بحدة حسب موضع الإجابة: 0.680 عندما كانت الإجابة تحت
+            <bdi>A</bdi> مقابل 0.020 عندما كانت تحت <bdi>B</bdi>.
+        </p>
+
+        <p>
+            <bdi>Llama-3.2-1B</bdi> كان أقل حدة، لكنه لم يكن ثابتاً. أما
+            <bdi>Llama-3.2-3B</bdi> فحسّن الدقة والثبات الدلالي، لكنه بقي يملك
+            تحيز وسم غير تافه ومدى 0.320 في دقة موضع الإجابة. في هذا الـ
+            <bdi>pilot</bdi>، الحجم يساعد، لكن الدقة الخام ما زالت تحتاج سياقاً
+            تشخيصياً.
+        </p>
+
+        <h2>ما الذي تغير مع <bdi>Llama-3.2-3B</bdi>؟</h2>
+
+        <p>
+            <bdi>Llama-3.2-3B</bdi> حسّن عدة قياسات معاً. في <bdi>pilot 1</bdi>
+            كانت الدقة أعلى، وفشل التحليل أقل، والثبات الدلالي أفضل. وفي
+            <bdi>pilot 2</bdi> كانت الدقة والثبات الدلالي أفضل من
+            <bdi>Llama-3.2-1B</bdi>.
+        </p>
+
+        <p>
+            لكن هذا ليس دراسة توسع كاملة. هو إضافة حجم واحد أكبر تحت نفس إعداد
+            التدقيق. لا يثبت كيف تتصرف النماذج الأكبر عموماً، ولا يغني عن تقييم
+            نماذج أقوى في العربية. تقييم نماذج أكبر عمل لاحق.
+        </p>
+
+        <h2>ماذا يثبت هذا، وماذا لا يثبت؟</h2>
+
+        <p>هذه الملاحظة تثبت بشكل محدود أن:</p>
+
+        <ul>
+            <li>سلوك واجهة القياس قد يؤثر في الأرقام المقاسة،</li>
+            <li>الصياغة الصارمة تساعد في قابلية التحليل،</li>
+            <li>حساسية موضع الخيار قد تبقى بعد إصلاح قابلية التحليل،</li>
+            <li>بيانات المتانة مفيدة بجانب الدقة الخام.</li>
+        </ul>
+
+        <p>ولا تثبت أن:</p>
+
+        <ul>
+            <li><bdi>ArabicMMLU</bdi> غير صالح،</li>
+            <li>هذه النماذج تمثل كل سلوك نماذج اللغة العربية،</li>
+            <li>النماذج الأكبر ستتصرف بنفس الطريقة،</li>
+            <li>اختبارات الاختيار من متعدد بلا فائدة،</li>
+            <li>هذه إطار تقييم عربي كامل.</li>
+        </ul>
+
+        <blockquote>
+            <p>رقم benchmark يصبح أكثر فائدة عندما يأتي معه ما يكفي من تشخيص واجهة القياس.</p>
+        </blockquote>
+
+        <h2>قائمة تقرير مقترحة</h2>
+
+        <p>
+            عند تقييم نماذج <bdi>decoder-only</bdi> صغيرة أو محلية، لا أريد عرض
+            دقة <bdi>ArabicMMLU</bdi> الخام وحدها. تقرير أفضل يشمل:
+        </p>
+
+        <ul>
+            <li>الدقة الخام،</li>
+            <li>معدل فشل التحليل،</li>
+            <li>الدقة على المخرجات القابلة للتحليل،</li>
+            <li>دقة <bdi>strict-output</bdi>،</li>
+            <li>توزيع وسوم الإجابة،</li>
+            <li>الدقة حسب موضع الإجابة الصحيحة،</li>
+            <li>الثبات الدلالي تحت تغييرات الـ <bdi>prompt</bdi> والخيارات،</li>
+            <li>حساسية التطبيع الإملائي كعمل لاحق،</li>
+            <li>فحوصات تسرب واعية بالصرف كعمل لاحق.</li>
+        </ul>
+
+        <h2>الأدلة والملفات</h2>
+
+        <p>
+            الـ <bdi>prompts</bdi>، والمخرجات، وملفات التقييم، والملخصات متاحة
+            في مستودع <bdi>Ember</bdi> العام تحت
+            <a href="https://github.com/voidwest/ember/tree/main/artifacts/benchmark-audit/arabicmmlu"><code>artifacts/benchmark-audit/arabicmmlu/</code></a>.
+            التشغيلات الفعلية تمت في مجلد اختبار محلي خاص؛ النسخة الموجودة في
+            المستودع هي حزمة الأدلة المنشورة عشان تكون أرقام هذه الصفحة قابلة
+            للفحص.
+        </p>
+
+        <h2>الخلاصة</h2>
+
+        <p>
+            الخلاصة ليست أن نموذجاً أفضل من آخر. ترتيب النماذج ليس هدف هذا
+            التدقيق. الهدف هو أن الدقة الخام قد تخلط بين كفاءة المهمة وسلوك
+            واجهة الاختبار.
+        </p>
+
+        <p>
+            التقييم العربي لا ينبغي أن يسأل فقط هل أعطى النموذج الإجابة الصحيحة.
+            ينبغي أيضاً أن يسأل هل تبقى الإجابة نفسها بعد تغييرات harmless في
+            صيغة الـ <bdi>prompt</bdi>، ووسوم الخيارات، وترتيب الخيارات، وتطبيع
+            النص العربي.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/index.ar.html">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>
