@@ -106,8 +106,8 @@
         </p>
 
         <ul>
-            <li><strong>answer format</strong>: النموذج يشرح، ينسخ نص الخيار، أو يطلع جواب ما فيه حرف واضح.</li>
-            <li><strong>parse failures</strong>: الجواب ممكن يكون مفهوم للإنسان لكنه يفشل عند الـ <bdi>parser</bdi>.</li>
+            <li><strong>answer format</strong>: النموذج يشرح، ينسخ نص الخيار، يجاوب بوسوم عربية، أو يطلع جواب ما فيه حرف واضح.</li>
+            <li><strong>parse failures</strong>: الجواب ممكن يكون مفهوم للإنسان لكنه يفشل عند الـ <bdi>parser</bdi>، أو ينجح parsing رغم أن السلوك ضعيف.</li>
             <li><strong>label bias</strong>: النموذج يفضل <bdi>A</bdi> أو <bdi>C</bdi> بغض النظر عن المحتوى.</li>
             <li><strong>position sensitivity</strong>: نفس الإجابة الصحيحة تعطي accuracy مختلف إذا تغير موضعها.</li>
             <li><strong>semantic instability</strong>: تغييرات شكلية في الـ <bdi>prompt</bdi> تغير الاختيار الدلالي.</li>
@@ -124,7 +124,10 @@
             <bdi>pilot 1</bdi> استخدم 50 سؤال من <bdi>ArabicMMLU</bdi>،
             و6 صيغ <bdi>prompt</bdi> لكل سؤال: 300 <bdi>prompt</bdi> لكل نموذج.
             النماذج: <bdi>Qwen3-0.6B</bdi>، <bdi>Llama-3.2-1B</bdi>،
-            و<bdi>Llama-3.2-3B</bdi>.
+            و<bdi>Llama-3.2-3B</bdi>. المقاييس كانت <bdi>accuracy_all</bdi>،
+            <bdi>accuracy_parseable</bdi>، <bdi>parse_failure_rate</bdi>،
+            <bdi>semantic consistency</bdi>، <bdi>strict-output accuracy</bdi>،
+            <bdi>strict-output parse failure</bdi>، وتوزيع وسوم التنبؤ.
         </p>
 
         <p>
@@ -156,7 +159,7 @@
             <bdi>Qwen3-0.6B</bdi> كان عنده parse failures كثيرة في الصيغ
             غير الصارمة. <bdi>strict-output</bdi> شال المشكلة في كل النماذج.
             لكن إصلاح parsing ما حل robustness بالكامل. <bdi>Llama-3.2-3B</bdi>
-            حسّن الدقة والثبات، وهذا يوحي إن الحجم يساعد هنا. مع ذلك،
+            حسّن الدقة، وقابلية التحليل، والثبات، وهذا يوحي إن الحجم يساعد هنا. مع ذلك،
             <bdi>semantic consistency</bdi> بقي 0.340، يعني أغلب الأسئلة ما
             أخذت نفس الإجابة الدلالية عبر كل الصيغ.
         </p>
@@ -180,7 +183,7 @@
             كل سؤال تبدل بحيث الإجابة الصحيحة تظهر مرة تحت <bdi>A</bdi>،
             مرة تحت <bdi>B</bdi>، مرة تحت <bdi>C</bdi>، ومرة تحت <bdi>D</bdi>.
             السؤال ونصوص الخيارات نفسها محفوظة. اللي يتغير هو label/order فقط.
-            هذا يعزل أثر موضع الإجابة بعد ما ضبطنا parsing.
+            هذا يعزل أثر option-label وموضع الإجابة بعد ما ضبطنا parsing.
         </p>
 
         <p>
@@ -264,15 +267,22 @@
         <h2><bdi>what changed with Llama-3.2-3B?</bdi></h2>
 
         <p>
-            <bdi>Llama-3.2-3B</bdi> حسّن أكثر من شيء: accuracy أعلى، parse
-            failures أقل، وsemantic consistency أفضل من 1B. هذا مفيد كـ
-            scale-check.
+            <bdi>Llama-3.2-3B</bdi> حسّن أكثر من شيء. في <bdi>pilot 1</bdi>،
+            كانت accuracy أعلى، وparse failures أقل، وsemantic consistency أفضل
+            من النماذج الأصغر. في <bdi>pilot 2</bdi>، كانت accuracy والثبات
+            الدلالي أفضل من <bdi>Llama-3.2-1B</bdi>.
         </p>
 
         <p>
             لكن هذا مو scaling study. هو حجم واحد أكبر تحت نفس إعداد القياس.
             ما يثبت كيف تتصرف النماذج الأكبر عموماً، ولا يغني عن تقييم نماذج
             عربية أقوى. هذا عمل لاحق.
+        </p>
+
+        <p>
+            القراءة العملية حذرة: scaling حسّن robustness هنا، لكن
+            option-position sensitivity بقيت واضحة حتى بعد ما strict formatting
+            أزال parse failures.
         </p>
 
         <h2><bdi>what this does and does not show</bdi></h2>
@@ -300,7 +310,7 @@
             <p>رقم benchmark يصير أصدق لما يجي معه تشخيص كافي لواجهة القياس.</p>
         </blockquote>
 
-        <h2><bdi>reporting checklist</bdi></h2>
+        <h2><bdi>proposed reporting checklist</bdi></h2>
 
         <p>
             لما أقيم نماذج <bdi>decoder-only</bdi> صغيرة أو محلية، ما أبغى
