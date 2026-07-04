@@ -1,0 +1,12 @@
+{
+  "n": 1,
+  "accuracy": 0.0,
+  "variants": {
+    "arabic-instruction": {
+      "n": 1,
+      "accuracy": 0.0,
+      "parse_failures": 0,
+      "parse_failure_rate": 0.0
+    }
+  }
+}

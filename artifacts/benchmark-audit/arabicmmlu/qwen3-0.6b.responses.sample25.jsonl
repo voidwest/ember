@@ -1,0 +1,25 @@
+{"answer": "B", "benchmark": "arabicmmlu", "id": "27", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "arabic-instruction"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "27", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nThe correct", "returncode": 0, "stderr_tail": "", "variant": "english-instruction"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "27", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "C\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "option-order-shuffle"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "27", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "option-label-shuffle"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "27", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "normalized-orthography"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "300", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "___________\n\nال", "returncode": 0, "stderr_tail": "", "variant": "arabic-instruction"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "300", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nThe correct", "returncode": 0, "stderr_tail": "", "variant": "english-instruction"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "300", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "The correct answer", "returncode": 0, "stderr_tail": "", "variant": "option-order-shuffle"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "300", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "___________\n\nال", "returncode": 0, "stderr_tail": "", "variant": "option-label-shuffle"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "300", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "___________\n\nال", "returncode": 0, "stderr_tail": "", "variant": "normalized-orthography"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "526", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "___________\n\nال", "returncode": 0, "stderr_tail": "", "variant": "arabic-instruction"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "526", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nThe question", "returncode": 0, "stderr_tail": "", "variant": "english-instruction"}
+{"answer": "A", "benchmark": "arabicmmlu", "id": "526", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "___________\n\nال", "returncode": 0, "stderr_tail": "", "variant": "option-order-shuffle"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "526", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "___________\n\nال", "returncode": 0, "stderr_tail": "", "variant": "option-label-shuffle"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "526", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "___________\n\nال", "returncode": 0, "stderr_tail": "", "variant": "normalized-orthography"}
+{"answer": "A", "benchmark": "arabicmmlu", "id": "1278", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "A\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "arabic-instruction"}
+{"answer": "A", "benchmark": "arabicmmlu", "id": "1278", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "A\n\nThe question", "returncode": 0, "stderr_tail": "", "variant": "english-instruction"}
+{"answer": "A", "benchmark": "arabicmmlu", "id": "1278", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "A\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "option-order-shuffle"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "1278", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "B\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "option-label-shuffle"}
+{"answer": "A", "benchmark": "arabicmmlu", "id": "1278", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "A\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "normalized-orthography"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "1713", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "arabic-instruction"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "1713", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nThe question", "returncode": 0, "stderr_tail": "", "variant": "english-instruction"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "1713", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "C\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "option-order-shuffle"}
+{"answer": "B", "benchmark": "arabicmmlu", "id": "1713", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "B\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "option-label-shuffle"}
+{"answer": "C", "benchmark": "arabicmmlu", "id": "1713", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "normalized-orthography"}

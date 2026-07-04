@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="When ArabicMMLU Accuracy Depends on Answer Position" />
+        <meta property="og:description" content="A small ArabicMMLU robustness audit showing that prompt formatting and option-label position can affect measured multiple-choice accuracy in small decoder-only models." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/arabicmmlu-correct-answer-position.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>When ArabicMMLU Accuracy Depends on Answer Position · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/index.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>When ArabicMMLU Accuracy Depends on Answer Position</h1>
+
+        <div class="meta">
+            a small robustness audit of ArabicMMLU multiple-choice evaluation<br>
+            mohammed al-thobaiti · 2026-07-04<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">robustness</span>
+            <span class="tag key">ArabicMMLU</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>
+            arabic benchmarks are valuable. they make it possible to compare
+            systems, track progress, and ask whether models handle arabic tasks
+            beyond english-centered evaluation. but aggregate accuracy can hide
+            measurement artifacts.
+        </p>
+
+        <p>
+            this note is a small diagnostic pilot on ArabicMMLU-style
+            multiple-choice evaluation. the question is not whether ArabicMMLU is
+            bad. the question is what else should be reported with an accuracy
+            score, especially when evaluating small local decoder-only models.
+        </p>
+
+        <p>
+            in the strongest case, Qwen3-0.6B scored 0.680 when the correct
+            answer was labeled A, but 0.020 when the same setup placed the
+            correct answer under B. that does not make ArabicMMLU invalid, but it
+            does show why raw accuracy is not enough.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">status</div>
+            <p>
+                treat this as a measurement note, not a model ranking. the item
+                count is small, the models are small/local decoder-only models,
+                and the 3B run is a scale-check rather than a full scaling study.
+            </p>
+        </div>
+
+        <p>
+            the core finding is narrow: in these runs, prompt formatting, answer
+            parsing, option-label preference, and correct-answer position were
+            associated with large changes in measured accuracy. scaling from
+            roughly 0.6B/1B to 3B improved accuracy and robustness, but did not
+            eliminate option-position sensitivity.
+        </p>
+
+        <p>
+            in multiple-choice evaluation, a model is not only solving the
+            underlying task. it is also following the answer format, choosing
+            from labels, and interacting with a parser.
+        </p>
+
+        <h2>why multiple-choice evaluation can be fragile</h2>
+
+        <p>
+            a multiple-choice benchmark looks simple: ask a question, show A/B/C/D
+            options, parse one answer, and compute accuracy. in practice, several
+            interface behaviors can enter the measurement.
+        </p>
+
+        <ul>
+            <li><strong>answer-format compliance</strong>: the model may explain, copy an option, answer in arabic labels, or produce malformed text instead of one clean letter.</li>
+            <li><strong>parsing failures</strong>: an output can be semantically useful but fail the benchmark parser, or parse cleanly despite weak task behavior.</li>
+            <li><strong>option-label bias</strong>: a model can prefer labels such as A or C independent of the answer content.</li>
+            <li><strong>position sensitivity</strong>: measured accuracy can change when the same correct answer is placed under a different label.</li>
+            <li><strong>semantic instability</strong>: harmless prompt edits can produce different underlying answer choices for the same source item.</li>
+        </ul>
+
+        <p>
+            these are not reasons to discard multiple-choice benchmarks. they
+            are reasons to report diagnostic metadata alongside raw accuracy.
+        </p>
+
+        <h2>pilot 1: prompt-format sensitivity</h2>
+
+        <p>
+            pilot 1 used 50 ArabicMMLU source items and 6 prompt variants per
+            item, for 300 prompts per model. the models were Qwen3-0.6B,
+            Llama-3.2-1B, and Llama-3.2-3B. the metrics were overall accuracy,
+            accuracy on parseable outputs, parse-failure rate, semantic
+            consistency across variants, strict-output accuracy, strict-output
+            parse failure, and predicted label distribution.
+        </p>
+
+        <p>
+            here, semantic consistency means the proportion of source items for
+            which the model's parseable answers map to the same underlying
+            answer choice across prompt variants or option permutations.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>acc all</th>
+                    <th>acc parseable</th>
+                    <th>parse fail</th>
+                    <th>semantic consistency</th>
+                    <th>strict acc</th>
+                    <th>strict parse fail</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Qwen3-0.6B</td><td>0.273</td><td>0.381</td><td>0.283</td><td>0.200</td><td>0.380</td><td>0.000</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>0.303</td><td>0.313</td><td>0.030</td><td>0.080</td><td>0.300</td><td>0.000</td></tr>
+                <tr><td>Llama-3.2-3B</td><td>0.430</td><td>0.433</td><td>0.007</td><td>0.340</td><td>0.400</td><td>0.000</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            Qwen3-0.6B had high parse failure under non-strict variants. strict
+            output prompting eliminated parse failures for all three models, but
+            fixing parseability did not fully solve robustness. Llama-3.2-3B
+            improved accuracy, parseability, and semantic consistency, which is
+            evidence that scale helps in this setup. still, semantic consistency
+            remained 0.340, meaning most source items did not receive a stable
+            semantic answer across all prompt variants.
+        </p>
+
+        <p>
+            for the Llama-3.2-3B pilot 1 run, the aggregate predicted label
+            distribution was A/B/C/D/E/PF = 59/87/92/58/2/2. that distribution is
+            not collapsed to one label, but it is still useful context for
+            interpreting the accuracy number.
+        </p>
+
+        <h2>pilot 2: option-label and correct-position bias</h2>
+
+        <p>
+            pilot 2 used 50 ArabicMMLU source items with 4 permutations per item,
+            for 200 prompts per model. the prompt used strict-output instruction
+            only:
+        </p>
+
+        <pre><code>Answer with exactly one character: A, B, C, or D. Do not explain.</code></pre>
+
+        <p>
+            each source item was permuted so that the correct answer appeared
+            exactly once under A, B, C, and D. the question content and answer
+            choices were preserved; only labels and order changed. this isolates
+            option-label and correct-position effects after parseability has
+            already been controlled.
+        </p>
+
+        <p>
+            label-bias score is computed as the largest predicted-label
+            proportion minus 0.25, where 0.25 corresponds to a uniform A/B/C/D
+            distribution.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>acc all</th>
+                    <th>parse fail</th>
+                    <th>label-bias score</th>
+                    <th>semantic consistency</th>
+                    <th>correct-position range</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Qwen3-0.6B</td><td>0.275</td><td>0.000</td><td>0.380</td><td>0.120</td><td>0.660</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>0.300</td><td>0.000</td><td>0.120</td><td>0.160</td><td>0.220</td></tr>
+                <tr><td>Llama-3.2-3B</td><td>0.410</td><td>0.000</td><td>0.145</td><td>0.260</td><td>0.320</td></tr>
+            </tbody>
+        </table>
+
+        <h3>accuracy by correct-answer position</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>correct=A</th>
+                    <th>correct=B</th>
+                    <th>correct=C</th>
+                    <th>correct=D</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Qwen3-0.6B</td><td>0.680</td><td>0.020</td><td>0.060</td><td>0.340</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>0.200</td><td>0.380</td><td>0.200</td><td>0.420</td></tr>
+                <tr><td>Llama-3.2-3B</td><td>0.300</td><td>0.460</td><td>0.600</td><td>0.280</td></tr>
+            </tbody>
+        </table>
+
+        <h3>prediction distribution</h3>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>A</th>
+                    <th>B</th>
+                    <th>C</th>
+                    <th>D</th>
+                    <th>PF</th>
+                    <th>other</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Qwen3-0.6B</td><td>126</td><td>4</td><td>9</td><td>61</td><td>0</td><td>0</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>29</td><td>57</td><td>40</td><td>74</td><td>0</td><td>0</td></tr>
+                <tr><td>Llama-3.2-3B</td><td>25</td><td>62</td><td>79</td><td>34</td><td>0</td><td>0</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            strict-output prompting eliminated parse failures for all models.
+            that is useful, but it also makes the remaining instability clearer.
+            Qwen3-0.6B showed an extreme A-label preference: 126 of 200
+            predictions were A. its accuracy changed sharply depending on where
+            the correct answer was placed: 0.680 when correct=A versus 0.020 when
+            correct=B.
+        </p>
+
+        <p>
+            Llama-3.2-1B was less extreme, but still unstable. Llama-3.2-3B
+            improved overall accuracy and semantic consistency, but still showed
+            non-trivial label bias and a 0.320 correct-position accuracy range.
+            in this pilot, scale helped, but raw accuracy still needed
+            diagnostic context.
+        </p>
+
+        <h2>what changed with Llama-3.2-3B?</h2>
+
+        <p>
+            Llama-3.2-3B improved several measurements at once. in pilot 1, it
+            had higher accuracy than the two smaller models, lower parse failure,
+            and higher semantic consistency. in pilot 2, it also had higher
+            overall accuracy and better semantic consistency than Llama-3.2-1B.
+        </p>
+
+        <p>
+            the important caveat is that the 3B result is a robustness check, not
+            a scaling study. it adds one larger model size under the same audit
+            setup. it does not establish how larger models in general behave, and
+            it does not replace evaluation on stronger arabic-capable systems.
+            larger-model evaluation is future work.
+        </p>
+
+        <p>
+            the practical reading is cautious: scaling improved robustness here,
+            but option-position sensitivity remained visible after strict
+            formatting removed parse failures.
+        </p>
+
+        <h2>what this does and does not show</h2>
+
+        <p>this pilot does show:</p>
+
+        <ul>
+            <li>benchmark-interface behavior can affect measured scores,</li>
+            <li>strict formatting helps parseability,</li>
+            <li>option-position sensitivity can persist after parseability is fixed,</li>
+            <li>robustness metadata is useful when reporting raw accuracy.</li>
+        </ul>
+
+        <p>this pilot does not show:</p>
+
+        <ul>
+            <li>ArabicMMLU is invalid,</li>
+            <li>these models fully represent all arabic LLM behavior,</li>
+            <li>larger models behave the same,</li>
+            <li>multiple-choice benchmarks are useless,</li>
+            <li>this is a complete arabic evaluation framework.</li>
+        </ul>
+
+        <blockquote>
+            <p>a benchmark score is more useful when it comes with the interface diagnostics needed to interpret it.</p>
+        </blockquote>
+
+        <h2>proposed reporting checklist</h2>
+
+        <p>
+            for small or local decoder-only models, i would not report raw
+            ArabicMMLU multiple-choice accuracy alone. a more useful report would
+            include:
+        </p>
+
+        <ul>
+            <li>raw accuracy,</li>
+            <li>parse-failure rate,</li>
+            <li>accuracy on parseable outputs,</li>
+            <li>strict-output accuracy,</li>
+            <li>answer-label distribution,</li>
+            <li>accuracy by correct-answer position,</li>
+            <li>semantic consistency under prompt and option perturbations,</li>
+            <li>orthographic normalization sensitivity as future work,</li>
+            <li>morphology-aware leakage checks as future work.</li>
+        </ul>
+
+        <h2>artifacts</h2>
+
+        <p>
+            prompts, responses, score files, and summaries are copied into the
+            Ember repo under <code>artifacts/benchmark-audit/arabicmmlu/</code>.
+            the original run artifacts were generated under
+            <code>output/benchmark-audit/arabicmmlu/</code> in the audit workspace.
+        </p>
+
+        <h2>closing</h2>
+
+        <p>
+            the main takeaway is not that one model is better than another. the
+            model ranking is not the point of this audit. the point is that raw
+            benchmark accuracy can conflate task competence with benchmark
+            interface behavior.
+        </p>
+
+        <p>
+            arabic evaluation should not only ask whether a model gets the right
+            answer. it should also ask whether the answer survives harmless
+            changes in prompt format, option labels, option order, and arabic
+            text normalization.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>

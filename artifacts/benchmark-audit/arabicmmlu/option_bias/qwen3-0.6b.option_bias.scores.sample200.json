@@ -1,0 +1,725 @@
+{
+  "n": 200,
+  "parseable": 200,
+  "accuracy_all": 0.275,
+  "parse_failure_rate": 0.0,
+  "prediction_distribution": {
+    "A": {
+      "count": 126,
+      "rate": 0.63
+    },
+    "B": {
+      "count": 4,
+      "rate": 0.02
+    },
+    "C": {
+      "count": 9,
+      "rate": 0.045
+    },
+    "D": {
+      "count": 61,
+      "rate": 0.305
+    },
+    "E": {
+      "count": 0,
+      "rate": 0.0
+    },
+    "ParseFail": {
+      "count": 0,
+      "rate": 0.0
+    },
+    "Other": {
+      "count": 0,
+      "rate": 0.0
+    }
+  },
+  "accuracy_by_correct_label": {
+    "A": 0.68,
+    "B": 0.02,
+    "C": 0.06,
+    "D": 0.34
+  },
+  "prediction_distribution_by_correct_label": {
+    "A": {
+      "A": {
+        "count": 34,
+        "rate": 0.68
+      },
+      "B": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "C": {
+        "count": 2,
+        "rate": 0.04
+      },
+      "D": {
+        "count": 14,
+        "rate": 0.28
+      },
+      "E": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "ParseFail": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "Other": {
+        "count": 0,
+        "rate": 0.0
+      }
+    },
+    "B": {
+      "A": {
+        "count": 31,
+        "rate": 0.62
+      },
+      "B": {
+        "count": 1,
+        "rate": 0.02
+      },
+      "C": {
+        "count": 2,
+        "rate": 0.04
+      },
+      "D": {
+        "count": 16,
+        "rate": 0.32
+      },
+      "E": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "ParseFail": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "Other": {
+        "count": 0,
+        "rate": 0.0
+      }
+    },
+    "C": {
+      "A": {
+        "count": 30,
+        "rate": 0.6
+      },
+      "B": {
+        "count": 3,
+        "rate": 0.06
+      },
+      "C": {
+        "count": 3,
+        "rate": 0.06
+      },
+      "D": {
+        "count": 14,
+        "rate": 0.28
+      },
+      "E": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "ParseFail": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "Other": {
+        "count": 0,
+        "rate": 0.0
+      }
+    },
+    "D": {
+      "A": {
+        "count": 31,
+        "rate": 0.62
+      },
+      "B": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "C": {
+        "count": 2,
+        "rate": 0.04
+      },
+      "D": {
+        "count": 17,
+        "rate": 0.34
+      },
+      "E": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "ParseFail": {
+        "count": 0,
+        "rate": 0.0
+      },
+      "Other": {
+        "count": 0,
+        "rate": 0.0
+      }
+    }
+  },
+  "semantic_consistency_by_source_item": {
+    "n_items": 50,
+    "n_items_with_parseable": 50,
+    "consistent_items": 6,
+    "proportion": 0.12,
+    "items": [
+      {
+        "id": "1713",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "1724",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "1868",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "1934",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "2381",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "2386",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "D"
+        ],
+        "consistent": true
+      },
+      {
+        "id": "2407",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "D"
+        ],
+        "consistent": true
+      },
+      {
+        "id": "2540",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "2614",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "27",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "2983",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "2987",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "2998",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "300",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "3720",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "3749",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "3960",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4278",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4298",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4399",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4418",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4436",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4450",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4712",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "4976",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "5161",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "5168",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "5242",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "526",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "5309",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "5939",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6273",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6396",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6410",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6425",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6437",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6456",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "C"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6536",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "D"
+        ],
+        "consistent": true
+      },
+      {
+        "id": "6718",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "6774",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "7013",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "7145",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "7149",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "7166",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "7214",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "C"
+        ],
+        "consistent": true
+      },
+      {
+        "id": "7228",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B"
+        ],
+        "consistent": true
+      },
+      {
+        "id": "7253",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "7267",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "B",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      },
+      {
+        "id": "7272",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "C"
+        ],
+        "consistent": true
+      },
+      {
+        "id": "7293",
+        "n_variants": 4,
+        "n_parseable": 4,
+        "semantic_predictions": [
+          "A",
+          "C",
+          "D"
+        ],
+        "consistent": false
+      }
+    ]
+  },
+  "label_bias_score": 0.38,
+  "majority_label_baseline": {
+    "label": "A",
+    "accuracy_all": 0.25
+  },
+  "correct_position_sensitivity": {
+    "by_label": {
+      "A": {
+        "n": 50,
+        "accuracy_all": 0.68
+      },
+      "B": {
+        "n": 50,
+        "accuracy_all": 0.02
+      },
+      "C": {
+        "n": 50,
+        "accuracy_all": 0.06
+      },
+      "D": {
+        "n": 50,
+        "accuracy_all": 0.34
+      }
+    },
+    "accuracy_range": 0.66
+  }
+}

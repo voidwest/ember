@@ -1,0 +1,780 @@
+{
+  "n": 300,
+  "parseable": 298,
+  "accuracy_all": 0.43,
+  "accuracy_parseable": 0.432886,
+  "semantic_accuracy_all": 0.43,
+  "semantic_accuracy_parseable": 0.432886,
+  "parse_failure_rate": 0.006667,
+  "prediction_distribution": {
+    "A": {
+      "count": 59,
+      "rate": 0.196667
+    },
+    "B": {
+      "count": 87,
+      "rate": 0.29
+    },
+    "C": {
+      "count": 92,
+      "rate": 0.306667
+    },
+    "D": {
+      "count": 58,
+      "rate": 0.193333
+    },
+    "E": {
+      "count": 2,
+      "rate": 0.006667
+    },
+    "ParseFail": {
+      "count": 2,
+      "rate": 0.006667
+    },
+    "Other": {
+      "count": 0,
+      "rate": 0.0
+    }
+  },
+  "variant_consistency": {
+    "n_items": 50,
+    "n_items_with_parseable": 50,
+    "consistent_items": 17,
+    "proportion": 0.34
+  },
+  "variants": {
+    "arabic-instruction": {
+      "n": 50,
+      "parseable": 49,
+      "accuracy_all": 0.44,
+      "accuracy_parseable": 0.44898,
+      "semantic_accuracy_all": 0.44,
+      "semantic_accuracy_parseable": 0.44898,
+      "parse_failures": 1,
+      "parse_failure_rate": 0.02,
+      "prediction_distribution": {
+        "A": {
+          "count": 10,
+          "rate": 0.2
+        },
+        "B": {
+          "count": 11,
+          "rate": 0.22
+        },
+        "C": {
+          "count": 15,
+          "rate": 0.3
+        },
+        "D": {
+          "count": 12,
+          "rate": 0.24
+        },
+        "E": {
+          "count": 1,
+          "rate": 0.02
+        },
+        "ParseFail": {
+          "count": 1,
+          "rate": 0.02
+        },
+        "Other": {
+          "count": 0,
+          "rate": 0.0
+        }
+      }
+    },
+    "english-instruction": {
+      "n": 50,
+      "parseable": 50,
+      "accuracy_all": 0.48,
+      "accuracy_parseable": 0.48,
+      "semantic_accuracy_all": 0.48,
+      "semantic_accuracy_parseable": 0.48,
+      "parse_failures": 0,
+      "parse_failure_rate": 0.0,
+      "prediction_distribution": {
+        "A": {
+          "count": 13,
+          "rate": 0.26
+        },
+        "B": {
+          "count": 14,
+          "rate": 0.28
+        },
+        "C": {
+          "count": 13,
+          "rate": 0.26
+        },
+        "D": {
+          "count": 10,
+          "rate": 0.2
+        },
+        "E": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "ParseFail": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "Other": {
+          "count": 0,
+          "rate": 0.0
+        }
+      }
+    },
+    "normalized-orthography": {
+      "n": 50,
+      "parseable": 50,
+      "accuracy_all": 0.42,
+      "accuracy_parseable": 0.42,
+      "semantic_accuracy_all": 0.42,
+      "semantic_accuracy_parseable": 0.42,
+      "parse_failures": 0,
+      "parse_failure_rate": 0.0,
+      "prediction_distribution": {
+        "A": {
+          "count": 9,
+          "rate": 0.18
+        },
+        "B": {
+          "count": 14,
+          "rate": 0.28
+        },
+        "C": {
+          "count": 17,
+          "rate": 0.34
+        },
+        "D": {
+          "count": 10,
+          "rate": 0.2
+        },
+        "E": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "ParseFail": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "Other": {
+          "count": 0,
+          "rate": 0.0
+        }
+      }
+    },
+    "option-label-shuffle": {
+      "n": 50,
+      "parseable": 50,
+      "accuracy_all": 0.44,
+      "accuracy_parseable": 0.44,
+      "semantic_accuracy_all": 0.44,
+      "semantic_accuracy_parseable": 0.44,
+      "parse_failures": 0,
+      "parse_failure_rate": 0.0,
+      "prediction_distribution": {
+        "A": {
+          "count": 8,
+          "rate": 0.16
+        },
+        "B": {
+          "count": 19,
+          "rate": 0.38
+        },
+        "C": {
+          "count": 13,
+          "rate": 0.26
+        },
+        "D": {
+          "count": 9,
+          "rate": 0.18
+        },
+        "E": {
+          "count": 1,
+          "rate": 0.02
+        },
+        "ParseFail": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "Other": {
+          "count": 0,
+          "rate": 0.0
+        }
+      }
+    },
+    "option-order-shuffle": {
+      "n": 50,
+      "parseable": 49,
+      "accuracy_all": 0.4,
+      "accuracy_parseable": 0.408163,
+      "semantic_accuracy_all": 0.4,
+      "semantic_accuracy_parseable": 0.408163,
+      "parse_failures": 1,
+      "parse_failure_rate": 0.02,
+      "prediction_distribution": {
+        "A": {
+          "count": 8,
+          "rate": 0.16
+        },
+        "B": {
+          "count": 19,
+          "rate": 0.38
+        },
+        "C": {
+          "count": 13,
+          "rate": 0.26
+        },
+        "D": {
+          "count": 9,
+          "rate": 0.18
+        },
+        "E": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "ParseFail": {
+          "count": 1,
+          "rate": 0.02
+        },
+        "Other": {
+          "count": 0,
+          "rate": 0.0
+        }
+      }
+    },
+    "strict-output": {
+      "n": 50,
+      "parseable": 50,
+      "accuracy_all": 0.4,
+      "accuracy_parseable": 0.4,
+      "semantic_accuracy_all": 0.4,
+      "semantic_accuracy_parseable": 0.4,
+      "parse_failures": 0,
+      "parse_failure_rate": 0.0,
+      "prediction_distribution": {
+        "A": {
+          "count": 11,
+          "rate": 0.22
+        },
+        "B": {
+          "count": 10,
+          "rate": 0.2
+        },
+        "C": {
+          "count": 21,
+          "rate": 0.42
+        },
+        "D": {
+          "count": 8,
+          "rate": 0.16
+        },
+        "E": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "ParseFail": {
+          "count": 0,
+          "rate": 0.0
+        },
+        "Other": {
+          "count": 0,
+          "rate": 0.0
+        }
+      }
+    }
+  },
+  "consistency_items": [
+    {
+      "id": "1278",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "1713",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "D"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "1724",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "1868",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "1934",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2013",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "2250",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2252",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2341",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2381",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2386",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "2407",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "D"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "2540",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "D"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "2598",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2614",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "27",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2983",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2987",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "2998",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "300",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "D"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "3720",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "3749",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "3960",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B",
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4278",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4298",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4399",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4418",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4436",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4450",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "4712",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4789",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B",
+        "C",
+        "E"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "4868",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "4976",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "5161",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "5168",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "5242",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "526",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "5309",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "5438",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "C"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "5887",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "5939",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6023",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6180",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6183",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B"
+      ],
+      "consistent": true
+    },
+    {
+      "id": "6190",
+      "n_variants": 6,
+      "n_parseable": 4,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6273",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6396",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6410",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B",
+        "C",
+        "D"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6425",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "A",
+        "B"
+      ],
+      "consistent": false
+    },
+    {
+      "id": "6437",
+      "n_variants": 6,
+      "n_parseable": 6,
+      "semantic_predictions": [
+        "B",
+        "D"
+      ],
+      "consistent": false
+    }
+  ]
+}

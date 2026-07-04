@@ -1,0 +1,36 @@
+{
+  "n": 250,
+  "accuracy": 0.244,
+  "variants": {
+    "arabic-instruction": {
+      "n": 50,
+      "accuracy": 0.2,
+      "parse_failures": 20,
+      "parse_failure_rate": 0.4
+    },
+    "english-instruction": {
+      "n": 50,
+      "accuracy": 0.24,
+      "parse_failures": 0,
+      "parse_failure_rate": 0.0
+    },
+    "normalized-orthography": {
+      "n": 50,
+      "accuracy": 0.26,
+      "parse_failures": 20,
+      "parse_failure_rate": 0.4
+    },
+    "option-label-shuffle": {
+      "n": 50,
+      "accuracy": 0.26,
+      "parse_failures": 26,
+      "parse_failure_rate": 0.52
+    },
+    "option-order-shuffle": {
+      "n": 50,
+      "accuracy": 0.26,
+      "parse_failures": 24,
+      "parse_failure_rate": 0.48
+    }
+  }
+}

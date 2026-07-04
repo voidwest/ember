@@ -1,0 +1,1 @@
+{"answer": "B", "benchmark": "arabicmmlu", "id": "27", "model": "/home/west/ember/Qwen3-0.6B-Q8_0.gguf", "response": "D\n\nالإ", "returncode": 0, "stderr_tail": "", "variant": "arabic-instruction"}
