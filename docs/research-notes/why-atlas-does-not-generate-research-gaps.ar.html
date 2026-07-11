@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="ليش Research Debt Atlas ما يولّد research gaps" />
+        <meta property="og:description" content="ليش استخراج الدليل يجي قبل توليد الـ gap، وليش Atlas يبقي مرحلته الأولى ثابتة وقابلة للتتبع وأضيق عمداً." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/why-atlas-does-not-generate-research-gaps.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>ليش Research Debt Atlas ما يولّد research gaps · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/why-atlas-does-not-generate-research-gaps.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>ليش <bdi>Research Debt Atlas</bdi> ما يولّد <bdi>research gaps</bdi></h1>
+
+        <div class="meta">
+            ليش استخراج الدليل يجي قبل توليد الـ <bdi>gap</bdi><br>
+            mohammed al-thobaiti · 2026-07-11<br>
+            <span class="tag key">research tooling</span>
+            <span class="tag key">information extraction</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag key">Atlas</span>
+        </div>
+
+        <p>
+            الفترة الأخيرة كنت أبني أداة صغيرة ترسم خريطة للقيود المتكررة،
+            والتقييمات الناقصة، والمشاكل المفتوحة، وادعاءات العمل المستقبلي عبر
+            مجموعة من الأوراق العلمية.
+        </p>
+
+        <p>
+            النسخة الواضحة من هالفكرة تطلب من <bdi>LLM</bdi> يقرأ الأوراق ويطلع
+            قائمة <bdi>research gaps</bdi>. وهذه بعد أسهل نسخة للعرض: عطها مجلد
+            <bdi>PDFs</bdi>، انتظر شوي، وبعدها اعرض قائمة مرتبة لاتجاهات بحثية
+            شكلها مقنع.
+        </p>
+
+        <p>أنا ما بنيت هالنسخة.</p>
+
+        <p>
+            <bdi>Atlas</bdi> يبدأ بمهمة أضيق: طلع الشيء اللي قاله مؤلفو الورقة
+            فعلاً، احفظ وين قالوه، وخلّ أي تفسير لاحق يرجع إلى هذا الدليل.
+        </p>
+
+        <blockquote>
+            <p><bdi>research gap</bdi> مولّد ممكن يبدو مقنع. جملة من المصدر تقدر تراجعها.</p>
+        </blockquote>
+
+        <h2>أول <bdi>prototype</bdi></h2>
+
+        <p>
+            أول نسخة من <bdi>Atlas</bdi> كانت بالكاد تستحق اسم
+            <bdi>pipeline</bdi>. تقرأ ملفات نصية بـ <bdi>UTF-8</bdi>، تكتشف عناوين
+            مثل <em>Limitations</em> و<em>Future Work</em> و<em>Threats to
+            Validity</em>، وبعدها تشغّل قواعد <bdi>regex</bdi> واضحة على الفقرات
+            والجمل.
+        </p>
+
+        <p>القواعد تدور على عبارات تتكرر أصلاً في الكتابة الأكاديمية:</p>
+
+        <ul>
+            <li><code>a limitation of this work</code>،</li>
+            <li><code>we did not evaluate</code>،</li>
+            <li><code>our study is limited to</code>،</li>
+            <li><code>remains unclear</code>،</li>
+            <li><code>future work</code>،</li>
+            <li><code>more work is needed</code>.</li>
+        </ul>
+
+        <p>
+            هذا يشتغل لأن قيود الأوراق مو دائماً مكتوبة بطريقة خفية. كثير من
+            الأوراق تعلنها بلغة متكررة، خصوصاً داخل أقسام مخصصة. الـ
+            <bdi>regex</bdi> ضعيف في فهم المعنى، لكنه ممتاز في إيجاد الصيغ
+            المتكررة. وسياق القسم يخلي الصيغة أفيد: عبارة <code>limited to</code>
+            داخل قسم <em>Limitations</em> مو مثل نفس العبارة داخل وصف
+            <bdi>dataset</bdi>.
+        </p>
+
+        <p>
+            النسخة الأولى تعطي كل نتيجة مرشحة درجة من مصدرين: عنوان القسم،
+            وأنواع القواعد اللي طابقتها. تحذف الأجزاء القصيرة، وتسوي
+            <bdi>deduplication</bdi> للنص داخل كل ورقة، وبعدها تكتب ملفات
+            <bdi>JSONL</bdi> وتقرير <bdi>HTML</bdi> ثابت.
+        </p>
+
+        <p>
+            لا <bdi>embeddings</bdi>. لا <bdi>API calls</bdi>. لا ملخص مولّد.
+            الجزء المهم مو قوة النموذج؛ ما كان فيه نموذج أصلاً. الجزء المهم إن
+            كل نتيجة معها اسم الملف، وعنوان القسم، وبداية ونهاية نطاق النص،
+            والنص الأصلي بالحرف.
+        </p>
+
+        <h2>ليش ما نولّد الـ <bdi>gap</bdi> مباشرة؟</h2>
+
+        <p>لأن جملة عن قيد في دراسة مو نفس <bdi>research gap</bdi>.</p>
+
+        <p>
+            لو الورقة تقول إنها ما قيّمت <bdi>robustness under domain shift</bdi>،
+            فهذا دليل عن شيء مؤلفو الورقة ما اختبروه. مو دليل إن محد اختبره، أو
+            إن المشكلة ما زالت مفتوحة، أو إن دراسة جديدة عنها ستكون
+            <bdi>novel</bdi>. هالأسئلة تحتاج بحث في الأدبيات، ومقارنة بين أوراق،
+            وحكم علمي.
+        </p>
+
+        <p>
+            نموذج لغوي يقدر يضغط كل هالخطوات في جملة مرتبة. الجملة ممكن تكون
+            مفيدة. وممكن بهدوء تحوّل قيد محلي في ورقة واحدة إلى ادعاء عن فجوة في
+            المجال كله.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">حدود التصميم</div>
+            <p>
+                <bdi>Atlas</bdi> يستخرج <bdi>research debt</bdi> مذكور في
+                المصدر. ما يدّعي إن العنصر ما زال بلا حل، أو مهم، أو جديد عبر
+                الأدبيات.
+            </p>
+        </div>
+
+        <p>
+            هالحد خلى الأداة أقل إثارة في لقطات العرض، لكنه خلى المخرجات أسهل
+            بكثير في المراجعة.
+        </p>
+
+        <h2>من النتائج المرشحة إلى مسار مراجعة</h2>
+
+        <p>
+            نسخة <bdi>0.1.0</bdi> كانت استخراج. النسخ اللي بعدها أضافت المسار
+            اللي يخلي الاستخراج دليل، مو جواب نهائي.
+        </p>
+
+        <p>
+            <bdi>0.2.0</bdi> أضافت تفاصيل كل قاعدة ومراجعة يدوية. بدل ما يقول
+            <bdi>Atlas</bdi> بس إن الجملة طابقت <code>future_work</code>، صار
+            يحفظ <bdi>pattern ID</bdi> ثابت والنص المحدد اللي شغّل القاعدة.
+            بعدها المراجع يقدر يقبل نطاق النص المرشح أو يرفضه قبل ما يصير
+            ادعاء أقوى.
+        </p>
+
+        <p>
+            النسخ اللاحقة أضافت ترقية النتائج المراجعة، وعُقد خريطة ثابتة،
+            وملفات <bdi>manifest</bdi>، والتحقق، وتعديلات أكثر أماناً، وتشخيص
+            للإصدار. عقدة الخريطة تجمع أدلة مراجعة: مثلاً عدة أوراق تقول إن
+            تقييم اللهجات ناقص تنحط تحت عقدة واحدة، بدون ما يدّعي
+            <bdi>Atlas</bdi> إن المشكلة ما زالت بلا حل عبر الأدبيات. كل طبقة
+            أضافت احتكاك أكثر بين خرج الـ <bdi>regex</bdi> الخام والادعاء البحثي
+            النهائي.
+        </p>
+
+        <h2>الـ <bdi>determinism</bdi> جزء من المنهج</h2>
+
+        <p>
+            <bdi>Atlas</bdi> يرتب أسماء الملفات، والأقسام، والنتائج، والقواعد،
+            والـ <bdi>tags</bdi>، وعُقد الخريطة بشكل صريح. الـ
+            <bdi>IDs</bdi> مشتقة من مدخلات مطبّعة باستخدام <bdi>SHA-256</bdi>
+            مختصر. ملفات الاستخراج ما فيها <bdi>timestamps</bdi>. نفس الـ
+            <bdi>corpus</bdi> ونفس النسخة المفروض يعطون نفس ملفات الأدلة.
+        </p>
+
+        <p>
+            هذا مهم لسبب ممل: لو تغيرت نتيجة مرشحة، أبغى أعرف هل الورقة
+            تغيرت، أو القاعدة تغيرت، أو حدود القسم تغيرت، أو مسار التشغيل تغير.
+            الاستخراج العشوائي يصعّب هالمقارنة.
+        </p>
+
+        <p>
+            الـ <bdi>determinism</bdi> ما يخلي الـ <bdi>regex</bdi> صحيح. يخلي
+            أخطاءه قابلة للتكرار، والفحص، والقياس.
+        </p>
+
+        <blockquote>
+            <p>نتيجة زائفة تقدر تعيد إنتاجها أسهل في الإصلاح من جواب مقنع ما تقدر تعيد بناءه.</p>
+        </blockquote>
+
+        <h2>دعم الـ <bdi>PDF</bdi> خلى المشكلة أقل نظافة</h2>
+
+        <p>
+            أول <bdi>MVP</bdi> كان يقبل ملفات <code>.txt</code> مجهزة مسبقاً.
+            هذا بسّط الاستخراج، لكنه رمى مشكلة مهمة على المستخدم. مجموعات الأوراق
+            تجي عادة كـ <bdi>PDFs</bdi>.
+        </p>
+
+        <p>
+            <bdi>Atlas 1.0.0</bdi> أضاف استخراج محلي عبر
+            <code>pdftotext</code>. التحويل يستخدم ترتيب قراءة ثابت،
+            و<bdi>Atlas</bdi> يحفظ النص المحول نفسه اللي استُخدم لكل موضع حرفي.
+            ما نتظاهر إن الرقم يشير إلى
+            بايت داخل الـ <bdi>PDF</bdi> أو إحداثي في الصفحة. يشير إلى ملف
+            <bdi>UTF-8</bdi> محفوظ تقدر تفتحه وتراجعه.
+        </p>
+
+        <p>
+            أول تشغيل على أوراق حقيقية كان سيئاً. ثلاث أوراق أنتجت 293 "قسم".
+            أسماء المؤلفين، والجامعات، وصفوف الجداول، وعناوين الرسومات، ونصوص
+            ملتفة كلها بدت كأنها عناوين للـ <bdi>detector</bdi> المتساهل.
+            وتصميم العمودين دمج نصوصاً غير مرتبطة داخل نطاق مرشح واحد.
+        </p>
+
+        <p>
+            هذا كان مفيد. الفشل كان محدد. أقدر أشير إلى النص المحول، والحد
+            الخطأ، والقاعدة اللي اشتغلت، ومعرّف النتيجة. تغيير التحويل من حفظ
+            شكل الصفحة إلى ترتيب القراءة شال أسوأ خلط بين الأعمدة. وتشديد قواعد
+            العناوين خفّض نفس
+            المجموعة من 293 قسم إلى 126.
+        </p>
+
+        <p>
+            126 ما زال رقم مزعج. نص الـ <bdi>PDF</bdi> مو شجرة دلالية لبنية
+            المستند، والمحول الثابت ما يقدر يرجع
+            بنية الملف إذا البنية مو مشفرة أصلاً. <bdi>Atlas</bdi> يعرض هالقيد
+            بدل ما يخفيه تحت ملخص مرتب.
+        </p>
+
+        <h2>القواعد فشلت بطرق أفيد</h2>
+
+        <p>
+            الأوراق الحقيقية كشفت نوعين مختلفين من النتائج الزائفة.
+        </p>
+
+        <p>
+            أولاً، عبارة مثل <code>future research</code> ممكن تصف موضوع، مو خطة
+            المؤلفين. القاعدة القديمة كانت واسعة. الآن تحتاج سياق فعلي أكثر، مثل
+            <code>future research would</code> أو <code>future studies should</code>.
+        </p>
+
+        <p>
+            ثانياً، ورقة عن توليد القيود تستخدم كلمة <em>limitation</em> في كل
+            مكان: <bdi>prompts</bdi>، وlabels، وتعريفات التقييم، ومخرجات النماذج،
+            وأمثلة البيانات. احتساب الدرجات بمجرد وجود الكلمة عامل عنوان مثل
+            <em>Limitation Subtype: Limited Datasets</em> كأنه قسم القيود
+            الخاص بالورقة. خلال مرحلة التجهيز الأخيرة قبل نشر وسم
+            <bdi>1.0.0</bdi> العام، استُبدل هذا الأسلوب بمطابقة دقيقة للعناوين
+            المعروفة، وتوقف <bdi>Atlas</bdi> عن فحص قسم المراجع.
+        </p>
+
+        <p>
+            المجموعة كشفت أيضاً عن نتائج كانت القواعد تفوّتها. فقرات واضحة
+            تبدأ بـ <em>Threats to construct validity</em> و<em>Threats to
+            internal validity</em> ما كانت تدخل إلا إذا صادفت قاعدة ثانية.
+            هالعبارات الآن قواعد دليل مستقلة.
+        </p>
+
+        <p>
+            ولا تغيير من هذي احتاج <bdi>prompt</bdi> أفضل. احتاج
+            <bdi>failure log</bdi>، و<bdi>source spans</bdi> محفوظة، واختبار
+            يفشل لنفس السبب اللي خلى الورقة الحقيقية تفشل.
+        </p>
+
+        <h2>وش يعني <bdi>1.0.0</bdi> فعلياً؟</h2>
+
+        <p>
+            <bdi>Atlas 1.0.0</bdi> يقبل نصوص إنجليزية و<bdi>PDFs</bdi> فيها طبقة
+            نص. يفحص الأقسام المكتشفة، يشغّل سبع فئات من القواعد، يعطي درجات
+            ويزيل التكرار، ويحفظ ملفات التحويل، ويكتب
+            <bdi>JSONL</bdi> وتقارير <bdi>HTML</bdi> قابلة للمراجعة.
+        </p>
+
+        <p>
+            المسار الكامل يروح من الأوراق إلى الأقسام، ثم النتائج المرشحة، ثم
+            مراجعات يدوية، ثم سجلات الدين وعُقد الخريطة. عنده 155 اختبار،
+            وفحوصات إصدار
+            على <bdi>Python 3.11</bdi> و<bdi>3.12</bdi> و<bdi>3.13</bdi>، ومسار
+            نظيف من مشروع جديد إلى ملفات ناتجة متحقَّق منها.
+        </p>
+
+        <p>وما زالت عنده حدود حقيقية:</p>
+
+        <ul>
+            <li>القواعد تستهدف الكتابة الأكاديمية الإنجليزية،</li>
+            <li>القيود غير المباشرة ممكن تضيع،</li>
+            <li>اللغة المتكررة ممكن تنتج نتائج زائفة،</li>
+            <li>الـ <bdi>PDFs</bdi> المصورة تحتاج <bdi>OCR</bdi> قبل الإدخال،</li>
+            <li>اكتشاف عناوين الـ <bdi>PDF</bdi> ما زال مزعج،</li>
+            <li>المراجعة البشرية مطلوبة قبل التفسير.</li>
+        </ul>
+
+        <p>
+            <bdi>1.0.0</bdi> ما تعني إن الاستخراج اكتمل. تعني إن عقد الأدلة صار
+            ثابتًا بما يكفي إننا نختبره بصدق.
+        </p>
+        <h2>وين يدخل الـ <bdi>machine learning</bdi> لاحقاً؟</h2>
+
+        <p>
+            إبقاء الاستخراج ثابت مو حجة ضد الـ <bdi>machine
+            learning</bdi>. هي حجة عن الترتيب.
+        </p>
+
+        <p>
+            <bdi>semantic clustering</bdi> ممكن يجمع جمل مراجعة تستخدم لغة
+            مختلفة. التلخيص ممكن يعطي وصف قصير لمجموعة أدلة. الـ
+            <bdi>retrieval</bdi> ممكن يختبر هل القيد يتكرر بين الأوراق أو انحل في
+            مكان ثاني. و<bdi>LLM</bdi> ممكن يساعد المراجع يتنقل في خريطة كبيرة.
+        </p>
+
+        <p>
+            لكن قياس هالطبقات يصير أسهل بعد ما تكون لطبقة الاستخراج قصة
+            <bdi>precision/recall</bdi> واضحة ومجموعة جمل مصدر مراجعة. غير كذا،
+            الطبقة الدلالية تحكم على premises هي ولّدتها بنفسها.
+        </p>
+
+        <h2>الخلاصة</h2>
+
+        <p>
+            <bdi>Atlas</bdi> بدأ كتجربة <bdi>regex</bdi> صغيرة لأن الأوراق
+            الأكاديمية كثير تقول قيودها بشكل أوضح مما نتوقع. وكبر إلى مسار
+            مراجعة لأن إيجاد جملة مو نفس إثبات فجوة.
+        </p>
+
+        <p>
+            النسخة الثابتة أقل سحراً. ترجع أدلة من المصدر، مو أفكار بحثية.
+            تترك الغموض واضح، وتخلي المراجع يسوي شغل.
+        </p>
+
+        <p>
+            وهذا هو الهدف: أول خريطة مفيدة للـ <bdi>research debt</bdi> لازم
+            تورينا من وين جاء كل ادعاء، قبل ما تحاول تقول لنا وين المفروض يروح
+            البحث بعده.
+        </p>
+
+        <p>
+            الكود وملفات الإصدار:
+            <a href="https://github.com/voidwest/atlas"><bdi>github.com/voidwest/atlas</bdi></a>.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/index.ar.html">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>

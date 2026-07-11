@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="Why Research Debt Atlas Does Not Generate Research Gaps" />
+        <meta property="og:description" content="Why evidence extraction comes before gap generation, and why Atlas keeps its first stage deterministic, traceable, and deliberately narrow." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/why-atlas-does-not-generate-research-gaps.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>Why Research Debt Atlas Does Not Generate Research Gaps · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/why-atlas-does-not-generate-research-gaps.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>Why Research Debt Atlas Does Not Generate Research Gaps</h1>
+
+        <div class="meta">
+            why evidence extraction comes before gap generation<br>
+            mohammed al-thobaiti · 2026-07-11<br>
+            <span class="tag key">research tooling</span>
+            <span class="tag key">information extraction</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag key">Atlas</span>
+        </div>
+
+        <p>
+            i have been building a small tool for mapping recurring limitations,
+            missing evaluations, open problems, and future-work claims across
+            collections of academic papers.
+        </p>
+
+        <p>
+            the obvious version of this tool would ask an LLM to read the papers
+            and generate a list of research gaps. that version would also be the
+            easiest one to demo. give it a folder of PDFs, wait a few minutes,
+            and show a clean list of promising directions.
+        </p>
+
+        <p>i did not build that version.</p>
+
+        <p>
+            Atlas starts with a narrower job: find what the paper authors
+            actually said, preserve where they said it, and make every later
+            interpretation point back to that evidence.
+        </p>
+
+        <blockquote>
+            <p>a generated research gap can sound convincing. a source statement can be checked.</p>
+        </blockquote>
+
+        <h2>the first prototype</h2>
+
+        <p>
+            the first Atlas pipeline was barely a pipeline. it read UTF-8 text
+            files, detected headings such as <em>Limitations</em>, <em>Future
+            Work</em>, and <em>Threats to Validity</em>, then ran explicit regex
+            rules over paragraphs and sentences.
+        </p>
+
+        <p>
+            the rules looked for phrases academic writing already repeats:
+        </p>
+
+        <ul>
+            <li><code>a limitation of this work</code>,</li>
+            <li><code>we did not evaluate</code>,</li>
+            <li><code>our study is limited to</code>,</li>
+            <li><code>remains unclear</code>,</li>
+            <li><code>future work</code>,</li>
+            <li><code>more work is needed</code>.</li>
+        </ul>
+
+        <p>
+            this works because academic limitations are not always subtle.
+            papers often announce them using formulaic language, especially in
+            dedicated sections. regex is weak at meaning, but it is good at
+            finding repeated surface forms. section context makes those forms
+            more useful: <code>limited to</code> means something different in a
+            Limitations section than it does in a dataset description.
+        </p>
+
+        <p>
+            the early version scored each candidate from two sources: the
+            section heading and the matched rule categories. it filtered short
+            fragments, deduplicated normalized text within each paper, and
+            wrote JSONL artifacts plus a static HTML report.
+        </p>
+
+        <p>
+            no embeddings. no API calls. no generated summary. the interesting
+            part was not the sophistication of the model. there was no model.
+            the interesting part was that every candidate had a filename,
+            section heading, start offset, end offset, and exact source text.
+        </p>
+
+        <h2>why not generate the gap?</h2>
+
+        <p>
+            because a limitation statement and a research gap are not the same
+            object.
+        </p>
+
+        <p>
+            if a paper says it did not evaluate robustness under domain shift,
+            that is evidence about what the authors did not test. it is not yet
+            proof that nobody has tested it, that the problem remains open, or
+            that another study would be novel. answering those questions needs
+            literature search, comparison across papers, and scientific
+            judgment.
+        </p>
+
+        <p>
+            a language model can collapse those steps into one fluent sentence.
+            the sentence may be useful. it may also quietly turn one paper's
+            local limitation into a field-level novelty claim.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">design boundary</div>
+            <p>
+                Atlas extracts stated research debt. it does not claim that the
+                extracted item is unresolved, important, or novel across the
+                literature.
+            </p>
+        </div>
+
+        <p>
+            this boundary made the tool less impressive in screenshots. it also
+            made the output much easier to audit.
+        </p>
+
+        <h2>from candidates to a review workflow</h2>
+
+        <p>
+            version 0.1.0 was extraction. the versions after that mostly added
+            the workflow needed to treat extraction as evidence rather than an
+            answer.
+        </p>
+
+        <p>
+            0.2.0 added pattern-level rule details and manual review. instead of
+            only saying that a candidate matched <code>future_work</code>, Atlas
+            recorded the stable pattern ID and exact substring that fired. a
+            reviewer could then label the span or reject it before it became
+            anything stronger.
+        </p>
+
+        <p>
+            later versions added promotion, deterministic map nodes, manifests,
+            validation, safer edits, and release diagnostics. a map node is a
+            group of reviewed evidence: for example, several papers reporting
+            missing dialect evaluation can sit under one node without Atlas
+            claiming that the issue remains unresolved across the literature.
+            every added layer put more friction between raw regex output and a
+            finished research claim.
+        </p>
+
+        <h2>determinism is part of the method</h2>
+
+        <p>
+            Atlas sorts filenames, headings, candidates, rules, tags, and map
+            nodes explicitly. IDs are derived from normalized inputs with
+            truncated SHA-256. JSON uses stable ordering. extraction artifacts
+            do not contain timestamps. the same corpus and version should
+            produce the same evidence files.
+        </p>
+
+        <p>
+            this matters for a boring reason: if a candidate changes, i want to
+            know whether the paper changed, the rule changed, the section
+            boundary changed, or the runtime changed. stochastic extraction
+            makes that comparison harder.
+        </p>
+
+        <p>
+            determinism does not make regex correct. it makes regex errors
+            repeatable, inspectable, and measurable.
+        </p>
+
+        <blockquote>
+            <p>a false positive you can reproduce is easier to fix than a plausible answer you cannot reconstruct.</p>
+        </blockquote>
+
+        <h2>PDF ingestion made the problem less clean</h2>
+
+        <p>
+            the original MVP only accepted pre-converted <code>.txt</code>
+            files. that kept the extraction logic simple, but pushed an
+            important problem onto the user. academic corpora arrive as PDFs.
+        </p>
+
+        <p>
+            Atlas 1.0.0 added local PDF ingestion through Poppler's
+            <code>pdftotext</code>. the converter runs with fixed reading-order
+            arguments, and Atlas preserves the exact converted text used for
+            every character offset. the output does not pretend an offset points
+            into PDF bytes or page coordinates. it points into a saved UTF-8
+            artifact that can be opened and checked.
+        </p>
+
+        <p>
+            the first real-corpus run was ugly. three papers produced 293
+            detected "sections." author names, affiliations, table rows,
+            diagram labels, and wrapped prose looked enough like headings to the
+            permissive detector. two-column layout also interleaved unrelated
+            text into candidate spans.
+        </p>
+
+        <p>
+            this was useful. the failure was concrete. i could point to the
+            converted text, the bad boundary, the rule hit, and the candidate
+            ID. changing PDF extraction from layout-preserving output to reading
+            order removed the worst cross-column spans. tightening heading
+            rules reduced the same corpus from 293 detected sections to 126.
+        </p>
+
+        <p>
+            126 is still noisy. PDF text is not a semantic document tree, and a
+            deterministic converter cannot recover structure the file does not
+            encode. Atlas reports that limitation instead of hiding it behind a
+            fluent summary.
+        </p>
+
+        <h2>the rules failed in more interesting ways</h2>
+
+        <p>
+            the real papers exposed two different false-positive classes.
+        </p>
+
+        <p>
+            first, phrases such as <code>future research</code> can describe a
+            topic without stating the authors' future work. the early rule was
+            too broad. it now requires a more action-like context, such as
+            <code>future research would</code> or <code>future studies should</code>.
+        </p>
+
+        <p>
+            second, a paper about limitation generation contains the word
+            <em>limitation</em> everywhere: prompts, labels, rubric definitions,
+            model outputs, and dataset examples. substring scoring treated
+            headings such as <em>Limitation Subtype: Limited Datasets</em> as if
+            they were the paper's own Limitations section. during the final
+            pre-release hardening for the public 1.0.0 tag, that shortcut was
+            replaced with exact canonical heading scores, and references were
+            removed from candidate scanning.
+        </p>
+
+        <p>
+            the corpus also exposed misses. explicit paragraphs beginning with
+            <em>Threats to construct validity</em> and <em>Threats to internal
+            validity</em> were not retained unless another rule happened to
+            match. those phrases are now first-class evidence patterns.
+        </p>
+
+        <p>
+            none of these changes required a better prompt. they required a
+            failure log, source spans, and a test that failed for the same reason
+            the real paper failed.
+        </p>
+
+        <h2>what 1.0.0 actually means</h2>
+
+        <p>
+            Atlas 1.0.0 accepts English text and text-bearing PDFs. it scans
+            detected headed sections, applies seven rule categories, scores and
+            deduplicates candidates, preserves PDF conversion artifacts, and
+            writes reviewable JSONL and HTML reports.
+        </p>
+
+        <p>
+            the full workflow goes from papers to sections, candidates, manual
+            reviews, promoted debt records, and deterministic map nodes. it has
+            155 tests, release checks across Python 3.11, 3.12, and 3.13, and a
+            clean-project smoke workflow that ends with validated artifacts.
+        </p>
+
+        <p>it still has real limits:</p>
+
+        <ul>
+            <li>the patterns target English academic prose,</li>
+            <li>nuanced or indirect limitations will be missed,</li>
+            <li>formulaic language can still produce false positives,</li>
+            <li>scanned PDFs need OCR before ingestion,</li>
+            <li>PDF heading recovery remains noisy,</li>
+            <li>human review is required before interpretation.</li>
+        </ul>
+
+        <p>
+            1.0.0 does not mean the extractor is complete. it means the evidence
+            contract is stable enough to test honestly.
+        </p>
+
+        <h2>where machine learning can enter later</h2>
+
+        <p>
+            keeping extraction deterministic is not an argument against machine
+            learning. it is an argument about order.
+        </p>
+
+        <p>
+            semantic clustering could group reviewed statements that use
+            different language. summarization could produce compact descriptions
+            of evidence groups. retrieval could test whether a stated limitation
+            recurs across papers or has been addressed elsewhere. an LLM could
+            help a reviewer navigate a large map.
+        </p>
+
+        <p>
+            but those layers are easier to evaluate after the extraction layer
+            has a measurable precision/recall story and a set of reviewed source
+            statements. otherwise the semantic layer is judging its own
+            generated premises.
+        </p>
+
+        <h2>closing</h2>
+
+        <p>
+            Atlas started as a small regex experiment because academic papers
+            often state their limitations more directly than we assume. it grew
+            into a review workflow because finding a sentence is not the same as
+            establishing a gap.
+        </p>
+
+        <p>
+            the deterministic version is less magical. it returns source
+            statements, not research ideas. it leaves ambiguity visible. it
+            makes the reviewer do work.
+        </p>
+
+        <p>
+            that is the point: the first useful map of research debt should show
+            where every claim came from before it tries to tell us where
+            research should go next.
+        </p>
+
+        <p>
+            source and release artifacts:
+            <a href="https://github.com/voidwest/atlas">github.com/voidwest/atlas</a>.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>
