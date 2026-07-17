@@ -9,8 +9,7 @@ artifact for “Leakage-Aware Probing of Arabic Morphology in Small Language
 Models.” Treat paper outputs, figures, tables, datasets, and probe reports as
 citable artifacts; do not change them casually. Future Ember backend/refactor
 work, including further llama.cpp integration, should happen in a separate
-repository. See [ARTIFACT_STATUS.md](ARTIFACT_STATUS.md) and
-[REPRODUCIBILITY.md](REPRODUCIBILITY.md).
+repository.
 
 a lightweight research layer for hidden-state extraction, leakage-aware probing,
 and reproducible morphology experiments over GGUF models. Ember keeps an

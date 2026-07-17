@@ -26,6 +26,9 @@ docs/plots/root_probe_scale_comparison.png
 *.md
 !README.md
 !docs/dataset_pipeline.md
+/REPRODUCIBILITY.md
+/ARTIFACT_STATUS.md
+/CITATION.cff
 __pycache__/
 .pytest_cache/
 *.egg-info/
