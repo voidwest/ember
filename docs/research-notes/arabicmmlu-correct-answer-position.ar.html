@@ -3,13 +3,13 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="When ArabicMMLU Accuracy Depends on Answer Position" />
+        <meta property="og:title" content="ليش دقة ArabicMMLU تعتمد على موضع الإجابة؟" />
         <meta property="og:description" content="ملاحظة قياس صغيرة: صيغة الـ prompt وموضع الخيار الصحيح قد يغيرون دقة ArabicMMLU في نماذج decoder-only صغيرة." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/arabicmmlu-correct-answer-position.ar.html" />
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
-        <title>When ArabicMMLU Accuracy Depends on Answer Position · research notes</title>
+        <title>ليش دقة ArabicMMLU تعتمد على موضع الإجابة؟ · research notes</title>
         <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
@@ -17,6 +17,18 @@
         <meta property="og:image:height" content="630" />
         <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
         <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
@@ -44,11 +56,11 @@
             <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
         </div>
 
-        <h1><bdi>When ArabicMMLU Accuracy Depends on Answer Position</bdi></h1>
+        <h1>ليش دقة <bdi>ArabicMMLU</bdi> تعتمد على موضع الإجابة؟</h1>
 
         <div class="meta">
             ملاحظة قياس صغيرة عن <bdi>ArabicMMLU multiple-choice</bdi><br>
-            mohammed al-thobaiti · 2026-07-04<br>
+            محمد الثبيتي · 2026-07-04<br>
             <span class="tag key">Arabic NLP</span>
             <span class="tag key">evaluation</span>
             <span class="tag key">robustness</span>
@@ -352,7 +364,6 @@
             لازم يسأل أيضاً: هل نفس الإجابة تصمد بعد تغييرات شكلية في صيغة
             الـ <bdi>prompt</bdi>، وlabels، وترتيب الخيارات، وتطبيع النص العربي؟
         </p>
-
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>
@@ -372,5 +383,6 @@
             <a href="/terms/index.ar.html">terms</a>
         </footer>
         <!-- docs:footer end -->
+
     </body>
 </html>

@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="قابلية إعادة الإنتاج تبدأ قبل الاستدلال" />
+        <meta property="og:description" content="ليش قابلية إعادة إنتاج تقييمات النماذج تحتاج قوائم أسئلة وقوالب prompts ونسخها النهائية وأنظمة parsing وملفات scoring، مو بس اسم النموذج والنتيجة." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/reproducibility-starts-before-inference.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>قابلية إعادة الإنتاج تبدأ قبل الاستدلال · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/reproducibility-starts-before-inference.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>قابلية إعادة الإنتاج تبدأ قبل الاستدلال</h1>
+
+        <div class="meta">
+            ليش واجهة التقييم لازم تكون جزء من ملفات التجربة<br>
+            محمد الثبيتي · 2026-07-17<br>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag key">LLM evaluation</span>
+            <span class="tag key">Arabic NLP</span>
+        </div>
+
+        <p>
+            غالباً نتكلم عن قابلية إعادة إنتاج الـ <bdi>benchmark</bdi> بعد ما
+            ينتهي <bdi>inference</bdi>.
+        </p>
+
+        <p>
+            أي نموذج استخدمنا؟ وش كان الـ <bdi>seed</bdi>؟ وش إعدادات التوليد؟
+            وكم كانت النتيجة؟
+        </p>
+
+        <p>كل هالتفاصيل مهمة، لكنها مو كفاية.</p>
+
+        <p>
+            عشان نقدر نعيد إنتاج نتيجة <bdi>benchmark</bdi>، لازم نقدر نعيد
+            إنتاج واجهة التقييم نفسها. يعني ما نثبت النموذج والنتيجة فقط؛ نثبت
+            الأسئلة نفسها، وقالب الـ <bdi>prompt</bdi>، والـ
+            <bdi>prompts</bdi> النهائية، والـ <bdi>parser</bdi>، وقواعد
+            <bdi>scoring</bdi>، والـ <bdi>metadata</bdi> اللي تربطهم كلهم.
+        </p>
+
+        <p>هذا يصير أهم لما تكون الواجهة نفسها جزء من التجربة.</p>
+
+        <p>
+            إذا تغيير صيغة الـ <bdi>prompt</bdi> يغير النتيجة، فالقالب مو تفصيل
+            تنسيق؛ هو شرط تجريبي. وإذا تغيير الـ <bdi>parser</bdi> يغير
+            <bdi>accuracy</bdi>، فهو مو تفصيل برمجي؛ هو جزء من طريقة القياس.
+            وإذا تغيير عينة الأسئلة يغير الخلاصة، فالـ <bdi>item manifest</bdi>
+            مو ملف للراحة؛ هو جزء من النتيجة.
+        </p>
+
+        <h2>وش أثبت الآن قبل تشغيل النماذج؟</h2>
+
+        <p>
+            في عملي على مراجعة الـ <bdi>Arabic benchmarks</bdi>، صار لكل تشغيل
+            مسار ملفات ثابت قبل ما يبدأ <bdi>inference</bdi>:
+        </p>
+
+        <ul>
+            <li><bdi>item manifests</bdi></li>
+            <li><bdi>prompt templates</bdi></li>
+            <li><bdi>rendered prompts</bdi></li>
+            <li><bdi>perturbation configs</bdi></li>
+            <li><bdi>parser regimes</bdi></li>
+            <li>إعدادات التوليد</li>
+            <li>ملفات الإجابات</li>
+            <li>ملفات النتائج</li>
+            <li>تقارير التحقق</li>
+            <li><bdi>checksums</bdi></li>
+        </ul>
+
+        <p>
+            الهدف بسيط: أي رقم أعرضه لازم أقدر أرجع منه إلى التجربة المحددة
+            اللي أنتجته.
+        </p>
+
+        <p>
+            مو <bdi>dataset</bdi> مشابه تقريباً. مو <bdi>prompt</bdi> قريب منه.
+            ومو نسخة مولّدة من جديد يفترض إنها مكافئة.
+        </p>
+
+        <p>
+            نفس صفوف الأسئلة، ونفس المدخلات النهائية، ونفس قواعد الـ
+            <bdi>parser</bdi>، ونفس ملفات الـ <bdi>scoring</bdi>.
+        </p>
+
+        <h2>قوالب الـ <bdi>prompt</bdi> ملفات تجريبية</h2>
+
+        <p>
+            سهل نتعامل مع قالب الـ <bdi>prompt</bdi> كأنه مساعد تنسيق صغير.
+            لكنه مو كذا.
+        </p>
+
+        <p>
+            في تقييم <bdi>benchmark</bdi>، القالب يحدد وش يشوف النموذج فعلياً.
+            تغييرات صغيرة ممكن تغير قابلية تحليل الجواب، أو تفضيلاته، أو ثباته
+            بين صيغ يفترض إنها متكافئة.
+        </p>
+
+        <p>عشان كذا، كل قالب في المراجعة صار معه:</p>
+
+        <ul>
+            <li><bdi>template ID</bdi> ثابت</li>
+            <li>ملف قالب له نسخة واضحة</li>
+            <li><bdi>SHA-256 checksum</bdi></li>
+            <li>نسخة محددة من الـ <bdi>renderer</bdi></li>
+            <li>متغيرات معلنة</li>
+            <li><bdi>condition metadata</bdi></li>
+        </ul>
+
+        <p>
+            وكل صف <bdi>rendered prompt</bdi> يحمل رقم القالب، والـ
+            <bdi>checksum</bdi>، ونسخة الـ <bdi>renderer</bdi> اللي أنتجته. كذا
+            أقدر أتتبع الاتجاهين: من النتيجة إلى القالب المحدد، ومن القالب إلى
+            كل الـ <bdi>prompts</bdi> والإجابات اللي أنتجها.
+        </p>
+
+        <h2>الـ <bdi>parser</bdi> جزء من القياس</h2>
+
+        <p>
+            نفس خرج النموذج ممكن يأخذ نتيجة مختلفة حسب الـ <bdi>parser</bdi>.
+            مثلاً، <bdi>exact parser</bdi> ممكن يرفض:
+        </p>
+
+        <pre><code>The answer is A.</code></pre>
+
+        <p>بينما <bdi>permissive parser</bdi> يقدر يستخرج <code>A</code>.</p>
+
+        <p>هذولا مو نفس القياس.</p>
+
+        <p>
+            الـ <bdi>exact parser</bdi> يقيس الالتزام بصيغة الجواب. والـ
+            <bdi>permissive parser</bdi> يقيس هل نقدر نستخرج جواب واضح من النص.
+            الاثنين مفيدين، لكن كل واحد يجاوب سؤال مختلف. عرض النتيجة بدون اسم
+            نظام الـ <bdi>parser</bdi> يصعّب تفسيرها.
+        </p>
+
+        <p>في المراجعة أعرض الاثنين:</p>
+
+        <ul>
+            <li><code>strict_exact</code>: الالتزام الحرفي بالصيغة،</li>
+            <li><code>permissive_extract</code>: سلوك الإجابة القابل للاستخراج.</li>
+        </ul>
+
+        <p>
+            الفصل بينهم يمنع خلط فشل الـ <bdi>parsing</bdi> بفشل المهمة. وهو نفس
+            الفرق اللي ظهر في
+            <a href="/research-notes/arabicmmlu-correct-answer-position.ar.html"
+                >مراجعة موضع الإجابة في <bdi>ArabicMMLU</bdi></a
+            >: ضبط قابلية التحليل وضّح القياس، لكنه ما ألغى حساسية الـ
+            <bdi>prompt</bdi> وموضع الخيار.
+        </p>
+
+        <h2>قابلية إعادة الإنتاج مو بس إعادة تشغيل الكود</h2>
+
+        <p>نتيجة الـ <bdi>benchmark</bdi> مو دالة في النموذج فقط. هي دالة في:</p>
+
+        <ul>
+            <li>النموذج،</li>
+            <li>أسئلة الـ <bdi>dataset</bdi>،</li>
+            <li>قالب الـ <bdi>prompt</bdi> والـ <bdi>prompt</bdi> النهائي،</li>
+            <li>إعدادات التوليد،</li>
+            <li>الـ <bdi>parser</bdi> وقاعدة الـ <bdi>scoring</bdi>،</li>
+            <li>طريقة تجميع النتائج.</li>
+        </ul>
+
+        <p>إذا تغير أي واحد منها، ممكن تتغير النتيجة.</p>
+
+        <p>
+            لذلك سؤال قابلية إعادة الإنتاج مو بس: هل يقدر شخص يعيد تشغيل
+            السكربت؟ السؤال هو: هل يقدر يعيد بناء نفس التجربة اللي أنتجت الرقم؟
+        </p>
+
+        <p>وهذا يشمل الملفات المملة. خصوصاً الملفات المملة.</p>
+
+        <p>
+            الـ <bdi>manifest</bdi>. والـ <bdi>template checksum</bdi>. وملف
+            الإجابات <bdi>JSONL</bdi>. ووضع الـ <bdi>parser</bdi>. وتقرير التحقق.
+        </p>
+
+        <p>
+            هذي الأشياء تمنع نتيجة الـ <bdi>benchmark</bdi> من إنها تصير رقم
+            وراءه قصة محد يقدر يتحقق منها. وهذا نفس السبب اللي يخليني أحط الملفات
+            الثابتة والقابلة للتتبع في قلب
+            <a href="/research-notes/why-atlas-does-not-generate-research-gaps.ar.html"
+                ><bdi>Atlas</bdi></a
+            >: مسار الملفات ما يخلي التفسير صحيح تلقائياً، لكنه يخلي الطريق له
+            قابل للفحص.
+        </p>
+
+        <h2>ليش هذا مهم في التقييم العربي؟</h2>
+
+        <p>
+            تقييم الـ <bdi>Arabic benchmarks</bdi> يضيف أماكن أكثر ممكن تأثر
+            فيها الواجهة على القياس.
+        </p>
+
+        <ul>
+            <li>وسوم الإجابة ممكن تكون لاتينية أو عربية،</li>
+            <li>التعليمات ممكن تكون بالإنجليزي أو العربي،</li>
+            <li>الإملاء ممكن يُطبّع أو يُحفظ كما هو،</li>
+            <li>الـ <bdi>tokenization</bdi> ممكن يتغير مع فروق صغيرة في الكتابة،</li>
+            <li>الصرف ممكن يخلق تسرب أو مشاكل تعميم ما تظهر في <bdi>aggregate accuracy</bdi>.</li>
+        </ul>
+
+        <p>
+            هذا مو معناه إن الـ <bdi>Arabic benchmarks</bdi> خربانة. معناه إن
+            نتائجها تحتاج معها معلومات عن مصدرها وثباتها.
+        </p>
+
+        <p>
+            الـ <bdi>aggregate accuracy</bdi> ما زالت مفيدة. بس مو كفاية لوحدها.
+        </p>
+
+        <h2>الخلاصة</h2>
+
+        <p>قابلية إعادة الإنتاج تبدأ قبل الاستدلال.</p>
+
+        <p>
+            قبل ما يجاوب النموذج على أي شيء، المفروض التقييم يعرف أي أسئلة
+            يستخدم، وأي قوالب تبنيها، وأي تغييرات تنطبق عليها، وأي
+            <bdi>parser</bdi> بيقيّمها، وأي ملفات تثبت إن ما تغير شيء بصمت.
+        </p>
+
+        <p>
+            نتيجة <bdi>benchmark</bdi> بدون هذا المسار تظل رقم. بس تصير رقم أصعب
+            بكثير إنك تثق فيه.
+        </p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/index.ar.html">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

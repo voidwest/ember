@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="Reproducibility Starts Before Inference" />
+        <meta property="og:description" content="Why benchmark reproducibility has to include item manifests, prompt templates, rendered prompts, parser regimes, and scoring artifacts—not only model names and final scores." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/reproducibility-starts-before-inference.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>Reproducibility Starts Before Inference · research notes</title>
+        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/reproducibility-starts-before-inference.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>Reproducibility Starts Before Inference</h1>
+
+        <div class="meta">
+            why the evaluation interface belongs in the artifact trail<br>
+            mohammed al-thobaiti · 2026-07-17<br>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag key">LLM evaluation</span>
+            <span class="tag key">Arabic NLP</span>
+        </div>
+
+        <p>
+            benchmark reproducibility is often discussed after inference has
+            already happened.
+        </p>
+
+        <p>
+            which model was used? which seed? which decoding settings? what
+            score did it get?
+        </p>
+
+        <p>those details matter, but they are not enough.</p>
+
+        <p>
+            a benchmark result is only as reproducible as the interface that
+            produced it. that means freezing not only the model and the score,
+            but also the exact item set, prompt template, rendered prompts,
+            parser, scoring rules, and metadata connecting all of them.
+        </p>
+
+        <p>this matters most when the interface is part of the experiment.</p>
+
+        <p>
+            if changing the prompt format changes the score, the prompt
+            template is not a formatting detail. it is an experimental
+            condition. if changing the parser changes the accuracy, the parser
+            is not an implementation detail. it is part of the measurement
+            procedure. if changing the sampled items changes the conclusion,
+            the item manifest is not just a convenience file. it is part of the
+            result.
+        </p>
+
+        <h2>what i now freeze before running models</h2>
+
+        <p>
+            for my Arabic benchmark audit work, every run now has a frozen
+            artifact trail before inference starts:
+        </p>
+
+        <ul>
+            <li>item manifests</li>
+            <li>prompt templates</li>
+            <li>rendered prompts</li>
+            <li>perturbation configs</li>
+            <li>parser regimes</li>
+            <li>generation settings</li>
+            <li>response files</li>
+            <li>score files</li>
+            <li>validation reports</li>
+            <li>checksums</li>
+        </ul>
+
+        <p>
+            the goal is simple: a reported number should be traceable back to
+            the exact experiment that produced it.
+        </p>
+
+        <p>
+            not roughly the same dataset. not approximately the same prompt.
+            not a regenerated version that should be equivalent.
+        </p>
+
+        <p>
+            the exact item rows, exact rendered inputs, exact parser rules, and
+            exact scoring artifacts.
+        </p>
+
+        <h2>prompt templates are artifacts</h2>
+
+        <p>
+            prompt templates are easy to treat as small formatting helpers.
+            they are not.
+        </p>
+
+        <p>
+            in a benchmark evaluation, a prompt template defines what the model
+            actually sees. small changes can alter parseability, answer
+            preferences, or consistency across equivalent variants.
+        </p>
+
+        <p>so each template in the audit now has:</p>
+
+        <ul>
+            <li>a stable template ID</li>
+            <li>a versioned template file</li>
+            <li>a SHA-256 checksum</li>
+            <li>an explicit renderer version</li>
+            <li>declared variables</li>
+            <li>condition metadata</li>
+        </ul>
+
+        <p>
+            every rendered prompt row carries the template ID, template
+            checksum, and renderer version that produced it. that makes the
+            prompt traceable in both directions: from a result back to the
+            exact template, and from a template forward to the rendered prompts
+            and responses it produced.
+        </p>
+
+        <h2>parsers are part of the measurement</h2>
+
+        <p>
+            the same model output can be scored differently depending on the
+            parser. for example, an exact parser may reject:
+        </p>
+
+        <pre><code>The answer is A.</code></pre>
+
+        <p>while a permissive parser may recover <code>A</code>.</p>
+
+        <p>those are not the same measurement.</p>
+
+        <p>
+            the exact parser measures format compliance. the permissive parser
+            measures recoverable answer behavior. both can be useful, but they
+            answer different questions. reporting one without naming the
+            parser regime makes the score harder to interpret.
+        </p>
+
+        <p>in the audit, i report both:</p>
+
+        <ul>
+            <li><code>strict_exact</code>: exact-format compliance,</li>
+            <li><code>permissive_extract</code>: recoverable answer behavior.</li>
+        </ul>
+
+        <p>
+            that separation prevents parse failures from being silently mixed
+            with task failures. it is the same distinction that became visible
+            in my
+            <a href="/research-notes/arabicmmlu-correct-answer-position.html"
+                >ArabicMMLU answer-position audit</a
+            >: fixing parseability clarified the measurement, but did not make
+            the remaining prompt and position sensitivity disappear.
+        </p>
+
+        <h2>reproducibility is not just rerunning code</h2>
+
+        <p>a benchmark result is not only a function of the model. it is a function of:</p>
+
+        <ul>
+            <li>the model,</li>
+            <li>dataset items,</li>
+            <li>the prompt template and rendered prompt,</li>
+            <li>decoding settings,</li>
+            <li>the parser and scoring rule,</li>
+            <li>aggregation logic.</li>
+        </ul>
+
+        <p>if any of those change, the result may change.</p>
+
+        <p>
+            so the reproducibility question is not only: can someone rerun the
+            script? it is: can someone reconstruct the exact experiment that
+            produced the number?
+        </p>
+
+        <p>that includes the boring files. especially the boring files.</p>
+
+        <p>
+            the manifest. the template checksum. the response JSONL. the parser
+            mode. the validation report.
+        </p>
+
+        <p>
+            those are the parts that keep a benchmark result from becoming a
+            number with a backstory nobody can verify. this is also the
+            principle behind
+            <a href="/research-notes/why-atlas-does-not-generate-research-gaps.html"
+                >Atlas</a
+            >: the artifact trail does not make an interpretation correct, but
+            it makes the path to it inspectable.
+        </p>
+
+        <h2>why this matters for Arabic evaluation</h2>
+
+        <p>
+            Arabic benchmark evaluation adds more places where the interface
+            can matter.
+        </p>
+
+        <ul>
+            <li>answer labels may be Latin or Arabic,</li>
+            <li>instructions may be in English or Arabic,</li>
+            <li>orthography may be normalized or preserved,</li>
+            <li>tokenization can vary under small script changes,</li>
+            <li>morphology can create leakage or generalization issues that aggregate accuracy does not expose.</li>
+        </ul>
+
+        <p>
+            that does not mean Arabic benchmarks are broken. it means Arabic
+            benchmark scores need provenance and robustness metadata around
+            them.
+        </p>
+
+        <p>aggregate accuracy is still useful. it is just not enough by itself.</p>
+
+        <h2>bottom line</h2>
+
+        <p>reproducibility starts before inference.</p>
+
+        <p>
+            before the model answers anything, the evaluation should already
+            know which items are being used, which templates render them, which
+            perturbations are applied, which parser will score them, and which
+            artifacts prove that nothing silently changed.
+        </p>
+
+        <p>
+            a benchmark score without that trail is still a number. it is just
+            a much harder number to trust.
+        </p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
