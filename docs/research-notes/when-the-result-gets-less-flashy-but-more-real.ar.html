@@ -10,27 +10,20 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>When the Result Gets Less Flashy but More Real · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
-        <meta name="twitter:title" content="When the Result Gets Less Flashy but More Real" />
-        <meta name="twitter:description" content="هذا الأسبوع تحول Ember من استخراج hidden states إلى probing أكثر وعياً بالتسرب في الصرف العربي." />
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
-        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="التنقل الرئيسي">
+        <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -39,15 +32,14 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
+                <a class="nav-lang" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.html">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <main id="main-content" class="document" tabindex="-1">
-<div class="back">
-            <a href="/index.ar.html" class="ltr">voidwest</a>
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
         </div>
@@ -102,7 +94,7 @@
             <p>نتيجة الـ <bdi>probe</bdi> ما لها قيمة كبيرة إذا كان التقسيم ما يختبر نوع التعميم اللي ندّعيه.</p>
         </blockquote>
 
-        <h2 id="from-extraction-to-measurement"><bdi>From extraction to measurement</bdi></h2>
+        <h2><bdi>From extraction to measurement</bdi></h2>
 
         <p>الـ pipeline الأول كان بسيط:</p>
 
@@ -142,7 +134,7 @@
             الجدول يصير أصغر، لكنه أنظف.
         </p>
 
-        <h2 id="the-leakage-problem"><bdi>The leakage problem</bdi></h2>
+        <h2><bdi>The leakage problem</bdi></h2>
 
         <p>
             النسخة الأولى استخدمت <bdi>random CV</bdi> في أماكن ما كان ينفع
@@ -171,7 +163,7 @@
             <p>ادعاء أضيق ممكن يكون نتيجة أقوى.</p>
         </blockquote>
 
-        <h2 id="what-survived-heldout-evaluation"><bdi>What survived heldout evaluation</bdi></h2>
+        <h2><bdi>What survived heldout evaluation</bdi></h2>
 
         <p>أقوى نتيجة الآن هي <bdi>POS</bdi>.</p>
 
@@ -195,7 +187,7 @@
             بس ما أبغى أحمّله أكثر مما يحتمل.
         </p>
 
-        <h2 id="the-high-cardinality-trap"><bdi>The high-cardinality trap</bdi></h2>
+        <h2><bdi>The high-cardinality trap</bdi></h2>
 
         <p>
             هنا صار عندي تصحيح مهم. الجذر واللمّة والوزن مو مثل
@@ -226,7 +218,7 @@
             النسخة الحالية من الورقة ما تتظاهر إن نفس المصنف يصلح لكل الوسوم.
         </p>
 
-        <h2 id="prompt-final-representation-probing"><bdi>Prompt-final representation probing</bdi></h2>
+        <h2><bdi>Prompt-final representation probing</bdi></h2>
 
         <p>
             تصحيح ثاني: موضع التوكن. التمثيلات هنا مأخوذة من توكن النقطة في
@@ -246,7 +238,7 @@
             الحقول، لا تمثيل الكلمة العربية نفسها فقط.
         </p>
 
-        <h2 id="prompt-ablation-when-the-prompt-becomes-part-of-the-result"><bdi>Prompt ablation: when the prompt becomes part of the result</bdi></h2>
+        <h2><bdi>Prompt ablation: when the prompt becomes part of the result</bdi></h2>
 
         <p>الـ <bdi>prompt</bdi> الأصلي كان يحتوي:</p>
 
@@ -279,7 +271,7 @@
             ممكن يختلف حسب النموذج والوسم.
         </p>
 
-        <h2 id="engineering-corrections-that-changed-the-paper"><bdi>Engineering corrections that changed the paper</bdi></h2>
+        <h2><bdi>Engineering corrections that changed the paper</bdi></h2>
 
         <p>في أشياء كثيرة هذا الأسبوع كانت تصحيحات، لكنها مهمة:</p>
 
@@ -305,7 +297,7 @@
             هو الشيء اللي صار واضح أكثر مع <bdi>Ember</bdi>.
         </p>
 
-        <h2 id="what-this-means-for-ember"><bdi>What this means for Ember</bdi></h2>
+        <h2><bdi>What this means for Ember</bdi></h2>
 
         <p>
             <bdi>Ember</bdi> بدأ كمحرك inference بـ <bdi>Rust</bdi> لنماذج
@@ -320,7 +312,7 @@
             <bdi>baseline</bdi> لكل رقم في الجدول.
         </p>
 
-        <h2 id="next-steps"><bdi>Next steps</bdi></h2>
+        <h2><bdi>Next steps</bdi></h2>
 
         <p>
             الخطوات الجاية: نماذج أكثر، <bdi>confidence intervals</bdi> أقوى،
@@ -337,7 +329,6 @@
         </p>
 
         <p>النتيجة أقل لمعاناً. وهذا غالباً أفضل شيء صار لها هذا الأسبوع.</p>
-        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

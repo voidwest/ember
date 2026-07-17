@@ -10,25 +10,18 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>Why Research Debt Atlas Does Not Generate Research Gaps · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
-        <meta name="twitter:title" content="Why Research Debt Atlas Does Not Generate Research Gaps" />
-        <meta name="twitter:description" content="Why evidence extraction comes before gap generation, and why Atlas keeps its first stage deterministic, traceable, and deliberately narrow." />
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
-        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -39,15 +32,14 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/why-atlas-does-not-generate-research-gaps.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
+                <a class="nav-lang" href="/research-notes/why-atlas-does-not-generate-research-gaps.ar.html">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <main id="main-content" class="document" tabindex="-1">
-<div class="back">
-            <a href="/">voidwest</a>
+        <div class="back">
+            <a href="/">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -88,7 +80,7 @@
             <p>a generated research gap can sound convincing. a source statement can be checked.</p>
         </blockquote>
 
-        <h2 id="the-first-prototype">the first prototype</h2>
+        <h2>the first prototype</h2>
 
         <p>
             the first Atlas pipeline was barely a pipeline. it read UTF-8 text
@@ -133,7 +125,7 @@
             section heading, start offset, end offset, and exact source text.
         </p>
 
-        <h2 id="why-not-generate-the-gap">why not generate the gap?</h2>
+        <h2>why not generate the gap?</h2>
 
         <p>
             because a limitation statement and a research gap are not the same
@@ -169,7 +161,7 @@
             made the output much easier to audit.
         </p>
 
-        <h2 id="from-candidates-to-a-review-workflow">from candidates to a review workflow</h2>
+        <h2>from candidates to a review workflow</h2>
 
         <p>
             version 0.1.0 was extraction. the versions after that mostly added
@@ -195,7 +187,7 @@
             finished research claim.
         </p>
 
-        <h2 id="determinism-is-part-of-the-method">determinism is part of the method</h2>
+        <h2>determinism is part of the method</h2>
 
         <p>
             Atlas sorts filenames, headings, candidates, rules, tags, and map
@@ -221,7 +213,7 @@
             <p>a false positive you can reproduce is easier to fix than a plausible answer you cannot reconstruct.</p>
         </blockquote>
 
-        <h2 id="pdf-ingestion-made-the-problem-less-clean">PDF ingestion made the problem less clean</h2>
+        <h2>PDF ingestion made the problem less clean</h2>
 
         <p>
             the original MVP only accepted pre-converted <code>.txt</code>
@@ -261,7 +253,7 @@
             fluent summary.
         </p>
 
-        <h2 id="the-rules-failed-in-more-interesting-ways">the rules failed in more interesting ways</h2>
+        <h2>the rules failed in more interesting ways</h2>
 
         <p>
             the real papers exposed two different false-positive classes.
@@ -298,7 +290,7 @@
             the real paper failed.
         </p>
 
-        <h2 id="what-1-0-0-actually-means">what 1.0.0 actually means</h2>
+        <h2>what 1.0.0 actually means</h2>
 
         <p>
             Atlas 1.0.0 accepts English text and text-bearing PDFs. it scans
@@ -330,7 +322,7 @@
             contract is stable enough to test honestly.
         </p>
 
-        <h2 id="where-machine-learning-can-enter-later">where machine learning can enter later</h2>
+        <h2>where machine learning can enter later</h2>
 
         <p>
             keeping extraction deterministic is not an argument against machine
@@ -352,7 +344,7 @@
             generated premises.
         </p>
 
-        <h2 id="closing">closing</h2>
+        <h2>closing</h2>
 
         <p>
             Atlas started as a small regex experiment because academic papers
@@ -377,7 +369,7 @@
             source and release artifacts:
             <a href="https://github.com/voidwest/atlas">github.com/voidwest/atlas</a>.
         </p>
-        </main>
+
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>
@@ -397,6 +389,5 @@
             <a href="/terms/">terms</a>
         </footer>
         <!-- docs:footer end -->
-
     </body>
 </html>

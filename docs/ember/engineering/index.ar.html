@@ -8,29 +8,22 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/ember/engineering/" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:card" content="summary" />
         <title>ember engineering update</title>
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
-        <meta name="twitter:title" content="ember engineering update" />
-        <meta name="twitter:description" content="Recent Ember engineering work after SIMD, Qwen3, and Gemma support: CPU runtime paths, streamed probe extraction, benchmark manifests, validation summaries, and conservative reporting." />
-        <meta property="og:image" content="https://voidwest.dev/og/ember.png?v=20260717" />
-        <meta property="og:image:secure_url" content="https://voidwest.dev/og/ember.png?v=20260717" />
-        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="Ember research infrastructure — hidden-state extraction, probing, and reproducible experiments" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png?v=20260717" />
-        <meta name="twitter:image:alt" content="Ember research infrastructure — hidden-state extraction, probing, and reproducible experiments" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
-        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="التنقل الرئيسي">
+        <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html" aria-current="page">ember</a>
@@ -39,15 +32,14 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/ember/engineering/" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
+                <a class="nav-lang" href="/ember/engineering/">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <main id="main-content" class="dossier" tabindex="-1">
-<div class="back">
-            <a href="/index.ar.html" class="ltr">voidwest</a>
+        <div class="back">
+            <a href="/" class="ltr">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/ember/index.ar.html" class="ltr">research</a>
             &nbsp;&nbsp;
@@ -82,7 +74,7 @@
             </table>
         </div>
 
-        <h2 id="engineering-pages">engineering pages</h2>
+        <h2>engineering pages</h2>
 
         <div class="project-list">
             <div class="project featured">
@@ -125,7 +117,7 @@
             </div>
         </div>
 
-        <h2 id="runtime-changes">runtime changes</h2>
+        <h2>runtime changes</h2>
 
         <p>
             الـ CPU backend صار يحمل جزء أكبر من عقد التنفيذ: row helpers،
@@ -186,7 +178,7 @@
             قابل للقياس عندما يكون النموذج كبيراً بما يكفي لتعويض overhead.
         </p>
 
-        <h2 id="benchmark-and-probe-pipeline">benchmark and probe pipeline</h2>
+        <h2>benchmark and probe pipeline</h2>
 
         <p>
             جهة Python صارت أوضح: <span class="mono">run_benchmark.py</span>
@@ -203,7 +195,7 @@
             المطلوب غير موجود، يفشل الطلب بدلاً من الرجوع بصمت إلى random.
         </p>
 
-        <h2 id="validation-and-reporting">validation and reporting</h2>
+        <h2>validation and reporting</h2>
 
         <p>
             smoke reports تسجل سياق الجهاز والأوامر. golden-logit reports يمكن
@@ -220,7 +212,7 @@
             geometry ممثلة عددياً بشكل موثوق.
         </p>
 
-        <h2 id="docs-and-site">docs and site</h2>
+        <h2>docs and site</h2>
 
         <p>
             صفحة ember الرئيسية صارت تفصل engineering عن research/results. صفحة
@@ -229,7 +221,7 @@
             يجب ربط أي claim بالأدلة الموجودة فعلاً.
         </p>
 
-        <h2 id="what-this-does-not-prove">what this does not prove</h2>
+        <h2>what this does not prove</h2>
 
         <ul>
             <li>لا يثبت quality parity مع llama.cpp أو Hugging Face.</li>
@@ -239,7 +231,7 @@
             <li>لا يجعل smoke generation benchmark للسلوك أو الجودة.</li>
         </ul>
 
-        <h2 id="next-engineering-pressure">next engineering pressure</h2>
+        <h2>next engineering pressure</h2>
 
         <p>
             أكثر عمل مفيد الآن هو العمل الممل: golden-logit references مستقلة
@@ -247,7 +239,6 @@
             تقارير encoder benchmarks كاملة، compact cloud artifacts، وتنظيف أي
             نص قديم يبالغ فيما تم التحقق منه.
         </p>
-        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

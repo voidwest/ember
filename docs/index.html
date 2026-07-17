@@ -8,27 +8,20 @@
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://voidwest.dev/" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:card" content="summary" />
         <title>voidwest</title>
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
-        <meta name="twitter:title" content="voidwest" />
-        <meta name="twitter:description" content="systems, ml, and the space where they overlap." />
-        <meta property="og:image" content="https://voidwest.dev/og/voidwest.png?v=20260717" />
-        <meta property="og:image:secure_url" content="https://voidwest.dev/og/voidwest.png?v=20260717" />
-        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image" content="https://voidwest.dev/og/voidwest.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="voidwest research archive — systems, ML, Arabic NLP, and technical writing" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png?v=20260717" />
-        <meta name="twitter:image:alt" content="voidwest research archive — systems, ML, Arabic NLP, and technical writing" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
-        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/" aria-current="page">voidwest</a>
@@ -39,16 +32,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/index.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
+                <a class="nav-lang" href="/index.ar.html">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <main id="main-content" class="home" tabindex="-1">
-<div class="hero">
+        <div class="hero">
             <div class="eyebrow">independent ML systems research</div>
-            <h1 class="name">voidwest</h1>
+            <div class="name">voidwest</div>
             <div class="tagline">
                 systems, ml, and the space where they overlap.
             </div>
@@ -57,6 +49,13 @@
                 <span>model internals</span>
                 <span>arabic nlp</span>
                 <span>inference tooling</span>
+            </div>
+            <div class="links">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+                <a href="https://github.com/voidwest/ember">ember</a>
+                <a href="/ember/">research</a>
             </div>
         </div>
 
@@ -78,15 +77,14 @@
             </div>
         </div>
 
-        <!-- ── INFRASTRUCTURE ── -->
-        <h2 id="infrastructure">infrastructure</h2>
+        <!-- ── EMBER ── -->
+        <h2>ember</h2>
         <div class="project-list">
 
             <div class="project featured">
                 <div class="name">
                     <a href="/ember/">ember</a>
                 </div>
-                <div class="record-meta">research infrastructure · active / 2026</div>
                 <div class="desc">
                     research layer for hidden-state extraction, leakage-aware
                     probing, and reproducible morphology experiments over GGUF
@@ -107,14 +105,13 @@
         </div>
 
         <!-- ── RESEARCH NOTES ── -->
-        <h2 id="research-notes">research notes</h2>
+        <h2>research notes</h2>
         <div class="project-list">
 
             <div class="project featured">
                 <div class="name">
                     <a href="/research-notes/">research notes</a>
                 </div>
-                <div class="record-meta">writing archive · ongoing / 2026</div>
                 <div class="desc">
                     running notes on papers, experiments, and ideas. current focus: Arabic nlp, tokenization, and mechanistic interpretability.
                 </div>
@@ -123,36 +120,16 @@
                 </div>
             </div>
 
-            <div class="note-card recent">
-                <div class="title">
-                    <a href="/research-notes/why-atlas-does-not-generate-research-gaps.html"
-                        >Why Research Debt Atlas Does Not Generate Research Gaps</a
-                    >
-                </div>
-                <div class="desc">
-                    from the first regex prototype to Atlas 1.0.0: why the
-                    extraction layer stays deterministic, traceable, and
-                    deliberately narrower than generated research-gap claims.
-                </div>
-                <div class="meta-row">
-                    <span class="date">2026-07-11</span>
-                    <span class="tag key">latest note</span>
-                    <span class="tag key">research tooling</span>
-                    <span class="tag key">reproducibility</span>
-                </div>
-            </div>
-
         </div>
 
         <!-- ── OTHER PROJECTS ── -->
-        <h2 id="other-projects">other projects</h2>
+        <h2>other projects</h2>
         <div class="project-list">
 
             <div class="project">
                 <div class="name">
                     <a href="https://github.com/voidwest/mini-os">mini-os</a>
                 </div>
-                <div class="record-meta">systems engineering · source available</div>
                 <div class="desc">
                     minimal x86_64 kernel in rust. gdt, idt, paging, heap with
                     3 allocation strategies, cooperative async executor,
@@ -167,7 +144,6 @@
                 <div class="name">
                     <a href="https://github.com/voidwest/devdocs-v2">devdocs-v2</a>
                 </div>
-                <div class="record-meta">research tooling · source available</div>
                 <div class="desc">
                     local rag pipeline for querying pdf documents. sentence-transformers
                     for embeddings, chromadb for vector storage, ollama for inference.
@@ -180,22 +156,6 @@
             </div>
 
         </div>
-        <div class="about-panel">
-            <div class="label">about / method</div>
-            <p>
-                Independent work across ML systems, Arabic NLP, and model
-                internals. I build inspectable local tools, treat validation as
-                part of the research method, and write down both the result and
-                its limits.
-            </p>
-            <div class="about-meta">
-                machine learning research<br>
-                arabic nlp<br>
-                systems engineering<br>
-                technical writing
-            </div>
-        </div>
-        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>

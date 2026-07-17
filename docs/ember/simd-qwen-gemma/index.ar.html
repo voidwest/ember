@@ -8,20 +8,14 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/ember/simd-qwen-gemma/" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:card" content="summary" />
         <title>simd kernels و دعم qwen 3 و gemma 4</title>
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
-        <meta name="twitter:title" content="simd kernels و دعم qwen 3 و gemma 4" />
-        <meta name="twitter:description" content="How ember&#x27;s SIMD Q8_0 kernels, Qwen 3 path, and dense text-only Gemma 4 support fit into the CPU-first inference engine." />
-        <meta property="og:image" content="https://voidwest.dev/og/simd-qwen-gemma.png?v=20260717" />
-        <meta property="og:image:secure_url" content="https://voidwest.dev/og/simd-qwen-gemma.png?v=20260717" />
-        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image" content="https://voidwest.dev/og/simd-qwen-gemma.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="Ember engineering record — SIMD kernels, Qwen 3, and Gemma 4" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/simd-qwen-gemma.png?v=20260717" />
-        <meta name="twitter:image:alt" content="Ember engineering record — SIMD kernels, Qwen 3, and Gemma 4" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/simd-qwen-gemma.png" />
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -40,9 +34,8 @@
         <!-- docs:theme-script end -->
     </head>
     <body>
-        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="التنقل الرئيسي">
+        <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html" aria-current="page">ember</a>
@@ -51,15 +44,14 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/ember/simd-qwen-gemma/" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
+                <a class="nav-lang" href="/ember/simd-qwen-gemma/">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <main id="main-content" class="dossier" tabindex="-1">
-<div class="back">
-            <a href="/index.ar.html" class="ltr">voidwest</a>
+        <div class="back">
+            <a href="/" class="ltr">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/ember/index.ar.html" class="ltr">research</a>
             &nbsp;&nbsp;
@@ -69,11 +61,6 @@
         </div>
 
         <h1>simd kernels و دعم qwen 3 و gemma 4</h1>
-
-        <div class="meta">
-            engineering case study · implementation record<br>
-            simd · q8_0 · qwen 3 · gemma 4 · cpu inference
-        </div>
 
         <p>
             ember بدأ كمسار cpu واضح: tensors بترتيب row-major، تحميل gguf،
@@ -101,7 +88,7 @@
             </table>
         </div>
 
-        <h2 id="مسار-simd">مسار simd</h2>
+        <h2>مسار simd</h2>
 
         <p>
             أوزان q8_0 مخزنة كـ blocks من ggml: بايتين scale بصيغة fp16
@@ -160,7 +147,7 @@
             لا لأجل حيلة ملكية أوسع.
         </p>
 
-        <h2 id="benchmark">benchmark</h2>
+        <h2>benchmark</h2>
 
         <p>
             هذا benchmark هو سبب الأداء الأساسي وراء شغل SIMD. على intel
@@ -183,7 +170,7 @@
             </figcaption>
         </figure>
 
-        <h2 id="qwen-3">qwen 3</h2>
+        <h2>qwen 3</h2>
 
         <p>
             qwen 3 يمر عبر transformer عائلة llama في
@@ -218,7 +205,7 @@
             llama.
         </p>
 
-        <h2 id="gemma-4">gemma 4</h2>
+        <h2>gemma 4</h2>
 
         <p>
             gemma 4 له module خاص، <span class="mono">src/gemma4.rs</span>، لأن نموذج
@@ -259,7 +246,7 @@
             </table>
         </div>
 
-        <h2 id="ليش-هذا-مهم">ليش هذا مهم</h2>
+        <h2>ليش هذا مهم</h2>
 
         <p>
             SIMD يغير السرعة بدون تغيير عقد النموذج. qwen 3 يغير metadata
@@ -269,7 +256,6 @@
             kernels جديدة وعوائل نماذج جديدة تدخل بدون إعادة كتابة
             generation أو sampling أو probing أو gguf loading من الصفر.
         </p>
-        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

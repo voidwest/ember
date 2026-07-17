@@ -8,29 +8,22 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/arabic-morphology-probing.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:card" content="summary" />
         <title>probing Arabic morphology inside LLMs · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
-        <meta name="twitter:title" content="probing Arabic morphology inside LLMs" />
-        <meta name="twitter:description" content="A research plan: using ember for activation probing to find where and how models learn Arabic root-pattern morphology. Following the open question from Alakeel et al. (2026)." />
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
-        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="التنقل الرئيسي">
+        <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -39,15 +32,14 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/arabic-morphology-probing.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
+                <a class="nav-lang" href="/research-notes/arabic-morphology-probing.html">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <main id="main-content" class="document" tabindex="-1">
-<div class="back">
-            <a href="/index.ar.html" class="ltr">voidwest</a>
+        <div class="back">
+            <a href="/" class="ltr">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/index.ar.html" class="ltr">research notes</a>
         </div>
@@ -69,7 +61,7 @@
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2 id="motivation"><bdi>motivation</bdi></h2>
+        <h2><bdi>motivation</bdi></h2>
 
         <p>ورقة 2026 تترك سؤال مفتوح: الكفاءة الصرفية في الـ <bdi>LLMs</bdi> تنقاس بـ <bdi>productive generalization</bdi>، لا بمحاذاة الـ <bdi>tokenizer</bdi>، لكن ما نعرف <em>كيف</em> يحققها النموذج.</p>
         <p>المؤلفون يقترحون "الاستدلال التركيبي + اتباع التعليمات" كآلية، لكن هذا وصف سلوكي، مو <bdi>mechanistic</bdi>.</p>
@@ -83,14 +75,14 @@
         </ol>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2 id="experimental-design"><bdi>experimental design</bdi></h2>
+        <h2><bdi>experimental design</bdi></h2>
 
-        <h3 id="hypothesis"><bdi>hypothesis</bdi></h3>
+        <h3><bdi>hypothesis</bdi></h3>
 
         <p><strong>النماذج اللي تولّد كلمات nonce بشكل صحيح تبني تمثيلات داخلية قابلة للفصل خطياً للجذر والوزن</strong> — وتظهر هالتمثيلات في طبقات transformer العميقة.</p>
         <p>النماذج اللي تفشل في التوليد (مثل ALLAM) إما ما تبني هالتمثيلات أبداً، أو تبنيها في طبقات مبكرة وتفقدها في الطبقات العميقة حيث يُتخذ قرار الـ output.</p>
 
-        <h3 id="models"><bdi>models</bdi></h3>
+        <h3><bdi>models</bdi></h3>
 
         <ul>
             <li><strong>GPT-2 small (124M)</strong> — baseline. ما تدرب على عربي كثير. هل يبني تمثيلات صرفية أصلاً؟</li>
@@ -99,13 +91,13 @@
             <li><em>إذا التوفر يسمح</em>: نموذج عربي مفتوح الأوزان (~1-3B). المقارنة المثالية.</li>
         </ul>
 
-        <h3 id="stimuli"><bdi>stimuli</bdi></h3>
+        <h3><bdi>stimuli</bdi></h3>
 
         <p>من ورقة 2026: جذور nonce (مخترعة) + أوزان حقيقية. المهمة: بالنظر لجذر nonce مثل <em>q-l-b</em> مع وزن مثل <em>فَعَلَ</em>، ولّد الكلمة الصحيحة (<em>qalaba</em>).</p>
 
         <p><strong>توسعة.</strong> dataset الورقة فيها 100 nonce root مع 5 أوزان. أوسع لـ 200 nonce root مع 10 أوزان (2,000 محفز) لطاقة إحصائية كافية للـ CCA والـ RSA.</p>
 
-        <h3 id="probe-types"><bdi>probe types</bdi></h3>
+        <h3><bdi>probe types</bdi></h3>
 
         <p>كل probe يشتغل على hidden states النموذج من ember:</p>
 
@@ -114,7 +106,7 @@
             <li><strong>linear probe</strong> (على مستوى hidden state). درّب مصنف خطي على hidden state كل طبقة للتنبؤ بالوزن (binary classification: وزن X أو لا؟). هذا يكمّل الـ behavioral probe: إذا الـ linear probe يوصل لدقة عالية لكن السلوك ضعيف، النموذج <em>يمثل</em> المعلومات الصرفية من دون ما <em>يستخدمها</em> للتوليد. كود الـ probe يستخدم SGD من numpy، مو PyTorch، عشان يشتغل في نفس البيئة.</li>
         </ol>
 
-        <h3 id="pipeline"><bdi>pipeline</bdi></h3>
+        <h3><bdi>pipeline</bdi></h3>
 
         <p>خط الأنابيب الكامل:</p>
 
@@ -129,9 +121,9 @@
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2 id="metrics-and-expectations"><bdi>metrics and expectations</bdi></h2>
+        <h2><bdi>metrics and expectations</bdi></h2>
 
-        <h3 id="measurement-points"><bdi>measurement points</bdi></h3>
+        <h3><bdi>measurement points</bdi></h3>
 
         <ul>
             <li><strong>دقة التوليد السلوكي</strong> عبر الطبقات (الهدف: منحنى على شكل S)</li>
@@ -140,31 +132,31 @@
             <li><strong>هندسة RDM</strong> (الهدف: تجميع حسب الوزن، مو حسب الجذر)</li>
         </ul>
 
-        <h3 id="compute-requirements"><bdi>compute requirements</bdi></h3>
+        <h3><bdi>compute requirements</bdi></h3>
 
         <p>لـ GPT-2 small (124M parameter): 12 طبقة × 12 رأس × 64 بعد = 768 بعد hidden state. 200 محفز × 12 طبقة = 2,400 activation vector لكل نموذج. تدريب probe على 4,800 عينة ياخذ ثواني في numpy. الـ pipeline كامل لـ GPT-2 يشتغل في أقل من دقيقة. LLaMA 3 8B بـ Q4_K quantization يحتاج حوالي 5GB RAM، ممكن على لابتوب.</p>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2 id="expected-results-and-interpretation"><bdi>expected results &amp; interpretation</bdi></h2>
+        <h2><bdi>expected results &amp; interpretation</bdi></h2>
 
-        <h3 id="if-gpt-4-succeeds-but-we-cant-probe-it"><bdi>if GPT-4 succeeds but we can't probe it</bdi></h3>
+        <h3><bdi>if GPT-4 succeeds but we can't probe it</bdi></h3>
 
         <p>أوزان GPT-4 مو متاحة. خطة الـ probing زي ما هي مكتوبة تشتغل على <em>نماذج مفتوحة الأوزان</em>. نتيجة ورقة 2026 (GPT-4o دقة 97% على nonce) تعطي الحد الأعلى. تجربة الـ probing تسأل: هل النماذج مفتوحة الأوزان بأحجام مختلفة تظهر نفس التنظيم الداخلي اللي يفسّر أداء GPT-4o؟ نبحث عن <em>نشوء</em> التمثيلات الصحيحة، مو عن تكرار GPT-4o.</p>
 
-        <h3 id="if-probes-are-near-chance-everywhere"><bdi>if probes are near chance everywhere</bdi></h3>
+        <h3><bdi>if probes are near chance everywhere</bdi></h3>
 
         <p>هذا يعني إن المعلومات الصرفية غير قابلة للفك الخطي من activations الطبقات الفردية؛ يمكن تكون موزعة عبر الطبقات، أو غير خطية. المتابعة: probes غير خطية (MLP)، أو تحليل تشابه تمثيلي بين الطبقات (CKA).</p>
 
-        <h3 id="if-root-and-pattern-are-in-the-same-subspace"><bdi>if root and pattern are in the same subspace</bdi></h3>
+        <h3><bdi>if root and pattern are in the same subspace</bdi></h3>
 
         <p>يمكن النموذج مرمّز الجذر+الوزن <em>المدمجين</em> كتمثيل موحد بدل ما يفصلهم. هذا يعني إن النموذج تعلم جدول بحث بدل قاعدة تركيبية، وهذا متسق مع سلوك ALLAM (جيد على الجذور الحقيقية، ينهار على المبتكرة).</p>
 
-        <h3 id="if-the-inflection-point-is-between-1b-and-3b"><bdi>if the inflection point is between 1B and 3B</bdi></h3>
+        <h3><bdi>if the inflection point is between 1B and 3B</bdi></h3>
 
         <p>هذه أكثر نتيجة قابلة للتنفيذ. تعني إن الحقن الصرفي الصريح (على مستوى tokenizer أو embedding) يمكن يساعد فقط تحت حوالي 1B parameter. فوق هذا الحد، النموذج يتعلمه بنفسه. هذا يكمم المقايضة ويقول للباحثين متى يستثمرون في tokenization خاص باللغة ومتى يكبرون النموذج.</p>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2 id="related-work-to-cite"><bdi>related work to cite</bdi></h2>
+        <h2><bdi>related work to cite</bdi></h2>
 
         <ul>
             <li>alakeel et al. (2026)، الورقة اللي تؤطر السؤال</li>
@@ -176,7 +168,7 @@
         </ul>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2 id="next-steps"><bdi>next steps</bdi></h2>
+        <h2><bdi>next steps</bdi></h2>
 
         <ol>
             <li><strong>إضافة سحب الـ activation لـ ember</strong>، حوالي 30 سطر في <span class="mono">model.rs</span>. دالة جديدة <span class="mono">forward_with_activations</span> ترجع hidden states مع الـ logits.</li>
@@ -185,7 +177,6 @@
             <li><strong>شغّل probes LLaMA 3 1B/3B</strong>، المقارنة المثيرة. وين نقطة الانعطاف؟</li>
             <li><strong>اكتب</strong>، إذا منحنى التحجيم واضح، هذه ورقة قصيرة (findings أو workshop). 6 صفحات، قصة نظيفة: "اللي وضّحته ورقة 2026 على المستوى السلوكي؛ واللي يصير داخل النموذج لتفسيره."</li>
         </ol>
-        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

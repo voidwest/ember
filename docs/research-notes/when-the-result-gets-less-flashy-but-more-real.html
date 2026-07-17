@@ -10,25 +10,18 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>When the Result Gets Less Flashy but More Real · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260623" />
         <!-- docs:og-image start -->
-        <meta name="twitter:title" content="When the Result Gets Less Flashy but More Real" />
-        <meta name="twitter:description" content="This week Ember&#x27;s Arabic morphology probing work shifted from hidden-state extraction into leakage-aware measurement." />
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta property="og:image:type" content="image/png" />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
-        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
-        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -39,15 +32,14 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
+                <a class="nav-lang" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.ar.html">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <main id="main-content" class="document" tabindex="-1">
-<div class="back">
-            <a href="/">voidwest</a>
+        <div class="back">
+            <a href="/">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -104,7 +96,7 @@
             <p>A probe result is only useful if the split tests the kind of generalization it claims to test.</p>
         </blockquote>
 
-        <h2 id="from-extraction-to-measurement">From extraction to measurement</h2>
+        <h2>From extraction to measurement</h2>
 
         <p>The original Ember probing loop was straightforward:</p>
 
@@ -150,7 +142,7 @@
 
         <p>That is the theme of the week. The table got less exciting. The methodology got stronger.</p>
 
-        <h2 id="the-leakage-problem">The leakage problem</h2>
+        <h2>The leakage problem</h2>
 
         <p>
             The first version used random cross-validation in places where
@@ -191,7 +183,7 @@
             <p>A smaller claim can be a stronger result.</p>
         </blockquote>
 
-        <h2 id="what-survived-heldout-evaluation">What survived heldout evaluation</h2>
+        <h2>What survived heldout evaluation</h2>
 
         <p>The strongest result right now is part of speech.</p>
 
@@ -216,7 +208,7 @@
 
         <p>The important part is that some signal remains after the easy leakage path is made harder.</p>
 
-        <h2 id="the-high-cardinality-trap">The high-cardinality trap</h2>
+        <h2>The high-cardinality trap</h2>
 
         <p>
             The stricter split exposed a second issue: root, lemma, and pattern
@@ -263,7 +255,7 @@
 
         <p>That is a better paper.</p>
 
-        <h2 id="prompt-final-representation-probing">Prompt-final representation probing</h2>
+        <h2>Prompt-final representation probing</h2>
 
         <p>Another correction is token position.</p>
 
@@ -294,7 +286,7 @@
 
         <p>That is a narrower claim, and it needs to be said plainly.</p>
 
-        <h2 id="prompt-ablation-when-the-prompt-becomes-part-of-the-result">Prompt ablation: when the prompt becomes part of the result</h2>
+        <h2>Prompt ablation: when the prompt becomes part of the result</h2>
 
         <p>The original prompt included:</p>
 
@@ -338,7 +330,7 @@
             measuring the representation of the whole prompt context.
         </p>
 
-        <h2 id="engineering-corrections-that-changed-the-paper">Engineering corrections that changed the paper</h2>
+        <h2>Engineering corrections that changed the paper</h2>
 
         <p>
             Several changes this week were not conceptual discoveries. They were
@@ -376,7 +368,7 @@
             pipeline.
         </p>
 
-        <h2 id="what-this-means-for-ember">What this means for Ember</h2>
+        <h2>What this means for Ember</h2>
 
         <p>
             Ember started as a CPU-first Rust inference engine for GGUF models.
@@ -405,7 +397,7 @@
             foundation for results I can stand behind.
         </p>
 
-        <h2 id="next-steps">Next steps</h2>
+        <h2>Next steps</h2>
 
         <p>
             The immediate next steps are straightforward: add more valid models,
@@ -427,7 +419,6 @@
         </p>
 
         <p>That is where the work is now: less flashy, more careful, and more real.</p>
-        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>
