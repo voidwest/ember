@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -15,13 +16,16 @@ import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from voidwest_theme import DARK, apply_matplotlib_theme, categorical_cmap  # noqa: E402
 
-BG = "#0d1117"
-SURFACE = "#161b22"
-BORDER = "#30363d"
-TEXT = "#c9d1d9"
-DIM = "#8b949e"
-ACCENT = "#f78166"
+BG = DARK.bg
+SURFACE = DARK.surface
+BORDER = DARK.border
+TEXT = DARK.text
+DIM = DARK.muted
+ACCENT = DARK.accent
 
 DEFAULT_MODELS = [
     "qwen3_06b",
@@ -35,22 +39,7 @@ DEFAULT_MODELS = [
 
 
 def setup_dark_theme() -> None:
-    plt.rcParams.update(
-        {
-            "figure.facecolor": BG,
-            "axes.facecolor": SURFACE,
-            "savefig.facecolor": BG,
-            "savefig.edgecolor": BG,
-            "axes.edgecolor": BORDER,
-            "axes.labelcolor": TEXT,
-            "xtick.color": DIM,
-            "ytick.color": DIM,
-            "text.color": TEXT,
-            "axes.titlecolor": ACCENT,
-            "grid.color": BORDER,
-            "legend.labelcolor": TEXT,
-        }
-    )
+    apply_matplotlib_theme(dark=True)
 
 
 def load_peak_rows(path: Path) -> dict[tuple[str, str], dict[str, str]]:
@@ -151,9 +140,9 @@ def selected_layers(model: str, rows: dict[tuple[str, str], dict[str, str]], n_l
     return deduped
 
 
-def label_colors(labels: list[str]) -> dict[str, tuple[float, float, float, float]]:
+def label_colors(labels: list[str], *, dark: bool = False) -> dict[str, tuple[float, float, float, float]]:
     unique = sorted(set(labels))
-    cmap = plt.get_cmap("tab20" if len(unique) > 10 else "tab10")
+    cmap = categorical_cmap(dark=dark)
     return {label: cmap(i % cmap.N) for i, label in enumerate(unique)}
 
 
@@ -168,7 +157,7 @@ def plot_projection(
     output: Path,
     dark: bool = False,
 ) -> None:
-    colors = label_colors(labels)
+    colors = label_colors(labels, dark=dark)
     fig, ax = plt.subplots(figsize=(7.8, 6.0), dpi=160)
     for label in sorted(colors):
         idx = np.array([value == label for value in labels])

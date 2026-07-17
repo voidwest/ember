@@ -20,28 +20,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-# ── style ────────────────────────────────────────────────────────────
-STYLE = {
-    "figure.facecolor": "#0d1117",
-    "axes.facecolor": "#0d1117",
-    "axes.edgecolor": "#30363d",
-    "axes.labelcolor": "#c9d1d9",
-    "text.color": "#c9d1d9",
-    "xtick.color": "#8b949e",
-    "ytick.color": "#8b949e",
-    "grid.color": "#21262d",
-    "grid.alpha": 0.6,
-    "legend.facecolor": "#161b22",
-    "legend.edgecolor": "#30363d",
-    "savefig.dpi": 200,
-    "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.1,
-}
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from voidwest_theme import LIGHT, LIGHT_CYCLE, matplotlib_style  # noqa: E402
+
+# -- style -------------------------------------------------------------
+STYLE = matplotlib_style(dark=False, dpi=200)
 
 MODEL_COLORS = {
-    "Qwen3-0.6B": "#58a6ff",
-    "Llama-3.2-1B": "#f0883e",
-    "Qwen2.5-1.5B": "#3fb950",
+    "Qwen3-0.6B": LIGHT_CYCLE[0],
+    "Llama-3.2-1B": LIGHT_CYCLE[1],
+    "Qwen2.5-1.5B": LIGHT_CYCLE[2],
 }
 
 TASK_NAMES = {
@@ -88,7 +77,8 @@ def main():
     fig.subplots_adjust(wspace=0.28)
 
     for ax, task in zip(axes, tasks):
-        ax.set_facecolor("#0d1117")
+        ax.set_facecolor(LIGHT.surface)
+        result = None
         for model_name, path in models.items():
             result = load_layerwise(path, task)
             if result is None:

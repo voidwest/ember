@@ -18,6 +18,8 @@ plots all analysis outputs from the probing pipeline:
 import argparse
 import json
 import os
+import sys
+from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
 
@@ -26,27 +28,39 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from voidwest_theme import (  # noqa: E402
+    BLUE, DARK, DARK_CYCLE, GREEN, LIGHT, LIGHT_CYCLE, PURPLE, RED, YELLOW,
+    apply_matplotlib_theme,
+    diverging_cmap, sequential_cmap, similarity_norm
+)
 
 # ── dark-mode palette (matches voidwest.dev CSS) ─────────────
-DARK_BG       = "#0d1117"
-DARK_SURFACE  = "#161b22"
-DARK_BORDER   = "#30363d"
-DARK_TEXT     = "#c9d1d9"
-DARK_DIM      = "#8b949e"
-DARK_ACCENT   = "#f78166"   # orange
-DARK_ACCENT2  = "#d2a8ff"   # purple
-DARK_GREEN    = "#7ee787"
-DARK_BLUE     = "#79c0ff"
-DARK_RED      = "#ff7b72"
-DARK_YELLOW   = "#d29922"
+DARK_BG       = DARK.bg
+DARK_SURFACE  = DARK.surface
+DARK_BORDER   = DARK.border
+DARK_TEXT     = DARK.text
+DARK_DIM      = DARK.muted
+DARK_ACCENT   = DARK.accent
+DARK_ACCENT2  = PURPLE
+DARK_GREEN    = GREEN
+DARK_BLUE     = BLUE
+DARK_RED      = RED
+DARK_YELLOW   = YELLOW
 
 # cross-model palette
 CM_COLORS = [
     (DARK_BLUE, DARK_RED),
     (DARK_ACCENT2, DARK_YELLOW),
     (DARK_ACCENT, "#ffa198"),
-    (DARK_GREEN, "#a5d6ff"),
-    ("#e6edf3", "#f0c6c6"),
+    (DARK_GREEN, DARK_CYCLE[5]),
+    (DARK_TEXT, DARK_DIM),
+]
+CM_COLORS_LIGHT = [
+    (LIGHT_CYCLE[1], LIGHT_CYCLE[4]),
+    (LIGHT_CYCLE[0], LIGHT_CYCLE[3]),
+    (LIGHT_CYCLE[2], LIGHT_CYCLE[5]),
 ]
 
 
@@ -65,28 +79,9 @@ def npz_has_key(path, key):
         return key in data
 
 
-def _setup_dark():
-    """apply dark-mode rcParams."""
-    matplotlib.rcParams.update({
-        "figure.facecolor": DARK_BG,
-        "axes.facecolor": DARK_SURFACE,
-        "axes.edgecolor": DARK_BORDER,
-        "axes.labelcolor": DARK_TEXT,
-        "text.color": DARK_TEXT,
-        "xtick.color": DARK_DIM,
-        "ytick.color": DARK_DIM,
-        "grid.color": DARK_BORDER,
-        "grid.alpha": 0.6,
-        "legend.facecolor": DARK_SURFACE,
-        "legend.edgecolor": DARK_BORDER,
-        "legend.labelcolor": DARK_TEXT,
-        "figure.titlesize": 14,
-        "axes.titlesize": 11,
-        "axes.labelsize": 9,
-        "xtick.labelsize": 8,
-        "ytick.labelsize": 8,
-        "legend.fontsize": 7,
-    })
+def _setup_theme(*, dark: bool):
+    """Apply the stylesheet-derived dark or light figure theme."""
+    apply_matplotlib_theme(dark=dark)
 
 
 def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
@@ -107,14 +102,14 @@ def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
     n_layers = len(data["root_accuracy"])
     layers = np.arange(n_layers)
 
-    root_color = color_root or (DARK_BLUE if dark else "b")
-    pat_color = color_pat or (DARK_ACCENT if dark else "r")
+    root_color = color_root or (DARK_BLUE if dark else LIGHT_CYCLE[1])
+    pat_color = color_pat or (DARK_ACCENT if dark else LIGHT.accent)
     leg_label_root = f"root ({label})" if label else "root"
     leg_label_pat = f"pattern ({label})" if label else "pattern"
 
     ax_root.plot(layers, data["root_accuracy"], color=root_color, marker="o",
                  markersize=4, linewidth=1.4, label=leg_label_root)
-    ax_root.axhline(1.0 / 20, color=DARK_DIM if dark else "gray",
+    ax_root.axhline(1.0 / 20, color=DARK_DIM if dark else LIGHT.subtle,
                     linestyle="--", alpha=0.5, label="chance (5%)")
     ax_root.set_ylabel("accuracy")
     ax_root.set_title("root probe")
@@ -124,7 +119,7 @@ def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
 
     ax_pattern.plot(layers, data["pattern_accuracy"], color=pat_color, marker="o",
                     markersize=4, linewidth=1.4, label=leg_label_pat)
-    ax_pattern.axhline(1.0 / 10, color=DARK_DIM if dark else "gray",
+    ax_pattern.axhline(1.0 / 10, color=DARK_DIM if dark else LIGHT.subtle,
                        linestyle="--", alpha=0.5, label="chance (10%)")
     ax_pattern.set_ylabel("accuracy")
     ax_pattern.set_title("pattern probe")
@@ -135,7 +130,7 @@ def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
 
     # plot selectivity on twin axis if available
     if "root_selectivity" in data:
-        sel_color = DARK_GREEN if dark else "g"
+        sel_color = DARK_GREEN if dark else LIGHT_CYCLE[2]
         ax_r2 = ax_root.twinx()
         ax_r2.plot(layers, data["root_selectivity"], color=sel_color,
                    marker="s", markersize=3, linewidth=1.0,
@@ -144,7 +139,7 @@ def plot_probe_accuracy(probes_path, ax_root, ax_pattern, dark=False,
         ax_r2.tick_params(axis="y", colors=sel_color, labelsize=6)
 
     if "pat_selectivity" in data:
-        sel_color = DARK_GREEN if dark else "g"
+        sel_color = DARK_GREEN if dark else LIGHT_CYCLE[2]
         ax_p2 = ax_pattern.twinx()
         ax_p2.plot(layers, data["pat_selectivity"], color=sel_color,
                    marker="s", markersize=3, linewidth=1.0,
@@ -225,7 +220,7 @@ def plot_generic_probe_metrics(data, ax_acc, ax_sel, dark=False):
     ax_acc.legend(fontsize=7)
 
     if plotted_margin or plotted_sel:
-        ax_sel.axhline(0.0, color=DARK_DIM if dark else "gray", linestyle="--", alpha=0.5)
+        ax_sel.axhline(0.0, color=DARK_DIM if dark else LIGHT.subtle, linestyle="--", alpha=0.5)
         ax_sel.set_ylabel("score")
         ax_sel.set_xlabel("layer")
         ax_sel.set_title("accuracy - majority baseline")
@@ -240,7 +235,8 @@ def plot_generic_probe_metrics(data, ax_acc, ax_sel, dark=False):
 def plot_cross_model_accuracy(compare_pairs, ax_root, ax_pattern, dark=False):
     """overlay probe accuracy from multiple models."""
     for i, (label, path) in enumerate(compare_pairs):
-        cr, cp = CM_COLORS[i % len(CM_COLORS)]
+        palette = CM_COLORS if dark else CM_COLORS_LIGHT
+        cr, cp = palette[i % len(palette)]
         plot_probe_accuracy(path, ax_root, ax_pattern, dark=dark,
                            label=label, color_root=cr, color_pat=cp)
 
@@ -251,12 +247,12 @@ def plot_cca_heatmap(cca_path, ax, dark=False):
     if "cca_layer_matrix" not in data:
         return
     mat = data["cca_layer_matrix"]
-    cmap = "YlOrRd"
-    im = ax.imshow(mat, cmap=cmap, vmin=0, vmax=1, aspect="auto")
+    cmap = sequential_cmap(dark=dark)
+    im = ax.imshow(mat, cmap=cmap, norm=similarity_norm(), aspect="auto")
     ax.set_xlabel("layer")
     ax.set_ylabel("layer")
     ax.set_title("CCA layer similarity")
-    cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+    cbar = plt.colorbar(im, ax=ax, shrink=0.8, ticks=[0.0, 0.6, 0.8, 0.9, 1.0])
     if dark:
         cbar.ax.yaxis.set_tick_params(color=DARK_DIM)
         cbar.outline.set_edgecolor(DARK_BORDER)
@@ -269,7 +265,7 @@ def plot_rsa_heatmap(rsa_path, ax, dark=False):
     if "rsa_layer_matrix" not in data:
         return
     mat = data["rsa_layer_matrix"]
-    im = ax.imshow(mat, cmap="coolwarm", vmin=-1, vmax=1, aspect="auto")
+    im = ax.imshow(mat, cmap=diverging_cmap(dark=dark), vmin=-1, vmax=1, aspect="auto")
     ax.set_xlabel("layer")
     ax.set_ylabel("layer")
     ax.set_title("RSA layer similarity")
@@ -287,7 +283,7 @@ def plot_probe_subspace(cca_path, ax, dark=False):
         return
     sim = data["root_pattern_cca"]
     layers = np.arange(len(sim))
-    color = DARK_GREEN if dark else "g"
+    color = DARK_GREEN if dark else LIGHT_CYCLE[2]
     ax.plot(layers, sim, color=color, marker="o", markersize=4, linewidth=1.4)
     ax.set_ylabel("subspace CCA")
     ax.set_xlabel("layer")
@@ -306,7 +302,7 @@ def plot_divergence(div_path, ax_cos, ax_euc, dark=False):
     n_c = int(data.get("n_correct", 0))
     n_i = int(data.get("n_incorrect", 0))
 
-    dim_color = DARK_DIM if dark else "gray"
+    dim_color = DARK_DIM if dark else LIGHT.subtle
 
     if cos_ok:
         layers = data["layer"]
@@ -327,7 +323,7 @@ def plot_divergence(div_path, ax_cos, ax_euc, dark=False):
 
         ax_cos.text(0.02, 0.98, f"correct={n_c}, incorrect={n_i}",
                     transform=ax_cos.transAxes, va="top", fontsize=7,
-                    color=DARK_DIM if dark else "black")
+                    color=DARK_DIM if dark else LIGHT.text)
     else:
         for ax in (ax_cos, ax_euc):
             ax.text(0.5, 0.5, "N/A — 0 correct predictions",
@@ -363,7 +359,7 @@ def plot_fertility_comparison(fertility_path, ax, dark=False):
     for i, ratio in enumerate(ratios):
         ax.text(i, max(en_means[i], ar_means[i]) + 2,
                 f"×{ratio:.1f}", ha="center", fontsize=8,
-                color=DARK_DIM if dark else "black")
+                color=DARK_DIM if dark else LIGHT.text)
 
     ax.set_ylabel("mean tokens/prompt")
     ax.set_title("tokenizer fertility (en vs ar prompts)")
@@ -391,6 +387,8 @@ def main():
     )
     parser.add_argument("--output", default="data/plots/",
                         help="output directory for plots")
+    parser.add_argument("--output-file", default=None,
+                        help="optional exact path for the main figure")
     parser.add_argument("--dark", action="store_true", help="dark-mode styling")
     parser.add_argument("--title", default="Arabic Morphology Probing Results",
                         help="figure suptitle")
@@ -398,9 +396,12 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
+    if args.output_file:
+        output_parent = os.path.dirname(args.output_file)
+        if output_parent:
+            os.makedirs(output_parent, exist_ok=True)
 
-    if args.dark:
-        _setup_dark()
+    _setup_theme(dark=args.dark)
 
     # parse --compare pairs
     compare_pairs = None
@@ -471,7 +472,7 @@ def main():
     if n_rows == 1:
         axes = np.array([axes])
 
-    title_color = DARK_ACCENT if args.dark else "black"
+    title_color = DARK_ACCENT if args.dark else LIGHT.accent_strong
     fig.suptitle(args.title, fontsize=14, fontweight="bold", color=title_color)
 
     for row_idx, assignment in enumerate(row_assignments):
@@ -523,15 +524,15 @@ def main():
         # save cross-model separately
         cm_path = os.path.join(args.output, "cross_model_comparison.png")
         fig_cm.savefig(cm_path, dpi=args.dpi, bbox_inches="tight",
-                       facecolor=DARK_BG if args.dark else "white",
+                       facecolor=DARK_BG if args.dark else LIGHT.bg,
                        edgecolor="none")
         print(f"saved cross-model comparison to {cm_path}")
         plt.close(fig_cm)
 
     plt.tight_layout()
-    out_path = os.path.join(args.output, "probe_results.png")
+    out_path = args.output_file or os.path.join(args.output, "probe_results.png")
     plt.savefig(out_path, dpi=args.dpi, bbox_inches="tight",
-                facecolor=DARK_BG if args.dark else "white",
+                facecolor=DARK_BG if args.dark else LIGHT.bg,
                 edgecolor="none")
     print(f"saved to {out_path}")
     plt.close()

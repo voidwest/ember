@@ -6,6 +6,7 @@ root accuracy vs normalized layer depth for 1B, 3B, and 8B.
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
@@ -16,16 +17,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from voidwest_theme import BLUE, DARK, GREEN, RED, apply_matplotlib_theme  # noqa: E402
 
-DARK_BG = "#0d1117"
-DARK_SURFACE = "#161b22"
-DARK_BORDER = "#30363d"
-DARK_TEXT = "#c9d1d9"
-DARK_DIM = "#8b949e"
-DARK_BLUE = "#79c0ff"
-DARK_ACCENT = "#f78166"
-DARK_GREEN = "#7ee787"
-DARK_RED = "#ff7b72"
+DARK_BG = DARK.bg
+DARK_SURFACE = DARK.surface
+DARK_BORDER = DARK.border
+DARK_TEXT = DARK.text
+DARK_DIM = DARK.muted
+DARK_BLUE = BLUE
+DARK_ACCENT = DARK.accent
+DARK_GREEN = GREEN
+DARK_RED = RED
 
 
 RUNS = {
@@ -36,26 +40,7 @@ RUNS = {
 
 
 def setup_dark_theme():
-    matplotlib.rcParams.update(
-        {
-            "figure.facecolor": DARK_BG,
-            "axes.facecolor": DARK_SURFACE,
-            "axes.edgecolor": DARK_BORDER,
-            "axes.labelcolor": DARK_TEXT,
-            "text.color": DARK_TEXT,
-            "xtick.color": DARK_DIM,
-            "ytick.color": DARK_DIM,
-            "grid.color": DARK_BORDER,
-            "legend.facecolor": DARK_SURFACE,
-            "legend.edgecolor": DARK_BORDER,
-            "legend.labelcolor": DARK_TEXT,
-            "axes.titlesize": 13,
-            "axes.labelsize": 10,
-            "xtick.labelsize": 9,
-            "ytick.labelsize": 9,
-            "legend.fontsize": 9,
-        }
-    )
+    apply_matplotlib_theme(dark=True)
 
 
 def load_root_accuracy(path: str) -> np.ndarray:

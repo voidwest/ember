@@ -28,16 +28,12 @@ from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+from voidwest_theme import DARK, DARK_CYCLE, apply_matplotlib_theme  # noqa: E402
+
 # ── palette ───────────────────────────────────────────────────────
-CM_COLORS = [
-    "#79c0ff",  # blue
-    "#f78166",  # orange
-    "#d2a8ff",  # purple
-    "#7ee787",  # green
-    "#ff7b72",  # red
-    "#d29922",  # yellow
-    "#a5d6ff",  # light blue
-]
+CM_COLORS = DARK_CYCLE
 
 DEFAULT_TASKS = [
     "root",
@@ -266,26 +262,7 @@ def plot_baseline(task_results: dict, out_dir: str, dark: bool = True):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if dark:
-        plt.rcParams.update(
-            {
-                "figure.facecolor": "#0d1117",
-                "axes.facecolor": "#161b22",
-                "axes.edgecolor": "#30363d",
-                "axes.labelcolor": "#c9d1d9",
-                "text.color": "#c9d1d9",
-                "xtick.color": "#8b949e",
-                "ytick.color": "#8b949e",
-                "grid.color": "#30363d",
-                "grid.alpha": 0.6,
-                "legend.facecolor": "#161b22",
-                "legend.edgecolor": "#30363d",
-                "legend.labelcolor": "#c9d1d9",
-                "figure.titlesize": 12,
-                "axes.titlesize": 10,
-                "axes.labelsize": 8,
-                "legend.fontsize": 7,
-            }
-        )
+        apply_matplotlib_theme(dark=True)
 
     tasks_in_order = [t for t in DEFAULT_TASKS if t in task_results]
 
@@ -305,7 +282,7 @@ def plot_baseline(task_results: dict, out_dir: str, dark: bool = True):
     ax.grid(alpha=0.3)
     ax.legend(fontsize=7)
     fig.tight_layout()
-    fig.savefig(out_dir / "probe_accuracy.png", dpi=150, bbox_inches="tight", facecolor="#0d1117")
+    fig.savefig(out_dir / "probe_accuracy.png", dpi=160, facecolor=DARK.bg)
     plt.close(fig)
 
     # ── lift over majority plot ──
@@ -317,14 +294,14 @@ def plot_baseline(task_results: dict, out_dir: str, dark: bool = True):
         color = CM_COLORS[i % len(CM_COLORS)]
         display = TASK_DISPLAY.get(task_key, task_key)
         ax.plot(layers, lift, color=color, marker="o", markersize=3, linewidth=1.3, label=display)
-    ax.axhline(0.0, color="#8b949e", linestyle="--", alpha=0.5)
+    ax.axhline(0.0, color=DARK.subtle, linestyle="--", alpha=0.7)
     ax.set_xlabel("layer")
     ax.set_ylabel("accuracy − majority baseline")
     ax.set_title("per-layer lift over majority baseline")
     ax.grid(alpha=0.3)
     ax.legend(fontsize=7)
     fig.tight_layout()
-    fig.savefig(out_dir / "probe_lift_over_majority.png", dpi=150, bbox_inches="tight", facecolor="#0d1117")
+    fig.savefig(out_dir / "probe_lift_over_majority.png", dpi=160, facecolor=DARK.bg)
     plt.close(fig)
 
     print(f"\nsaved plots to {out_dir}/probe_accuracy.png and probe_lift_over_majority.png")

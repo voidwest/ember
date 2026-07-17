@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,13 +13,18 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from voidwest_theme import (  # noqa: E402
+    DARK, apply_matplotlib_theme, sequential_cmap, similarity_norm
+)
 
-BG = "#0d1117"
-SURFACE = "#161b22"
-BORDER = "#30363d"
-TEXT = "#c9d1d9"
-DIM = "#8b949e"
-ACCENT = "#f78166"
+BG = DARK.bg
+SURFACE = DARK.surface
+BORDER = DARK.border
+TEXT = DARK.text
+DIM = DARK.muted
+ACCENT = DARK.accent
 
 DEFAULT_MODELS = [
     "qwen3_06b",
@@ -39,21 +45,7 @@ PAIRWISE_PLAN = [
 
 
 def setup_dark_theme() -> None:
-    plt.rcParams.update(
-        {
-            "figure.facecolor": BG,
-            "axes.facecolor": SURFACE,
-            "savefig.facecolor": BG,
-            "savefig.edgecolor": BG,
-            "axes.edgecolor": BORDER,
-            "axes.labelcolor": TEXT,
-            "xtick.color": DIM,
-            "ytick.color": DIM,
-            "text.color": TEXT,
-            "axes.titlecolor": ACCENT,
-            "grid.color": BORDER,
-        }
-    )
+    apply_matplotlib_theme(dark=True)
 
 
 @dataclass
@@ -114,11 +106,20 @@ def matrix_key(path: Path, preferred_key: str) -> tuple[str, np.ndarray] | None:
 
 def plot_heatmap(matrix: np.ndarray, output: Path, title: str, colorbar_label: str, dark: bool = False) -> None:
     fig, ax = plt.subplots(figsize=(6.4, 5.8), dpi=160)
-    im = ax.imshow(matrix, origin="lower", aspect="auto", cmap="viridis")
+    values_are_similarity = float(np.nanmin(matrix)) >= 0.0 and float(np.nanmax(matrix)) <= 1.0
+    im = ax.imshow(
+        matrix,
+        origin="lower",
+        aspect="auto",
+        cmap=sequential_cmap(dark=dark),
+        norm=similarity_norm() if values_are_similarity else None,
+    )
     ax.set_xlabel("Layer")
     ax.set_ylabel("Layer")
     ax.set_title(title)
     cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    if values_are_similarity:
+        cbar.set_ticks([0.0, 0.6, 0.8, 0.9, 1.0])
     cbar.set_label(colorbar_label)
     if dark:
         ax.tick_params(colors=DIM)

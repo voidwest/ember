@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
-STYLESHEET_VERSION = "20260623"
+STYLESHEET_VERSION = "20260718"
 
 MANAGED_HEAD_RE = re.compile(
     r"\n[ \t]*<!-- docs:head-scripts start -->.*?[ \t]*<!-- docs:head-scripts end -->\n?",

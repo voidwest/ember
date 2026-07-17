@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -12,17 +13,17 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+from voidwest_theme import BLUE, DARK, PURPLE, apply_matplotlib_theme  # noqa: E402
 
-BG = "#0d1117"
-SURFACE = "#161b22"
-BORDER = "#30363d"
-TEXT = "#c9d1d9"
-DIM = "#8b949e"
-ACCENT = "#f78166"
-ACCENT2 = "#d2a8ff"
-BLUE = "#79c0ff"
-GREEN = "#7ee787"
-RED = "#ff7b72"
+BG = DARK.bg
+SURFACE = DARK.surface
+BORDER = DARK.border
+TEXT = DARK.text
+DIM = DARK.muted
+ACCENT = DARK.accent
+ACCENT2 = PURPLE
 
 DEFAULT_MODELS = [
     "qwen3_06b",
@@ -36,22 +37,7 @@ DEFAULT_MODELS = [
 
 
 def setup_dark_theme() -> None:
-    plt.rcParams.update(
-        {
-            "figure.facecolor": BG,
-            "axes.facecolor": SURFACE,
-            "savefig.facecolor": BG,
-            "savefig.edgecolor": BG,
-            "axes.edgecolor": BORDER,
-            "axes.labelcolor": TEXT,
-            "xtick.color": DIM,
-            "ytick.color": DIM,
-            "text.color": TEXT,
-            "axes.titlecolor": ACCENT,
-            "grid.color": BORDER,
-            "legend.labelcolor": TEXT,
-        }
-    )
+    apply_matplotlib_theme(dark=True)
 
 
 def finish_axes(ax: plt.Axes, dark: bool) -> None:

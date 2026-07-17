@@ -11,7 +11,7 @@
         <meta name="twitter:card" content="summary_large_image" />
         <title>وش يعرف LLaMA عن الصرف العربي (وما راح يقوله) · research notes</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/style.css?v=20260718" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png" />
         <meta property="og:image:width" content="1200" />
@@ -112,7 +112,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <h3><bdi>LLaMA 3.2 1B</bdi> (16 طبقة، <bdi>hidden dim</bdi> 2048)</h3>
 
         <figure class="chart-wrap">
-        <img class="chart" src="/plots/llama1b_probe_results.png"
+        <img class="chart theme-chart-dark" src="/plots/llama1b_probe_results.png"
+             alt="LLaMA 3.2 1B probing results: 3x2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
+             loading="lazy" />
+        <img class="chart theme-chart-light" src="/plots/llama1b_probe_results_light.png"
              alt="LLaMA 3.2 1B probing results: 3x2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
              loading="lazy" />
         </figure>
@@ -130,7 +133,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <h3><bdi>LLaMA 3.2 3B</bdi> (28 طبقة، <bdi>hidden dim</bdi> 3072)</h3>
 
         <figure class="chart-wrap">
-        <img class="chart" src="/plots/llama3b_probe_results.png"
+        <img class="chart theme-chart-dark" src="/plots/llama3b_probe_results.png"
+             alt="LLaMA 3.2 3B probing results: note the U-shaped root accuracy dip and flat 100% pattern accuracy"
+             loading="lazy" />
+        <img class="chart theme-chart-light" src="/plots/llama3b_probe_results_light.png"
              alt="LLaMA 3.2 3B probing results: note the U-shaped root accuracy dip and flat 100% pattern accuracy"
              loading="lazy" />
         </figure>
@@ -155,7 +161,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <h3><bdi>LLaMA 3.1 8B</bdi> (تشغيل أول مؤرشف، لم يُعد)</h3>
 
         <figure class="chart-wrap">
-        <img class="chart" src="/plots/llama8b_probe_results.png"
+        <img class="chart theme-chart-dark" src="/plots/llama8b_probe_results.png"
+             alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
+             loading="lazy" />
+        <img class="chart theme-chart-light" src="/plots/llama8b_probe_results_light.png"
              alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
              loading="lazy" />
         </figure>

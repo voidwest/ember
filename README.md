@@ -683,6 +683,11 @@ Playwright is installed. Open Graph preview images can be regenerated with:
 python3 scripts/generate_og_images.py
 ```
 
+Generated charts and social cards read their palette from `docs/style.css`
+through `scripts/voidwest_theme.py`. Change the site tokens first, then rerun
+the relevant generator; categorical colors, heatmaps, typography, borders,
+and dark/light figure backgrounds are derived from that shared theme.
+
 ### llama models
 
 ember supports llama-compatible architectures via `--arch llama`. qwen-family

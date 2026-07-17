@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Generate charts for the Gemma 4 parity debugging writeup.
+"""Generate dark and light charts for the Gemma 4 parity debugging writeup.
 
 All charts use a dark theme matching the voidwest.dev style.
 Output: docs/plots/gemma_*.png
 """
 
+import argparse
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -14,49 +15,43 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from pathlib import Path
 
+from voidwest_theme import (
+    DARK,
+    DARK_CYCLE,
+    LIGHT,
+    LIGHT_CYCLE,
+    apply_matplotlib_theme,
+)
+
 OUT = Path("docs/plots")
 OUT.mkdir(parents=True, exist_ok=True)
 
 # ── voidwest dark theme ──────────────────────────────────────────────
-BG = "#0d1117"
-SURFACE = "#161b22"
-BORDER = "#30363d"
-TEXT = "#c9d1d9"
-TEXT_DIM = "#8b949e"
-ACCENT = "#f78166"
-ACCENT2 = "#d2a8ff"
-GREEN = "#7ee787"
-BLUE = "#79c0ff"
-RED = "#ff7b72"
-YELLOW = "#d29922"
+BG = SURFACE = BORDER = TEXT = TEXT_DIM = ACCENT = ACCENT2 = ""
+BLUE = GREEN = RED = YELLOW = ""
+OUTPUT_SUFFIX = ""
 
-plt.rcParams.update({
-    "figure.facecolor": BG,
-    "axes.facecolor": SURFACE,
-    "axes.edgecolor": BORDER,
-    "axes.labelcolor": TEXT_DIM,
-    "axes.titlecolor": TEXT,
-    "text.color": TEXT,
-    "xtick.color": TEXT_DIM,
-    "ytick.color": TEXT_DIM,
-    "grid.color": BORDER,
-    "legend.facecolor": SURFACE,
-    "legend.edgecolor": BORDER,
-    "legend.labelcolor": TEXT,
-    "font.family": "sans-serif",
-    "font.size": 10,
-    "axes.titlesize": 13,
-    "axes.labelsize": 10,
-    "savefig.facecolor": BG,
-    "savefig.edgecolor": BG,
-    "savefig.dpi": 150,
-    "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.15,
-})
+
+def configure_theme(*, dark: bool) -> None:
+    global BG, SURFACE, BORDER, TEXT, TEXT_DIM, ACCENT, ACCENT2
+    global BLUE, GREEN, RED, YELLOW, OUTPUT_SUFFIX
+    theme = DARK if dark else LIGHT
+    cycle = DARK_CYCLE if dark else LIGHT_CYCLE
+    BG = theme.bg
+    SURFACE = theme.surface
+    BORDER = theme.border
+    TEXT = theme.text
+    TEXT_DIM = theme.muted
+    ACCENT = theme.accent
+    ACCENT2 = theme.accent_strong
+    BLUE, GREEN, YELLOW, RED = cycle[1:5]
+    OUTPUT_SUFFIX = "" if dark else "_light"
+    apply_matplotlib_theme(dark=dark, dpi=160)
 
 
 def save(fig, name):
-    path = OUT / name
+    source = Path(name)
+    path = OUT / f"{source.stem}{OUTPUT_SUFFIX}{source.suffix}"
     fig.savefig(str(path))
     plt.close(fig)
     print(f"  {name}")
@@ -426,11 +421,22 @@ def chart_rmsnorm_autopsy():
 # Run all
 # ═══════════════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
-    print("generating gemma parity charts...")
-    chart_structural_fixes_timeline()
-    chart_ablation_graveyard()
-    chart_cosine_vs_topk()
-    chart_layerwise_cosine()
-    chart_rmsnorm_autopsy()
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--theme", choices=("dark", "light", "both"), default="both")
+    args = parser.parse_args()
+
+    themes = (True, False) if args.theme == "both" else (args.theme == "dark",)
+    for dark in themes:
+        configure_theme(dark=dark)
+        print(f"generating gemma parity charts ({'dark' if dark else 'light'})...")
+        chart_structural_fixes_timeline()
+        chart_ablation_graveyard()
+        chart_cosine_vs_topk()
+        chart_layerwise_cosine()
+        chart_rmsnorm_autopsy()
     print("done → docs/plots/gemma_*.png")
+
+
+if __name__ == "__main__":
+    main()

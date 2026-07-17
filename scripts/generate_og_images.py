@@ -14,6 +14,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from voidwest_theme import DARK
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "docs" / "og"
@@ -69,102 +71,145 @@ CARDS = [
 
 
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@500;600;700&display=swap');
-
 :root {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --border: #30363d;
-    --text: #dbe4ee;
-    --text-dim: #8b949e;
-    --accent: #f78166;
-    --accent2: #d2a8ff;
-    --blue: #79c0ff;
-    --green: #7ee787;
+    --bg: __BG__;
+    --surface: __SURFACE__;
+    --border: __BORDER__;
+    --border-soft: __BORDER_SOFT__;
+    --text: __TEXT__;
+    --heading: __HEADING__;
+    --muted: __MUTED__;
+    --subtle: __SUBTLE__;
+    --accent: __ACCENT__;
 }
 * { box-sizing: border-box; }
 body {
     margin: 0;
     width: 1200px;
     height: 630px;
-    background:
-        linear-gradient(135deg, rgba(247, 129, 102, 0.12), transparent 38%),
-        linear-gradient(315deg, rgba(121, 192, 255, 0.13), transparent 42%),
-        var(--bg);
+    background: var(--bg);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
 }
 .card {
     width: 100%;
     height: 100%;
-    padding: 72px 82px 64px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+    padding: 0 72px 58px;
+    display: grid;
+    grid-template-rows: 78px 1fr auto;
 }
 .brand {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    color: var(--text-dim);
-    font-size: 28px;
+    border-bottom: 1px solid var(--border);
+    color: var(--subtle);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 17px;
 }
 .brand strong {
-    color: var(--accent);
-    font-size: 32px;
+    color: var(--text);
+    font-size: 18px;
+    font-weight: 500;
+}
+.brand strong::before {
+    content: "";
+    display: inline-block;
+    width: 24px;
+    height: 17px;
+    margin-right: 12px;
+    border: 1px solid var(--text);
+    border-left: 6px solid var(--accent);
+    vertical-align: -2px;
+}
+.content {
+    align-self: center;
+    min-height: 0;
+    padding-bottom: 8px;
 }
 .eyebrow {
-    color: var(--blue);
-    font-size: 30px;
-    font-weight: 650;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
+    color: var(--accent);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 19px;
+    line-height: 1.4;
 }
 h1 {
     margin: 0;
-    max-width: 980px;
-    color: var(--text);
-    font-size: 76px;
-    line-height: 1.04;
-    letter-spacing: 0;
+    max-width: 1010px;
+    color: var(--heading);
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 78px;
+    font-weight: 400;
+    line-height: 0.98;
+    letter-spacing: -2.5px;
+}
+.long-title h1 {
+    max-width: 1060px;
+    font-size: 62px;
+    line-height: 1;
+    letter-spacing: -1.8px;
+}
+.long-title .subtitle {
+    margin-top: 20px;
+    font-size: 25px;
 }
 .subtitle {
-    max-width: 900px;
-    margin-top: 26px;
-    color: var(--text-dim);
-    font-size: 34px;
-    line-height: 1.34;
+    max-width: 930px;
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: 27px;
+    line-height: 1.42;
 }
 .tags {
     display: flex;
-    gap: 16px;
+    gap: 24px;
     flex-wrap: wrap;
+    padding-top: 18px;
+    border-top: 1px solid var(--border-soft);
 }
 .tag {
-    border: 1px solid var(--border);
-    background: rgba(22, 27, 34, 0.84);
-    color: var(--accent2);
-    border-radius: 6px;
-    padding: 10px 16px;
-    font-size: 24px;
+    color: var(--muted);
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 16px;
+}
+.tag::before {
+    content: "#";
+    color: var(--accent);
 }
 """
+
+for token, value in {
+    "__BG__": DARK.bg,
+    "__SURFACE__": DARK.surface,
+    "__BORDER__": DARK.border,
+    "__BORDER_SOFT__": DARK.border_soft,
+    "__TEXT__": DARK.text,
+    "__HEADING__": DARK.heading,
+    "__MUTED__": DARK.muted,
+    "__SUBTLE__": DARK.subtle,
+    "__ACCENT__": DARK.accent,
+}.items():
+    CSS = CSS.replace(token, value)
 
 
 def card_html(card: OgCard) -> str:
     tags = "\n".join(f'<span class="tag">{html.escape(tag)}</span>' for tag in card.tags)
+    body_class = "long-title" if len(card.title) > 34 else ""
     return f"""<!doctype html>
 <html>
 <head>
     <meta charset="utf-8">
     <style>{CSS}</style>
 </head>
-<body>
+<body class="{body_class}">
     <main class="card">
         <div class="brand">
             <strong>voidwest</strong>
             <span>voidwest.dev</span>
         </div>
-        <section>
+        <section class="content">
             <div class="eyebrow">{html.escape(card.eyebrow)}</div>
             <h1>{html.escape(card.title)}</h1>
             <div class="subtitle">{html.escape(card.subtitle)}</div>

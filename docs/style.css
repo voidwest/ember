@@ -743,6 +743,18 @@ img,
     background: var(--surface-2);
 }
 
+.theme-chart-light {
+    display: none;
+}
+
+:root[data-theme="light"] .theme-chart-dark {
+    display: none;
+}
+
+:root[data-theme="light"] .theme-chart-light {
+    display: block;
+}
+
 .arch-tree,
 .layout-block,
 .pipeline-block,

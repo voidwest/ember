@@ -27,7 +27,9 @@ PAGES = [
     ("/research-notes/", "research"),
     ("/research-notes/llama-probing-results.html", "llama-probing"),
     ("/research-notes/llama-probing-results.ar.html", "llama-probing-ar"),
+    ("/ember/gemma4-parity-debugging/", "gemma-parity"),
 ]
+THEMES = ("dark", "light")
 VIEWPORTS = {
     "desktop": {"width": 1366, "height": 900},
     "mobile": {"width": 390, "height": 844},
@@ -67,15 +69,19 @@ def main() -> int:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()
-            for viewport_name, viewport in VIEWPORTS.items():
-                page = browser.new_page(viewport=viewport)
-                for path, name in PAGES:
-                    page.goto(base_url + path, wait_until="networkidle")
-                    page.screenshot(
-                        path=args.output / f"{name}-{viewport_name}.png",
-                        full_page=True,
+            for theme in THEMES:
+                for viewport_name, viewport in VIEWPORTS.items():
+                    page = browser.new_page(viewport=viewport)
+                    page.add_init_script(
+                        f"localStorage.setItem('voidwest-theme', {theme!r})"
                     )
-                page.close()
+                    for path, name in PAGES:
+                        page.goto(base_url + path, wait_until="networkidle")
+                        page.screenshot(
+                            path=args.output / f"{name}-{viewport_name}-{theme}.png",
+                            full_page=True,
+                        )
+                    page.close()
             browser.close()
     finally:
         server.shutdown()
