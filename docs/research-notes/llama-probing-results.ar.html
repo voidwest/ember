@@ -10,12 +10,18 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>what LLaMA knows about Arabic morphology (and won't say) · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png" />
+        <meta name="twitter:title" content="what LLaMA knows about Arabic morphology (and won&#x27;t say)" />
+        <meta name="twitter:description" content="Corrected probing of LLaMA 3.2 1B/3B shows root and pattern variables are recoverable from prompts even when generation fails. 8B is archived pending rerun." />
+        <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/llama-probing-results.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/llama-probing-results.png" />
+        <meta property="og:image:alt" content="Research note — what LLaMA knows about Arabic morphology" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/llama-probing-results.png?v=20260717" />
+        <meta name="twitter:image:alt" content="Research note — what LLaMA knows about Arabic morphology" />
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -34,8 +40,9 @@
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -44,14 +51,15 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/llama-probing-results.html">en</a>
+                <a class="nav-lang" href="/research-notes/llama-probing-results.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/" class="ltr">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/index.ar.html" class="ltr">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/index.ar.html" class="ltr">research notes</a>
         </div>
@@ -69,7 +77,7 @@
             <span class="tag metric">scaling</span>
         </div>
 
-        <h2><bdi>motivation</bdi></h2>
+        <h2 id="motivation"><bdi>motivation</bdi></h2>
 
         <p>ورقة <a href="/research-notes/morphemes-without-borders.ar.html"><bdi>Alakeel et al.</bdi> (2026)</a> تركت سؤال مفتوح: <bdi>GPT-4o</bdi> يوصل 97% في توليد الجذر والوزن العربي على <bdi>nonce roots</bdi> مع إنه عنده أسوأ محاذاة <bdi>tokenizer</bdi> في الدراسة (17% <bdi>boundary precision</bdi>). <bdi>ALLAM</bdi> عنده أفضل محاذاة <bdi>tokenizer</bdi>، لكنه ينهار لـ 20% على نفس المهمة. جودة الـ <bdi>tokenizer</bdi> ما تتنبأ بالكفاءة الصرفية. طيب وش اللي يتنبأ؟</p>
 
@@ -91,7 +99,7 @@
             <p>التشغيل المصحح لـ <bdi>1B</bdi> و <bdi>3B</bdi> ما زال يخرج <code><bdi>The</bdi></code> لكل محفز: <bdi>0/200</bdi>. الـ <bdi>hidden states</bdi> تحتفظ بمتغيرات الجذر والوزن المكتوبة صراحة في الـ <bdi>prompt</bdi>، لكن هذا ليس دليلاً كافياً بعد على صرف عربي داخلي. الخطوة التالية لازم تفصل بين استرجاع متغيرات الـ <bdi>prompt</bdi> وبين الحساب الصرفي فعلاً.</p>
         </div>
 
-        <h2><bdi>the pipeline</bdi></h2>
+        <h2 id="the-pipeline"><bdi>the pipeline</bdi></h2>
 
         <div class="pipeline-block">
 <pre><code>generate_stimuli.py        → stimuli/nonce_root_pattern.json  (200 stimuli)
@@ -106,9 +114,9 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>كل الكود في <a href="https://github.com/voidwest/ember">مستودع <bdi>ember</bdi></a>. التشغيل المصحح لـ <bdi>1B</bdi> و <bdi>3B</bdi> تم محلياً. رسم <bdi>8B</bdi> يبقى معروضاً كأرشيف للمقارنة، لكنه لم يُعد بالتقسيم المصحح لأن الجهاز المحلي لا يشغله بثبات.</p>
 
-        <h2><bdi>results</bdi></h2>
+        <h2 id="results"><bdi>results</bdi></h2>
 
-        <h3><bdi>LLaMA 3.2 1B</bdi> (16 طبقة، <bdi>hidden dim</bdi> 2048)</h3>
+        <h3 id="llama-3-2-1b-16-طبقة-hidden-dim-2048"><bdi>LLaMA 3.2 1B</bdi> (16 طبقة، <bdi>hidden dim</bdi> 2048)</h3>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/llama1b_probe_results.png"
@@ -126,7 +134,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <hr />
 
-        <h3><bdi>LLaMA 3.2 3B</bdi> (28 طبقة، <bdi>hidden dim</bdi> 3072)</h3>
+        <h3 id="llama-3-2-3b-28-طبقة-hidden-dim-3072"><bdi>LLaMA 3.2 3B</bdi> (28 طبقة، <bdi>hidden dim</bdi> 3072)</h3>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/llama3b_probe_results.png"
@@ -151,7 +159,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <hr />
 
-        <h3><bdi>LLaMA 3.1 8B</bdi> (تشغيل أول مؤرشف، لم يُعد)</h3>
+        <h3 id="llama-3-1-8b-تشغيل-أول-مؤرشف-لم-ي-عد"><bdi>LLaMA 3.1 8B</bdi> (تشغيل أول مؤرشف، لم يُعد)</h3>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/llama8b_probe_results.png"
@@ -176,7 +184,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <hr />
 
-        <h3><bdi>side-by-side</bdi></h3>
+        <h3 id="side-by-side"><bdi>side-by-side</bdi></h3>
 
         <div class="comparison">
             <div class="col">
@@ -222,9 +230,9 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p class="punchline">التشغيل المصحح لـ <bdi>1B/3B</bdi>: <bdi>0/200</bdi> صحيحة. متغيرات الـ <bdi>prompt</bdi> قابلة للاسترجاع؛ السلوك لا يزال مكسوراً.</p>
 
-        <h2><bdi>discussion</bdi></h2>
+        <h2 id="discussion"><bdi>discussion</bdi></h2>
 
-        <h3>1. فجوة التمثيل والسلوك</h3>
+        <h3 id="1-فجوة-التمثيل-والسلوك">1. فجوة التمثيل والسلوك</h3>
 
         <p>هذا هو اللغز الأساسي. التشغيلان المصححان لـ <bdi>1B</bdi> و <bdi>3B</bdi> يملكان متغيرات جذر ووزن قابلة للفك الخطي. هوية الجذر عالية لكنها تهبط في وسط <bdi>3B</bdi>؛ هوية الوزن شبه كاملة من الطبقة الأولى. المعلومة قابلة للاسترجاع ومنظمة، لكن نقطة الاستخراج الحالية هي آخر توكن في <bdi>prompt</bdi> يذكر الجذر والوزن صراحة.</p>
 
@@ -234,7 +242,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>ورقة <bdi>Alakeel</bdi> خلصت إلى أن "الاستدلال التركيبي + اتباع التعليمات يعوض التحليل الصرفي الصريح." نتائجنا متسقة مع صياغة أدق: <strong>اتباع التعليمات قد يكون الشيء اللي يربط متغيرات المهمة القابلة للاسترجاع بسلوك المخرج.</strong> عشان تتحول هذه إلى دعوى صرفية أقوى، نحتاج <bdi>prompt ablations</bdi>، واستخراج من مواضع الجذر والوزن، وتجارب يحذف فيها نص الجذر أو الوزن أو يستبدل.</p>
 
-        <h3>2. التحجيم غير الرتيب</h3>
+        <h3 id="2-التحجيم-غير-الرتيب">2. التحجيم غير الرتيب</h3>
 
         <p>"الأكبر أفضل" ما يصف فحص الجذر. منحنى الدقة المصحح محلياً ينتقل من شبه مسطح (<bdi>1B</bdi>) إلى شكل <bdi>U</bdi> (<bdi>3B</bdi>). التشغيل القديم لـ <bdi>8B</bdi> قد يعمق النمط، لكنه ليس جزءاً من المقارنة المصححة بعد. هذا متسق مع فرضية <a href="/research-notes/arabic-morphology-probing.ar.html">الخطة البحثية الأصلية</a>:</p>
 
@@ -244,7 +252,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>البيانات تشير إن نقطة الانعطاف مو عن <em>هل</em> البنية الصرفية قابلة للاسترجاع، بل عن <strong>كيف</strong> هي منظمة. عند <bdi>1B</bdi>، هوية الجذر قابلة للوصول الخطي في كل طبقة. عند <bdi>3B</bdi>، هوية الجذر تبدو موزعة أو متحولة في الطبقات الوسطى إلى صيغة يسترجعها <bdi>logistic regression</bdi> بدرجة أضعف، لكن المعلومة قد تكون ما زالت موجودة لأن الدقة تتعافى جزئياً في الطبقات الأعمق. هذا يبدو كتغير نوعي في التنظيم التمثيلي، مو فشل من النموذج في التقاط الفرق. هذه النتائج خاصة بـ <bdi>LLaMA</bdi> حالياً. تشغيل <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> يختبر هل النمط يعمم.</p>
 
-        <h3>3. الوزن متغير واضح في الـ <bdi>prompt</bdi></h3>
+        <h3 id="3-الوزن-متغير-واضح-في-الـ-prompt">3. الوزن متغير واضح في الـ <bdi>prompt</bdi></h3>
 
         <p>النتيجة المصححة أبسط وأكثر تحفظاً: الوزن قابل للفصل الخطي من أول طبقة تقريباً في <bdi>1B</bdi> و <bdi>3B</bdi>. هذا منطقي لأن الـ <bdi>prompt</bdi> يذكر اسم الوزن صراحة. النتيجة مفيدة، لكنها لا تثبت لوحدها أن النموذج نفذ تركيباً صرفياً عربياً.</p>
 
@@ -256,7 +264,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <li><strong>التركيب لم يُختبر بعد.</strong> لاختبار التركيب، نحتاج استخراجاً من موضع الصيغة المتوقعة أو تجارب يحجب فيها اسم الوزن أو يستبدل.</li>
         </ol>
 
-        <h3>4. <bdi>8B</bdi> مؤرشف: ينتظر إعادة التشغيل</h3>
+        <h3 id="4-8b-مؤرشف-ينتظر-إعادة-التشغيل">4. <bdi>8B</bdi> مؤرشف: ينتظر إعادة التشغيل</h3>
 
         <p>منحنى <bdi>root-pattern CCA</bdi> في <bdi>8B</bdi> (ارتفاع إلى 0.345 عند الطبقة 4 ثم هبوط إلى 0.078) يظهر نمطاً متسقاً مع تنظيم ثنائي المرحلة: الطبقات المبكرة تعرض تداخلاً أعلى بين فضاءات أوزان <bdi>probe</bdi> للجذر والوزن، بينما الطبقات الأعمق تعرض فضاءات أكثر انفصالاً. شكل القمة ثم الهبوط غائب عند الحجمين الأصغر.</p>
 
@@ -274,7 +282,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <p>200 محفز لتصنيف من 20 فئة = 10 عينات لكل فئة قبل <bdi>cross-validation</bdi>. منطق التقسيم المصحح يتجنب الطيات المستحيلة، لكن ما زلنا نحتاج محفزات أكثر وفواصل ثقة.</p>
         </div>
 
-        <h2><bdi>next steps</bdi></h2>
+        <h2 id="next-steps"><bdi>next steps</bdi></h2>
 
         <ol>
             <li><strong>ضوابط الـ <bdi>prompt</bdi> والمواضع.</strong> أضف <code>--probe-template</code>، واستخراج من موضع الجذر والوزن، وتجارب تحجب الجذر أو الوزن. هذا هو العائق الأساسي قبل دعوى صرفية أقوى.</li>
@@ -283,7 +291,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <li><strong>تكرار عبر نماذج ثانية.</strong> شغل نفس الـ <bdi>pipeline</bdi> على <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> بأحجام مشابهة.</li>
         </ol>
 
-        <h2><bdi>references</bdi></h2>
+        <h2 id="references"><bdi>references</bdi></h2>
 
         <ol>
             <li>alakeel, qwaider, aldarmaki, alqahtani. "morphemes without borders: evaluating root-pattern morphology in Arabic tokenizers and LLMs." LREC 2026. <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
@@ -292,6 +300,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <li>alain &amp; bengio. "understanding intermediate layers using linear classifier probes." ICLR 2017. <a href="https://arxiv.org/abs/1610.01644">arXiv:1610.01644</a></li>
             <li>conneau et al. "what you can cram into a single vector: probing sentence embeddings for linguistic properties." ACL 2018. <a href="https://arxiv.org/abs/1805.01070">arXiv:1805.01070</a></li>
         </ol>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

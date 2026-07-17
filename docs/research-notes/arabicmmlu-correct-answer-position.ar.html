@@ -10,20 +10,39 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>When ArabicMMLU Accuracy Depends on Answer Position · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="When ArabicMMLU Accuracy Depends on Answer Position" />
+        <meta name="twitter:description" content="ملاحظة قياس صغيرة: صيغة الـ prompt وموضع الخيار الصحيح قد يغيرون دقة ArabicMMLU في نماذج decoder-only صغيرة." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -32,14 +51,15 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/arabicmmlu-correct-answer-position.html">en</a>
+                <a class="nav-lang" href="/research-notes/arabicmmlu-correct-answer-position.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/index.ar.html" class="ltr">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/index.ar.html" class="ltr">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
         </div>
@@ -98,7 +118,7 @@
             الجواب، يختار label، وبعدها <bdi>parser</bdi> يحاول يفهم وش قال.
         </p>
 
-        <h2><bdi>why multiple-choice evaluation can be fragile</bdi></h2>
+        <h2 id="why-multiple-choice-evaluation-can-be-fragile"><bdi>why multiple-choice evaluation can be fragile</bdi></h2>
 
         <p>
             الشكل بسيط: سؤال، خيارات <bdi>A/B/C/D</bdi>، استخرج حرف، احسب
@@ -118,7 +138,7 @@
             بجانب raw accuracy.
         </p>
 
-        <h2><bdi>pilot 1: prompt-format sensitivity</bdi></h2>
+        <h2 id="pilot-1-prompt-format-sensitivity"><bdi>pilot 1: prompt-format sensitivity</bdi></h2>
 
         <p>
             <bdi>pilot 1</bdi> استخدم 50 سؤال من <bdi>ArabicMMLU</bdi>،
@@ -170,7 +190,7 @@
             لا ينهار إلى وسم واحد، لكنه يظل سياقاً مهماً لتفسير الدقة.
         </p>
 
-        <h2><bdi>pilot 2: label and position bias</bdi></h2>
+        <h2 id="pilot-2-label-and-position-bias"><bdi>pilot 2: label and position bias</bdi></h2>
 
         <p>
             <bdi>pilot 2</bdi> استخدم 50 سؤال، و4 تبديلات لكل سؤال: 200
@@ -209,7 +229,7 @@
             </tbody>
         </table>
 
-        <h3><bdi>accuracy by correct-answer position</bdi></h3>
+        <h3 id="accuracy-by-correct-answer-position"><bdi>accuracy by correct-answer position</bdi></h3>
 
         <table>
             <thead>
@@ -228,7 +248,7 @@
             </tbody>
         </table>
 
-        <h3><bdi>prediction distribution</bdi></h3>
+        <h3 id="prediction-distribution"><bdi>prediction distribution</bdi></h3>
 
         <table>
             <thead>
@@ -264,7 +284,7 @@
             الحجم يساعد، بس raw accuracy ما زال يحتاج سياق.
         </p>
 
-        <h2><bdi>what changed with Llama-3.2-3B?</bdi></h2>
+        <h2 id="what-changed-with-llama-3-2-3b"><bdi>what changed with Llama-3.2-3B?</bdi></h2>
 
         <p>
             <bdi>Llama-3.2-3B</bdi> حسّن أكثر من شيء. في <bdi>pilot 1</bdi>،
@@ -285,7 +305,7 @@
             أزال parse failures.
         </p>
 
-        <h2><bdi>what this does and does not show</bdi></h2>
+        <h2 id="what-this-does-and-does-not-show"><bdi>what this does and does not show</bdi></h2>
 
         <p>هذه الملاحظة تقول، بشكل محدود:</p>
 
@@ -310,7 +330,7 @@
             <p>رقم benchmark يصير أصدق لما يجي معه تشخيص كافي لواجهة القياس.</p>
         </blockquote>
 
-        <h2><bdi>proposed reporting checklist</bdi></h2>
+        <h2 id="proposed-reporting-checklist"><bdi>proposed reporting checklist</bdi></h2>
 
         <p>
             لما أقيم نماذج <bdi>decoder-only</bdi> صغيرة أو محلية، ما أبغى
@@ -329,7 +349,7 @@
             <li>فحوصات تسرب واعية بالصرف كعمل لاحق.</li>
         </ul>
 
-        <h2><bdi>artifacts</bdi></h2>
+        <h2 id="artifacts"><bdi>artifacts</bdi></h2>
 
         <p>
             الـ <bdi>prompts</bdi>، والمخرجات، وملفات التقييم، والملخصات موجودة
@@ -339,7 +359,7 @@
             <bdi>artifact bundle</bdi> منشورة لفحص الأرقام والجداول في هذه الملاحظة.
         </p>
 
-        <h2><bdi>closing</bdi></h2>
+        <h2 id="closing"><bdi>closing</bdi></h2>
 
         <p>
             الخلاصة مو إن نموذج أفضل من الثاني. ranking مو هدف هذه الملاحظة.
@@ -352,7 +372,7 @@
             لازم يسأل أيضاً: هل نفس الإجابة تصمد بعد تغييرات شكلية في صيغة
             الـ <bdi>prompt</bdi>، وlabels، وترتيب الخيارات، وتطبيع النص العربي؟
         </p>
-
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>
@@ -372,5 +392,6 @@
             <a href="/terms/index.ar.html">terms</a>
         </footer>
         <!-- docs:footer end -->
+
     </body>
 </html>

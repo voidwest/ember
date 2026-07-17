@@ -10,20 +10,27 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>cross-family Arabic morphology probes · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="cross-family Arabic morphology probes" />
+        <meta name="twitter:description" content="ملاحظة أولية عن probing للصرف العربي عبر LLaMA وQwen وGemma." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -32,14 +39,15 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/cross-family-arabic-morphology-probes.html">en</a>
+                <a class="nav-lang" href="/research-notes/cross-family-arabic-morphology-probes.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/index.ar.html" class="ltr">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/index.ar.html" class="ltr">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
         </div>
@@ -80,7 +88,7 @@
             </p>
         </div>
 
-        <h2>الإعداد</h2>
+        <h2 id="الإعداد">الإعداد</h2>
 
         <p>
             استخرجت التمثيلات باستخدام <a href="/ember/index.ar.html"><bdi>ember</bdi></a>
@@ -102,7 +110,7 @@
             يعامل كأثر تسجيل لا كسياسة التقسيم الفعلية.
         </p>
 
-        <h2>نتائج الجذر</h2>
+        <h2 id="نتائج-الجذر">نتائج الجذر</h2>
 
         <p>
             الجذر هو المهمة الأكثر إفادة هنا لأنه يختلف بين النماذج والطبقات.
@@ -139,7 +147,7 @@
             </p>
         </div>
 
-        <h2><bdi>Gemma E2B</bdi></h2>
+        <h2 id="gemma-e2b"><bdi>Gemma E2B</bdi></h2>
 
         <p>
             <bdi>Gemma E2B</bdi> يبلغ قمة الجذر في الطبقة 14 ثم يهبط من
@@ -160,7 +168,7 @@
              loading="lazy" />
         </figure>
 
-        <h2>تشبع الوزن</h2>
+        <h2 id="تشبع-الوزن">تشبع الوزن</h2>
 
         <p>
             الوزن يصل إلى 1.000 في القمة والطبقة النهائية لكل النماذج السبعة.
@@ -169,7 +177,7 @@
             أو مقارنات حجم في هذا التشغيل.
         </p>
 
-        <h2>رسوم استكشافية</h2>
+        <h2 id="رسوم-استكشافية">رسوم استكشافية</h2>
 
         <p>
             رسوم <bdi>RSA</bdi> و<bdi>CCA</bdi> و<bdi>PCA</bdi> هنا
@@ -195,7 +203,7 @@
              loading="lazy" />
         </figure>
 
-        <h2>تحفظات</h2>
+        <h2 id="تحفظات">تحفظات</h2>
 
         <ul>
             <li>هذه بيانات أولية، وقد تعكس سهولة البيانات أو إعداد الـ <bdi>probe</bdi>.</li>
@@ -204,6 +212,7 @@
             <li><bdi>Gemma E2B</bdi> نقطة واحدة فقط، ولا تدعم اتجاه عائلي أو اتجاه حجم.</li>
             <li>دقة القمة وحدها مقياس ضعيف للحجم لأن الوزن مشبع وكثير من قمم الجذر مشبعة أيضاً.</li>
         </ul>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

@@ -10,12 +10,18 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>what LLaMA knows about Arabic morphology (and won't say) · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png" />
+        <meta name="twitter:title" content="what LLaMA knows about Arabic morphology (and won&#x27;t say)" />
+        <meta name="twitter:description" content="Corrected probing of LLaMA 3.2 1B/3B shows root and pattern variables are linearly recoverable from prompts even when generation fails. 8B results are archived pending rerun." />
+        <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/llama-probing-results.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/llama-probing-results.png" />
+        <meta property="og:image:alt" content="Research note — what LLaMA knows about Arabic morphology" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/llama-probing-results.png?v=20260717" />
+        <meta name="twitter:image:alt" content="Research note — what LLaMA knows about Arabic morphology" />
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -34,6 +40,7 @@
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -44,14 +51,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/llama-probing-results.ar.html">عربي</a>
+                <a class="nav-lang" href="/research-notes/llama-probing-results.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -70,7 +78,7 @@
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>motivation</h2>
+        <h2 id="motivation">motivation</h2>
 
         <p>the <a href="/research-notes/morphemes-without-borders.html">Alakeel et al. (2026)</a> paper left an open question: GPT-4o gets 97% on nonce Arabic root-pattern generation despite having the worst tokenizer alignment in the study (17% boundary precision). ALLAM, with the best tokenizer alignment, collapses to 20% on the same task. tokenizer quality doesn't predict morphological competence ,  so what does?</p>
 
@@ -93,7 +101,7 @@
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>the pipeline</h2>
+        <h2 id="the-pipeline">the pipeline</h2>
 
         <div class="pipeline-block">
 <pre><code>generate_stimuli.py        → stimuli/nonce_root_pattern.json  (200 stimuli)
@@ -109,10 +117,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <p>all code is in the <a href="https://github.com/voidwest/ember">ember repository</a>. the corrected 1B and 3B reruns were done locally. the 8B first-pass plot remains shown as an archived comparison, but it was not rerun with the corrected split logic because the local machine cannot run it reliably.</p>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>results</h2>
+        <h2 id="results">results</h2>
 
         <!-- ── 1B chart ────────────────────────────────────── -->
-        <h3>LLaMA 3.2 1B (16 layers, 2048-dim hidden)</h3>
+        <h3 id="llama-3-2-1b-16-layers-2048-dim-hidden">LLaMA 3.2 1B (16 layers, 2048-dim hidden)</h3>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/llama1b_probe_results.png"
@@ -131,7 +139,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <hr />
 
         <!-- ── 3B chart ────────────────────────────────────── -->
-        <h3>LLaMA 3.2 3B (28 layers, 3072-dim hidden)</h3>
+        <h3 id="llama-3-2-3b-28-layers-3072-dim-hidden">LLaMA 3.2 3B (28 layers, 3072-dim hidden)</h3>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/llama3b_probe_results.png"
@@ -157,7 +165,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <hr />
 
         <!-- ── 8B chart ────────────────────────────────────── -->
-        <h3>LLaMA 3.1 8B (archived first pass, not rerun)</h3>
+        <h3 id="llama-3-1-8b-archived-first-pass-not-rerun">LLaMA 3.1 8B (archived first pass, not rerun)</h3>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/llama8b_probe_results.png"
@@ -183,7 +191,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <hr />
 
         <!-- ── comparison grid ─────────────────────────────── -->
-        <h3>side-by-side</h3>
+        <h3 id="side-by-side">side-by-side</h3>
 
         <div class="comparison">
             <div class="col">
@@ -230,9 +238,9 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <p class="punchline">corrected 1B/3B: 0/200 correct. prompt variables are recoverable; behavior is still broken.</p>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>discussion</h2>
+        <h2 id="discussion">discussion</h2>
 
-        <h3>1. the representation–behavior gap</h3>
+        <h3 id="1-the-representation-behavior-gap">1. the representation–behavior gap</h3>
 
         <p>this is the central puzzle. the corrected 1B and 3B runs have linearly decodable root and pattern variables. root identity is high but dips in 3B mid-layers; pattern identity is essentially perfect from the first layer. the information is recoverable and structured, but the current extraction point is the last token of a prompt that explicitly contains the root and pattern.</p>
 
@@ -242,7 +250,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results are consistent with a refinement: <strong>instruction-following may be what connects recoverable task variables to output behavior.</strong> to upgrade that into a morphology claim, the next run needs prompt ablations, span-specific extraction, and controls where root or pattern text is removed or replaced.</p>
 
-        <h3>2. non-monotonic scaling</h3>
+        <h3 id="2-non-monotonic-scaling">2. non-monotonic scaling</h3>
 
         <p>"bigger is better" doesn't describe root probing. the corrected local accuracy curve goes from nearly flat (1B) to U-shaped (3B). the older 8B run may deepen the pattern, but it is not part of the corrected comparison yet. this is consistent with the hypothesis from the <a href="/research-notes/arabic-morphology-probing.html">original research plan</a>:</p>
 
@@ -252,7 +260,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>the data suggests the inflection point isn't about <em>whether</em> morphological structure is recoverable, but <strong>how</strong> it is organized. at 1B, root identity is linearly accessible at every layer. at 3B, root identity appears distributed or transformed in mid-layers into a format that logistic regression recovers less cleanly, but the information may still be present since accuracy partially recovers in deeper layers. this looks like a qualitative change in representational organization, not a failure of the model to capture the distinction. (these results are LLaMA-only; a Qwen or Mistral run would test whether the pattern generalizes.)</p>
 
-        <h3>3. pattern is a prompt-level variable</h3>
+        <h3 id="3-pattern-is-a-prompt-level-variable">3. pattern is a prompt-level variable</h3>
 
         <p>the corrected result is simpler and more sobering: pattern is basically linearly separable from the first layer in both 1B and 3B. that makes sense because the prompt literally names the pattern. this result is useful, but it is not evidence by itself that the model has performed Arabic root-pattern composition.</p>
 
@@ -264,7 +272,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <li><strong>composition still untested.</strong> to test composition, extract from the generated/expected form position, or use ablations where the pattern label is masked or replaced.</li>
         </ol>
 
-        <h3>4. archived 8B: pending rerun</h3>
+        <h3 id="4-archived-8b-pending-rerun">4. archived 8B: pending rerun</h3>
 
         <p>the 8B root-pattern CCA curve (rise to 0.345 at layer 4, then decline to 0.078) shows a pattern consistent with two-phase organization: early layers show increased subspace overlap between root and pattern probe weights, while deeper layers show increasingly separable subspaces. this hump-and-decline shape is absent at both smaller scales.</p>
 
@@ -283,7 +291,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <p>200 stimuli for 20-way classification = 10 samples per class before cross-validation. the corrected split policy avoids impossible folds, but larger stimulus sets and confidence intervals are still needed.</p>
         </div>
 
-        <h2>next steps</h2>
+        <h2 id="next-steps">next steps</h2>
 
         <ol>
             <li><strong>prompt and span controls.</strong> add <code>--probe-template</code>, root-span/pattern-span extraction, and masked-root/masked-pattern ablations. this is the main blocker before stronger morphology claims.</li>
@@ -293,7 +301,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         </ol>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>references</h2>
+        <h2 id="references">references</h2>
 
         <ol>
             <li>alakeel, qwaider, aldarmaki, alqahtani. "morphemes without borders: evaluating root-pattern morphology in Arabic tokenizers and LLMs." LREC 2026. <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
@@ -302,6 +310,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <li>alain & bengio. "understanding intermediate layers using linear classifier probes." ICLR 2017. <a href="https://arxiv.org/abs/1610.01644">arXiv:1610.01644</a></li>
             <li>conneau et al. "what you can cram into a single vector: probing sentence embeddings for linguistic properties." ACL 2018. <a href="https://arxiv.org/abs/1805.01070">arXiv:1805.01070</a></li>
         </ol>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>

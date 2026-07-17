@@ -10,18 +10,37 @@
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>When ArabicMMLU Accuracy Depends on Answer Position · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="When ArabicMMLU Accuracy Depends on Answer Position" />
+        <meta name="twitter:description" content="A small ArabicMMLU robustness audit showing that prompt formatting and option-label position can affect measured multiple-choice accuracy in small decoder-only models." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -32,14 +51,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/arabicmmlu-correct-answer-position.ar.html">عربي</a>
+                <a class="nav-lang" href="/research-notes/arabicmmlu-correct-answer-position.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -101,7 +121,7 @@
             from labels, and interacting with a parser.
         </p>
 
-        <h2>why multiple-choice evaluation can be fragile</h2>
+        <h2 id="why-multiple-choice-evaluation-can-be-fragile">why multiple-choice evaluation can be fragile</h2>
 
         <p>
             a multiple-choice benchmark looks simple: ask a question, show A/B/C/D
@@ -122,7 +142,7 @@
             are reasons to report diagnostic metadata alongside raw accuracy.
         </p>
 
-        <h2>pilot 1: prompt-format sensitivity</h2>
+        <h2 id="pilot-1-prompt-format-sensitivity">pilot 1: prompt-format sensitivity</h2>
 
         <p>
             pilot 1 used 50 ArabicMMLU source items and 6 prompt variants per
@@ -175,7 +195,7 @@
             interpreting the accuracy number.
         </p>
 
-        <h2>pilot 2: option-label and correct-position bias</h2>
+        <h2 id="pilot-2-option-label-and-correct-position-bias">pilot 2: option-label and correct-position bias</h2>
 
         <p>
             pilot 2 used 50 ArabicMMLU source items with 4 permutations per item,
@@ -217,7 +237,7 @@
             </tbody>
         </table>
 
-        <h3>accuracy by correct-answer position</h3>
+        <h3 id="accuracy-by-correct-answer-position">accuracy by correct-answer position</h3>
 
         <table>
             <thead>
@@ -236,7 +256,7 @@
             </tbody>
         </table>
 
-        <h3>prediction distribution</h3>
+        <h3 id="prediction-distribution">prediction distribution</h3>
 
         <table>
             <thead>
@@ -274,7 +294,7 @@
             diagnostic context.
         </p>
 
-        <h2>what changed with Llama-3.2-3B?</h2>
+        <h2 id="what-changed-with-llama-3-2-3b">what changed with Llama-3.2-3B?</h2>
 
         <p>
             Llama-3.2-3B improved several measurements at once. in pilot 1, it
@@ -297,7 +317,7 @@
             formatting removed parse failures.
         </p>
 
-        <h2>what this does and does not show</h2>
+        <h2 id="what-this-does-and-does-not-show">what this does and does not show</h2>
 
         <p>this pilot does show:</p>
 
@@ -322,7 +342,7 @@
             <p>a benchmark score is more useful when it comes with the interface diagnostics needed to interpret it.</p>
         </blockquote>
 
-        <h2>proposed reporting checklist</h2>
+        <h2 id="proposed-reporting-checklist">proposed reporting checklist</h2>
 
         <p>
             for small or local decoder-only models, i would not report raw
@@ -342,7 +362,7 @@
             <li>morphology-aware leakage checks as future work.</li>
         </ul>
 
-        <h2>artifacts</h2>
+        <h2 id="artifacts">artifacts</h2>
 
         <p>
             prompts, responses, score files, and summaries are available in the
@@ -353,7 +373,7 @@
             numbers on this page inspectable.
         </p>
 
-        <h2>closing</h2>
+        <h2 id="closing">closing</h2>
 
         <p>
             the main takeaway is not that one model is better than another. the
@@ -368,7 +388,7 @@
             changes in prompt format, option labels, option order, and arabic
             text normalization.
         </p>
-
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>
@@ -388,5 +408,6 @@
             <a href="/terms/">terms</a>
         </footer>
         <!-- docs:footer end -->
+
     </body>
 </html>

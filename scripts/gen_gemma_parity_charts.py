@@ -17,18 +17,20 @@ from pathlib import Path
 OUT = Path("docs/plots")
 OUT.mkdir(parents=True, exist_ok=True)
 
-# ── voidwest dark theme ──────────────────────────────────────────────
-BG = "#0d1117"
-SURFACE = "#161b22"
-BORDER = "#30363d"
-TEXT = "#c9d1d9"
-TEXT_DIM = "#8b949e"
-ACCENT = "#f78166"
-ACCENT2 = "#d2a8ff"
-GREEN = "#7ee787"
-BLUE = "#79c0ff"
-RED = "#ff7b72"
-YELLOW = "#d29922"
+# ── voidwest research-archive dark theme ─────────────────────────────
+# Keep plots on the same five core tokens as the site. Additional series
+# colors are restrained tints of the single accent or neutral ink values.
+BG = "#0d0f12"
+SURFACE = "#171a1f"
+BORDER = "#2b3037"
+TEXT = "#f2f0e9"
+TEXT_DIM = "#92979f"
+ACCENT = "#6f93ff"
+ACCENT2 = "#c5d0ff"
+GREEN = "#a5b9ff"
+BLUE = "#7f9fff"
+RED = "#f2f0e9"
+YELLOW = "#92979f"
 
 plt.rcParams.update({
     "figure.facecolor": BG,
@@ -43,10 +45,18 @@ plt.rcParams.update({
     "legend.facecolor": SURFACE,
     "legend.edgecolor": BORDER,
     "legend.labelcolor": TEXT,
+    "legend.fancybox": False,
+    "legend.framealpha": 0.94,
     "font.family": "sans-serif",
+    "font.sans-serif": ["Avenir Next", "Avenir", "DejaVu Sans", "Arial", "sans-serif"],
     "font.size": 10,
     "axes.titlesize": 13,
+    "axes.titleweight": "normal",
+    "axes.titlepad": 14,
     "axes.labelsize": 10,
+    "axes.linewidth": 0.7,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
     "savefig.facecolor": BG,
     "savefig.edgecolor": BG,
     "savefig.dpi": 150,

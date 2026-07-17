@@ -8,22 +8,29 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/wanlp-2020-embeddings.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>tokenization in Arabic embedding models · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="tokenization in Arabic embedding models" />
+        <meta name="twitter:description" content="Alkaoud &amp; Syed (WANLP 2020): morph-aware tokenization in the embedding layer — 60% smaller vocabularies, better OOV handling, SOTA without retraining." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -32,16 +39,17 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/wanlp-2020-embeddings.html">en</a>
+                <a class="nav-lang" href="/research-notes/wanlp-2020-embeddings.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/" class="ltr">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/index.ar.html" class="ltr">voidwest</a>
             &nbsp;&nbsp;
-            <a href="/research-notes/" class="ltr">research notes</a>
+            <a href="/research-notes/index.ar.html" class="ltr">research notes</a>
         </div>
 
         <h1><bdi>tokenization in Arabic embedding models</bdi></h1>
@@ -55,18 +63,18 @@
             <span class="tag key">embeddings</span>
         </div>
 
-        <h2><bdi>the claim</bdi></h2>
+        <h2 id="the-claim"><bdi>the claim</bdi></h2>
         <p>استخدام <bdi>morph-aware tokenization</bdi> في طبقة الـ <bdi>embedding</bdi> يرفع أداء مهام <bdi>Arabic NLP</bdi> بدون ما تحتاج تعيد تدريب النموذج.</p>
         <p>بدل ما تستخدم كلمات سطحية أو <bdi>BPE</bdi>، استخدم <bdi>tokens</bdi> على مستوى الـ <bdi>morpheme</bdi>. المؤلفون جربوا هالشي على <bdi>Word2Vec</bdi> و <bdi>BERT</bdi> وقاسوا الأداء على <bdi>NER</bdi> و <bdi>sentiment</bdi> و <bdi>POS tagging</bdi>.</p>
 
-        <h2><bdi>results</bdi></h2>
+        <h2 id="results"><bdi>results</bdi></h2>
         <ul>
             <li><strong>مفردات أصغر بـ 60%</strong> — الـ <bdi>tokenizer</bdi> المورفيمي يفكك الكلمة لمكوناتها الأساسية بدل ما يتعامل مع كل شكل سطحي ككلمة مستقلة.</li>
             <li><strong>تعامل أفضل مع الكلمات الجديدة</strong> — حتى لو الكلمة جديدة على النموذج، <bdi>morphemes</bdi>ها معروفة ويقدر يمثلها بدون مشكلة.</li>
             <li><strong><bdi>SOTA</bdi> من دون إعادة تدريب</strong> — <bdi>BERT</bdi> المعدل وصل <bdi>SOTA</bdi> على <bdi>datasets</bdi> عربية وهو يستخدم نموذج <bdi>pretrained</bdi> مجمد بالكامل.</li>
         </ul>
 
-        <h2><bdi>context</bdi></h2>
+        <h2 id="context"><bdi>context</bdi></h2>
         <p>السر في النظام الصرفي العربي نفسه. عندك مجموعة صغيرة ومحدودة من الجذور والأوزان واللواصق — وكل الكلمات العربية تقريباً تتكون منها. الـ <bdi>tokenizer</bdi> المورفيمي يفكك الكلمة لهالمكونات الأساسية، فتنزل المفردات الفعلية من حوالي مليون شكل سطحي إلى 20K <bdi>morpheme</bdi> فقط. طبقة الـ <bdi>embedding</bdi> في النماذج الصغيرة تاخذ جزء كبير من الـ <bdi>parameters</bdi>، فتصغير جدول الـ <bdi>embedding</bdi> — مع الاحتفاظ بالتركيب الدلالي — يعطي مكاسب واضحة.</p>
 
         <div class="callout hypothesis">
@@ -75,6 +83,7 @@
             <p>نتيجة 2020 تقول: الحقن الصرفي يساعد. نتيجة 2026 تقول: محاذاة الـ <bdi>tokenizer</bdi> ما تتنبأ بجودة التوليد. الاثنين متسقين إذا المتغير الأساسي هو <strong>حجم النموذج</strong>.</p>
             <p>على مستوى <bdi>Word2Vec/mBERT</bdi>: النموذج صغير وما يقدر يتعلم التركيب الصرفي من نفسه، فتحتاج تحطه بشكل صريح في طبقة الـ <bdi>embedding</bdi>. على مستوى <bdi>GPT-4</bdi>: النموذج كبير ويقدر يستنتج التحليل الصرفي بنفسه بقدراته الداخلية واتباع التعليمات. السؤال المفتوح: وين بالضبط تصير هالنقلة؟ وهل نقدر نوصل لها بدون <bdi>compute</bdi> مستوى <bdi>GPT-4</bdi>؟</p>
         </div>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

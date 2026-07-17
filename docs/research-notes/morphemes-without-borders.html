@@ -8,20 +8,27 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/morphemes-without-borders.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>morphemes without borders · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="morphemes without borders" />
+        <meta name="twitter:description" content="Alakeel et al. (LREC 2026): tokenizer-morpheme alignment does not predict morphological generation ability in Arabic LLMs. GPT-4o hits 97% on nonce roots with 17% boundary precision." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -32,14 +39,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/morphemes-without-borders.ar.html">عربي</a>
+                <a class="nav-lang" href="/research-notes/morphemes-without-borders.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -53,12 +61,12 @@
             <span class="tag key">LLM evaluation</span>
             <span class="tag">arXiv:2603.15773</span>
         </div>
-        <h2>the core claim</h2>
+        <h2 id="the-core-claim">the core claim</h2>
         <p>token-morpheme alignment doesn't predict whether a model can generate Arabic root-pattern forms. a tokenizer that segments morphemes cleanly doesn't guarantee good generation, and one that over-segments badly (GPT-4) doesn't prevent it.</p>
-        <h2>why Arabic morphology is a good test</h2>
+        <h2 id="why-arabic-morphology-is-a-good-test">why Arabic morphology is a good test</h2>
         <p>Arabic uses a <strong>root-and-pattern</strong> (non-concatenative) system. consonantal roots combine with templatic vowel patterns to form words. example: root <em>ktb</em> (write) + pattern <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (written). the root and pattern interleave; they aren't concatenated like prefix+stem+suffix in English, which makes Arabic a stress test for subword tokenizers (BPE, Unigram, WordPiece) built for concatenative morphology.</p>
-        <h2>experimental design</h2>
-        <h3>part 1: tokenizer morphological alignment</h3>
+        <h2 id="experimental-design">experimental design</h2>
+        <h3 id="part-1-tokenizer-morphological-alignment">part 1: tokenizer morphological alignment</h3>
         <p>measured how well each tokenizer's segments match gold-standard morpheme boundaries from CAMEL and Farasa analyzers, on MSA (ATB3) and dialectal (BOLT) Arabic. metrics:</p>
         <ul>
             <li><strong>fertility</strong>: tokens per word</li>
@@ -66,17 +74,17 @@
             <li><strong>boundary F<sub>1</sub></strong>: boundary detection precision/recall</li>
             <li><strong>MCR</strong>: morpheme coverage rate (avoids internal splits)</li>
         </ul>
-        <h3>part 2: morphological generation</h3>
+        <h3 id="part-2-morphological-generation">part 2: morphological generation</h3>
         <p>three probing tasks using real roots and nonce (invented) roots:</p>
         <ul>
             <li><strong>root-pattern real</strong>: apply a pattern to a real triliteral root</li>
             <li><strong>root-pattern nonce</strong>: same task with made-up roots (tests generalization, not memorization)</li>
             <li><strong>affix-build</strong>: concatenative affix ordering on a base word</li>
         </ul>
-        <h3>models evaluated</h3>
+        <h3 id="models-evaluated">models evaluated</h3>
         <p>ALLAM, FANAR, GPT-4, GPT-4o, LLaMA-3, Qwen-3, Cohere. FANAR uses MorphBPE (morphologically-informed tokenization); the rest use standard BPE/Unigram/WordPiece. zero-shot and one-shot prompts, tested in both English and Arabic.</p>
         <hr>
-        <h2>key findings</h2>
+        <h2 id="key-findings">key findings</h2>
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
             <p><strong>finding 1</strong></p>
@@ -103,29 +111,30 @@
             <p><strong>five error modes.</strong> pattern misapplication (root right, template wrong), root deformation (consonants changed), real-word substitution (outputting a valid word instead of applying the pattern), incorrect affix ordering, and partial truncation.</p>
         </div>
         <hr>
-        <h2>what this means for Arabic NLP research</h2>
-        <h3>1. morphology-aware tokenizers may not be worth the complexity</h3>
+        <h2 id="what-this-means-for-arabic-nlp-research">what this means for Arabic NLP research</h2>
+        <h3 id="1-morphology-aware-tokenizers-may-not-be-worth-the-complexity">1. morphology-aware tokenizers may not be worth the complexity</h3>
         <p>language-specific tokenizers (MorphBPE, Splinter, etc.) are expensive to build. large-scale pretraining and instruction tuning seem to compensate, or even outperform them. GPT-4o's tokenizer over-segments Arabic (fertility &gt; 3, boundary precision 17%) yet nails nonce patterns 97% of the time.</p>
-        <h3>2. instruction-following matters more than tokenizer design</h3>
+        <h3 id="2-instruction-following-matters-more-than-tokenizer-design">2. instruction-following matters more than tokenizer design</h3>
         <p>compositional reasoning + instruction-following replaces explicit morphological parsing. models that follow instructions apply morphological rules consistently. models that can't follow instructions fail regardless of tokenizer quality.</p>
-        <h3>3. Arabic-centric models have room to grow</h3>
+        <h3 id="3-arabic-centric-models-have-room-to-grow">3. Arabic-centric models have room to grow</h3>
         <p>ALLAM and FANAR underperformed GPT-4 and GPT-4o on every task despite more Arabic training data. scale and tuning methodology seem to outweigh language-specific data advantages in current LLMs.</p>
-        <h3>4. real-word-only benchmarks hide failure modes</h3>
+        <h3 id="4-real-word-only-benchmarks-hide-failure-modes">4. real-word-only benchmarks hide failure modes</h3>
         <p>ALLAM scored 67% on real roots, 20% on nonce. a 47-point gap. nonce probes are the only way to tell memorization from genuine productivity. benchmarks without nonce conditions give an incomplete picture.</p>
-        <h3>5. future directions</h3>
+        <h3 id="5-future-directions">5. future directions</h3>
         <ul>
             <li><strong>tokenization-agnostic morphology learning</strong>: teach LLMs morphology through data and tuning, not custom tokenizers</li>
             <li><strong>adaptive/hybrid tokenization</strong>: character-level processing only when morphologically needed</li>
             <li><strong>controlled experiments</strong>: isolate tokenizer design from architecture, data, and tuning</li>
         </ul>
         <hr>
-        <h2>limitations</h2>
+        <h2 id="limitations">limitations</h2>
         <ul>
             <li>generation task conflates morphology with instruction-following; models that can't follow format instructions score lower regardless of morphological competence</li>
             <li>correlation can't prove causation: architectures, data, and tuning are confounded</li>
             <li>only 7 models, 13 patterns; more data would help</li>
             <li>dialectal Arabic (BOLT) tested for alignment but not generation</li>
         </ul>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>

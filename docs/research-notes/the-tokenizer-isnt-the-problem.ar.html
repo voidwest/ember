@@ -8,22 +8,29 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/the-tokenizer-isnt-the-problem.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>the tokenizer isn't the problem · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="the tokenizer isn&#x27;t the problem" />
+        <meta name="twitter:description" content="What I learned reading Arabic NLP papers for a week. Why GPT-4o hits 97% on nonce morphology with the worst tokenizer alignment — and what it means for Arabic NLP." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -32,16 +39,17 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/the-tokenizer-isnt-the-problem.html">en</a>
+                <a class="nav-lang" href="/research-notes/the-tokenizer-isnt-the-problem.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/" class="ltr">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/index.ar.html" class="ltr">voidwest</a>
             &nbsp;&nbsp;
-            <a href="/research-notes/" class="ltr">research notes</a>
+            <a href="/research-notes/index.ar.html" class="ltr">research notes</a>
         </div>
 
         <h1><bdi>the tokenizer isn't the problem</bdi></h1>
@@ -54,7 +62,7 @@
         <p>بنيت <bdi>inference engine</bdi> بـ <bdi>Rust</bdi>، نشرته، وبعدها كتبت بوست على <bdi>LinkedIn</bdi> إني أبغى أتعمق في <bdi>Arabic tokenization</bdi>.</p>
         <p>وفعلاً غصت فيه. اللي طلعت به ما كان اللي توقعته.</p>
 
-        <h2><bdi>why Arabic is a real stress test for tokenizers</bdi></h2>
+        <h2 id="why-arabic-is-a-real-stress-test-for-tokenizers"><bdi>why Arabic is a real stress test for tokenizers</bdi></h2>
 
         <p>العربي يستخدم <strong>نظام الجذر والوزن</strong>. جذر من 3 حروف مثل <em>k-t-b</em> (كتب) يندمج مع قوالب صوتية وينتج: <em>kataba</em> (هو كتب)، <em>kitaab</em> (كتاب)، <em>maktab</em> (مكتب)، <em>maktūb</em> (مكتوب)، <em>yaktubu</em> (هو يكتب). الجذر ما يظهر ككلمة مستقلة أبداً — دايم متداخل داخل الشكل السطحي.</p>
 
@@ -63,7 +71,7 @@
         <p><bdi>BPE</bdi> مصمم يدمج سلاسل حروف متجاورة بناءً على التكرار. المعنى في العربي يعيش في تداخل الجذر والوزن غير المتصل. الاثنين متعارضين هيكلياً.</p>
         <p>ضيف الحركات الاختيارية، عدم ثبات المسافات، وتعدد العربي نفسه (فصحى، مصري، خليجي، شامي)، وعندك مشكلة معقدة فعلاً.</p>
 
-        <h2><bdi>the obvious hypothesis: fix the tokenizer</bdi></h2>
+        <h2 id="the-obvious-hypothesis-fix-the-tokenizer"><bdi>the obvious hypothesis: fix the tokenizer</bdi></h2>
 
         <p>جربوا هذا كثير:</p>
 
@@ -75,7 +83,7 @@
 
         <p>فرضية معقولة: لو قطعت الـ morphemes صح قبل ما يشوفها النموذج، مفروض يتعلم الصرف أفضل.</p>
 
-        <h2><bdi>then a 2026 paper broke the assumption</bdi></h2>
+        <h2 id="then-a-2026-paper-broke-the-assumption"><bdi>then a 2026 paper broke the assumption</bdi></h2>
 
         <div class="meta">
             <div class="paper-title">Morphemes Without Borders: Evaluating Root-Pattern Morphology in Arabic Tokenizers and LLMs</div>
@@ -100,7 +108,7 @@
 
         <p>استنتاج الورقة: <strong>الكفاءة الصرفية تنقاس بالتعميم، مو بجودة التقطيع السطحي.</strong> النموذج يقدر يعوض ضعف الـ tokenizer بقدراته الداخلية وقدرته على فهم التعليمات.</p>
 
-        <h2><bdi>what this means</bdi></h2>
+        <h2 id="what-this-means"><bdi>what this means</bdi></h2>
 
         <p>نتيجة 2020 (morph-aware tokenization يفيد) ونتيجة 2026 (محاذاة الـ tokenizer ما تفرق) مو متناقضين. الفرق يعتمد على الحجم:</p>
 
@@ -115,7 +123,7 @@
         <p>الفجوة الحقيقية مو في الـ <bdi>tokenizer</bdi> ولا حتى طبقة الـ <bdi>embedding</bdi>. يمكن في <strong><bdi>internal representations</bdi></strong> اللي يبنيها النموذج داخلياً.</p>
         <p><bdi>GPT-4</bdi> و <bdi>GPT-4o</bdi> يسوون شيء <bdi>ALLAM</bdi> ما يسويه، مع إن <bdi>ALLAM</bdi> عنده بيانات تدريب عربية أكثر و <bdi>tokenizer</bdi> أفضل. وش هو هذا الشيء؟</p>
 
-        <h2><bdi>what's next</bdi></h2>
+        <h2 id="whats-next"><bdi>what's next</bdi></h2>
 
         <p>بروح أشوف زاوية الـ internal activation: <a href="/research-notes/arabic-morphology-probing.ar.html">كيف تبدو التمثيلات فعلاً</a> داخل نماذج تنجح ضد نماذج تفشل على Arabic nonce words؟</p>
 
@@ -133,13 +141,14 @@
 
         <hr>
 
-        <h2><bdi>papers referenced</bdi></h2>
+        <h2 id="papers-referenced"><bdi>papers referenced</bdi></h2>
         <ol>
             <li>alakeel, qwaider, aldarmaki, alqahtani, "morphemes without borders", LREC 2026, <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
             <li>alkaoud & syed, "on the importance of tokenization in Arabic embedding models", WANLP 2020, <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a></li>
             <li>attia، "Arabic tokenization system"، ~2007 (قواعدي، finite-state)</li>
             <li>alrefaie et al., "exploring tokenization strategies and vocabulary sizes for enhanced Arabic language models", <a href="https://arxiv.org/abs/2403.11130">arXiv:2403.11130</a>, 2024</li>
         </ol>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

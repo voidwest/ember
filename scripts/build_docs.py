@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import re
 import sys
+from html import escape
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
-STYLESHEET_VERSION = "20260623"
+STYLESHEET_VERSION = "20260717"
+SOCIAL_IMAGE_VERSION = "20260717"
 
 MANAGED_HEAD_RE = re.compile(
     r"\n[ \t]*<!-- docs:head-scripts start -->.*?[ \t]*<!-- docs:head-scripts end -->\n?",
@@ -50,6 +52,13 @@ HEAD_CLOSE_RE = re.compile(r"\n\s*</head>")
 STYLESHEET_RE = re.compile(r'(\n[ \t]*<link rel="stylesheet" href="/style\.css(?:\?v=\d+)?" />)')
 BODY_OPEN_RE = re.compile(r"(\n[ \t]*<body>)\s*\n")
 BODY_CLOSE_RE = re.compile(r"\n\s*</body>")
+SKIP_LINK_RE = re.compile(
+    r'(\n[ \t]*<a class="skip-link" href="#main-content">.*?</a>)'
+    r'[ \t]*\n(?:[ \t]*\n)*'
+)
+TWITTER_CARD_RE = re.compile(
+    r'(<meta name="twitter:card" content=")[^"]+(" />)'
+)
 
 
 THEME_SCRIPT = """\
@@ -76,7 +85,9 @@ HEAD_SCRIPTS = """\
 
 
 def is_arabic(text: str) -> bool:
-    return 'lang="ar"' in text or 'dir="rtl"' in text
+    return bool(
+        re.search(r'<html\b[^>]*(?:lang="ar"|dir="rtl")', text, re.IGNORECASE)
+    )
 
 
 def section_for(path: Path) -> str:
@@ -140,14 +151,44 @@ def og_slug_for(path: Path) -> str:
     return "voidwest"
 
 
-def og_image_html(path: Path) -> str:
-    url = f"https://voidwest.dev/og/{og_slug_for(path)}.png"
+OG_IMAGE_ALT = {
+    "voidwest": "voidwest research archive — systems, ML, Arabic NLP, and technical writing",
+    "ember": "Ember research infrastructure — hidden-state extraction, probing, and reproducible experiments",
+    "research-notes": "voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals",
+    "llama-probing-results": "Research note — what LLaMA knows about Arabic morphology",
+    "simd-qwen-gemma": "Ember engineering record — SIMD kernels, Qwen 3, and Gemma 4",
+}
+
+
+def meta_content(text: str, property_name: str) -> str:
+    match = re.search(
+        rf'<meta property="{re.escape(property_name)}" content="([^"]*)" />',
+        text,
+    )
+    return escape(match.group(1), quote=True) if match else ""
+
+
+def og_image_html(path: Path, text: str) -> str:
+    slug = og_slug_for(path)
+    url = (
+        f"https://voidwest.dev/og/{slug}.png"
+        f"?v={SOCIAL_IMAGE_VERSION}"
+    )
+    alt = escape(OG_IMAGE_ALT[slug], quote=True)
+    title = meta_content(text, "og:title")
+    description = meta_content(text, "og:description")
     return f"""\
         <!-- docs:og-image start -->
+        <meta name="twitter:title" content="{title}" />
+        <meta name="twitter:description" content="{description}" />
         <meta property="og:image" content="{url}" />
+        <meta property="og:image:secure_url" content="{url}" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
+        <meta property="og:image:alt" content="{alt}" />
         <meta name="twitter:image" content="{url}" />
+        <meta name="twitter:image:alt" content="{alt}" />
         <!-- docs:og-image end -->
 """
 
@@ -156,6 +197,9 @@ def nav_html(path: Path, text: str) -> str:
     ar = is_arabic(text)
     current = section_for(path)
     lang_text = "en" if ar else "عربي"
+    lang_code = "en" if ar else "ar"
+    lang_label = "Read this page in English" if ar else "اقرأ هذه الصفحة بالعربية"
+    nav_label = "التنقل الرئيسي" if ar else "Primary"
     links = [
         ("ember", "ember", localized_href("ember", ar)),
         ("research", "research notes", localized_href("research", ar)),
@@ -172,13 +216,13 @@ def nav_html(path: Path, text: str) -> str:
     )
     return f"""\
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="{nav_label}">
             <a class="brand" href="{localized_href('home', ar)}"{current_attr('home')}>voidwest</a>
             <div class="nav-links">
 {link_lines}
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="{alternate_href(path, ar)}">{lang_text}</a>
+                <a class="nav-lang" href="{alternate_href(path, ar)}" lang="{lang_code}" hreflang="{lang_code}" aria-label="{lang_label}">{lang_text}</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
@@ -231,7 +275,15 @@ def update_theme_script(text: str) -> str:
 
 def update_og_image(path: Path, text: str) -> str:
     text = MANAGED_OG_RE.sub("\n", text)
-    return STYLESHEET_RE.sub(r"\1\n" + og_image_html(path).rstrip(), text, count=1)
+    return STYLESHEET_RE.sub(
+        r"\1\n" + og_image_html(path, text).rstrip(),
+        text,
+        count=1,
+    )
+
+
+def update_twitter_card(text: str) -> str:
+    return TWITTER_CARD_RE.sub(r'\1summary_large_image\2', text, count=1)
 
 
 def update_stylesheet(text: str) -> str:
@@ -242,7 +294,14 @@ def update_stylesheet(text: str) -> str:
 def update_nav(path: Path, text: str) -> str:
     text = MANAGED_NAV_RE.sub("\n", text)
     text = NAV_RE.sub("\n", text, count=1)
-    return BODY_OPEN_RE.sub(r"\1\n" + nav_html(path, text) + "\n", text, count=1)
+    generated = nav_html(path, text)
+    if SKIP_LINK_RE.search(text):
+        return SKIP_LINK_RE.sub(
+            lambda match: match.group(1) + "\n" + generated.rstrip() + "\n\n",
+            text,
+            count=1,
+        )
+    return BODY_OPEN_RE.sub(r"\1\n" + generated + "\n", text, count=1)
 
 
 def update_footer(text: str) -> str:
@@ -257,6 +316,7 @@ def update_file(path: Path) -> bool:
     new = update_theme_script(new)
     new = update_stylesheet(new)
     new = update_og_image(path, new)
+    new = update_twitter_card(new)
     new = update_nav(path, new)
     new = update_footer(new)
     if new == old:

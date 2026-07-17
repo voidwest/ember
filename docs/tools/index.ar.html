@@ -8,22 +8,29 @@
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://voidwest.dev/tools/index.ar.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>tools · voidwest</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/voidwest.png" />
+        <meta name="twitter:title" content="tools · voidwest" />
+        <meta name="twitter:description" content="Small technical projects, local tooling, and research-adjacent systems." />
+        <meta property="og:image" content="https://voidwest.dev/og/voidwest.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/voidwest.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png" />
+        <meta property="og:image:alt" content="voidwest research archive — systems, ML, Arabic NLP, and technical writing" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research archive — systems, ML, Arabic NLP, and technical writing" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -32,12 +39,13 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/tools/">en</a>
+                <a class="nav-lang" href="/tools/" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
+        <main id="main-content" class="archive" tabindex="-1">
 <div class="back">
             <a href="/index.ar.html" class="ltr">voidwest</a>
         </div>
@@ -54,6 +62,7 @@
                 <div class="name">
                     <a href="/ember/index.ar.html" class="ltr">ember</a>
                 </div>
+                <div class="record-meta">research infrastructure · active / 2026</div>
                 <div class="desc">
                     محرك <bdi>LLM</bdi> و probing على <bdi>CPU</bdi> بلغة
                     <bdi>Rust</bdi>: تحميل <bdi>GGUF</bdi>، مسارات كمّية،
@@ -73,6 +82,7 @@
                 <div class="name">
                     <a href="https://github.com/voidwest/devdocs-v2" class="ltr">devdocs-v2</a>
                 </div>
+                <div class="record-meta">research tooling · source available</div>
                 <div class="desc">
                     pipeline محلي للبحث داخل ملفات <bdi>PDF</bdi> باستخدام
                     embeddings محلية، vector storage، و inference محلي.
@@ -86,6 +96,7 @@
                 <div class="name">
                     <a href="https://github.com/voidwest/mini-os" class="ltr">mini-os</a>
                 </div>
+                <div class="record-meta">systems engineering · source available</div>
                 <div class="desc">
                     kernel صغير لـ <bdi>x86_64</bdi> بلغة <bdi>Rust</bdi> مع
                     paging، heap allocation، async executor، ramdisk، و shell.
@@ -95,6 +106,7 @@
                 </div>
             </div>
         </div>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>

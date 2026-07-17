@@ -8,20 +8,27 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/the-tokenizer-isnt-the-problem.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>the tokenizer isn't the problem · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="the tokenizer isn&#x27;t the problem" />
+        <meta name="twitter:description" content="What I learned reading Arabic NLP papers for a week. Why GPT-4o hits 97% on nonce morphology with the worst tokenizer alignment — and what it means for Arabic NLP." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -32,14 +39,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/the-tokenizer-isnt-the-problem.ar.html">عربي</a>
+                <a class="nav-lang" href="/research-notes/the-tokenizer-isnt-the-problem.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -53,7 +61,7 @@
 
         <p>i built an inference engine in rust, shipped it, then said in a linkedin post i wanted to look into Arabic tokenization. so i actually did. what follows is what i found, and it wasn't what i expected.</p>
 
-        <h2>why Arabic is a real stress test for tokenizers</h2>
+        <h2 id="why-arabic-is-a-real-stress-test-for-tokenizers">why Arabic is a real stress test for tokenizers</h2>
 
         <p>Arabic uses a <strong>root-and-pattern (non-concatenative) morphological system</strong>. a 3-consonant root like <em>k-t-b</em> (write) combines with templatic vowel patterns to produce: <em>kataba</em> (he wrote), <em>kitaab</em> (book), <em>maktab</em> (office), <em>maktūb</em> (written), <em>yaktubu</em> (he writes). the root never appears as a standalone word, it's always embedded inside a surface form.</p>
 
@@ -61,7 +69,7 @@
 
         <p>BPE was designed for frequency-based merging of contiguous character sequences. Arabic's meaning lives in non-contiguous root-pattern interleaving. these are structurally incompatible. add optional diacritics, no consistent spacing, and diglossia (MSA vs Egyptian vs Gulf vs Levantine), and you have a genuinely hard problem.</p>
 
-        <h2>the obvious hypothesis: fix the tokenizer</h2>
+        <h2 id="the-obvious-hypothesis-fix-the-tokenizer">the obvious hypothesis: fix the tokenizer</h2>
 
         <p>the field tried this. a lot:</p>
 
@@ -73,7 +81,7 @@
 
         <p>reasonable assumption: if you segment morphemes correctly before the model sees them, it should learn morphological structure better.</p>
 
-        <h2>then a 2026 paper broke the assumption</h2>
+        <h2 id="then-a-2026-paper-broke-the-assumption">then a 2026 paper broke the assumption</h2>
 
         <div class="meta">
             <div class="paper-title">Morphemes Without Borders: Evaluating Root-Pattern Morphology in Arabic Tokenizers and LLMs</div>
@@ -98,7 +106,7 @@
 
         <p>the paper's conclusion: <strong>morphological competence should be defined by productive generalization, not surface segmentation alignment.</strong> compositional reasoning + instruction-following substitutes for explicit morphological parsing.</p>
 
-        <h2>what this means</h2>
+        <h2 id="what-this-means">what this means</h2>
 
         <p>the 2020 result (morphology-aware tokenization helps) and the 2026 result (tokenizer alignment doesn't predict generation) aren't fully contradictory. they're scale-dependent:</p>
 
@@ -112,7 +120,7 @@
 
         <p>the real gap might not be at the tokenizer or even the embedding layer, it might be in the <strong>internal representations</strong> the model builds. GPT-4 and GPT-4o are doing something ALLAM isn't, despite ALLAM having more Arabic training data and a better tokenizer. what is it?</p>
 
-        <h2>what's next</h2>
+        <h2 id="whats-next">what's next</h2>
 
         <p>i'm going to look at the internal activation angle, <a href="/research-notes/arabic-morphology-probing.html">what do the representations actually look like</a> inside models that succeed vs fail on nonce Arabic words?</p>
 
@@ -130,13 +138,14 @@
 
         <hr>
 
-        <h2>papers referenced</h2>
+        <h2 id="papers-referenced">papers referenced</h2>
         <ol>
             <li>alakeel, qwaider, aldarmaki, alqahtani, "morphemes without borders", LREC 2026, <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>
             <li>alkaoud & syed, "on the importance of tokenization in Arabic embedding models", WANLP 2020, <a href="https://aclanthology.org/2020.wanlp-1.2/">ACL Anthology</a></li>
             <li>attia, "Arabic tokenization system", ~2007 (rule-based, finite-state)</li>
             <li>alrefaie et al., "exploring tokenization strategies and vocabulary sizes for enhanced Arabic language models", <a href="https://arxiv.org/abs/2403.11130">arXiv:2403.11130</a>, 2024</li>
         </ol>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>

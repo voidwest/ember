@@ -8,20 +8,27 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/arabic-morphology-probing.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>probing Arabic morphology inside LLMs · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="probing Arabic morphology inside LLMs" />
+        <meta name="twitter:description" content="A research plan: using ember for activation probing to find where and how models learn Arabic root-pattern morphology. Following the open question from Alakeel et al. (2026)." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -32,14 +39,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/arabic-morphology-probing.ar.html">عربي</a>
+                <a class="nav-lang" href="/research-notes/arabic-morphology-probing.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -61,7 +69,7 @@
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>motivation</h2>
+        <h2 id="motivation">motivation</h2>
 
         <p>the 2026 paper leaves an open question: morphological competence in LLMs is defined by productive generalization, not tokenizer alignment, but we don't know <em>how</em> the model achieves it. the authors suggest "compositional reasoning + instruction-following" as the mechanism, but that's a behavioral description, not a mechanistic one.</p>
 
@@ -76,9 +84,9 @@
         <p><strong>one caveat on model selection.</strong> GPT-2, LLaMA 3, and ALLAM differ in architecture, training data composition, and scale simultaneously — any comparison across them confounds all three. within this set, the LLaMA 3 family (1B→3B→8B) provides the cleanest scaling curve: same architecture, same training distribution, different sizes. the GPT-2 and ALLAM comparisons are still informative for cross-family patterns (e.g. whether probe accuracy and layer geometry generalize), but claims about scaling effects specifically should be grounded in the LLaMA curve.</p>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>experimental design</h2>
+        <h2 id="experimental-design">experimental design</h2>
 
-        <h3>stimuli: root-pattern nonce pairs</h3>
+        <h3 id="stimuli-root-pattern-nonce-pairs">stimuli: root-pattern nonce pairs</h3>
 
         <p>build a stimulus set of ~200 nonce triliteral roots (consonant triplets that don't exist in Arabic, filtered against a lexicon) crossed with ~10 common patterns (<em>fa3ala</em>, <em>maf3ūl</em>, <em>yaf3alu</em>, <em>fā3il</em>, etc.). each stimulus is: "apply pattern X to root Y" → expected surface form. example:</p>
 
@@ -89,7 +97,7 @@
 
         <p>the gold-standard dataset from Alakeel et al. is public (<a href="https://github.com/YaraAlakeel/morphems_without_borders">github</a>). start there, extend with more patterns if needed.</p>
 
-        <h3>probing setup</h3>
+        <h3 id="probing-setup">probing setup</h3>
 
         <p>for each stimulus:</p>
 
@@ -100,7 +108,7 @@
             <li><strong>record correctness</strong>: does the argmax token match the expected surface form?</li>
         </ol>
 
-        <h3>analysis questions</h3>
+        <h3 id="analysis-questions">analysis questions</h3>
 
         <div class="callout open-question">
             <div class="label">Open Question</div>
@@ -133,9 +141,9 @@
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>implementation in ember</h2>
+        <h2 id="implementation-in-ember">implementation in ember</h2>
 
-        <h3>what needs to change</h3>
+        <h3 id="what-needs-to-change">what needs to change</h3>
 
         <p>ember already has everything needed for the base inference. the probing pipeline needs two additions:</p>
 
@@ -144,7 +152,7 @@
             <li><strong>probe training harness</strong>, a small Rust module or Python script that takes the saved activations, fits logistic regression probes (via <span class="mono">linfa</span> or numpy), and reports accuracy per layer. this doesn't need to be fast, we're running ~200 stimuli, not 200K.</li>
         </ol>
 
-        <h3>models to test</h3>
+        <h3 id="models-to-test">models to test</h3>
 
         <table>
             <tr><th>model</th><th>params</th><th>why</th></tr>
@@ -154,31 +162,31 @@
             <tr><td>LLaMA 3 8B</td><td>8B</td><td>largest feasible on consumer CPU. where does the inflection happen?</td></tr>
         </table>
 
-        <h3>compute requirements</h3>
+        <h3 id="compute-requirements">compute requirements</h3>
 
         <p>this is CPU-friendly by design. a single forward pass on GPT-2 (124M params) takes ~50ms on modern x86. 200 stimuli × 12 layers × 2 snapshots = 4,800 activation vectors per model. probe training on 4,800 samples is seconds in numpy. the whole pipeline for GPT-2 runs in under a minute. LLaMA 3 8B with Q4_K quantization fits in ~5 GB RAM, feasible on a laptop.</p>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>expected results & interpretation</h2>
+        <h2 id="expected-results-interpretation">expected results & interpretation</h2>
 
-        <h3>if GPT-4 succeeds but we can't probe it</h3>
+        <h3 id="if-gpt-4-succeeds-but-we-cant-probe-it">if GPT-4 succeeds but we can't probe it</h3>
 
         <p>GPT-4's weights aren't accessible. the probing plan as written works on <em>open-weight models</em>. the 2026 paper's result (GPT-4o 97% nonce accuracy) provides the ceiling. the probing experiment asks: do open-weight models at various scales show the same internal organization that presumably enables GPT-4o's performance? we're looking for the <em>emergence</em> of the right representations, not replicating GPT-4o.</p>
 
-        <h3>if probes are near chance everywhere</h3>
+        <h3 id="if-probes-are-near-chance-everywhere">if probes are near chance everywhere</h3>
 
         <p>this means morphological information isn't linearly decodable from individual layer activations, it may be distributed across layers, or non-linear. follow-up: non-linear probes (MLP), or inter-layer representational similarity analysis (CKA).</p>
 
-        <h3>if root and pattern are in the same subspace</h3>
+        <h3 id="if-root-and-pattern-are-in-the-same-subspace">if root and pattern are in the same subspace</h3>
 
         <p>the model might be encoding the <em>combined</em> root+pattern as a single fused representation rather than disentangling them. this would mean the model learned a lookup table rather than a compositional rule, which is consistent with ALLAM's behavior (good on real roots, collapses on nonce).</p>
 
-        <h3>if the inflection point is between 1B and 3B</h3>
+        <h3 id="if-the-inflection-point-is-between-1b-and-3b">if the inflection point is between 1B and 3B</h3>
 
         <p>this is the most actionable result. it means explicit morphological injection (tokenizer-side, embedding-side) might only help below ~1B parameters. above that, the model learns it. this quantifies the tradeoff and tells researchers when to invest in language-specific tokenization vs when to scale.</p>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>related work to cite</h2>
+        <h2 id="related-work-to-cite">related work to cite</h2>
 
         <ul>
             <li>alakeel et al. (2026), the paper that frames the question</li>
@@ -190,7 +198,7 @@
         </ul>
 
         <!-- ════════════════════════════════════════════════ -->
-        <h2>next steps</h2>
+        <h2 id="next-steps">next steps</h2>
 
         <ol>
             <li><strong>add activation capture to ember</strong>, ~30 lines in <span class="mono">model.rs</span>. a new method <span class="mono">forward_with_activations</span> that returns hidden states alongside logits.</li>
@@ -199,6 +207,7 @@
             <li><strong>run LLaMA 3 1B/3B probes</strong>, the interesting comparison. where's the inflection?</li>
             <li><strong>write up</strong>, if the scaling curve is clear, this is a short paper (findings or workshop). 6 pages, clean story: "here's what the 2026 paper showed at the behavioral level; here's what's happening inside the model to explain it."</li>
         </ol>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>

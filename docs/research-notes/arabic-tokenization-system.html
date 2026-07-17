@@ -8,20 +8,27 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/arabic-tokenization-system.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>arabic tokenization system · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="arabic tokenization system" />
+        <meta name="twitter:description" content="Attia (~2007): a modular finite-state Arabic tokenizer with a clitic guesser, morphological analyzer, and disambiguation via the kashida. A guess-and-filter design." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -32,14 +39,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/arabic-tokenization-system.ar.html">عربي</a>
+                <a class="nav-lang" href="/research-notes/arabic-tokenization-system.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/">voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
         </div>
@@ -52,32 +60,33 @@
             <span class="tag key">finite-state</span>
             <span class="tag key">morphology</span>
         </div>
-        <h2>the idea</h2>
+        <h2 id="the-idea">the idea</h2>
         <p>a modular, finite-state tokenizer for Arabic built on top of the XFST platform (Beesley &amp; Karttunen, 2003). unlike statistical tokenizers that learn from data, this is a hand-engineered system with explicit rules for clitic detection, morphological analysis, and token disambiguation.</p>
-        <h2>architecture</h2>
-        <h3>three tokenization models</h3>
+        <h2 id="architecture">architecture</h2>
+        <h3 id="three-tokenization-models">three tokenization models</h3>
         <p><strong>model 1: tokenization without a morphological analyzer.</strong> uses a clitic guesser, a finite-state transducer with hand-written patterns for proclitic prefixes and enclitic suffixes. strips all possible clitic combinations. a separate small-scale lexc transducer handles detached clitic forms. this is <strong>robust</strong>, works on any word regardless of dictionary coverage, and <strong>modular</strong>, tokenization and morphology are independent components. the tradeoff: the guesser is non-deterministic, producing combinatorial ambiguity (a three-word sentence can yield 8 tokenization paths).</p>
         <p><strong>model 2: tokenization with morphological analyzer hints.</strong> the stem is constrained to entries in the morphological analyzer. not implemented in the paper; described as a future refinement that would reduce ambiguity at the cost of requiring lexicon coverage.</p>
         <p><strong>model 3: tokenization dependent on the morphological analyzer.</strong> the stem is constrained to actual entries in the morphological analyzer's lexicon rather than guessed. reduces ambiguity but loses robustness, unknown words can't be tokenized.</p>
-        <h2>key engineering details</h2>
-        <h3>preprocessing: whitespace normalization</h3>
+        <h2 id="key-engineering-details">key engineering details</h2>
+        <h3 id="preprocessing-whitespace-normalization">preprocessing: whitespace normalization</h3>
         <p>Arabic text uses multiple whitespace characters (spaces, newlines, Arabic-specific space variants) inconsistently, especially around punctuation and clitics. a finite-state normalizer collapses whitespace to a canonical form before tokenization runs.</p>
-        <h3>clitic demarcation with the cashida</h3>
+        <h3 id="clitic-demarcation-with-the-cashida">clitic demarcation with the cashida</h3>
         <p>the Arabic elongation line (<em>cashida</em>, <span class="mono">ـ</span>) is repurposed as a disambiguation marker. when the tokenizer splits enclitics, it inserts a cashida between the stem and the clitic. this resolves ambiguity between proclitics and homographic enclitics, and between morphologically-attached clitics and free-standing homographs. example: <em>kitabuhum</em> (their book) becomes <em>kitab@ـhum</em>, where the cashida signals the pronoun is attached, not a separate word. clever use of existing typographic infrastructure.</p>
-        <h3>post-processing: token filter</h3>
+        <h3 id="post-processing-token-filter">post-processing: token filter</h3>
         <p>a finite-state transducer composed on top of the core tokenizer marks undesired tokenizations with a <span class="mono">+undesired</span> tag. it imports lists from the MWE transducer (curfew → forbidden + walking) and a hand-curated set of improbable splits (e.g., <em>ba'd</em> (after) being split as <em>bi</em> + <em>'add</em>). the filter doesn't query for morpho-syntactic information, it matches surface forms against known undesirable patterns.</p>
-        <h3>multiword expressions</h3>
+        <h3 id="multiword-expressions">multiword expressions</h3>
         <p>MWEs like <em>hazr al-tajawwul</em> (curfew, lit. "forbidding of walking") are handled by keeping internal spaces intact, the tokenizer outputs them as single tokens. a dedicated MWE transducer supplies the list of expressions, and the token filter blocks the compositional analyses that a non-deterministic tokenizer would otherwise produce.</p>
         <div class="callout observation">
             <div class="label">Observation</div>
             <p><strong>key insight</strong></p>
             <p><strong>tokenization can be modular.</strong> by separating clitic detection (guesser) from morphological analysis (lexicon), the system gains robustness and maintainability. the guesser handles unknown words; the filter cleans up the noise. this is the opposite of "tokenization baked into the model" approaches and prefigures the modular NLP pipeline debates still active today.</p>
         </div>
-        <h2>relevance today</h2>
-        <h3>finite-state approaches are alive in constrained settings</h3>
+        <h2 id="relevance-today">relevance today</h2>
+        <h3 id="finite-state-approaches-are-alive-in-constrained-settings">finite-state approaches are alive in constrained settings</h3>
         <p>neural tokenizers have largely replaced hand-written finite-state systems for Arabic. but the structural problems haven't changed: Arabic's clitic stacking still over-segments BPE tokenizers (GPT-4o's boundary precision was 17%), and the guess-and-filter architecture anticipates modern two-stage pipelines (over-generate + rerank). the cashida trick is still used in Arabic NLP preprocessing pipelines.</p>
-        <h3>the modularity lesson</h3>
+        <h3 id="the-modularity-lesson">the modularity lesson</h3>
         <p>the cleanest insight from this paper isn't any specific algorithm, it's the argument that tokenization should be separable from morphological analysis. the guesser handles the surface string problem (where do the clitic boundaries go?); the analyzer handles the linguistic problem (what does this stem mean?). conflating them produces systems that fail on unknown words. this lesson didn't make it into neural NLP, where tokenization is baked into model architectures and changed only by retraining.</p>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>

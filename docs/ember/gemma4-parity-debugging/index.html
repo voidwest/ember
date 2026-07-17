@@ -8,14 +8,20 @@
     <meta property="og:type" content="article" />
     <meta property="og:url" content="https://voidwest.dev/ember/gemma4-parity-debugging/" />
     <meta property="og:site_name" content="voidwest" />
-    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:card" content="summary_large_image" />
     <title>when the logits lie · gemma 4 gguf debugging</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta name="twitter:title" content="when the logits lie: gemma 4 gguf debugging" />
+        <meta name="twitter:description" content="Arabic went in. English and Japanese came out. Tracking down the Gemma 4 GGUF parity gap in Ember, from flat logits through the ablation graveyard to the discovery that RMSNorm weights were amplifying small numerical drift across 35 layers." />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/ember.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:alt" content="Ember research infrastructure — hidden-state extraction, probing, and reproducible experiments" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png?v=20260717" />
+        <meta name="twitter:image:alt" content="Ember research infrastructure — hidden-state extraction, probing, and reproducible experiments" />
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -34,6 +40,7 @@
         <!-- docs:theme-script end -->
     </head>
   <body>
+        <a class="skip-link" href="#main-content">Skip to content</a>
         <!-- docs:nav start -->
         <nav class="site-nav" aria-label="Primary">
             <a class="brand" href="/">voidwest</a>
@@ -44,14 +51,15 @@
                 <a href="/terms/">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/index.ar.html">عربي</a>
+                <a class="nav-lang" href="/index.ar.html" lang="ar" hreflang="ar" aria-label="اقرأ هذه الصفحة بالعربية">عربي</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-    <div class="back">
-      <a href="/">← voidwest</a>
+        <main id="main-content" class="dossier" tabindex="-1">
+<div class="back">
+      <a href="/">voidwest</a>
       &nbsp;&nbsp;
       <a href="/ember/">research</a>
       &nbsp;&nbsp;
@@ -99,7 +107,7 @@
 
     <hr>
 
-    <h2>llama: the sanity check</h2>
+    <h2 id="llama-the-sanity-check">llama: the sanity check</h2>
 
     <p>
       this matters because it set expectations. llama 3.2 1b hit cosine
@@ -145,9 +153,9 @@
 
     <hr>
 
-    <h2>gemma 4: the play</h2>
+    <h2 id="gemma-4-the-play">gemma 4: the play</h2>
 
-    <h3>act i: the shapes matched, which meant almost nothing</h3>
+    <h3 id="act-i-the-shapes-matched-which-meant-almost-nothing">act i: the shapes matched, which meant almost nothing</h3>
 
     <p>
       gemma 4 is weirder than llama. per-layer embeddings (ple), global projection
@@ -171,7 +179,7 @@
       </div>
     </div>
 
-    <h3>act ii: the ablation graveyard</h3>
+    <h3 id="act-ii-the-ablation-graveyard">act ii: the ablation graveyard</h3>
 
     <p>
       each of these was a hypothesis. build, run golden-logit comparison against
@@ -230,7 +238,7 @@
 
     <hr>
 
-    <h3>act iii: cosine, the beautiful liar</h3>
+    <h3 id="act-iii-cosine-the-beautiful-liar">act iii: cosine, the beautiful liar</h3>
 
     <p>
       at one point cosine improved from 0.84 to 0.92. i thought i was making
@@ -272,7 +280,7 @@
 
     <hr>
 
-    <h3>act iv: the layerwise oracle</h3>
+    <h3 id="act-iv-the-layerwise-oracle">act iv: the layerwise oracle</h3>
 
     <p>
       at some point comparing final logits wasn't giving enough signal. a final
@@ -343,7 +351,7 @@ final logits:        cosine 0.87 , after output projection
 
     <hr>
 
-    <h2>finale: the structural bugs were loud</h2>
+    <h2 id="finale-the-structural-bugs-were-loud">finale: the structural bugs were loud</h2>
 
     <p>
       with the layerwise pipeline working, i could actually see which changes
@@ -443,7 +451,7 @@ final logits:        cosine 0.87 , after output projection
 
     <hr>
 
-    <h2>curtain call: the last 0.13</h2>
+    <h2 id="curtain-call-the-last-0-13">curtain call: the last 0.13</h2>
 
     <p>
       at this point i had fixed every structural mismatch i could find. the
@@ -522,7 +530,7 @@ at every layer's normalization step.
 
     <hr>
 
-    <h2>things i learned</h2>
+    <h2 id="things-i-learned">things i learned</h2>
 
     <ul>
       <li>
@@ -552,7 +560,7 @@ at every layer's normalization step.
 
     <hr>
 
-    <h2>current status</h2>
+    <h2 id="current-status">current status</h2>
 
     <ol class="flow-list">
       <li>
@@ -579,9 +587,9 @@ at every layer's normalization step.
 
     <hr>
 
-    <h2>appendix: commands and numbers</h2>
+    <h2 id="appendix-commands-and-numbers">appendix: commands and numbers</h2>
 
-    <h3>golden-logit comparison</h3>
+    <h3 id="golden-logit-comparison">golden-logit comparison</h3>
 
     <pre><code class="language-bash">target/release/ember --model gemma-4-E2B-it-Q8_0.gguf --arch gemma4 \
  --prompt "Hello world" --max-seq-len 128 --temperature 0 \
@@ -595,7 +603,7 @@ cos = np.dot(e,r)/(np.linalg.norm(e)*np.linalg.norm(r))
 print(f'cosine={cos:.6f}')
 "</code></pre>
 
-    <h3>layerwise comparison</h3>
+    <h3 id="layerwise-comparison">layerwise comparison</h3>
 
     <pre><code class="language-bash"># requires patched llama.cpp (see docs/layer-dump-tooling.md)
 # 1. dump llama.cpp layers
@@ -612,11 +620,11 @@ python3 scripts/compare_layer_dumps.py \
  --layers 35 --hidden-size 1536 \
  --out-md report.md --out-json report.json</code></pre>
 
-    <h3>tests</h3>
+    <h3 id="tests">tests</h3>
 
     <pre><code class="language-bash">cargo test --lib</code></pre>
 
-    <h3>summary numbers</h3>
+    <h3 id="summary-numbers">summary numbers</h3>
 
     <div class="table-wrap">
       <table class="data-table">
@@ -633,7 +641,7 @@ python3 scripts/compare_layer_dumps.py \
       </table>
     </div>
 
-    <h3>key files</h3>
+    <h3 id="key-files">key files</h3>
 
     <div class="table-wrap">
       <table class="simd-table">
@@ -651,6 +659,7 @@ python3 scripts/compare_layer_dumps.py \
         </tbody>
       </table>
     </div>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/">voidwest</a>

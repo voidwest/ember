@@ -8,22 +8,29 @@
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/morphemes-without-borders.html" />
         <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:card" content="summary_large_image" />
         <title>morphemes without borders · research notes</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta name="twitter:title" content="morphemes without borders" />
+        <meta name="twitter:description" content="Alakeel et al. (LREC 2026): tokenizer-morpheme alignment does not predict morphological generation ability in Arabic LLMs. GPT-4o hits 97% on nonce roots with 17% boundary precision." />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:secure_url" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta property="og:image:type" content="image/png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png?v=20260717" />
+        <meta name="twitter:image:alt" content="voidwest research notes — papers, experiments, and field notes on Arabic NLP and model internals" />
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
+        <a class="skip-link" href="#main-content">تخطي إلى المحتوى</a>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
@@ -32,16 +39,17 @@
                 <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/morphemes-without-borders.html">en</a>
+                <a class="nav-lang" href="/research-notes/morphemes-without-borders.html" lang="en" hreflang="en" aria-label="Read this page in English">en</a>
                 <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
 
-        <div class="back">
-            <a href="/" class="ltr">← voidwest</a>
+        <main id="main-content" class="document" tabindex="-1">
+<div class="back">
+            <a href="/index.ar.html" class="ltr">voidwest</a>
             &nbsp;&nbsp;
-            <a href="/research-notes/" class="ltr">research notes</a>
+            <a href="/research-notes/index.ar.html" class="ltr">research notes</a>
         </div>
         <h1><bdi>morphemes without borders</bdi></h1>
         <div class="meta">
@@ -53,14 +61,14 @@
             <span class="tag key">LLM evaluation</span>
             <span class="tag">arXiv:2603.15773</span>
         </div>
-        <h2><bdi>the core claim</bdi></h2>
+        <h2 id="the-core-claim"><bdi>the core claim</bdi></h2>
         <p>محاذاة الـ <bdi>token</bdi> مع الـ <bdi>morpheme</bdi> ما تتنبأ بقدرة النموذج على توليد أشكال الجذر والوزن العربي.</p>
         <p><bdi>tokenizer</bdi> يقطع الـ <bdi>morphemes</bdi> بشكل نظيف ما يضمن توليد جيد، و <bdi>tokenizer</bdi> يقطع زيادة (<bdi>GPT-4</bdi>) ما يمنعه.</p>
-        <h2><bdi>why Arabic morphology is a good test</bdi></h2>
+        <h2 id="why-arabic-morphology-is-a-good-test"><bdi>why Arabic morphology is a good test</bdi></h2>
         <p>العربي يستخدم <strong>نظام الجذر والوزن</strong>. جذور ساكنة تندمج مع قوالب صوتية لتكوين الكلمات.</p>
         <p>مثال: الجذر <em><bdi>ktb</bdi></em> (كتب) + الوزن <em><bdi>maf&#x16B;l</bdi></em> → <em><bdi>makt&#x16B;b</bdi></em> (مكتوب). الجذر والوزن يتداخلون؛ مو متسلسلين مثل <bdi>prefix+stem+suffix</bdi> في الإنجليزي، وهذا يخلي العربي <bdi>stress test</bdi> للـ <bdi>subword tokenizers</bdi> (<bdi>BPE</bdi>، <bdi>Unigram</bdi>، <bdi>WordPiece</bdi>) المصممة للصرف التسلسلي.</p>
-        <h2><bdi>experimental design</bdi></h2>
-        <h3><bdi>part 1: tokenizer morphological alignment</bdi></h3>
+        <h2 id="experimental-design"><bdi>experimental design</bdi></h2>
+        <h3 id="part-1-tokenizer-morphological-alignment"><bdi>part 1: tokenizer morphological alignment</bdi></h3>
         <p>قاسوا مدى تطابق قطع الـ tokenizer مع حدود الـ morpheme المثالية من محللات CAMEL و Farasa، على الفصحى (ATB3) واللهجات (BOLT). المقاييس:</p>
         <ul>
             <li><strong>fertility</strong>: tokens لكل كلمة</li>
@@ -68,17 +76,17 @@
             <li><strong>boundary F<sub>1</sub></strong>: دقة/استدعاء كشف الحدود</li>
             <li><strong>MCR</strong>: معدل تغطية المورفيم (يتجنب التقطيع الداخلي)</li>
         </ul>
-        <h3><bdi>part 2: morphological generation</bdi></h3>
+        <h3 id="part-2-morphological-generation"><bdi>part 2: morphological generation</bdi></h3>
         <p>ثلاث مهام probing باستخدام جذور حقيقية و nonce roots:</p>
         <ul>
             <li><strong>root-pattern real</strong>: طبّق وزن على جذر ثلاثي حقيقي</li>
             <li><strong>root-pattern nonce</strong>: نفس المهمة مع جذور مخترعة (تختبر التعميم، مو الحفظ)</li>
             <li><strong>affix-build</strong>: ترتيب لواحق تسلسلية على كلمة أساس</li>
         </ul>
-        <h3><bdi>models evaluated</bdi></h3>
+        <h3 id="models-evaluated"><bdi>models evaluated</bdi></h3>
         <p>ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere. FANAR يستخدم MorphBPE (morph-aware tokenization)؛ البقية يستخدمون BPE/Unigram/WordPiece عادي. zero-shot و one-shot، اختُبرت بالعربي والإنجليزي.</p>
         <hr>
-        <h2><bdi>key findings</bdi></h2>
+        <h2 id="key-findings"><bdi>key findings</bdi></h2>
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
             <p><strong>ما فيه ارتباط بين محاذاة الـ <bdi>tokenizer</bdi> وأداء التوليد.</strong> <bdi>GPT-4o</bdi> سجل أعلى درجة عبر كل المهام (97% دقة <bdi>nonce</bdi>) مع <em>أسوأ</em> محاذاة (17% <bdi>boundary precision</bdi>). <bdi>ALLAM</bdi> عنده أفضل <bdi>MCR</bdi> (83-86%) لكن انهار لـ 20% على <bdi>nonce words</bdi>.</p>
@@ -100,29 +108,30 @@
             <p><strong>خمسة أنماط خطأ.</strong> تطبيق خاطئ للوزن (الجذر صحيح، القالب خاطئ)، تشويه الجذر (تغيرت الحروف الساكنة)، استبدال بكلمة حقيقية (يطلع كلمة صحيحة بدل تطبيق الوزن)، ترتيب خاطئ للواحق، واقتطاع جزئي.</p>
         </div>
         <hr>
-        <h2><bdi>what this means for Arabic NLP research</bdi></h2>
-        <h3>1. morphology-aware tokenizers may not be worth the complexity</h3>
+        <h2 id="what-this-means-for-arabic-nlp-research"><bdi>what this means for Arabic NLP research</bdi></h2>
+        <h3 id="1-morphology-aware-tokenizers-may-not-be-worth-the-complexity">1. morphology-aware tokenizers may not be worth the complexity</h3>
         <p>الـ tokenizers المخصصة للغة (MorphBPE، Splinter، إلخ) مكلفة في البناء. التدريب المسبق على نطاق واسع و instruction tuning يبدو إنها تعوض، أو حتى تتفوق عليها. tokenizer GPT-4o يقطع العربي زيادة (fertility أكبر من 3، boundary precision 17%) ومع ذلك يصيب أنماط nonce 97% من الوقت.</p>
-        <h3>2. instruction-following matters more than tokenizer design</h3>
+        <h3 id="2-instruction-following-matters-more-than-tokenizer-design">2. instruction-following matters more than tokenizer design</h3>
         <p>قدرة النموذج على اتباع التعليمات تستبدل التحليل الصرفي الصريح. النماذج اللي تتبع التعليمات تطبق القواعد الصرفية باستمرار. اللي ما تقدر تتبع التعليمات تفشل بغض النظر عن جودة الـ tokenizer.</p>
-        <h3>3. Arabic-centric models have room to grow</h3>
+        <h3 id="3-arabic-centric-models-have-room-to-grow">3. Arabic-centric models have room to grow</h3>
         <p>ALLAM و FANAR كان أداؤهم أقل من GPT-4 و GPT-4o في كل مهمة مع إن عندهم بيانات تدريب عربية أكثر. الحجم ومنهجية الـ tuning يبدو إنها تغلب ميزة البيانات المخصصة للغة في الـ LLMs الحالية.</p>
-        <h3>4. real-word-only benchmarks hide failure modes</h3>
+        <h3 id="4-real-word-only-benchmarks-hide-failure-modes">4. real-word-only benchmarks hide failure modes</h3>
         <p>ALLAM سجل 67% على الجذور الحقيقية، 20% على nonce. فجوة 47 نقطة. nonce probes هي الطريقة الوحيدة للتفريق بين الحفظ و genuine productivity. benchmarks بدون شرط nonce تعطي صورة ناقصة.</p>
-        <h3>5. future directions</h3>
+        <h3 id="5-future-directions">5. future directions</h3>
         <ul>
             <li><strong>تعلم الصرف بدون tokenization مخصصة</strong>: علّم الـ LLMs الصرف من خلال البيانات والـ tuning، مو tokenizers مخصصة</li>
             <li><strong>tokenization تكيفي/هجين</strong>: معالجة على مستوى الحرف فقط عند الحاجة الصرفية</li>
             <li><strong>تجارب مضبوطة</strong>: عزل تصميم الـ tokenizer عن المعمارية والبيانات والـ tuning</li>
         </ul>
         <hr>
-        <h2><bdi>limitations</bdi></h2>
+        <h2 id="limitations"><bdi>limitations</bdi></h2>
         <ul>
             <li>مهمة التوليد تخلط الصرف مع اتباع التعليمات؛ النماذج اللي ما تقدر تتبع تنسيق التعليمات تسجل أقل بغض النظر عن كفاءتها الصرفية</li>
             <li>الارتباط لا يثبت السببية: المعماريات والبيانات والـ tuning متداخلة</li>
             <li>7 نماذج فقط، 13 وزن؛ بيانات أكثر بتساعد</li>
             <li>اللهجات العربية (BOLT) اختُبرت للمحاذاة لكن مو للتوليد</li>
         </ul>
+        </main>
         <!-- docs:footer start -->
         <footer>
             <a href="/index.ar.html">voidwest</a>
