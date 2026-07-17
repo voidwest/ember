@@ -634,10 +634,14 @@ body.home {
         background-size: 18px 18px;
     }
 
-    .registration-field picture,
+    .registration-field picture {
+        inline-size: 145px;
+        transform: translateY(-4px);
+    }
+
     .registration-field img {
-        inline-size: 115px;
-        transform: translateY(-24px);
+        inline-size: 100%;
+        transform: none;
     }
 
     .projects-section {
