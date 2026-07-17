@@ -4,177 +4,111 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta property="og:title" content="voidwest" />
-        <meta property="og:description" content="systems, ml, and the space where they overlap." />
+        <meta property="og:description" content="Independent research engineering across systems, language, and evaluation." />
         <meta property="og:type" content="website" />
         <meta property="og:url" content="https://voidwest.dev/" />
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary" />
         <title>voidwest</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
-        <!-- docs:og-image start -->
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/homepage.css?v=20260717" />
         <meta property="og:image" content="https://voidwest.dev/og/voidwest.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
         <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png" />
-        <!-- docs:og-image end -->
-        <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
-        <!-- docs:theme-script end -->
     </head>
-    <body>
-        <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
-            <a class="brand" href="/" aria-current="page">voidwest</a>
-            <div class="nav-links">
-                <a href="/ember/">ember</a>
-                <a href="/research-notes/">research notes</a>
-                <a href="/tools/">tools</a>
-                <a href="/terms/">terms</a>
-            </div>
-            <div class="nav-actions">
-                <a class="nav-lang" href="/index.ar.html">عربي</a>
-                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
-            </div>
-        </nav>
-        <!-- docs:nav end -->
+    <body class="home">
+        <header class="home-header">
+            <nav class="home-nav" aria-label="Primary navigation">
+                <a class="home-brand" href="/" aria-current="page">
+                    <picture>
+                        <img src="/assets/voidwest/vw-mark-light.svg" alt="" width="32" height="24" />
+                    </picture>
+                    <span>voidwest</span>
+                </a>
+                <div class="home-nav-links" id="home-menu">
+                    <a href="/ember/">ember</a>
+                    <a href="/research-notes/">research notes</a>
+                    <a href="/tools/">tools</a>
+                    <a href="/terms/">terms</a>
+                    <button class="theme-toggle mobile-theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+                </div>
+                <div class="home-nav-actions">
+                    <a class="home-lang" href="/index.ar.html" lang="ar">عربي</a>
+                    <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+                    <button class="menu-toggle" type="button" aria-label="Open navigation" aria-controls="home-menu" aria-expanded="false"><span></span><span></span><span></span></button>
+                </div>
+            </nav>
+        </header>
 
-        <div class="hero">
-            <div class="eyebrow">independent ML systems research</div>
-            <div class="name">voidwest</div>
-            <div class="tagline">
-                systems, ml, and the space where they overlap.
-            </div>
-            <div class="focus-tags" aria-label="Research focus">
-                <span>ml systems</span>
-                <span>model internals</span>
-                <span>arabic nlp</span>
-                <span>inference tooling</span>
-            </div>
-            <div class="links">
+        <main>
+            <section class="home-hero" aria-labelledby="hero-title">
+                <div class="hero-copy">
+                    <p class="section-label">// independent researcher</p>
+                    <h1 id="hero-title">systems, language,<br />and evaluation.</h1>
+                    <p class="hero-intro">Exploring Arabic NLP, model evaluation, and representation analysis through rigorous, reproducible research.</p>
+                    <a class="text-link" href="/research-notes/">read the research notes <span aria-hidden="true">→</span></a>
+                </div>
+                <div class="registration-field" aria-hidden="true">
+                    <picture>
+                        <img src="/assets/voidwest/registration-mark-light.svg" alt="" width="320" height="320" />
+                    </picture>
+                </div>
+            </section>
+
+            <section class="home-section projects-section" aria-labelledby="projects-title">
+                <h2 class="section-label" id="projects-title">// projects</h2>
+                <div class="project-grid">
+                    <article class="project-record">
+                        <h3>ember</h3>
+                        <p>Hidden-state extraction, leakage-aware probing, and reproducible morphology experiments over GGUF models.</p>
+                        <div class="project-meta"><a href="/ember/">view project <span aria-hidden="true">→</span></a><span class="project-index">01</span></div>
+                    </article>
+                    <article class="project-record">
+                        <h3>atlas</h3>
+                        <p>Maps limitations, missing evaluations, and future-work claims from papers. Deterministic. Evidence-first.</p>
+                        <div class="project-meta"><a href="https://github.com/voidwest/atlas">view project <span aria-hidden="true">→</span></a><span class="project-index">02</span></div>
+                    </article>
+                    <article class="project-record">
+                        <h3>mini-os</h3>
+                        <p>A minimal x86_64 kernel in Rust with paging, async execution, ramdisk, and a small shell.</p>
+                        <div class="project-meta"><a href="https://github.com/voidwest/mini-os">view source <span aria-hidden="true">→</span></a><span class="project-index">03</span></div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="home-section notes-section" aria-labelledby="notes-title">
+                <h2 class="section-label" id="notes-title">// research notes</h2>
+                <div class="notes-table">
+                    <a class="note-row" href="/research-notes/reproducibility-starts-before-inference.html">
+                        <time datetime="2026-07-17">2026-07-17</time><span class="note-title">Reproducibility Starts Before Inference</span><span class="note-tags">evaluation &nbsp;&nbsp; reproducibility</span><span class="note-arrow" aria-hidden="true">→</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/why-atlas-does-not-generate-research-gaps.html">
+                        <time datetime="2026-07-11">2026-07-11</time><span class="note-title">Why Research Debt Atlas Does Not Generate Research Gaps</span><span class="note-tags">tooling &nbsp;&nbsp; reproducibility</span><span class="note-arrow" aria-hidden="true">→</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/arabicmmlu-correct-answer-position.html">
+                        <time datetime="2026-07-04">2026-07-04</time><span class="note-title">When ArabicMMLU Accuracy Depends on Answer Position</span><span class="note-tags">ArabicMMLU &nbsp;&nbsp; evaluation</span><span class="note-arrow" aria-hidden="true">→</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.html">
+                        <time datetime="2026-06-22">2026-06-22</time><span class="note-title">When the Result Gets Less Flashy but More Real</span><span class="note-tags">probing &nbsp;&nbsp; methodology</span><span class="note-arrow" aria-hidden="true">→</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/cross-family-arabic-morphology-probes.html">
+                        <time datetime="2026-06-14">2026-06-14</time><span class="note-title">Cross-family Arabic Morphology Probes</span><span class="note-tags">Arabic NLP &nbsp;&nbsp; representation</span><span class="note-arrow" aria-hidden="true">→</span>
+                    </a>
+                </div>
+                <a class="text-link notes-all" href="/research-notes/">view all notes <span aria-hidden="true">→</span></a>
+            </section>
+        </main>
+
+        <footer class="home-footer">
+            <span>© 2026 voidwest</span>
+            <div class="footer-links">
                 <a href="https://github.com/voidwest">github</a>
                 <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
                 <a href="mailto:mthobaiti@outlook.com">email</a>
-                <a href="https://github.com/voidwest/ember">ember</a>
-                <a href="/ember/">research</a>
             </div>
-        </div>
-
-        <div class="focus-panel">
-            <div class="label">current focus</div>
-            <div class="focus-grid">
-                <a href="/ember/">
-                    <span>ember</span>
-                    <small>cpu inference, probing, and validation workflows</small>
-                </a>
-                <a href="/research-notes/">
-                    <span>research notes</span>
-                    <small>arabic morphology, tokenization, and model internals</small>
-                </a>
-                <a href="/tools/">
-                    <span>tooling</span>
-                    <small>small local systems for experiments, probes, and reproducible artifacts</small>
-                </a>
-            </div>
-        </div>
-
-        <!-- ── EMBER ── -->
-        <h2>ember</h2>
-        <div class="project-list">
-
-            <div class="project featured">
-                <div class="name">
-                    <a href="/ember/">ember</a>
-                </div>
-                <div class="desc">
-                    research layer for hidden-state extraction, leakage-aware
-                    probing, and reproducible morphology experiments over GGUF
-                    models, with a native rust backend for inspectability and
-                    llama.cpp as the scalable execution path.
-                </div>
-                <div class="tags">
-                    <span>rust</span><span>inference</span><span>gguf</span><span>cpu</span><span>probing</span><span>validation</span>
-                </div>
-                <div class="project-links">
-                    <a href="https://github.com/voidwest/ember">source</a>
-                    <a href="/ember/">research</a>
-                    <a href="/ember/engineering/">engineering</a>
-                    <a href="/ember/internals/">internals</a>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- ── RESEARCH NOTES ── -->
-        <h2>research notes</h2>
-        <div class="project-list">
-
-            <div class="project featured">
-                <div class="name">
-                    <a href="/research-notes/">research notes</a>
-                </div>
-                <div class="desc">
-                    running notes on papers, experiments, and ideas. current focus: Arabic nlp, tokenization, and mechanistic interpretability.
-                </div>
-                <div class="tags">
-                    <span>papers</span><span>notes</span><span>arabic nlp</span><span>probing</span>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- ── OTHER PROJECTS ── -->
-        <h2>other projects</h2>
-        <div class="project-list">
-
-            <div class="project">
-                <div class="name">
-                    <a href="https://github.com/voidwest/mini-os">mini-os</a>
-                </div>
-                <div class="desc">
-                    minimal x86_64 kernel in rust. gdt, idt, paging, heap with
-                    3 allocation strategies, cooperative async executor,
-                    ramdisk, and a shell with 10 commands. runs in qemu.
-                </div>
-                <div class="tags">
-                    <span>rust</span><span>kernel</span><span>x86_64</span><span>no_std</span>
-                </div>
-            </div>
-
-            <div class="project">
-                <div class="name">
-                    <a href="https://github.com/voidwest/devdocs-v2">devdocs-v2</a>
-                </div>
-                <div class="desc">
-                    local rag pipeline for querying pdf documents. sentence-transformers
-                    for embeddings, chromadb for vector storage, ollama for inference.
-                    fastapi backend with a vanilla html/css/js chat ui. fully local,
-                    no external apis.
-                </div>
-                <div class="tags">
-                    <span>python</span><span>rag</span><span>chromadb</span><span>ollama</span><span>fastapi</span>
-                </div>
-            </div>
-
-        </div>
-        <!-- docs:footer start -->
-        <footer>
-            <a href="/">voidwest</a>
-            &nbsp;·&nbsp;
-            <a href="https://github.com/voidwest">github</a>
-            &nbsp;·&nbsp;
-            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-            &nbsp;·&nbsp;
-            <a href="mailto:mthobaiti@outlook.com">email</a>
-            &nbsp;·&nbsp;
-            <a href="/ember/">ember</a>
-            &nbsp;·&nbsp;
-            <a href="/research-notes/">research notes</a>
-            &nbsp;·&nbsp;
-            <a href="/tools/">tools</a>
-            &nbsp;·&nbsp;
-            <a href="/terms/">terms</a>
         </footer>
-        <!-- docs:footer end -->
-
     </body>
 </html>

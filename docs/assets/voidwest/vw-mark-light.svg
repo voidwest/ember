@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 96" role="img" aria-labelledby="title desc">
+  <title id="title">Voidwest VW monogram</title>
+  <desc id="desc">A minimal geometric VW monogram.</desc>
+  <g fill="none" stroke="#F3EFE5" stroke-width="8" stroke-linecap="square" stroke-linejoin="miter">
+    <path d="M12 18 L36 76 L60 18"/>
+    <path d="M68 18 L88 76 L116 18"/>
+  </g>
+</svg>

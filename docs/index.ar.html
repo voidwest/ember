@@ -4,179 +4,111 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta property="og:title" content="voidwest" />
-        <meta property="og:description" content="systems, ml, and the space where they overlap." />
+        <meta property="og:description" content="هندسة بحثية مستقلة في الأنظمة واللغة والتقييم." />
         <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://voidwest.dev/" />
+        <meta property="og:url" content="https://voidwest.dev/index.ar.html" />
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary" />
         <title>voidwest</title>
-        <link rel="stylesheet" href="/style.css?v=20260623" />
-        <!-- docs:og-image start -->
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <link rel="stylesheet" href="/homepage.css?v=20260717" />
         <meta property="og:image" content="https://voidwest.dev/og/voidwest.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
         <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png" />
-        <!-- docs:og-image end -->
-        <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
-        <!-- docs:theme-script end -->
     </head>
-    <body>
-        <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
-            <a class="brand" href="/index.ar.html" aria-current="page">voidwest</a>
-            <div class="nav-links">
-                <a href="/ember/index.ar.html">ember</a>
-                <a href="/research-notes/index.ar.html">research notes</a>
-                <a href="/tools/index.ar.html">tools</a>
-                <a href="/terms/index.ar.html">terms</a>
-            </div>
-            <div class="nav-actions">
-                <a class="nav-lang" href="/">en</a>
-                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
-            </div>
-        </nav>
-        <!-- docs:nav end -->
+    <body class="home">
+        <header class="home-header">
+            <nav class="home-nav" aria-label="التنقل الرئيسي">
+                <a class="home-brand" href="/index.ar.html" aria-current="page">
+                    <picture>
+                        <img src="/assets/voidwest/vw-mark-light.svg" alt="" width="32" height="24" />
+                    </picture>
+                    <span>voidwest</span>
+                </a>
+                <div class="home-nav-links" id="home-menu">
+                    <a href="/ember/index.ar.html">ember</a>
+                    <a href="/research-notes/index.ar.html">research notes</a>
+                    <a href="/tools/index.ar.html">tools</a>
+                    <a href="/terms/index.ar.html">terms</a>
+                    <button class="theme-toggle mobile-theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false">light</button>
+                </div>
+                <div class="home-nav-actions">
+                    <a class="home-lang" href="/">en</a>
+                    <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false">light</button>
+                    <button class="menu-toggle" type="button" aria-label="فتح قائمة التنقل" aria-controls="home-menu" aria-expanded="false"><span></span><span></span><span></span></button>
+                </div>
+            </nav>
+        </header>
 
-        <div class="hero">
-            <div class="eyebrow">independent ML systems research</div>
-            <div class="name">voidwest</div>
-            <div class="tagline">
-                أنظمة، تعلم آلي، والنقطة اللي يتقاطعوا فيها.
-            </div>
-            <div class="focus-tags" aria-label="Research focus">
-                <span>ml systems</span>
-                <span>model internals</span>
-                <span>arabic nlp</span>
-                <span>inference tooling</span>
-            </div>
-            <div class="links">
+        <main>
+            <section class="home-hero" aria-labelledby="hero-title">
+                <div class="hero-copy">
+                    <p class="section-label">// باحث مستقل</p>
+                    <h1 id="hero-title">الأنظمة، اللغة،<br />والتقييم.</h1>
+                    <p class="hero-intro">أستكشف معالجة اللغة العربية وتقييم النماذج وتحليل تمثيلاتها من خلال أبحاث دقيقة قابلة لإعادة الإنتاج.</p>
+                    <a class="text-link" href="/research-notes/index.ar.html">اقرأ ملاحظات البحث <span aria-hidden="true">←</span></a>
+                </div>
+                <div class="registration-field" aria-hidden="true">
+                    <picture>
+                        <img src="/assets/voidwest/registration-mark-light.svg" alt="" width="320" height="320" />
+                    </picture>
+                </div>
+            </section>
+
+            <section class="home-section projects-section" aria-labelledby="projects-title">
+                <h2 class="section-label" id="projects-title">// المشاريع</h2>
+                <div class="project-grid">
+                    <article class="project-record">
+                        <h3><bdi>ember</bdi></h3>
+                        <p>استخراج الحالات الخفية، واختبارات واعية بالتسرب، وتجارب صرفية قابلة لإعادة الإنتاج على نماذج <bdi>GGUF</bdi>.</p>
+                        <div class="project-meta"><a href="/ember/index.ar.html">عرض المشروع <span aria-hidden="true">←</span></a><span class="project-index">01</span></div>
+                    </article>
+                    <article class="project-record">
+                        <h3><bdi>atlas</bdi></h3>
+                        <p>يرصد القيود والتقييمات الناقصة وادعاءات العمل المستقبلي في الأوراق. حتمي ويرتكز على الأدلة.</p>
+                        <div class="project-meta"><a href="https://github.com/voidwest/atlas">عرض المشروع <span aria-hidden="true">←</span></a><span class="project-index">02</span></div>
+                    </article>
+                    <article class="project-record">
+                        <h3><bdi>mini-os</bdi></h3>
+                        <p>نواة <bdi>x86_64</bdi> مصغرة بلغة <bdi>Rust</bdi> تدعم الذاكرة الافتراضية والتنفيذ غير المتزامن وقرصاً وصدفة صغيرة.</p>
+                        <div class="project-meta"><a href="https://github.com/voidwest/mini-os">عرض المصدر <span aria-hidden="true">←</span></a><span class="project-index">03</span></div>
+                    </article>
+                </div>
+            </section>
+
+            <section class="home-section notes-section" aria-labelledby="notes-title">
+                <h2 class="section-label" id="notes-title">// ملاحظات البحث</h2>
+                <div class="notes-table">
+                    <a class="note-row" href="/research-notes/reproducibility-starts-before-inference.ar.html">
+                        <time datetime="2026-07-17">2026-07-17</time><span class="note-title">قابلية إعادة الإنتاج تبدأ قبل الاستدلال</span><span class="note-tags" lang="en">evaluation &nbsp;&nbsp; reproducibility</span><span class="note-arrow" aria-hidden="true">←</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/why-atlas-does-not-generate-research-gaps.ar.html">
+                        <time datetime="2026-07-11">2026-07-11</time><span class="note-title">ليش <bdi>Research Debt Atlas</bdi> ما يولّد <bdi>research gaps</bdi></span><span class="note-tags" lang="en">tooling &nbsp;&nbsp; reproducibility</span><span class="note-arrow" aria-hidden="true">←</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/arabicmmlu-correct-answer-position.ar.html">
+                        <time datetime="2026-07-04">2026-07-04</time><span class="note-title">ليش دقة <bdi>ArabicMMLU</bdi> تعتمد على موضع الإجابة؟</span><span class="note-tags" lang="en"><bdi>ArabicMMLU</bdi> &nbsp;&nbsp; evaluation</span><span class="note-arrow" aria-hidden="true">←</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/when-the-result-gets-less-flashy-but-more-real.ar.html">
+                        <time datetime="2026-06-22">2026-06-22</time><span class="note-title">لما تنخفض الأرقام ويصير القياس أصدق</span><span class="note-tags" lang="en">probing &nbsp;&nbsp; methodology</span><span class="note-arrow" aria-hidden="true">←</span>
+                    </a>
+                    <a class="note-row" href="/research-notes/cross-family-arabic-morphology-probes.ar.html">
+                        <time datetime="2026-06-14">2026-06-14</time><span class="note-title">اختبارات الصرف العربي بين عائلات النماذج</span><span class="note-tags" lang="en">Arabic NLP &nbsp;&nbsp; representation</span><span class="note-arrow" aria-hidden="true">←</span>
+                    </a>
+                </div>
+                <a class="text-link notes-all" href="/research-notes/index.ar.html">عرض كل الملاحظات <span aria-hidden="true">←</span></a>
+            </section>
+        </main>
+
+        <footer class="home-footer">
+            <span>© 2026 voidwest</span>
+            <div class="footer-links">
                 <a href="https://github.com/voidwest">github</a>
                 <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
                 <a href="mailto:mthobaiti@outlook.com">email</a>
-                <a href="https://github.com/voidwest/ember">ember</a>
-                <a href="/ember/index.ar.html">research</a>
             </div>
-        </div>
-
-        <div class="focus-panel">
-            <div class="label">current focus</div>
-            <div class="focus-grid">
-                <a href="/ember/index.ar.html">
-                    <span>ember</span>
-                    <small>cpu inference، probing، ومسارات validation</small>
-                </a>
-                <a href="/research-notes/index.ar.html">
-                    <span>research notes</span>
-                    <small>الصرف العربي، tokenization، و model internals</small>
-                </a>
-                <a href="/tools/index.ar.html">
-                    <span>tooling</span>
-                    <small>أنظمة محلية صغيرة للتجارب والـ probes و artifacts قابلة لإعادة الإنتاج</small>
-                </a>
-            </div>
-        </div>
-
-        <!-- ── EMBER ── -->
-        <h2>ember</h2>
-        <div class="project-list">
-            <div class="project featured">
-                <div class="name">
-                    <a href="/ember/">ember</a>
-                </div>
-                <div class="desc">
-                    محرك inference لنماذج اللغة، CPU أولاً، مكتوب بـ Rust.
-                    يقرأ GGUF، يشغّل transformers مع KV cache، وفيه وضع probing
-                    لاستخراج activations، مع مسارات validation وتقارير benchmark.
-                    بدون أي framework خارجي في runtime.
-                </div>
-                <div class="tags">
-                    <span>rust</span><span>inference</span><span>gguf</span
-                    ><span>cpu</span><span>llama</span><span>probing</span>
-                </div>
-                <div class="project-links">
-                    <a href="https://github.com/voidwest/ember">source</a>
-                    <a href="/ember/index.ar.html">research</a>
-                    <a href="/ember/engineering/index.ar.html">engineering</a>
-                    <a href="/ember/internals/index.ar.html">internals</a>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- ── RESEARCH NOTES ── -->
-        <h2>research notes</h2>
-        <div class="project-list">
-            <div class="project featured">
-                <div class="name">
-                    <a href="/research-notes/">research notes</a>
-                </div>
-                <div class="desc">
-                    ملاحظات على أوراق بحثية وتجارب وأفكار أولية. التركيز
-                    الحالي: Arabic NLP، tokenization، و mechanistic
-                    interpretability.
-                </div>
-                <div class="tags">
-                    <span>papers</span><span>notes</span><span>arabic nlp</span
-                    ><span>probing</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- ── OTHER PROJECTS ── -->
-        <h2>other projects</h2>
-        <div class="project-list">
-            <div class="project">
-                <div class="name">
-                    <a href="https://github.com/voidwest/mini-os">mini-os</a>
-                </div>
-                <div class="desc">
-                    نواة x86_64 بسيطة بـ Rust. فيها GDT، IDT، paging،
-                    heap بثلاث استراتيجيات allocation، async executor تعاوني،
-                    ramdisk، و shell فيه 10 أوامر. تشتغل في QEMU.
-                </div>
-                <div class="tags">
-                    <span>rust</span><span>kernel</span><span>x86_64</span
-                    ><span>no_std</span>
-                </div>
-            </div>
-            <div class="project">
-                <div class="name">
-                    <a href="https://github.com/voidwest/devdocs-v2"
-                        >devdocs-v2</a
-                    >
-                </div>
-                <div class="desc">
-                    نظام RAG محلي تقدر تسأله عن ملفات PDF. يستخدم
-                    sentence-transformers للـ embeddings، ChromaDB للتخزين،
-                    و Ollama للـ inference. الـ backend بـ FastAPI والواجهة
-                    شات بسيط بـ HTML/CSS/JS. كله محلي، ما يحتاج أي API خارجي.
-                </div>
-                <div class="tags">
-                    <span>python</span><span>rag</span><span>chromadb</span
-                    ><span>ollama</span><span>fastapi</span>
-                </div>
-            </div>
-        </div>
-        <!-- docs:footer start -->
-        <footer>
-            <a href="/index.ar.html">voidwest</a>
-            &nbsp;·&nbsp;
-            <a href="https://github.com/voidwest">github</a>
-            &nbsp;·&nbsp;
-            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-            &nbsp;·&nbsp;
-            <a href="mailto:mthobaiti@outlook.com">email</a>
-            &nbsp;·&nbsp;
-            <a href="/ember/index.ar.html">ember</a>
-            &nbsp;·&nbsp;
-            <a href="/research-notes/index.ar.html">research notes</a>
-            &nbsp;·&nbsp;
-            <a href="/tools/index.ar.html">tools</a>
-            &nbsp;·&nbsp;
-            <a href="/terms/index.ar.html">terms</a>
         </footer>
-        <!-- docs:footer end -->
-
     </body>
 </html>
