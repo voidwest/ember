@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="تجربة محلية على تمثيلات مجمّدة تختبر إذا كانت مجموعات الطبقات المرتبة على بيانات التطوير تحمل إشارة POS عربية أقوى من مجموعات عشوائية مماثلة وغير متقاطعة." />
+        <meta property="og:title" content="إشارة محلية لتكييف الصرف العربي باختيار الطبقات" />
+        <meta property="og:description" content="ضوابط على hidden states مجمّدة قبل targeted LoRA في Qwen3-0.6B وLlama-3.2-1B." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/geometry-guided-arabic-morphology-pilot.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>إشارة محلية لتكييف الصرف العربي باختيار الطبقات · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/research-notes/figures/linkedin_k4_geometry_vs_random.png" />
+        <meta property="og:image:width" content="2160" />
+        <meta property="og:image:height" content="1130" />
+        <meta name="twitter:image" content="https://voidwest.dev/research-notes/figures/linkedin_k4_geometry_vs_random.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/geometry-guided-arabic-morphology-pilot.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>إشارة محلية لتكييف الصرف العربي باختيار الطبقات</h1>
+
+        <div class="meta">
+            ضوابط على <bdi>hidden states</bdi> مجمّدة قبل <bdi>targeted LoRA</bdi><br>
+            محمد الثبيتي · 2026-07-19<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">LoRA</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <h2>الملخص</h2>
+
+        <p>
+            سؤال المشروع بسيط: هل اختيار الطبقات من إشارة تمثيلية مرتبطة
+            بالصرف يعطي أهداف تكييف أنفع من طبقات عشوائية مماثلة في عدد
+            المعاملات؟ قبل استئجار <bdi>GPU</bdi> أو بناء <bdi>backend</bdi>
+            للتدريب الحقيقي، سويت فحصاً محلياً أضيق: هل مجموعات الطبقات
+            المرتبة على بيانات <bdi>development</bdi> تحمل إشارة
+            <bdi>POS</bdi> عربية أقوى على اختبار <bdi>held-out</bdi> من
+            مجموعات عشوائية بالحجم نفسه ومن دون تداخل؟
+        </p>
+
+        <p>
+            هذا التشغيل ما يختبر <bdi>LoRA</bdi>. هو يدرب ضوابط خطية
+            <bdi>deterministic</bdi> على <bdi>hidden states</bdi> مجمّدة من
+            <bdi>Qwen3-0.6B</bdi> و<bdi>Llama-3.2-1B</bdi>. نتيجة
+            <bdi>K=4</bdi> تكررت في النموذجين وتفوقت على الضوابط العشوائية
+            الخمسة كلها. هذا يكفي لتبرير تجربة صغيرة بـ<bdi>targeted LoRA</bdi>،
+            لكنه مو ادعاء تحديد سببي لمكان الصرف.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">الحالة</div>
+            <p>
+                الدليل هنا من خصائص مجمّدة فقط. هذه ليست نتيجة
+                <bdi>LoRA</bdi>، وليست دليلاً على نجاح التكييف، وليست دليلاً
+                على أن الصرف العربي متمركز سببياً في أربع طبقات.
+            </p>
+        </div>
+
+        <h2>ليش هذا السؤال مهم؟</h2>
+
+        <p>
+            الصرف العربي حالة اختبار مفيدة لأن بنيته غنية ولأن التعميم مهم.
+            الصيغ قد تشترك في الجذر أو اللمّة أو النمط السطحي، ولذلك
+            <bdi>random split</bdi> سهل ممكن يكافئ التداخل المعجمي بدل الإشارة
+            الصرفية اللي نحاول نقيسها.
+        </p>
+
+        <p>
+            والتكييف على طبقات عشوائية مو <bdi>baseline</bdi> مفيد إذا ما كان
+            مضبوطاً. تغيير عدد الطبقات أو الوحدات المستهدفة أو رتبة
+            <bdi>adapter</bdi> أو البيانات أو ميزانية التدريب يغير السعة أو
+            الحساب مع اختيار الطبقات. المقارنة هنا أضيق: طبقات مختارة من
+            الإشارة التمثيلية مقابل طبقات عشوائية غير متقاطعة، وكل شيء ثاني
+            ثابت.
+        </p>
+
+        <p>
+            الضابط المحلي ما يقدر يقول إن <bdi>targeted LoRA</bdi> راح ينجح.
+            لكنه يقدر يقول إذا كان التدخل المقترح يحمل إشارة كافية تستحق
+            تجربة تدريب حقيقية.
+        </p>
+
+        <h2>إعداد التجربة</h2>
+
+        <ul>
+            <li><strong>النماذج</strong>: <bdi>Qwen3-0.6B</bdi> و<bdi>Llama-3.2-1B</bdi>.</li>
+            <li><strong>المهمة</strong>: تصنيف <bdi>POS</bdi> من تمثيل الموضع الأخير في الـ<bdi>prompt</bdi> ضمن <bdi>hidden states</bdi> مجمّدة.</li>
+            <li><strong>البيانات</strong>: 1,416 مثالاً؛ تقسيم <bdi>root-heldout</bdi> ببذرة 17.</li>
+            <li><strong>أحجام التقسيم</strong>: 991 تدريب، و213 تطوير، و212 اختبار <bdi>held-out</bdi>.</li>
+            <li><strong>الاختيار</strong>: <bdi>linear probes</bdi> تتعلم من التدريب فقط، وترتيب الطبقات يعتمد على التطوير فقط.</li>
+            <li><strong>الاختبار</strong>: للتقرير النهائي فقط؛ نتيجته ما دخلت في اختيار الطبقات.</li>
+            <li><strong>أعداد الطبقات</strong>: <bdi>K=1</bdi> و<bdi>K=2</bdi> و<bdi>K=4</bdi>.</li>
+            <li><strong>الضوابط العشوائية</strong>: خمس سحبات حتمية لكل <bdi>K</bdi> بعد استبعاد الطبقات المختارة هندسياً.</li>
+        </ul>
+
+        <p>
+            مسارات البيانات و<bdi>SHA-256 checksums</bdi> ومعرّفات التقسيم
+            ومصدر الاختيار بقيت ثابتة. بيانات <bdi>manifest</bdi> المستقبلية
+            لـ<bdi>LoRA</bdi> تعلن أيضاً مجموعة <bdi>q_proj/v_proj</bdi> نفسها،
+            والرتبة 8، و<bdi>alpha</bdi> بقيمة 16، وعدد معاملات
+            <bdi>adapter</bdi> متساوياً داخل كل <bdi>K</bdi>.
+        </p>
+
+        <p>
+            هذه أسماء وحدات مستقبلية للمحافظة على تكافؤ الـ<bdi>manifests</bdi>.
+            <bdi>sklearn</bdi> ما يلمس <bdi>q_proj</bdi> أو <bdi>v_proj</bdi>؛
+            هو يضم متجهات <bdi>hidden states</bdi> المجمّدة للطبقات المختارة
+            ويدرّب مصنفاً خطياً. هذا اختبار لإشارة مجموعة الطبقات، مو حقن
+            <bdi>adapters</bdi>.
+        </p>
+
+        <h2>النتائج الرئيسية</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج</th>
+                    <th><bdi>K</bdi></th>
+                    <th>دقة <bdi>geometry-selected</bdi></th>
+                    <th>متوسط العشوائي ± الانحراف</th>
+                    <th>الفرق</th>
+                    <th>مرات الفوز</th>
+                    <th>المئين</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>Qwen3-0.6B</bdi></td><td>1</td><td>83.49%</td><td>84.91% ± 1.16</td><td>−1.42 pp</td><td>1/5</td><td>20th</td></tr>
+                <tr><td><bdi>Qwen3-0.6B</bdi></td><td>2</td><td>83.96%</td><td>82.83% ± 2.61</td><td>+1.13 pp</td><td>4/5</td><td>80th</td></tr>
+                <tr><td><strong><bdi>Qwen3-0.6B</bdi></strong></td><td><strong>4</strong></td><td><strong>85.85%</strong></td><td>81.79% ± 2.32</td><td><strong>+4.06 pp</strong></td><td><strong>5/5</strong></td><td><strong>100th</strong></td></tr>
+                <tr><td><bdi>Llama-3.2-1B</bdi></td><td>1</td><td>87.74%</td><td>85.09% ± 2.10</td><td>+2.64 pp</td><td>5/5</td><td>100th</td></tr>
+                <tr><td><bdi>Llama-3.2-1B</bdi></td><td>2</td><td>85.38%</td><td>85.28% ± 2.22</td><td>+0.09 pp</td><td>3/5</td><td>60th</td></tr>
+                <tr><td><strong><bdi>Llama-3.2-1B</bdi></strong></td><td><strong>4</strong></td><td><strong>87.26%</strong></td><td>84.53% ± 2.03</td><td><strong>+2.74 pp</strong></td><td><strong>5/5</strong></td><td><strong>100th</strong></td></tr>
+            </tbody>
+        </table>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/k4_geometry_vs_random_accuracy.svg"
+                 alt="رسم أعمدة يوضح أن دقة POS عند K=4 للطبقات المختارة هندسياً أعلى من متوسط خمس مجموعات عشوائية غير متقاطعة في Qwen3-0.6B وLlama-3.2-1B"
+                 loading="lazy" />
+            <img class="chart theme-chart-light" src="figures/k4_geometry_vs_random_accuracy_light.svg"
+                 alt="رسم أعمدة يوضح أن دقة POS عند K=4 للطبقات المختارة هندسياً أعلى من متوسط خمس مجموعات عشوائية غير متقاطعة في Qwen3-0.6B وLlama-3.2-1B"
+                 loading="lazy" />
+            <figcaption>
+                دقة <bdi>POS held-out</bdi> عند <bdi>K=4</bdi>. الأعمدة
+                العشوائية تعرض المتوسط ± الانحراف المعياري السكاني لخمس
+                سحبات حتمية غير متقاطعة.
+            </figcaption>
+        </figure>
+
+        <p>
+            نتيجة <bdi>K=4</bdi> موجبة في النموذجين، وفازت على الضوابط
+            العشوائية الخمسة كلها في كليهما. تحسن <bdi>macro-F1</bdi> بمقدار
+            4.70 نقطة في <bdi>Qwen</bdi> و3.15 نقطة في <bdi>Llama</bdi>.
+            نتائج <bdi>K=1</bdi> و<bdi>K=2</bdi> مهمة أيضاً:
+            <bdi>Qwen</bdi> عند <bdi>K=1</bdi> ما تفوق على الضابط العشوائي، و<bdi>Llama K=2</bdi>
+            شبه محايد. النتيجة مو «الطبقات المختارة تفوز دائماً»؛ هي إشارة
+            محلية متكررة عند <bdi>K=4</bdi>.
+        </p>
+
+        <h2>النتيجة حسب الفئة عند <bdi>K=4</bdi></h2>
+
+        <p>
+            الجدول يعرض نتيجة الاختيار الهندسي ناقص متوسط الضوابط العشوائية
+            على اختبار <bdi>held-out</bdi>.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج</th>
+                    <th>الفئة</th>
+                    <th>فرق <bdi>precision</bdi></th>
+                    <th>فرق <bdi>recall</bdi></th>
+                    <th>فرق <bdi>F1</bdi></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>Qwen</bdi></td><td><bdi>ADJ</bdi></td><td>+8.17 pp</td><td>+3.81 pp</td><td>+6.00 pp</td></tr>
+                <tr><td><bdi>Qwen</bdi></td><td><bdi>NOUN</bdi></td><td>−0.19 pp</td><td>+5.37 pp</td><td>+2.81 pp</td></tr>
+                <tr><td><bdi>Qwen</bdi></td><td><bdi>VERB</bdi></td><td>+8.71 pp</td><td>−0.56 pp</td><td>+5.29 pp</td></tr>
+                <tr><td><bdi>Llama</bdi></td><td><bdi>ADJ</bdi></td><td>+0.57 pp</td><td>+5.71 pp</td><td>+3.02 pp</td></tr>
+                <tr><td><bdi>Llama</bdi></td><td><bdi>NOUN</bdi></td><td>+1.76 pp</td><td>+2.54 pp</td><td>+2.21 pp</td></tr>
+                <tr><td><bdi>Llama</bdi></td><td><bdi>VERB</bdi></td><td>+6.37 pp</td><td>0.00 pp</td><td>+4.21 pp</td></tr>
+            </tbody>
+        </table>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/k4_class_f1_deltas.svg"
+                 alt="أعمدة أفقية توضح فروق F1 موجبة عند K=4 لفئات ADJ وNOUN وVERB في Qwen3-0.6B وLlama-3.2-1B"
+                 loading="lazy" />
+            <img class="chart theme-chart-light" src="figures/k4_class_f1_deltas_light.svg"
+                 alt="أعمدة أفقية توضح فروق F1 موجبة عند K=4 لفئات ADJ وNOUN وVERB في Qwen3-0.6B وLlama-3.2-1B"
+                 loading="lazy" />
+            <figcaption>
+                فئات <bdi>POS</bdi> الثلاث تحسنت في <bdi>F1</bdi> عند
+                <bdi>K=4</bdi>. النتيجة الإجمالية مو أثر فئة
+                <bdi>NOUN</bdi> ذات الأغلبية فقط.
+            </figcaption>
+        </figure>
+
+        <h2>كيف أفسر النتيجة؟</h2>
+
+        <h3>وش يدعم الدليل الحالي؟</h3>
+
+        <ul>
+            <li>مجموعات الطبقات الحساسة للصرف والمرتبة على التطوير ممكن تحمل إشارة <bdi>POS held-out</bdi> أقوى من مجموعات عشوائية مماثلة؛</li>
+            <li>اتجاه <bdi>K=4</bdi> تكرر في <bdi>Qwen3-0.6B</bdi> و<bdi>Llama-3.2-1B</bdi>؛</li>
+            <li>المكسب عند <bdi>K=4</bdi> مو محصوراً في فئة <bdi>NOUN</bdi>؛</li>
+            <li>الإشارة تكفي لتبرير تجربة صغيرة بـ<bdi>targeted LoRA</bdi>.</li>
+        </ul>
+
+        <h3>وش ما يدعمه إلى الآن؟</h3>
+
+        <ul>
+            <li>أن <bdi>targeted LoRA</bdi> ينجح؛</li>
+            <li>أن الطبقات المختارة تحدد موقع الصرف العربي سببياً؛</li>
+            <li>أن الأثر يعمم على الجنس أو العدد أو الجذر أو اللمّة أو الوزن أو الصيغ المصطنعة أو النماذج الأكبر أو معماريات ثانية؛</li>
+            <li>أن الهندسة التمثيلية ثابتة بين المعماريات بمعنى نظري قوي.</li>
+        </ul>
+
+        <h2>الخطوة التالية المجمّدة مسبقاً</h2>
+
+        <p>
+            التدخل الأول مجمّد مسبقاً: <bdi>Qwen3-0.6B</bdi>، ومهمة
+            <bdi>POS</bdi>، و<bdi>K=4</bdi>، والطبقات المختارة
+            <bdi><code>7, 8, 18, 20</code></bdi>، وخمسة ضوابط عشوائية ثابتة
+            وغير متقاطعة. كل تشغيل يستهدف <bdi>q_proj/v_proj</bdi> برتبة 8
+            و<bdi>alpha</bdi> بقيمة 16، وبالضبط 163,840 معامل
+            <bdi>adapter</bdi> قابل للتدريب. الميزانية 200 خطوة
+            <bdi>optimizer</bdi>.
+        </p>
+
+        <p>
+            المقياس الأساسي هو <bdi>held-out POS macro-F1</bdi>. النجاح يعني
+            أن شرط الاختيار الهندسي يتجاوز المتوسط الحسابي للضوابط العشوائية
+            الخمسة ويفوز بصرامة على ثلاثة منها على الأقل. الدقة و<bdi>F1</bdi>
+            لكل فئة تشخيصات ثانوية.
+        </p>
+
+        <p>
+            قبل التنفيذ لازم تتجمّد نسخة النموذج والـ<bdi>tokenizer</bdi>،
+            والـ<bdi>backend</bdi>، وأقصى طول للسياق، وحجم الدفعة وتجميع
+            التدرجات، ومعدل التعلم، والـ<bdi>optimizer</bdi>، والـ<bdi>scheduler</bdi>،
+            والـ<bdi>warmup</bdi>، والـ<bdi>weight decay</bdi>، والـ<bdi>dropout</bdi>،
+            والدقة العددية، ودورية التقييم، وسياسة حفظ الـ<bdi>checkpoints</bdi>.
+            ما فيه <bdi>early stopping</bdi> في التجربة الأولية.
+        </p>
+
+        <h2>القيود</h2>
+
+        <ul>
+            <li>هذا دليل من خصائص مجمّدة فقط، وليس نتيجة <bdi>LoRA</bdi>؛</li>
+            <li>المهمة هي <bdi>POS</bdi> فقط؛</li>
+            <li>النماذج صغيرة فقط؛</li>
+            <li>خمس سحبات عشوائية تعطي توزيع ضابط محلي مفيد، مو عدم يقين استدلالي كامل؛</li>
+            <li>اختيار <bdi>K=4</bdi> للتدخل المصرّح به مبني على إشارة محلية تكررت، مو إثبات أنه أفضل <bdi>K</bdi> عموماً؛</li>
+            <li>ضابط <bdi>sklearn</bdi> حتمي وما يمثل تباين التدريب؛</li>
+            <li>تحسين <bdi>LoRA</bdi> الحقيقي ممكن ما يتبع نمط الخصائص المجمّدة.</li>
+        </ul>
+
+        <h2>الخلاصة</h2>
+
+        <p>
+            هذه إشارة حياة محلية. مجموعات <bdi>K=4</bdi> المرتبة على
+            التطوير حملت إشارة <bdi>POS held-out</bdi> أقوى من خمس مجموعات
+            عشوائية غير متقاطعة في نموذجين صغيرين، والتحسن ظهر في فئات
+            <bdi>POS</bdi> الثلاث. هذا يبرر تجربة التدخل، لكنه ما يدّعي نجاح
+            التكييف إلى الآن.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>

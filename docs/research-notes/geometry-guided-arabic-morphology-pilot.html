@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="A frozen-feature pilot testing whether development-ranked layer groups carry stronger held-out Arabic POS signal than non-overlapping random-matched groups." />
+        <meta property="og:title" content="A Local Signal for Geometry-Guided Arabic Morphology Adaptation" />
+        <meta property="og:description" content="Frozen-feature controls before targeted LoRA: Qwen3-0.6B and Llama-3.2-1B POS results with non-overlapping random layer controls." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/geometry-guided-arabic-morphology-pilot.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>A Local Signal for Geometry-Guided Arabic Morphology Adaptation · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/research-notes/figures/linkedin_k4_geometry_vs_random.png" />
+        <meta property="og:image:width" content="2160" />
+        <meta property="og:image:height" content="1130" />
+        <meta name="twitter:image" content="https://voidwest.dev/research-notes/figures/linkedin_k4_geometry_vs_random.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/geometry-guided-arabic-morphology-pilot.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>A Local Signal for Geometry-Guided Arabic Morphology Adaptation</h1>
+
+        <div class="meta">
+            frozen-feature controls before targeted LoRA<br>
+            mohammed al-thobaiti · 2026-07-19<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">LoRA</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <h2>summary</h2>
+
+        <p>
+            this project asks whether layers selected from morphology-sensitive
+            representational evidence can become better adaptation targets than
+            parameter-matched random layers. before renting GPUs or building a
+            real training backend, i wanted a smaller local check: do layer
+            groups ranked using development-only evidence carry stronger
+            held-out Arabic part-of-speech signal than non-overlapping random
+            groups of the same size?
+        </p>
+
+        <p>
+            this run does not test LoRA. it trains deterministic linear controls
+            on concatenated frozen hidden-state features from Qwen3-0.6B and
+            Llama-3.2-1B. the K=4 result repeats in both models and survives all
+            five declared random controls. that is enough to justify a tiny
+            targeted-LoRA intervention. it is not a causal localization claim.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">status</div>
+            <p>
+                frozen-feature evidence only. this is not a LoRA result, not
+                language-model adaptation evidence, and not evidence that Arabic
+                morphology is causally localized in four layers.
+            </p>
+        </div>
+
+        <h2>motivation</h2>
+
+        <p>
+            Arabic morphology is a useful test case because the structure is
+            rich and the generalization question matters. related forms can
+            share roots, lemmas, and surface patterns, so an easy random split
+            can reward lexical overlap instead of the kind of held-out
+            morphology signal the experiment is supposed to measure.
+        </p>
+
+        <p>
+            random layer adaptation is also a weak control unless it is matched.
+            changing the number of layers, target modules, adapter rank, data,
+            or training budget changes capacity or compute along with layer
+            choice. the contrast i care about is narrower: geometry-selected
+            layers versus non-overlapping random layers, with everything else
+            held fixed.
+        </p>
+
+        <p>
+            the local control cannot tell me whether targeted LoRA will work.
+            it can tell me whether the proposed intervention has enough signal
+            to be worth running before i spend money on real training.
+        </p>
+
+        <h2>experimental setup</h2>
+
+        <ul>
+            <li><strong>models</strong>: Qwen3-0.6B and Llama-3.2-1B.</li>
+            <li><strong>task</strong>: POS classification from frozen prompt-final hidden states.</li>
+            <li><strong>data</strong>: 1,416 examples; root-heldout split with seed 17.</li>
+            <li><strong>split sizes</strong>: 991 train, 213 development, 212 held-out test.</li>
+            <li><strong>selection</strong>: linear probes fit on train; layers ranked using development evidence only.</li>
+            <li><strong>test</strong>: held-out reporting only; test performance never entered layer selection.</li>
+            <li><strong>layer counts</strong>: K=1, K=2, and K=4.</li>
+            <li><strong>random controls</strong>: five deterministic random draws per K, sampled after removing the geometry-selected layers.</li>
+        </ul>
+
+        <p>
+            dataset paths, SHA-256 checksums, split identifiers, and selection
+            provenance were held fixed. future-LoRA manifests also declare the
+            same <code>q_proj</code>/<code>v_proj</code> target group, rank 8,
+            alpha 16, and matched expected adapter counts within each K.
+        </p>
+
+        <p>
+            that module metadata is for future manifest parity. sklearn never
+            touches <code>q_proj</code> or <code>v_proj</code>. it concatenates
+            the selected layers' frozen hidden-state vectors and fits a linear
+            classifier. this is a test of layer-group signal, not adapter
+            injection.
+        </p>
+
+        <h2>main results</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>K</th>
+                    <th>geometry test</th>
+                    <th>random mean ± SD</th>
+                    <th>difference</th>
+                    <th>wins</th>
+                    <th>percentile</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Qwen3-0.6B</td><td>1</td><td>83.49%</td><td>84.91% ± 1.16</td><td>−1.42 pp</td><td>1/5</td><td>20th</td></tr>
+                <tr><td>Qwen3-0.6B</td><td>2</td><td>83.96%</td><td>82.83% ± 2.61</td><td>+1.13 pp</td><td>4/5</td><td>80th</td></tr>
+                <tr><td><strong>Qwen3-0.6B</strong></td><td><strong>4</strong></td><td><strong>85.85%</strong></td><td>81.79% ± 2.32</td><td><strong>+4.06 pp</strong></td><td><strong>5/5</strong></td><td><strong>100th</strong></td></tr>
+                <tr><td>Llama-3.2-1B</td><td>1</td><td>87.74%</td><td>85.09% ± 2.10</td><td>+2.64 pp</td><td>5/5</td><td>100th</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>2</td><td>85.38%</td><td>85.28% ± 2.22</td><td>+0.09 pp</td><td>3/5</td><td>60th</td></tr>
+                <tr><td><strong>Llama-3.2-1B</strong></td><td><strong>4</strong></td><td><strong>87.26%</strong></td><td>84.53% ± 2.03</td><td><strong>+2.74 pp</strong></td><td><strong>5/5</strong></td><td><strong>100th</strong></td></tr>
+            </tbody>
+        </table>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/k4_geometry_vs_random_accuracy.svg"
+                 alt="Grouped bar chart showing K=4 geometry-selected held-out POS accuracy above the mean of five non-overlapping random layer controls for Qwen3-0.6B and Llama-3.2-1B"
+                 loading="lazy" />
+            <img class="chart theme-chart-light" src="figures/k4_geometry_vs_random_accuracy_light.svg"
+                 alt="Grouped bar chart showing K=4 geometry-selected held-out POS accuracy above the mean of five non-overlapping random layer controls for Qwen3-0.6B and Llama-3.2-1B"
+                 loading="lazy" />
+            <figcaption>
+                K=4 held-out POS accuracy. random bars show mean ± population SD
+                across five deterministic, non-overlapping layer draws.
+            </figcaption>
+        </figure>
+
+        <p>
+            K=4 is positive for both models and beats all five non-overlapping
+            random controls in both cases. macro-F1 improves by 4.70 points for
+            Qwen and 3.15 points for Llama. the K=1 and K=2 rows matter too:
+            Qwen K=1 fails this control, and Llama K=2 is effectively neutral.
+            the result is not “selected layers always win.” it is a replicated
+            local signal at K=4.
+        </p>
+
+        <h2>class-level K=4 result</h2>
+
+        <p>
+            the table reports geometry minus the random-control mean on the
+            held-out test split.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>class</th>
+                    <th>precision Δ</th>
+                    <th>recall Δ</th>
+                    <th>F1 Δ</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Qwen</td><td>ADJ</td><td>+8.17 pp</td><td>+3.81 pp</td><td>+6.00 pp</td></tr>
+                <tr><td>Qwen</td><td>NOUN</td><td>−0.19 pp</td><td>+5.37 pp</td><td>+2.81 pp</td></tr>
+                <tr><td>Qwen</td><td>VERB</td><td>+8.71 pp</td><td>−0.56 pp</td><td>+5.29 pp</td></tr>
+                <tr><td>Llama</td><td>ADJ</td><td>+0.57 pp</td><td>+5.71 pp</td><td>+3.02 pp</td></tr>
+                <tr><td>Llama</td><td>NOUN</td><td>+1.76 pp</td><td>+2.54 pp</td><td>+2.21 pp</td></tr>
+                <tr><td>Llama</td><td>VERB</td><td>+6.37 pp</td><td>0.00 pp</td><td>+4.21 pp</td></tr>
+            </tbody>
+        </table>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/k4_class_f1_deltas.svg"
+                 alt="Horizontal bars showing positive K=4 F1 differences for ADJ, NOUN, and VERB in both Qwen3-0.6B and Llama-3.2-1B"
+                 loading="lazy" />
+            <img class="chart theme-chart-light" src="figures/k4_class_f1_deltas_light.svg"
+                 alt="Horizontal bars showing positive K=4 F1 differences for ADJ, NOUN, and VERB in both Qwen3-0.6B and Llama-3.2-1B"
+                 loading="lazy" />
+            <figcaption>
+                every POS class improves in F1 at K=4. the aggregate result is
+                not only a majority-class NOUN effect.
+            </figcaption>
+        </figure>
+
+        <h2>interpretation</h2>
+
+        <h3>what the current evidence supports</h3>
+
+        <ul>
+            <li>development-ranked morphology-sensitive layer groups can carry more held-out POS signal than matched random layer groups;</li>
+            <li>the K=4 direction repeats in Qwen3-0.6B and Llama-3.2-1B;</li>
+            <li>the K=4 gain is not confined to the majority NOUN class;</li>
+            <li>the result is strong enough to justify a small targeted-LoRA pilot.</li>
+        </ul>
+
+        <h3>what it does not support yet</h3>
+
+        <ul>
+            <li>that targeted LoRA works;</li>
+            <li>that these layers causally localize Arabic morphology;</li>
+            <li>that the effect generalizes to gender, number, root, lemma, pattern, nonce forms, larger models, or other architectures;</li>
+            <li>that geometry is stable across architectures in a strong theoretical sense.</li>
+        </ul>
+
+        <h2>predeclared next step</h2>
+
+        <p>
+            the first intervention is already frozen: Qwen3-0.6B, POS, K=4,
+            geometry layers <code>7, 8, 18, 20</code>, and five fixed
+            non-overlapping random controls. every run targets
+            <code>q_proj</code>/<code>v_proj</code> with rank 8, alpha 16, and
+            exactly 163,840 trainable adapter parameters. the budget is 200
+            optimizer steps.
+        </p>
+
+        <p>
+            the primary metric is held-out POS macro-F1. success requires the
+            geometry condition to exceed the arithmetic mean of the five random
+            controls and strictly beat at least three of them. accuracy and
+            per-class F1 are secondary diagnostics.
+        </p>
+
+        <p>
+            before execution, the model and tokenizer revisions, backend,
+            maximum sequence length, batch and accumulation settings, learning
+            rate, optimizer, scheduler, warmup, weight decay, dropout,
+            precision, evaluation cadence, and checkpoint policy must be frozen.
+            early stopping is disabled for the pilot.
+        </p>
+
+        <h2>limitations</h2>
+
+        <ul>
+            <li>this is frozen-feature evidence only, not a LoRA result;</li>
+            <li>the task is POS only;</li>
+            <li>the models are small;</li>
+            <li>five random draws provide a useful local control distribution, not full inferential uncertainty;</li>
+            <li>K=4 is a predeclared intervention candidate based on replicated local signal, not proof that K=4 is globally optimal;</li>
+            <li>the sklearn control is deterministic and does not represent training variance;</li>
+            <li>real LoRA optimization may not follow the frozen-feature pattern.</li>
+        </ul>
+
+        <h2>conclusion</h2>
+
+        <p>
+            this is a local proof-of-life. development-ranked K=4 layer groups
+            carry stronger held-out POS signal than five non-overlapping random
+            groups in two small decoder models, and the gain appears across all
+            three POS classes. that justifies the intervention experiment. it
+            does not yet claim adaptation success.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>
