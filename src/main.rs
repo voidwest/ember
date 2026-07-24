@@ -24,6 +24,7 @@ use ember::model_backend::LlamaCppBackend;
 use ember::model_backend::NativeModelBackend;
 use ember::npy::{write_npy_2d, NpyStreamWriter};
 use ember::sampler::sample_token;
+use ember::trace;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs;
@@ -31,6 +32,14 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+fn rayon_current_num_threads() -> usize {
+    // rayon doesn't expose current thread count directly; check env
+    std::env::var("RAYON_NUM_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+}
 
 /// a lightweight, cpu-first llm inference engine.
 #[derive(Parser)]
@@ -90,6 +99,22 @@ struct Args {
     /// print prefill/decode timing stats to stderr
     #[arg(long)]
     benchmark: bool,
+
+    /// enable execution tracing (ops = per-operation breakdown)
+    #[arg(long, value_parser = ["ops"])]
+    trace: Option<String>,
+
+    /// write trace JSON to this path (default: stderr)
+    #[arg(long)]
+    trace_out: Option<String>,
+
+    /// collect output norms and fingerprints (none = off, summary = L2 norm + fingerprint)
+    #[arg(long, default_value = "none", value_parser = ["none", "summary"])]
+    trace_values: String,
+
+    /// attach system metadata (CPU, governor, threads, commit) to trace report
+    #[arg(long)]
+    trace_run_metadata: bool,
 
     /// write last-prompt logits for --prompt to a .npy file and exit
     #[arg(long, conflicts_with_all = ["demo", "interactive", "probe"])]
@@ -1377,6 +1402,11 @@ where
         args.top_k,
         args.top_p,
         args.benchmark,
+        args.trace.is_some(),
+        args.trace_out.as_deref(),
+        args.trace_values == "summary",
+        args.trace_run_metadata,
+        rayon_current_num_threads(),
         effective_context_limit(backend, model, args),
     )?;
     println!("{}", output);
@@ -1723,6 +1753,11 @@ fn generate<B: Backend>(
     top_k: Option<usize>,
     top_p: Option<f32>,
     benchmark: bool,
+    trace_ops: bool,
+    trace_out: Option<&str>,
+    trace_values_summary: bool,
+    trace_run_metadata: bool,
+    thread_count: usize,
     context_limit: usize,
 ) -> anyhow::Result<String>
 where
@@ -1747,9 +1782,29 @@ where
         None
     };
     log::info!("prefilling KV cache for {} tokens", prompt_len);
+
+    // -- trace: prefill ----------------------------------------------------
+    let mut prefill_trace: Option<trace::TraceReport> = None;
+    let run_meta = if trace_run_metadata {
+        Some(trace::collect_run_metadata(thread_count))
+    } else {
+        None
+    };
+    if trace_ops {
+        if trace_values_summary {
+            trace::set_values_level(trace::TraceValuesLevel::Summary);
+        }
+        trace::enable_tracing("prefill", 0);
+    }
     let mut cache = model.create_cache(backend, max_seq_len);
     let mut logits = model.forward_last_logits_with_cache(backend, &all_tokens, &mut cache, 0)?;
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
+    if trace_ops {
+        prefill_trace = trace::disable_tracing();
+        if let Some(ref mut pt) = prefill_trace {
+            pt.run_metadata = run_meta.clone();
+        }
+    }
     let vocab_size = backend.shape(&logits)[1];
 
     // -- 2. decode loop: one new token at a time --------------------------
@@ -1760,6 +1815,7 @@ where
     };
     let mut generated = Vec::with_capacity(max_tokens);
     let mut next_token: usize;
+    let mut decode_traces: Vec<trace::TraceReport> = Vec::new();
 
     for step in 0..max_tokens {
         let logit_data = backend.data(&logits);
@@ -1783,12 +1839,20 @@ where
         generated.push(next_token as u32);
 
         // decode step: forward with just the new token, using cached K/V
+        if trace_ops {
+            trace::enable_tracing("decode", step);
+        }
         logits = model.forward_last_logits_with_cache(
             backend,
             &[next_token as u32],
             &mut cache,
             prompt_len + step, // absolute position offset
         )?;
+        if trace_ops {
+            if let Some(report) = trace::disable_tracing() {
+                decode_traces.push(report);
+            }
+        }
     }
 
     let output = tokenizer.decode(&generated)?;
@@ -1809,6 +1873,42 @@ where
             decode_ms,
             generated.len() as f64 / decode_start.unwrap().elapsed().as_secs_f64()
         );
+    }
+
+    // -- trace: emit reports -----------------------------------------------
+    if trace_ops {
+        // aggregate all decode traces into one
+        let mut all_events: Vec<trace::OpTrace> = Vec::new();
+        let mut total_decode_ns: u64 = 0;
+        for report in &decode_traces {
+            all_events.extend(report.events.clone());
+            total_decode_ns += report.total_duration_ns;
+        }
+        let aggregated = trace::TraceReport {
+            phase: "decode".to_string(),
+            token_index: 0,
+            events: all_events,
+            total_duration_ns: total_decode_ns,
+            run_metadata: run_meta.clone(),
+        };
+
+        // write JSON if requested
+        if let Some(path) = trace_out {
+            let json = aggregated.to_json();
+            fs::write(path, json).context("failed to write trace JSON")?;
+            eprintln!("trace JSON written to {}", path);
+        }
+
+        eprintln!("--- trace: decode ({} tokens, {:.2} ms) ---",
+            decode_traces.len(),
+            total_decode_ns as f64 / 1_000_000.0);
+        eprintln!("{}", aggregated.summary());
+
+        if let Some(ref prefill) = prefill_trace {
+            eprintln!("\n--- trace: prefill ({:.2} ms) ---",
+                prefill.total_duration_ns as f64 / 1_000_000.0);
+            eprintln!("{}", prefill.summary());
+        }
     }
 
     if log::log_enabled!(log::Level::Debug) {
@@ -2075,6 +2175,11 @@ where
                     top_k,
                     top_p,
                     false, // benchmark not meaningful in interactive mode
+                    false, // trace not meaningful in interactive mode
+                    None,  // trace_out
+                    false, // trace_values
+                    false, // trace_run_metadata
+                    1,     // thread_count
                     max_seq_len.unwrap_or_else(|| {
                         <Gpt2<B> as ForwardModel<B>>::max_seq_len(model, backend)
                     }),

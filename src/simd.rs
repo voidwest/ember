@@ -1943,4 +1943,115 @@ mod tests {
             diff
         );
     }
+
+    // -- crossover sweep: matmul_q8_0_decode at multiple sizes  ------------
+
+    /// Synthetic sweep: measure `matmul_q8_0_decode` throughput at a range of
+    /// matrix sizes to find the thread-parallelism crossover point.
+    ///
+    /// Run with e.g.:
+    ///   RAYON_NUM_THREADS=2 cargo test --release -- crossover_sweep --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn crossover_sweep() {
+        use crate::quant::QuantizedWeight;
+        use std::time::Instant;
+
+        // embed_dim × inter_dim pairs covering 14–61 MFLOPs
+        // aspect ratio ≈ 1:3 (embed_dim : inter_dim)
+        let sizes: &[(usize, usize)] = &[
+            (1536, 4608),  //  14.2 MFLOPs
+            (2048, 6144),  //  25.2 MFLOPs
+            (2304, 6912),  //  31.9 MFLOPs
+            (2560, 7680),  //  39.3 MFLOPs
+            (2816, 8448),  //  47.6 MFLOPs
+            (3200, 9600),  //  61.4 MFLOPs
+        ];
+
+        let warmup = 20usize;
+        let measure = 100usize;
+        let threads = std::env::var("RAYON_NUM_THREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+
+        // Print header once
+        if threads == 1 {
+            println!("embed_dim,inter_dim,mflops,threads,n_iters,ns_per_matmul_median,ns_per_matmul_min,ns_per_matmul_max,ns_per_matmul_stdev");
+        }
+
+        for &(embed_dim, inter_dim) in sizes {
+            let data = random_q8_0_data(inter_dim, embed_dim);
+            let w = QuantizedWeight::new(data, vec![inter_dim, embed_dim]);
+            let x = vec![1.0f32; embed_dim];
+            let mut out = vec![0.0f32; inter_dim];
+
+            // Warmup
+            for _ in 0..warmup {
+                super::matmul_q8_0_decode(&x, &w, &mut out);
+            }
+
+            // Measure
+            let mut times = Vec::with_capacity(measure);
+            for _ in 0..measure {
+                let t0 = Instant::now();
+                super::matmul_q8_0_decode(&x, &w, &mut out);
+                times.push(t0.elapsed().as_nanos() as f64);
+            }
+
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let n = times.len();
+            let median = times[n / 2];
+            let min = times[0];
+            let max = times[n - 1];
+            let mean = times.iter().sum::<f64>() / n as f64;
+            let variance = times.iter().map(|t| (t - mean) * (t - mean)).sum::<f64>() / n as f64;
+            let stdev = variance.sqrt();
+            let mflops = 2.0 * embed_dim as f64 * inter_dim as f64 / 1_000_000.0;
+
+            println!(
+                "{},{},{:.1},{},{},{:.0},{:.0},{:.0},{:.0}",
+                embed_dim, inter_dim, mflops, threads, measure,
+                median, min, max, stdev
+            );
+        }
+    }
+
+    /// Measure Rayon thread-pool scheduling overhead with an empty workload.
+    ///
+    /// Run with e.g.:
+    ///   RAYON_NUM_THREADS=4 cargo test --release -- scheduling_overhead --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn scheduling_overhead() {
+        use rayon::prelude::*;
+        use std::time::Instant;
+
+        let threads = std::env::var("RAYON_NUM_THREADS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1);
+        let warmup = 50usize;
+        let measure = 500usize;
+
+        // Empty parallel iteration — measures fixed thread-pool dispatch cost
+        for _ in 0..warmup {
+            (0..threads).into_par_iter().for_each(|_| {});
+        }
+
+        let mut times = Vec::with_capacity(measure);
+        for _ in 0..measure {
+            let t0 = Instant::now();
+            (0..threads).into_par_iter().for_each(|_| {});
+            times.push(t0.elapsed().as_nanos() as f64);
+        }
+
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let n = times.len();
+        let median_ns = times[n / 2];
+        let mean_ns = times.iter().sum::<f64>() / n as f64;
+
+        println!("threads,median_ns,mean_ns");
+        println!("{},{:.0},{:.0}", threads, median_ns, mean_ns);
+    }
 }

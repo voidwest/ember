@@ -173,11 +173,119 @@ impl<B: Backend> LlamaMlp<B> {
 
 impl<B: Backend> Module<B> for LlamaMlp<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        use crate::trace::{self, OpKind};
+        use std::time::Instant;
+
+        let seq_len = backend.shape(x)[0];
+        let embed_dim = backend.shape(x)[1];
+
+        // -- gate projection --
+        let t0 = Instant::now();
         let gate = self.gate_proj.forward(backend, x)?;
+        let inter_dim = backend.shape(&gate)[1];
+        if trace::is_tracing() {
+            let vals = if trace::values_enabled() {
+                Some(trace::compute_tensor_values(backend.data(&gate)))
+            } else {
+                None
+            };
+            trace::record(
+                "gate_proj", trace::current_layer(), OpKind::MatMulQ8_0,
+                vec![seq_len, embed_dim],
+                trace::bytes_matmul_input(seq_len, embed_dim, self.gate_proj.weight_bytes(backend)),
+                vec![seq_len, inter_dim],
+                trace::bytes_matmul_output(seq_len, inter_dim),
+                trace::flops_matmul(seq_len, inter_dim, embed_dim),
+                t0.elapsed().as_nanos() as u64,
+                vals,
+            );
+        }
+
+        // -- silu --
+        let t0 = Instant::now();
         let gate = backend.silu(&gate)?;
+        if trace::is_tracing() {
+            let vals = if trace::values_enabled() {
+                Some(trace::compute_tensor_values(backend.data(&gate)))
+            } else {
+                None
+            };
+            trace::record(
+                "silu", trace::current_layer(), OpKind::Silu,
+                vec![seq_len, inter_dim],
+                trace::bytes_from_shape(&[seq_len, inter_dim]),
+                vec![seq_len, inter_dim],
+                trace::bytes_from_shape(&[seq_len, inter_dim]),
+                trace::flops_silu(seq_len * inter_dim),
+                t0.elapsed().as_nanos() as u64,
+                vals,
+            );
+        }
+
+        // -- up projection --
+        let t0 = Instant::now();
         let up = self.up_proj.forward(backend, x)?;
+        if trace::is_tracing() {
+            let vals = if trace::values_enabled() {
+                Some(trace::compute_tensor_values(backend.data(&up)))
+            } else {
+                None
+            };
+            trace::record(
+                "up_proj", trace::current_layer(), OpKind::MatMulQ8_0,
+                vec![seq_len, embed_dim],
+                trace::bytes_matmul_input(seq_len, embed_dim, self.up_proj.weight_bytes(backend)),
+                vec![seq_len, inter_dim],
+                trace::bytes_matmul_output(seq_len, inter_dim),
+                trace::flops_matmul(seq_len, inter_dim, embed_dim),
+                t0.elapsed().as_nanos() as u64,
+                vals,
+            );
+        }
+
+        // -- elemul (gating) --
+        let t0 = Instant::now();
         let gated = backend.elemul(&gate, &up)?;
-        self.down_proj.forward(backend, &gated)
+        if trace::is_tracing() {
+            let vals = if trace::values_enabled() {
+                Some(trace::compute_tensor_values(backend.data(&gated)))
+            } else {
+                None
+            };
+            trace::record(
+                "elemul", trace::current_layer(), OpKind::Elemul,
+                vec![seq_len, inter_dim],
+                trace::bytes_from_shape(&[seq_len, inter_dim]) * 2,
+                vec![seq_len, inter_dim],
+                trace::bytes_from_shape(&[seq_len, inter_dim]),
+                trace::flops_elemul(seq_len * inter_dim),
+                t0.elapsed().as_nanos() as u64,
+                vals,
+            );
+        }
+
+        // -- down projection --
+        let t0 = Instant::now();
+        let result = self.down_proj.forward(backend, &gated)?;
+        if trace::is_tracing() {
+            let vals = if trace::values_enabled() {
+                Some(trace::compute_tensor_values(backend.data(&result)))
+            } else {
+                None
+            };
+            trace::record(
+                "down_proj", trace::current_layer(), OpKind::MatMulQ8_0,
+                vec![seq_len, inter_dim],
+                trace::bytes_matmul_input(seq_len, inter_dim, self.down_proj.weight_bytes(backend)),
+                vec![seq_len, embed_dim],
+                trace::bytes_matmul_output(seq_len, embed_dim),
+                trace::flops_matmul(seq_len, embed_dim, inter_dim),
+                t0.elapsed().as_nanos() as u64,
+                vals,
+            );
+        }
+
+        Ok(result)
     }
 }
 
@@ -488,14 +596,68 @@ impl<B: Backend> LlamaAttention<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        use crate::trace::{self, OpKind};
+
+        let seq_len_in = backend.shape(x)[0];
+        let embed_dim = backend.shape(x)[1];
+
+        // -- Q projection --
+        let _span_q = trace::span(
+            "q_proj",
+            layer,
+            OpKind::MatMulQ8_0,
+            vec![seq_len_in, embed_dim],
+            trace::bytes_matmul_input(seq_len_in, embed_dim, self.q_proj.weight_bytes(backend)),
+            trace::flops_matmul(seq_len_in, self.n_heads * self.head_dim, embed_dim),
+        );
         let q = self.q_proj.forward(backend, x)?;
+        let q_dim = backend.shape(&q)[1];
+        if let Some(s) = _span_q {
+            s.end(vec![seq_len_in, q_dim], trace::bytes_matmul_output(seq_len_in, q_dim));
+        }
+
+        // -- K projection --
+        let kv_dim = self.n_kv_heads * self.head_dim;
+        let _span_k = trace::span(
+            "k_proj",
+            layer,
+            OpKind::MatMulQ8_0,
+            vec![seq_len_in, embed_dim],
+            trace::bytes_matmul_input(seq_len_in, embed_dim, self.k_proj.weight_bytes(backend)),
+            trace::flops_matmul(seq_len_in, kv_dim, embed_dim),
+        );
         let k = self.k_proj.forward(backend, x)?;
+        if let Some(s) = _span_k {
+            s.end(vec![seq_len_in, kv_dim], trace::bytes_matmul_output(seq_len_in, kv_dim));
+        }
+
+        // -- V projection --
+        let _span_v = trace::span(
+            "v_proj",
+            layer,
+            OpKind::MatMulQ8_0,
+            vec![seq_len_in, embed_dim],
+            trace::bytes_matmul_input(seq_len_in, embed_dim, self.v_proj.weight_bytes(backend)),
+            trace::flops_matmul(seq_len_in, kv_dim, embed_dim),
+        );
         let v = self.v_proj.forward(backend, x)?;
+        if let Some(s) = _span_v {
+            s.end(vec![seq_len_in, kv_dim], trace::bytes_matmul_output(seq_len_in, kv_dim));
+        }
 
         let seq_len = backend.shape(&q)[0];
-        let kv_dim = self.n_kv_heads * self.head_dim;
         let head_dim = self.head_dim;
 
+        // -- RoPE Q --
+        let q_width = self.n_heads * head_dim;
+        let _span_rope_q = trace::span(
+            "rope_q",
+            layer,
+            OpKind::RoPE,
+            vec![seq_len, q_width],
+            trace::bytes_from_shape(&[seq_len, q_width]),
+            trace::flops_rope(seq_len, q_width),
+        );
         let q = apply_rope_and_qk_norm(
             backend,
             &q,
@@ -510,6 +672,20 @@ impl<B: Backend> LlamaAttention<B> {
             },
             self.q_norm.as_ref(),
         )?;
+        if let Some(s) = _span_rope_q {
+            s.end(vec![seq_len, q_width], trace::bytes_from_shape(&[seq_len, q_width]));
+        }
+
+        // -- RoPE K --
+        let k_width = self.n_kv_heads * head_dim;
+        let _span_rope_k = trace::span(
+            "rope_k",
+            layer,
+            OpKind::RoPE,
+            vec![seq_len, k_width],
+            trace::bytes_from_shape(&[seq_len, k_width]),
+            trace::flops_rope(seq_len, k_width),
+        );
         let k = apply_rope_and_qk_norm(
             backend,
             &k,
@@ -524,11 +700,22 @@ impl<B: Backend> LlamaAttention<B> {
             },
             self.k_norm.as_ref(),
         )?;
+        if let Some(s) = _span_rope_k {
+            s.end(vec![seq_len, k_width], trace::bytes_from_shape(&[seq_len, k_width]));
+        }
 
         let k_data = backend.data(&k);
         let v_data = backend.data(&v);
 
-        // store k/v in cache (n_kv_heads per layer)
+        // -- KV cache store --
+        let _span_kv_store = trace::span(
+            "kv_cache_store",
+            layer,
+            OpKind::Other,
+            vec![seq_len, kv_dim],
+            (k_data.len() + v_data.len()) * 4,
+            0,
+        );
         let cursor = cache.cursor();
         for pos in 0..seq_len {
             let offset = pos * kv_dim;
@@ -539,10 +726,22 @@ impl<B: Backend> LlamaAttention<B> {
                 &v_data[offset..offset + kv_dim],
             );
         }
+        if let Some(s) = _span_kv_store {
+            s.end(vec![], 0);
+        }
 
-        // compute attention against full cached k/v
+        // -- Attention score computation --
         let total_seq_len = cache.cursor() + seq_len;
         let max_seq_len = cache.max_seq_len();
+        let _span_attn = trace::span(
+            "attention_score",
+            layer,
+            OpKind::AttentionScore,
+            vec![seq_len, q_width],
+            trace::bytes_from_shape(&[seq_len, q_width])  // Q bytes
+                + (total_seq_len * kv_dim * 4),            // cached K bytes
+            trace::flops_attention(seq_len, self.n_heads, head_dim, total_seq_len),
+        );
         let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(layer);
         let result = backend.cached_causal_attention_with_scratch(
             &q,
@@ -557,7 +756,26 @@ impl<B: Backend> LlamaAttention<B> {
             },
             qk_scratch,
         )?;
-        self.o_proj.forward(backend, &result)
+        let attn_out_dim = backend.shape(&result)[1];
+        if let Some(s) = _span_attn {
+            s.end(vec![seq_len, attn_out_dim], trace::bytes_from_shape(&[seq_len, attn_out_dim]));
+        }
+
+        // -- O projection --
+        let _span_o = trace::span(
+            "o_proj",
+            layer,
+            OpKind::MatMulQ8_0,
+            vec![seq_len, attn_out_dim],
+            trace::bytes_matmul_input(seq_len, attn_out_dim, self.o_proj.weight_bytes(backend)),
+            trace::flops_matmul(seq_len, embed_dim, attn_out_dim),
+        );
+        let result = self.o_proj.forward(backend, &result)?;
+        if let Some(s) = _span_o {
+            s.end(vec![seq_len, embed_dim], trace::bytes_matmul_output(seq_len, embed_dim));
+        }
+
+        Ok(result)
     }
 }
 
@@ -618,17 +836,88 @@ impl<B: Backend> LlamaBlock<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        // rms_norm -> attention (cached) -> residual add
+        use crate::trace::{self, OpKind};
+
+        trace::set_current_layer(layer);
+
+        let embed_dim = backend.shape(x)[1];
+        let seq_len = backend.shape(x)[0];
+        let x_shape = vec![seq_len, embed_dim];
+        let x_bytes = trace::bytes_from_shape(backend.shape(x));
+        let norm_bytes = trace::bytes_from_shape(backend.shape(&self.input_layernorm));
+
+        // -- attn RMS norm --
+        let _span_attn_norm = trace::span(
+            "attn_rms_norm",
+            layer,
+            OpKind::RmsNorm,
+            x_shape.clone(),
+            x_bytes + norm_bytes,
+            trace::flops_rms_norm(seq_len, embed_dim),
+        );
         let normed = backend.rms_norm(x, &self.input_layernorm, self.norm_eps)?;
+        let normed_shape = backend.shape(&normed).to_vec();
+        let normed_bytes = trace::bytes_from_shape(backend.shape(&normed));
+        if let Some(s) = _span_attn_norm {
+            s.end(normed_shape, normed_bytes);
+        }
+
+        // attention (cached) — sub-spans are inside LlamaAttention::forward_with_cache
         let attn_out = self
             .self_attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
-        let x = backend.add(x, &attn_out)?;
 
-        // rms_norm -> swiglu mlp -> residual add
+        // -- attn residual add --
+        let attn_out_bytes = trace::bytes_from_shape(backend.shape(&attn_out));
+        let _span_attn_add = trace::span(
+            "attn_residual_add",
+            layer,
+            OpKind::ResidualAdd,
+            x_shape.clone(),
+            x_bytes + attn_out_bytes,
+            trace::flops_residual_add(backend.data(&x).len()),
+        );
+        let x = backend.add(x, &attn_out)?;
+        if let Some(s) = _span_attn_add {
+            s.end(vec![backend.shape(&x)[0], backend.shape(&x)[1]], trace::bytes_from_shape(backend.shape(&x)));
+        }
+
+        // -- mlp RMS norm --
+        let mlp_norm_bytes = trace::bytes_from_shape(backend.shape(&self.post_attention_layernorm));
+        let _span_mlp_norm = trace::span(
+            "mlp_rms_norm",
+            layer,
+            OpKind::RmsNorm,
+            vec![backend.shape(&x)[0], backend.shape(&x)[1]],
+            trace::bytes_from_shape(backend.shape(&x)) + mlp_norm_bytes,
+            trace::flops_rms_norm(backend.shape(&x)[0], backend.shape(&x)[1]),
+        );
         let normed = backend.rms_norm(&x, &self.post_attention_layernorm, self.norm_eps)?;
+        let normed_shape = backend.shape(&normed).to_vec();
+        let normed_bytes = trace::bytes_from_shape(backend.shape(&normed));
+        if let Some(s) = _span_mlp_norm {
+            s.end(normed_shape, normed_bytes);
+        }
+
+        // swiglu mlp — sub-spans are inside LlamaMlp::forward
         let mlp_out = self.mlp.forward(backend, &normed)?;
-        backend.add(&x, &mlp_out)
+
+        // -- mlp residual add --
+        let mlp_out_bytes = trace::bytes_from_shape(backend.shape(&mlp_out));
+        let _span_mlp_add = trace::span(
+            "mlp_residual_add",
+            layer,
+            OpKind::ResidualAdd,
+            vec![backend.shape(&x)[0], backend.shape(&x)[1]],
+            trace::bytes_from_shape(backend.shape(&x)) + mlp_out_bytes,
+            trace::flops_residual_add(backend.data(&x).len()),
+        );
+        let result = backend.add(&x, &mlp_out)?;
+        if let Some(s) = _span_mlp_add {
+            s.end(vec![backend.shape(&result)[0], backend.shape(&result)[1]], trace::bytes_from_shape(backend.shape(&result)));
+        }
+
+        Ok(result)
     }
 }
 
@@ -940,11 +1229,26 @@ impl<B: Backend> Llama<B> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        use crate::trace::{self, OpKind};
+
         let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
         let mut x = backend.zeroes(&[seq_len, embed_dim])?;
+
+        // -- embedding lookup --
+        let _span_emb = trace::span(
+            "embedding",
+            usize::MAX,
+            OpKind::Embedding,
+            vec![seq_len, embed_dim],
+            trace::bytes_from_shape(&[seq_len, embed_dim]),
+            trace::flops_embedding(),
+        );
         for (i, &tok) in token_ids.iter().enumerate() {
             backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
+        }
+        if let Some(s) = _span_emb {
+            s.end(vec![seq_len, embed_dim], trace::bytes_from_shape(&[seq_len, embed_dim]));
         }
 
         for (layer, block) in self.blocks.iter().enumerate() {
@@ -955,8 +1259,37 @@ impl<B: Backend> Llama<B> {
         }
 
         let last = backend.row_as_2d(&x, seq_len - 1)?;
+
+        // -- final RMS norm --
+        let _span_final_norm = trace::span(
+            "final_norm",
+            usize::MAX,
+            OpKind::RmsNorm,
+            vec![1, embed_dim],
+            trace::bytes_from_shape(&[1, embed_dim]) + trace::bytes_from_shape(&[1, embed_dim]),
+            trace::flops_rms_norm(1, embed_dim),
+        );
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
-        self.head.forward(backend, &last)
+        if let Some(s) = _span_final_norm {
+            s.end(vec![1, embed_dim], trace::bytes_from_shape(&[1, embed_dim]));
+        }
+
+        // -- LM head --
+        let _span_head = trace::span(
+            "lm_head",
+            usize::MAX,
+            OpKind::MatMulQ8_0,
+            vec![1, embed_dim],
+            trace::bytes_matmul_input(1, embed_dim, self.head.weight_bytes(backend)),
+            trace::flops_matmul(1, self.config.vocab_size, embed_dim),
+        );
+        let result = self.head.forward(backend, &last)?;
+        let vocab_size = backend.shape(&result)[1];
+        if let Some(s) = _span_head {
+            s.end(vec![1, vocab_size], trace::bytes_matmul_output(1, vocab_size));
+        }
+
+        Ok(result)
     }
 
     /// forward pass without caching (full sequence).
