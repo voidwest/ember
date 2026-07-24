@@ -168,6 +168,10 @@
         </table>
 
         <p>
+            <small>each cell: median of 2–3 measured runs after 1–2 warmup runs.</small>
+        </p>
+
+        <p>
             at 6.3 and 23.1 MFLOPs per matmul, threads are net-negative or
             break-even. Ember's <code>should_parallel_q8_decode</code> gate
             returns false at these sizes — the matmul stays single-threaded
