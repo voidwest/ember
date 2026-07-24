@@ -6,9 +6,8 @@ tasks that survive heldout evaluation.
 
 Usage:
     python probes/plot_layerwise.py \
-        --qwen3 data/arabic_morph_real/probe_baseline_qwen3_1416/baseline_probe_summary.json \
-        --llama data/arabic_morph_real/probe_baseline_llama32_1b/baseline_probe_summary.json \
-        --qwen25 data/arabic_morph_real/probe_baseline_qwen25_15b/baseline_probe_summary.json \
+        --qwen3 data/arabic_morph_real/probe_baseline_qwen3_5k/baseline_probe_summary.json \
+        --llama data/arabic_morph_real/probe_baseline_llama32_5k/baseline_probe_summary.json \
         --output paper/figures/layerwise_probe_curves.png
 """
 
@@ -59,7 +58,7 @@ def main():
     parser = argparse.ArgumentParser(description="layerwise probe curve plot")
     parser.add_argument("--qwen3", required=True)
     parser.add_argument("--llama", required=True)
-    parser.add_argument("--qwen25", required=True)
+    parser.add_argument("--qwen25")
     parser.add_argument("--output", default="paper/figures/layerwise_probe_curves.png")
     args = parser.parse_args()
 
@@ -68,13 +67,16 @@ def main():
     models = {
         "Qwen3-0.6B": args.qwen3,
         "Llama-3.2-1B": args.llama,
-        "Qwen2.5-1.5B": args.qwen25,
     }
+    if args.qwen25:
+        models["Qwen2.5-1.5B"] = args.qwen25
 
     tasks = ["pos", "features.gender", "features.number"]
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.2))
-    fig.subplots_adjust(wspace=0.28)
+    fig, axes = plt.subplots(2, 2, figsize=(7.0, 5.4))
+    axes = axes.flatten()
+    fig.subplots_adjust(wspace=0.28, hspace=0.38)
+    legend_handles = {}
 
     for ax, task in zip(axes, tasks):
         ax.set_facecolor(LIGHT.surface)
@@ -86,31 +88,52 @@ def main():
             lw, info = result
             layers = np.arange(len(lw))
             color = MODEL_COLORS[model_name]
-            ax.plot(layers, lw, color=color, linewidth=1.6,
-                    marker="o", markersize=2.5, label=model_name)
+            line, = ax.plot(layers, lw, color=color, linewidth=1.6,
+                            marker="o", markersize=2.4, label=model_name)
+            legend_handles[model_name] = line
             # Mark best layer
             best = int(np.argmax(lw))
             ax.scatter([best], [lw[best]], color=color, s=30,
-                       edgecolors="white", linewidths=0.5, zorder=5)
+                       edgecolors=LIGHT.heading, linewidths=0.45, zorder=5)
 
         # Majority baseline
         if result:
-            ax.axhline(info["majority"], color="#484f58", linestyle=":",
-                       linewidth=0.8, alpha=0.7, label=f"majority ({info['majority']:.2f})")
+            majority = ax.axhline(info["majority"], color=LIGHT.subtle, linestyle=":",
+                                  linewidth=1.0, alpha=0.8, label="majority baseline")
+            legend_handles.setdefault("Majority baseline", majority)
 
-        ax.set_title(TASK_NAMES[task], fontsize=10, pad=6)
-        ax.set_xlabel("Layer", fontsize=8)
-        ax.set_ylabel("Accuracy", fontsize=8)
+        ax.set_title(TASK_NAMES[task], fontsize=9, pad=4)
+        ax.set_xlabel("Layer")
+        ax.set_ylabel("Accuracy")
         ax.set_ylim(0.4, 1.02)
-        ax.grid(True, alpha=0.25)
-        ax.legend(fontsize=6.5, loc="lower right",
-                  framealpha=0.85, borderpad=0.3,
-                  handletextpad=0.5, labelspacing=0.2)
+        ax.grid(True)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
         ax.tick_params(labelsize=7)
 
-    fig.suptitle("Layerwise probe accuracy (random CV, best layer only)",
-                 fontsize=11, y=1.01)
-    fig.tight_layout()
+    legend_ax = axes[-1]
+    legend_ax.axis("off")
+    legend_ax.legend(
+        legend_handles.values(),
+        legend_handles.keys(),
+        loc="center",
+        frameon=True,
+        fontsize=8,
+        borderpad=0.6,
+        handlelength=2.2,
+        labelspacing=0.5,
+    )
+    legend_ax.text(
+        0.0, 0.24,
+        "Dots mark each model's best layer.\nLayer 0 is the first transformer block output.",
+        transform=legend_ax.transAxes,
+        fontsize=7.4,
+        color=LIGHT.muted,
+        va="top",
+    )
+
+    fig.suptitle("Layerwise probe accuracy (random CV)", fontsize=10, y=0.995)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1960,12 +1960,12 @@ mod tests {
         // embed_dim × inter_dim pairs covering 14–61 MFLOPs
         // aspect ratio ≈ 1:3 (embed_dim : inter_dim)
         let sizes: &[(usize, usize)] = &[
-            (1536, 4608),  //  14.2 MFLOPs
-            (2048, 6144),  //  25.2 MFLOPs
-            (2304, 6912),  //  31.9 MFLOPs
-            (2560, 7680),  //  39.3 MFLOPs
-            (2816, 8448),  //  47.6 MFLOPs
-            (3200, 9600),  //  61.4 MFLOPs
+            (1536, 4608), //  14.2 MFLOPs
+            (2048, 6144), //  25.2 MFLOPs
+            (2304, 6912), //  31.9 MFLOPs
+            (2560, 7680), //  39.3 MFLOPs
+            (2816, 8448), //  47.6 MFLOPs
+            (3200, 9600), //  61.4 MFLOPs
         ];
 
         let warmup = 20usize;
@@ -2011,8 +2011,7 @@ mod tests {
 
             println!(
                 "{},{},{:.1},{},{},{:.0},{:.0},{:.0},{:.0}",
-                embed_dim, inter_dim, mflops, threads, measure,
-                median, min, max, stdev
+                embed_dim, inter_dim, mflops, threads, measure, median, min, max, stdev
             );
         }
     }

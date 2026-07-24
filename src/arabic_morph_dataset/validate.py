@@ -32,7 +32,7 @@ def validate_canonical_rows(rows: list[dict[str, Any]], split_strategy: str | No
         and not row_errors
         and not report["duplicate_ids"]
         and not report["missing_labels"]
-        and not (report["leakage"] and not report["leakage"].get("passed"))
+        and _leakage_allows_validation(report["leakage"])
     )
     return report
 
@@ -50,7 +50,7 @@ def validate_canonical(records: list[MorphRecord], split_strategy: str | None = 
     passed = (
         not duplicate_ids
         and not missing_labels
-        and not (leakage and not leakage.get("passed"))
+        and _leakage_allows_validation(leakage)
     )
     return {
         "type": "canonical",
@@ -62,6 +62,14 @@ def validate_canonical(records: list[MorphRecord], split_strategy: str | None = 
         "missing_labels": dict(missing_labels),
         "leakage": leakage,
     }
+
+
+def _leakage_allows_validation(leakage: dict[str, Any] | None) -> bool:
+    if not leakage:
+        return True
+    if leakage.get("status") in {"not_applicable", "not_checked"}:
+        return True
+    return bool(leakage.get("passed"))
 
 
 def validate_sft_examples(rows: list[dict[str, Any]]) -> dict[str, Any]:

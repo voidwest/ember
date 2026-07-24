@@ -22,7 +22,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -149,21 +149,25 @@ def extract_labels(
 # ── probe training ─────────────────────────────────────────────────
 
 
-def make_probe(max_iter=2000, scale=True, solver="lbfgs", tol=1e-4, n_jobs=None):
+def make_probe(max_iter=2000, scale=True, solver="lbfgs", tol=1e-4, n_jobs=None,
+               classifier="logistic"):
     steps = []
     if scale:
         steps.append(("standardscaler", StandardScaler()))
-    steps.append(
-        (
-            "logisticregression",
-            LogisticRegression(
-                max_iter=max_iter,
-                solver=solver,
-                tol=tol,
-                n_jobs=n_jobs,
-            ),
+    if classifier == "ridge":
+        steps.append(("ridge", RidgeClassifier(alpha=1.0)))
+    else:
+        steps.append(
+            (
+                "logisticregression",
+                LogisticRegression(
+                    max_iter=max_iter,
+                    solver=solver,
+                    tol=tol,
+                    n_jobs=n_jobs,
+                ),
+            )
         )
-    )
     return Pipeline(steps)
 
 
@@ -177,6 +181,7 @@ def train_layer_probes(
     tol: float = 1e-4,
     n_jobs: int | None = None,
     seed: int = 0,
+    classifier: str = "logistic",
 ) -> tuple[np.ndarray, list, LabelEncoder, np.ndarray | None]:
     """Train a probe per layer with cross-validation. Returns (accuracies, probes, le, confusions)."""
     le = LabelEncoder()
@@ -198,7 +203,7 @@ def train_layer_probes(
 
     for layer in range(n_layers):
         X = activations[:, layer, :]
-        probe = make_probe(max_iter=max_iter, scale=scale, solver=solver, tol=tol, n_jobs=n_jobs)
+        probe = make_probe(max_iter=max_iter, scale=scale, solver=solver, tol=tol, n_jobs=n_jobs, classifier=classifier)
 
         if splits is None:
             # fallback: train accuracy
@@ -209,7 +214,7 @@ def train_layer_probes(
             scores = []
             pred = np.full_like(y, fill_value=-1)
             for train_idx, test_idx in splits:
-                clone = make_probe(max_iter=max_iter, scale=scale, solver=solver, tol=tol, n_jobs=n_jobs)
+                clone = make_probe(max_iter=max_iter, scale=scale, solver=solver, tol=tol, n_jobs=n_jobs, classifier=classifier)
                 clone.fit(X[train_idx], y[train_idx])
                 scores.append(clone.score(X[test_idx], y[test_idx]))
                 pred[test_idx] = clone.predict(X[test_idx])
@@ -330,6 +335,9 @@ def main():
     parser.add_argument("--folds", type=int, default=5, help="CV folds (default: 5)")
     parser.add_argument("--max-iter", type=int, default=2000, help="LR max_iter (default: 2000)")
     parser.add_argument("--solver", default="lbfgs", help="LR solver (default: lbfgs)")
+    parser.add_argument("--classifier", default="logistic",
+                        choices=["logistic", "ridge"],
+                        help="classifier: logistic or ridge (default: logistic)")
     parser.add_argument("--tol", type=float, default=1e-4, help="LR tolerance (default: 1e-4)")
     parser.add_argument("--seed", type=int, default=42, help="random seed (default: 42)")
     parser.add_argument("--n-jobs", type=int, default=None, help="LR n_jobs")
@@ -379,6 +387,7 @@ def main():
             tol=args.tol,
             n_jobs=args.n_jobs,
             seed=args.seed,
+            classifier=args.classifier,
         )
 
         best_idx = int(np.argmax(acc))
@@ -408,8 +417,9 @@ def main():
         npz_data[f"{key}_majority_baseline"] = np.array(info["majority_baseline_accuracy"])
         npz_data[f"{key}_accuracy_minus_majority"] = acc - info["majority_baseline_accuracy"]
         npz_data[f"{key}_confusion_matrices"] = confusions.astype(np.int64)
+        step_name = "ridge" if args.classifier == "ridge" else "logisticregression"
         npz_data[f"{key}_probe_weights"] = [
-            p.named_steps["logisticregression"].coef_ for p in probes
+            p.named_steps[step_name].coef_ for p in probes
         ]
 
     # save NPZ

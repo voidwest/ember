@@ -125,9 +125,12 @@ def test_each_split_strategy_has_no_required_leakage():
     ]:
         split, report = split_records(records, strategy=strategy, seed=3, ratios={"train": 0.6, "dev": 0.2, "test": 0.2})
         assert len(split) == len(records)
-        assert report["leakage"]["passed"], strategy
         if strategy == "random":
+            assert report["leakage"]["passed"] is None
+            assert report["leakage"]["status"] == "not_applicable"
             assert report["leakage"]["checks"] == {}
+        else:
+            assert report["leakage"]["passed"], strategy
         if strategy == "lemma_heldout":
             assert set(report["leakage"]["checks"]) == {"lemma"}
 

@@ -61,7 +61,9 @@ pub fn compute_tensor_values(data: &[f32]) -> TraceValues {
         }
         // Mix every 64th element into the fingerprint
         if i % 64 == 0 {
-            fp = fp.wrapping_mul(6364136223846793005).wrapping_add(val.to_bits() as u64);
+            fp = fp
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(val.to_bits() as u64);
             fp ^= (i as u64).rotate_left(17);
         }
     }
@@ -113,6 +115,7 @@ pub fn is_tracing() -> bool {
 
 /// Record a trace event directly (without the RAII span pattern).
 /// Used when timing is done manually or when output shapes are only known after the operation.
+#[allow(clippy::too_many_arguments)]
 #[inline]
 pub fn record(
     name: &str,
@@ -162,7 +165,9 @@ pub enum TraceLevel {
 }
 
 /// Category of a traced operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub enum OpKind {
     Embedding,
     RmsNorm,
@@ -631,11 +636,7 @@ impl TraceReport {
         let mut out = String::new();
         let total_ns = self.total_duration_ns.max(1) as f64;
 
-        out.push_str(&format!(
-            "\n{} summary\n{}\n",
-            self.phase,
-            "-".repeat(30)
-        ));
+        out.push_str(&format!("\n{} summary\n{}\n", self.phase, "-".repeat(30)));
 
         let total_ms = total_ns / 1_000_000.0;
         let tok_s = 1.0 / (total_ms / 1000.0);
@@ -712,20 +713,14 @@ impl TraceReport {
 
                 out.push_str(&format!(
                     "  {:24} {}% {:>7.2} ms  {:>12} -> {:>12}  {:>6.1} GFLOPS/s  AI {:.1}",
-                    ev.name,
-                    pct_fmt,
-                    ms,
-                    shape_in,
-                    shape_out,
-                    gflops,
-                    ai,
+                    ev.name, pct_fmt, ms, shape_in, shape_out, gflops, ai,
                 ));
 
                 // Show dequant bytes for q8_0 matmuls
                 if ev.op_kind == OpKind::MatMulQ8_0 {
-                    let weight_bytes = ev.input_bytes.saturating_sub(
-                        ev.input_shape.iter().product::<usize>() * 4,
-                    );
+                    let weight_bytes = ev
+                        .input_bytes
+                        .saturating_sub(ev.input_shape.iter().product::<usize>() * 4);
                     out.push_str(&format!(
                         "  [q8_0: {} B weight]",
                         format_bytes(weight_bytes)
@@ -755,7 +750,7 @@ impl TraceReport {
             entry.0 += ev.duration_ns;
         }
         let mut ranked: Vec<_> = by_name.into_iter().collect();
-        ranked.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        ranked.sort_by_key(|b| std::cmp::Reverse(b.1 .0));
 
         for (i, (name, (ns, kind))) in ranked.iter().enumerate() {
             let pct = *ns as f64 / total_ns * 100.0;
@@ -777,7 +772,7 @@ impl TraceReport {
             entry.1 += ev.estimated_flops;
         }
         let mut cat_ranked: Vec<_> = by_cat.into_iter().collect();
-        cat_ranked.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        cat_ranked.sort_by_key(|b| std::cmp::Reverse(b.1 .0));
 
         for (kind, (ns, total_flops)) in &cat_ranked {
             let pct = *ns as f64 / total_ns * 100.0;
@@ -887,7 +882,14 @@ mod tests {
     #[test]
     fn json_roundtrip() {
         enable_tracing("decode", 0);
-        let s = span("gate_proj", 5, OpKind::MatMulQ8_0, vec![1, 4096], 4096 * 4 + 4096 * 4096 / 32 * 34, flops_matmul(1, 4096, 14336));
+        let s = span(
+            "gate_proj",
+            5,
+            OpKind::MatMulQ8_0,
+            vec![1, 4096],
+            4096 * 4 + 4096 * 4096 / 32 * 34,
+            flops_matmul(1, 4096, 14336),
+        );
         s.unwrap().end(vec![1, 14336], 14336 * 4);
         let report = disable_tracing().unwrap();
 

@@ -13,3 +13,4 @@ pub mod sampler;
 pub mod simd;
 pub mod tensor;
 pub mod tokenizer;
+pub mod trace;

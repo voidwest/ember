@@ -174,9 +174,14 @@ def leakage_report(records: Iterable[MorphRecord], strategy: str) -> dict[str, o
             by_split[record.split].append(record)
 
     report: dict[str, object] = {"strategy": strategy, "checks": {}}
+    if strategy == "random":
+        report["status"] = "not_applicable"
+        report["passed"] = None
+        report["ignored_unsplit_records"] = sum(1 for record in records if record.split not in {"train", "dev", "test"})
+        return report
+
     checks: dict[str, object] = {}
-    if strategy != "random":
-        checks["lemma"] = _intersection_check(by_split, lambda r: r.lemma)
+    checks["lemma"] = _intersection_check(by_split, lambda r: r.lemma)
     if strategy == "root_heldout":
         checks["root"] = _intersection_check(by_split, lambda r: r.root)
     elif strategy == "abstract_pattern_heldout":

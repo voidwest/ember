@@ -190,7 +190,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
                 None
             };
             trace::record(
-                "gate_proj", trace::current_layer(), OpKind::MatMulQ8_0,
+                "gate_proj",
+                trace::current_layer(),
+                OpKind::MatMulQ8_0,
                 vec![seq_len, embed_dim],
                 trace::bytes_matmul_input(seq_len, embed_dim, self.gate_proj.weight_bytes(backend)),
                 vec![seq_len, inter_dim],
@@ -211,7 +213,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
                 None
             };
             trace::record(
-                "silu", trace::current_layer(), OpKind::Silu,
+                "silu",
+                trace::current_layer(),
+                OpKind::Silu,
                 vec![seq_len, inter_dim],
                 trace::bytes_from_shape(&[seq_len, inter_dim]),
                 vec![seq_len, inter_dim],
@@ -232,7 +236,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
                 None
             };
             trace::record(
-                "up_proj", trace::current_layer(), OpKind::MatMulQ8_0,
+                "up_proj",
+                trace::current_layer(),
+                OpKind::MatMulQ8_0,
                 vec![seq_len, embed_dim],
                 trace::bytes_matmul_input(seq_len, embed_dim, self.up_proj.weight_bytes(backend)),
                 vec![seq_len, inter_dim],
@@ -253,7 +259,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
                 None
             };
             trace::record(
-                "elemul", trace::current_layer(), OpKind::Elemul,
+                "elemul",
+                trace::current_layer(),
+                OpKind::Elemul,
                 vec![seq_len, inter_dim],
                 trace::bytes_from_shape(&[seq_len, inter_dim]) * 2,
                 vec![seq_len, inter_dim],
@@ -274,7 +282,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
                 None
             };
             trace::record(
-                "down_proj", trace::current_layer(), OpKind::MatMulQ8_0,
+                "down_proj",
+                trace::current_layer(),
+                OpKind::MatMulQ8_0,
                 vec![seq_len, inter_dim],
                 trace::bytes_matmul_input(seq_len, inter_dim, self.down_proj.weight_bytes(backend)),
                 vec![seq_len, embed_dim],
@@ -613,7 +623,10 @@ impl<B: Backend> LlamaAttention<B> {
         let q = self.q_proj.forward(backend, x)?;
         let q_dim = backend.shape(&q)[1];
         if let Some(s) = _span_q {
-            s.end(vec![seq_len_in, q_dim], trace::bytes_matmul_output(seq_len_in, q_dim));
+            s.end(
+                vec![seq_len_in, q_dim],
+                trace::bytes_matmul_output(seq_len_in, q_dim),
+            );
         }
 
         // -- K projection --
@@ -628,7 +641,10 @@ impl<B: Backend> LlamaAttention<B> {
         );
         let k = self.k_proj.forward(backend, x)?;
         if let Some(s) = _span_k {
-            s.end(vec![seq_len_in, kv_dim], trace::bytes_matmul_output(seq_len_in, kv_dim));
+            s.end(
+                vec![seq_len_in, kv_dim],
+                trace::bytes_matmul_output(seq_len_in, kv_dim),
+            );
         }
 
         // -- V projection --
@@ -642,7 +658,10 @@ impl<B: Backend> LlamaAttention<B> {
         );
         let v = self.v_proj.forward(backend, x)?;
         if let Some(s) = _span_v {
-            s.end(vec![seq_len_in, kv_dim], trace::bytes_matmul_output(seq_len_in, kv_dim));
+            s.end(
+                vec![seq_len_in, kv_dim],
+                trace::bytes_matmul_output(seq_len_in, kv_dim),
+            );
         }
 
         let seq_len = backend.shape(&q)[0];
@@ -673,7 +692,10 @@ impl<B: Backend> LlamaAttention<B> {
             self.q_norm.as_ref(),
         )?;
         if let Some(s) = _span_rope_q {
-            s.end(vec![seq_len, q_width], trace::bytes_from_shape(&[seq_len, q_width]));
+            s.end(
+                vec![seq_len, q_width],
+                trace::bytes_from_shape(&[seq_len, q_width]),
+            );
         }
 
         // -- RoPE K --
@@ -701,7 +723,10 @@ impl<B: Backend> LlamaAttention<B> {
             self.k_norm.as_ref(),
         )?;
         if let Some(s) = _span_rope_k {
-            s.end(vec![seq_len, k_width], trace::bytes_from_shape(&[seq_len, k_width]));
+            s.end(
+                vec![seq_len, k_width],
+                trace::bytes_from_shape(&[seq_len, k_width]),
+            );
         }
 
         let k_data = backend.data(&k);
@@ -739,7 +764,7 @@ impl<B: Backend> LlamaAttention<B> {
             OpKind::AttentionScore,
             vec![seq_len, q_width],
             trace::bytes_from_shape(&[seq_len, q_width])  // Q bytes
-                + (total_seq_len * kv_dim * 4),            // cached K bytes
+                + (total_seq_len * kv_dim * 4), // cached K bytes
             trace::flops_attention(seq_len, self.n_heads, head_dim, total_seq_len),
         );
         let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(layer);
@@ -758,7 +783,10 @@ impl<B: Backend> LlamaAttention<B> {
         )?;
         let attn_out_dim = backend.shape(&result)[1];
         if let Some(s) = _span_attn {
-            s.end(vec![seq_len, attn_out_dim], trace::bytes_from_shape(&[seq_len, attn_out_dim]));
+            s.end(
+                vec![seq_len, attn_out_dim],
+                trace::bytes_from_shape(&[seq_len, attn_out_dim]),
+            );
         }
 
         // -- O projection --
@@ -772,7 +800,10 @@ impl<B: Backend> LlamaAttention<B> {
         );
         let result = self.o_proj.forward(backend, &result)?;
         if let Some(s) = _span_o {
-            s.end(vec![seq_len, embed_dim], trace::bytes_matmul_output(seq_len, embed_dim));
+            s.end(
+                vec![seq_len, embed_dim],
+                trace::bytes_matmul_output(seq_len, embed_dim),
+            );
         }
 
         Ok(result)
@@ -869,6 +900,7 @@ impl<B: Backend> LlamaBlock<B> {
 
         // -- attn residual add --
         let attn_out_bytes = trace::bytes_from_shape(backend.shape(&attn_out));
+        #[allow(clippy::needless_borrow)]
         let _span_attn_add = trace::span(
             "attn_residual_add",
             layer,
@@ -879,7 +911,10 @@ impl<B: Backend> LlamaBlock<B> {
         );
         let x = backend.add(x, &attn_out)?;
         if let Some(s) = _span_attn_add {
-            s.end(vec![backend.shape(&x)[0], backend.shape(&x)[1]], trace::bytes_from_shape(backend.shape(&x)));
+            s.end(
+                vec![backend.shape(&x)[0], backend.shape(&x)[1]],
+                trace::bytes_from_shape(backend.shape(&x)),
+            );
         }
 
         // -- mlp RMS norm --
@@ -904,6 +939,7 @@ impl<B: Backend> LlamaBlock<B> {
 
         // -- mlp residual add --
         let mlp_out_bytes = trace::bytes_from_shape(backend.shape(&mlp_out));
+        #[allow(clippy::needless_borrow)]
         let _span_mlp_add = trace::span(
             "mlp_residual_add",
             layer,
@@ -914,7 +950,10 @@ impl<B: Backend> LlamaBlock<B> {
         );
         let result = backend.add(&x, &mlp_out)?;
         if let Some(s) = _span_mlp_add {
-            s.end(vec![backend.shape(&result)[0], backend.shape(&result)[1]], trace::bytes_from_shape(backend.shape(&result)));
+            s.end(
+                vec![backend.shape(&result)[0], backend.shape(&result)[1]],
+                trace::bytes_from_shape(backend.shape(&result)),
+            );
         }
 
         Ok(result)
@@ -1248,7 +1287,10 @@ impl<B: Backend> Llama<B> {
             backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
         }
         if let Some(s) = _span_emb {
-            s.end(vec![seq_len, embed_dim], trace::bytes_from_shape(&[seq_len, embed_dim]));
+            s.end(
+                vec![seq_len, embed_dim],
+                trace::bytes_from_shape(&[seq_len, embed_dim]),
+            );
         }
 
         for (layer, block) in self.blocks.iter().enumerate() {
@@ -1286,7 +1328,10 @@ impl<B: Backend> Llama<B> {
         let result = self.head.forward(backend, &last)?;
         let vocab_size = backend.shape(&result)[1];
         if let Some(s) = _span_head {
-            s.end(vec![1, vocab_size], trace::bytes_matmul_output(1, vocab_size));
+            s.end(
+                vec![1, vocab_size],
+                trace::bytes_matmul_output(1, vocab_size),
+            );
         }
 
         Ok(result)

@@ -38,7 +38,11 @@ fn rayon_current_num_threads() -> usize {
     std::env::var("RAYON_NUM_THREADS")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+        })
 }
 
 /// a lightweight, cpu-first llm inference engine.
@@ -1899,14 +1903,18 @@ where
             eprintln!("trace JSON written to {}", path);
         }
 
-        eprintln!("--- trace: decode ({} tokens, {:.2} ms) ---",
+        eprintln!(
+            "--- trace: decode ({} tokens, {:.2} ms) ---",
             decode_traces.len(),
-            total_decode_ns as f64 / 1_000_000.0);
+            total_decode_ns as f64 / 1_000_000.0
+        );
         eprintln!("{}", aggregated.summary());
 
         if let Some(ref prefill) = prefill_trace {
-            eprintln!("\n--- trace: prefill ({:.2} ms) ---",
-                prefill.total_duration_ns as f64 / 1_000_000.0);
+            eprintln!(
+                "\n--- trace: prefill ({:.2} ms) ---",
+                prefill.total_duration_ns as f64 / 1_000_000.0
+            );
             eprintln!("{}", prefill.summary());
         }
     }

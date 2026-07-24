@@ -170,6 +170,17 @@ impl<B: Backend> Linear<B> {
         }
         Ok(out)
     }
+
+    /// Return the byte size of the weight tensor (for trace/benchmark reporting).
+    pub fn weight_bytes(&self, backend: &B) -> usize {
+        match &self.weight {
+            WeightKind::F32(w) => {
+                let shape = backend.shape(w);
+                shape.iter().product::<usize>() * 4
+            }
+            WeightKind::Q8_0(qw) => qw.data.len(),
+        }
+    }
 }
 
 /// gpt-2's two-layer feed-forward network: `c_fc` -> gelu -> `c_proj`.
