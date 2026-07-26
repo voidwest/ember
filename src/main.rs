@@ -197,6 +197,39 @@ enum Commands {
     ValidateRun(ValidateRunCommand),
     /// compare native and llama.cpp backend outputs where comparable
     ValidateBackends(ValidateBackendsCommand),
+    /// benchmark model-only single-token decode with llama-bench-compatible timing
+    BenchDecode(BenchDecodeCommand),
+}
+
+#[derive(ClapArgs)]
+struct BenchDecodeCommand {
+    /// path to the GGUF model
+    #[arg(short, long)]
+    model: String,
+
+    /// model architecture
+    #[arg(long, value_parser = ["gpt2", "llama", "qwen3", "gemma4"])]
+    arch: String,
+
+    /// number of timed single-token evaluations per repetition
+    #[arg(short = 'n', long, default_value_t = 128)]
+    tokens: usize,
+
+    /// untimed repetitions used to warm model pages and kernels
+    #[arg(long, default_value_t = 2)]
+    warmups: usize,
+
+    /// measured repetitions
+    #[arg(short, long, default_value_t = 5)]
+    repetitions: usize,
+
+    /// deterministic token id fed to the model
+    #[arg(long, default_value_t = 1)]
+    token_id: u32,
+
+    /// optional context-size cap
+    #[arg(long, value_parser = parse_max_seq_len)]
+    max_seq_len: Option<usize>,
 }
 
 #[derive(ClapArgs)]
@@ -358,6 +391,7 @@ fn main() -> anyhow::Result<()> {
             }
             Commands::ValidateRun(command) => run_validate_run_command(command),
             Commands::ValidateBackends(command) => run_validate_backends_command(command),
+            Commands::BenchDecode(command) => run_bench_decode_command(command),
         };
     }
 
@@ -1387,6 +1421,112 @@ fn ensure_sequence_fits(
     Ok(requested)
 }
 
+fn run_bench_decode_command(command: &BenchDecodeCommand) -> anyhow::Result<()> {
+    if command.tokens == 0 {
+        anyhow::bail!("--tokens must be greater than 0");
+    }
+    if command.repetitions == 0 {
+        anyhow::bail!("--repetitions must be greater than 0");
+    }
+
+    let loader = load_gguf(&command.model)?;
+    let backend = CpuBackend;
+    match command.arch.as_str() {
+        "gpt2" => {
+            let model = Gpt2::from_loader(loader)?;
+            bench_decode_model(&backend, &model, command)
+        }
+        "llama" | "qwen3" => {
+            let model =
+                ember::model::Llama::from_loader_with_max_seq_len(loader, command.max_seq_len)?;
+            bench_decode_model(&backend, &model, command)
+        }
+        "gemma4" => {
+            let model = ember::gemma4::Gemma4::from_loader(loader)?;
+            bench_decode_model(&backend, &model, command)
+        }
+        architecture => anyhow::bail!("unsupported architecture: {architecture}"),
+    }
+}
+
+fn bench_decode_model<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    command: &BenchDecodeCommand,
+) -> anyhow::Result<()>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let required_context = command
+        .tokens
+        .checked_add(1)
+        .context("decode benchmark context length overflowed")?;
+    let model_limit = model.max_seq_len(backend);
+    let context_limit = command.max_seq_len.unwrap_or(model_limit).min(model_limit);
+    if required_context > context_limit {
+        anyhow::bail!(
+            "decode benchmark needs context {}, but model limit is {}",
+            required_context,
+            context_limit
+        );
+    }
+
+    let run_once = || -> anyhow::Result<u64> {
+        let mut cache = model.create_cache(backend, required_context);
+        let _ =
+            model.forward_last_logits_with_cache(backend, &[command.token_id], &mut cache, 0)?;
+        let start = Instant::now();
+        for position in 0..command.tokens {
+            let logits = model.forward_last_logits_with_cache(
+                backend,
+                &[command.token_id],
+                &mut cache,
+                position + 1,
+            )?;
+            std::hint::black_box(backend.data(&logits));
+        }
+        Ok(start.elapsed().as_nanos() as u64)
+    };
+
+    for _ in 0..command.warmups {
+        run_once()?;
+    }
+    let mut samples_ns = Vec::with_capacity(command.repetitions);
+    for _ in 0..command.repetitions {
+        samples_ns.push(run_once()?);
+    }
+    let mut sorted = samples_ns.clone();
+    sorted.sort_unstable();
+    let median_ns = sorted[sorted.len() / 2];
+    let samples_ts = samples_ns
+        .iter()
+        .map(|duration| command.tokens as f64 * 1_000_000_000.0 / *duration as f64)
+        .collect::<Vec<_>>();
+    let median_ts = command.tokens as f64 * 1_000_000_000.0 / median_ns as f64;
+
+    let output = serde_json::json!({
+        "schema_version": 1,
+        "benchmark": "decode",
+        "model": command.model,
+        "model_file_size_bytes": fs::metadata(&command.model).ok().map(|metadata| metadata.len()),
+        "architecture": command.arch,
+        "git_commit": git_commit(),
+        "tokens": command.tokens,
+        "warmups": command.warmups,
+        "repetitions": command.repetitions,
+        "token_id": command.token_id,
+        "threads": rayon_current_num_threads(),
+        "timing_excludes": ["model_load", "prefill", "tokenization", "sampling"],
+        "median_ns": median_ns,
+        "median_tokens_per_second": median_ts,
+        "samples_ns": samples_ns,
+        "samples_tokens_per_second": samples_ts,
+        "run_metadata": trace::collect_run_metadata(rayon_current_num_threads()),
+    });
+    println!("{}", serde_json::to_string_pretty(&output)?);
+    Ok(())
+}
+
 fn run_single_prompt<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
@@ -2115,6 +2255,33 @@ mod tests {
         assert!(Args::try_parse_from(["ember", "--top-p", "0"]).is_err());
         assert!(Args::try_parse_from(["ember", "--top-p", "1.1"]).is_err());
         assert!(Args::try_parse_from(["ember", "--max-seq-len", "0"]).is_err());
+    }
+
+    #[test]
+    fn bench_decode_subcommand_parses_matched_timing_options() {
+        let args = Args::try_parse_from([
+            "ember",
+            "bench-decode",
+            "--model",
+            "model.gguf",
+            "--arch",
+            "gemma4",
+            "--tokens",
+            "16",
+            "--warmups",
+            "1",
+            "--repetitions",
+            "3",
+        ])
+        .unwrap();
+        match args.command {
+            Some(Commands::BenchDecode(command)) => {
+                assert_eq!(command.tokens, 16);
+                assert_eq!(command.warmups, 1);
+                assert_eq!(command.repetitions, 3);
+            }
+            _ => panic!("expected bench-decode command"),
+        }
     }
 }
 
@@ -3045,6 +3212,12 @@ fn cpu_features_detected() -> Vec<&'static str> {
         }
         if std::arch::is_x86_feature_detected!("avx512f") {
             features.push("avx512f");
+        }
+        if std::arch::is_x86_feature_detected!("avx512vl") {
+            features.push("avx512vl");
+        }
+        if std::arch::is_x86_feature_detected!("avx512vnni") {
+            features.push("avx512vnni");
         }
     }
 

@@ -18,8 +18,10 @@ use crate::quant::{Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
 use half::f16;
 use rayon::prelude::*;
 
-const PARALLEL_Q8_DECODE_MIN_OUT_FEATURES: usize = 4096;
-const PARALLEL_Q8_DECODE_MIN_WORK: usize = 8_388_608;
+// Four-way row splitting becomes beneficial well below the old 8M-MAC gate
+// now that decode uses cheaper Q8 × Q8 dots. This includes Gemma's Q/O
+// projections while keeping its tiny 256-wide PLE gates serial.
+const PARALLEL_Q8_DECODE_MIN_WORK: usize = 1_048_576;
 // ---------------------------------------------------------------------------
 // public dispatch
 // ---------------------------------------------------------------------------
@@ -142,16 +144,60 @@ mod x86_64 {
         }
     }
 
-    /// Fused Q8_0 dot product using AVX2 for integer widening and FMA for
-    /// multiply-accumulate.  Processes 32 quants per block in 4 batches of
-    /// 8 f32 values each, with two independent accumulators for ILP.
+    /// Q8_0 × Q8_0 dot product using AVX2 integer pairwise multiply-add.
     ///
     /// # Safety
     ///
-    /// Caller must ensure AVX2 and FMA are supported.
-    #[target_feature(enable = "avx2,fma")]
-    pub unsafe fn matmul_q8_0_decode_avx2_fma(
-        x: &[f32],
+    /// Caller must ensure AVX2 is supported.
+    #[target_feature(enable = "avx2")]
+    pub unsafe fn matmul_q8_0_decode_avx2(
+        x: &[u8],
+        data: &[u8],
+        _out_features: usize,
+        blocks_per_row: usize,
+        out: &mut [f32],
+    ) {
+        let ones = _mm256_set1_epi16(1);
+        for (row, out_val) in out.iter_mut().enumerate() {
+            let row_start = row * blocks_per_row;
+            let mut acc = _mm256_setzero_ps();
+
+            for b in 0..blocks_per_row {
+                let byte_offset = (row_start + b) * Q8_0_TYPE_SIZE;
+                let x_offset = b * Q8_0_TYPE_SIZE;
+                let weight_scale = f16::from_bits(u16::from_le_bytes(
+                    *(data.as_ptr().add(byte_offset) as *const [u8; 2]),
+                ))
+                .to_f32();
+                let input_scale = f16::from_bits(u16::from_le_bytes(
+                    *(x.as_ptr().add(x_offset) as *const [u8; 2]),
+                ))
+                .to_f32();
+                let weights =
+                    _mm256_loadu_si256(data.as_ptr().add(byte_offset + 2) as *const __m256i);
+                let input = _mm256_loadu_si256(x.as_ptr().add(x_offset + 2) as *const __m256i);
+                let abs_weights = _mm256_abs_epi8(weights);
+                let signed_input = _mm256_sign_epi8(input, weights);
+                let pair16 = _mm256_maddubs_epi16(abs_weights, signed_input);
+                let pair32 = _mm256_madd_epi16(pair16, ones);
+                let products = _mm256_cvtepi32_ps(pair32);
+                let scale = _mm256_set1_ps(weight_scale * input_scale);
+                acc = _mm256_add_ps(acc, _mm256_mul_ps(products, scale));
+            }
+
+            let low = _mm256_castps256_ps128(acc);
+            let high = _mm256_extractf128_ps::<1>(acc);
+            let sum128 = _mm_add_ps(low, high);
+            let sum128 = _mm_hadd_ps(sum128, sum128);
+            let sum128 = _mm_hadd_ps(sum128, sum128);
+            *out_val = _mm_cvtss_f32(sum128);
+        }
+    }
+
+    /// Q8_0 × Q8_0 dot product using AVX-512 VNNI's packed integer dot.
+    #[target_feature(enable = "avx2,avx512vl,avx512vnni")]
+    pub unsafe fn matmul_q8_0_decode_avx512_vnni(
+        x: &[u8],
         data: &[u8],
         _out_features: usize,
         blocks_per_row: usize,
@@ -159,59 +205,30 @@ mod x86_64 {
     ) {
         for (row, out_val) in out.iter_mut().enumerate() {
             let row_start = row * blocks_per_row;
-            let mut acc0 = _mm256_setzero_ps();
-            let mut acc1 = _mm256_setzero_ps();
-
+            let mut acc = _mm256_setzero_ps();
             for b in 0..blocks_per_row {
                 let byte_offset = (row_start + b) * Q8_0_TYPE_SIZE;
-                let base_ptr = data.as_ptr().add(byte_offset);
-
-                // -- scale -----------------------------------------------
-                let d_bits = u16::from_le_bytes(*(base_ptr as *const [u8; 2]));
-                let d = f16::from_bits(d_bits).to_f32();
-                let d_vec = _mm256_set1_ps(d);
-
-                // -- quants: 32 i8 values as 256-bit vector ---------------
-                let quants_ptr = base_ptr.add(2) as *const i8;
-                let quants = _mm256_loadu_si256(quants_ptr as *const __m256i);
-
-                let low128 = _mm256_castsi256_si128(quants);
-                let high128 = _mm256_extracti128_si256::<1>(quants);
-
-                let x_offset = b * Q8_0_BLOCK_SIZE;
-                let x_ptr = x.as_ptr().add(x_offset);
-
-                // -- batch 0: bytes 0..7 of low128 → acc0 ----------------
-                let q0_i32 = _mm256_cvtepi8_epi32(low128);
-                let q0_f32 = _mm256_cvtepi32_ps(q0_i32);
-                let q0_scaled = _mm256_mul_ps(q0_f32, d_vec);
-                let x0 = _mm256_loadu_ps(x_ptr);
-                acc0 = _mm256_fmadd_ps(q0_scaled, x0, acc0);
-
-                // -- batch 1: bytes 8..15 of low128 → acc1 ---------------
-                let q1_i32 = _mm256_cvtepi8_epi32(_mm_bsrli_si128(low128, 8));
-                let q1_f32 = _mm256_cvtepi32_ps(q1_i32);
-                let q1_scaled = _mm256_mul_ps(q1_f32, d_vec);
-                let x1 = _mm256_loadu_ps(x_ptr.add(8));
-                acc1 = _mm256_fmadd_ps(q1_scaled, x1, acc1);
-
-                // -- batch 2: bytes 0..7 of high128 → acc0 ---------------
-                let q2_i32 = _mm256_cvtepi8_epi32(high128);
-                let q2_f32 = _mm256_cvtepi32_ps(q2_i32);
-                let q2_scaled = _mm256_mul_ps(q2_f32, d_vec);
-                let x2 = _mm256_loadu_ps(x_ptr.add(16));
-                acc0 = _mm256_fmadd_ps(q2_scaled, x2, acc0);
-
-                // -- batch 3: bytes 8..15 of high128 → acc1 --------------
-                let q3_i32 = _mm256_cvtepi8_epi32(_mm_bsrli_si128(high128, 8));
-                let q3_f32 = _mm256_cvtepi32_ps(q3_i32);
-                let q3_scaled = _mm256_mul_ps(q3_f32, d_vec);
-                let x3 = _mm256_loadu_ps(x_ptr.add(24));
-                acc1 = _mm256_fmadd_ps(q3_scaled, x3, acc1);
+                let x_offset = b * Q8_0_TYPE_SIZE;
+                let weight_scale = f16::from_bits(u16::from_le_bytes(
+                    *(data.as_ptr().add(byte_offset) as *const [u8; 2]),
+                ))
+                .to_f32();
+                let input_scale = f16::from_bits(u16::from_le_bytes(
+                    *(x.as_ptr().add(x_offset) as *const [u8; 2]),
+                ))
+                .to_f32();
+                let weights =
+                    _mm256_loadu_si256(data.as_ptr().add(byte_offset + 2) as *const __m256i);
+                let input = _mm256_loadu_si256(x.as_ptr().add(x_offset + 2) as *const __m256i);
+                let abs_weights = _mm256_abs_epi8(weights);
+                let signed_input = _mm256_sign_epi8(input, weights);
+                let sums = _mm256_dpbusd_epi32(_mm256_setzero_si256(), abs_weights, signed_input);
+                let products = _mm256_cvtepi32_ps(sums);
+                acc = _mm256_add_ps(
+                    acc,
+                    _mm256_mul_ps(products, _mm256_set1_ps(weight_scale * input_scale)),
+                );
             }
-
-            // -- horizontal sum: acc0 + acc1 → scalar --------------------
-            let acc = _mm256_add_ps(acc0, acc1);
             let low = _mm256_castps256_ps128(acc);
             let high = _mm256_extractf128_ps::<1>(acc);
             let sum128 = _mm_add_ps(low, high);
@@ -914,29 +931,25 @@ mod aarch64 {
 // fused Q8_0 decode (seq_len = 1)
 // ---------------------------------------------------------------------------
 //
-// When the input is a single row (decode), each output value is a dot product
-// between the input row and one dequantized weight row.  Skipping the dense
-// w_block buffer and computing the dot product directly from the compressed
-// Q8_0 data eliminates the temporary allocation and sgemm dispatch overhead.
+// When the input is a single row (decode), quantize it once to Q8_0 and use
+// packed integer dot products against each compressed weight row.
 //
-//   out[j] = Σᵢ x[i] · dequant(w[j][i])
-//
-// Each Q8_0 block contributes 32 terms:  Σₖ x[off+k] · (qₖ · d).
+//   out[j] = Σblocks (d_x · d_w · Σₖ q_x[k] · q_w[j][k])
 
 use crate::quant::QuantizedWeight;
 
 /// Fused Q8_0 dot product for single-row input (decode, seq_len = 1).
 ///
-/// Computes `out[j] = Σᵢ x[i] · dequant(w[j][i])` for every output row j
-/// directly from the compressed weight data.  No dense temporary is allocated.
+/// Computes a Q8_0 × Q8_0 matrix-vector product for every output row.
 ///
 /// # Panics
 ///
-/// Panics if `x.len() != in_features`, `out.len() != out_features`, or the
+/// Panics if `x` is not a valid quantized input row, `out.len() !=
+/// out_features`, or the
 /// weight data is not a valid Q8_0 encoding.
 #[inline]
-pub(crate) fn matmul_q8_0_decode(x: &[f32], w: &QuantizedWeight, out: &mut [f32]) {
-    debug_assert_eq!(x.len(), w.in_features());
+pub(crate) fn matmul_q8_0_decode(x: &[u8], w: &QuantizedWeight, out: &mut [f32]) {
+    debug_assert_eq!(x.len(), w.in_features() / Q8_0_BLOCK_SIZE * Q8_0_TYPE_SIZE);
     debug_assert_eq!(out.len(), w.out_features());
 
     let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
@@ -947,9 +960,12 @@ pub(crate) fn matmul_q8_0_decode(x: &[f32], w: &QuantizedWeight, out: &mut [f32]
 
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        if is_x86_feature_detected!("avx512vnni")
+            && is_x86_feature_detected!("avx512vl")
+            && is_x86_feature_detected!("avx2")
+        {
             unsafe {
-                return x86_64::matmul_q8_0_decode_avx2_fma(
+                return x86_64::matmul_q8_0_decode_avx512_vnni(
                     x,
                     &w.data,
                     w.out_features(),
@@ -958,12 +974,9 @@ pub(crate) fn matmul_q8_0_decode(x: &[f32], w: &QuantizedWeight, out: &mut [f32]
                 );
             }
         }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
+        if is_x86_feature_detected!("avx2") {
             unsafe {
-                return aarch64::matmul_q8_0_decode_neon(
+                return x86_64::matmul_q8_0_decode_avx2(
                     x,
                     &w.data,
                     w.out_features(),
@@ -977,13 +990,12 @@ pub(crate) fn matmul_q8_0_decode(x: &[f32], w: &QuantizedWeight, out: &mut [f32]
 }
 
 fn should_parallel_q8_decode(out_features: usize, in_features: usize) -> bool {
-    out_features >= PARALLEL_Q8_DECODE_MIN_OUT_FEATURES
-        && rayon::current_num_threads() > 1
+    rayon::current_num_threads() > 1
         && out_features.saturating_mul(in_features) >= PARALLEL_Q8_DECODE_MIN_WORK
 }
 
 fn matmul_q8_0_decode_parallel(
-    x: &[f32],
+    x: &[u8],
     w: &QuantizedWeight,
     blocks_per_row: usize,
     out: &mut [f32],
@@ -1001,16 +1013,19 @@ fn matmul_q8_0_decode_parallel(
 }
 
 fn matmul_q8_0_decode_dispatch_chunk(
-    x: &[f32],
+    x: &[u8],
     data: &[u8],
     blocks_per_row: usize,
     out: &mut [f32],
 ) {
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+        if is_x86_feature_detected!("avx512vnni")
+            && is_x86_feature_detected!("avx512vl")
+            && is_x86_feature_detected!("avx2")
+        {
             unsafe {
-                return x86_64::matmul_q8_0_decode_avx2_fma(
+                return x86_64::matmul_q8_0_decode_avx512_vnni(
                     x,
                     data,
                     out.len(),
@@ -1019,12 +1034,9 @@ fn matmul_q8_0_decode_dispatch_chunk(
                 );
             }
         }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
+        if is_x86_feature_detected!("avx2") {
             unsafe {
-                return aarch64::matmul_q8_0_decode_neon(x, data, out.len(), blocks_per_row, out);
+                return x86_64::matmul_q8_0_decode_avx2(x, data, out.len(), blocks_per_row, out);
             }
         }
     }
@@ -1034,7 +1046,7 @@ fn matmul_q8_0_decode_dispatch_chunk(
 // -- scalar fallback --------------------------------------------------------
 
 fn matmul_q8_0_decode_scalar(
-    x: &[f32],
+    x: &[u8],
     data: &[u8],
     _out_features: usize,
     blocks_per_row: usize,
@@ -1045,13 +1057,22 @@ fn matmul_q8_0_decode_scalar(
         let row_start = row * blocks_per_row;
         for b in 0..blocks_per_row {
             let byte_offset = (row_start + b) * Q8_0_TYPE_SIZE;
-            let d_bits = u16::from_le_bytes(data[byte_offset..byte_offset + 2].try_into().unwrap());
-            let d = f16::from_bits(d_bits).to_f32();
-            let x_offset = b * Q8_0_BLOCK_SIZE;
+            let x_offset = b * Q8_0_TYPE_SIZE;
+            let weight_scale = f16::from_bits(u16::from_le_bytes(
+                data[byte_offset..byte_offset + 2].try_into().unwrap(),
+            ))
+            .to_f32();
+            let input_scale = f16::from_bits(u16::from_le_bytes(
+                x[x_offset..x_offset + 2].try_into().unwrap(),
+            ))
+            .to_f32();
+            let mut block_sum = 0i32;
             for j in 0..Q8_0_BLOCK_SIZE {
-                let q = data[byte_offset + 2 + j] as i8;
-                sum += x[x_offset + j] * (q as f32) * d;
+                let weight = data[byte_offset + 2 + j] as i8 as i32;
+                let input = x[x_offset + 2 + j] as i8 as i32;
+                block_sum += weight * input;
             }
+            sum += block_sum as f32 * weight_scale * input_scale;
         }
         *out_val = sum;
     }
@@ -1306,6 +1327,12 @@ mod tests {
         (0..len)
             .map(|i| ((i as f32 + phase) * 0.37).sin() * 3.0 + (i % 5) as f32 * 0.125)
             .collect()
+    }
+
+    fn quantized_input(values: &[f32]) -> Vec<u8> {
+        let mut data = Vec::new();
+        crate::quant::quantize_q8_0_into(values, &mut data);
+        data
     }
 
     fn max_diff(a: &[f32], b: &[f32]) -> (f32, f32, usize) {
@@ -1734,13 +1761,14 @@ mod tests {
         let x: Vec<f32> = (0..in_features)
             .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
             .collect();
+        let qx = quantized_input(&x);
 
         let mut decode_out = vec![0.0f32; out_features];
-        matmul_q8_0_decode(&x, &w, &mut decode_out);
+        matmul_q8_0_decode(&qx, &w, &mut decode_out);
 
         let mut scalar_out = vec![0.0f32; out_features];
         matmul_q8_0_decode_scalar(
-            &x,
+            &qx,
             &data,
             out_features,
             in_features / Q8_0_BLOCK_SIZE,
@@ -1774,9 +1802,10 @@ mod tests {
         let x: Vec<f32> = (0..in_features)
             .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
             .collect();
+        let qx = quantized_input(&x);
 
         let mut decode_out = vec![0.0f32; out_features];
-        matmul_q8_0_decode(&x, &w, &mut decode_out);
+        matmul_q8_0_decode(&qx, &w, &mut decode_out);
 
         // Force the existing block-wise prefill implementation by using two
         // identical rows; CpuBackend only takes the fused decode branch for
@@ -1796,8 +1825,8 @@ mod tests {
             "q8 decode vs blockwise prefill",
             &decode_out,
             prefill_first_row,
-            1e-3,
-            1e-3,
+            0.1,
+            0.02,
         );
     }
 
@@ -1829,6 +1858,7 @@ mod tests {
         let x: Vec<f32> = (0..IN_FEATURES)
             .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
             .collect();
+        let qx = quantized_input(&x);
         let mut out = vec![0.0f32; OUT_FEATURES];
 
         let kernel_name = {
@@ -1857,13 +1887,13 @@ mod tests {
 
         // warmup — scalar fallback
         for _ in 0..WARMUP_ITERS {
-            matmul_q8_0_decode_scalar(&x, &data, OUT_FEATURES, BLOCKS_PER_ROW, &mut out);
+            matmul_q8_0_decode_scalar(&qx, &data, OUT_FEATURES, BLOCKS_PER_ROW, &mut out);
         }
 
         // measure — scalar
         let t0 = std::time::Instant::now();
         for _ in 0..MEASURE_ITERS {
-            matmul_q8_0_decode_scalar(&x, &data, OUT_FEATURES, BLOCKS_PER_ROW, &mut out);
+            matmul_q8_0_decode_scalar(&qx, &data, OUT_FEATURES, BLOCKS_PER_ROW, &mut out);
         }
         let scalar_elapsed = t0.elapsed();
         let scalar_us = scalar_elapsed.as_micros() as f64 / MEASURE_ITERS as f64;
@@ -1872,13 +1902,13 @@ mod tests {
 
         // warmup — dispatch
         for _ in 0..WARMUP_ITERS {
-            matmul_q8_0_decode(&x, &w, &mut out);
+            matmul_q8_0_decode(&qx, &w, &mut out);
         }
 
         // measure — dispatch
         let t0 = std::time::Instant::now();
         for _ in 0..MEASURE_ITERS {
-            matmul_q8_0_decode(&x, &w, &mut out);
+            matmul_q8_0_decode(&qx, &w, &mut out);
         }
         let dispatch_elapsed = t0.elapsed();
         let dispatch_us = dispatch_elapsed.as_micros() as f64 / MEASURE_ITERS as f64;
@@ -1957,9 +1987,13 @@ mod tests {
         use crate::quant::QuantizedWeight;
         use std::time::Instant;
 
-        // embed_dim × inter_dim pairs covering 14–61 MFLOPs
-        // aspect ratio ≈ 1:3 (embed_dim : inter_dim)
+        // Include Gemma's narrow PLE projections and its wider transformer
+        // projections around the row-parallelism crossover.
         let sizes: &[(usize, usize)] = &[
+            (1536, 256),  //   0.8 MFLOPs
+            (1536, 768),  //   2.4 MFLOPs
+            (1536, 1536), //   4.7 MFLOPs
+            (1536, 2048), //   6.3 MFLOPs
             (1536, 4608), //  14.2 MFLOPs
             (2048, 6144), //  25.2 MFLOPs
             (2304, 6912), //  31.9 MFLOPs
@@ -1984,18 +2018,19 @@ mod tests {
             let data = random_q8_0_data(inter_dim, embed_dim);
             let w = QuantizedWeight::new(data, vec![inter_dim, embed_dim]);
             let x = vec![1.0f32; embed_dim];
+            let qx = quantized_input(&x);
             let mut out = vec![0.0f32; inter_dim];
 
             // Warmup
             for _ in 0..warmup {
-                super::matmul_q8_0_decode(&x, &w, &mut out);
+                super::matmul_q8_0_decode(&qx, &w, &mut out);
             }
 
             // Measure
             let mut times = Vec::with_capacity(measure);
             for _ in 0..measure {
                 let t0 = Instant::now();
-                super::matmul_q8_0_decode(&x, &w, &mut out);
+                super::matmul_q8_0_decode(&qx, &w, &mut out);
                 times.push(t0.elapsed().as_nanos() as f64);
             }
 

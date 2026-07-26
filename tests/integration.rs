@@ -629,6 +629,28 @@ fn test_matmul_q8_0_dimension_mismatch_returns_error() {
 }
 
 #[test]
+fn test_assign_row_from_q8_0_dequantizes_only_selected_row() {
+    use ember::backend::{Backend, CpuBackend};
+    use ember::quant::QuantizedWeight;
+    use ember::tensor::CpuTensor;
+    use half::f16;
+
+    let mut raw = Vec::new();
+    for scale in [1.0f32, 2.0] {
+        raw.extend_from_slice(&f16::from_f32(scale).to_bits().to_le_bytes());
+        raw.extend((0..32).map(|value| value as i8 as u8));
+    }
+    let table = QuantizedWeight::try_new(raw, vec![2, 32]).unwrap();
+    let mut dst = CpuTensor::zeroes(&[1, 32]);
+    CpuBackend
+        .assign_row_from_q8_0(&mut dst, 0, &table, 1)
+        .unwrap();
+    for (index, value) in dst.data().iter().enumerate() {
+        assert_eq!(*value, index as f32 * 2.0);
+    }
+}
+
+#[test]
 fn test_backend_causal_attention_shapes() {
     use ember::backend::{AttentionSpec, Backend, CpuBackend};
 

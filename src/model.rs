@@ -181,6 +181,20 @@ impl<B: Backend> Linear<B> {
             WeightKind::Q8_0(qw) => qw.data.len(),
         }
     }
+
+    pub fn in_features(&self, backend: &B) -> usize {
+        match &self.weight {
+            WeightKind::F32(w) => backend.shape(w)[0],
+            WeightKind::Q8_0(qw) => qw.in_features(),
+        }
+    }
+
+    pub fn out_features(&self, backend: &B) -> usize {
+        match &self.weight {
+            WeightKind::F32(w) => backend.shape(w)[1],
+            WeightKind::Q8_0(qw) => qw.out_features(),
+        }
+    }
 }
 
 /// gpt-2's two-layer feed-forward network: `c_fc` -> gelu -> `c_proj`.

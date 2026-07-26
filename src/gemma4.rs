@@ -561,22 +561,31 @@ enum Gemma4Ple<B: Backend> {
     },
 }
 
+#[derive(Clone)]
+enum Gemma4Embedding<B: Backend> {
+    F32(Arc<B::Tensor>),
+    Q8_0(Arc<crate::quant::QuantizedWeight>),
+}
+
 enum Gemma4Head<B: Backend> {
     Linear(Linear<B>),
-    TiedEmbedding(Arc<B::Tensor>),
+    TiedEmbedding(Gemma4Embedding<B>),
 }
 
 impl<B: Backend> Gemma4Head<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
         match self {
             Self::Linear(head) => head.forward(backend, x),
-            Self::TiedEmbedding(table) => tied_embedding_logits(backend, x, table),
+            Self::TiedEmbedding(Gemma4Embedding::F32(table)) => {
+                tied_embedding_logits(backend, x, table)
+            }
+            Self::TiedEmbedding(Gemma4Embedding::Q8_0(table)) => backend.matmul_q8_0(x, table),
         }
     }
 }
 
 pub struct Gemma4<B: Backend> {
-    embed_tokens: Arc<B::Tensor>,
+    embed_tokens: Gemma4Embedding<B>,
     blocks: Vec<Gemma4Block<B>>,
     norm: B::Tensor,
     head: Gemma4Head<B>,
@@ -676,15 +685,11 @@ impl Gemma4<CpuBackend> {
                 None => anyhow::bail!("Missing tensor: {}", name),
             }
         };
-        let get_linear_no_transpose = |name: &str| -> anyhow::Result<Linear<CpuBackend>> {
-            match loader.tensors.get(name) {
-                Some(LoadedTensor::F32(t)) => Ok(Linear::new(t.clone(), None)),
-                Some(LoadedTensor::Q8_0(qw)) => Ok(Linear::new(qw.dequantize_all(), None)),
-                None => anyhow::bail!("Missing tensor: {}", name),
-            }
+        let embed_tokens = match loader.tensors.get("token_embd.weight") {
+            Some(LoadedTensor::F32(t)) => Gemma4Embedding::F32(Arc::new(t.clone())),
+            Some(LoadedTensor::Q8_0(qw)) => Gemma4Embedding::Q8_0(Arc::new(qw.clone())),
+            None => anyhow::bail!("Missing tensor: token_embd.weight"),
         };
-
-        let embed_tokens = Arc::new(get_f32("token_embd.weight")?);
 
         // Load rope_freqs for partial RoPE application (global layers)
         let rope_freqs: Option<Vec<f32>> = match loader.tensors.get("rope_freqs.weight") {
@@ -711,6 +716,9 @@ impl Gemma4<CpuBackend> {
             (Arc::new(cos), Arc::new(sin))
         };
 
+        let per_layer_dim = config
+            .hidden_size_per_layer_input
+            .unwrap_or(config.embed_dim);
         let mut blocks = Vec::with_capacity(config.n_layers);
         let mut last_local_source = None;
         let mut last_global_source = None;
@@ -796,15 +804,38 @@ impl Gemma4<CpuBackend> {
             let proj_name = format!("blk.{}.proj.weight", i);
             let has_ple = loader.tensors.contains_key(&proj_name);
             let inp_gate = if has_ple {
-                Some(get_linear_no_transpose(&format!(
-                    "blk.{}.inp_gate.weight",
-                    i
-                ))?)
+                let linear = get_linear(&format!("blk.{}.inp_gate.weight", i))?;
+                if linear.in_features(&CpuBackend) != config.embed_dim
+                    || linear.out_features(&CpuBackend) != per_layer_dim
+                {
+                    anyhow::bail!(
+                        "Gemma 4 layer {} input gate must be {} -> {}, got {} -> {}",
+                        i,
+                        config.embed_dim,
+                        per_layer_dim,
+                        linear.in_features(&CpuBackend),
+                        linear.out_features(&CpuBackend)
+                    );
+                }
+                Some(linear)
             } else {
                 None
             };
             let ple_proj = if has_ple {
-                Some(get_linear_no_transpose(&proj_name)?)
+                let linear = get_linear(&proj_name)?;
+                if linear.in_features(&CpuBackend) != per_layer_dim
+                    || linear.out_features(&CpuBackend) != config.embed_dim
+                {
+                    anyhow::bail!(
+                        "Gemma 4 layer {} PLE projection must be {} -> {}, got {} -> {}",
+                        i,
+                        per_layer_dim,
+                        config.embed_dim,
+                        linear.in_features(&CpuBackend),
+                        linear.out_features(&CpuBackend)
+                    );
+                }
+                Some(linear)
             } else {
                 None
             };
@@ -843,9 +874,6 @@ impl Gemma4<CpuBackend> {
             "token_embd_per_layer.weight".to_string(),
             "per_layer_embd.weight".to_string(),
         ];
-        let per_layer_dim = config
-            .hidden_size_per_layer_input
-            .unwrap_or(config.embed_dim);
         let ple = match get_optional_f32_only(&loader, &ple_names) {
             Some(t) => {
                 if t.shape().len() != 3
@@ -885,7 +913,7 @@ impl Gemma4<CpuBackend> {
                 Gemma4Head::Linear(Linear::new(t.clone().transpose(), None))
             }
             Some(LoadedTensor::Q8_0(qw)) => Gemma4Head::Linear(Linear::new_q8_0(qw.clone(), None)),
-            None => Gemma4Head::TiedEmbedding(Arc::clone(&embed_tokens)),
+            None => Gemma4Head::TiedEmbedding(embed_tokens.clone()),
         };
 
         // Global PLE projection (llama.cpp pathway): combines hidden state
@@ -894,7 +922,7 @@ impl Gemma4<CpuBackend> {
             if let Some(t) = loader.tensors.get("per_layer_model_proj.weight") {
                 let proj = match t {
                     LoadedTensor::F32(t) => Linear::new(t.clone(), None),
-                    LoadedTensor::Q8_0(qw) => Linear::new(qw.dequantize_all(), None),
+                    LoadedTensor::Q8_0(qw) => Linear::new_q8_0(qw.clone(), None),
                 };
                 let norm = get_f32("per_layer_proj_norm.weight")?;
                 (Some(proj), Some(norm))
@@ -1204,14 +1232,20 @@ impl<B: Backend> Gemma4<B> {
 
 fn embed_tokens<B: Backend>(
     backend: &B,
-    table: &B::Tensor,
+    table: &Gemma4Embedding<B>,
     token_ids: &[u32],
     embed_dim: usize,
 ) -> Result<B::Tensor, B::Error> {
     let mut x = backend.zeroes(&[token_ids.len(), embed_dim])?;
     for (i, &tok) in token_ids.iter().enumerate() {
-        let word_vec = backend.index_select(table, tok as usize)?;
-        backend.assign_row(&mut x, i, &word_vec);
+        match table {
+            Gemma4Embedding::F32(table) => {
+                backend.assign_row_from_table(&mut x, i, table, tok as usize)?;
+            }
+            Gemma4Embedding::Q8_0(table) => {
+                backend.assign_row_from_q8_0(&mut x, i, table, tok as usize)?;
+            }
+        }
     }
     // Matching llama.cpp: scale token embeddings by sqrt(n_embd)
     let emb_scale = (embed_dim as f32).sqrt();
@@ -1853,7 +1887,7 @@ mod tests {
     fn ple_vectors_slice_by_layer_and_token() {
         let backend = CpuBackend;
         let model = Gemma4 {
-            embed_tokens: Arc::new(CpuTensor::zeroes(&[3, 2])),
+            embed_tokens: Gemma4Embedding::F32(Arc::new(CpuTensor::zeroes(&[3, 2]))),
             blocks: Vec::new(),
             norm: CpuTensor::zeroes(&[2]),
             head: Gemma4Head::Linear(Linear::new(CpuTensor::zeroes(&[2, 3]), None)),

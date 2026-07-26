@@ -286,13 +286,37 @@ pub fn collect_run_metadata(thread_count: usize) -> RunMetadata {
         .and_then(|l| l.split(':').nth(1).map(|s| s.trim().to_string()))
         .unwrap_or_else(|| "unknown".to_string());
 
-    let cpu_cores_physical = std::fs::read_to_string("/proc/cpuinfo")
-        .map(|s| s.lines().filter(|l| l.starts_with("cpu cores")).count())
-        .unwrap_or(0);
-
-    let cpu_cores_logical = std::fs::read_to_string("/proc/cpuinfo")
-        .map(|s| s.lines().filter(|l| l.starts_with("processor")).count())
-        .unwrap_or(0);
+    let cpuinfo = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
+    let cpu_cores_logical = cpuinfo
+        .lines()
+        .filter(|line| line.starts_with("processor"))
+        .count();
+    let physical_pairs = cpuinfo
+        .split("\n\n")
+        .filter_map(|record| {
+            let mut package = None;
+            let mut core = None;
+            for line in record.lines() {
+                let (key, value) = line.split_once(':')?;
+                match key.trim() {
+                    "physical id" => package = Some(value.trim().to_string()),
+                    "core id" => core = Some(value.trim().to_string()),
+                    _ => {}
+                }
+            }
+            Some((package?, core?))
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    let cpu_cores_physical = if physical_pairs.is_empty() {
+        cpuinfo
+            .lines()
+            .find(|line| line.starts_with("cpu cores"))
+            .and_then(|line| line.split_once(':'))
+            .and_then(|(_, value)| value.trim().parse().ok())
+            .unwrap_or(cpu_cores_logical)
+    } else {
+        physical_pairs.len()
+    };
 
     let frequency_governor =
         read_first_line("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")

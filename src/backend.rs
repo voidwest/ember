@@ -9,6 +9,7 @@ const PARALLEL_ATTENTION_MIN_WORK: usize = 32_768;
 
 thread_local! {
     static Q8_0_PREFILL_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    static Q8_0_DECODE_INPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 /// shape metadata for standard causal self-attention.
@@ -90,6 +91,14 @@ pub trait Backend {
         dst: &mut Self::Tensor,
         dst_index: usize,
         table: &Self::Tensor,
+        table_index: usize,
+    ) -> Result<(), Self::Error>;
+    /// Dequantize one row from a Q8_0 table directly into `dst`.
+    fn assign_row_from_q8_0(
+        &self,
+        dst: &mut Self::Tensor,
+        dst_index: usize,
+        table: &QuantizedWeight,
         table_index: usize,
     ) -> Result<(), Self::Error>;
     fn assign_row_sum_from_tables(
@@ -222,10 +231,14 @@ impl Backend for CpuBackend {
         let mut out = vec![0.0f32; seq_len * out_features];
 
         // decode path: single input row, no column reuse.
-        // skip the dense w_block buffer and sgemm dispatch overhead;
-        // compute the dot product directly from compressed Q8_0 data.
+        // Quantize the activation once, then use the same Q8_0 × Q8_0
+        // integer-dot arithmetic as llama.cpp.
         if seq_len == 1 {
-            crate::simd::matmul_q8_0_decode(x_data, w, &mut out);
+            Q8_0_DECODE_INPUT.with(|input| {
+                let mut input = input.borrow_mut();
+                crate::quant::quantize_q8_0_into(x_data, &mut input);
+                crate::simd::matmul_q8_0_decode(&input, w, &mut out);
+            });
             return Ok(CpuTensor::from_data(vec![seq_len, out_features], out));
         }
 
@@ -282,6 +295,32 @@ impl Backend for CpuBackend {
         table_index: usize,
     ) -> Result<(), Self::Error> {
         assign_row_from_table_cpu(dst, dst_index, table, table_index)
+    }
+    fn assign_row_from_q8_0(
+        &self,
+        dst: &mut CpuTensor,
+        dst_index: usize,
+        table: &QuantizedWeight,
+        table_index: usize,
+    ) -> Result<(), Self::Error> {
+        if dst.ndim() != 2
+            || dst_index >= dst.shape()[0]
+            || table_index >= table.out_features()
+            || dst.shape()[1] != table.in_features()
+        {
+            return Err(CpuError::ShapeMismatch(format!(
+                "assign_row_from_q8_0: dst={:?}, dst_index={}, table=[{}, {}], table_index={}",
+                dst.shape(),
+                dst_index,
+                table.out_features(),
+                table.in_features(),
+                table_index
+            )));
+        }
+        let cols = table.in_features();
+        let start = dst_index * cols;
+        table.dequantize_row(table_index, &mut dst.data_mut()[start..start + cols]);
+        Ok(())
     }
     fn assign_row_sum_from_tables(
         &self,

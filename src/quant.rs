@@ -7,6 +7,36 @@ pub const Q8_0_BLOCK_SIZE: usize = 32;
 /// total byte size of one q8_0 block (2 byte fp16 scale + 32 int8 values)
 pub const Q8_0_TYPE_SIZE: usize = 34;
 
+/// Quantize one or more contiguous rows to llama.cpp-compatible Q8_0 blocks.
+///
+/// Each 32-value block stores an FP16 `amax / 127` scale followed by 32
+/// rounded signed bytes. `dst` is resized and reused by decode callers.
+pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
+    assert!(
+        src.len().is_multiple_of(Q8_0_BLOCK_SIZE),
+        "q8_0 input length must be a multiple of 32"
+    );
+    let n_blocks = src.len() / Q8_0_BLOCK_SIZE;
+    dst.resize(n_blocks * Q8_0_TYPE_SIZE, 0);
+
+    for block in 0..n_blocks {
+        let src_start = block * Q8_0_BLOCK_SIZE;
+        let values = &src[src_start..src_start + Q8_0_BLOCK_SIZE];
+        let amax = values
+            .iter()
+            .fold(0.0f32, |acc, value| acc.max(value.abs()));
+        let scale = amax / 127.0;
+        let inv_scale = if scale != 0.0 { scale.recip() } else { 0.0 };
+        let dst_start = block * Q8_0_TYPE_SIZE;
+        dst[dst_start..dst_start + 2]
+            .copy_from_slice(&f16::from_f32(scale).to_bits().to_le_bytes());
+        for (index, value) in values.iter().enumerate() {
+            let quantized = (*value * inv_scale).round().clamp(-127.0, 127.0) as i8;
+            dst[dst_start + 2 + index] = quantized as u8;
+        }
+    }
+}
+
 /// dequantize a q8_0 block-compressed buffer into f32 values.
 ///
 /// each block: 2-byte fp16 scale `d`, followed by 32 int8 quantized values `q`.
@@ -140,5 +170,43 @@ impl QuantizedWeight {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quantize_q8_0_zero_block_matches_reference_layout() {
+        let mut encoded = Vec::new();
+        quantize_q8_0_into(&[0.0; Q8_0_BLOCK_SIZE], &mut encoded);
+        assert_eq!(encoded, vec![0; Q8_0_TYPE_SIZE]);
+    }
+
+    #[test]
+    fn quantize_q8_0_matches_llama_reference_vector() {
+        let values = (0..Q8_0_BLOCK_SIZE)
+            .map(|index| index as f32 - 16.0)
+            .collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+        quantize_q8_0_into(&values, &mut encoded);
+
+        let expected_scale = f16::from_f32(16.0 / 127.0);
+        assert_eq!(
+            &encoded[..2],
+            &expected_scale.to_bits().to_le_bytes(),
+            "Q8_0 scale must be stored as little-endian FP16"
+        );
+        let scale = (16.0f32 / 127.0).recip();
+        for (index, value) in values.iter().enumerate() {
+            let expected = (*value * scale).round() as i8;
+            assert_eq!(encoded[2 + index] as i8, expected, "index {index}");
+        }
+    }
+
+    #[test]
+    fn quantized_weight_rejects_non_block_aligned_rows() {
+        assert!(QuantizedWeight::try_new(vec![], vec![1, 31]).is_err());
     }
 }
