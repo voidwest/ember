@@ -1807,12 +1807,17 @@ mod tests {
         let mut decode_out = vec![0.0f32; out_features];
         matmul_q8_0_decode(&qx, &w, &mut decode_out);
 
-        // Force the existing block-wise prefill implementation by using two
-        // identical rows; CpuBackend only takes the fused decode branch for
-        // seq_len == 1.
+        // Decode quantizes its activation before multiplying. Feed prefill the
+        // same quantized values so this test measures kernel parity rather
+        // than the expected, data-dependent Q8 activation rounding error.
+        let mut quantized_x = vec![0.0f32; in_features];
+        crate::quant::dequantize_q8_0(&qx, &mut quantized_x).unwrap();
+
+        // Force the existing block-wise prefill implementation with two
+        // identical rows; CpuBackend only takes fused decode for seq_len == 1.
         let mut x2 = Vec::with_capacity(in_features * 2);
-        x2.extend_from_slice(&x);
-        x2.extend_from_slice(&x);
+        x2.extend_from_slice(&quantized_x);
+        x2.extend_from_slice(&quantized_x);
         let backend = CpuBackend;
         let prefill = backend
             .matmul_q8_0(
