@@ -114,27 +114,31 @@ Use these levels when interpreting Ember runs:
 | llama | local/cloud structural smokes and probe extraction | pending | pending | preliminary LLaMA 1B/3B/8B decoder probe runs | research findings are preliminary until references and reports are complete |
 | qwen2.5 | selected warning-prone smokes through llama-family path | none | none | pending validation | experimental; do not treat as quality-compatible |
 | qwen3 | Qwen3 0.6B smoke/probe paths run locally | pending target | pending | Qwen3 0.6B local probe run exists | promising engineering path, not yet numerically validated |
-| gemma4 | local BOS smoke + golden-logit comparison passes | cosine ~0.87 against llama.cpp reference; coherent English output | per-layer hidden-state comparison pipeline operational; L0 attn_norm bit-identical | pending full runs | structural fixes applied (PLE, block layout, RoPE, global projection, BF16, embedding scale, layer scales); remaining gap ~0.13 attributed to RMSNorm weight amplification of sub-ULP differences, not a structural bug |
+| gemma4 | local BOS smoke and llama.cpp reference comparison run | final-logit cosine ~0.87; not a golden pass | per-layer comparison pipeline operational; L0 attn_norm bit-identical | pending full runs | structural fixes applied, but the remaining numerical gap still prevents a parity claim; RMSNorm amplification is the current working explanation |
 | hf encoders | external Hugging Face extraction path works for mBERT smoke | not applicable to Ember GGUF numerics | external stack not activation-checked here | mBERT PADT smoke; full encoder suite pending | useful benchmark path, not an Ember inference validation result |
 
 ## features
 
-- **gguf v3 loader**: reads gguf model files, supports f32, f16, and q8_0 dtypes.
-- **on-the-fly dequantization**: q8_0 weights stay in block-compressed form in
-  memory (~4x smaller than f32) and are dequantized during matmul.  the 3B
-  model uses ~3.4 GB of ram instead of ~12.8 GB.
-- **block-wise sgemm**: quantized matmuls dequantize in blocks of 256 columns
-  and multiply with `matrixmultiply::sgemm` - 5x faster prefill than the
-  scalar path.
+- **gguf v3 loader**: reads f32, f16, bf16, and q8_0 tensors. File-loaded q8_0
+  weights retain shared ranges into a read-only mmap instead of being copied
+  into a second allocation; f16 and bf16 tensors are materialized as f32.
+- **packed q8_0 matmul**: q8_0 weights remain block-compressed and activations
+  are quantized once per row. Decode uses runtime-dispatched scalar, AVX2, or
+  AVX-512 VNNI Q8×Q8 integer-dot kernels, while prompt prefill uses tiled
+  multi-row kernels and Rayon scheduling.
+- **shared projection packing**: Q/K/V and gate/up projections can reuse one
+  packed activation buffer when their weights are q8_0.
 - **backend trait**: model code is generic over a `Backend` trait for linear ops,
   embeddings, and element-wise math - swap cpu for gpu later without rewriting
-  those paths. (attention is cpu-scalar for now; see design notes.)
+  those paths. The CPU attention path uses SIMD inner loops and Rayon above
+  measured work thresholds.
 - **execution backend interface**: extraction can now be routed through a model
   execution backend. `native` wraps Ember's Rust inference path; `llama-cpp` is
   reserved for a patched/custom external extraction binary and currently errors
   clearly as not implemented.
-- **explicit memory**: pre-allocated kv caches and explicit tensor ownership make
-  inference memory use visible and easy to profile.
+- **explicit memory**: pre-allocated f16 kv caches, context-sized prompt-only
+  caches, and explicit tensor ownership make inference memory use visible and
+  easy to profile.
 - **alloc-first design**: core tensor types and model code avoid `std` where practical, using `alloc` for vec-backed storage.
 - **hidden-state probing**: extract per-layer activations at any token position.
   probe mode (`--probe`) feeds stimuli through the model and saves full
@@ -155,11 +159,11 @@ Use these levels when interpreting Ember runs:
 - **ml fundamentals**: causal multi-head attention with kv caching,
   numerically stable softmax (handles all-masked rows), layer norm,
   gelu activation, top-k/top-p sampling.
-- **file format parsing**: gguf v3 loader with f32, f16, and q8_0
+- **file format parsing**: gguf v3 loader with f32, f16, bf16, and q8_0
   quantization support.
-- **memory-conscious inference**: q8_0 weights stay quantized in memory
-  and are dequantized in blocks during matmul - the 3.2B model runs in
-  ~3.4 GB of ram on consumer hardware.
+- **memory-conscious inference**: q8_0 weights stay mapped in their compressed
+  representation, tied q8_0 embeddings can be reused directly as the LM head,
+  and K/V state is stored as f16.
 - **edge case handling**: uniform fallback when every logit is -inf,
   categorical sampling with inverse cdf, nucleus cutoff logic.
 
@@ -169,10 +173,11 @@ Use these levels when interpreting Ember runs:
 cargo run --release -- --model gpt2.Q8_0.gguf --prompt "hello"
 ```
 
-Backend-ready hidden-state extraction uses a declarative config:
+Backend-ready hidden-state extraction uses a declarative config. Save the
+minimal example below as `extract.toml`, then run:
 
 ```bash
-cargo run --release -- extract --backend native --config configs/extract.example.toml
+cargo run --release -- extract --backend native --config extract.toml
 ```
 
 Minimal config shape:
@@ -239,7 +244,12 @@ the patched extractor contract is implemented.
 | `--demo` | (none) | fixed prompts with timing and deterministic output |
 | `--delay-ms` | `0` | delay between tokens in demo mode (0 = instant) |
 | `--benchmark` | (none) | print prefill/decode timing to stderr |
+| `--trace` | (none) | enable per-operation execution tracing (`ops`) |
+| `--trace-out` | stderr | write trace JSON to a file |
+| `--trace-values` | `none` | optionally record output norms and fingerprints (`summary`) |
+| `--trace-run-metadata` | (none) | attach CPU, thread, governor, and commit metadata to traces |
 | `--dump-logits` | (none) | write last-prompt logits for `--prompt` to `.npy` and exit |
+| `--dump-layers` | (none) | write Gemma 4 last-token layer states as flat native-endian f32 |
 | `--write-run-manifest` | (none) | write a reproducibility manifest with model/tokenizer hashes, git commit, compiler, Rayon, and CPU feature data |
 | `--record-model-sha256` | (none) | compute and record model file sha256 in probe metadata |
 | `--dump-gguf-metadata` | (none) | write parsed GGUF metadata to JSON |
@@ -254,6 +264,58 @@ the patched extractor contract is implemented.
 | `--probe-output-prefix` | `probe` | output filename prefix for batch probe extraction |
 | `--probe-generate-tokens` | `16` | continuation length for probe behavioral scoring |
 | `--probe-limit` | (none) | cap probe extraction to the first N stimuli for smoke tests |
+
+### decode benchmark
+
+For a model-only decode comparison with `llama-bench`, build once and exclude
+loading, prefill, tokenization, and sampling on both sides:
+
+```bash
+cargo build --release
+RAYON_NUM_THREADS=4 target/release/ember bench-decode \
+  --model models/gemma-4-E2B-it.Q8_0.gguf \
+  --arch gemma4 \
+  --tokens 128 \
+  --warmups 2 \
+  --repetitions 5
+```
+
+The command creates a fresh cache per repetition, performs one untimed seed
+evaluation, then times deterministic single-token evaluations. It emits JSON
+with every timing sample, median throughput, thread count, CPU metadata, model
+size, commit, and explicit timing exclusions. Use `--token-id` to change the
+fixed input token and `--max-seq-len` to cap the benchmark context.
+
+### execution tracing
+
+Trace the native generation path to stderr, or add `--trace-out trace.json` for
+a reusable report:
+
+```bash
+RAYON_NUM_THREADS=1 target/release/ember \
+  --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --prompt "The capital of France is" \
+  --max-tokens 1 \
+  --temperature 0 \
+  --trace ops \
+  --trace-values summary \
+  --trace-run-metadata
+```
+
+Tracing is thread-local; use one Rayon thread when a complete per-operation
+decode trace is more important than throughput. See `TRACE.md` for the event
+schema, recorded operation types, and caveats.
+
+### subcommands
+
+| command | purpose |
+|---------|---------|
+| `extract` | write the versioned artifact contract with the native backend, or exercise the current llama.cpp backend plumbing |
+| `native-logits-reference` | write a native logits-only artifact run from an extraction config |
+| `validate-run` | validate checksums, metadata, row counts, and optional layer shards for one run directory |
+| `validate-backends` | compare existing native and external artifact runs |
+| `bench-decode` | measure model-only single-token decode and emit JSON |
 
 ### demo mode
 
@@ -659,9 +721,10 @@ python3 probes/test_probe_workflows.py
 ```
 
 the integration suite covers tensor operations, sampling, tokenizer loading,
-and an in-memory gguf parser fixture. the model smoke test also runs a gpt-2
-forward pass when `gpt2.Q8_0.gguf` is present locally; otherwise it skips so ci
-does not need to download large model weights.
+in-memory and mmap-backed gguf fixtures, grouped q8_0 projections, and f16
+cache attention. the model smoke test also runs a gpt-2 forward pass when
+`gpt2.Q8_0.gguf` is present locally; otherwise it skips so ci does not need to
+download large model weights.
 
 ### docs site
 
@@ -699,9 +762,11 @@ qwen3-specific metadata handling. the following models have been tested:
 - **llama 3.1 8b instruct** (`meta-llama-3.1-8b-instruct.Q8_0.gguf`) - 8b params, q8_0 (~8.5 gb)
 - **qwen2.5 1.5b instruct** (`qwen2.5-1.5b-instruct-q8_0.gguf`) - 1.5b params, q8_0 (~1.8 gb)
 
-qwen2.5 models use `--arch llama`; ember auto-detects the qwen2 gguf metadata
-inside the shared llama-family path. qwen3 models use `--arch qwen3`, which
-dispatches through that same path while selecting qwen3 metadata keys.
+Both `--arch llama` and `--arch qwen3` dispatch to the shared Llama-family
+implementation; the GGUF `general.architecture` metadata selects the `llama`,
+`qwen2`, or `qwen3` configuration keys. The smoke wrapper currently labels
+Qwen2.5 as `qwen3` and passes `tokenizer-qwen2.5.json` explicitly, but Qwen2.5
+remains experimental because its generated smoke output has been degenerate.
 
 ### support status
 
@@ -709,17 +774,17 @@ dispatches through that same path while selecting qwen3 metadata keys.
 |--------------|-------|-----------|-------------|--------------------------|----------------|
 | gpt-2 | yes | yes | yes | not standard | no |
 | llama | yes | yes | yes | yes, local/cloud depending on size | no |
-| qwen2.5 | experimental, currently via `--arch qwen3` | warning-prone | selected smoke runs | pending architecture/tokenizer validation | no |
+| qwen2.5 | experimental through the shared Llama-family path | warning-prone | selected smoke runs | pending architecture/tokenizer validation | no |
 | qwen3 | yes, via `--arch qwen3` | yes | yes, 5-stimulus local smoke | yes, Qwen3 0.6B local run | no |
-| gemma4 | yes | yes, coherent English | one-stimulus local smoke | pending | no (cosine ~0.87, L0 bit-identical, remaining gap ~0.13 from RMSNorm amplification) |
+| gemma4 | yes | yes, coherent English | one-stimulus local smoke | pending | no (cosine ~0.87; L0 bit-identical; remaining gap unresolved) |
 
 hidden-state probe results should be treated as research-grade only after a
 trusted-reference logits or activation check exists for the exact architecture,
 model file, tokenizer, and quantization path. gemma4 golden-logit checks now cover block layout, PLE, global projection,
 embedding scaling, layer scales, GELU tanh, RoPE freq_factors, and BF16
-loading. The remaining cosine gap (~0.13) is attributed to RMSNorm weight
-amplification of sub-ULP differences across the 35-layer pipeline, not to a
-known structural mismatch. See `docs/gemma4-parity-investigation.md` and
+loading. RMSNorm amplification of small upstream differences is the current
+working explanation for the remaining cosine gap, not a completed root-cause
+proof. See `docs/gemma4-parity-investigation.md` and
 `docs/layer-dump-tooling.md` for details.
 
 Ember can emit last-prompt logits for external golden checks:
@@ -796,9 +861,9 @@ cargo run --release -- \
 > for `--arch gpt2`, `tokenizer.json` for llama/qwen, and
 > `tokenizer-gemma4.json` for `--arch gemma4`.
 
-> **note**: interactive (`-i`) and demo (`--demo`) modes are not yet wired
-> for llama/qwen or gemma 4. the single-prompt generation path and probe
-> (`--probe`) mode work with these architectures.
+> **note**: demo (`--demo`), single-prompt generation, and probe (`--probe`)
+> mode work across the supported model families. Interactive mode (`-i`)
+> remains GPT-2-only.
 
 ## research: arabic morphology probing
 
@@ -839,16 +904,17 @@ parser is `src/loader.rs`.
 
 ```text
 main.rs              entry point, cli args, dispatch, probe mode
-|- loader.rs         gguf v3 parser, tensor loading
+|- loader.rs         gguf v3 parser, mmap-backed q8_0 loading
 |- model.rs          shared model primitives + gpt-2 transformer
 |- llama.rs          llama/qwen transformer
 |- gemma4.rs         dense text-only gemma 4 transformer
-|  |- backend.rs     backend trait + cpu backend impl
-|  |- tensor.rs      row-major f32 tensor, rope, silu, elemul
-|  `- kv_cache.rs    flat k/v cache, gqa-aware (n_kv_heads)
+|- backend.rs        backend trait + cpu backend impl
+|- tensor.rs         row-major f32 tensor, rope, silu, elemul
+|- kv_cache.rs       flat f16 k/v cache, gqa-aware (n_kv_heads)
 |- sampler.rs        temperature, top-k, top-p sampling
 |- tokenizer.rs      huggingface tokenizer wrapper
-|- quant.rs          q8_0 block dequantization + QuantizedWeight
+|- quant.rs          q8_0 packing + owned/mmap-backed QuantizedWeight
+|- simd.rs           q8_0 matmul and f32/f16 CPU kernels
 `- probes/           python probe scripts (linear, cca, rsa, divergence)
 ```
 
@@ -857,27 +923,28 @@ main.rs              entry point, cli args, dispatch, probe mode
 - **backend trait**: the transformer is generic - `CpuBackend` is the default,
   but any type implementing `Backend` works. the trait abstracts linear ops,
   element-wise math, layer norm, attention, and tensor lifecycle. the current
-  attention backend is still scalar cpu code, but the model no longer owns
-  those kernels directly.
+  CPU attention backend uses runtime-dispatched SIMD helpers and Rayon, but the
+  model no longer owns those kernels directly.
 - **q8_0 quantization**: 8-bit block quantization (fp16 scale + 32 int8
-  values per block). weights stay in this quantized form in memory and
-  are dequantized on the fly during matmul - ~4x smaller than f32 at
-  rest with minimal perplexity loss.
+  values per block). File-loaded weights remain in mmap-backed q8_0 storage.
+  The CPU backend quantizes each activation row to the same block format and
+  accumulates packed integer dots, with scalar fallback and x86 AVX2/AVX-512
+  VNNI dispatch.
 - **kv cache**: flat `[layer][head][seq_position][head_dim]` layout. prefill
   stores k/v for all prompt tokens; decode reads from cache and appends one
-  token at a time. uses `n_kv_heads` (not `n_heads`) for the head dimension,
-  supporting grouped-query attention with zero overhead for mha models
-  (`n_heads == n_kv_heads`).
+  token at a time. K/V values are stored as f16 and converted inside the
+  attention kernels. The cache uses `n_kv_heads` (not `n_heads`), supporting
+  grouped-query attention without storing repeated query-head copies.
 
 ## design justifications
 
 these are the non-obvious trade-offs made in this codebase.
 
-**transposed embeddings on load.** gguf stores token/position embeddings as
-`[vocab, embed]`. the loader transposes them so `index_select` picks a row
-directly - one contiguous slice per token - instead of gathering strided
-elements at inference time. the cost is one transpose at load; the benefit
-is simpler and faster lookups in the hot loop.
+**embedding storage and tied heads.** model builders expose embedding tables as
+row-addressable token data; q8_0 dimensions are normalized to contiguous
+`[vocab, embed]` rows. Token lookup copies or dequantizes only the requested
+row. When `output.weight` is absent, Llama/Qwen and Gemma can reuse the same
+embedding table as the language-model head without expanding a q8_0 table.
 
 **`load_from_cpu` on the backend trait.** the method loads host-side f32
 data into a backend tensor. for `CpuBackend` this is a thin wrapper around
@@ -886,17 +953,15 @@ memory here. the name was chosen over `from_cpu` to avoid tripping
 `clippy::wrong_self_convention` (which expects `from_*` to be a constructor
 without `&self`).
 
-**`n_layers` is stored but never read.** the kv cache allocates per-layer
-storage using `n_layers` in `new()`, then never reads the field again. it
-exists only to size the flat buffer. removing it would require threading
-the layer count through every cache method or hardcoding it. storing it is
-the more explicit path.
+**mixed CPU matmul paths.** f32 tensors use `matrixmultiply::sgemm`. q8_0
+weights use Ember's packed Q8×Q8 kernels instead. Q/K/V and gate/up grouped
+methods share activation quantization when possible, while the `Backend` trait
+keeps those choices out of model code.
 
-**`matrixmultiply` for cpu matmul.** both f32 and q8_0 matmuls go through
-`matrixmultiply::sgemm` - pure rust, no blas linking, decent simd.  the
-`Backend` trait means faster kernels can be swapped in under a new backend
-type without touching model code.  this is a pragmatic default, not a
-final answer.
+**f16 kv cache.** attention projections are computed in f32, converted to f16
+when appended to the cache, and consumed through f32×f16 dot/accumulate
+helpers. This halves K/V storage relative to an f32 cache while keeping
+attention scores and outputs in f32.
 
 **softmax returns uniform for all-masked input.** when every logit is -inf
 (fully masked row), softmax normally produces NaN. this code detects that
@@ -915,18 +980,18 @@ prevents the generation loop from producing NaNs on degenerate input.
   implementation today is the cpu backend. it uses SIMD helpers for inner
   dot/accumulate work and Rayon for larger per-head workloads; there is no gpu
   backend yet.
-- the lm head (large vocab projection) is still the throughput bottleneck during
-  decode. a fused/deferred or top-k-aware lm-head path is the next obvious
-  optimization target.
+- q8_0 matmul quantizes activations to q8_0 for both prefill and decode. The
+  packed AVX2/AVX-512 paths are x86-specific; unsupported CPUs use the scalar
+  Q8×Q8 implementation.
 - model loader supports gpt-2, llama/qwen, and dense text-only gemma 4 ggufs
-  through architecture-specific tensor names. demo and interactive modes are
-  not yet wired for llama/qwen or gemma 4; single-prompt generation and probe
-  mode work with those architectures.
+  through architecture-specific tensor names. Demo, single-prompt generation,
+  and probe mode use the shared model interface; interactive mode remains
+  GPT-2-only.
 - not fully no_std - file i/o and mmap require std.
 
 ## optimization notes
 
-the probe pipeline and CPU backend now have six CPU-friendly optimizations:
+the probe pipeline and CPU backend include these CPU-friendly optimizations:
 
 - grouped extraction avoids redundant forwards across positions for the same
   template.
@@ -936,23 +1001,27 @@ the probe pipeline and CPU backend now have six CPU-friendly optimizations:
   bundles after extraction.
 - full and cached attention paths use the shared SIMD dot-product and
   weighted-accumulate helpers where their head dimensions are contiguous.
-- large q8_0 single-row decode matmuls can split output rows across Rayon
-  workers, primarily targeting vocab-head-sized projections.
-- shared CPU attention can split independent heads across Rayon workers for
-  larger prefill/cached-attention workloads.
+- K/V caches use f16 storage with direct f32×f16 attention helpers.
+- prompt-only inference sizes its cache to the actual token count instead of a
+  model's potentially very large metadata context.
+- file-loaded q8_0 tensors retain mmap ranges, avoiding a second full model
+  copy and allowing the operating system to page data lazily.
+- q8_0 prefill uses tiled multi-row kernels; Q/K/V and gate/up projections
+  reuse packed activation rows.
+- q8_0 single-row decode matmuls split output rows across Rayon workers once
+  their measured work exceeds the decode crossover.
+- shared CPU attention parallelizes prefill by output row and decode by head,
+  with worker-local score scratch to avoid scatter buffers.
 
 the next useful optimization targets are:
 
-1. **lm-head specialization**: decode throughput is dominated by projecting the
-   final hidden state to a large vocabulary. a fused, top-k-aware, or tiled
-   lm-head path is likely higher impact than parallelizing small element-wise
-   ops.
+1. **lm-head specialization**: the tied Gemma head now remains Q8_0, but a
+   fused top-k-aware path could avoid materializing all vocabulary logits.
 2. **richer thread-count benchmarks**: run `scripts/benchmark_threads.py` across
    Qwen3 0.6B, LLaMA 1B, Gemma 4, and selected 3B slices, then use the results
    to tune the parallelism thresholds.
-3. **persistent scratch for parallel attention**: the parallel attention path
-   currently allocates per-head scratch/output buffers. a small worker-local
-   scratch pool could reduce allocation overhead on repeated decode steps.
+3. **aarch64 q8 kernels**: aarch64 has NEON helpers for several f32 operations,
+   but packed Q8×Q8 matmul currently falls back to the portable scalar kernel.
 
 ## license
 
