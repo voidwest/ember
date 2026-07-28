@@ -591,6 +591,48 @@ fn test_load_q8_0_reverses_to_quantized_matmul_shape() {
     };
     assert_eq!(q8.out_features(), 2);
     assert_eq!(q8.in_features(), 32);
+    assert!(
+        !q8.is_mapped(),
+        "reader-backed GGUF data should own its Q8 bytes"
+    );
+}
+
+#[test]
+fn test_file_loader_keeps_q8_0_in_shared_mapping() {
+    use ember::loader::{load_gguf, LoadedTensor};
+    use ember::quant::Q8_0_TYPE_SIZE;
+
+    let tensor_bytes = vec![0u8; 2 * Q8_0_TYPE_SIZE];
+    let gguf_bytes = build_single_tensor_gguf(8, &[32, 2], &tensor_bytes);
+    let path = std::env::temp_dir().join(format!("ember-mmap-test-{}.gguf", std::process::id()));
+    std::fs::write(&path, gguf_bytes).expect("write temporary GGUF");
+    let loader = load_gguf(&path).expect("load mmap-backed GGUF");
+    std::fs::remove_file(&path).expect("remove temporary GGUF");
+
+    let q8 = match loader.tensors.get("test.weight") {
+        Some(LoadedTensor::Q8_0(qw)) => qw,
+        _ => panic!("expected Q8_0 tensor"),
+    };
+    assert!(q8.is_mapped());
+    assert_eq!(q8.byte_len(), tensor_bytes.len());
+}
+
+#[test]
+fn test_file_loader_rejects_truncated_mapped_q8_0() {
+    use ember::loader::load_gguf;
+    use ember::quant::Q8_0_TYPE_SIZE;
+
+    let tensor_bytes = vec![0u8; 2 * Q8_0_TYPE_SIZE - 1];
+    let gguf_bytes = build_single_tensor_gguf(8, &[32, 2], &tensor_bytes);
+    let path = std::env::temp_dir().join(format!(
+        "ember-mmap-truncated-test-{}.gguf",
+        std::process::id()
+    ));
+    std::fs::write(&path, gguf_bytes).expect("write temporary GGUF");
+    let result = load_gguf(&path);
+    std::fs::remove_file(&path).expect("remove temporary GGUF");
+
+    assert!(result.is_err(), "truncated mapped tensors must be rejected");
 }
 
 #[test]
@@ -626,6 +668,49 @@ fn test_matmul_q8_0_dimension_mismatch_returns_error() {
     let result = backend.matmul_q8_0(&x, &weight);
 
     assert!(result.is_err(), "q8_0 matmul mismatch should not panic");
+}
+
+#[test]
+fn test_grouped_q8_0_backend_matches_separate_projections() {
+    use ember::backend::{Backend, CpuBackend};
+    use ember::quant::{QuantizedWeight, Q8_0_TYPE_SIZE};
+    use half::f16;
+
+    fn weight(out_features: usize, quant: i8) -> QuantizedWeight {
+        let mut raw = Vec::with_capacity(out_features * Q8_0_TYPE_SIZE);
+        for output in 0..out_features {
+            raw.extend_from_slice(
+                &f16::from_f32(0.01 * (output + 1) as f32)
+                    .to_bits()
+                    .to_le_bytes(),
+            );
+            raw.extend(std::iter::repeat_n(quant as u8, 32));
+        }
+        QuantizedWeight::try_new(raw, vec![out_features, 32]).unwrap()
+    }
+
+    let backend = CpuBackend;
+    let input = CpuTensor::from_data(
+        vec![5, 32],
+        (0..160).map(|index| index as f32 * 0.01 - 0.8).collect(),
+    );
+    let first = weight(3, 2);
+    let second = weight(5, -3);
+    let third = weight(7, 4);
+
+    let expected_first = backend.matmul_q8_0(&input, &first).unwrap();
+    let expected_second = backend.matmul_q8_0(&input, &second).unwrap();
+    let expected_third = backend.matmul_q8_0(&input, &third).unwrap();
+    let (paired_first, paired_second) = backend.matmul_q8_0_pair(&input, &first, &second).unwrap();
+    let (grouped_first, grouped_second, grouped_third) = backend
+        .matmul_q8_0_triple(&input, &first, &second, &third)
+        .unwrap();
+
+    assert_eq!(paired_first.data(), expected_first.data());
+    assert_eq!(paired_second.data(), expected_second.data());
+    assert_eq!(grouped_first.data(), expected_first.data());
+    assert_eq!(grouped_second.data(), expected_second.data());
+    assert_eq!(grouped_third.data(), expected_third.data());
 }
 
 #[test]
@@ -683,11 +768,12 @@ fn test_backend_causal_attention_shapes() {
 #[test]
 fn test_backend_cached_causal_attention_shapes() {
     use ember::backend::{Backend, CachedAttentionSpec, CpuBackend};
+    use half::f16;
 
     let backend = CpuBackend;
     let q = CpuTensor::from_data(vec![1, 2], vec![0.0, 1.0]);
-    let cached_k = vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
-    let cached_v = vec![1.0, 2.0, 3.0, 4.0, 0.0, 0.0];
+    let cached_k = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0].map(f16::from_f32);
+    let cached_v = [1.0, 2.0, 3.0, 4.0, 0.0, 0.0].map(f16::from_f32);
 
     let out = backend
         .cached_causal_attention(

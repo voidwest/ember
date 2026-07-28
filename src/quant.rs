@@ -223,6 +223,31 @@ impl QuantizedWeight {
         matches!(&self.data, QuantizedData::Mapped { .. })
     }
 
+    /// Drop resident file-backed pages after constructing an alternate layout.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure no slices into this mapping are live while
+    /// `MADV_DONTNEED` executes. The weight remains valid and will fault its
+    /// original pages back from the GGUF file if a generic path uses it later.
+    #[cfg(unix)]
+    pub(crate) unsafe fn evict_mapped_pages(&self) -> std::io::Result<bool> {
+        if let QuantizedData::Mapped { mmap, range } = &self.data {
+            // Safety: delegated to the caller above. Model construction invokes
+            // this only after repacking has returned and before inference can
+            // share or borrow the model.
+            unsafe {
+                mmap.unchecked_advise_range(
+                    memmap2::UncheckedAdvice::DontNeed,
+                    range.start,
+                    range.len(),
+                )
+            }?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     /// dequantize one output-feature column into `dst`.
     ///
     /// `dst` must have length `in_features` (= `shape[1]`).
@@ -366,10 +391,98 @@ impl QuantizedWeightInterleaved {
     }
 
     #[inline]
-    pub fn out_features(&self) -> usize { self.shape[0] }
+    pub fn out_features(&self) -> usize {
+        self.shape[0]
+    }
 
     #[inline]
-    pub fn in_features(&self) -> usize { self.shape[1] }
+    pub fn in_features(&self) -> usize {
+        self.shape[1]
+    }
+}
+
+/// Q8_0 weights packed for a batch-1 AVX-512 VNNI matrix-vector kernel.
+///
+/// Output rows are grouped in tiles of 16. Within each input block, weights
+/// are transposed in groups of four input bytes:
+///
+/// ```text
+/// [k0..k3 for row 0, k0..k3 for row 1, ... k0..k3 for row 15]
+/// ```
+///
+/// Eight such 64-byte groups cover one Q8_0 block. The 16 FP16 scales follow
+/// the quants. A complete tile/block record is therefore 512 + 32 = 544
+/// bytes, exactly the same size as 16 row-contiguous Q8_0 blocks.
+pub const VNNI_OUT_TILE: usize = 16;
+pub const VNNI_BLOCK_RECORD_SIZE: usize =
+    VNNI_OUT_TILE * (Q8_0_BLOCK_SIZE + core::mem::size_of::<u16>());
+
+#[derive(Clone, Debug)]
+pub struct QuantizedWeightVnni {
+    /// Tile-major packed records described above.
+    pub data: alloc::vec::Vec<u8>,
+    /// Logical shape `[out_features, in_features]`.
+    pub shape: Vec<usize>,
+    /// Blocks per row = `in_features / 32`.
+    pub blocks_per_row: usize,
+}
+
+impl QuantizedWeightVnni {
+    /// Repack a row-contiguous Q8_0 matrix without changing its encoded size.
+    pub fn from_quantized(weight: &QuantizedWeight) -> Self {
+        let out_features = weight.out_features();
+        let in_features = weight.in_features();
+        let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
+        let output_tiles = out_features.div_ceil(VNNI_OUT_TILE);
+        let mut data = vec![0_u8; output_tiles * blocks_per_row * VNNI_BLOCK_RECORD_SIZE];
+        let source = weight.data();
+        let source_row_size = blocks_per_row * Q8_0_TYPE_SIZE;
+
+        for tile in 0..output_tiles {
+            for block in 0..blocks_per_row {
+                let record = (tile * blocks_per_row + block) * VNNI_BLOCK_RECORD_SIZE;
+                let scales = record + VNNI_OUT_TILE * Q8_0_BLOCK_SIZE;
+
+                for lane in 0..VNNI_OUT_TILE {
+                    let row = tile * VNNI_OUT_TILE + lane;
+                    if row >= out_features {
+                        continue;
+                    }
+                    let source_block = row * source_row_size + block * Q8_0_TYPE_SIZE;
+                    data[scales + lane * 2..scales + lane * 2 + 2]
+                        .copy_from_slice(&source[source_block..source_block + 2]);
+
+                    for group in 0..Q8_0_BLOCK_SIZE / 4 {
+                        let destination = record + group * VNNI_OUT_TILE * 4 + lane * 4;
+                        let source_quants = source_block + 2 + group * 4;
+                        data[destination..destination + 4]
+                            .copy_from_slice(&source[source_quants..source_quants + 4]);
+                    }
+                }
+            }
+        }
+
+        Self {
+            data,
+            shape: vec![out_features, in_features],
+            blocks_per_row,
+        }
+    }
+
+    #[inline]
+    pub fn out_features(&self) -> usize {
+        self.shape[0]
+    }
+
+    #[inline]
+    pub fn in_features(&self) -> usize {
+        self.shape[1]
+    }
+
+    #[inline]
+    pub fn byte_len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-use crate::quant::QuantizedWeight;
+use crate::quant::{QuantizedWeight, QuantizedWeightVnni};
 use crate::tensor::{CpuTensor, TensorError};
 use half::f16;
 use rayon::prelude::*;
@@ -230,6 +230,8 @@ pub enum CpuError {
     Tensor(#[from] TensorError),
     #[error("shape mismatch: {0}")]
     ShapeMismatch(String),
+    #[error(transparent)]
+    DecodeWorker(#[from] crate::decode_scheduler::WorkerTeamError),
 }
 
 fn q8_matmul_output_len(x: &CpuTensor, w: &QuantizedWeight) -> Result<(usize, usize), CpuError> {
@@ -255,24 +257,6 @@ fn q8_matmul_output_len(x: &CpuTensor, w: &QuantizedWeight) -> Result<(usize, us
 }
 
 impl CpuBackend {
-    /// Quantize activations into the thread-local buffer and return a reference
-    /// to the encoded Q8_0 bytes. The caller must consume the result before
-    /// the next call to this method (or any other method that uses the same
-    /// thread-local) on the same thread.
-    ///
-    /// This is used by the fast path to quantize once and feed multiple
-    /// matmul kernels (e.g., interleaved + parallel) without extra allocations.
-    pub fn quantize_activation<'a>(&self, src: &[f32]) -> &'a [u8] {
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            // SAFETY: we return a reference with the lifetime of the thread-local,
-            // which outlives this function. The caller must use it before the
-            // thread-local is mutated again on this thread.
-            unsafe { std::slice::from_raw_parts(input.as_ptr(), input.len()) }
-        })
-    }
-
     /// Quantize flat f32 activations `src` (shape `[rows, in_features]`) and
     /// compute `dst = src × w` using packed Q8_0 integer dots. Writes into the
     /// pre-allocated `dst` slice, which must have length `rows * w.out_features()`.
@@ -280,13 +264,7 @@ impl CpuBackend {
     /// This is the zero-alloc variant of `matmul_q8_0` — it reuses the
     /// thread-local quantized-activation buffer and writes directly into the
     /// caller's output slice instead of wrapping a new `Vec`.
-    pub fn matmul_q8_0_into(
-        &self,
-        src: &[f32],
-        rows: usize,
-        w: &QuantizedWeight,
-        dst: &mut [f32],
-    ) {
+    pub fn matmul_q8_0_into(&self, src: &[f32], rows: usize, w: &QuantizedWeight, dst: &mut [f32]) {
         debug_assert_eq!(dst.len(), rows * w.out_features());
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
@@ -297,6 +275,214 @@ impl CpuBackend {
                 crate::simd::matmul_q8_0_batch(&input, rows, w, dst);
             }
         });
+    }
+
+    /// Explicit serial single-row projection for execution-mode baselines.
+    pub fn matmul_q8_0_serial_into(&self, src: &[f32], w: &QuantizedWeight, dst: &mut [f32]) {
+        debug_assert_eq!(dst.len(), w.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::matmul_q8_0_decode_serial(&input, w, dst);
+        });
+    }
+
+    /// Static row-parallel projection on a persistent model-owned worker team.
+    pub fn matmul_q8_0_worker_into(
+        &self,
+        workers: &crate::decode_scheduler::WorkerTeam,
+        src: &[f32],
+        w: &QuantizedWeight,
+        dst: &mut [f32],
+    ) -> Result<(), CpuError> {
+        debug_assert_eq!(dst.len(), w.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            workers.matmul(&input, w, dst)?;
+            Ok(())
+        })
+    }
+
+    /// Instrumented single-row projection used only by operator profiling.
+    ///
+    /// The returned duration covers the matrix kernel, not activation
+    /// quantization, so it is directly comparable with the pair/triple timings.
+    pub fn matmul_q8_0_into_timed(
+        &self,
+        src: &[f32],
+        w: &QuantizedWeight,
+        dst: &mut [f32],
+    ) -> std::time::Duration {
+        debug_assert_eq!(dst.len(), w.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            let start = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode(&input, w, dst);
+            start.elapsed()
+        })
+    }
+
+    /// Q8_0 decode projection using the cache-friendly interleaved layout.
+    ///
+    /// The quantized activation stays borrowed inside the thread-local closure,
+    /// so no fabricated lifetime or raw slice construction is required.
+    pub fn matmul_q8_0_interleaved_into(
+        &self,
+        src: &[f32],
+        w: &crate::quant::QuantizedWeightInterleaved,
+        dst: &mut [f32],
+    ) {
+        assert!(crate::simd::interleaved_q8_0_supported());
+        assert_eq!(src.len(), w.in_features());
+        assert_eq!(dst.len(), w.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::matmul_q8_0_decode_interleaved_parallel(&input, w, dst);
+        });
+    }
+
+    /// Instrumented interleaved projection used only by operator profiling.
+    pub fn matmul_q8_0_interleaved_into_timed(
+        &self,
+        src: &[f32],
+        w: &crate::quant::QuantizedWeightInterleaved,
+        dst: &mut [f32],
+    ) -> std::time::Duration {
+        assert!(crate::simd::interleaved_q8_0_supported());
+        assert_eq!(src.len(), w.in_features());
+        assert_eq!(dst.len(), w.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            let start = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode_interleaved_parallel(&input, w, dst);
+            start.elapsed()
+        })
+    }
+
+    /// Batch-1 projection over a 16-output packed Q8_0 weight.
+    pub fn matmul_q8_0_packed_into(
+        &self,
+        src: &[f32],
+        weight: &QuantizedWeightVnni,
+        dst: &mut [f32],
+    ) {
+        debug_assert_eq!(src.len(), weight.in_features());
+        debug_assert_eq!(dst.len(), weight.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, weight, dst);
+        });
+    }
+
+    /// Instrumented packed projection used by the optional operator profiler.
+    pub fn matmul_q8_0_packed_into_timed(
+        &self,
+        src: &[f32],
+        weight: &QuantizedWeightVnni,
+        dst: &mut [f32],
+    ) -> std::time::Duration {
+        debug_assert_eq!(src.len(), weight.in_features());
+        debug_assert_eq!(dst.len(), weight.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            let started = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, weight, dst);
+            started.elapsed()
+        })
+    }
+
+    /// Two packed projections sharing one activation quantization.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_packed_pair_into(
+        &self,
+        src: &[f32],
+        first: &QuantizedWeightVnni,
+        second: &QuantizedWeightVnni,
+        first_dst: &mut [f32],
+        second_dst: &mut [f32],
+    ) {
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
+        });
+    }
+
+    /// Instrumented packed pair sharing one activation quantization.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_packed_pair_into_timed(
+        &self,
+        src: &[f32],
+        first: &QuantizedWeightVnni,
+        second: &QuantizedWeightVnni,
+        first_dst: &mut [f32],
+        second_dst: &mut [f32],
+    ) -> [std::time::Duration; 2] {
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            let first_started = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
+            let first_elapsed = first_started.elapsed();
+            let second_started = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
+            [first_elapsed, second_started.elapsed()]
+        })
+    }
+
+    /// Three packed projections sharing one activation quantization.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_packed_triple_into(
+        &self,
+        src: &[f32],
+        first: &QuantizedWeightVnni,
+        second: &QuantizedWeightVnni,
+        third: &QuantizedWeightVnni,
+        first_dst: &mut [f32],
+        second_dst: &mut [f32],
+        third_dst: &mut [f32],
+    ) {
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, third, third_dst);
+        });
+    }
+
+    /// Instrumented packed triple sharing one activation quantization.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_packed_triple_into_timed(
+        &self,
+        src: &[f32],
+        first: &QuantizedWeightVnni,
+        second: &QuantizedWeightVnni,
+        third: &QuantizedWeightVnni,
+        first_dst: &mut [f32],
+        second_dst: &mut [f32],
+        third_dst: &mut [f32],
+    ) -> [std::time::Duration; 3] {
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            let first_started = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
+            let first_elapsed = first_started.elapsed();
+            let second_started = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
+            let second_elapsed = second_started.elapsed();
+            let third_started = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, third, third_dst);
+            [first_elapsed, second_elapsed, third_started.elapsed()]
+        })
     }
 
     /// Fused dual Q8_0 projection (gate + up): quantize `src` once, compute
@@ -325,9 +511,81 @@ impl CpuBackend {
         });
     }
 
+    /// Explicit serial pair projection with one shared activation packing.
+    pub fn matmul_q8_0_pair_serial_into(
+        &self,
+        src: &[f32],
+        w_a: &QuantizedWeight,
+        w_b: &QuantizedWeight,
+        dst_a: &mut [f32],
+        dst_b: &mut [f32],
+    ) {
+        debug_assert_eq!(dst_a.len(), w_a.out_features());
+        debug_assert_eq!(dst_b.len(), w_b.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::matmul_q8_0_decode_serial(&input, w_a, dst_a);
+            crate::simd::matmul_q8_0_decode_serial(&input, w_b, dst_b);
+        });
+    }
+
+    /// Pair projection on a persistent worker team. With `task_parallel`,
+    /// workers are split between the projections; otherwise all workers
+    /// row-partition each projection in sequence.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_pair_worker_into(
+        &self,
+        workers: &crate::decode_scheduler::WorkerTeam,
+        task_parallel: bool,
+        src: &[f32],
+        w_a: &QuantizedWeight,
+        w_b: &QuantizedWeight,
+        dst_a: &mut [f32],
+        dst_b: &mut [f32],
+    ) -> Result<(), CpuError> {
+        debug_assert_eq!(dst_a.len(), w_a.out_features());
+        debug_assert_eq!(dst_b.len(), w_b.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            if task_parallel {
+                workers.matmul_pair(&input, w_a, dst_a, w_b, dst_b)?;
+            } else {
+                workers.matmul(&input, w_a, dst_a)?;
+                workers.matmul(&input, w_b, dst_b)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Instrumented fused-input pair projection used only by operator profiling.
+    pub fn matmul_q8_0_pair_into_timed(
+        &self,
+        src: &[f32],
+        w_a: &QuantizedWeight,
+        w_b: &QuantizedWeight,
+        dst_a: &mut [f32],
+        dst_b: &mut [f32],
+    ) -> [std::time::Duration; 2] {
+        debug_assert_eq!(dst_a.len(), w_a.out_features());
+        debug_assert_eq!(dst_b.len(), w_b.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            let start_a = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode(&input, w_a, dst_a);
+            let elapsed_a = start_a.elapsed();
+            let start_b = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode(&input, w_b, dst_b);
+            [elapsed_a, start_b.elapsed()]
+        })
+    }
+
     /// Fused Q/K/V decode projection: quantize `src` once, compute all three
     /// Q8_0 projections in one pass. For seq_len=1 decode this saves two
     /// activation quantization passes and their scheduling overhead.
+    #[allow(clippy::too_many_arguments)]
     pub fn matmul_q8_0_triple_into(
         &self,
         src: &[f32],
@@ -355,6 +613,263 @@ impl CpuBackend {
                 crate::simd::matmul_q8_0_batch(&input, rows, w_v, dst_v);
             }
         });
+    }
+
+    /// Explicit serial Q/K/V projection with one shared activation packing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_triple_serial_into(
+        &self,
+        src: &[f32],
+        w_q: &QuantizedWeight,
+        w_k: &QuantizedWeight,
+        w_v: &QuantizedWeight,
+        dst_q: &mut [f32],
+        dst_k: &mut [f32],
+        dst_v: &mut [f32],
+    ) {
+        debug_assert_eq!(dst_q.len(), w_q.out_features());
+        debug_assert_eq!(dst_k.len(), w_k.out_features());
+        debug_assert_eq!(dst_v.len(), w_v.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            crate::simd::matmul_q8_0_decode_serial(&input, w_q, dst_q);
+            crate::simd::matmul_q8_0_decode_serial(&input, w_k, dst_k);
+            crate::simd::matmul_q8_0_decode_serial(&input, w_v, dst_v);
+        });
+    }
+
+    /// Sequential static row partitions for Q/K/V on one persistent worker
+    /// team, with one shared activation packing.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_triple_worker_into(
+        &self,
+        workers: &crate::decode_scheduler::WorkerTeam,
+        src: &[f32],
+        w_q: &QuantizedWeight,
+        w_k: &QuantizedWeight,
+        w_v: &QuantizedWeight,
+        dst_q: &mut [f32],
+        dst_k: &mut [f32],
+        dst_v: &mut [f32],
+    ) -> Result<(), CpuError> {
+        debug_assert_eq!(dst_q.len(), w_q.out_features());
+        debug_assert_eq!(dst_k.len(), w_k.out_features());
+        debug_assert_eq!(dst_v.len(), w_v.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            workers.matmul(&input, w_q, dst_q)?;
+            workers.matmul(&input, w_k, dst_k)?;
+            workers.matmul(&input, w_v, dst_v)?;
+            Ok(())
+        })
+    }
+
+    /// Instrumented fused-input triple projection used only by operator
+    /// profiling.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_triple_into_timed(
+        &self,
+        src: &[f32],
+        w_q: &QuantizedWeight,
+        w_k: &QuantizedWeight,
+        w_v: &QuantizedWeight,
+        dst_q: &mut [f32],
+        dst_k: &mut [f32],
+        dst_v: &mut [f32],
+    ) -> [std::time::Duration; 3] {
+        debug_assert_eq!(dst_q.len(), w_q.out_features());
+        debug_assert_eq!(dst_k.len(), w_k.out_features());
+        debug_assert_eq!(dst_v.len(), w_v.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            let start_q = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode(&input, w_q, dst_q);
+            let elapsed_q = start_q.elapsed();
+            let start_k = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode(&input, w_k, dst_k);
+            let elapsed_k = start_k.elapsed();
+            let start_v = std::time::Instant::now();
+            crate::simd::matmul_q8_0_decode(&input, w_v, dst_v);
+            [elapsed_q, elapsed_k, start_v.elapsed()]
+        })
+    }
+
+    /// Cached causal attention into caller-owned storage.
+    ///
+    /// This is the allocation-free form used by the single-token Llama decode
+    /// path. `q` and `out` are flat row-major buffers with width
+    /// `n_heads * head_dim`.
+    pub fn cached_causal_attention_into(
+        &self,
+        q: &[f32],
+        cached_k: &[f16],
+        cached_v: &[f16],
+        spec: CachedAttentionSpec,
+        qk_row: &mut Vec<f32>,
+        out: &mut [f32],
+    ) -> Result<(), CpuError> {
+        let embed_dim = spec
+            .n_heads
+            .checked_mul(spec.head_dim)
+            .ok_or_else(|| CpuError::ShapeMismatch("attention width overflow".into()))?;
+        if embed_dim == 0 || !q.len().is_multiple_of(embed_dim) {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: q len {} is not divisible by width {}",
+                q.len(),
+                embed_dim
+            )));
+        }
+        let seq_len = q.len() / embed_dim;
+        if out.len() != q.len() {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: output len {} != q len {}",
+                out.len(),
+                q.len()
+            )));
+        }
+        if spec.total_seq_len < seq_len || spec.total_seq_len > spec.max_seq_len {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: total_seq_len {} invalid for seq_len {} and max_seq_len {}",
+                spec.total_seq_len, seq_len, spec.max_seq_len
+            )));
+        }
+        let cache_len = spec
+            .n_kv_heads
+            .checked_mul(spec.max_seq_len)
+            .and_then(|len| len.checked_mul(spec.head_dim))
+            .ok_or_else(|| CpuError::ShapeMismatch("attention cache length overflow".into()))?;
+        if cached_k.len() != cache_len || cached_v.len() != cache_len {
+            return Err(CpuError::ShapeMismatch(format!(
+                "cached_causal_attention: cache len mismatch, got k={} v={}, expected {}",
+                cached_k.len(),
+                cached_v.len(),
+                cache_len
+            )));
+        }
+
+        let n_repeat = validate_gqa(spec.n_heads, spec.n_kv_heads)?;
+        let scale = (spec.head_dim as f32).sqrt().recip();
+        let cache_head_stride = spec.max_seq_len * spec.head_dim;
+        let parallel_attention =
+            should_parallel_attention(spec.n_heads, seq_len, spec.total_seq_len, spec.head_dim);
+
+        out.fill(0.0);
+        if parallel_attention && seq_len > 1 {
+            out.par_chunks_mut(embed_dim)
+                .enumerate()
+                .for_each(|(i, out_row)| {
+                    ATTENTION_SCORE_SCRATCH.with(|qk_row| {
+                        let mut qk_row = qk_row.borrow_mut();
+                        let max_j = spec.total_seq_len - seq_len + i;
+                        qk_row.resize(max_j + 1, 0.0);
+                        for h in 0..spec.n_heads {
+                            let q_head_offset = h * spec.head_dim;
+                            let kv_h = h / n_repeat;
+                            let q_idx = i * embed_dim + q_head_offset;
+
+                            for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
+                                let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                                *slot = crate::simd::dot_product_f16(
+                                    &q[q_idx..q_idx + spec.head_dim],
+                                    &cached_k[k_offset..k_offset + spec.head_dim],
+                                ) * scale;
+                            }
+
+                            softmax_prefix(qk_row.as_mut_slice(), max_j + 1);
+                            let head_out =
+                                &mut out_row[q_head_offset..q_head_offset + spec.head_dim];
+                            for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
+                                if weight == 0.0 {
+                                    continue;
+                                }
+                                let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                                crate::simd::weighted_add_f16(
+                                    head_out,
+                                    &cached_v[v_offset..v_offset + spec.head_dim],
+                                    weight,
+                                );
+                            }
+                        }
+                    });
+                });
+            return Ok(());
+        }
+
+        if parallel_attention {
+            debug_assert_eq!(seq_len, 1);
+            out.par_chunks_mut(spec.head_dim)
+                .enumerate()
+                .for_each(|(h, head_out)| {
+                    ATTENTION_SCORE_SCRATCH.with(|qk_row| {
+                        let mut qk_row = qk_row.borrow_mut();
+                        let q_head_offset = h * spec.head_dim;
+                        let kv_h = h / n_repeat;
+                        let max_j = spec.total_seq_len - 1;
+                        qk_row.resize(max_j + 1, 0.0);
+
+                        for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
+                            let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                            *slot = crate::simd::dot_product_f16(
+                                &q[q_head_offset..q_head_offset + spec.head_dim],
+                                &cached_k[k_offset..k_offset + spec.head_dim],
+                            ) * scale;
+                        }
+
+                        softmax_prefix(qk_row.as_mut_slice(), max_j + 1);
+                        for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
+                            if weight == 0.0 {
+                                continue;
+                            }
+                            let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                            crate::simd::weighted_add_f16(
+                                head_out,
+                                &cached_v[v_offset..v_offset + spec.head_dim],
+                                weight,
+                            );
+                        }
+                    });
+                });
+            return Ok(());
+        }
+
+        if qk_row.capacity() < spec.max_seq_len {
+            qk_row.reserve(spec.max_seq_len - qk_row.capacity());
+        }
+        for h in 0..spec.n_heads {
+            let q_head_offset = h * spec.head_dim;
+            let kv_h = h / n_repeat;
+            for i in 0..seq_len {
+                let max_j = spec.total_seq_len - seq_len + i;
+                qk_row.resize(max_j + 1, 0.0);
+                let q_idx = i * embed_dim + q_head_offset;
+
+                for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
+                    let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                    *slot = crate::simd::dot_product_f16(
+                        &q[q_idx..q_idx + spec.head_dim],
+                        &cached_k[k_offset..k_offset + spec.head_dim],
+                    ) * scale;
+                }
+
+                softmax_prefix(qk_row.as_mut_slice(), max_j + 1);
+                let out_offset = i * embed_dim + q_head_offset;
+                for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
+                    if weight == 0.0 {
+                        continue;
+                    }
+                    let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                    crate::simd::weighted_add_f16(
+                        &mut out[out_offset..out_offset + spec.head_dim],
+                        &cached_v[v_offset..v_offset + spec.head_dim],
+                        weight,
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1097,5 +1612,43 @@ fn scatter_attention_heads(
             let src = i * head_dim;
             out[dst..dst + head_dim].copy_from_slice(&head_out[src..src + head_dim]);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_attention_into_matches_tensor_api() {
+        let backend = CpuBackend;
+        let query = CpuTensor::from_data(vec![1, 4], vec![0.25, -0.5, 0.75, 1.0]);
+        let cached_k = [0.5, 0.25, -0.75, 1.0, 1.0, 0.0, 0.5, -0.5].map(f16::from_f32);
+        let cached_v = [1.0, 2.0, 3.0, 4.0, -1.0, -2.0, -3.0, -4.0].map(f16::from_f32);
+        let spec = CachedAttentionSpec {
+            n_heads: 2,
+            n_kv_heads: 2,
+            head_dim: 2,
+            max_seq_len: 2,
+            total_seq_len: 2,
+        };
+
+        let expected = backend
+            .cached_causal_attention(&query, &cached_k, &cached_v, spec)
+            .unwrap();
+        let mut scratch = Vec::new();
+        let mut actual = vec![0.0; query.len()];
+        backend
+            .cached_causal_attention_into(
+                query.data(),
+                &cached_k,
+                &cached_v,
+                spec,
+                &mut scratch,
+                &mut actual,
+            )
+            .unwrap();
+
+        assert_eq!(actual, expected.data());
     }
 }

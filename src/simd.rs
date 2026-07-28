@@ -22,6 +22,41 @@ use rayon::prelude::*;
 // now that decode uses cheaper Q8 × Q8 dots. This includes Gemma's Q/O
 // projections while keeping its tiny 256-wide PLE gates serial.
 const PARALLEL_Q8_DECODE_MIN_WORK: usize = 1_048_576;
+
+/// Whether this CPU can execute the interleaved Q8_0 decode kernel.
+#[inline]
+pub(crate) fn interleaved_q8_0_supported() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        is_x86_feature_detected!("avx512vnni")
+            && is_x86_feature_detected!("avx512vl")
+            && is_x86_feature_detected!("avx2")
+            && is_x86_feature_detected!("f16c")
+            && is_x86_feature_detected!("fma")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// Whether this CPU can execute the 16-output packed Q8_0 decode kernel.
+#[inline]
+pub(crate) fn packed_q8_0_vnni_supported() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        is_x86_feature_detected!("avx512f")
+            && is_x86_feature_detected!("avx512bw")
+            && is_x86_feature_detected!("avx512vnni")
+            && is_x86_feature_detected!("avx2")
+            && is_x86_feature_detected!("f16c")
+            && is_x86_feature_detected!("fma")
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
 // ---------------------------------------------------------------------------
 // public dispatch
 // ---------------------------------------------------------------------------
@@ -73,7 +108,9 @@ pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            unsafe { return x86_64::rms_norm_into_avx2(x, weight, eps, dst); }
+            unsafe {
+                return x86_64::rms_norm_into_avx2(x, weight, eps, dst);
+            }
         }
     }
     rms_norm_into_scalar(x, weight, eps, dst);
@@ -89,7 +126,9 @@ pub fn silu_mul_into(gate: &[f32], up: &[f32], dst: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            unsafe { return x86_64::silu_mul_into_avx2(gate, up, dst); }
+            unsafe {
+                return x86_64::silu_mul_into_avx2(gate, up, dst);
+            }
         }
     }
     silu_mul_into_scalar(gate, up, dst);
@@ -103,7 +142,9 @@ pub fn silu_into(src: &[f32], dst: &mut [f32]) {
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            unsafe { return x86_64::silu_into_avx2(src, dst); }
+            unsafe {
+                return x86_64::silu_into_avx2(src, dst);
+            }
         }
     }
     silu_into_scalar(src, dst);
@@ -112,7 +153,13 @@ pub fn silu_into(src: &[f32], dst: &mut [f32]) {
 /// Fused RMS norm + residual add: `dst = (x * weight / rms(x)) + residual`.
 /// `x`, `weight`, `residual`, and `dst` must all have the same length.
 #[inline]
-pub fn rms_norm_residual_into(x: &[f32], weight: &[f32], eps: f32, residual: &[f32], dst: &mut [f32]) {
+pub fn rms_norm_residual_into(
+    x: &[f32],
+    weight: &[f32],
+    eps: f32,
+    residual: &[f32],
+    dst: &mut [f32],
+) {
     let n = x.len();
     debug_assert_eq!(weight.len(), n);
     debug_assert_eq!(residual.len(), n);
@@ -120,7 +167,9 @@ pub fn rms_norm_residual_into(x: &[f32], weight: &[f32], eps: f32, residual: &[f
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            unsafe { return x86_64::rms_norm_residual_into_avx2(x, weight, eps, residual, dst); }
+            unsafe {
+                return x86_64::rms_norm_residual_into_avx2(x, weight, eps, residual, dst);
+            }
         }
     }
     rms_norm_residual_into_scalar(x, weight, eps, residual, dst);
@@ -152,7 +201,13 @@ fn silu_into_scalar(src: &[f32], dst: &mut [f32]) {
     }
 }
 
-fn rms_norm_residual_into_scalar(x: &[f32], weight: &[f32], eps: f32, residual: &[f32], dst: &mut [f32]) {
+fn rms_norm_residual_into_scalar(
+    x: &[f32],
+    weight: &[f32],
+    eps: f32,
+    residual: &[f32],
+    dst: &mut [f32],
+) {
     let n = x.len();
     let sum_sq: f32 = x.iter().map(|v| v * v).sum();
     let rstd = (sum_sq / n as f32 + eps).sqrt().recip();
@@ -195,12 +250,7 @@ mod x86_64 {
 
     /// SIMD RMS norm into pre-allocated dst using AVX2+FMA.
     #[target_feature(enable = "avx2,fma")]
-    pub(crate) unsafe fn rms_norm_into_avx2(
-        x: &[f32],
-        weight: &[f32],
-        eps: f32,
-        dst: &mut [f32],
-    ) {
+    pub(crate) unsafe fn rms_norm_into_avx2(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
         let n = x.len();
         // 1. sum of squares
         let mut ss0 = _mm256_setzero_ps();
@@ -485,11 +535,11 @@ mod x86_64 {
                 if block_start + 4 < grouped_blocks {
                     let pf_offset = (row_start * blocks_per_row + block_start + 4) * Q8_0_TYPE_SIZE;
                     #[cfg(target_arch = "x86_64")]
-                    core::arch::x86_64::_mm_prefetch::<{core::arch::x86_64::_MM_HINT_T0}>(
+                    core::arch::x86_64::_mm_prefetch::<{ core::arch::x86_64::_MM_HINT_T0 }>(
                         data.as_ptr().add(pf_offset) as *const i8,
                     );
                 }
-                for lane in 0..8 {
+                for (lane, lane_acc) in acc.iter_mut().enumerate() {
                     for bl in 0..4 {
                         let block = block_start + bl;
                         let byte_off =
@@ -497,17 +547,15 @@ mod x86_64 {
                         let weight_scale = f16_bits_to_f32(u16::from_le_bytes(
                             *(data.as_ptr().add(byte_off) as *const [u8; 2]),
                         ));
-                        let weights = _mm256_loadu_si256(
-                            data.as_ptr().add(byte_off + 2) as *const __m256i,
-                        );
+                        let weights =
+                            _mm256_loadu_si256(data.as_ptr().add(byte_off + 2) as *const __m256i);
                         let abs_w = _mm256_abs_epi8(weights);
                         let signed_in = _mm256_sign_epi8(input_quants[bl], weights);
-                        let sums =
-                            _mm256_dpbusd_epi32(_mm256_setzero_si256(), abs_w, signed_in);
-                        acc[lane] = _mm256_fmadd_ps(
+                        let sums = _mm256_dpbusd_epi32(_mm256_setzero_si256(), abs_w, signed_in);
+                        *lane_acc = _mm256_fmadd_ps(
                             _mm256_cvtepi32_ps(sums),
                             _mm256_set1_ps(weight_scale * input_scales[bl]),
-                            acc[lane],
+                            *lane_acc,
                         );
                     }
                 }
@@ -519,7 +567,7 @@ mod x86_64 {
                     *(x.as_ptr().add(x_off) as *const [u8; 2]),
                 ));
                 let in_q = _mm256_loadu_si256(x.as_ptr().add(x_off + 2) as *const __m256i);
-                for lane in 0..8 {
+                for (lane, lane_acc) in acc.iter_mut().enumerate() {
                     let byte_off = ((row_start + lane) * blocks_per_row + b) * Q8_0_TYPE_SIZE;
                     let w_scale = f16_bits_to_f32(u16::from_le_bytes(
                         *(data.as_ptr().add(byte_off) as *const [u8; 2]),
@@ -528,10 +576,10 @@ mod x86_64 {
                     let abs_w = _mm256_abs_epi8(w);
                     let signed_in = _mm256_sign_epi8(in_q, w);
                     let sums = _mm256_dpbusd_epi32(_mm256_setzero_si256(), abs_w, signed_in);
-                    acc[lane] = _mm256_fmadd_ps(
+                    *lane_acc = _mm256_fmadd_ps(
                         _mm256_cvtepi32_ps(sums),
                         _mm256_set1_ps(w_scale * in_scale),
-                        acc[lane],
+                        *lane_acc,
                     );
                 }
             }
@@ -564,7 +612,11 @@ mod x86_64 {
                 let abs_w = _mm256_abs_epi8(w);
                 let signed_in = _mm256_sign_epi8(in_q, w);
                 let sums = _mm256_dpbusd_epi32(_mm256_setzero_si256(), abs_w, signed_in);
-                acc = _mm256_fmadd_ps(_mm256_cvtepi32_ps(sums), _mm256_set1_ps(w_scale * in_scale), acc);
+                acc = _mm256_fmadd_ps(
+                    _mm256_cvtepi32_ps(sums),
+                    _mm256_set1_ps(w_scale * in_scale),
+                    acc,
+                );
             }
             let low = _mm256_castps256_ps128(acc);
             let high = _mm256_extractf128_ps::<1>(acc);
@@ -572,6 +624,84 @@ mod x86_64 {
             let s = _mm_hadd_ps(s, s);
             let s = _mm_hadd_ps(s, s);
             *out_val = _mm_cvtss_f32(s);
+        }
+    }
+
+    /// Q8_0 × Q8_0 decode over a 16-output packed weight layout.
+    ///
+    /// Each VNNI lane accumulates the same four input coordinates for 16
+    /// output rows. Eight vector accumulators preserve the row-contiguous
+    /// kernel's floating-point reduction order exactly.
+    #[target_feature(enable = "avx2,f16c,fma,avx512f,avx512bw,avx512vnni")]
+    pub unsafe fn matmul_q8_0_decode_packed16_avx512_vnni(
+        x: &[u8],
+        data: &[u8],
+        blocks_per_row: usize,
+        out: &mut [f32],
+        global_row_offset: usize,
+    ) {
+        use crate::quant::{VNNI_BLOCK_RECORD_SIZE, VNNI_OUT_TILE};
+
+        debug_assert!(global_row_offset.is_multiple_of(VNNI_OUT_TILE));
+        let first_tile = global_row_offset / VNNI_OUT_TILE;
+
+        for (local_tile, out_tile) in out.chunks_mut(VNNI_OUT_TILE).enumerate() {
+            let tile = first_tile + local_tile;
+            let mut accumulators = [_mm512_setzero_ps(); Q8_0_BLOCK_SIZE / 4];
+
+            for block in 0..blocks_per_row {
+                let record = (tile * blocks_per_row + block) * VNNI_BLOCK_RECORD_SIZE;
+                let scales_offset = record + VNNI_OUT_TILE * Q8_0_BLOCK_SIZE;
+                let weight_scales = _mm512_cvtph_ps(_mm256_loadu_si256(
+                    data.as_ptr().add(scales_offset) as *const __m256i,
+                ));
+                let input_offset = block * Q8_0_TYPE_SIZE;
+                let input_scale = f16_bits_to_f32(u16::from_le_bytes(
+                    *(x.as_ptr().add(input_offset) as *const [u8; 2]),
+                ));
+                let combined_scales = _mm512_mul_ps(weight_scales, _mm512_set1_ps(input_scale));
+
+                for (group, accumulator) in accumulators.iter_mut().enumerate() {
+                    // The public dispatcher verifies one complete encoded
+                    // activation row. `group < 8`, so this unaligned load is
+                    // contained in the current 34-byte Q8_0 block.
+                    let input_group = core::ptr::read_unaligned(
+                        x.as_ptr().add(input_offset + 2 + group * 4) as *const i32,
+                    );
+                    let input = _mm512_set1_epi32(input_group);
+                    let weights = _mm512_loadu_si512(
+                        data.as_ptr().add(record + group * VNNI_OUT_TILE * 4) as *const __m512i,
+                    );
+                    let absolute_weights = _mm512_abs_epi8(weights);
+                    let zero = _mm512_setzero_si512();
+                    let negative_weights = _mm512_cmpgt_epi8_mask(zero, weights);
+                    let negated_input = _mm512_sub_epi8(zero, input);
+                    let signed_input = _mm512_mask_mov_epi8(input, negative_weights, negated_input);
+                    let products =
+                        _mm512_dpbusd_epi32(_mm512_setzero_si512(), absolute_weights, signed_input);
+                    *accumulator = _mm512_fmadd_ps(
+                        _mm512_cvtepi32_ps(products),
+                        combined_scales,
+                        *accumulator,
+                    );
+                }
+            }
+
+            // Match the two 128-bit horizontal adds used by the existing
+            // eight-lane row-contiguous kernel.
+            let sum04 = _mm512_add_ps(accumulators[0], accumulators[4]);
+            let sum15 = _mm512_add_ps(accumulators[1], accumulators[5]);
+            let sum26 = _mm512_add_ps(accumulators[2], accumulators[6]);
+            let sum37 = _mm512_add_ps(accumulators[3], accumulators[7]);
+            let result = _mm512_add_ps(_mm512_add_ps(sum04, sum15), _mm512_add_ps(sum26, sum37));
+
+            if out_tile.len() == VNNI_OUT_TILE {
+                _mm512_storeu_ps(out_tile.as_mut_ptr(), result);
+            } else {
+                let mut tail = [0.0_f32; VNNI_OUT_TILE];
+                _mm512_storeu_ps(tail.as_mut_ptr(), result);
+                out_tile.copy_from_slice(&tail[..out_tile.len()]);
+            }
         }
     }
 
@@ -612,14 +742,13 @@ mod x86_64 {
                 let w3 = _mm256_loadu_si256(q_stripe[q_off + 96..].as_ptr() as *const __m256i);
 
                 // Load 4 scales (8 bytes), convert each f16 → f32
-                let s_bits = u64::from_le_bytes(
-                    *(s_stripe[s_off..s_off + 8].as_ptr() as *const [u8; 8]),
-                );
+                let s_bits =
+                    u64::from_le_bytes(*(s_stripe[s_off..s_off + 8].as_ptr() as *const [u8; 8]));
                 let ws = [
-                    f16_bits_to_f32((s_bits as u16) as u16),
-                    f16_bits_to_f32(((s_bits >> 16) as u16) as u16),
-                    f16_bits_to_f32(((s_bits >> 32) as u16) as u16),
-                    f16_bits_to_f32(((s_bits >> 48) as u16) as u16),
+                    f16_bits_to_f32(s_bits as u16),
+                    f16_bits_to_f32((s_bits >> 16) as u16),
+                    f16_bits_to_f32((s_bits >> 32) as u16),
+                    f16_bits_to_f32((s_bits >> 48) as u16),
                 ];
 
                 // Input activation for this block
@@ -633,8 +762,7 @@ mod x86_64 {
                 for lane in 0..INTERLEAVE {
                     let abs_w = _mm256_abs_epi8(weights[lane]);
                     let signed_in = _mm256_sign_epi8(xq, weights[lane]);
-                    let sums =
-                        _mm256_dpbusd_epi32(_mm256_setzero_si256(), abs_w, signed_in);
+                    let sums = _mm256_dpbusd_epi32(_mm256_setzero_si256(), abs_w, signed_in);
                     acc[lane] = _mm256_fmadd_ps(
                         _mm256_cvtepi32_ps(sums),
                         _mm256_set1_ps(ws[lane] * x_scale),
@@ -1849,6 +1977,11 @@ fn should_parallel_q8_decode(out_features: usize, in_features: usize) -> bool {
         && out_features.saturating_mul(in_features) >= PARALLEL_Q8_DECODE_MIN_WORK
 }
 
+#[inline]
+pub(crate) fn q8_decode_uses_row_parallel(out_features: usize, in_features: usize) -> bool {
+    should_parallel_q8_decode(out_features, in_features)
+}
+
 fn matmul_q8_0_decode_parallel(
     x: &[u8],
     w: &QuantizedWeight,
@@ -1865,6 +1998,35 @@ fn matmul_q8_0_decode_parallel(
             let data = &w.data()[data_start..];
             matmul_q8_0_decode_dispatch_chunk(x, data, blocks_per_row, out_chunk);
         });
+}
+
+/// Explicit serial decode mode used by scheduler calibration and benchmarks.
+///
+/// This bypasses the global work threshold while retaining the same
+/// architecture-specific kernel and per-output-row arithmetic.
+pub(crate) fn matmul_q8_0_decode_serial(x: &[u8], w: &QuantizedWeight, out: &mut [f32]) {
+    let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
+    matmul_q8_0_decode_dispatch_chunk(x, w.data(), blocks_per_row, out);
+}
+
+/// Explicit static contiguous row-parallel decode mode used by scheduler
+/// calibration and benchmarks.
+#[cfg(test)]
+pub(crate) fn matmul_q8_0_decode_row_parallel(x: &[u8], w: &QuantizedWeight, out: &mut [f32]) {
+    let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
+    matmul_q8_0_decode_parallel(x, w, blocks_per_row, out);
+}
+
+/// Execute a contiguous output-row chunk using the architecture-specific
+/// serial kernel. The caller is responsible for passing weight data whose
+/// first row corresponds to `out[0]`.
+pub(crate) fn matmul_q8_0_decode_raw_chunk(
+    x: &[u8],
+    data: &[u8],
+    blocks_per_row: usize,
+    out: &mut [f32],
+) {
+    matmul_q8_0_decode_dispatch_chunk(x, data, blocks_per_row, out);
 }
 
 fn matmul_q8_0_decode_dispatch_chunk(
@@ -1903,6 +2065,42 @@ fn matmul_q8_0_decode_dispatch_chunk(
 // -- interleaved Q8_0 dispatch -----------------------------------------------
 
 use crate::quant::QuantizedWeightInterleaved;
+use crate::quant::{QuantizedWeightVnni, VNNI_OUT_TILE};
+
+/// Matrix-vector multiply using the 16-output packed Q8_0 layout.
+pub(crate) fn matmul_q8_0_decode_packed16_parallel(
+    x: &[u8],
+    weight: &QuantizedWeightVnni,
+    out: &mut [f32],
+) {
+    assert!(packed_q8_0_vnni_supported());
+    assert_eq!(x.len(), weight.blocks_per_row * Q8_0_TYPE_SIZE);
+    assert_eq!(out.len(), weight.out_features());
+    let threads = rayon::current_num_threads().max(1);
+    let chunk_rows = weight
+        .out_features()
+        .div_ceil(threads)
+        .next_multiple_of(VNNI_OUT_TILE)
+        .max(64);
+    out.par_chunks_mut(chunk_rows)
+        .enumerate()
+        .for_each(|(chunk_index, out_chunk)| {
+            let global_row_offset = chunk_index * chunk_rows;
+            #[cfg(target_arch = "x86_64")]
+            unsafe {
+                // Safety: runtime feature checks above cover every enabled ISA
+                // extension. Repacking pads the last tile and guarantees one
+                // complete record for every output chunk addressed here.
+                x86_64::matmul_q8_0_decode_packed16_avx512_vnni(
+                    x,
+                    &weight.data,
+                    weight.blocks_per_row,
+                    out_chunk,
+                    global_row_offset,
+                );
+            }
+        });
+}
 
 /// Matrix multiply using interleaved Q8_0 weight layout.
 /// Dispatches to the fastest available kernel.
@@ -1945,18 +2143,25 @@ pub(crate) fn matmul_q8_0_decode_interleaved(
         let global_row = global_row_start + row;
         let stripe = global_row / crate::quant::INTERLEAVE;
         let lane = global_row % crate::quant::INTERLEAVE;
-        let q_stripe = &w.quants[stripe * w.blocks_per_row * crate::quant::INTERLEAVE * Q8_0_BLOCK_SIZE..];
+        let q_stripe =
+            &w.quants[stripe * w.blocks_per_row * crate::quant::INTERLEAVE * Q8_0_BLOCK_SIZE..];
         let s_stripe = &w.scales[stripe * w.blocks_per_row * crate::quant::INTERLEAVE * 2..];
         let mut sum = 0.0f32;
         for b in 0..w.blocks_per_row {
             let q_off = b * crate::quant::INTERLEAVE * Q8_0_BLOCK_SIZE + lane * Q8_0_BLOCK_SIZE;
             let s_off = b * crate::quant::INTERLEAVE * 2 + lane * 2;
-            let ws = f16::from_bits(u16::from_le_bytes([s_stripe[s_off], s_stripe[s_off + 1]])).to_f32();
-            let xs = f16::from_bits(u16::from_le_bytes([x[b * Q8_0_TYPE_SIZE], x[b * Q8_0_TYPE_SIZE + 1]])).to_f32();
+            let ws =
+                f16::from_bits(u16::from_le_bytes([s_stripe[s_off], s_stripe[s_off + 1]])).to_f32();
+            let xs = f16::from_bits(u16::from_le_bytes([
+                x[b * Q8_0_TYPE_SIZE],
+                x[b * Q8_0_TYPE_SIZE + 1],
+            ]))
+            .to_f32();
             for j in 0..Q8_0_BLOCK_SIZE {
                 sum += (x[b * Q8_0_TYPE_SIZE + 2 + j] as i8) as f32
                     * (q_stripe[q_off + j] as i8) as f32
-                    * ws * xs;
+                    * ws
+                    * xs;
             }
         }
         *out_val = sum;
@@ -1971,14 +2176,16 @@ pub(crate) fn matmul_q8_0_decode_interleaved_parallel(
     out: &mut [f32],
 ) {
     let threads = rayon::current_num_threads().max(1);
-    let chunk_rows = w.out_features().div_ceil(threads).max(64);
-    let blocks_per_row = w.blocks_per_row;
+    let chunk_rows = w
+        .out_features()
+        .div_ceil(threads)
+        .next_multiple_of(crate::quant::INTERLEAVE)
+        .max(64);
     out.par_chunks_mut(chunk_rows)
         .enumerate()
         .for_each(|(chunk_idx, out_chunk)| {
             let global_start = chunk_idx * chunk_rows;
             matmul_q8_0_decode_interleaved(x, w, out_chunk, global_start);
-            let _ = blocks_per_row;
         });
 }
 
@@ -2852,6 +3059,146 @@ mod tests {
     }
 
     #[test]
+    fn interleaved_decode_matches_row_contiguous_decode() {
+        use rand::Rng;
+
+        // A non-power-of-two row count exercises the aligned parallel chunks
+        // and the final partial interleave stripe.
+        let out_features = 70;
+        let in_features = 256;
+        let data = random_q8_0_data(out_features, in_features);
+        let weight = QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap();
+        let interleaved = QuantizedWeightInterleaved::from_quantized(&weight);
+        let mut rng = rand::thread_rng();
+        let input = (0..in_features)
+            .map(|_| rng.r#gen::<f32>() * 2.0 - 1.0)
+            .collect::<Vec<_>>();
+        let quantized = quantized_input(&input);
+
+        let mut expected = vec![0.0; out_features];
+        matmul_q8_0_decode(&quantized, &weight, &mut expected);
+        let mut actual = vec![0.0; out_features];
+        matmul_q8_0_decode_interleaved_parallel(&quantized, &interleaved, &mut actual);
+
+        assert_close("interleaved q8 decode", &actual, &expected, 0.1, 0.02);
+    }
+
+    #[test]
+    fn packed16_decode_matches_row_contiguous_decode() {
+        if !packed_q8_0_vnni_supported() {
+            return;
+        }
+
+        for (out_features, in_features) in [(70, 256), (32, 2_048), (32, 8_192)] {
+            let data = random_q8_0_data(out_features, in_features);
+            let weight = QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap();
+            let packed = QuantizedWeightVnni::from_quantized(&weight);
+            assert_eq!(
+                packed.byte_len(),
+                out_features.div_ceil(VNNI_OUT_TILE) * VNNI_OUT_TILE * in_features
+                    / Q8_0_BLOCK_SIZE
+                    * Q8_0_TYPE_SIZE
+            );
+            let input = patterned_vec(in_features, 0.625);
+            let quantized = quantized_input(&input);
+
+            let mut expected = vec![0.0; out_features];
+            matmul_q8_0_decode(&quantized, &weight, &mut expected);
+            let mut actual = vec![0.0; out_features];
+            matmul_q8_0_decode_packed16_parallel(&quantized, &packed, &mut actual);
+
+            for (index, (packed_value, row_value)) in actual.iter().zip(expected.iter()).enumerate()
+            {
+                assert_eq!(
+                    packed_value.to_bits(),
+                    row_value.to_bits(),
+                    "packed Q8 decode mismatch at row {index} for {out_features}x{in_features}: \
+                     packed={packed_value} row={row_value}"
+                );
+            }
+        }
+    }
+
+    /// Compare the existing row-contiguous and packed-16 projection kernels.
+    #[test]
+    #[ignore]
+    fn bench_packed16_decode() {
+        if !packed_q8_0_vnni_supported() {
+            println!("packed16 AVX-512 VNNI unavailable");
+            return;
+        }
+
+        for (name, in_features, out_features) in [
+            ("q_o", 2_048, 2_048),
+            ("gate_up", 2_048, 8_192),
+            ("down", 8_192, 2_048),
+        ] {
+            let iterations = 40;
+            let data = random_q8_0_data(out_features, in_features);
+            let weight = QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap();
+            let packed = QuantizedWeightVnni::from_quantized(&weight);
+            let input = quantized_input(&patterned_vec(in_features, 0.875));
+            let mut output = vec![0.0; out_features];
+
+            matmul_q8_0_decode(&input, &weight, &mut output);
+            let started = std::time::Instant::now();
+            for _ in 0..iterations {
+                matmul_q8_0_decode(&input, &weight, &mut output);
+            }
+            let row_contiguous = started.elapsed();
+
+            matmul_q8_0_decode_packed16_parallel(&input, &packed, &mut output);
+            let started = std::time::Instant::now();
+            for _ in 0..iterations {
+                matmul_q8_0_decode_packed16_parallel(&input, &packed, &mut output);
+            }
+            let packed16 = started.elapsed();
+
+            println!(
+                "{name}: row={row_contiguous:?} packed16={packed16:?} speedup={:.3}",
+                row_contiguous.as_secs_f64() / packed16.as_secs_f64()
+            );
+        }
+    }
+
+    /// Compare row-contiguous and interleaved decode scheduling.
+    ///
+    /// Run with:
+    /// `cargo test --release bench_interleaved_decode -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn bench_interleaved_decode() {
+        let out_features = 16_384;
+        let in_features = 2_048;
+        let iterations = 10;
+        let data = random_q8_0_data(out_features, in_features);
+        let weight = QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap();
+        let interleaved = QuantizedWeightInterleaved::from_quantized(&weight);
+        let input = patterned_vec(in_features, 0.75);
+        let quantized = quantized_input(&input);
+        let mut output = vec![0.0; out_features];
+
+        matmul_q8_0_decode(&quantized, &weight, &mut output);
+        let started = std::time::Instant::now();
+        for _ in 0..iterations {
+            matmul_q8_0_decode(&quantized, &weight, &mut output);
+        }
+        let contiguous = started.elapsed();
+
+        matmul_q8_0_decode_interleaved_parallel(&quantized, &interleaved, &mut output);
+        let started = std::time::Instant::now();
+        for _ in 0..iterations {
+            matmul_q8_0_decode_interleaved_parallel(&quantized, &interleaved, &mut output);
+        }
+        let interleaved_time = started.elapsed();
+
+        println!(
+            "row-contiguous={contiguous:?} interleaved={interleaved_time:?} ratio={:.3}",
+            contiguous.as_secs_f64() / interleaved_time.as_secs_f64()
+        );
+    }
+
+    #[test]
     fn decode_path_matches_packed_batch_path() {
         use crate::backend::{Backend, CpuBackend};
         use rand::Rng;
@@ -3183,5 +3530,147 @@ mod tests {
 
         println!("threads,median_ns,mean_ns");
         println!("{},{:.0},{:.0}", threads, median_ns, mean_ns);
+    }
+
+    /// Compare explicit decode execution modes on representative Llama-1B
+    /// projection shapes.
+    ///
+    /// Run in separate processes so Rayon reads the intended pool size:
+    /// `RAYON_NUM_THREADS=4 cargo test --release -- execution_mode_sweep --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn execution_mode_sweep() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        fn measure(mut operation: impl FnMut(), warmups: usize, samples: usize) -> (u64, u64) {
+            for _ in 0..warmups {
+                operation();
+            }
+            let mut elapsed = Vec::with_capacity(samples);
+            for _ in 0..samples {
+                let start = Instant::now();
+                operation();
+                elapsed.push(start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+            }
+            elapsed.sort_unstable();
+            let p95 = samples.saturating_mul(95).div_ceil(100).saturating_sub(1);
+            (elapsed[samples / 2], elapsed[p95.min(samples - 1)])
+        }
+
+        let threads = rayon::current_num_threads().max(1);
+        let shapes = [
+            ("kv", 2_048, 512),
+            ("q_o", 2_048, 2_048),
+            ("gate_up", 2_048, 8_192),
+            ("down", 8_192, 2_048),
+        ];
+        println!(
+            "benchmark,shape,threads,mode,input_dimension,output_dimension,macs,median_ns,p95_ns"
+        );
+
+        for (shape, input_dimension, output_dimension) in shapes {
+            let weight = QuantizedWeight::new(
+                random_q8_0_data(output_dimension, input_dimension),
+                vec![output_dimension, input_dimension],
+            );
+            let input = quantized_input(&patterned_vec(input_dimension, 0.75));
+            let mut serial_output = vec![0.0; output_dimension];
+            let mut row_output = vec![0.0; output_dimension];
+
+            let (serial_median, serial_p95) = measure(
+                || {
+                    super::matmul_q8_0_decode_serial(&input, &weight, &mut serial_output);
+                    black_box(&serial_output);
+                },
+                10,
+                50,
+            );
+            let (row_median, row_p95) = measure(
+                || {
+                    super::matmul_q8_0_decode_row_parallel(&input, &weight, &mut row_output);
+                    black_box(&row_output);
+                },
+                10,
+                50,
+            );
+            assert_eq!(serial_output, row_output);
+            let macs = input_dimension * output_dimension;
+            println!(
+                "single,{shape},{threads},serial,{input_dimension},{output_dimension},{macs},{serial_median},{serial_p95}"
+            );
+            println!(
+                "single,{shape},{threads},row_parallel,{input_dimension},{output_dimension},{macs},{row_median},{row_p95}"
+            );
+
+            if shape == "gate_up" {
+                let second_weight = QuantizedWeight::new(
+                    random_q8_0_data(output_dimension, input_dimension),
+                    vec![output_dimension, input_dimension],
+                );
+                let mut first_output = vec![0.0; output_dimension];
+                let mut second_output = vec![0.0; output_dimension];
+
+                let (serial_pair_median, serial_pair_p95) = measure(
+                    || {
+                        super::matmul_q8_0_decode_serial(&input, &weight, &mut first_output);
+                        super::matmul_q8_0_decode_serial(
+                            &input,
+                            &second_weight,
+                            &mut second_output,
+                        );
+                        black_box((&first_output, &second_output));
+                    },
+                    10,
+                    50,
+                );
+                let (task_pair_median, task_pair_p95) = measure(
+                    || {
+                        rayon::join(
+                            || {
+                                super::matmul_q8_0_decode_serial(
+                                    &input,
+                                    &weight,
+                                    &mut first_output,
+                                );
+                            },
+                            || {
+                                super::matmul_q8_0_decode_serial(
+                                    &input,
+                                    &second_weight,
+                                    &mut second_output,
+                                );
+                            },
+                        );
+                        black_box((&first_output, &second_output));
+                    },
+                    10,
+                    50,
+                );
+                let (row_pair_median, row_pair_p95) = measure(
+                    || {
+                        super::matmul_q8_0_decode_row_parallel(&input, &weight, &mut first_output);
+                        super::matmul_q8_0_decode_row_parallel(
+                            &input,
+                            &second_weight,
+                            &mut second_output,
+                        );
+                        black_box((&first_output, &second_output));
+                    },
+                    10,
+                    50,
+                );
+                let pair_macs = macs * 2;
+                println!(
+                    "pair,gate_up,{threads},serial,{input_dimension},{output_dimension},{pair_macs},{serial_pair_median},{serial_pair_p95}"
+                );
+                println!(
+                    "pair,gate_up,{threads},task_parallel,{input_dimension},{output_dimension},{pair_macs},{task_pair_median},{task_pair_p95}"
+                );
+                println!(
+                    "pair,gate_up,{threads},row_parallel,{input_dimension},{output_dimension},{pair_macs},{row_pair_median},{row_pair_p95}"
+                );
+            }
+        }
     }
 }

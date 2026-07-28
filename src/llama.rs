@@ -1,7 +1,17 @@
-use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, Module};
+use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, CpuError, Module};
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::tensor::CpuTensor;
+use crate::workspace::Workspace;
 use alloc::vec::Vec;
+use std::cell::RefCell;
+
+const INTERLEAVED_MIN_OUT_FEATURES: usize = 65_536;
+
+thread_local! {
+    /// One decode workspace per calling thread. Dimensions are checked before
+    /// every use so sequential inference with different models remains safe.
+    static LLAMA_DECODE_WORKSPACE: RefCell<Option<Workspace>> = const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RopeLayout {
@@ -479,6 +489,54 @@ fn apply_rope_and_qk_norm<B: Backend>(
     }
 
     backend.load_from_cpu(data, &[seq_len, width])
+}
+
+impl LlamaAttention<CpuBackend> {
+    fn apply_decode_rope_and_qk_norm(
+        &self,
+        data: &mut [f32],
+        n_heads: usize,
+        position: usize,
+        norm: Option<&CpuTensor>,
+    ) {
+        let width = n_heads * self.head_dim;
+        debug_assert_eq!(data.len(), width);
+
+        if self.qk_norm_order == QkNormOrder::BeforeRope {
+            if let Some(norm) = norm {
+                apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
+            }
+        }
+
+        let half = self.head_dim / 2;
+        let table_start = position * half;
+        let cos = &self.rope_cos.data()[table_start..table_start + half];
+        let sin = &self.rope_sin.data()[table_start..table_start + half];
+        match self.rope_layout {
+            RopeLayout::SplitHalf => {
+                crate::simd::rope_split_half(data, n_heads, self.head_dim, cos, sin);
+            }
+            RopeLayout::AdjacentPair => {
+                for head in 0..n_heads {
+                    let head_start = head * self.head_dim;
+                    for d in 0..half {
+                        let i0 = head_start + 2 * d;
+                        let i1 = i0 + 1;
+                        let x0 = data[i0];
+                        let x1 = data[i1];
+                        data[i0] = x0 * cos[d] - x1 * sin[d];
+                        data[i1] = x0 * sin[d] + x1 * cos[d];
+                    }
+                }
+            }
+        }
+
+        if self.qk_norm_order == QkNormOrder::AfterRope {
+            if let Some(norm) = norm {
+                apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
+            }
+        }
+    }
 }
 
 impl<B: Backend> LlamaAttention<B> {
@@ -1005,9 +1063,14 @@ impl<B: Backend> Module<B> for LlamaBlock<B> {
 /// token embedding (no learned position embeddings - rope handles
 /// position). the `from_loader` builder reads llama-specific gguf
 /// metadata keys.
+pub enum LlamaEmbedding<B: Backend> {
+    F32(B::Tensor),
+    Q8_0(crate::quant::QuantizedWeight),
+}
+
 pub struct Llama<B: Backend> {
     /// token embedding table, shape [vocab_size, embed_dim]
-    pub embed_tokens: B::Tensor,
+    pub embed_tokens: LlamaEmbedding<B>,
     /// transformer decoder blocks
     pub blocks: Vec<LlamaBlock<B>>,
     /// final rms normalization weight
@@ -1016,10 +1079,160 @@ pub struct Llama<B: Backend> {
     pub head: Linear<B>,
     /// model configuration
     pub config: LlamaConfig,
+    /// Stable decode execution plan selected once when the model is built.
+    decode_plan: LlamaDecodePlan,
 }
 
-impl<B: Backend> ForwardModel<B> for Llama<B> {
-    fn create_cache(&self, _backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
+/// Existing Llama projection groups that can receive the packed Q8_0 decode
+/// representation. The tied embedding and LM head are deliberately excluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlamaPackedSelection {
+    GateUp,
+    Mlp,
+    Attention,
+    AttentionGateUp,
+    All,
+}
+
+impl LlamaPackedSelection {
+    #[inline]
+    fn includes_attention(self) -> bool {
+        matches!(self, Self::Attention | Self::AttentionGateUp | Self::All)
+    }
+
+    #[inline]
+    fn includes_gate_up(self) -> bool {
+        matches!(
+            self,
+            Self::GateUp | Self::Mlp | Self::AttentionGateUp | Self::All
+        )
+    }
+
+    #[inline]
+    fn includes_down(self) -> bool {
+        matches!(self, Self::Mlp | Self::All)
+    }
+}
+
+/// Work performed while constructing selected packed projections.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct LlamaPackingStats {
+    pub weights_packed: usize,
+    pub packed_bytes: usize,
+    pub packing_ns: u64,
+    pub eviction_attempts: usize,
+    pub eviction_successes: usize,
+    pub eviction_ns: u64,
+}
+
+/// Work performed by a later residency-only eviction pass.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct LlamaEvictionStats {
+    pub eviction_attempts: usize,
+    pub eviction_successes: usize,
+    pub eviction_ns: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LlamaProjectionMode {
+    Rayon,
+    PrivateRayon,
+    Serial,
+    PersistentRows,
+    PersistentTasks,
+}
+
+#[derive(Debug)]
+struct LlamaDecodePlan {
+    projection_mode: LlamaProjectionMode,
+    workers: Option<crate::decode_scheduler::WorkerTeam>,
+    rayon_pool: Option<crate::decode_scheduler::PinnedRayonPool>,
+}
+
+impl LlamaDecodePlan {
+    fn rayon() -> Self {
+        Self {
+            projection_mode: LlamaProjectionMode::Rayon,
+            workers: None,
+            rayon_pool: None,
+        }
+    }
+
+    fn from_environment(fast_path_available: bool) -> anyhow::Result<Self> {
+        if !fast_path_available {
+            return Ok(Self::rayon());
+        }
+        let mode = std::env::var("EMBER_LLAMA_DECODE_MODE")
+            .unwrap_or_else(|_| "rayon".to_string())
+            .to_ascii_lowercase();
+        let projection_mode = match mode.as_str() {
+            "rayon" => LlamaProjectionMode::Rayon,
+            "private-rayon" => LlamaProjectionMode::PrivateRayon,
+            "serial" => LlamaProjectionMode::Serial,
+            "persistent-row" => LlamaProjectionMode::PersistentRows,
+            "persistent-task" => LlamaProjectionMode::PersistentTasks,
+            _ => anyhow::bail!(
+                "invalid EMBER_LLAMA_DECODE_MODE '{mode}'; expected rayon, serial, \
+                 private-rayon, persistent-row, or persistent-task"
+            ),
+        };
+        if matches!(
+            projection_mode,
+            LlamaProjectionMode::Rayon | LlamaProjectionMode::Serial
+        ) {
+            return Ok(Self {
+                projection_mode,
+                workers: None,
+                rayon_pool: None,
+            });
+        }
+
+        let physical_cpus = crate::decode_scheduler::physical_cpu_ids();
+        let requested_workers = std::env::var("EMBER_DECODE_THREADS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or_else(rayon::current_num_threads);
+        let worker_count = requested_workers.min(physical_cpus.len()).max(1);
+        let pin_workers = std::env::var("EMBER_DECODE_AFFINITY")
+            .map(|value| value != "0")
+            .unwrap_or(true);
+        if projection_mode == LlamaProjectionMode::PrivateRayon {
+            return Ok(Self {
+                projection_mode,
+                workers: None,
+                rayon_pool: Some(crate::decode_scheduler::PinnedRayonPool::new(
+                    worker_count,
+                    pin_workers,
+                )?),
+            });
+        }
+
+        let wait_strategy = match std::env::var("EMBER_DECODE_WAIT")
+            .unwrap_or_else(|_| "sleep".to_string())
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "sleep" => crate::decode_scheduler::WorkerWaitStrategy::Sleep,
+            "hybrid" => crate::decode_scheduler::WorkerWaitStrategy::Hybrid {
+                spin_iterations: 10_000,
+            },
+            value => {
+                anyhow::bail!("invalid EMBER_DECODE_WAIT '{value}'; expected sleep or hybrid")
+            }
+        };
+        let workers =
+            crate::decode_scheduler::WorkerTeam::new(worker_count, wait_strategy, pin_workers)?;
+        Ok(Self {
+            projection_mode,
+            workers: Some(workers),
+            rayon_pool: None,
+        })
+    }
+}
+
+impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
+    fn create_cache(&self, _backend: &CpuBackend, max_seq_len: usize) -> crate::kv_cache::KVCache {
         crate::kv_cache::KVCache::new(
             self.blocks.len(),
             self.config.n_kv_heads,
@@ -1027,25 +1240,28 @@ impl<B: Backend> ForwardModel<B> for Llama<B> {
             max_seq_len,
         )
     }
-    fn max_seq_len(&self, _backend: &B) -> usize {
+    fn max_seq_len(&self, _backend: &CpuBackend) -> usize {
         self.config.max_seq_len
     }
     fn forward_with_cache(
         &self,
-        backend: &B,
+        backend: &CpuBackend,
         token_ids: &[u32],
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
-    ) -> Result<B::Tensor, B::Error> {
+    ) -> Result<CpuTensor, CpuError> {
         Llama::forward_with_cache(self, backend, token_ids, cache, start_pos)
     }
     fn forward_last_logits_with_cache(
         &self,
-        backend: &B,
+        backend: &CpuBackend,
         token_ids: &[u32],
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
-    ) -> Result<B::Tensor, B::Error> {
+    ) -> Result<CpuTensor, CpuError> {
+        if let Some(result) = self.forward_decode_fast(backend, token_ids, cache, start_pos) {
+            return result;
+        }
         Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
     }
     fn n_layers(&self) -> usize {
@@ -1056,23 +1272,426 @@ impl<B: Backend> ForwardModel<B> for Llama<B> {
     }
     fn forward_with_activations(
         &self,
-        backend: &B,
+        backend: &CpuBackend,
         token_ids: &[u32],
-    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+    ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
         Llama::forward_with_activations(self, backend, token_ids)
     }
 
     fn forward_pooled_activations(
         &self,
-        backend: &B,
+        backend: &CpuBackend,
         token_ids: &[u32],
         token_index_groups: &[Vec<usize>],
-    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+    ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
         Llama::forward_pooled_activations(self, backend, token_ids, token_index_groups)
     }
 }
 
 impl Llama<CpuBackend> {
+    fn fast_decode_inter_dim(&self) -> Option<usize> {
+        // The allocation-free path is currently validated for Llama's
+        // adjacent-pair RoPE. Keep Qwen's split-half layout on the generic
+        // implementation until it has real-model logit parity coverage.
+        if self.config.rope_layout != RopeLayout::AdjacentPair {
+            return None;
+        }
+
+        let q_dim = self.config.n_heads.checked_mul(self.config.head_dim)?;
+        let kv_dim = self.config.n_kv_heads.checked_mul(self.config.head_dim)?;
+        let embed_dim = self.config.embed_dim;
+        let mut inter_dim = None;
+
+        for block in &self.blocks {
+            let q = block.self_attn.q_proj.q8_weight_without_bias()?;
+            let k = block.self_attn.k_proj.q8_weight_without_bias()?;
+            let v = block.self_attn.v_proj.q8_weight_without_bias()?;
+            let o = block.self_attn.o_proj.q8_weight_without_bias()?;
+            let gate = block.mlp.gate_proj.q8_weight_without_bias()?;
+            let up = block.mlp.up_proj.q8_weight_without_bias()?;
+            let down = block.mlp.down_proj.q8_weight_without_bias()?;
+
+            if q.in_features() != embed_dim
+                || q.out_features() != q_dim
+                || k.in_features() != embed_dim
+                || k.out_features() != kv_dim
+                || v.in_features() != embed_dim
+                || v.out_features() != kv_dim
+                || o.in_features() != q_dim
+                || o.out_features() != embed_dim
+                || gate.in_features() != embed_dim
+                || up.in_features() != embed_dim
+                || gate.out_features() != up.out_features()
+                || down.in_features() != gate.out_features()
+                || down.out_features() != embed_dim
+            {
+                return None;
+            }
+
+            match inter_dim {
+                Some(expected) if expected != gate.out_features() => return None,
+                None => inter_dim = Some(gate.out_features()),
+                _ => {}
+            }
+        }
+
+        let head = self.head.q8_weight_without_bias()?;
+        if head.in_features() != embed_dim {
+            return None;
+        }
+        inter_dim
+    }
+
+    /// Run the allocation-free Q8_0 path for a single decode token.
+    ///
+    /// `None` means the model uses a mixed/F32 weight layout or tracing is
+    /// active, in which case the generic implementation remains authoritative.
+    fn forward_decode_fast(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Option<Result<CpuTensor, CpuError>> {
+        if token_ids.len() != 1 || crate::trace::is_tracing() {
+            return None;
+        }
+        let inter_dim = self.fast_decode_inter_dim()?;
+        let embed_dim = self.config.embed_dim;
+        let q_dim = self.config.n_heads * self.config.head_dim;
+        let kv_dim = self.config.n_kv_heads * self.config.head_dim;
+
+        let mut execute = || {
+            LLAMA_DECODE_WORKSPACE.with(|workspace| {
+                let mut workspace = workspace.borrow_mut();
+                let needs_resize = workspace.as_ref().is_none_or(|current| {
+                    current.max_rows() != 1
+                        || current.embed_dim() != embed_dim
+                        || current.inter_dim() != inter_dim
+                        || current.q_dim() != q_dim
+                        || current.kv_dim() != kv_dim
+                });
+                if needs_resize {
+                    *workspace = Some(Workspace::new(
+                        1,
+                        embed_dim,
+                        inter_dim,
+                        self.config.n_heads,
+                        self.config.n_kv_heads,
+                        self.config.head_dim,
+                    ));
+                }
+                self.forward_decode_with_workspace(
+                    backend,
+                    token_ids[0],
+                    cache,
+                    start_pos,
+                    workspace.as_mut().expect("decode workspace initialized"),
+                )
+            })
+        };
+        Some(if let Some(pool) = self.decode_plan.rayon_pool.as_ref() {
+            pool.install(execute)
+        } else {
+            execute()
+        })
+    }
+
+    fn forward_decode_with_workspace(
+        &self,
+        backend: &CpuBackend,
+        token_id: u32,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        workspace: &mut Workspace,
+    ) -> Result<CpuTensor, CpuError> {
+        let embed_dim = self.config.embed_dim;
+        let q_dim = self.config.n_heads * self.config.head_dim;
+        let kv_dim = self.config.n_kv_heads * self.config.head_dim;
+        let inter_dim = workspace.inter_dim();
+        let profile_operators = crate::decode_profile::is_enabled();
+        let projection_mode = self.decode_plan.projection_mode;
+        let persistent_workers = self.decode_plan.workers.as_ref();
+
+        let Workspace {
+            norm_out,
+            residual_out,
+            q_out,
+            k_out,
+            v_out,
+            attn_out,
+            gate_out,
+            up_out,
+            gated_out,
+            mlp_out,
+            ..
+        } = workspace;
+        let x = &mut residual_out[..embed_dim];
+        match &self.embed_tokens {
+            LlamaEmbedding::F32(table) => {
+                if token_id as usize >= table.shape()[0] {
+                    return Err(CpuError::ShapeMismatch(format!(
+                        "embedding token {} out of bounds for vocabulary {}",
+                        token_id,
+                        table.shape()[0]
+                    )));
+                }
+                let embedding_start = token_id as usize * embed_dim;
+                x.copy_from_slice(&table.data()[embedding_start..embedding_start + embed_dim]);
+            }
+            LlamaEmbedding::Q8_0(table) => {
+                if token_id as usize >= table.out_features() {
+                    return Err(CpuError::ShapeMismatch(format!(
+                        "embedding token {} out of bounds for vocabulary {}",
+                        token_id,
+                        table.out_features()
+                    )));
+                }
+                table.dequantize_row(token_id as usize, x);
+            }
+        }
+
+        let norm = &mut norm_out[..embed_dim];
+        let q = &mut q_out[..q_dim];
+        let k = &mut k_out[..kv_dim];
+        let v = &mut v_out[..kv_dim];
+        let attention = &mut attn_out[..q_dim];
+        let gate = &mut gate_out[..inter_dim];
+        let up = &mut up_out[..inter_dim];
+        let gated = &mut gated_out[..inter_dim];
+        let projected = &mut mlp_out[..embed_dim];
+
+        for (layer, block) in self.blocks.iter().enumerate() {
+            crate::simd::rms_norm_into(x, block.input_layernorm.data(), block.norm_eps, norm);
+
+            let q_weight = block
+                .self_attn
+                .q_proj
+                .q8_weight_without_bias()
+                .expect("fast path eligibility checked");
+            let k_weight = block
+                .self_attn
+                .k_proj
+                .q8_weight_without_bias()
+                .expect("fast path eligibility checked");
+            let v_weight = block
+                .self_attn
+                .v_proj
+                .q8_weight_without_bias()
+                .expect("fast path eligibility checked");
+            let packed_q = block.self_attn.q_proj.packed_q8_weight_without_bias();
+            let packed_k = block.self_attn.k_proj.packed_q8_weight_without_bias();
+            let packed_v = block.self_attn.v_proj.packed_q8_weight_without_bias();
+            if projection_mode == LlamaProjectionMode::Serial {
+                backend.matmul_q8_0_triple_serial_into(norm, q_weight, k_weight, v_weight, q, k, v);
+            } else if let Some(workers) = persistent_workers {
+                backend.matmul_q8_0_triple_worker_into(
+                    workers, norm, q_weight, k_weight, v_weight, q, k, v,
+                )?;
+            } else if let (Some(packed_q), Some(packed_k), Some(packed_v)) =
+                (packed_q, packed_k, packed_v)
+            {
+                if profile_operators {
+                    let elapsed = backend.matmul_q8_0_packed_triple_into_timed(
+                        norm, packed_q, packed_k, packed_v, q, k, v,
+                    );
+                    record_profiled_packed(layer, "q", packed_q, elapsed[0]);
+                    record_profiled_packed(layer, "k", packed_k, elapsed[1]);
+                    record_profiled_packed(layer, "v", packed_v, elapsed[2]);
+                } else {
+                    backend.matmul_q8_0_packed_triple_into(
+                        norm, packed_q, packed_k, packed_v, q, k, v,
+                    );
+                }
+            } else if profile_operators {
+                let elapsed = backend
+                    .matmul_q8_0_triple_into_timed(norm, q_weight, k_weight, v_weight, q, k, v);
+                record_profiled_q8(layer, "q", q_weight, elapsed[0]);
+                record_profiled_q8(layer, "k", k_weight, elapsed[1]);
+                record_profiled_q8(layer, "v", v_weight, elapsed[2]);
+            } else {
+                backend.matmul_q8_0_triple_into(norm, 1, q_weight, k_weight, v_weight, q, k, v);
+            }
+
+            block.self_attn.apply_decode_rope_and_qk_norm(
+                q,
+                self.config.n_heads,
+                start_pos,
+                block.self_attn.q_norm.as_ref(),
+            );
+            block.self_attn.apply_decode_rope_and_qk_norm(
+                k,
+                self.config.n_kv_heads,
+                start_pos,
+                block.self_attn.k_norm.as_ref(),
+            );
+
+            let cursor = cache.cursor();
+            cache.append(layer, cursor, k, v);
+            let attention_spec = CachedAttentionSpec {
+                n_heads: self.config.n_heads,
+                n_kv_heads: self.config.n_kv_heads,
+                head_dim: self.config.head_dim,
+                max_seq_len: cache.max_seq_len(),
+                total_seq_len: cursor + 1,
+            };
+            let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(layer);
+            backend.cached_causal_attention_into(
+                q,
+                cached_k,
+                cached_v,
+                attention_spec,
+                qk_scratch,
+                attention,
+            )?;
+
+            let o_weight = block
+                .self_attn
+                .o_proj
+                .q8_weight_without_bias()
+                .expect("fast path eligibility checked");
+            let packed_o = block.self_attn.o_proj.packed_q8_weight_without_bias();
+            if projection_mode == LlamaProjectionMode::Serial {
+                backend.matmul_q8_0_serial_into(attention, o_weight, projected);
+            } else if let Some(workers) = persistent_workers {
+                backend.matmul_q8_0_worker_into(workers, attention, o_weight, projected)?;
+            } else if let Some(packed_o) = packed_o {
+                if profile_operators {
+                    let elapsed =
+                        backend.matmul_q8_0_packed_into_timed(attention, packed_o, projected);
+                    record_profiled_packed(layer, "o", packed_o, elapsed);
+                } else {
+                    backend.matmul_q8_0_packed_into(attention, packed_o, projected);
+                }
+            } else if profile_operators {
+                let elapsed = backend.matmul_q8_0_into_timed(attention, o_weight, projected);
+                record_profiled_q8(layer, "o", o_weight, elapsed);
+            } else {
+                backend.matmul_q8_0_into(attention, 1, o_weight, projected);
+            }
+            crate::simd::add_assign(x, projected);
+
+            crate::simd::rms_norm_into(
+                x,
+                block.post_attention_layernorm.data(),
+                block.norm_eps,
+                norm,
+            );
+            let gate_weight = block
+                .mlp
+                .gate_proj
+                .q8_weight_without_bias()
+                .expect("fast path eligibility checked");
+            let up_weight = block
+                .mlp
+                .up_proj
+                .q8_weight_without_bias()
+                .expect("fast path eligibility checked");
+            let packed_gate = block.mlp.gate_proj.packed_q8_weight_without_bias();
+            let packed_up = block.mlp.up_proj.packed_q8_weight_without_bias();
+            if projection_mode == LlamaProjectionMode::Serial {
+                backend.matmul_q8_0_pair_serial_into(norm, gate_weight, up_weight, gate, up);
+            } else if let Some(workers) = persistent_workers {
+                backend.matmul_q8_0_pair_worker_into(
+                    workers,
+                    projection_mode == LlamaProjectionMode::PersistentTasks,
+                    norm,
+                    gate_weight,
+                    up_weight,
+                    gate,
+                    up,
+                )?;
+            } else if let (Some(packed_gate), Some(packed_up)) = (packed_gate, packed_up) {
+                if profile_operators {
+                    let elapsed = backend.matmul_q8_0_packed_pair_into_timed(
+                        norm,
+                        packed_gate,
+                        packed_up,
+                        gate,
+                        up,
+                    );
+                    record_profiled_packed(layer, "gate", packed_gate, elapsed[0]);
+                    record_profiled_packed(layer, "up", packed_up, elapsed[1]);
+                } else {
+                    backend.matmul_q8_0_packed_pair_into(norm, packed_gate, packed_up, gate, up);
+                }
+            } else if profile_operators {
+                let elapsed =
+                    backend.matmul_q8_0_pair_into_timed(norm, gate_weight, up_weight, gate, up);
+                record_profiled_q8(layer, "gate", gate_weight, elapsed[0]);
+                record_profiled_q8(layer, "up", up_weight, elapsed[1]);
+            } else {
+                backend.matmul_q8_0_pair_into(norm, 1, gate_weight, up_weight, gate, up);
+            }
+            crate::simd::silu_mul_into(gate, up, gated);
+
+            let down_weight = block
+                .mlp
+                .down_proj
+                .q8_weight_without_bias()
+                .expect("fast path eligibility checked");
+            let packed_down = block.mlp.down_proj.packed_q8_weight_without_bias();
+            if projection_mode == LlamaProjectionMode::Serial {
+                backend.matmul_q8_0_serial_into(gated, down_weight, projected);
+            } else if let Some(workers) = persistent_workers {
+                backend.matmul_q8_0_worker_into(workers, gated, down_weight, projected)?;
+            } else if let Some(packed_down) = packed_down {
+                if profile_operators {
+                    let elapsed =
+                        backend.matmul_q8_0_packed_into_timed(gated, packed_down, projected);
+                    record_profiled_packed(layer, "down", packed_down, elapsed);
+                } else {
+                    backend.matmul_q8_0_packed_into(gated, packed_down, projected);
+                }
+            } else if profile_operators {
+                let elapsed = backend.matmul_q8_0_into_timed(gated, down_weight, projected);
+                record_profiled_q8(layer, "down", down_weight, elapsed);
+            } else {
+                backend.matmul_q8_0_into(gated, 1, down_weight, projected);
+            }
+            crate::simd::add_assign(x, projected);
+        }
+        cache.advance_cursor();
+
+        crate::simd::rms_norm_into(x, self.norm.data(), self.config.norm_eps, norm);
+        let head_weight = self
+            .head
+            .q8_weight_without_bias()
+            .expect("fast path eligibility checked");
+        let mut logits = vec![0.0; head_weight.out_features()];
+        if let Some(interleaved) = self.head.interleaved.as_ref() {
+            if profile_operators {
+                let elapsed =
+                    backend.matmul_q8_0_interleaved_into_timed(norm, interleaved, &mut logits);
+                crate::decode_profile::record(
+                    usize::MAX,
+                    "lm_head",
+                    interleaved.in_features(),
+                    interleaved.out_features(),
+                    if rayon::current_num_threads() > 1 {
+                        crate::decode_profile::DecodeExecutionMode::InterleavedRowParallelRayon
+                    } else {
+                        crate::decode_profile::DecodeExecutionMode::InterleavedSerial
+                    },
+                    elapsed,
+                );
+            } else {
+                backend.matmul_q8_0_interleaved_into(norm, interleaved, &mut logits);
+            }
+        } else {
+            if profile_operators {
+                let elapsed = backend.matmul_q8_0_into_timed(norm, head_weight, &mut logits);
+                record_profiled_q8(usize::MAX, "lm_head", head_weight, elapsed);
+            } else {
+                backend.matmul_q8_0_into(norm, 1, head_weight, &mut logits);
+            }
+        }
+        Ok(CpuTensor::from_data(
+            vec![1, head_weight.out_features()],
+            logits,
+        ))
+    }
+
     /// build a llama model from a gguf loader.
     ///
     /// reads metadata keys under the `llama.*` namespace (as written
@@ -1109,6 +1728,24 @@ impl Llama<CpuBackend> {
         loader: crate::loader::GgufLoader,
         max_seq_len: Option<usize>,
     ) -> anyhow::Result<Self> {
+        Self::from_loader_impl(loader, max_seq_len, true)
+    }
+
+    /// Build a Llama-family model without consulting the automatic packed
+    /// decode environment switch. Lifecycle experiments use this constructor
+    /// so packing can occur at an explicit phase boundary in the same binary.
+    pub fn from_loader_without_packed_decode(
+        loader: crate::loader::GgufLoader,
+        max_seq_len: Option<usize>,
+    ) -> anyhow::Result<Self> {
+        Self::from_loader_impl(loader, max_seq_len, false)
+    }
+
+    fn from_loader_impl(
+        loader: crate::loader::GgufLoader,
+        max_seq_len: Option<usize>,
+        allow_automatic_packing: bool,
+    ) -> anyhow::Result<Self> {
         use crate::loader::LoadedTensor;
         use crate::tensor::compute_rope_freqs;
 
@@ -1118,6 +1755,9 @@ impl Llama<CpuBackend> {
         }
         log::debug!("llama config: {:?}", config);
         let n_layers = config.n_layers;
+        let packed_decode_enabled = allow_automatic_packing
+            && config.rope_layout == RopeLayout::AdjacentPair
+            && std::env::var_os("EMBER_LLAMA_PACKED_Q8").is_none_or(|value| value != "0");
 
         // precompute rope tables once, shared across all attention layers
         let (rope_cos, rope_sin) =
@@ -1140,14 +1780,22 @@ impl Llama<CpuBackend> {
         // helper: build a linear from a weight tensor (may be f32 or q8_0).
         // llama weights have no bias, so this takes only the weight name.
         let get_linear = |name: &str| -> anyhow::Result<Linear<CpuBackend>> {
-            match loader.tensors.get(name) {
-                Some(LoadedTensor::F32(t)) => Ok(Linear::new(t.clone().transpose(), None)),
-                Some(LoadedTensor::Q8_0(qw)) => Ok(Linear::new_q8_0(qw.clone(), None)),
+            let mut linear = match loader.tensors.get(name) {
+                Some(LoadedTensor::F32(t)) => Linear::new(t.clone().transpose(), None),
+                Some(LoadedTensor::Q8_0(qw)) => Linear::new_q8_0(qw.clone(), None),
                 None => anyhow::bail!("Missing tensor: {}", name),
+            };
+            if packed_decode_enabled {
+                linear.prepare_packed_decode();
             }
+            Ok(linear)
         };
 
-        let embed_tokens = get_f32("token_embd.weight")?;
+        let embed_tokens = match loader.tensors.get("token_embd.weight") {
+            Some(LoadedTensor::F32(tensor)) => LlamaEmbedding::F32(tensor.clone()),
+            Some(LoadedTensor::Q8_0(weight)) => LlamaEmbedding::Q8_0(weight.clone()),
+            None => anyhow::bail!("Missing tensor: token_embd.weight"),
+        };
 
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
@@ -1199,20 +1847,269 @@ impl Llama<CpuBackend> {
         }
 
         // lm_head: use output.weight if present, otherwise tie with embed_tokens
-        let head = match loader.tensors.get("output.weight") {
+        let mut head = match loader.tensors.get("output.weight") {
             Some(LoadedTensor::F32(t)) => Linear::new(t.clone().transpose(), None),
             Some(LoadedTensor::Q8_0(qw)) => Linear::new_q8_0(qw.clone(), None),
-            None => Linear::new(embed_tokens.clone().transpose(), None),
+            None => match loader.tensors.get("token_embd.weight") {
+                // Tied embeddings are already laid out as [vocab, embed] in
+                // QuantizedWeight, exactly the [out, in] layout the Q8 matmul
+                // expects. Reusing the mapping avoids a second ~1 GiB F32
+                // embedding copy and keeps decode on the packed integer path.
+                Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight.clone(), None),
+                Some(LoadedTensor::F32(tensor)) => Linear::new(tensor.clone().transpose(), None),
+                None => anyhow::bail!("Missing tensor: token_embd.weight"),
+            },
         };
+        head.prepare_interleaved(INTERLEAVED_MIN_OUT_FEATURES);
 
-        Ok(Self {
+        let mut model = Self {
             embed_tokens,
             blocks,
             norm: get_f32("output_norm.weight")?,
             head,
             config,
-        })
+            decode_plan: LlamaDecodePlan::rayon(),
+        };
+        model.decode_plan =
+            LlamaDecodePlan::from_environment(model.fast_decode_inter_dim().is_some())?;
+        log::debug!(
+            "llama q8 decode workspace: {}; projection plan: {:?}",
+            if model.fast_decode_inter_dim().is_some() {
+                "enabled"
+            } else {
+                "unavailable (mixed or unsupported weight shapes)"
+            },
+            model.decode_plan
+        );
+        Ok(model)
     }
+
+    /// Construct packed representations for the selected existing projection
+    /// group. Packing and eviction are timed separately; when eviction is
+    /// requested it happens immediately after each weight is packed, matching
+    /// the production path's bounded temporary residency.
+    pub fn prepare_packed_decode_selected(
+        &mut self,
+        selection: LlamaPackedSelection,
+        evict_source_pages: bool,
+    ) -> anyhow::Result<LlamaPackingStats> {
+        if self.config.rope_layout != RopeLayout::AdjacentPair {
+            anyhow::bail!(
+                "packed lifecycle experiments require adjacent-pair Llama RoPE; \
+                 this architecture remains on the generic path"
+            );
+        }
+        if !crate::simd::packed_q8_0_vnni_supported() {
+            anyhow::bail!("packed Q8_0 AVX-512 VNNI kernel is unavailable on this CPU");
+        }
+
+        let mut stats = LlamaPackingStats::default();
+        for block in &mut self.blocks {
+            if selection.includes_attention() {
+                prepare_experimental_linear(
+                    &mut block.self_attn.q_proj,
+                    evict_source_pages,
+                    &mut stats,
+                )?;
+                prepare_experimental_linear(
+                    &mut block.self_attn.k_proj,
+                    evict_source_pages,
+                    &mut stats,
+                )?;
+                prepare_experimental_linear(
+                    &mut block.self_attn.v_proj,
+                    evict_source_pages,
+                    &mut stats,
+                )?;
+                prepare_experimental_linear(
+                    &mut block.self_attn.o_proj,
+                    evict_source_pages,
+                    &mut stats,
+                )?;
+            }
+            if selection.includes_gate_up() {
+                prepare_experimental_linear(
+                    &mut block.mlp.gate_proj,
+                    evict_source_pages,
+                    &mut stats,
+                )?;
+                prepare_experimental_linear(
+                    &mut block.mlp.up_proj,
+                    evict_source_pages,
+                    &mut stats,
+                )?;
+            }
+            if selection.includes_down() {
+                prepare_experimental_linear(
+                    &mut block.mlp.down_proj,
+                    evict_source_pages,
+                    &mut stats,
+                )?;
+            }
+        }
+        Ok(stats)
+    }
+
+    /// Re-issue `MADV_DONTNEED` for selected packed projection sources after a
+    /// generic prefill may have faulted their row-contiguous pages back in.
+    pub fn reevict_packed_decode_sources(
+        &self,
+        selection: LlamaPackedSelection,
+    ) -> anyhow::Result<LlamaEvictionStats> {
+        let mut stats = LlamaEvictionStats::default();
+        for block in &self.blocks {
+            if selection.includes_attention() {
+                reevict_experimental_linear(&block.self_attn.q_proj, &mut stats)?;
+                reevict_experimental_linear(&block.self_attn.k_proj, &mut stats)?;
+                reevict_experimental_linear(&block.self_attn.v_proj, &mut stats)?;
+                reevict_experimental_linear(&block.self_attn.o_proj, &mut stats)?;
+            }
+            if selection.includes_gate_up() {
+                reevict_experimental_linear(&block.mlp.gate_proj, &mut stats)?;
+                reevict_experimental_linear(&block.mlp.up_proj, &mut stats)?;
+            }
+            if selection.includes_down() {
+                reevict_experimental_linear(&block.mlp.down_proj, &mut stats)?;
+            }
+        }
+        Ok(stats)
+    }
+
+    /// Return the number and byte size of selected packed projections now
+    /// owned by the model.
+    pub fn packed_decode_summary(&self, selection: LlamaPackedSelection) -> (usize, usize) {
+        let mut weights = 0;
+        let mut bytes = 0;
+        let mut account = |linear: &Linear<CpuBackend>| {
+            if linear.has_packed_decode() {
+                weights += 1;
+                bytes += linear.packed_decode_bytes();
+            }
+        };
+        for block in &self.blocks {
+            if selection.includes_attention() {
+                account(&block.self_attn.q_proj);
+                account(&block.self_attn.k_proj);
+                account(&block.self_attn.v_proj);
+                account(&block.self_attn.o_proj);
+            }
+            if selection.includes_gate_up() {
+                account(&block.mlp.gate_proj);
+                account(&block.mlp.up_proj);
+            }
+            if selection.includes_down() {
+                account(&block.mlp.down_proj);
+            }
+        }
+        (weights, bytes)
+    }
+}
+
+fn prepare_experimental_linear(
+    linear: &mut Linear<CpuBackend>,
+    evict_source_pages: bool,
+    stats: &mut LlamaPackingStats,
+) -> anyhow::Result<()> {
+    let packing_start = std::time::Instant::now();
+    let packed_bytes = linear.prepare_packed_decode_without_eviction();
+    let packing_elapsed = packing_start.elapsed();
+    let Some(packed_bytes) = packed_bytes else {
+        return Ok(());
+    };
+
+    stats.weights_packed += 1;
+    stats.packed_bytes += packed_bytes;
+    stats.packing_ns = stats
+        .packing_ns
+        .saturating_add(packing_elapsed.as_nanos() as u64);
+
+    if evict_source_pages && linear.has_mapped_q8_source() {
+        stats.eviction_attempts += 1;
+        let eviction_start = std::time::Instant::now();
+        let evicted = linear.evict_packed_source_pages()?;
+        stats.eviction_ns = stats
+            .eviction_ns
+            .saturating_add(eviction_start.elapsed().as_nanos() as u64);
+        stats.eviction_successes += usize::from(evicted);
+    }
+    Ok(())
+}
+
+fn reevict_experimental_linear(
+    linear: &Linear<CpuBackend>,
+    stats: &mut LlamaEvictionStats,
+) -> anyhow::Result<()> {
+    if !linear.has_packed_decode() || !linear.has_mapped_q8_source() {
+        return Ok(());
+    }
+    stats.eviction_attempts += 1;
+    let eviction_start = std::time::Instant::now();
+    let evicted = linear.evict_packed_source_pages()?;
+    stats.eviction_ns = stats
+        .eviction_ns
+        .saturating_add(eviction_start.elapsed().as_nanos() as u64);
+    stats.eviction_successes += usize::from(evicted);
+    Ok(())
+}
+
+#[inline]
+fn record_profiled_q8(
+    layer: usize,
+    operator: &'static str,
+    weight: &crate::quant::QuantizedWeight,
+    elapsed: std::time::Duration,
+) {
+    let execution_mode =
+        if crate::simd::q8_decode_uses_row_parallel(weight.out_features(), weight.in_features()) {
+            crate::decode_profile::DecodeExecutionMode::RowParallelRayon
+        } else {
+            crate::decode_profile::DecodeExecutionMode::Serial
+        };
+    crate::decode_profile::record(
+        layer,
+        operator,
+        weight.in_features(),
+        weight.out_features(),
+        execution_mode,
+        elapsed,
+    );
+}
+
+#[inline]
+fn record_profiled_packed(
+    layer: usize,
+    operator: &'static str,
+    weight: &crate::quant::QuantizedWeightVnni,
+    elapsed: std::time::Duration,
+) {
+    crate::decode_profile::record(
+        layer,
+        operator,
+        weight.in_features(),
+        weight.out_features(),
+        crate::decode_profile::DecodeExecutionMode::PackedRowParallelRayon,
+        elapsed,
+    );
+}
+
+fn llama_embed_tokens<B: Backend>(
+    backend: &B,
+    table: &LlamaEmbedding<B>,
+    token_ids: &[u32],
+    embed_dim: usize,
+) -> Result<B::Tensor, B::Error> {
+    let mut output = backend.zeroes(&[token_ids.len(), embed_dim])?;
+    for (row, &token) in token_ids.iter().enumerate() {
+        match table {
+            LlamaEmbedding::F32(table) => {
+                backend.assign_row_from_table(&mut output, row, table, token as usize)?;
+            }
+            LlamaEmbedding::Q8_0(table) => {
+                backend.assign_row_from_q8_0(&mut output, row, table, token as usize)?;
+            }
+        }
+    }
+    Ok(output)
 }
 
 impl<B: Backend> Llama<B> {
@@ -1245,10 +2142,7 @@ impl<B: Backend> Llama<B> {
     ) -> Result<B::Tensor, B::Error> {
         let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
-        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
-        for (i, &tok) in token_ids.iter().enumerate() {
-            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
-        }
+        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
 
         for (layer, block) in self.blocks.iter().enumerate() {
             x = block.forward_with_cache(backend, &x, cache, layer, start_pos)?;
@@ -1272,7 +2166,6 @@ impl<B: Backend> Llama<B> {
 
         let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
-        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
 
         // -- embedding lookup --
         let _span_emb = trace::span(
@@ -1283,9 +2176,7 @@ impl<B: Backend> Llama<B> {
             trace::bytes_from_shape(&[seq_len, embed_dim]),
             trace::flops_embedding(),
         );
-        for (i, &tok) in token_ids.iter().enumerate() {
-            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
-        }
+        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
         if let Some(s) = _span_emb {
             s.end(
                 vec![seq_len, embed_dim],
@@ -1339,12 +2230,8 @@ impl<B: Backend> Llama<B> {
 
     /// forward pass without caching (full sequence).
     pub fn forward(&self, backend: &B, token_ids: &[u32]) -> Result<B::Tensor, B::Error> {
-        let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
-        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
-        for (i, &tok) in token_ids.iter().enumerate() {
-            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
-        }
+        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
 
         for block in &self.blocks {
             x = block.forward(backend, &x)?;
@@ -1360,12 +2247,8 @@ impl<B: Backend> Llama<B> {
         backend: &B,
         token_ids: &[u32],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
-        let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
-        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
-        for (i, &tok) in token_ids.iter().enumerate() {
-            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
-        }
+        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
 
         let mut activations = Vec::with_capacity(self.blocks.len());
 
@@ -1386,17 +2269,13 @@ impl<B: Backend> Llama<B> {
         token_ids: &[u32],
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
-        let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
         let mut pooled = token_index_groups
             .iter()
             .map(|_| vec![0.0f32; self.blocks.len() * embed_dim])
             .collect::<Vec<_>>();
 
-        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
-        for (i, &tok) in token_ids.iter().enumerate() {
-            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
-        }
+        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
 
         for (li, block) in self.blocks.iter().enumerate() {
             x = block.forward(backend, &x)?;
@@ -1432,17 +2311,13 @@ impl<B: Backend> Llama<B> {
         block_boundaries: &[usize],
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
-        let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
         let mut pooled = token_index_groups
             .iter()
             .map(|_| vec![0.0f32; self.blocks.len() * embed_dim])
             .collect::<Vec<_>>();
 
-        let mut x = backend.zeroes(&[seq_len, embed_dim])?;
-        for (i, &tok) in token_ids.iter().enumerate() {
-            backend.assign_row_from_table(&mut x, i, &self.embed_tokens, tok as usize)?;
-        }
+        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
 
         for (li, block) in self.blocks.iter().enumerate() {
             x = block.forward_with_blocks(backend, &x, block_boundaries)?;
@@ -1467,6 +2342,7 @@ impl<B: Backend> Llama<B> {
 mod tests {
     use super::*;
     use crate::loader::{GgufLoader, GgufValue};
+    use crate::quant::{QuantizedWeight, Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
     use std::collections::HashMap;
 
     #[test]
@@ -1481,5 +2357,111 @@ mod tests {
         let config = LlamaConfig::from_gguf_metadata(&loader);
 
         assert_eq!(config.max_seq_len, 131_072);
+    }
+
+    fn test_q8_linear(out_features: usize, in_features: usize, seed: usize) -> Linear<CpuBackend> {
+        assert!(in_features.is_multiple_of(Q8_0_BLOCK_SIZE));
+        let blocks = out_features * in_features / Q8_0_BLOCK_SIZE;
+        let mut data = Vec::with_capacity(blocks * Q8_0_TYPE_SIZE);
+        for block in 0..blocks {
+            let scale = half::f16::from_f32(0.005 + (block % 7) as f32 * 0.001);
+            data.extend_from_slice(&scale.to_bits().to_le_bytes());
+            for index in 0..Q8_0_BLOCK_SIZE {
+                let quant = ((block * 17 + index * 13 + seed) % 31) as i8 - 15;
+                data.push(quant as u8);
+            }
+        }
+        Linear::new_q8_0(
+            QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap(),
+            None,
+        )
+    }
+
+    #[test]
+    fn fast_q8_decode_matches_generic_path() {
+        let embed_dim = 32;
+        let head_dim = 16;
+        let n_heads = 2;
+        let n_kv_heads = 1;
+        let inter_dim = 64;
+        let vocab_size = 32;
+        let max_seq_len = 8;
+        let (rope_cos, rope_sin) =
+            crate::tensor::compute_rope_freqs(max_seq_len, head_dim, 10_000.0, None);
+        let attention = LlamaAttention::new(
+            test_q8_linear(embed_dim, embed_dim, 1),
+            test_q8_linear(head_dim, embed_dim, 2),
+            test_q8_linear(head_dim, embed_dim, 3),
+            test_q8_linear(embed_dim, embed_dim, 4),
+            rope_cos,
+            rope_sin,
+            n_heads,
+            n_kv_heads,
+            head_dim,
+            RopeLayout::AdjacentPair,
+            QkNormOrder::AfterRope,
+            None,
+            None,
+        );
+        let mlp = LlamaMlp::new(
+            test_q8_linear(inter_dim, embed_dim, 5),
+            test_q8_linear(inter_dim, embed_dim, 6),
+            test_q8_linear(embed_dim, inter_dim, 7),
+        );
+        let block = LlamaBlock::new(
+            CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+            attention,
+            CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+            mlp,
+            1e-5,
+        );
+        let embedding = (0..vocab_size * embed_dim)
+            .map(|index| ((index * 19 % 101) as f32 - 50.0) * 0.002)
+            .collect();
+        let model = Llama {
+            embed_tokens: LlamaEmbedding::F32(CpuTensor::from_data(
+                vec![vocab_size, embed_dim],
+                embedding,
+            )),
+            blocks: vec![block],
+            norm: CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+            head: test_q8_linear(vocab_size, embed_dim, 8),
+            config: LlamaConfig {
+                n_layers: 1,
+                n_heads,
+                n_kv_heads,
+                embed_dim,
+                head_dim,
+                max_seq_len,
+                rope_theta: 10_000.0,
+                norm_eps: 1e-5,
+                rope_layout: RopeLayout::AdjacentPair,
+                qk_norm_order: QkNormOrder::AfterRope,
+                vocab_size,
+            },
+            decode_plan: LlamaDecodePlan::rayon(),
+        };
+        let backend = CpuBackend;
+        let mut generic_cache = model.create_cache(&backend, max_seq_len);
+        let generic =
+            Llama::forward_last_logits_with_cache(&model, &backend, &[3], &mut generic_cache, 0)
+                .unwrap();
+        let mut fast_cache = model.create_cache(&backend, max_seq_len);
+        let fast = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[3],
+            &mut fast_cache,
+            0,
+        )
+        .unwrap();
+
+        for (index, (expected, actual)) in generic.data().iter().zip(fast.data()).enumerate() {
+            let tolerance = 1e-4 * expected.abs().max(actual.abs()).max(1.0);
+            assert!(
+                (expected - actual).abs() <= tolerance,
+                "logit {index}: generic={expected} fast={actual}"
+            );
+        }
     }
 }

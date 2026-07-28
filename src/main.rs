@@ -408,8 +408,8 @@ fn main() -> anyhow::Result<()> {
         .tokenizer
         .as_deref()
         .unwrap_or_else(|| default_tokenizer_for_arch(&args.arch));
-    let tokenizer_path = resolve_tokenizer(&tokenizer_path);
-    let tokenizer_path: &str = &tokenizer_path;
+    let tokenizer_path = resolve_tokenizer(tokenizer_path);
+    let tokenizer_path: &str = tokenizer_path.as_str();
     let record_model_sha256 = args.record_model_sha256
         || args.write_run_manifest.is_some()
         || args.probe

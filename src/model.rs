@@ -1,7 +1,7 @@
 use crate::backend::{
     AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, Module, TensorTriple,
 };
-use crate::quant::{QuantizedWeight, QuantizedWeightInterleaved};
+use crate::quant::{QuantizedWeight, QuantizedWeightInterleaved, QuantizedWeightVnni};
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
 
@@ -150,6 +150,8 @@ pub struct Linear<B: Backend> {
     bias: Option<B::Tensor>,
     /// optional interleaved Q8_0 weight for fast decode path
     pub interleaved: Option<QuantizedWeightInterleaved>,
+    /// optional 16-output packed Q8_0 weight for batch-1 decode
+    pub packed_decode: Option<QuantizedWeightVnni>,
 }
 
 impl<B: Backend> Linear<B> {
@@ -159,6 +161,7 @@ impl<B: Backend> Linear<B> {
             weight: WeightKind::F32(weight),
             bias,
             interleaved: None,
+            packed_decode: None,
         }
     }
 
@@ -169,6 +172,7 @@ impl<B: Backend> Linear<B> {
             weight: WeightKind::Q8_0(qw),
             bias,
             interleaved: None,
+            packed_decode: None,
         }
     }
 
@@ -279,6 +283,107 @@ impl Linear<CpuBackend> {
         match &self.weight {
             WeightKind::F32(t) => WeightKindView::F32(t),
             WeightKind::Q8_0(qw) => WeightKindView::Q8_0(qw),
+        }
+    }
+
+    /// Return a Q8_0 weight only when the layer needs no separate bias pass.
+    pub(crate) fn q8_weight_without_bias(&self) -> Option<&QuantizedWeight> {
+        if self.bias.is_some() {
+            return None;
+        }
+        match &self.weight {
+            WeightKind::Q8_0(weight) => Some(weight),
+            WeightKind::F32(_) => None,
+        }
+    }
+
+    /// Return the packed batch-1 weight only when no bias pass is needed.
+    pub(crate) fn packed_q8_weight_without_bias(&self) -> Option<&QuantizedWeightVnni> {
+        if self.bias.is_some() {
+            return None;
+        }
+        self.packed_decode.as_ref()
+    }
+
+    /// Build the same-size, 16-output packed layout used by the AVX-512 VNNI
+    /// batch-1 projection kernel.
+    pub fn prepare_packed_decode(&mut self) {
+        if self.prepare_packed_decode_without_eviction().is_some() {
+            #[cfg(unix)]
+            let _ = self.evict_packed_source_pages();
+        }
+    }
+
+    /// Build the packed decode representation while leaving source residency
+    /// unchanged. Returns the new packed byte count, or `None` when the layer
+    /// was already packed or is ineligible.
+    pub(crate) fn prepare_packed_decode_without_eviction(&mut self) -> Option<usize> {
+        if self.packed_decode.is_some() || !crate::simd::packed_q8_0_vnni_supported() {
+            return None;
+        }
+        let WeightKind::Q8_0(weight) = &self.weight else {
+            return None;
+        };
+        let packed = QuantizedWeightVnni::from_quantized(weight);
+        let packed_bytes = packed.byte_len();
+        self.packed_decode = Some(packed);
+        Some(packed_bytes)
+    }
+
+    /// Evict the mapped source pages for an already-packed projection.
+    ///
+    /// The source object remains valid and can fault the pages back if a
+    /// generic operation accesses it later.
+    #[cfg(unix)]
+    pub(crate) fn evict_packed_source_pages(&self) -> std::io::Result<bool> {
+        if self.packed_decode.is_none() {
+            return Ok(false);
+        }
+        let WeightKind::Q8_0(weight) = &self.weight else {
+            return Ok(false);
+        };
+        // Safety: callers invoke this only at lifecycle phase boundaries where
+        // inference is stopped and no source-weight slices can be live.
+        unsafe { weight.evict_mapped_pages() }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn evict_packed_source_pages(&self) -> std::io::Result<bool> {
+        Ok(false)
+    }
+
+    /// Bytes in the optional packed representation.
+    pub(crate) fn packed_decode_bytes(&self) -> usize {
+        self.packed_decode
+            .as_ref()
+            .map_or(0, QuantizedWeightVnni::byte_len)
+    }
+
+    /// Whether this layer currently owns a packed decode representation.
+    pub(crate) fn has_packed_decode(&self) -> bool {
+        self.packed_decode.is_some()
+    }
+
+    /// Whether the row-contiguous source is backed by the model mmap.
+    pub(crate) fn has_mapped_q8_source(&self) -> bool {
+        match &self.weight {
+            WeightKind::Q8_0(weight) => weight.is_mapped(),
+            WeightKind::F32(_) => false,
+        }
+    }
+
+    /// Build the decode-optimized layout for sufficiently wide Q8_0 layers.
+    ///
+    /// Keeping this opt-in avoids duplicating every projection in memory. In
+    /// practice only the LM head is wide enough to benefit.
+    pub fn prepare_interleaved(&mut self, min_out_features: usize) {
+        if self.interleaved.is_some() || !crate::simd::interleaved_q8_0_supported() {
+            return;
+        }
+        if let WeightKind::Q8_0(weight) = &self.weight {
+            if weight.out_features() >= min_out_features {
+                self.interleaved = Some(QuantizedWeightInterleaved::from_quantized(weight));
+            }
         }
     }
 }
