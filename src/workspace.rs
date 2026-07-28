@@ -1,0 +1,177 @@
+//! Pre-allocated scratch buffers for inference.
+//!
+//! Every tensor operation in `CpuTensor` allocates a new `Vec<f32>`. For a
+//! 16-layer Llama decode step that means ~800+ heap allocations. This module
+//! provides a `Workspace` with reusable buffers so the decode hot path can
+//! write intermediate results into pre-allocated slices, eliminating almost
+//! all per-token allocations.
+//!
+//! ## Buffer sizing
+//!
+//! Buffers are sized for the largest row count the workspace will see across
+//! a decode step. For seq_len=1 decode, every tensor has shape `[1, dim]`.
+//! For prefill, seq_len can be larger; the workspace allocates once with the
+//! model's max context length as the row bound, so resize never reallocates
+//! during inference as long as `seq_len <= max_seq_len`.
+
+use alloc::vec::Vec;
+
+/// Reusable scratch buffers for one transformer forward pass.
+///
+/// Each buffer is pre-allocated to `max_rows * cols` elements. Callers
+/// write into `&mut out[..rows * cols]` where `rows <= max_rows`.
+///
+/// Cache-line aligned to prevent false sharing when Rayon threads access
+/// different fields of the same workspace during parallel matmuls.
+#[derive(Debug)]
+#[repr(align(64))]
+pub struct Workspace {
+    /// max row count these buffers were allocated for
+    max_rows: usize,
+
+    // -- per-layer intermediates (reused across layers) --
+    /// RMS norm output shape [rows, embed_dim]
+    pub norm_out: Vec<f32>,
+    /// residual add output shape [rows, embed_dim]
+    pub residual_out: Vec<f32>,
+    /// Q projection output shape [rows, n_heads * head_dim]
+    pub q_out: Vec<f32>,
+    /// K projection output shape [rows, n_kv_heads * head_dim]
+    pub k_out: Vec<f32>,
+    /// V projection output shape [rows, n_kv_heads * head_dim]
+    pub v_out: Vec<f32>,
+    /// Attention output projection shape [rows, embed_dim]
+    pub attn_out: Vec<f32>,
+    /// Gate projection output shape [rows, inter_dim]
+    pub gate_out: Vec<f32>,
+    /// Up projection output shape [rows, inter_dim]
+    pub up_out: Vec<f32>,
+    /// Silu(gate) * up (gated activation) shape [rows, inter_dim]
+    pub gated_out: Vec<f32>,
+    /// Down projection (MLP output) shape [rows, embed_dim]
+    pub mlp_out: Vec<f32>,
+
+    // -- config for bounds checking --
+    embed_dim: usize,
+    inter_dim: usize,
+    q_dim: usize,
+    kv_dim: usize,
+}
+
+impl Workspace {
+    /// Allocate a workspace sized for `max_rows` tokens.
+    ///
+    /// `max_rows` should be at least the model's max sequence length if you
+    /// plan to use this for prefill; for pure decode it only needs to be 1.
+    pub fn new(
+        max_rows: usize,
+        embed_dim: usize,
+        inter_dim: usize,
+        n_heads: usize,
+        n_kv_heads: usize,
+        head_dim: usize,
+    ) -> Self {
+        let q_dim = n_heads * head_dim;
+        let kv_dim = n_kv_heads * head_dim;
+        // Attention output is q_dim (n_heads * head_dim), which may differ
+        // from embed_dim in some architectures. Allocate the larger.
+        let attn_dim = q_dim.max(embed_dim);
+
+        let cap = |cols: usize| max_rows * cols;
+
+        Self {
+            max_rows,
+            norm_out: vec![0.0; cap(embed_dim)],
+            residual_out: vec![0.0; cap(embed_dim)],
+            q_out: vec![0.0; cap(q_dim)],
+            k_out: vec![0.0; cap(kv_dim)],
+            v_out: vec![0.0; cap(kv_dim)],
+            attn_out: vec![0.0; cap(attn_dim)],
+            gate_out: vec![0.0; cap(inter_dim)],
+            up_out: vec![0.0; cap(inter_dim)],
+            gated_out: vec![0.0; cap(inter_dim)],
+            mlp_out: vec![0.0; cap(embed_dim)],
+            embed_dim,
+            inter_dim,
+            q_dim,
+            kv_dim,
+        }
+    }
+
+    // -- accessors that return correctly-sized slices for `rows` tokens --
+
+    #[inline]
+    pub fn norm_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.norm_out[..rows * self.embed_dim]
+    }
+
+    #[inline]
+    pub fn residual_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.residual_out[..rows * self.embed_dim]
+    }
+
+    #[inline]
+    pub fn q_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.q_out[..rows * self.q_dim]
+    }
+
+    #[inline]
+    pub fn k_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.k_out[..rows * self.kv_dim]
+    }
+
+    #[inline]
+    pub fn v_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.v_out[..rows * self.kv_dim]
+    }
+
+    #[inline]
+    pub fn attn_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.attn_out[..rows * self.embed_dim]
+    }
+
+    #[inline]
+    pub fn gate_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.gate_out[..rows * self.inter_dim]
+    }
+
+    #[inline]
+    pub fn up_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.up_out[..rows * self.inter_dim]
+    }
+
+    #[inline]
+    pub fn gated_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.gated_out[..rows * self.inter_dim]
+    }
+
+    #[inline]
+    pub fn mlp_slice(&mut self, rows: usize) -> &mut [f32] {
+        &mut self.mlp_out[..rows * self.embed_dim]
+    }
+
+    #[inline]
+    pub fn max_rows(&self) -> usize {
+        self.max_rows
+    }
+
+    #[inline]
+    pub fn embed_dim(&self) -> usize {
+        self.embed_dim
+    }
+
+    #[inline]
+    pub fn inter_dim(&self) -> usize {
+        self.inter_dim
+    }
+
+    #[inline]
+    pub fn q_dim(&self) -> usize {
+        self.q_dim
+    }
+
+    #[inline]
+    pub fn kv_dim(&self) -> usize {
+        self.kv_dim
+    }
+}

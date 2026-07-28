@@ -4,6 +4,7 @@ use crate::loader::{GgufLoader, GgufValue, LoadedTensor};
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::tensor::{compute_rope_freqs, CpuTensor};
 use alloc::vec::Vec;
+use half::f16;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,11 +245,9 @@ struct Gemma4Mlp<B: Backend> {
 
 impl<B: Backend> Gemma4Mlp<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        let gate = self.gate_proj.forward(backend, x)?;
+        let (gate, up) = self.gate_proj.forward_pair(backend, x, &self.up_proj)?;
 
         let gate = gelu_tanh(backend, &gate)?;
-
-        let up = self.up_proj.forward(backend, x)?;
 
         let gated = backend.elemul(&gate, &up)?;
 
@@ -290,7 +289,20 @@ impl<B: Backend> Gemma4Attention<B> {
         let seq_len = backend.shape(x)[0];
         let q_dim = self.n_heads * self.head_dim;
         let kv_dim = self.n_kv_heads * self.head_dim;
-        let mut q = self.q_proj.forward(backend, x)?;
+        let (mut q, projected_kv) = if self.shared_source_layer.is_some() {
+            (self.q_proj.forward(backend, x)?, None)
+        } else {
+            let k_proj = self
+                .k_proj
+                .as_ref()
+                .expect("non-shared Gemma 4 layer must have k_proj");
+            let v_proj = self
+                .v_proj
+                .as_ref()
+                .expect("non-shared Gemma 4 layer must have v_proj");
+            let (q, k, v) = self.q_proj.forward_triple(backend, x, k_proj, v_proj)?;
+            (q, Some((k, v)))
+        };
         q = apply_rope_and_qk_norm(
             backend,
             &q,
@@ -306,11 +318,8 @@ impl<B: Backend> Gemma4Attention<B> {
         let source_layer = if let Some(source_layer) = self.shared_source_layer {
             source_layer
         } else {
-            let k = self
-                .k_proj
-                .as_ref()
-                .expect("non-shared Gemma 4 layer must have k_proj")
-                .forward(backend, x)?;
+            let (k, v) =
+                projected_kv.expect("non-shared Gemma 4 layer must project K/V activations");
             let k = apply_rope_and_qk_norm(
                 backend,
                 &k,
@@ -322,11 +331,6 @@ impl<B: Backend> Gemma4Attention<B> {
                 self.head_dim,
                 self.norm_eps,
             )?;
-            let v = self
-                .v_proj
-                .as_ref()
-                .expect("non-shared Gemma 4 layer must have v_proj")
-                .forward(backend, x)?;
             let k_data = backend.data(&k);
             let v_data = backend.data(&v);
             let cursor = cache.cursor();
@@ -380,7 +384,15 @@ impl<B: Backend> Gemma4Attention<B> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
         let seq_len = backend.shape(x)[0];
-        let q = self.q_proj.forward(backend, x)?;
+        let k_proj = self
+            .k_proj
+            .as_ref()
+            .expect("activation capture does not support shared-only Gemma 4 K/V");
+        let v_proj = self
+            .v_proj
+            .as_ref()
+            .expect("activation capture does not support shared-only Gemma 4 K/V");
+        let (q, k, v) = self.q_proj.forward_triple(backend, x, k_proj, v_proj)?;
         let q = apply_rope_and_qk_norm(
             backend,
             &q,
@@ -392,11 +404,6 @@ impl<B: Backend> Gemma4Attention<B> {
             self.head_dim,
             self.norm_eps,
         )?;
-        let k = self
-            .k_proj
-            .as_ref()
-            .expect("activation capture does not support shared-only Gemma 4 K/V")
-            .forward(backend, x)?;
         let k = apply_rope_and_qk_norm(
             backend,
             &k,
@@ -408,11 +415,6 @@ impl<B: Backend> Gemma4Attention<B> {
             self.head_dim,
             self.norm_eps,
         )?;
-        let v = self
-            .v_proj
-            .as_ref()
-            .expect("activation capture does not support shared-only Gemma 4 K/V")
-            .forward(backend, x)?;
         let out = full_attention(
             backend,
             &q,
@@ -1103,8 +1105,9 @@ impl<B: Backend> Gemma4<B> {
         for _ in 0..token_ids.len() {
             cache.advance_cursor();
         }
-        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
-        let logits = self.head.forward(backend, &x)?;
+        let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
+        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &last)?;
         Ok((
             pooled,
             softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
@@ -1156,20 +1159,22 @@ impl<B: Backend> Gemma4<B> {
                 let packed_dim = embeddings.in_features();
                 let expected = self.config.n_layers * *per_layer_dim;
                 debug_assert_eq!(packed_dim, expected);
-                let mut out = Vec::with_capacity(self.config.n_layers);
-                for layer in 0..self.config.n_layers {
-                    let mut data = vec![0.0; token_ids.len() * *per_layer_dim];
-                    let layer_start = layer * *per_layer_dim;
-                    let mut row = vec![0.0; packed_dim];
-                    for (pos, &tok) in token_ids.iter().enumerate() {
-                        let token = (tok as usize).min(embeddings.out_features() - 1);
-                        embeddings.dequantize_row(token, &mut row);
+                let mut out =
+                    vec![vec![0.0; token_ids.len() * *per_layer_dim]; self.config.n_layers];
+                let mut row = vec![0.0; packed_dim];
+                for (pos, &tok) in token_ids.iter().enumerate() {
+                    let token = (tok as usize).min(embeddings.out_features() - 1);
+                    embeddings.dequantize_row(token, &mut row);
+                    for (layer, data) in out.iter_mut().enumerate() {
+                        let layer_start = layer * *per_layer_dim;
                         let dst = pos * *per_layer_dim;
-                        for d in 0..*per_layer_dim {
-                            data[dst + d] = row[layer_start + d] * ple_scale;
+                        for (output, &value) in data[dst..dst + *per_layer_dim]
+                            .iter_mut()
+                            .zip(&row[layer_start..layer_start + *per_layer_dim])
+                        {
+                            *output = value * ple_scale;
                         }
                     }
-                    out.push(data);
                 }
                 out
             }
@@ -1442,8 +1447,8 @@ struct Gemma4CachedAttentionSpec {
 fn cached_attention_with_scratch<B: Backend>(
     backend: &B,
     q: &B::Tensor,
-    cached_k: &[f32],
-    cached_v: &[f32],
+    cached_k: &[f16],
+    cached_v: &[f16],
     spec: Gemma4CachedAttentionSpec,
     scores: &mut Vec<f32>,
 ) -> Result<B::Tensor, B::Error> {
@@ -1471,7 +1476,7 @@ fn cached_attention_with_scratch<B: Backend>(
             let q_idx = i * q_width + q_head;
             for (j, score) in scores.iter_mut().enumerate().take(max_j + 1).skip(min_j) {
                 let k_idx = kv_h * cache_head_stride + j * spec.cache_head_dim;
-                *score = dot(
+                *score = dot_f16(
                     &q_data[q_idx..q_idx + spec.head_dim],
                     &cached_k[k_idx..k_idx + spec.head_dim],
                 ) * spec.scale;
@@ -1483,7 +1488,7 @@ fn cached_attention_with_scratch<B: Backend>(
                     continue;
                 }
                 let v_idx = kv_h * cache_head_stride + j * spec.cache_head_dim;
-                crate::simd::weighted_add(
+                crate::simd::weighted_add_f16(
                     &mut out[out_idx..out_idx + spec.head_dim],
                     &cached_v[v_idx..v_idx + spec.head_dim],
                     weight,
@@ -1496,6 +1501,10 @@ fn cached_attention_with_scratch<B: Backend>(
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     crate::simd::dot_product(a, b)
+}
+
+fn dot_f16(a: &[f32], b: &[f16]) -> f32 {
+    crate::simd::dot_product_f16(a, b)
 }
 
 fn softmax_range(row: &mut [f32], start: usize, end: usize) {
@@ -1818,8 +1827,20 @@ mod tests {
         let mut cache = KVCache::new(2, 1, 4, 3);
         cache.append_with_head_dim(0, 0, &[1.0, 2.0], &[3.0, 4.0], 2);
         let (k, v) = cache.get(0);
-        assert_eq!(&k[..4], &[1.0, 2.0, 0.0, 0.0]);
-        assert_eq!(&v[..4], &[3.0, 4.0, 0.0, 0.0]);
+        assert_eq!(
+            k[..4]
+                .iter()
+                .map(|value| value.to_f32())
+                .collect::<Vec<_>>(),
+            [1.0, 2.0, 0.0, 0.0]
+        );
+        assert_eq!(
+            v[..4]
+                .iter()
+                .map(|value| value.to_f32())
+                .collect::<Vec<_>>(),
+            [3.0, 4.0, 0.0, 0.0]
+        );
     }
 
     #[test]

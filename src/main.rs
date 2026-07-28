@@ -408,6 +408,8 @@ fn main() -> anyhow::Result<()> {
         .tokenizer
         .as_deref()
         .unwrap_or_else(|| default_tokenizer_for_arch(&args.arch));
+    let tokenizer_path = resolve_tokenizer(&tokenizer_path);
+    let tokenizer_path: &str = &tokenizer_path;
     let record_model_sha256 = args.record_model_sha256
         || args.write_run_manifest.is_some()
         || args.probe
@@ -598,6 +600,10 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Embedded llama tokenizer — written to a temp file when the external file is
+/// missing so the binary is self-contained for the most common architecture.
+static EMBEDDED_LLAMA_TOKENIZER: &str = include_str!("../tokenizer.json");
+
 fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     match arch {
         "gpt2" => "tokenizer-gpt2.json",
@@ -606,6 +612,25 @@ fn default_tokenizer_for_arch(arch: &str) -> &'static str {
         "gemma4" => "tokenizer-gemma4.json",
         _ => "tokenizer.json",
     }
+}
+
+/// Resolve a tokenizer path: if the file exists use it, otherwise write the
+/// embedded tokenizer to a temp file and return that path.
+fn resolve_tokenizer(path: &str) -> String {
+    if std::path::Path::new(path).exists() {
+        return path.to_string();
+    }
+    if path == "tokenizer.json" {
+        let tmp = std::env::temp_dir().join("ember-tokenizer.json");
+        if !tmp.exists() {
+            if let Err(e) = std::fs::write(&tmp, EMBEDDED_LLAMA_TOKENIZER) {
+                eprintln!("warning: could not write embedded tokenizer: {e}");
+                return path.to_string();
+            }
+        }
+        return tmp.to_string_lossy().into_owned();
+    }
+    path.to_string()
 }
 
 fn run_extract_command(command: &ExtractCommand) -> anyhow::Result<()> {

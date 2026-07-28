@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use half::{f16, slice::HalfFloatSliceExt};
 
 /// a flat, pre-allocated key/value cache for transformer attention.
 ///
@@ -8,11 +9,10 @@ use alloc::vec::Vec;
 /// instead of recomputing against the full sequence each pass.
 pub struct KVCache {
     /// key cache, flat layout: [layer][head][pos][head_dim]
-    k: Vec<f32>,
+    k: Vec<f16>,
     /// value cache, flat layout: [layer][head][pos][head_dim]
-    v: Vec<f32>,
-    /// stored for allocation size, not read back
-    #[allow(dead_code)]
+    v: Vec<f16>,
+    /// number of cache layers
     n_layers: usize,
     /// pre-allocated scratch buffer for attention score rows.
     /// reused across all heads and tokens during a decode step
@@ -31,10 +31,13 @@ pub struct KVCache {
 
 impl KVCache {
     pub fn new(n_layers: usize, n_kv_heads: usize, head_dim: usize, max_seq_len: usize) -> Self {
-        let len = n_layers * n_kv_heads * max_seq_len * head_dim;
+        let len = [n_layers, n_kv_heads, max_seq_len, head_dim]
+            .into_iter()
+            .try_fold(1usize, |count, dim| count.checked_mul(dim))
+            .expect("kv cache shape product overflow");
         Self {
-            k: vec![0.0; len],
-            v: vec![0.0; len],
+            k: vec![f16::ZERO; len],
+            v: vec![f16::ZERO; len],
             n_layers,
             n_kv_heads,
             qk_scratch: vec![0.0; max_seq_len],
@@ -45,8 +48,6 @@ impl KVCache {
     }
 
     pub fn append(&mut self, layer: usize, pos: usize, k_new: &[f32], v_new: &[f32]) {
-        assert_eq!(k_new.len(), self.n_kv_heads * self.head_dim);
-        assert_eq!(v_new.len(), self.n_kv_heads * self.head_dim);
         self.append_with_head_dim(layer, pos, k_new, v_new, self.head_dim);
     }
 
@@ -58,9 +59,14 @@ impl KVCache {
         v_new: &[f32],
         active_head_dim: usize,
     ) {
+        assert!(layer < self.n_layers, "kv cache layer out of bounds");
         assert!(active_head_dim <= self.head_dim);
-        assert_eq!(k_new.len(), self.n_kv_heads * active_head_dim);
-        assert_eq!(v_new.len(), self.n_kv_heads * active_head_dim);
+        let source_len = self
+            .n_kv_heads
+            .checked_mul(active_head_dim)
+            .expect("kv cache append shape product overflow");
+        assert_eq!(k_new.len(), source_len);
+        assert_eq!(v_new.len(), source_len);
         assert!(
             pos < self.max_seq_len,
             "kv cache overflow: pos={}, max_seq_len={}",
@@ -68,30 +74,37 @@ impl KVCache {
             self.max_seq_len
         );
 
-        let layer_offset = layer * self.n_kv_heads * self.max_seq_len * self.head_dim;
-        let seq_offset = pos * self.head_dim;
+        let layer_offset = self.layer_offset(layer);
+        let seq_offset = pos
+            .checked_mul(self.head_dim)
+            .expect("kv cache sequence offset overflow");
 
         for h in 0..self.n_kv_heads {
-            let head_offset = h * self.max_seq_len * self.head_dim;
+            let head_offset = h
+                .checked_mul(self.max_seq_len)
+                .and_then(|offset| offset.checked_mul(self.head_dim))
+                .expect("kv cache head offset overflow");
             let dst = layer_offset + head_offset + seq_offset;
             let src = h * active_head_dim;
 
-            self.k[dst..dst + active_head_dim].copy_from_slice(&k_new[src..src + active_head_dim]);
-            self.v[dst..dst + active_head_dim].copy_from_slice(&v_new[src..src + active_head_dim]);
+            self.k[dst..dst + active_head_dim]
+                .convert_from_f32_slice(&k_new[src..src + active_head_dim]);
+            self.v[dst..dst + active_head_dim]
+                .convert_from_f32_slice(&v_new[src..src + active_head_dim]);
         }
     }
-    pub fn get(&self, layer: usize) -> (&[f32], &[f32]) {
-        let layer_offset = layer * self.n_kv_heads * self.max_seq_len * self.head_dim;
-        let len = self.n_kv_heads * self.max_seq_len * self.head_dim;
+    pub fn get(&self, layer: usize) -> (&[f16], &[f16]) {
+        let layer_offset = self.layer_offset(layer);
+        let len = self.layer_stride();
         (
             &self.k[layer_offset..layer_offset + len],
             &self.v[layer_offset..layer_offset + len],
         )
     }
 
-    pub fn get_with_scratch(&mut self, layer: usize) -> (&[f32], &[f32], &mut Vec<f32>) {
-        let layer_offset = layer * self.n_kv_heads * self.max_seq_len * self.head_dim;
-        let len = self.n_kv_heads * self.max_seq_len * self.head_dim;
+    pub fn get_with_scratch(&mut self, layer: usize) -> (&[f16], &[f16], &mut Vec<f32>) {
+        let layer_offset = self.layer_offset(layer);
+        let len = self.layer_stride();
         (
             &self.k[layer_offset..layer_offset + len],
             &self.v[layer_offset..layer_offset + len],
@@ -121,7 +134,21 @@ impl KVCache {
     pub fn max_seq_len(&self) -> usize {
         self.max_seq_len
     }
+
+    /// bytes reserved for K and V storage, excluding the small score scratch.
+    pub fn storage_bytes(&self) -> usize {
+        self.k
+            .capacity()
+            .saturating_add(self.v.capacity())
+            .saturating_mul(core::mem::size_of::<f16>())
+    }
     pub fn advance_cursor(&mut self) {
+        assert!(
+            self.cursor < self.max_seq_len,
+            "kv cache cursor overflow: cursor={}, max_seq_len={}",
+            self.cursor,
+            self.max_seq_len
+        );
         self.cursor += 1;
     }
     pub fn reset(&mut self) {
@@ -133,6 +160,20 @@ impl KVCache {
     #[inline]
     pub fn n_kv_heads(&self) -> usize {
         self.n_kv_heads
+    }
+
+    fn layer_stride(&self) -> usize {
+        self.n_kv_heads
+            .checked_mul(self.max_seq_len)
+            .and_then(|stride| stride.checked_mul(self.head_dim))
+            .expect("kv cache layer stride overflow")
+    }
+
+    fn layer_offset(&self, layer: usize) -> usize {
+        assert!(layer < self.n_layers, "kv cache layer out of bounds");
+        layer
+            .checked_mul(self.layer_stride())
+            .expect("kv cache layer offset overflow")
     }
 }
 
@@ -153,5 +194,11 @@ mod tests {
         let (k_out, v_out) = cache.get(0);
         assert_eq!(k_out.len(), 4 * 128 * 8);
         assert_eq!(v_out.len(), 4 * 128 * 8);
+        assert_eq!(
+            cache.storage_bytes(),
+            2 * 2 * 4 * 128 * 8 * core::mem::size_of::<f16>()
+        );
+        assert_eq!(k_out[0].to_f32(), 1.0);
+        assert_eq!(v_out[0].to_f32(), 2.0);
     }
 }

@@ -1,5 +1,7 @@
-use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, Module};
-use crate::quant::QuantizedWeight;
+use crate::backend::{
+    AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, Module, TensorTriple,
+};
+use crate::quant::{QuantizedWeight, QuantizedWeightInterleaved};
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
 
@@ -133,6 +135,12 @@ pub enum WeightKind<B: Backend> {
     Q8_0(QuantizedWeight),
 }
 
+/// Read-only view of a `WeightKind` for the fast decode path.
+pub enum WeightKindView<'a> {
+    F32(&'a CpuTensor),
+    Q8_0(&'a QuantizedWeight),
+}
+
 /// a linear (fully-connected) layer: `y = xW + b`.
 /// weight must be `[in_features, out_features]`.
 pub struct Linear<B: Backend> {
@@ -140,6 +148,8 @@ pub struct Linear<B: Backend> {
     weight: WeightKind<B>,
     /// optional bias vector, shape [out_features]
     bias: Option<B::Tensor>,
+    /// optional interleaved Q8_0 weight for fast decode path
+    pub interleaved: Option<QuantizedWeightInterleaved>,
 }
 
 impl<B: Backend> Linear<B> {
@@ -148,6 +158,7 @@ impl<B: Backend> Linear<B> {
         Self {
             weight: WeightKind::F32(weight),
             bias,
+            interleaved: None,
         }
     }
 
@@ -157,18 +168,83 @@ impl<B: Backend> Linear<B> {
         Self {
             weight: WeightKind::Q8_0(qw),
             bias,
+            interleaved: None,
         }
     }
 
-    pub fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
-        let mut out = match &self.weight {
+    fn forward_without_bias(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        let out = match &self.weight {
             WeightKind::F32(w) => backend.matmul(x, w)?,
             WeightKind::Q8_0(qw) => backend.matmul_q8_0(x, qw)?,
         };
+        Ok(out)
+    }
+
+    pub fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        let mut out = self.forward_without_bias(backend, x)?;
         if let Some(ref b) = self.bias {
             out = backend.add_broadcast(&out, b)?;
         }
         Ok(out)
+    }
+
+    /// Apply this layer and `other` to the same input.
+    ///
+    /// When both weights are Q8_0 the backend can quantize the activations
+    /// once and schedule both projections together.
+    pub fn forward_pair(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        other: &Self,
+    ) -> Result<(B::Tensor, B::Tensor), B::Error> {
+        let (mut first, mut second) = match (&self.weight, &other.weight) {
+            (WeightKind::Q8_0(first), WeightKind::Q8_0(second)) => {
+                backend.matmul_q8_0_pair(x, first, second)?
+            }
+            _ => (
+                self.forward_without_bias(backend, x)?,
+                other.forward_without_bias(backend, x)?,
+            ),
+        };
+        if let Some(ref bias) = self.bias {
+            first = backend.add_broadcast(&first, bias)?;
+        }
+        if let Some(ref bias) = other.bias {
+            second = backend.add_broadcast(&second, bias)?;
+        }
+        Ok((first, second))
+    }
+
+    /// Apply this layer and two peers to the same input.
+    pub fn forward_triple(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        second: &Self,
+        third: &Self,
+    ) -> Result<TensorTriple<B::Tensor>, B::Error> {
+        let (mut first_out, mut second_out, mut third_out) =
+            match (&self.weight, &second.weight, &third.weight) {
+                (WeightKind::Q8_0(first), WeightKind::Q8_0(second), WeightKind::Q8_0(third)) => {
+                    backend.matmul_q8_0_triple(x, first, second, third)?
+                }
+                _ => (
+                    self.forward_without_bias(backend, x)?,
+                    second.forward_without_bias(backend, x)?,
+                    third.forward_without_bias(backend, x)?,
+                ),
+            };
+        if let Some(ref bias) = self.bias {
+            first_out = backend.add_broadcast(&first_out, bias)?;
+        }
+        if let Some(ref bias) = second.bias {
+            second_out = backend.add_broadcast(&second_out, bias)?;
+        }
+        if let Some(ref bias) = third.bias {
+            third_out = backend.add_broadcast(&third_out, bias)?;
+        }
+        Ok((first_out, second_out, third_out))
     }
 
     /// Return the byte size of the weight tensor (for trace/benchmark reporting).
@@ -178,7 +254,7 @@ impl<B: Backend> Linear<B> {
                 let shape = backend.shape(w);
                 shape.iter().product::<usize>() * 4
             }
-            WeightKind::Q8_0(qw) => qw.data.len(),
+            WeightKind::Q8_0(qw) => qw.byte_len(),
         }
     }
 
@@ -193,6 +269,16 @@ impl<B: Backend> Linear<B> {
         match &self.weight {
             WeightKind::F32(w) => backend.shape(w)[1],
             WeightKind::Q8_0(qw) => qw.out_features(),
+        }
+    }
+}
+
+impl Linear<CpuBackend> {
+    /// Return a read-only view of the underlying weight.
+    pub fn weight_kind(&self) -> WeightKindView<'_> {
+        match &self.weight {
+            WeightKind::F32(t) => WeightKindView::F32(t),
+            WeightKind::Q8_0(qw) => WeightKindView::Q8_0(qw),
         }
     }
 }
@@ -768,8 +854,9 @@ impl<B: Backend> Gpt2<B> {
                 );
             }
         }
-        let x = self.ln_f.forward(backend, &x)?;
-        let logits = self.head.forward(backend, &x)?;
+        let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
+        let last = self.ln_f.forward(backend, &last)?;
+        let logits = self.head.forward(backend, &last)?;
         Ok((pooled, logits))
     }
 

@@ -30,7 +30,7 @@ impl CpuTensor {
     #[must_use]
     #[inline]
     pub fn zeroes(shape: &[usize]) -> Self {
-        let len = shape.iter().product();
+        let len = Self::checked_element_count(shape);
         let strides = Self::compute_strides(shape);
         Self {
             shape: shape.into(),
@@ -78,7 +78,7 @@ impl CpuTensor {
     }
 
     pub fn from_data(shape: Vec<usize>, data: Vec<f32>) -> Self {
-        let expected = shape.iter().product::<usize>();
+        let expected = Self::checked_element_count(&shape);
         assert_eq!(
             expected,
             data.len(),
@@ -136,7 +136,7 @@ impl CpuTensor {
     #[must_use]
     #[inline]
     pub fn reshape(&self, new_shape: &[usize]) -> Self {
-        let new_len: usize = new_shape.iter().product();
+        let new_len = Self::checked_element_count(new_shape);
         assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
         Self::from_data(new_shape.into(), self.data.clone())
     }
@@ -165,7 +165,8 @@ impl CpuTensor {
         let (k2, n) = (other.shape[0], other.shape[1]);
         assert_eq!(k1, k2, "matmul: inner dims must match");
 
-        let mut out = vec![0.0f32; m * n];
+        let output_len = m.checked_mul(n).expect("matmul: output shape overflow");
+        let mut out = vec![0.0f32; output_len];
 
         unsafe {
             matrixmultiply::sgemm(
@@ -408,9 +409,23 @@ impl CpuTensor {
     fn compute_strides(shape: &[usize]) -> Vec<usize> {
         let mut strides = vec![1usize; shape.len()];
         for i in (0..shape.len().saturating_sub(1)).rev() {
-            strides[i] = strides[i + 1] * shape[i + 1];
+            strides[i] = strides[i + 1]
+                .checked_mul(shape[i + 1])
+                .expect("tensor stride overflow");
         }
         strides
+    }
+
+    #[inline]
+    fn checked_element_count(shape: &[usize]) -> usize {
+        assert!(
+            shape.iter().all(|&dim| dim <= isize::MAX as usize),
+            "tensor dimension exceeds isize::MAX"
+        );
+        shape
+            .iter()
+            .try_fold(1usize, |count, &dim| count.checked_mul(dim))
+            .expect("tensor shape product overflow")
     }
 
     /// select the `index`-th row from a 2d tensor.

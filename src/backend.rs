@@ -1,16 +1,19 @@
 use crate::quant::QuantizedWeight;
 use crate::tensor::{CpuTensor, TensorError};
+use half::f16;
 use rayon::prelude::*;
 use std::cell::RefCell;
 
-const Q8_0_PREFILL_BLOCK_SIZE: usize = 256;
 const PARALLEL_ATTENTION_MIN_HEADS: usize = 4;
 const PARALLEL_ATTENTION_MIN_WORK: usize = 32_768;
 
 thread_local! {
-    static Q8_0_PREFILL_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
     static Q8_0_DECODE_INPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    static ATTENTION_SCORE_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
 }
+
+/// Three tensors produced by projections that share one input.
+pub type TensorTriple<T> = (T, T, T);
 
 /// shape metadata for standard causal self-attention.
 #[derive(Debug, Clone, Copy)]
@@ -61,13 +64,44 @@ pub trait Backend {
     /// raw q8_0 block-compressed weight with logical shape
     /// `[out_features, in_features]` (reversed from the gguf native order
     /// so q8_0 blocks are contiguous per output feature).  the weight is
-    /// never stored as f32 - columns are dequantized in blocks and
-    /// multiplied with `sgemm`.
+    /// never stored as f32. Activations are quantized once per row and all
+    /// prompt/decode projections use packed integer dots.
     fn matmul_q8_0(
         &self,
         x: &Self::Tensor,
         w: &QuantizedWeight,
     ) -> Result<Self::Tensor, Self::Error>;
+
+    /// Apply two Q8_0 projections to the same activations.
+    ///
+    /// Backends may override this to share activation packing and scheduling.
+    /// The default preserves compatibility for backends without a fused path.
+    fn matmul_q8_0_pair(
+        &self,
+        x: &Self::Tensor,
+        first: &QuantizedWeight,
+        second: &QuantizedWeight,
+    ) -> Result<(Self::Tensor, Self::Tensor), Self::Error> {
+        Ok((self.matmul_q8_0(x, first)?, self.matmul_q8_0(x, second)?))
+    }
+
+    /// Apply three Q8_0 projections to the same activations.
+    ///
+    /// This is primarily used by separate Q/K/V projection weights.
+    fn matmul_q8_0_triple(
+        &self,
+        x: &Self::Tensor,
+        first: &QuantizedWeight,
+        second: &QuantizedWeight,
+        third: &QuantizedWeight,
+    ) -> Result<TensorTriple<Self::Tensor>, Self::Error> {
+        Ok((
+            self.matmul_q8_0(x, first)?,
+            self.matmul_q8_0(x, second)?,
+            self.matmul_q8_0(x, third)?,
+        ))
+    }
+
     fn add(&self, a: &Self::Tensor, b: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
     fn softmax(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
     fn gelu(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
@@ -130,15 +164,15 @@ pub trait Backend {
     fn cached_causal_attention(
         &self,
         q: &Self::Tensor,
-        cached_k: &[f32],
-        cached_v: &[f32],
+        cached_k: &[f16],
+        cached_v: &[f16],
         spec: CachedAttentionSpec,
     ) -> Result<Self::Tensor, Self::Error>;
     fn cached_causal_attention_with_scratch(
         &self,
         q: &Self::Tensor,
-        cached_k: &[f32],
-        cached_v: &[f32],
+        cached_k: &[f16],
+        cached_v: &[f16],
         spec: CachedAttentionSpec,
         qk_row: &mut Vec<f32>,
     ) -> Result<Self::Tensor, Self::Error>;
@@ -198,6 +232,132 @@ pub enum CpuError {
     ShapeMismatch(String),
 }
 
+fn q8_matmul_output_len(x: &CpuTensor, w: &QuantizedWeight) -> Result<(usize, usize), CpuError> {
+    if x.ndim() != 2 {
+        return Err(CpuError::ShapeMismatch(format!(
+            "matmul_q8_0: input must be 2D, got shape {:?}",
+            x.shape()
+        )));
+    }
+
+    let (seq_len, in_features) = (x.shape[0], x.shape[1]);
+    if in_features != w.in_features() {
+        return Err(CpuError::ShapeMismatch(format!(
+            "matmul_q8_0: inner dims must match (got {} vs {})",
+            in_features,
+            w.in_features()
+        )));
+    }
+    let output_len = seq_len.checked_mul(w.out_features()).ok_or_else(|| {
+        CpuError::ShapeMismatch("matmul_q8_0: output shape product overflow".into())
+    })?;
+    Ok((seq_len, output_len))
+}
+
+impl CpuBackend {
+    /// Quantize activations into the thread-local buffer and return a reference
+    /// to the encoded Q8_0 bytes. The caller must consume the result before
+    /// the next call to this method (or any other method that uses the same
+    /// thread-local) on the same thread.
+    ///
+    /// This is used by the fast path to quantize once and feed multiple
+    /// matmul kernels (e.g., interleaved + parallel) without extra allocations.
+    pub fn quantize_activation<'a>(&self, src: &[f32]) -> &'a [u8] {
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            // SAFETY: we return a reference with the lifetime of the thread-local,
+            // which outlives this function. The caller must use it before the
+            // thread-local is mutated again on this thread.
+            unsafe { std::slice::from_raw_parts(input.as_ptr(), input.len()) }
+        })
+    }
+
+    /// Quantize flat f32 activations `src` (shape `[rows, in_features]`) and
+    /// compute `dst = src × w` using packed Q8_0 integer dots. Writes into the
+    /// pre-allocated `dst` slice, which must have length `rows * w.out_features()`.
+    ///
+    /// This is the zero-alloc variant of `matmul_q8_0` — it reuses the
+    /// thread-local quantized-activation buffer and writes directly into the
+    /// caller's output slice instead of wrapping a new `Vec`.
+    pub fn matmul_q8_0_into(
+        &self,
+        src: &[f32],
+        rows: usize,
+        w: &QuantizedWeight,
+        dst: &mut [f32],
+    ) {
+        debug_assert_eq!(dst.len(), rows * w.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            if rows == 1 {
+                crate::simd::matmul_q8_0_decode(&input, w, dst);
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, rows, w, dst);
+            }
+        });
+    }
+
+    /// Fused dual Q8_0 projection (gate + up): quantize `src` once, compute
+    /// both projections in one pass.
+    pub fn matmul_q8_0_pair_into(
+        &self,
+        src: &[f32],
+        rows: usize,
+        w_a: &QuantizedWeight,
+        w_b: &QuantizedWeight,
+        dst_a: &mut [f32],
+        dst_b: &mut [f32],
+    ) {
+        debug_assert_eq!(dst_a.len(), rows * w_a.out_features());
+        debug_assert_eq!(dst_b.len(), rows * w_b.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            if rows == 1 {
+                crate::simd::matmul_q8_0_decode(&input, w_a, dst_a);
+                crate::simd::matmul_q8_0_decode(&input, w_b, dst_b);
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, rows, w_a, dst_a);
+                crate::simd::matmul_q8_0_batch(&input, rows, w_b, dst_b);
+            }
+        });
+    }
+
+    /// Fused Q/K/V decode projection: quantize `src` once, compute all three
+    /// Q8_0 projections in one pass. For seq_len=1 decode this saves two
+    /// activation quantization passes and their scheduling overhead.
+    pub fn matmul_q8_0_triple_into(
+        &self,
+        src: &[f32],
+        rows: usize,
+        w_q: &QuantizedWeight,
+        w_k: &QuantizedWeight,
+        w_v: &QuantizedWeight,
+        dst_q: &mut [f32],
+        dst_k: &mut [f32],
+        dst_v: &mut [f32],
+    ) {
+        debug_assert_eq!(dst_q.len(), rows * w_q.out_features());
+        debug_assert_eq!(dst_k.len(), rows * w_k.out_features());
+        debug_assert_eq!(dst_v.len(), rows * w_v.out_features());
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(src, &mut input);
+            if rows == 1 {
+                crate::simd::matmul_q8_0_decode(&input, w_q, dst_q);
+                crate::simd::matmul_q8_0_decode(&input, w_k, dst_k);
+                crate::simd::matmul_q8_0_decode(&input, w_v, dst_v);
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, rows, w_q, dst_q);
+                crate::simd::matmul_q8_0_batch(&input, rows, w_k, dst_k);
+                crate::simd::matmul_q8_0_batch(&input, rows, w_v, dst_v);
+            }
+        });
+    }
+}
+
 impl Backend for CpuBackend {
     type Tensor = CpuTensor;
     type Error = CpuError;
@@ -211,51 +371,78 @@ impl Backend for CpuBackend {
     }
 
     fn matmul_q8_0(&self, x: &CpuTensor, w: &QuantizedWeight) -> Result<CpuTensor, CpuError> {
-        if x.ndim() != 2 {
-            return Err(CpuError::ShapeMismatch(format!(
-                "matmul_q8_0: input must be 2D, got shape {:?}",
-                x.shape()
-            )));
-        }
-        let (seq_len, in_features) = (x.shape[0], x.shape[1]);
-        let out_features = w.out_features();
-        if in_features != w.in_features() {
-            return Err(CpuError::ShapeMismatch(format!(
-                "matmul_q8_0: inner dims must match (got {} vs {})",
-                in_features,
-                w.in_features()
-            )));
-        }
-
-        let x_data = x.data();
-        let mut out = vec![0.0f32; seq_len * out_features];
-
-        // decode path: single input row, no column reuse.
-        // Quantize the activation once, then use the same Q8_0 × Q8_0
-        // integer-dot arithmetic as llama.cpp.
-        if seq_len == 1 {
-            Q8_0_DECODE_INPUT.with(|input| {
-                let mut input = input.borrow_mut();
-                crate::quant::quantize_q8_0_into(x_data, &mut input);
+        let (seq_len, output_len) = q8_matmul_output_len(x, w)?;
+        let mut out = vec![0.0f32; output_len];
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(x.data(), &mut input);
+            if seq_len == 1 {
                 crate::simd::matmul_q8_0_decode(&input, w, &mut out);
-            });
-            return Ok(CpuTensor::from_data(vec![seq_len, out_features], out));
-        }
-
-        Q8_0_PREFILL_SCRATCH.with(|scratch| {
-            let mut scratch = scratch.borrow_mut();
-            matmul_q8_0_prefill(
-                x_data,
-                w,
-                seq_len,
-                in_features,
-                out_features,
-                &mut out,
-                &mut scratch,
-            );
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, seq_len, w, &mut out);
+            }
         });
+        Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
+    }
 
-        Ok(CpuTensor::from_data(vec![seq_len, out_features], out))
+    fn matmul_q8_0_pair(
+        &self,
+        x: &CpuTensor,
+        first: &QuantizedWeight,
+        second: &QuantizedWeight,
+    ) -> Result<(CpuTensor, CpuTensor), CpuError> {
+        let (seq_len, first_len) = q8_matmul_output_len(x, first)?;
+        let (_, second_len) = q8_matmul_output_len(x, second)?;
+        let mut first_out = vec![0.0f32; first_len];
+        let mut second_out = vec![0.0f32; second_len];
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(x.data(), &mut input);
+            if seq_len == 1 {
+                crate::simd::matmul_q8_0_decode(&input, first, &mut first_out);
+                crate::simd::matmul_q8_0_decode(&input, second, &mut second_out);
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, seq_len, first, &mut first_out);
+                crate::simd::matmul_q8_0_batch(&input, seq_len, second, &mut second_out);
+            }
+        });
+        Ok((
+            CpuTensor::from_data(vec![seq_len, first.out_features()], first_out),
+            CpuTensor::from_data(vec![seq_len, second.out_features()], second_out),
+        ))
+    }
+
+    fn matmul_q8_0_triple(
+        &self,
+        x: &CpuTensor,
+        first: &QuantizedWeight,
+        second: &QuantizedWeight,
+        third: &QuantizedWeight,
+    ) -> Result<(CpuTensor, CpuTensor, CpuTensor), CpuError> {
+        let (seq_len, first_len) = q8_matmul_output_len(x, first)?;
+        let (_, second_len) = q8_matmul_output_len(x, second)?;
+        let (_, third_len) = q8_matmul_output_len(x, third)?;
+        let mut first_out = vec![0.0f32; first_len];
+        let mut second_out = vec![0.0f32; second_len];
+        let mut third_out = vec![0.0f32; third_len];
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(x.data(), &mut input);
+            if seq_len == 1 {
+                crate::simd::matmul_q8_0_decode(&input, first, &mut first_out);
+                crate::simd::matmul_q8_0_decode(&input, second, &mut second_out);
+                crate::simd::matmul_q8_0_decode(&input, third, &mut third_out);
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, seq_len, first, &mut first_out);
+                crate::simd::matmul_q8_0_batch(&input, seq_len, second, &mut second_out);
+                crate::simd::matmul_q8_0_batch(&input, seq_len, third, &mut third_out);
+            }
+        });
+        Ok((
+            CpuTensor::from_data(vec![seq_len, first.out_features()], first_out),
+            CpuTensor::from_data(vec![seq_len, second.out_features()], second_out),
+            CpuTensor::from_data(vec![seq_len, third.out_features()], third_out),
+        ))
     }
 
     fn add(&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError> {
@@ -384,7 +571,57 @@ impl Backend for CpuBackend {
         };
         let use_blocks = spec.block_boundaries.is_some();
 
-        if should_parallel_attention(spec.n_heads, seq_len, seq_len, spec.head_dim) {
+        let parallel_attention =
+            should_parallel_attention(spec.n_heads, seq_len, seq_len, spec.head_dim);
+        if parallel_attention && seq_len > 1 {
+            // Prefill rows are independent once the causal range is known.
+            // Writing one complete output row per Rayon job avoids the old
+            // per-head output buffers and the full-size scatter copy.
+            let mut out = vec![0.0f32; seq_len * embed_dim];
+            out.par_chunks_mut(embed_dim)
+                .enumerate()
+                .for_each(|(i, out_row)| {
+                    ATTENTION_SCORE_SCRATCH.with(|qk_row| {
+                        let mut qk_row = qk_row.borrow_mut();
+                        qk_row.resize(seq_len, 0.0);
+                        let start = if use_blocks { block_start[i] } else { 0 };
+                        let ctx_len = i - start + 1;
+                        for h in 0..spec.n_heads {
+                            let q_head_offset = h * spec.head_dim;
+                            let kv_h = h / n_repeat;
+                            let kv_head_offset = kv_h * spec.head_dim;
+                            let q_idx = i * embed_dim + q_head_offset;
+
+                            for j in start..=i {
+                                let k_idx = j * kv_dim + kv_head_offset;
+                                qk_row[j - start] = crate::simd::dot_product(
+                                    &q_data[q_idx..q_idx + spec.head_dim],
+                                    &k_data[k_idx..k_idx + spec.head_dim],
+                                ) * scale;
+                            }
+
+                            softmax_prefix(qk_row.as_mut_slice(), ctx_len);
+                            let head_out =
+                                &mut out_row[q_head_offset..q_head_offset + spec.head_dim];
+                            for j in start..=i {
+                                let weight = qk_row[j - start];
+                                if weight == 0.0 {
+                                    continue;
+                                }
+                                let v_offset = j * kv_dim + kv_head_offset;
+                                crate::simd::weighted_add(
+                                    head_out,
+                                    &v_data[v_offset..v_offset + spec.head_dim],
+                                    weight,
+                                );
+                            }
+                        }
+                    });
+                });
+            return Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out));
+        }
+
+        if parallel_attention {
             let heads = (0..spec.n_heads)
                 .into_par_iter()
                 .map(|h| {
@@ -478,8 +715,8 @@ impl Backend for CpuBackend {
     fn cached_causal_attention(
         &self,
         q: &CpuTensor,
-        cached_k: &[f32],
-        cached_v: &[f32],
+        cached_k: &[f16],
+        cached_v: &[f16],
         spec: CachedAttentionSpec,
     ) -> Result<CpuTensor, CpuError> {
         let mut qk_row = Vec::with_capacity(spec.max_seq_len);
@@ -489,8 +726,8 @@ impl Backend for CpuBackend {
     fn cached_causal_attention_with_scratch(
         &self,
         q: &CpuTensor,
-        cached_k: &[f32],
-        cached_v: &[f32],
+        cached_k: &[f16],
+        cached_v: &[f16],
         spec: CachedAttentionSpec,
         qk_row: &mut Vec<f32>,
     ) -> Result<CpuTensor, CpuError> {
@@ -532,24 +769,67 @@ impl Backend for CpuBackend {
         let q_data = q.data();
         let cache_head_stride = spec.max_seq_len * spec.head_dim;
 
-        if should_parallel_attention(spec.n_heads, seq_len, spec.total_seq_len, spec.head_dim) {
-            let heads = (0..spec.n_heads)
-                .into_par_iter()
-                .map(|h| {
-                    let q_head_offset = h * spec.head_dim;
-                    let kv_h = h / n_repeat;
-                    let mut head_out = vec![0.0f32; seq_len * spec.head_dim];
-                    let mut qk_row = Vec::with_capacity(spec.total_seq_len);
-
-                    for i in 0..seq_len {
+        let parallel_attention =
+            should_parallel_attention(spec.n_heads, seq_len, spec.total_seq_len, spec.head_dim);
+        if parallel_attention && seq_len > 1 {
+            let mut out = vec![0.0f32; seq_len * embed_dim];
+            out.par_chunks_mut(embed_dim)
+                .enumerate()
+                .for_each(|(i, out_row)| {
+                    ATTENTION_SCORE_SCRATCH.with(|qk_row| {
+                        let mut qk_row = qk_row.borrow_mut();
                         let max_j = spec.total_seq_len - seq_len + i;
                         qk_row.resize(max_j + 1, 0.0);
-                        let q_idx = i * embed_dim + q_head_offset;
+                        for h in 0..spec.n_heads {
+                            let q_head_offset = h * spec.head_dim;
+                            let kv_h = h / n_repeat;
+                            let q_idx = i * embed_dim + q_head_offset;
+
+                            for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
+                                let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                                *slot = crate::simd::dot_product_f16(
+                                    &q_data[q_idx..q_idx + spec.head_dim],
+                                    &cached_k[k_offset..k_offset + spec.head_dim],
+                                ) * scale;
+                            }
+
+                            softmax_prefix(qk_row.as_mut_slice(), max_j + 1);
+                            let head_out =
+                                &mut out_row[q_head_offset..q_head_offset + spec.head_dim];
+                            for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
+                                if weight == 0.0 {
+                                    continue;
+                                }
+                                let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
+                                crate::simd::weighted_add_f16(
+                                    head_out,
+                                    &cached_v[v_offset..v_offset + spec.head_dim],
+                                    weight,
+                                );
+                            }
+                        }
+                    });
+                });
+            return Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out));
+        }
+
+        if parallel_attention {
+            debug_assert_eq!(seq_len, 1);
+            let mut out = vec![0.0f32; embed_dim];
+            out.par_chunks_mut(spec.head_dim)
+                .enumerate()
+                .for_each(|(h, head_out)| {
+                    ATTENTION_SCORE_SCRATCH.with(|qk_row| {
+                        let mut qk_row = qk_row.borrow_mut();
+                        let q_head_offset = h * spec.head_dim;
+                        let kv_h = h / n_repeat;
+                        let max_j = spec.total_seq_len - 1;
+                        qk_row.resize(max_j + 1, 0.0);
 
                         for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
                             let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
-                            let dot = crate::simd::dot_product(
-                                &q_data[q_idx..q_idx + spec.head_dim],
+                            let dot = crate::simd::dot_product_f16(
+                                &q_data[q_head_offset..q_head_offset + spec.head_dim],
                                 &cached_k[k_offset..k_offset + spec.head_dim],
                             );
                             *slot = dot * scale;
@@ -557,25 +837,20 @@ impl Backend for CpuBackend {
 
                         softmax_prefix(qk_row.as_mut_slice(), max_j + 1);
 
-                        let head_offset = i * spec.head_dim;
                         for (j, &weight) in qk_row.iter().enumerate().take(max_j + 1) {
                             if weight == 0.0 {
                                 continue;
                             }
                             let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
-                            crate::simd::weighted_add(
-                                &mut head_out[head_offset..head_offset + spec.head_dim],
+                            crate::simd::weighted_add_f16(
+                                head_out,
                                 &cached_v[v_offset..v_offset + spec.head_dim],
                                 weight,
                             );
                         }
-                    }
-                    (h, head_out)
-                })
-                .collect::<Vec<_>>();
-            let mut out = vec![0.0f32; seq_len * embed_dim];
-            scatter_attention_heads(&heads, seq_len, embed_dim, spec.head_dim, &mut out);
-            return Ok(CpuTensor::from_data(vec![seq_len, embed_dim], out));
+                    });
+                });
+            return Ok(CpuTensor::from_data(vec![1, embed_dim], out));
         }
 
         let mut out = vec![0.0f32; seq_len * embed_dim];
@@ -594,7 +869,7 @@ impl Backend for CpuBackend {
 
                 for (j, slot) in qk_row.iter_mut().enumerate().take(max_j + 1) {
                     let k_offset = kv_h * cache_head_stride + j * spec.head_dim;
-                    let dot = crate::simd::dot_product(
+                    let dot = crate::simd::dot_product_f16(
                         &q_data[q_idx..q_idx + spec.head_dim],
                         &cached_k[k_offset..k_offset + spec.head_dim],
                     );
@@ -609,7 +884,7 @@ impl Backend for CpuBackend {
                         continue;
                     }
                     let v_offset = kv_h * cache_head_stride + j * spec.head_dim;
-                    crate::simd::weighted_add(
+                    crate::simd::weighted_add_f16(
                         &mut out[out_offset..out_offset + spec.head_dim],
                         &cached_v[v_offset..v_offset + spec.head_dim],
                         weight,
@@ -723,55 +998,6 @@ fn assign_row_sum_from_tables_cpu(
     let rhs_row = &rhs_table.data()[rhs_start..rhs_start + cols];
     crate::simd::add(lhs_row, rhs_row, dst_row);
     Ok(())
-}
-
-fn matmul_q8_0_prefill(
-    x_data: &[f32],
-    w: &QuantizedWeight,
-    seq_len: usize,
-    in_features: usize,
-    out_features: usize,
-    out: &mut [f32],
-    w_block: &mut Vec<f32>,
-) {
-    // w_block is column-major [in_features, block_len]:
-    //   w_block[j * in_features + i] = weight[i, j_block + j]
-    let required = in_features * Q8_0_PREFILL_BLOCK_SIZE;
-    if w_block.len() < required {
-        w_block.resize(required, 0.0);
-    }
-
-    let mut j = 0;
-    while j < out_features {
-        let block_len = (out_features - j).min(Q8_0_PREFILL_BLOCK_SIZE);
-
-        for b in 0..block_len {
-            let dst = &mut w_block[b * in_features..(b + 1) * in_features];
-            w.dequantize_row(j + b, dst);
-        }
-
-        // x [seq_len, in_features] @ w_block [in_features, block_len]
-        // -> write to out[:, j..j+block_len]
-        unsafe {
-            matrixmultiply::sgemm(
-                seq_len,
-                in_features,
-                block_len,
-                1.0,
-                x_data.as_ptr(),
-                in_features as isize,
-                1,
-                w_block.as_ptr(),
-                1,
-                in_features as isize,
-                0.0,
-                out.as_mut_ptr().add(j),
-                out_features as isize,
-                1,
-            );
-        }
-        j += Q8_0_PREFILL_BLOCK_SIZE;
-    }
 }
 
 fn validate_attention_inputs(

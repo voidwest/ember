@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::Arc;
 
 const GGUF_MAGIC: u32 = 0x46554747;
 const GGUF_VERSION: u32 = 3;
@@ -47,23 +48,31 @@ pub enum GgufValue {
     Array(Vec<GgufValue>),
 }
 
-/// load a GGUF file from disk using memory-mapped i/o.
-/// avoids copying the file into userspace buffers and lets the OS
-/// lazily page in data. the mmap is borrowed via cursor and
-/// dropped when the function returns; tensors are copied out.
+/// Load a GGUF file from disk using memory-mapped I/O.
+///
+/// Q8_0 weights retain shared ranges into the read-only mapping, avoiding a
+/// second anonymous-memory copy and allowing the OS to page weights lazily.
+/// Dtypes that require conversion (F16/BF16) are materialized as F32.
 pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
     let f = File::open(&path).with_context(|| format!("failed to open {:?}", path.as_ref()))?;
-    // safety: the backing file is our own model file; no external writers.
-    // if the file is modified while mapped, behavior is undefined.
-    // for a local inference engine, this is acceptable.
-    let mmap = unsafe { memmap2::Mmap::map(&f)? };
+    // Safety: the read-only mapping remains alive through every QuantizedWeight
+    // that references it. As with all file mappings, callers must not truncate
+    // or concurrently mutate the GGUF while it is loaded.
+    let mmap = Arc::new(unsafe { memmap2::Mmap::map(&f)? });
     let mut cursor = std::io::Cursor::new(&mmap[..]);
-    load_gguf_from_reader(&mut cursor)
+    load_gguf_from_reader_impl(&mut cursor, Some(Arc::clone(&mmap)))
 }
 
 /// load a GGUF file from any readable + seekable source.
 /// useful for testing with in-memory buffers (std::io::Cursor<Vec<u8>>).
 pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoader> {
+    load_gguf_from_reader_impl(reader, None)
+}
+
+fn load_gguf_from_reader_impl<R: Read + Seek>(
+    reader: &mut R,
+    mmap: Option<Arc<memmap2::Mmap>>,
+) -> Result<GgufLoader> {
     let magic = read_u32(reader)?;
     if magic != GGUF_MAGIC {
         bail!("not a GGUF file (bad magic: {:#x})", magic);
@@ -74,8 +83,10 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
         bail!("unsupported GGUF version: {}", version);
     }
 
-    let tensor_count = read_u64(reader)?;
-    let metadata_kv_count = read_u64(reader)?;
+    let tensor_count = usize::try_from(read_u64(reader)?)
+        .context("GGUF tensor count does not fit in memory address space")?;
+    let metadata_kv_count = usize::try_from(read_u64(reader)?)
+        .context("GGUF metadata count does not fit in memory address space")?;
 
     let mut metadata = HashMap::new();
     for _ in 0..metadata_kv_count {
@@ -85,7 +96,7 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
         metadata.insert(key, value);
     }
 
-    let mut tensor_info = read_tensor_info(reader, tensor_count as usize)?;
+    let mut tensor_info = read_tensor_info(reader, tensor_count)?;
 
     let current_pos = reader.stream_position()?;
     let alignment = match metadata.get("general.alignment") {
@@ -93,12 +104,28 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
         Some(GgufValue::U64(a)) => *a,
         _ => DEFAULT_ALIGNMENT,
     };
-    let data_start = (current_pos + alignment - 1) & !(alignment - 1);
+    if alignment == 0 || !alignment.is_power_of_two() {
+        bail!("invalid GGUF alignment {alignment}: expected a power of two");
+    }
+    let data_start = current_pos
+        .checked_add(alignment - 1)
+        .context("GGUF aligned data offset overflow")?
+        & !(alignment - 1);
 
     let mut tensors = HashMap::new();
     for info in tensor_info.drain(..) {
-        reader.seek(SeekFrom::Start(data_start + info.offset))?;
-        let element_count: usize = info.dims.iter().product();
+        let tensor_offset = data_start
+            .checked_add(info.offset)
+            .with_context(|| format!("tensor '{}' file offset overflow", info.name))?;
+        reader.seek(SeekFrom::Start(tensor_offset))?;
+        let element_count = info.dims.iter().try_fold(1usize, |count, &dim| {
+            count.checked_mul(dim).with_context(|| {
+                format!(
+                    "tensor '{}' shape product overflow for dimensions {:?}",
+                    info.name, info.dims
+                )
+            })
+        })?;
         log::debug!(
             "loading tensor '{}' dtype={} dims={:?}",
             info.name,
@@ -110,7 +137,10 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                 0 => {
                     // f32: read directly, no dim reversal
                     let mut data = vec![0.0f32; element_count];
-                    let mut buf = vec![0u8; element_count * 4];
+                    let byte_len = element_count.checked_mul(4).with_context(|| {
+                        format!("tensor '{}' f32 byte size overflow", info.name)
+                    })?;
+                    let mut buf = vec![0u8; byte_len];
                     reader.read_exact(&mut buf)?;
                     for (i, dst) in data.iter_mut().enumerate().take(element_count) {
                         let start = i * 4;
@@ -126,7 +156,10 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                     // unchanged; model builders handle any linear-weight transpose
                     // the same way they do for native f32 tensors.
                     use half::f16;
-                    let mut buf = vec![0u8; element_count * 2];
+                    let byte_len = element_count.checked_mul(2).with_context(|| {
+                        format!("tensor '{}' f16 byte size overflow", info.name)
+                    })?;
+                    let mut buf = vec![0u8; byte_len];
                     reader.read_exact(&mut buf)?;
                     let mut data = vec![0.0f32; element_count];
                     for (i, dst) in data.iter_mut().enumerate().take(element_count) {
@@ -143,16 +176,49 @@ pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoade
                     // q8_0: store raw, dequantize on the fly during matmul.
                     // reverse dims to match the column-major storage convention
                     // (same as the old path did for f16/q8_0 tensors).
+                    if !element_count.is_multiple_of(32) {
+                        bail!(
+                            "tensor '{}' Q8_0 element count {} is not block-aligned",
+                            info.name,
+                            element_count
+                        );
+                    }
                     let n_blocks = element_count / 32;
-                    let mut raw = vec![0u8; n_blocks * Q8_0_TYPE_SIZE];
-                    reader.read_exact(&mut raw)?;
+                    let byte_len = n_blocks.checked_mul(Q8_0_TYPE_SIZE).with_context(|| {
+                        format!("tensor '{}' Q8_0 byte size overflow", info.name)
+                    })?;
                     let mut dims = info.dims;
                     dims.reverse();
-                    LoadedTensor::Q8_0(QuantizedWeight::try_new(raw, dims)?)
+                    let weight = if let Some(mmap) = mmap.as_ref() {
+                        let start = usize::try_from(tensor_offset).with_context(|| {
+                            format!("tensor '{}' offset exceeds address space", info.name)
+                        })?;
+                        let end = start.checked_add(byte_len).with_context(|| {
+                            format!("tensor '{}' mapped range overflow", info.name)
+                        })?;
+                        if end > mmap.len() {
+                            bail!(
+                                "tensor '{}' data range {}..{} exceeds file length {}",
+                                info.name,
+                                start,
+                                end,
+                                mmap.len()
+                            );
+                        }
+                        QuantizedWeight::try_from_mmap(Arc::clone(mmap), start..end, dims)?
+                    } else {
+                        let mut raw = vec![0u8; byte_len];
+                        reader.read_exact(&mut raw)?;
+                        QuantizedWeight::try_new(raw, dims)?
+                    };
+                    LoadedTensor::Q8_0(weight)
                 }
                 30 => {
                     // bf16: brain floating point — upper 16 bits of f32.
-                    let mut buf = vec![0u8; element_count * 2];
+                    let byte_len = element_count.checked_mul(2).with_context(|| {
+                        format!("tensor '{}' bf16 byte size overflow", info.name)
+                    })?;
+                    let mut buf = vec![0u8; byte_len];
                     reader.read_exact(&mut buf)?;
                     let mut data = vec![0.0f32; element_count];
                     for (i, dst) in data.iter_mut().enumerate().take(element_count) {
@@ -193,7 +259,11 @@ fn read_tensor_info<R: Read + Seek>(reader: &mut R, count: usize) -> Result<Vec<
         let n_dims = read_u32(reader)?;
         let mut dims = Vec::with_capacity(n_dims as usize);
         for _ in 0..n_dims {
-            dims.push(read_u64(reader)? as usize);
+            dims.push(
+                usize::try_from(read_u64(reader)?).with_context(|| {
+                    format!("tensor '{}' dimension exceeds address space", name)
+                })?,
+            );
         }
         let dtype = read_u32(reader)?;
         let offset = read_u64(reader)?;
@@ -238,7 +308,7 @@ fn read_f32<R: Read>(f: &mut R) -> Result<f32> {
 }
 
 fn read_gguf_string<R: Read>(f: &mut R) -> Result<String> {
-    let len = read_u64(f)? as usize;
+    let len = usize::try_from(read_u64(f)?).context("GGUF string length exceeds address space")?;
     let mut buf = vec![0u8; len];
     f.read_exact(&mut buf).context("read string failed")?;
     String::from_utf8(buf).context("invalid utf8 in string")
@@ -255,8 +325,9 @@ fn read_gguf_value<R: Read>(f: &mut R, val_type: u32) -> Result<GgufValue> {
         10 => Ok(GgufValue::U64(read_u64(f)?)),
         9 => {
             let element_type = read_u32(f)?;
-            let count = read_u64(f)?;
-            let mut elements = Vec::with_capacity(count as usize);
+            let count =
+                usize::try_from(read_u64(f)?).context("GGUF array length exceeds address space")?;
+            let mut elements = Vec::with_capacity(count);
             for _ in 0..count {
                 elements.push(read_gguf_value(f, element_type)?);
             }

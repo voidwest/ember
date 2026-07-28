@@ -1,11 +1,29 @@
 use crate::tensor::CpuTensor;
 use anyhow::{bail, Result};
 use half::f16;
+use memmap2::Mmap;
+use std::ops::Range;
+use std::sync::Arc;
 
 /// number of float elements per q8_0 quantization block
 pub const Q8_0_BLOCK_SIZE: usize = 32;
 /// total byte size of one q8_0 block (2 byte fp16 scale + 32 int8 values)
 pub const Q8_0_TYPE_SIZE: usize = 34;
+
+/// Compute the encoded byte length for `n_floats` values.
+///
+/// Each 32-float block → 34 bytes (2B f16 scale + 32B i8 quants).
+/// Panics if `n_floats` is not a multiple of 32.
+#[inline]
+pub fn q8_0_encoded_len(n_floats: usize) -> usize {
+    assert!(
+        n_floats.is_multiple_of(Q8_0_BLOCK_SIZE),
+        "q8_0_encoded_len: n_floats ({}) must be a multiple of {}",
+        n_floats,
+        Q8_0_BLOCK_SIZE
+    );
+    (n_floats / Q8_0_BLOCK_SIZE) * Q8_0_TYPE_SIZE
+}
 
 /// Quantize one or more contiguous rows to llama.cpp-compatible Q8_0 blocks.
 ///
@@ -43,7 +61,24 @@ pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
 /// output: `dst[j] = (q[j] as f32) * d`.
 #[inline]
 pub fn dequantize_q8_0(src: &[u8], dst: &mut [f32]) -> Result<()> {
+    if !src.len().is_multiple_of(Q8_0_TYPE_SIZE) {
+        bail!(
+            "q8_0 source length {} is not a multiple of block size {}",
+            src.len(),
+            Q8_0_TYPE_SIZE
+        );
+    }
     let n_blocks = src.len() / Q8_0_TYPE_SIZE;
+    let expected_dst_len = n_blocks
+        .checked_mul(Q8_0_BLOCK_SIZE)
+        .ok_or_else(|| anyhow::anyhow!("q8_0 output length overflow"))?;
+    if dst.len() != expected_dst_len {
+        bail!(
+            "q8_0 destination length {} does not match expected {}",
+            dst.len(),
+            expected_dst_len
+        );
+    }
 
     for i in 0..n_blocks {
         let block_start = i * Q8_0_TYPE_SIZE;
@@ -72,10 +107,45 @@ pub fn dequantize_q8_0(src: &[u8], dst: &mut [f32]) -> Result<()> {
 /// q8_0 blocks (which run along the in_features dimension) are
 /// contiguous per output feature.  `shape[0]` is `out_features`,
 /// `shape[1]` is `in_features`.
+#[derive(Clone)]
+enum QuantizedData {
+    Owned(Arc<[u8]>),
+    Mapped {
+        mmap: Arc<Mmap>,
+        range: Range<usize>,
+    },
+}
+
+impl QuantizedData {
+    #[inline]
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(data) => data,
+            Self::Mapped { mmap, range } => &mmap[range.clone()],
+        }
+    }
+}
+
+impl core::fmt::Debug for QuantizedData {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Owned(data) => f.debug_struct("Owned").field("len", &data.len()).finish(),
+            Self::Mapped { range, .. } => f
+                .debug_struct("Mapped")
+                .field("range", range)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct QuantizedWeight {
     /// raw q8_0 bytes: [block0_scale(2B) | block0_q(32B) | block1_scale(2B) | ...]
-    pub data: Vec<u8>,
+    ///
+    /// File-loaded weights retain a shared mmap range instead of copying model
+    /// bytes into anonymous memory. Cloning a weight is therefore constant-time
+    /// and does not increase the model's resident allocation.
+    data: QuantizedData,
     /// logical shape [out_features, in_features] (reversed from gguf dims)
     pub shape: Vec<usize>,
 }
@@ -89,6 +159,25 @@ impl QuantizedWeight {
 
     /// fallible constructor for q8_0 weights loaded from external model files.
     pub fn try_new(data: Vec<u8>, shape: Vec<usize>) -> Result<Self> {
+        Self::try_new_storage(QuantizedData::Owned(data.into()), shape)
+    }
+
+    pub(crate) fn try_from_mmap(
+        mmap: Arc<Mmap>,
+        range: Range<usize>,
+        shape: Vec<usize>,
+    ) -> Result<Self> {
+        if range.start > range.end || range.end > mmap.len() {
+            bail!(
+                "QuantizedWeight: mmap range {:?} exceeds mapping length {}",
+                range,
+                mmap.len()
+            );
+        }
+        Self::try_new_storage(QuantizedData::Mapped { mmap, range }, shape)
+    }
+
+    fn try_new_storage(data: QuantizedData, shape: Vec<usize>) -> Result<Self> {
         if shape.len() != 2 {
             bail!("QuantizedWeight: expected 2D shape, got {:?}", shape);
         }
@@ -99,16 +188,39 @@ impl QuantizedWeight {
                 Q8_0_BLOCK_SIZE
             );
         }
-        let expected_blocks = shape[0] * shape[1] / Q8_0_BLOCK_SIZE;
-        let expected_len = expected_blocks * Q8_0_TYPE_SIZE;
-        if data.len() != expected_len {
+        let expected_elements = shape[0]
+            .checked_mul(shape[1])
+            .ok_or_else(|| anyhow::anyhow!("QuantizedWeight: shape product overflow"))?;
+        let expected_blocks = expected_elements / Q8_0_BLOCK_SIZE;
+        let expected_len = expected_blocks
+            .checked_mul(Q8_0_TYPE_SIZE)
+            .ok_or_else(|| anyhow::anyhow!("QuantizedWeight: byte length overflow"))?;
+        if data.as_slice().len() != expected_len {
             bail!(
                 "QuantizedWeight: data len ({}) != expected ({})",
-                data.len(),
+                data.as_slice().len(),
                 expected_len
             );
         }
         Ok(Self { data, shape })
+    }
+
+    /// Raw Q8_0 storage.
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
+    /// Compressed byte size of this weight.
+    #[inline]
+    pub fn byte_len(&self) -> usize {
+        self.data.as_slice().len()
+    }
+
+    /// Whether this weight directly references a read-only model-file mapping.
+    #[inline]
+    pub fn is_mapped(&self) -> bool {
+        matches!(&self.data, QuantizedData::Mapped { .. })
     }
 
     /// dequantize one output-feature column into `dst`.
@@ -131,7 +243,7 @@ impl QuantizedWeight {
         let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
         let row_start = row * blocks_per_row;
 
-        crate::simd::dequantize_q8_0_row(&self.data, row_start, blocks_per_row, dst);
+        crate::simd::dequantize_q8_0_row(self.data(), row_start, blocks_per_row, dst);
     }
 
     /// fully dequantize to a f32 `CpuTensor` with shape `[out_features, in_features]`.
@@ -173,6 +285,93 @@ impl QuantizedWeight {
     }
 }
 
+/// Interleaved Q8_0 layout: 4 consecutive output rows' blocks are stored
+/// together so that a single cache-line load serves multiple rows. Quants
+/// and scales are split into separate contiguous arrays for SIMD-friendly access.
+///
+/// For each stripe of `INTERLEAVE` rows, block b is stored as:
+///   quants: [row0_b(32B) | row1_b(32B) | row2_b(32B) | row3_b(32B)]
+///   scales: [row0_b(2B)  | row1_b(2B)  | row2_b(2B)  | row3_b(2B)]
+///
+/// Total stripe size = blocks_per_row × (INTERLEAVE × 32 + INTERLEAVE × 2) bytes.
+/// Total size matches the original row-contiguous layout exactly.
+pub const INTERLEAVE: usize = 4;
+
+#[derive(Clone, Debug)]
+pub struct QuantizedWeightInterleaved {
+    /// Interleaved quants, grouped by stripe.
+    pub quants: alloc::vec::Vec<u8>,
+    /// Interleaved scales, grouped by stripe.
+    pub scales: alloc::vec::Vec<u8>,
+    /// Logical shape [out_features, in_features].
+    pub shape: Vec<usize>,
+    /// Blocks per row = in_features / 32.
+    pub blocks_per_row: usize,
+}
+
+impl QuantizedWeightInterleaved {
+    /// Repack a row-contiguous `QuantizedWeight` into the interleaved layout.
+    ///
+    /// This is a one-time cost at model load. The interleaved layout enables
+    /// the VNNI kernel to process 4 output rows simultaneously with contiguous
+    /// weight reads, reducing DRAM transactions by ~2-3× for large matrices.
+    pub fn from_quantized(w: &QuantizedWeight) -> Self {
+        let out_features = w.out_features();
+        let in_features = w.in_features();
+        let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
+        let data = w.data();
+
+        let stripes = out_features.div_ceil(INTERLEAVE);
+        let quants_per_stripe = blocks_per_row * INTERLEAVE * Q8_0_BLOCK_SIZE;
+        let scales_per_stripe = blocks_per_row * INTERLEAVE * 2; // 2 bytes per f16
+
+        let mut quants = vec![0u8; stripes * quants_per_stripe];
+        let mut scales = vec![0u8; stripes * scales_per_stripe];
+
+        let row_bytes = blocks_per_row * Q8_0_TYPE_SIZE;
+
+        for stripe in 0..stripes {
+            let row_base = stripe * INTERLEAVE;
+            let q_base = stripe * quants_per_stripe;
+            let s_base = stripe * scales_per_stripe;
+
+            for b in 0..blocks_per_row {
+                let q_block_off = q_base + b * INTERLEAVE * Q8_0_BLOCK_SIZE;
+                let s_block_off = s_base + b * INTERLEAVE * 2;
+
+                for lane in 0..INTERLEAVE {
+                    let row = row_base + lane;
+                    if row >= out_features {
+                        // Pad with zeros for incomplete final stripe
+                        continue;
+                    }
+                    let src = row * row_bytes + b * Q8_0_TYPE_SIZE;
+                    // Copy quants (skip 2-byte scale prefix in source)
+                    let q_dst = q_block_off + lane * Q8_0_BLOCK_SIZE;
+                    quants[q_dst..q_dst + Q8_0_BLOCK_SIZE]
+                        .copy_from_slice(&data[src + 2..src + 2 + Q8_0_BLOCK_SIZE]);
+                    // Copy scale
+                    let s_dst = s_block_off + lane * 2;
+                    scales[s_dst..s_dst + 2].copy_from_slice(&data[src..src + 2]);
+                }
+            }
+        }
+
+        Self {
+            quants,
+            scales,
+            shape: vec![out_features, in_features],
+            blocks_per_row,
+        }
+    }
+
+    #[inline]
+    pub fn out_features(&self) -> usize { self.shape[0] }
+
+    #[inline]
+    pub fn in_features(&self) -> usize { self.shape[1] }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +407,11 @@ mod tests {
     #[test]
     fn quantized_weight_rejects_non_block_aligned_rows() {
         assert!(QuantizedWeight::try_new(vec![], vec![1, 31]).is_err());
+    }
+
+    #[test]
+    fn dequantize_rejects_malformed_buffer_lengths() {
+        assert!(dequantize_q8_0(&[0; Q8_0_TYPE_SIZE - 1], &mut [0.0; Q8_0_BLOCK_SIZE]).is_err());
+        assert!(dequantize_q8_0(&[0; Q8_0_TYPE_SIZE], &mut [0.0; Q8_0_BLOCK_SIZE - 1]).is_err());
     }
 }
