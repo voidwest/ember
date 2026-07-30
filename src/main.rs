@@ -2,7 +2,11 @@ mod cli_support;
 
 use anyhow::Context;
 use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
-use cli_support::{build_run_manifest, gguf_metadata_json, token_audit_json, write_json_file};
+use cli_support::{
+    build_run_manifest, default_tokenizer_for_arch, gguf_metadata_json, parse_layers_list,
+    parse_max_seq_len, parse_temperature, parse_top_k, parse_top_p, resolve_tokenizer,
+    token_audit_json, write_json_file,
+};
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::extraction::{
@@ -596,39 +600,6 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Embedded llama tokenizer — written to a temp file when the external file is
-/// missing so the binary is self-contained for the most common architecture.
-static EMBEDDED_LLAMA_TOKENIZER: &str = include_str!("../tokenizer.json");
-
-fn default_tokenizer_for_arch(arch: &str) -> &'static str {
-    match arch {
-        "gpt2" => "tokenizer-gpt2.json",
-        "llama" => "tokenizer.json",
-        "qwen3" => "tokenizer-qwen3.json",
-        "gemma4" => "tokenizer-gemma4.json",
-        _ => "tokenizer.json",
-    }
-}
-
-/// Resolve a tokenizer path: if the file exists use it, otherwise write the
-/// embedded tokenizer to a temp file and return that path.
-fn resolve_tokenizer(path: &str) -> String {
-    if std::path::Path::new(path).exists() {
-        return path.to_string();
-    }
-    if path == "tokenizer.json" {
-        let tmp = std::env::temp_dir().join("ember-tokenizer.json");
-        if !tmp.exists() {
-            if let Err(e) = std::fs::write(&tmp, EMBEDDED_LLAMA_TOKENIZER) {
-                eprintln!("warning: could not write embedded tokenizer: {e}");
-                return path.to_string();
-            }
-        }
-        return tmp.to_string_lossy().into_owned();
-    }
-    path.to_string()
 }
 
 fn run_extract_command(command: &ExtractCommand) -> anyhow::Result<()> {
@@ -1337,21 +1308,6 @@ fn run_llama_cpp_external_extract_command(config: &ExtractionConfig) -> anyhow::
     Ok(())
 }
 
-fn parse_layers_list(value: Option<&str>) -> anyhow::Result<Vec<usize>> {
-    let Some(value) = value else {
-        return Ok(Vec::new());
-    };
-    value
-        .split(',')
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            s.parse::<usize>()
-                .with_context(|| format!("invalid layer index '{s}'"))
-        })
-        .collect()
-}
-
 fn infer_extraction_architecture(
     config: &ExtractionConfig,
     gguf_metadata: &serde_json::Value,
@@ -1366,50 +1322,6 @@ fn infer_extraction_architecture(
                 .map(str::to_string)
         })
         .unwrap_or_else(|| "gpt2".to_string())
-}
-
-fn parse_temperature(value: &str) -> Result<f32, String> {
-    let temperature = value
-        .parse::<f32>()
-        .map_err(|_| format!("invalid temperature '{value}'"))?;
-    if temperature.is_finite() && temperature >= 0.0 {
-        Ok(temperature)
-    } else {
-        Err("temperature must be a finite number >= 0".to_string())
-    }
-}
-
-fn parse_top_k(value: &str) -> Result<usize, String> {
-    let top_k = value
-        .parse::<usize>()
-        .map_err(|_| format!("invalid top-k '{value}'"))?;
-    if top_k > 0 {
-        Ok(top_k)
-    } else {
-        Err("top-k must be greater than 0".to_string())
-    }
-}
-
-fn parse_top_p(value: &str) -> Result<f32, String> {
-    let top_p = value
-        .parse::<f32>()
-        .map_err(|_| format!("invalid top-p '{value}'"))?;
-    if top_p.is_finite() && top_p > 0.0 && top_p <= 1.0 {
-        Ok(top_p)
-    } else {
-        Err("top-p must be in the range (0, 1]".to_string())
-    }
-}
-
-fn parse_max_seq_len(value: &str) -> Result<usize, String> {
-    let max_seq_len = value
-        .parse::<usize>()
-        .map_err(|_| format!("invalid max sequence length '{value}'"))?;
-    if max_seq_len > 0 {
-        Ok(max_seq_len)
-    } else {
-        Err("max sequence length must be greater than 0".to_string())
-    }
 }
 
 fn effective_context_limit<B: Backend>(
