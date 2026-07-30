@@ -2849,7 +2849,7 @@ where
     let mut all_token_ids: Vec<u32> = Vec::new();
     let mut block_boundaries: Vec<usize> = Vec::new();
     let mut block_token_counts: Vec<usize> = Vec::new();
-    let mut stimulus_info: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut stimulus_info: Vec<(String, serde_json::Value, Vec<Vec<usize>>)> = Vec::new();
 
     for (si, stimulus) in stimuli.iter().enumerate() {
         let prompt = stimulus["prompts"][config.template]
@@ -2861,7 +2861,7 @@ where
                 )
             })?;
 
-        let (token_ids, _offsets) = tokenizer.encode_with_offsets(prompt)?;
+        let (token_ids, offsets) = tokenizer.encode_with_offsets(prompt)?;
         if token_ids.is_empty() {
             eprintln!(
                 "  [{}/{}] WARNING: empty tokenization, skipping",
@@ -2877,8 +2877,15 @@ where
 
         block_boundaries.push(all_token_ids.len());
         block_token_counts.push(token_ids.len());
+        let probe_indices = config
+            .outputs
+            .iter()
+            .map(|output| {
+                select_probe_indices(prompt, &token_ids, &offsets, stimulus, output.position)
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
         all_token_ids.extend_from_slice(&token_ids);
-        stimulus_info.push((prompt.to_string(), stimulus.clone()));
+        stimulus_info.push((prompt.to_string(), stimulus.clone(), probe_indices));
     }
 
     if block_boundaries.is_empty() {
@@ -2927,18 +2934,7 @@ where
 
         for bi in chunk_start..chunk_end {
             let base = block_boundaries[bi];
-            let token_slice = &all_token_ids[base..base + block_token_counts[bi]];
-
-            let (_, offsets) = tokenizer.encode_with_offsets(&stimulus_info[bi].0)?;
-
-            for output in &config.outputs {
-                let local_indices = select_probe_indices(
-                    &stimulus_info[bi].0,
-                    token_slice,
-                    &offsets,
-                    &stimulus_info[bi].1,
-                    output.position,
-                )?;
+            for local_indices in &stimulus_info[bi].2 {
                 let absolute: Vec<usize> = local_indices
                     .iter()
                     .map(|i| (base - chunk_base) + i)
@@ -3008,16 +3004,7 @@ where
                 let pool_idx = local_bi * n_outputs + oi;
                 let pooled_slice = &pooled_states[pool_idx];
 
-                // re-tokenize for offsets
-                let prompt_str = stimulus["prompts"][config.template].as_str().unwrap_or("");
-                let (_, offsets) = tokenizer.encode_with_offsets(prompt_str)?;
-                let probe_indices = select_probe_indices(
-                    prompt_str,
-                    token_slice,
-                    &offsets,
-                    stimulus,
-                    output.position,
-                )?;
+                let probe_indices = &stimulus_info[bi].2[oi];
 
                 correctness[oi].push(serde_json::json!({
                     "index": bi,
