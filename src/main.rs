@@ -3,14 +3,14 @@ use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::extraction::{
-    canonical_config_toml, load_input_samples, pooling_for_mode, run_dir, sample_order_hash,
-    select_token_positions, source_field_for_position, source_span_for_position,
-    source_value_for_position, stable_bytes_hash, stable_prompt_hash, validate_artifact_contract,
-    ArtifactManifest, BackendMetadata, ExecutionBackendName, ExtractionConfig, LogitsArtifact,
-    ModelMetadata, PositionArtifactRecord, SampleArtifactRecord, TensorContract,
-    TokenizationArtifactRecord, ARTIFACT_CONTRACT_VERSION, ARTIFACT_LAYOUT, CHECKSUMS_FILENAME,
-    CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME,
-    SAMPLES_FILENAME, TOKENIZATION_FILENAME,
+    canonical_config_toml, git_commit, load_input_samples, pooling_for_mode, run_dir,
+    sample_order_hash, select_token_positions, sha256_file, source_field_for_position,
+    source_span_for_position, source_value_for_position, stable_bytes_hash, stable_prompt_hash,
+    unix_timestamp, validate_artifact_contract, ArtifactManifest, BackendMetadata,
+    ExecutionBackendName, ExtractionConfig, LogitsArtifact, ModelMetadata, PositionArtifactRecord,
+    SampleArtifactRecord, TensorContract, TokenizationArtifactRecord, ARTIFACT_CONTRACT_VERSION,
+    ARTIFACT_LAYOUT, CHECKSUMS_FILENAME, CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME,
+    POSITIONS_FILENAME, REPORT_FILENAME, SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
 use ember::loader::load_gguf;
 use ember::loader::GgufLoader;
@@ -22,7 +22,7 @@ use ember::model_backend::run_extraction_with_backend;
 use ember::model_backend::run_llama_cpp_external_backend;
 use ember::model_backend::NativeModelBackend;
 use ember::npy::{write_npy_2d, NpyStreamWriter};
-use ember::sampler::sample_token;
+use ember::sampler::{argmax_token, sample_token};
 use ember::trace;
 use std::collections::BTreeMap;
 use std::env;
@@ -30,7 +30,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 fn rayon_current_num_threads() -> usize {
     // rayon doesn't expose current thread count directly; check env
@@ -2230,17 +2230,6 @@ where
     Ok(())
 }
 
-/// greedy argmax: return the index of the largest logit value.
-#[inline]
-fn argmax_token(logits: &[f32]) -> usize {
-    logits
-        .iter()
-        .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-        .map(|(i, _)| i)
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3121,13 +3110,6 @@ where
     Ok(())
 }
 
-fn unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
 fn gguf_metadata_json(loader: &GgufLoader) -> serde_json::Value {
     let mut entries = serde_json::Map::new();
     for (key, value) in &loader.metadata {
@@ -3154,15 +3136,6 @@ fn gguf_value_json(value: &GgufValue) -> serde_json::Value {
 fn write_json_file(path: &str, value: &serde_json::Value) -> anyhow::Result<()> {
     fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
-}
-
-fn sha256_file(path: &str) -> Option<String> {
-    let output = Command::new("sha256sum").arg(path).output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    stdout.split_whitespace().next().map(str::to_string)
 }
 
 fn build_run_manifest(
@@ -3295,16 +3268,4 @@ fn token_audit_json(
         "offsets": offsets,
         "encode_with_offsets_matches_encode": true,
     })
-}
-
-fn git_commit() -> Option<String> {
-    let output = Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let commit = String::from_utf8(output.stdout).ok()?;
-    Some(commit.trim().to_string())
 }

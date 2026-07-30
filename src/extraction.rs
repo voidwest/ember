@@ -889,6 +889,18 @@ pub fn sha256_file(path: impl AsRef<Path>) -> Option<String> {
     stdout.split_whitespace().next().map(str::to_string)
 }
 
+pub fn git_commit() -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let commit = String::from_utf8(output.stdout).ok()?;
+    Some(commit.trim().to_string())
+}
+
 fn token_indices_for_offsets(offsets: &[(usize, usize)], start: usize, end: usize) -> Vec<usize> {
     offsets
         .iter()

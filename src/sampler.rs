@@ -47,7 +47,7 @@ pub fn sample_token(
     categorical_sample(&dist, rng)
 }
 
-fn argmax_token(logits: &[f32]) -> usize {
+pub fn argmax_token(logits: &[f32]) -> usize {
     logits
         .iter()
         .enumerate()

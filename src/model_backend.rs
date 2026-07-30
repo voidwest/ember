@@ -1,6 +1,6 @@
 use crate::backend::{Backend, CpuBackend};
 use crate::extraction::{
-    canonical_config_toml, layer_relative_path, load_input_samples, pooling_for_mode,
+    canonical_config_toml, git_commit, layer_relative_path, load_input_samples, pooling_for_mode,
     read_jsonl_records, run_dir, sample_order_hash, select_token_positions, sha256_file,
     source_field_for_position, source_span_for_position, source_value_for_position,
     stable_bytes_hash, stable_prompt_hash, unix_timestamp, validate_artifact_contract,
@@ -772,18 +772,6 @@ fn path_to_string(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_string)
         .with_context(|| format!("path is not valid UTF-8: {}", path.display()))
-}
-
-fn git_commit() -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let commit = String::from_utf8(output.stdout).ok()?;
-    Some(commit.trim().to_string())
 }
 
 fn llama_cpp_version(executable: Option<&str>) -> Option<String> {
