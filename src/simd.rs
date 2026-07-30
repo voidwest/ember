@@ -1068,67 +1068,30 @@ mod x86_64 {
         }
     }
 
-    /// Accurate SIMD exp using range reduction + 5th-degree polynomial.
-    ///
-    /// Algorithm: reduce to [-ln2/2, ln2/2], evaluate minimax polynomial,
-    /// scale by 2^n.  Relative error < 2e-6 — indistinguishable from
-    /// `libm::expf` in practice.
+    /// Accurate SIMD exp using range reduction and a fifth-degree polynomial.
     #[target_feature(enable = "avx2,fma")]
     unsafe fn exp_ps(x: __m256) -> __m256 {
         let log2e = _mm256_set1_ps(core::f32::consts::LOG2_E);
         let ln2 = _mm256_set1_ps(core::f32::consts::LN_2);
-        let magic = _mm256_set1_ps(12582912.0_f32); // 1.5 * 2^23
-
-        // polynomial coefficients for exp(y), y ∈ [-ln2/2, ln2/2]
+        let magic = _mm256_set1_ps(12_582_912.0_f32);
         let p0 = _mm256_set1_ps(1.0_f32);
         let p1 = _mm256_set1_ps(1.0_f32);
         let p2 = _mm256_set1_ps(0.5_f32);
-        let p3 = _mm256_set1_ps(0.166_666_67_f32); // 1/6
-        let p4 = _mm256_set1_ps(0.041_666_668_f32); // 1/24
-        let p5 = _mm256_set1_ps(0.008_333_334_f32); // 1/120
+        let p3 = _mm256_set1_ps(0.166_666_67_f32);
+        let p4 = _mm256_set1_ps(0.041_666_668_f32);
+        let p5 = _mm256_set1_ps(0.008_333_334_f32);
 
-        // 1. k = round(x * log2(e))
         let a = _mm256_mul_ps(x, log2e);
         let k = _mm256_sub_ps(_mm256_add_ps(a, magic), magic);
-
-        // 2. r = x - k * ln(2)  (reduced argument)
-        let r = _mm256_fnmadd_ps(k, ln2, x); // x - k*ln2 = -(k*ln2 - x)
-
-        // 3. polynomial: p5*r + p4 → Horner
+        let r = _mm256_fnmadd_ps(k, ln2, x);
         let poly = _mm256_fmadd_ps(p5, r, p4);
         let poly = _mm256_fmadd_ps(poly, r, p3);
         let poly = _mm256_fmadd_ps(poly, r, p2);
         let poly = _mm256_fmadd_ps(poly, r, p1);
         let poly = _mm256_fmadd_ps(poly, r, p0);
-
-        // 4. scale by 2^k: (k+127) << 23
         let k_i32 = _mm256_cvtps_epi32(k);
         let pow2 = _mm256_slli_epi32::<23>(_mm256_add_epi32(k_i32, _mm256_set1_epi32(127)));
-        let pow2_f = _mm256_castsi256_ps(pow2);
-
-        _mm256_mul_ps(poly, pow2_f)
-    }
-
-    /// SIMD SiLU using accurate polynomial exp.
-    #[target_feature(enable = "avx2,fma")]
-    pub(crate) unsafe fn silu_avx2(x: &[f32], out: &mut [f32]) {
-        let n = x.len();
-        let one = _mm256_set1_ps(1.0_f32);
-        let zero = _mm256_setzero_ps();
-        let mut i = 0;
-
-        while i + 8 <= n {
-            let xv = _mm256_loadu_ps(x.as_ptr().add(i));
-            let neg_x = _mm256_sub_ps(zero, xv);
-            let exp_neg = exp_ps(neg_x);
-            let denom = _mm256_add_ps(one, exp_neg);
-            _mm256_storeu_ps(out.as_mut_ptr().add(i), _mm256_div_ps(xv, denom));
-            i += 8;
-        }
-        while i < n {
-            out[i] = x[i] / (1.0 + (-x[i]).exp());
-            i += 1;
-        }
+        _mm256_mul_ps(poly, _mm256_castsi256_ps(pow2))
     }
 
     /// SIMD dot product using AVX2 FMA.
@@ -1319,92 +1282,6 @@ mod x86_64 {
                 x[i0] = x0 * cos[d] - x1 * sin[d];
                 x[i1] = x0 * sin[d] + x1 * cos[d];
             }
-        }
-    }
-
-    /// SIMD prefix softmax using AVX2 + accurate polynomial exp.
-    #[target_feature(enable = "avx2,fma")]
-    #[allow(clippy::needless_range_loop)]
-    pub(crate) unsafe fn softmax_prefix_avx2(row: &mut [f32], len: usize) {
-        let neg_inf = _mm256_set1_ps(f32::NEG_INFINITY);
-
-        // 1. find max
-        let mut max_vec = neg_inf;
-        let mut i = 0;
-        while i + 8 <= len {
-            let v = _mm256_loadu_ps(row.as_ptr().add(i));
-            max_vec = _mm256_max_ps(max_vec, v);
-            i += 8;
-        }
-        let low = _mm256_castps256_ps128(max_vec);
-        let high = _mm256_extractf128_ps::<1>(max_vec);
-        let mut max_val = _mm_cvtss_f32(_mm_max_ps(low, high));
-        // handle tail
-        for j in i..len {
-            max_val = max_val.max(row[j]);
-        }
-
-        if max_val == f32::NEG_INFINITY {
-            let uniform = 1.0 / (len as f32);
-            let u = _mm256_set1_ps(uniform);
-            let mut i = 0;
-            while i + 8 <= len {
-                _mm256_storeu_ps(row.as_mut_ptr().add(i), u);
-                i += 8;
-            }
-            for j in i..len {
-                row[j] = uniform;
-            }
-            return;
-        }
-
-        // 2. exp(x - max) + sum
-        let max_splat = _mm256_set1_ps(max_val);
-        let mut sum0 = _mm256_setzero_ps();
-        let mut sum1 = _mm256_setzero_ps();
-        i = 0;
-        while i + 16 <= len {
-            let v0 = _mm256_loadu_ps(row.as_ptr().add(i));
-            let v1 = _mm256_loadu_ps(row.as_ptr().add(i + 8));
-            let e0 = exp_ps(_mm256_sub_ps(v0, max_splat));
-            let e1 = exp_ps(_mm256_sub_ps(v1, max_splat));
-            _mm256_storeu_ps(row.as_mut_ptr().add(i), e0);
-            _mm256_storeu_ps(row.as_mut_ptr().add(i + 8), e1);
-            sum0 = _mm256_add_ps(sum0, e0);
-            sum1 = _mm256_add_ps(sum1, e1);
-            i += 16;
-        }
-        while i + 8 <= len {
-            let v = _mm256_loadu_ps(row.as_ptr().add(i));
-            let e = exp_ps(_mm256_sub_ps(v, max_splat));
-            _mm256_storeu_ps(row.as_mut_ptr().add(i), e);
-            sum0 = _mm256_add_ps(sum0, e);
-            i += 8;
-        }
-        let sum_vec = _mm256_add_ps(sum0, sum1);
-        let low = _mm256_castps256_ps128(sum_vec);
-        let high = _mm256_extractf128_ps::<1>(sum_vec);
-        let sum128 = _mm_add_ps(low, high);
-        let sum128 = _mm_hadd_ps(sum128, sum128);
-        let sum128 = _mm_hadd_ps(sum128, sum128);
-        let mut total = _mm_cvtss_f32(sum128);
-        // tail
-        for j in i..len {
-            let e = (row[j] - max_val).exp();
-            row[j] = e;
-            total += e;
-        }
-
-        // 3. scale by 1/sum
-        let inv = _mm256_set1_ps(total.recip());
-        let mut i = 0;
-        while i + 8 <= len {
-            let v = _mm256_loadu_ps(row.as_ptr().add(i));
-            _mm256_storeu_ps(row.as_mut_ptr().add(i), _mm256_mul_ps(v, inv));
-            i += 8;
-        }
-        for j in i..len {
-            row[j] *= total.recip();
         }
     }
 }
@@ -1610,57 +1487,6 @@ mod aarch64 {
         }
     }
 
-    /// Accurate SIMD exp using NEON (range reduction + polynomial).
-    #[target_feature(enable = "neon")]
-    unsafe fn exp_ps(x: float32x4_t) -> float32x4_t {
-        let log2e = vdupq_n_f32(core::f32::consts::LOG2_E);
-        let ln2 = vdupq_n_f32(core::f32::consts::LN_2);
-        let magic = vdupq_n_f32(12582912.0_f32);
-        let p0 = vdupq_n_f32(1.0_f32);
-        let p1 = vdupq_n_f32(1.0_f32);
-        let p2 = vdupq_n_f32(0.5_f32);
-        let p3 = vdupq_n_f32(0.166_666_67_f32);
-        let p4 = vdupq_n_f32(0.041_666_668_f32);
-        let p5 = vdupq_n_f32(0.008_333_334_f32);
-
-        let a = vmulq_f32(x, log2e);
-        let k = vsubq_f32(vaddq_f32(a, magic), magic);
-        let r = vfmsq_f32(x, k, ln2); // x - k * ln2
-
-        let poly = vfmaq_f32(p4, p5, r);
-        let poly = vfmaq_f32(p3, poly, r);
-        let poly = vfmaq_f32(p2, poly, r);
-        let poly = vfmaq_f32(p1, poly, r);
-        let poly = vfmaq_f32(p0, poly, r);
-
-        let k_i32 = vcvtq_s32_f32(k);
-        let pow2 = vshlq_s32(vaddq_s32(k_i32, vdupq_n_s32(127)), vdupq_n_s32(23));
-        let pow2_f = vreinterpretq_f32_s32(pow2);
-        vmulq_f32(poly, pow2_f)
-    }
-
-    /// SIMD SiLU using NEON with accurate polynomial exp.
-    #[target_feature(enable = "neon")]
-    pub(crate) unsafe fn silu_neon(x: &[f32], out: &mut [f32]) {
-        let n = x.len();
-        let one = vdupq_n_f32(1.0_f32);
-        let zero = vdupq_n_f32(0.0_f32);
-        let mut i = 0;
-
-        while i + 4 <= n {
-            let xv = vld1q_f32(x.as_ptr().add(i));
-            let neg_x = vsubq_f32(zero, xv);
-            let exp_neg = exp_ps(neg_x);
-            let denom = vaddq_f32(one, exp_neg);
-            vst1q_f32(out.as_mut_ptr().add(i), vdivq_f32(xv, denom));
-            i += 4;
-        }
-        while i < n {
-            out[i] = x[i] / (1.0 + (-x[i]).exp());
-            i += 1;
-        }
-    }
-
     /// SIMD dot product using NEON FMA.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
@@ -1720,77 +1546,6 @@ mod aarch64 {
         while i < n {
             acc[i] += weight * src[i];
             i += 1;
-        }
-    }
-
-    /// SIMD prefix softmax using NEON + accurate polynomial exp.
-    #[target_feature(enable = "neon")]
-    pub(crate) unsafe fn softmax_prefix_neon(row: &mut [f32], len: usize) {
-        let neg_inf = vdupq_n_f32(f32::NEG_INFINITY);
-        let zero = vdupq_n_f32(0.0);
-
-        // 1. find max
-        let mut max_vec = neg_inf;
-        let mut i = 0;
-        while i + 4 <= len {
-            let v = vld1q_f32(row.as_ptr().add(i));
-            max_vec = vmaxq_f32(max_vec, v);
-            i += 4;
-        }
-        let mut max_val = vgetq_lane_f32::<0>(max_vec)
-            .max(vgetq_lane_f32::<1>(max_vec))
-            .max(vgetq_lane_f32::<2>(max_vec))
-            .max(vgetq_lane_f32::<3>(max_vec));
-        for j in i..len {
-            max_val = max_val.max(row[j]);
-        }
-
-        if max_val == f32::NEG_INFINITY {
-            let uniform = 1.0 / (len as f32);
-            let u = vdupq_n_f32(uniform);
-            let mut i = 0;
-            while i + 4 <= len {
-                vst1q_f32(row.as_mut_ptr().add(i), u);
-                i += 4;
-            }
-            for j in i..len {
-                row[j] = uniform;
-            }
-            return;
-        }
-
-        // 2. exp(x - max) + sum
-        let max_splat = vdupq_n_f32(max_val);
-        let mut sum_vec = vdupq_n_f32(0.0);
-        i = 0;
-        while i + 4 <= len {
-            let v = vld1q_f32(row.as_ptr().add(i));
-            let shifted = vsubq_f32(v, max_splat);
-            let e = exp_ps(shifted);
-            vst1q_f32(row.as_mut_ptr().add(i), e);
-            sum_vec = vaddq_f32(sum_vec, e);
-            i += 4;
-        }
-        let mut total = vgetq_lane_f32::<0>(sum_vec)
-            + vgetq_lane_f32::<1>(sum_vec)
-            + vgetq_lane_f32::<2>(sum_vec)
-            + vgetq_lane_f32::<3>(sum_vec);
-        for j in i..len {
-            let e = (row[j] - max_val).exp();
-            row[j] = e;
-            total += e;
-        }
-
-        // 3. scale
-        let inv = vdupq_n_f32(total.recip());
-        let mut i = 0;
-        while i + 4 <= len {
-            let v = vld1q_f32(row.as_ptr().add(i));
-            vst1q_f32(row.as_mut_ptr().add(i), vmulq_f32(v, inv));
-            i += 4;
-        }
-        for j in i..len {
-            row[j] *= total.recip();
         }
     }
 }
@@ -2264,39 +2019,6 @@ pub(crate) fn elemul(a: &[f32], b: &[f32], out: &mut [f32]) {
     }
 }
 
-/// SIMD SiLU: `out[i] = x[i] / (1 + exp(-x[i]))`.
-///
-/// Uses a fast polynomial exp approximation suitable for inference.
-/// Maximum relative error < 2% in the critical region [-8, 8].
-///
-/// NOTE: uses accurate polynomial exp (not Schraudolph).
-/// Currently not wired — libm::expf is faster on scalar.
-#[inline]
-#[allow(dead_code)]
-pub(crate) fn silu(x: &[f32], out: &mut [f32]) {
-    debug_assert_eq!(x.len(), out.len());
-
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            unsafe {
-                return x86_64::silu_avx2(x, out);
-            }
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            unsafe {
-                return aarch64::silu_neon(x, out);
-            }
-        }
-    }
-    for i in 0..x.len() {
-        out[i] = x[i] / (1.0 + (-x[i]).exp());
-    }
-}
-
 /// SIMD dot product: `Σ a[i] · b[i]`.
 #[inline]
 pub(crate) fn dot_product(a: &[f32], b: &[f32]) -> f32 {
@@ -2498,47 +2220,6 @@ pub(crate) fn rope_split_half(
     }
 }
 
-///
-/// Uses accurate polynomial exp.  Currently not wired — libm::expf is faster.
-#[inline]
-#[allow(dead_code)]
-pub(crate) fn softmax_prefix(row: &mut [f32], len: usize) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
-            unsafe {
-                return x86_64::softmax_prefix_avx2(row, len);
-            }
-        }
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        if is_aarch64_feature_detected!("neon") {
-            unsafe {
-                return aarch64::softmax_prefix_neon(row, len);
-            }
-        }
-    }
-    // scalar fallback
-    let max_val = row[..len].iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-    if max_val == f32::NEG_INFINITY {
-        let uniform = 1.0 / (len as f32);
-        for slot in row.iter_mut().take(len) {
-            *slot = uniform;
-        }
-        return;
-    }
-    let mut sum = 0.0;
-    for slot in row.iter_mut().take(len) {
-        *slot = (*slot - max_val).exp();
-        sum += *slot;
-    }
-    let inv_sum = sum.recip();
-    for slot in row.iter_mut().take(len) {
-        *slot *= inv_sum;
-    }
-}
-
 // ---------------------------------------------------------------------------
 // tests
 // ---------------------------------------------------------------------------
@@ -2651,23 +2332,6 @@ mod tests {
                 1e-6,
                 1e-6,
             );
-
-            let silu_input: Vec<f32> = a.iter().map(|v| v.clamp(-8.0, 8.0)).collect();
-            let expected: Vec<f32> = silu_input.iter().map(|x| x / (1.0 + (-x).exp())).collect();
-            silu(&silu_input, &mut got);
-            assert_close(&format!("silu len={len}"), &got, &expected, 3e-3, 3e-3);
-
-            let mut row = patterned_vec(len + 3, 2.5);
-            let mut expected = row.clone();
-            scalar_softmax_prefix(&mut expected, len);
-            softmax_prefix(&mut row, len);
-            assert_close(
-                &format!("softmax_prefix len={len}"),
-                &row,
-                &expected,
-                3e-5,
-                3e-5,
-            );
         }
     }
 
@@ -2700,26 +2364,6 @@ mod tests {
             let mut got = patterned_vec(len, 3.25);
             weighted_add_f16(&mut got, &source_f16, 0.375);
             assert_close("f16 weighted add", &got, &expected, 1e-5, 1e-5);
-        }
-    }
-
-    fn scalar_softmax_prefix(row: &mut [f32], len: usize) {
-        let max_val = row[..len].iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
-        if max_val == f32::NEG_INFINITY {
-            let uniform = 1.0 / len as f32;
-            for slot in row.iter_mut().take(len) {
-                *slot = uniform;
-            }
-            return;
-        }
-        let mut sum = 0.0;
-        for slot in row.iter_mut().take(len) {
-            *slot = (*slot - max_val).exp();
-            sum += *slot;
-        }
-        let inv_sum = sum.recip();
-        for slot in row.iter_mut().take(len) {
-            *slot *= inv_sum;
         }
     }
 
