@@ -132,6 +132,36 @@ pub(super) fn build_run_manifest(
     tokenizer_sha256: Option<&str>,
     gguf_metadata: &serde_json::Value,
 ) -> serde_json::Value {
+    let mut execution = serde_json::json!({
+        "max_seq_len": args.max_seq_len,
+        "max_tokens": args.max_tokens,
+        "temperature": args.temperature,
+        "top_k": args.top_k,
+        "top_p": args.top_p,
+        "probe": args.probe,
+        "probe_stimuli": args.probe_stimuli,
+        "probe_template": args.probe_template,
+        "probe_templates": args.probe_templates,
+        "probe_position": args.probe_position,
+        "probe_positions": args.probe_positions,
+        "probe_generate_tokens": args.probe_generate_tokens,
+        "probe_limit": args.probe_limit,
+    });
+    if let Some(spec) = args.zero_layer_output {
+        execution
+            .as_object_mut()
+            .expect("execution manifest is an object")
+            .insert(
+                "experiment".to_string(),
+                serde_json::json!({
+                    "name": "zero-layer-output",
+                    "layer": spec.layer(),
+                    "stage": spec.stage().to_string(),
+                    "modifies_execution": true,
+                }),
+            );
+    }
+
     serde_json::json!({
         "schema_version": 1,
         "created_at_unix": unix_timestamp(),
@@ -158,21 +188,7 @@ pub(super) fn build_run_manifest(
             "path": tokenizer_path,
             "sha256": tokenizer_sha256,
         },
-        "execution": {
-            "max_seq_len": args.max_seq_len,
-            "max_tokens": args.max_tokens,
-            "temperature": args.temperature,
-            "top_k": args.top_k,
-            "top_p": args.top_p,
-            "probe": args.probe,
-            "probe_stimuli": args.probe_stimuli,
-            "probe_template": args.probe_template,
-            "probe_templates": args.probe_templates,
-            "probe_position": args.probe_position,
-            "probe_positions": args.probe_positions,
-            "probe_generate_tokens": args.probe_generate_tokens,
-            "probe_limit": args.probe_limit,
-        },
+        "execution": execution,
     })
 }
 

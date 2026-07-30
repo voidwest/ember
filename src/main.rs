@@ -9,6 +9,11 @@ use cli_support::{
 };
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
+use ember::experiments::{
+    ExecutionContext, ExecutionPhase, ExperimentRunner, ExperimentalForwardModel,
+    GenerationContext, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
+    ZeroLayerOutputSpec,
+};
 use ember::extraction::{
     canonical_config_toml, git_commit, load_input_samples, pooling_for_mode, run_dir,
     sample_order_hash, select_token_positions, sha256_file, source_field_for_position,
@@ -105,6 +110,14 @@ struct Args {
     /// print prefill/decode timing stats to stderr
     #[arg(long)]
     benchmark: bool,
+
+    /// example research intervention, formatted as LAYER:attention|mlp|layer
+    #[arg(
+        long,
+        value_name = "LAYER:STAGE",
+        conflicts_with_all = ["demo", "interactive", "dump_logits", "dump_layers", "probe"]
+    )]
+    zero_layer_output: Option<ZeroLayerOutputSpec>,
 
     /// enable execution tracing (ops = per-operation breakdown)
     #[arg(long, value_parser = ["ops"])]
@@ -384,6 +397,7 @@ struct RunMetadata {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let args = Args::parse();
+    validate_experiment_options(&args)?;
 
     if let Some(command) = &args.command {
         return match command {
@@ -542,6 +556,28 @@ fn main() -> anyhow::Result<()> {
                 bail_dump_layers_unsupported(&args.arch)?;
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
+            } else if let Some(spec) = args.zero_layer_output {
+                let family = if args.arch == "qwen3" {
+                    ModelFamily::Qwen3
+                } else {
+                    ModelFamily::Llama
+                };
+                let model_context = ModelContext::new(
+                    family,
+                    Some(&args.model),
+                    &args.arch,
+                    model.n_layers(),
+                    model.embed_dim(),
+                );
+                let mut runner = start_zero_layer_output(spec, &model_context)?;
+                run_single_prompt_with_experiment(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args,
+                    model_context,
+                    &mut runner,
+                )?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -592,6 +628,23 @@ fn main() -> anyhow::Result<()> {
                 )?;
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
+            } else if let Some(spec) = args.zero_layer_output {
+                let model_context = ModelContext::new(
+                    ModelFamily::Gemma4,
+                    Some(&args.model),
+                    &args.arch,
+                    model.n_layers(),
+                    model.embed_dim(),
+                );
+                let mut runner = start_zero_layer_output(spec, &model_context)?;
+                run_single_prompt_with_experiment(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args,
+                    model_context,
+                    &mut runner,
+                )?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -599,6 +652,21 @@ fn main() -> anyhow::Result<()> {
         _ => anyhow::bail!("unknown architecture: {}", args.arch),
     }
 
+    Ok(())
+}
+
+fn validate_experiment_options(args: &Args) -> anyhow::Result<()> {
+    if args.zero_layer_output.is_none() {
+        return Ok(());
+    }
+    if args.command.is_some() {
+        anyhow::bail!("--zero-layer-output is supported only for normal generation");
+    }
+    if args.arch == "gpt2" {
+        anyhow::bail!(
+            "--zero-layer-output is supported for --arch llama, qwen3, and gemma4, not gpt2"
+        );
+    }
     Ok(())
 }
 
@@ -1461,6 +1529,51 @@ where
     Ok(())
 }
 
+fn start_zero_layer_output(
+    spec: ZeroLayerOutputSpec,
+    model_context: &ModelContext<'_>,
+) -> anyhow::Result<ExperimentRunner> {
+    let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(spec));
+    runner.on_model_loaded(model_context)?;
+    eprintln!(
+        "research experiment active: zero-layer-output layer={} stage={}; execution will be modified",
+        spec.layer(),
+        spec.stage()
+    );
+    Ok(runner)
+}
+
+fn run_single_prompt_with_experiment(
+    backend: &CpuBackend,
+    model: &impl ExperimentalForwardModel,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    args: &Args,
+    model_context: ModelContext<'_>,
+    runner: &mut ExperimentRunner,
+) -> anyhow::Result<()> {
+    let output = generate_with_experiment(
+        backend,
+        model,
+        runner,
+        model_context,
+        tokenizer,
+        &args.prompt,
+        args.max_tokens,
+        args.temperature,
+        args.top_k,
+        args.top_p,
+        args.benchmark,
+        args.trace.is_some(),
+        args.trace_out.as_deref(),
+        args.trace_values == "summary",
+        args.trace_run_metadata,
+        rayon_current_num_threads(),
+        effective_context_limit(backend, model, args),
+    )?;
+    println!("{}", output);
+    Ok(())
+}
+
 fn run_single_prompt<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
@@ -1817,18 +1930,133 @@ where
     Ok(())
 }
 
-/// run the full autoregressive generation loop.
-///
-/// operates in two phases:
-/// 1. **prefill** - feeds the entire prompt through the model in one forward pass,
-///    populating the kv cache with key/value projections for all prompt tokens.
-/// 2. **decode** - generates one token at a time: samples from the last position's
-///    logits, appends it, and runs a single-token forward pass reusing the cached
-///    k/v from all previous positions. stops when `max_tokens` is reached or a
-///    tokenizer-defined eos token is predicted.
-///
-/// temperature 0.0 uses greedy argmax; any positive value enables temperature
-/// scaling with optional top-k and top-p filtering via [`sample_token`].
+trait GenerationExecution<B, M>
+where
+    B: Backend,
+    M: ForwardModel<B>,
+{
+    fn before_prefill(&mut self, prompt_token_count: usize) -> anyhow::Result<()>;
+
+    fn forward_last_logits(
+        &mut self,
+        backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        phase: ExecutionPhase,
+    ) -> Result<B::Tensor, B::Error>;
+
+    fn generation_complete(
+        &mut self,
+        prompt_token_count: usize,
+        generated_token_count: usize,
+        decode_evaluations: usize,
+    ) -> anyhow::Result<()>;
+}
+
+struct StandardGeneration;
+
+impl<B, M> GenerationExecution<B, M> for StandardGeneration
+where
+    B: Backend,
+    M: ForwardModel<B>,
+{
+    #[inline(always)]
+    fn before_prefill(&mut self, _prompt_token_count: usize) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn forward_last_logits(
+        &mut self,
+        backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        _phase: ExecutionPhase,
+    ) -> Result<B::Tensor, B::Error> {
+        model.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)
+    }
+
+    #[inline(always)]
+    fn generation_complete(
+        &mut self,
+        _prompt_token_count: usize,
+        _generated_token_count: usize,
+        _decode_evaluations: usize,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+struct ActiveGeneration<'runner, 'model> {
+    runner: &'runner mut ExperimentRunner,
+    model_context: ModelContext<'model>,
+    tracing: TracingState,
+}
+
+impl<M> GenerationExecution<CpuBackend, M> for ActiveGeneration<'_, '_>
+where
+    M: ExperimentalForwardModel,
+{
+    fn before_prefill(&mut self, prompt_token_count: usize) -> anyhow::Result<()> {
+        let context = ExecutionContext::new(
+            self.model_context,
+            ExecutionPhase::Prefill,
+            0,
+            prompt_token_count,
+            self.tracing,
+        );
+        self.runner.before_prefill(&context)?;
+        Ok(())
+    }
+
+    fn forward_last_logits(
+        &mut self,
+        backend: &CpuBackend,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        phase: ExecutionPhase,
+    ) -> Result<ember::tensor::CpuTensor, ember::backend::CpuError> {
+        let context = ExecutionContext::new(
+            self.model_context,
+            phase,
+            start_pos,
+            token_ids.len(),
+            self.tracing,
+        );
+        model.forward_last_logits_with_experiment(
+            backend,
+            token_ids,
+            cache,
+            start_pos,
+            context,
+            self.runner,
+        )
+    }
+
+    fn generation_complete(
+        &mut self,
+        prompt_token_count: usize,
+        generated_token_count: usize,
+        decode_evaluations: usize,
+    ) -> anyhow::Result<()> {
+        let context = GenerationContext::new(
+            self.model_context,
+            prompt_token_count,
+            generated_token_count,
+            decode_evaluations,
+            self.tracing,
+        );
+        self.runner.on_generation_complete(&context)?;
+        Ok(())
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn generate<B: Backend>(
     backend: &B,
@@ -1848,6 +2076,109 @@ fn generate<B: Backend>(
     context_limit: usize,
 ) -> anyhow::Result<String>
 where
+    B::Error: Send + Sync + 'static,
+{
+    let mut execution = StandardGeneration;
+    generate_with_execution(
+        backend,
+        model,
+        &mut execution,
+        tokenizer,
+        prompt,
+        max_tokens,
+        temperature,
+        top_k,
+        top_p,
+        benchmark,
+        trace_ops,
+        trace_out,
+        trace_values_summary,
+        trace_run_metadata,
+        thread_count,
+        context_limit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn generate_with_experiment(
+    backend: &CpuBackend,
+    model: &impl ExperimentalForwardModel,
+    runner: &mut ExperimentRunner,
+    model_context: ModelContext<'_>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    prompt: &str,
+    max_tokens: usize,
+    temperature: f32,
+    top_k: Option<usize>,
+    top_p: Option<f32>,
+    benchmark: bool,
+    trace_ops: bool,
+    trace_out: Option<&str>,
+    trace_values_summary: bool,
+    trace_run_metadata: bool,
+    thread_count: usize,
+    context_limit: usize,
+) -> anyhow::Result<String> {
+    let mut execution = ActiveGeneration {
+        runner,
+        model_context,
+        tracing: TracingState::from(trace_ops),
+    };
+    generate_with_execution(
+        backend,
+        model,
+        &mut execution,
+        tokenizer,
+        prompt,
+        max_tokens,
+        temperature,
+        top_k,
+        top_p,
+        benchmark,
+        trace_ops,
+        trace_out,
+        trace_values_summary,
+        trace_run_metadata,
+        thread_count,
+        context_limit,
+    )
+}
+
+/// run the full autoregressive generation loop.
+///
+/// operates in two phases:
+/// 1. **prefill** - feeds the entire prompt through the model in one forward pass,
+///    populating the kv cache with key/value projections for all prompt tokens.
+/// 2. **decode** - generates one token at a time: samples from the last position's
+///    logits, appends it, and runs a single-token forward pass reusing the cached
+///    k/v from all previous positions. stops when `max_tokens` is reached or a
+///    tokenizer-defined eos token is predicted.
+///
+/// temperature 0.0 uses greedy argmax; any positive value enables temperature
+/// scaling with optional top-k and top-p filtering via [`sample_token`].
+#[allow(clippy::too_many_arguments)]
+fn generate_with_execution<B, M, E>(
+    backend: &B,
+    model: &M,
+    execution: &mut E,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    prompt: &str,
+    max_tokens: usize,
+    temperature: f32,
+    top_k: Option<usize>,
+    top_p: Option<f32>,
+    benchmark: bool,
+    trace_ops: bool,
+    trace_out: Option<&str>,
+    trace_values_summary: bool,
+    trace_run_metadata: bool,
+    thread_count: usize,
+    context_limit: usize,
+) -> anyhow::Result<String>
+where
+    B: Backend,
+    M: ForwardModel<B>,
+    E: GenerationExecution<B, M>,
     B::Error: Send + Sync + 'static,
 {
     let mut rng = rand::thread_rng();
@@ -1884,7 +2215,15 @@ where
         trace::enable_tracing("prefill", 0);
     }
     let mut cache = model.create_cache(backend, max_seq_len);
-    let mut logits = model.forward_last_logits_with_cache(backend, &all_tokens, &mut cache, 0)?;
+    execution.before_prefill(prompt_len)?;
+    let mut logits = execution.forward_last_logits(
+        backend,
+        model,
+        &all_tokens,
+        &mut cache,
+        0,
+        ExecutionPhase::Prefill,
+    )?;
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
     if trace_ops {
         prefill_trace = trace::disable_tracing();
@@ -1934,11 +2273,13 @@ where
         if trace_ops {
             trace::enable_tracing("decode", step);
         }
-        logits = model.forward_last_logits_with_cache(
+        logits = execution.forward_last_logits(
             backend,
+            model,
             &[next_token as u32],
             &mut cache,
             prompt_len + step, // absolute position offset
+            ExecutionPhase::Decode,
         )?;
         decode_evaluations += 1;
         if trace_ops {
@@ -2014,6 +2355,7 @@ where
         log::debug!("generated: {:?}", output);
     }
 
+    execution.generation_complete(prompt_len, generated.len(), decode_evaluations)?;
     Ok(output)
 }
 
@@ -2200,6 +2542,104 @@ mod tests {
         assert!(Args::try_parse_from(["ember", "--top-p", "0"]).is_err());
         assert!(Args::try_parse_from(["ember", "--top-p", "1.1"]).is_err());
         assert!(Args::try_parse_from(["ember", "--max-seq-len", "0"]).is_err());
+    }
+
+    #[test]
+    fn zero_layer_output_cli_parses_typed_spec() {
+        let args = Args::try_parse_from([
+            "ember",
+            "--arch",
+            "qwen3",
+            "--zero-layer-output",
+            "4:attention",
+        ])
+        .unwrap();
+        let spec = args.zero_layer_output.unwrap();
+        assert_eq!(spec.layer(), 4);
+        assert_eq!(
+            spec.stage(),
+            ember::experiments::ZeroLayerOutputStage::Attention
+        );
+        validate_experiment_options(&args).unwrap();
+    }
+
+    #[test]
+    fn zero_layer_output_cli_rejects_malformed_and_incompatible_uses() {
+        assert!(Args::try_parse_from([
+            "ember",
+            "--arch",
+            "llama",
+            "--zero-layer-output",
+            "4:residual",
+        ])
+        .is_err());
+        assert!(Args::try_parse_from([
+            "ember",
+            "--arch",
+            "gemma4",
+            "--zero-layer-output",
+            "4:attention",
+            "--dump-layers",
+            "layers.bin",
+        ])
+        .is_err());
+
+        let gpt2 =
+            Args::try_parse_from(["ember", "--arch", "gpt2", "--zero-layer-output", "0:layer"])
+                .unwrap();
+        assert!(validate_experiment_options(&gpt2)
+            .unwrap_err()
+            .to_string()
+            .contains("not gpt2"));
+
+        let subcommand = Args::try_parse_from([
+            "ember",
+            "--zero-layer-output",
+            "0:layer",
+            "bench-decode",
+            "--model",
+            "model.gguf",
+            "--arch",
+            "llama",
+        ])
+        .unwrap();
+        assert!(validate_experiment_options(&subcommand)
+            .unwrap_err()
+            .to_string()
+            .contains("normal generation"));
+    }
+
+    #[test]
+    fn run_manifest_omits_disabled_experiment_and_records_active_one() {
+        let normal = Args::try_parse_from(["ember", "--arch", "llama"]).unwrap();
+        let normal_manifest = build_run_manifest(
+            &normal,
+            "tokenizer.json",
+            None,
+            None,
+            &serde_json::json!({}),
+        );
+        assert!(normal_manifest["execution"].get("experiment").is_none());
+
+        let active =
+            Args::try_parse_from(["ember", "--arch", "gemma4", "--zero-layer-output", "2:mlp"])
+                .unwrap();
+        let active_manifest = build_run_manifest(
+            &active,
+            "tokenizer.json",
+            None,
+            None,
+            &serde_json::json!({}),
+        );
+        assert_eq!(
+            active_manifest["execution"]["experiment"],
+            serde_json::json!({
+                "name": "zero-layer-output",
+                "layer": 2,
+                "stage": "mlp",
+                "modifies_execution": true,
+            })
+        );
     }
 
     #[test]

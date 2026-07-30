@@ -244,6 +244,7 @@ the patched extractor contract is implemented.
 | `--demo` | (none) | fixed prompts with timing and deterministic output |
 | `--delay-ms` | `0` | delay between tokens in demo mode (0 = instant) |
 | `--benchmark` | (none) | print prefill/decode timing to stderr |
+| `--zero-layer-output` | (none) | experimental `LAYER:attention|mlp|layer` intervention for normal LLaMA, Qwen3, or Gemma 4 generation |
 | `--trace` | (none) | enable per-operation execution tracing (`ops`) |
 | `--trace-out` | stderr | write trace JSON to a file |
 | `--trace-values` | `none` | optionally record output norms and fingerprints (`summary`) |
@@ -264,6 +265,29 @@ the patched extractor contract is implemented.
 | `--probe-output-prefix` | `probe` | output filename prefix for batch probe extraction |
 | `--probe-generate-tokens` | `16` | continuation length for probe behavioral scoring |
 | `--probe-limit` | (none) | cap probe extraction to the first N stimuli for smoke tests |
+
+### research experiments
+
+Ember v0.1 has an intentionally unstable, statically compiled experiment API
+for narrow research interventions. The built-in example zeros one selected
+layer contribution:
+
+```bash
+target/release/ember \
+  --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" \
+  --temperature 0 \
+  --zero-layer-output 4:mlp
+```
+
+Experiment notices and summaries go to stderr; generated text keeps its normal
+stdout format. Active experiments do not currently participate in probes,
+hidden-state extraction, logits/layer dumps, demos, or benchmark subcommands.
+Dynamic third-party plugin loading and multiple simultaneous experiments are
+intentionally unsupported. See [docs/experiments.md](docs/experiments.md) for
+the hook lifecycle, mutation boundaries, guarantees, and extension process.
 
 ### decode benchmark
 

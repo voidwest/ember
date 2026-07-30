@@ -795,4 +795,53 @@ mod tests {
         assert_eq!(decode.token_position(), Some(6));
         assert!(decode.tracing.is_enabled());
     }
+
+    #[test]
+    fn runner_preserves_complete_lifecycle_order() {
+        let model = ModelContext::new(ModelFamily::Gemma4, None, "gemma4", 1, 4);
+        let execution =
+            ExecutionContext::new(model, ExecutionPhase::Prefill, 0, 2, TracingState::Disabled);
+        let (experiment, records) = test_support::RecordingExperiment::new();
+        let mut runner = ExperimentRunner::new(experiment);
+        runner.on_model_loaded(&model).unwrap();
+        runner.before_prefill(&execution).unwrap();
+
+        let mut values = [1.0; 8];
+        let mut tensor = TensorAccess::new(2, 4, &mut values);
+        runner.before_layer(execution, 0, &mut tensor).unwrap();
+        runner.after_attention(execution, 0, &mut tensor).unwrap();
+        runner.after_mlp(execution, 0, &mut tensor).unwrap();
+        runner.after_layer(execution, 0, &mut tensor).unwrap();
+        runner.before_logits(&execution, &mut tensor).unwrap();
+        runner.after_logits(&execution, &mut tensor).unwrap();
+        runner
+            .on_generation_complete(&GenerationContext::new(
+                model,
+                2,
+                1,
+                0,
+                TracingState::Disabled,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            records
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|record| record.hook)
+                .collect::<Vec<_>>(),
+            [
+                ExperimentHook::ModelLoaded,
+                ExperimentHook::BeforePrefill,
+                ExperimentHook::BeforeLayer,
+                ExperimentHook::AfterAttention,
+                ExperimentHook::AfterMlp,
+                ExperimentHook::AfterLayer,
+                ExperimentHook::BeforeLogits,
+                ExperimentHook::AfterLogits,
+                ExperimentHook::GenerationComplete,
+            ]
+        );
+    }
 }
