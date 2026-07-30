@@ -8,11 +8,9 @@
 //!
 //! ## Buffer sizing
 //!
-//! Buffers are sized for the largest row count the workspace will see across
-//! a decode step. For seq_len=1 decode, every tensor has shape `[1, dim]`.
-//! For prefill, seq_len can be larger; the workspace allocates once with the
-//! model's max context length as the row bound, so resize never reallocates
-//! during inference as long as `seq_len <= max_seq_len`.
+//! The production Llama path uses this workspace only for single-token decode,
+//! with `max_rows = 1`. The type can hold more rows for focused experiments,
+//! but prefill continues through the generic tensor path.
 
 use alloc::vec::Vec;
 
@@ -61,8 +59,7 @@ pub struct Workspace {
 impl Workspace {
     /// Allocate a workspace sized for `max_rows` tokens.
     ///
-    /// `max_rows` should be at least the model's max sequence length if you
-    /// plan to use this for prefill; for pure decode it only needs to be 1.
+    /// Production decode passes `max_rows = 1`.
     pub fn new(
         max_rows: usize,
         embed_dim: usize,
