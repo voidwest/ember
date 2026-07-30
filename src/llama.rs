@@ -14,6 +14,16 @@ thread_local! {
     static LLAMA_DECODE_WORKSPACE: RefCell<Option<Workspace>> = const { RefCell::new(None) };
 }
 
+macro_rules! llama_trace_span {
+    ($($argument:tt)*) => {
+        if crate::trace::is_tracing() {
+            crate::trace::span($($argument)*)
+        } else {
+            None
+        }
+    };
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RopeLayout {
     AdjacentPair,
@@ -189,12 +199,13 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 
         let seq_len = backend.shape(x)[0];
         let embed_dim = backend.shape(x)[1];
+        let tracing = trace::is_tracing();
 
         // -- gate projection --
-        let t0 = Instant::now();
+        let t0 = tracing.then(Instant::now);
         let gate = self.gate_proj.forward(backend, x)?;
         let inter_dim = backend.shape(&gate)[1];
-        if trace::is_tracing() {
+        if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
                 Some(trace::compute_tensor_values(backend.data(&gate)))
             } else {
@@ -215,9 +226,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
         }
 
         // -- silu --
-        let t0 = Instant::now();
+        let t0 = tracing.then(Instant::now);
         let gate = backend.silu(&gate)?;
-        if trace::is_tracing() {
+        if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
                 Some(trace::compute_tensor_values(backend.data(&gate)))
             } else {
@@ -238,9 +249,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
         }
 
         // -- up projection --
-        let t0 = Instant::now();
+        let t0 = tracing.then(Instant::now);
         let up = self.up_proj.forward(backend, x)?;
-        if trace::is_tracing() {
+        if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
                 Some(trace::compute_tensor_values(backend.data(&up)))
             } else {
@@ -261,9 +272,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
         }
 
         // -- elemul (gating) --
-        let t0 = Instant::now();
+        let t0 = tracing.then(Instant::now);
         let gated = backend.elemul(&gate, &up)?;
-        if trace::is_tracing() {
+        if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
                 Some(trace::compute_tensor_values(backend.data(&gated)))
             } else {
@@ -284,9 +295,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
         }
 
         // -- down projection --
-        let t0 = Instant::now();
+        let t0 = tracing.then(Instant::now);
         let result = self.down_proj.forward(backend, &gated)?;
-        if trace::is_tracing() {
+        if let Some(t0) = t0 {
             let vals = if trace::values_enabled() {
                 Some(trace::compute_tensor_values(backend.data(&result)))
             } else {
@@ -717,7 +728,7 @@ impl<B: Backend> LlamaAttention<B> {
         let embed_dim = backend.shape(x)[1];
 
         // -- Q projection --
-        let _span_q = trace::span(
+        let _span_q = llama_trace_span!(
             "q_proj",
             layer,
             OpKind::MatMulQ8_0,
@@ -736,7 +747,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         // -- K projection --
         let kv_dim = self.n_kv_heads * self.head_dim;
-        let _span_k = trace::span(
+        let _span_k = llama_trace_span!(
             "k_proj",
             layer,
             OpKind::MatMulQ8_0,
@@ -753,7 +764,7 @@ impl<B: Backend> LlamaAttention<B> {
         }
 
         // -- V projection --
-        let _span_v = trace::span(
+        let _span_v = llama_trace_span!(
             "v_proj",
             layer,
             OpKind::MatMulQ8_0,
@@ -774,7 +785,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         // -- RoPE Q --
         let q_width = self.n_heads * head_dim;
-        let _span_rope_q = trace::span(
+        let _span_rope_q = llama_trace_span!(
             "rope_q",
             layer,
             OpKind::RoPE,
@@ -806,7 +817,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         // -- RoPE K --
         let k_width = self.n_kv_heads * head_dim;
-        let _span_rope_k = trace::span(
+        let _span_rope_k = llama_trace_span!(
             "rope_k",
             layer,
             OpKind::RoPE,
@@ -840,7 +851,7 @@ impl<B: Backend> LlamaAttention<B> {
         let v_data = backend.data(&v);
 
         // -- KV cache store --
-        let _span_kv_store = trace::span(
+        let _span_kv_store = llama_trace_span!(
             "kv_cache_store",
             layer,
             OpKind::Other,
@@ -865,7 +876,7 @@ impl<B: Backend> LlamaAttention<B> {
         // -- Attention score computation --
         let total_seq_len = cache.cursor() + seq_len;
         let max_seq_len = cache.max_seq_len();
-        let _span_attn = trace::span(
+        let _span_attn = llama_trace_span!(
             "attention_score",
             layer,
             OpKind::AttentionScore,
@@ -897,7 +908,7 @@ impl<B: Backend> LlamaAttention<B> {
         }
 
         // -- O projection --
-        let _span_o = trace::span(
+        let _span_o = llama_trace_span!(
             "o_proj",
             layer,
             OpKind::MatMulQ8_0,
@@ -985,7 +996,7 @@ impl<B: Backend> LlamaBlock<B> {
         let norm_bytes = trace::bytes_from_shape(backend.shape(&self.input_layernorm));
 
         // -- attn RMS norm --
-        let _span_attn_norm = trace::span(
+        let _span_attn_norm = llama_trace_span!(
             "attn_rms_norm",
             layer,
             OpKind::RmsNorm,
@@ -1008,7 +1019,7 @@ impl<B: Backend> LlamaBlock<B> {
         // -- attn residual add --
         let attn_out_bytes = trace::bytes_from_shape(backend.shape(&attn_out));
         #[allow(clippy::needless_borrow)]
-        let _span_attn_add = trace::span(
+        let _span_attn_add = llama_trace_span!(
             "attn_residual_add",
             layer,
             OpKind::ResidualAdd,
@@ -1026,7 +1037,7 @@ impl<B: Backend> LlamaBlock<B> {
 
         // -- mlp RMS norm --
         let mlp_norm_bytes = trace::bytes_from_shape(backend.shape(&self.post_attention_layernorm));
-        let _span_mlp_norm = trace::span(
+        let _span_mlp_norm = llama_trace_span!(
             "mlp_rms_norm",
             layer,
             OpKind::RmsNorm,
@@ -1047,7 +1058,7 @@ impl<B: Backend> LlamaBlock<B> {
         // -- mlp residual add --
         let mlp_out_bytes = trace::bytes_from_shape(backend.shape(&mlp_out));
         #[allow(clippy::needless_borrow)]
-        let _span_mlp_add = trace::span(
+        let _span_mlp_add = llama_trace_span!(
             "mlp_residual_add",
             layer,
             OpKind::ResidualAdd,
@@ -2236,7 +2247,7 @@ impl<B: Backend> Llama<B> {
         let embed_dim = self.config.embed_dim;
 
         // -- embedding lookup --
-        let _span_emb = trace::span(
+        let _span_emb = llama_trace_span!(
             "embedding",
             usize::MAX,
             OpKind::Embedding,
@@ -2262,7 +2273,7 @@ impl<B: Backend> Llama<B> {
         let last = backend.row_as_2d(&x, seq_len - 1)?;
 
         // -- final RMS norm --
-        let _span_final_norm = trace::span(
+        let _span_final_norm = llama_trace_span!(
             "final_norm",
             usize::MAX,
             OpKind::RmsNorm,
@@ -2276,7 +2287,7 @@ impl<B: Backend> Llama<B> {
         }
 
         // -- LM head --
-        let _span_head = trace::span(
+        let _span_head = llama_trace_span!(
             "lm_head",
             usize::MAX,
             OpKind::MatMulQ8_0,
@@ -2579,6 +2590,50 @@ mod tests {
                 "logit {index}: generic={expected} fast={actual}"
             );
         }
+    }
+
+    #[test]
+    fn trace_guard_preserves_semantic_events() {
+        let model = test_llama_model();
+        let backend = CpuBackend;
+        let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+
+        assert!(crate::trace::enable_tracing("prefill", 0));
+        let result =
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &[3], &mut cache, 0);
+        let report = crate::trace::disable_tracing().expect("trace report");
+        result.unwrap();
+
+        let names = report
+            .events
+            .iter()
+            .map(|event| event.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "embedding",
+                "attn_rms_norm",
+                "q_proj",
+                "k_proj",
+                "v_proj",
+                "rope_q",
+                "rope_k",
+                "kv_cache_store",
+                "attention_score",
+                "o_proj",
+                "attn_residual_add",
+                "mlp_rms_norm",
+                "gate_proj",
+                "silu",
+                "up_proj",
+                "elemul",
+                "down_proj",
+                "mlp_residual_add",
+                "final_norm",
+                "lm_head",
+            ]
+        );
     }
 
     #[test]
