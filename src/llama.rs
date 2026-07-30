@@ -1278,13 +1278,6 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
 
 impl Llama<CpuBackend> {
     fn eligible_fast_decode_inter_dim(&self) -> Option<usize> {
-        // The allocation-free path is currently validated for Llama's
-        // adjacent-pair RoPE. Keep Qwen's split-half layout on the generic
-        // implementation until it has real-model logit parity coverage.
-        if self.config.rope_layout != RopeLayout::AdjacentPair {
-            return None;
-        }
-
         let q_dim = self.config.n_heads.checked_mul(self.config.head_dim)?;
         let kv_dim = self.config.n_kv_heads.checked_mul(self.config.head_dim)?;
         let embed_dim = self.config.embed_dim;
@@ -2510,6 +2503,57 @@ mod tests {
                 (expected - actual).abs() <= tolerance,
                 "logit {index}: generic={expected} fast={actual}"
             );
+        }
+    }
+
+    #[test]
+    fn split_half_qk_norm_fast_decode_matches_generic_across_positions() {
+        let mut model = test_llama_model();
+        model.config.rope_layout = RopeLayout::SplitHalf;
+        model.config.qk_norm_order = QkNormOrder::BeforeRope;
+        for block in &mut model.blocks {
+            block.self_attn.rope_layout = RopeLayout::SplitHalf;
+            block.self_attn.qk_norm_order = QkNormOrder::BeforeRope;
+            block.self_attn.q_norm = Some(CpuTensor::from_data(
+                vec![model.config.head_dim],
+                vec![1.0; model.config.head_dim],
+            ));
+            block.self_attn.k_norm = Some(CpuTensor::from_data(
+                vec![model.config.head_dim],
+                vec![1.0; model.config.head_dim],
+            ));
+        }
+        model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
+        assert!(model.fast_decode_inter_dim.is_some());
+
+        let backend = CpuBackend;
+        let mut generic_cache = model.create_cache(&backend, model.config.max_seq_len);
+        let mut fast_cache = model.create_cache(&backend, model.config.max_seq_len);
+        for (position, token) in [3, 5, 7, 11].into_iter().enumerate() {
+            let generic = Llama::forward_last_logits_with_cache(
+                &model,
+                &backend,
+                &[token],
+                &mut generic_cache,
+                position,
+            )
+            .unwrap();
+            let fast = ForwardModel::forward_last_logits_with_cache(
+                &model,
+                &backend,
+                &[token],
+                &mut fast_cache,
+                position,
+            )
+            .unwrap();
+
+            for (index, (expected, actual)) in generic.data().iter().zip(fast.data()).enumerate() {
+                let tolerance = 1e-4 * expected.abs().max(actual.abs()).max(1.0);
+                assert!(
+                    (expected - actual).abs() <= tolerance,
+                    "position {position}, logit {index}: generic={expected} fast={actual}"
+                );
+            }
         }
     }
 
