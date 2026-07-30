@@ -486,16 +486,16 @@ impl<B: Backend> Gemma4Block<B> {
         let normed = backend.rms_norm(&x, &self.pre_ffn_norm, self.norm_eps)?;
         let mlp_out = self.mlp.forward(backend, &normed)?;
         let mlp_out = backend.rms_norm(&mlp_out, &self.post_ffn_norm, self.norm_eps)?;
-        let x = backend.add(&residual, &mlp_out)?;
+        let mut x = backend.add(&residual, &mlp_out)?;
 
         // 3. Per-layer embedding (PLE)
-        let x = self.add_ple(backend, &x, ple)?;
+        if let Some(ple) = ple {
+            x = self.add_ple(backend, &x, ple)?;
+        }
 
         // 4. Layer output scaling
         if let Some(ref scale) = self.layer_output_scale {
-            let scale_val = backend.data(scale)[0];
-            let scaled: Vec<f32> = backend.data(&x).iter().map(|v| v * scale_val).collect();
-            return backend.load_from_cpu(scaled, backend.shape(&x));
+            backend.scale_in_place(&mut x, backend.data(scale)[0]);
         }
         Ok(x)
     }
@@ -507,7 +507,11 @@ impl<B: Backend> Gemma4Block<B> {
         x: &B::Tensor,
         ple: Option<&B::Tensor>,
     ) -> Result<B::Tensor, B::Error> {
-        let x = self.add_ple(backend, x, ple)?;
+        let x = if let Some(ple) = ple {
+            self.add_ple(backend, x, ple)?
+        } else {
+            x.clone()
+        };
         let normed = backend.rms_norm(&x, &self.input_norm, self.norm_eps)?;
         let attn_out = self.attn.forward_full(backend, &normed, 0)?;
         let attn_out = backend.rms_norm(&attn_out, &self.post_attn_norm, self.norm_eps)?;
@@ -520,15 +524,7 @@ impl<B: Backend> Gemma4Block<B> {
 
     /// Apply per-layer input following HF pathway:
     /// gate(hidden)→gelu→*PLE→proj→rms_norm→+residual
-    fn add_ple(
-        &self,
-        backend: &B,
-        x: &B::Tensor,
-        ple: Option<&B::Tensor>,
-    ) -> Result<B::Tensor, B::Error> {
-        let Some(ple) = ple else {
-            return Ok(x.clone());
-        };
+    fn add_ple(&self, backend: &B, x: &B::Tensor, ple: &B::Tensor) -> Result<B::Tensor, B::Error> {
         let gate = self
             .inp_gate
             .as_ref()
@@ -978,7 +974,7 @@ impl<B: Backend> Gemma4<B> {
         }
         let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &x)?;
-        softcap_logits(backend, &logits, self.config.final_logit_softcap)
+        softcap_logits(backend, logits, self.config.final_logit_softcap)
     }
 
     pub fn forward_last_logits_with_cache(
@@ -1005,7 +1001,7 @@ impl<B: Backend> Gemma4<B> {
         let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &last)?;
-        softcap_logits(backend, &logits, self.config.final_logit_softcap)
+        softcap_logits(backend, logits, self.config.final_logit_softcap)
     }
 
     /// Run a forward pass and return (per-layer states, logits).
@@ -1042,7 +1038,7 @@ impl<B: Backend> Gemma4<B> {
         let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         let logits = self.head.forward(backend, &last)?;
-        let logits = softcap_logits(backend, &logits, self.config.final_logit_softcap)?;
+        let logits = softcap_logits(backend, logits, self.config.final_logit_softcap)?;
         Ok((layer_states, logits))
     }
 
@@ -1073,7 +1069,7 @@ impl<B: Backend> Gemma4<B> {
         let logits = self.head.forward(backend, &x)?;
         Ok((
             activations,
-            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
+            softcap_logits(backend, logits, self.config.final_logit_softcap)?,
         ))
     }
 
@@ -1091,7 +1087,7 @@ impl<B: Backend> Gemma4<B> {
         let logits = self.head.forward(backend, &last)?;
         Ok((
             pooled,
-            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
+            softcap_logits(backend, logits, self.config.final_logit_softcap)?,
         ))
     }
 
@@ -1213,14 +1209,10 @@ impl<B: Backend> Gemma4<B> {
 
         // 2. Global projection: hidden (1536) → per_layer_dim * n_layers (8960)
         let proj = if let Some(ref proj_layer) = self.per_layer_model_proj {
-            let projected = proj_layer.forward(backend, hidden)?;
+            let mut projected = proj_layer.forward(backend, hidden)?;
             let proj_scale = (self.config.embed_dim as f32).sqrt().recip();
-            let proj_data: Vec<f32> = backend
-                .data(&projected)
-                .iter()
-                .map(|v| v * proj_scale)
-                .collect();
-            Some(backend.load_from_cpu(proj_data, backend.shape(&projected))?)
+            backend.scale_in_place(&mut projected, proj_scale);
+            Some(projected)
         } else {
             None
         };
@@ -1285,8 +1277,8 @@ fn embed_tokens<B: Backend>(
     }
     // Matching llama.cpp: scale token embeddings by sqrt(n_embd)
     let emb_scale = (embed_dim as f32).sqrt();
-    let scaled: Vec<f32> = backend.data(&x).iter().map(|v| v * emb_scale).collect();
-    backend.load_from_cpu(scaled, backend.shape(&x))
+    backend.scale_in_place(&mut x, emb_scale);
+    Ok(x)
 }
 
 #[allow(dead_code)]
@@ -1342,18 +1334,18 @@ fn gelu_tanh<B: Backend>(backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Err
 
 fn softcap_logits<B: Backend>(
     backend: &B,
-    logits: &B::Tensor,
+    logits: B::Tensor,
     softcap: Option<f32>,
 ) -> Result<B::Tensor, B::Error> {
     let Some(cap) = softcap else {
-        return Ok(logits.clone());
+        return Ok(logits);
     };
     let data = backend
-        .data(logits)
+        .data(&logits)
         .iter()
         .map(|&v| (v / cap).tanh() * cap)
         .collect();
-    backend.load_from_cpu(data, backend.shape(logits))
+    backend.load_from_cpu(data, backend.shape(&logits))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1791,10 +1783,20 @@ mod tests {
     fn softcap_transforms_logits() {
         let backend = CpuBackend;
         let logits = CpuTensor::from_data(vec![1, 3], vec![-100.0, 0.0, 100.0]);
-        let capped = softcap_logits(&backend, &logits, Some(30.0)).unwrap();
+        let capped = softcap_logits(&backend, logits, Some(30.0)).unwrap();
         assert!(capped.data()[0] > -30.0);
         assert_eq!(capped.data()[1], 0.0);
         assert!(capped.data()[2] < 30.0);
+    }
+
+    #[test]
+    fn disabled_softcap_reuses_logits_allocation() {
+        let backend = CpuBackend;
+        let logits = CpuTensor::from_data(vec![1, 3], vec![1.0, 2.0, 3.0]);
+        let allocation = logits.data().as_ptr();
+        let uncapped = softcap_logits(&backend, logits, None).unwrap();
+
+        assert_eq!(uncapped.data().as_ptr(), allocation);
     }
 
     #[test]
