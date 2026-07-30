@@ -260,6 +260,8 @@ pub enum CpuError {
     Tensor(#[from] TensorError),
     #[error("shape mismatch: {0}")]
     ShapeMismatch(String),
+    #[error(transparent)]
+    Experiment(#[from] crate::experiments::ExperimentFailure),
 }
 
 fn q8_matmul_output_len(x: &CpuTensor, w: &QuantizedWeight) -> Result<(usize, usize), CpuError> {
