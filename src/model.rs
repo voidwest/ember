@@ -83,6 +83,19 @@ pub trait ForwardModel<B: Backend> {
         Ok((pooled, logits))
     }
 
+    /// Collect pooled block states without evaluating the final normalization
+    /// and language-model head. Implementations override this when hidden-only
+    /// extraction can stop before logits computation.
+    fn forward_pooled_hidden_states(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<Vec<Vec<f32>>, B::Error> {
+        self.forward_pooled_activations(backend, token_ids, token_index_groups)
+            .map(|(pooled, _)| pooled)
+    }
+
     /// batched forward pass with block-diagonal attention for independent sequences.
     ///
     /// The returned logits contain one row per block, evaluated at that block's
@@ -831,6 +844,15 @@ impl<B: Backend> ForwardModel<B> for Gpt2<B> {
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         Gpt2::forward_pooled_activations(self, backend, token_ids, token_index_groups)
     }
+
+    fn forward_pooled_hidden_states(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<Vec<Vec<f32>>, B::Error> {
+        Gpt2::forward_pooled_hidden_states(self, backend, token_ids, token_index_groups)
+    }
 }
 
 impl<B: Backend> Gpt2<B> {
@@ -981,6 +1003,30 @@ impl<B: Backend> Gpt2<B> {
         token_ids: &[u32],
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let (pooled, last) =
+            self.forward_pooled_hidden_and_last(backend, token_ids, token_index_groups)?;
+        let last = self.ln_f.forward(backend, &last)?;
+        let logits = self.head.forward(backend, &last)?;
+        Ok((pooled, logits))
+    }
+
+    pub fn forward_pooled_hidden_states(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<Vec<Vec<f32>>, B::Error> {
+        self.forward_pooled_hidden_and_last(backend, token_ids, token_index_groups)
+            .map(|(pooled, _)| pooled)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn forward_pooled_hidden_and_last(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         let n_layers = self.blocks.len();
         let embed_dim = self.embed_dim;
         let mut pooled = token_index_groups
@@ -1003,8 +1049,6 @@ impl<B: Backend> Gpt2<B> {
             }
         }
         let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
-        let last = self.ln_f.forward(backend, &last)?;
-        let logits = self.head.forward(backend, &last)?;
-        Ok((pooled, logits))
+        Ok((pooled, last))
     }
 }

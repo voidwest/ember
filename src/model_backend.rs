@@ -39,6 +39,7 @@ pub struct HiddenStateRequest<'a> {
     pub selected_token_positions: &'a [usize],
     pub layers: &'a [usize],
     pub max_seq_len: Option<usize>,
+    pub include_logits: bool,
 }
 
 pub struct NativeModelBackend<M> {
@@ -147,9 +148,21 @@ where
         }
 
         let groups = vec![request.selected_token_positions.to_vec()];
-        let (pooled_states, logits) =
-            self.model
-                .forward_pooled_activations(&self.compute, request.token_ids, &groups)?;
+        let (pooled_states, logits) = if request.include_logits {
+            let (pooled, logits) =
+                self.model
+                    .forward_pooled_activations(&self.compute, request.token_ids, &groups)?;
+            (pooled, Some(logits))
+        } else {
+            (
+                self.model.forward_pooled_hidden_states(
+                    &self.compute,
+                    request.token_ids,
+                    &groups,
+                )?,
+                None,
+            )
+        };
         let all_layers = &pooled_states[0];
         let embed_dim = self.model.embed_dim();
         let mut hidden_states = Vec::with_capacity(request.layers.len() * embed_dim);
@@ -158,25 +171,24 @@ where
             let end = start + embed_dim;
             hidden_states.extend_from_slice(&all_layers[start..end]);
         }
-        let raw_logits_shape = self.compute.shape(&logits).to_vec();
-        let (logits, logits_shape) = if raw_logits_shape.len() == 2 && raw_logits_shape[0] > 0 {
-            let vocab_size = raw_logits_shape[1];
-            let row_start = (raw_logits_shape[0] - 1) * vocab_size;
-            let row_end = row_start + vocab_size;
-            (
-                Some(self.compute.data(&logits)[row_start..row_end].to_vec()),
-                Some(vec![1, vocab_size]),
-            )
-        } else {
-            (
-                Some(self.compute.data(&logits).to_vec()),
-                Some(raw_logits_shape),
-            )
-        };
+        let (logits, logits_shape) = logits.map_or((None, None), |logits| {
+            let raw_shape = self.compute.shape(&logits).to_vec();
+            if raw_shape.len() == 2 && raw_shape[0] > 0 {
+                let vocab_size = raw_shape[1];
+                let row_start = (raw_shape[0] - 1) * vocab_size;
+                let row_end = row_start + vocab_size;
+                (
+                    Some(self.compute.data(&logits)[row_start..row_end].to_vec()),
+                    Some(vec![1, vocab_size]),
+                )
+            } else {
+                (Some(self.compute.data(&logits).to_vec()), Some(raw_shape))
+            }
+        });
         Ok(BackendHiddenStateOutput {
             hidden_states,
             hidden_states_shape: vec![request.layers.len(), embed_dim],
-            logits_available: true,
+            logits_available: request.include_logits,
             logits,
             logits_shape,
         })
@@ -556,6 +568,7 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
             selected_token_positions: &selected_token_positions,
             layers: &layers,
             max_seq_len: config.max_seq_len,
+            include_logits: config.write_logits,
         })?;
         if output.hidden_states_shape != vec![layers.len(), model_metadata.embed_dim] {
             anyhow::bail!(
@@ -850,8 +863,129 @@ fn llama_cpp_version(executable: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::CpuError;
+    use crate::tensor::CpuTensor;
+    use std::cell::Cell;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct CountingForwardModel {
+        hidden_calls: Cell<usize>,
+        logits_calls: Cell<usize>,
+    }
+
+    impl ForwardModel<CpuBackend> for CountingForwardModel {
+        fn create_cache(
+            &self,
+            _backend: &CpuBackend,
+            max_seq_len: usize,
+        ) -> crate::kv_cache::KVCache {
+            crate::kv_cache::KVCache::new(1, 1, 2, max_seq_len)
+        }
+
+        fn max_seq_len(&self, _backend: &CpuBackend) -> usize {
+            16
+        }
+
+        fn forward_with_cache(
+            &self,
+            _backend: &CpuBackend,
+            _token_ids: &[u32],
+            _cache: &mut crate::kv_cache::KVCache,
+            _start_pos: usize,
+        ) -> Result<CpuTensor, CpuError> {
+            unreachable!("not used by extraction")
+        }
+
+        fn forward_last_logits_with_cache(
+            &self,
+            _backend: &CpuBackend,
+            _token_ids: &[u32],
+            _cache: &mut crate::kv_cache::KVCache,
+            _start_pos: usize,
+        ) -> Result<CpuTensor, CpuError> {
+            unreachable!("not used by extraction")
+        }
+
+        fn n_layers(&self) -> usize {
+            1
+        }
+
+        fn embed_dim(&self) -> usize {
+            2
+        }
+
+        fn forward_with_activations(
+            &self,
+            _backend: &CpuBackend,
+            _token_ids: &[u32],
+        ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
+            unreachable!("not used by extraction")
+        }
+
+        fn forward_pooled_activations(
+            &self,
+            _backend: &CpuBackend,
+            _token_ids: &[u32],
+            _token_index_groups: &[Vec<usize>],
+        ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
+            self.logits_calls.set(self.logits_calls.get() + 1);
+            Ok((
+                vec![vec![1.0, 2.0]],
+                CpuTensor::from_data(vec![1, 3], vec![3.0, 4.0, 5.0]),
+            ))
+        }
+
+        fn forward_pooled_hidden_states(
+            &self,
+            _backend: &CpuBackend,
+            _token_ids: &[u32],
+            _token_index_groups: &[Vec<usize>],
+        ) -> Result<Vec<Vec<f32>>, CpuError> {
+            self.hidden_calls.set(self.hidden_calls.get() + 1);
+            Ok(vec![vec![1.0, 2.0]])
+        }
+    }
+
+    #[test]
+    fn native_extraction_skips_logits_when_not_requested() {
+        let model = CountingForwardModel {
+            hidden_calls: Cell::new(0),
+            logits_calls: Cell::new(0),
+        };
+        let tokenizer =
+            EmberTokenizer::from_file("tokenizer.json").expect("repository test tokenizer");
+        let mut backend = NativeModelBackend::new(
+            model,
+            tokenizer,
+            "Cargo.toml",
+            Some("test".to_string()),
+            Value::Null,
+            false,
+        );
+        let request = |include_logits| HiddenStateRequest {
+            token_ids: &[1],
+            selected_token_positions: &[0],
+            layers: &[0],
+            max_seq_len: None,
+            include_logits,
+        };
+
+        let hidden_only = backend.extract_hidden_states(request(false)).unwrap();
+        assert!(!hidden_only.logits_available);
+        assert!(hidden_only.logits.is_none());
+        assert_eq!(backend.model.hidden_calls.get(), 1);
+        assert_eq!(backend.model.logits_calls.get(), 0);
+
+        let with_logits = backend.extract_hidden_states(request(true)).unwrap();
+        assert!(with_logits.logits_available);
+        assert_eq!(
+            with_logits.logits.as_deref(),
+            Some([3.0, 4.0, 5.0].as_slice())
+        );
+        assert_eq!(backend.model.hidden_calls.get(), 1);
+        assert_eq!(backend.model.logits_calls.get(), 1);
+    }
 
     #[test]
     fn llama_cpp_placeholder_reports_not_implemented() {

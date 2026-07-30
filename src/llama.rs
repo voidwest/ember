@@ -1347,6 +1347,15 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
         Llama::forward_pooled_activations(self, backend, token_ids, token_index_groups)
     }
 
+    fn forward_pooled_hidden_states(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<Vec<Vec<f32>>, CpuError> {
+        Llama::forward_pooled_hidden_states(self, backend, token_ids, token_index_groups)
+    }
+
     fn forward_pooled_with_blocks(
         &self,
         backend: &CpuBackend,
@@ -2348,6 +2357,30 @@ impl<B: Backend> Llama<B> {
         token_ids: &[u32],
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let (pooled, x) =
+            self.forward_pooled_hidden_and_output(backend, token_ids, token_index_groups)?;
+        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &x)?;
+        Ok((pooled, logits))
+    }
+
+    pub fn forward_pooled_hidden_states(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<Vec<Vec<f32>>, B::Error> {
+        self.forward_pooled_hidden_and_output(backend, token_ids, token_index_groups)
+            .map(|(pooled, _)| pooled)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn forward_pooled_hidden_and_output(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         let embed_dim = self.config.embed_dim;
         let mut pooled = token_index_groups
             .iter()
@@ -2369,9 +2402,7 @@ impl<B: Backend> Llama<B> {
                 );
             }
         }
-        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
-        let logits = self.head.forward(backend, &x)?;
-        Ok((pooled, logits))
+        Ok((pooled, x))
     }
 
     /// batched forward pass with block-diagonal attention for independent sequences.
@@ -2634,6 +2665,21 @@ mod tests {
                 "lm_head",
             ]
         );
+    }
+
+    #[test]
+    fn hidden_only_pooling_matches_logits_path() {
+        let model = test_llama_model();
+        let backend = CpuBackend;
+        let groups = vec![vec![0, 1]];
+        let hidden_only = model
+            .forward_pooled_hidden_states(&backend, &[3, 5], &groups)
+            .unwrap();
+        let (with_logits, _) = model
+            .forward_pooled_activations(&backend, &[3, 5], &groups)
+            .unwrap();
+
+        assert_eq!(hidden_only, with_logits);
     }
 
     #[test]

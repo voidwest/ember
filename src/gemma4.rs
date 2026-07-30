@@ -657,6 +657,15 @@ impl<B: Backend> ForwardModel<B> for Gemma4<B> {
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         Gemma4::forward_pooled_activations(self, backend, token_ids, token_index_groups)
     }
+
+    fn forward_pooled_hidden_states(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<Vec<Vec<f32>>, B::Error> {
+        Gemma4::forward_pooled_hidden_states(self, backend, token_ids, token_index_groups)
+    }
 }
 
 impl Gemma4<CpuBackend> {
@@ -1075,6 +1084,34 @@ impl<B: Backend> Gemma4<B> {
         token_ids: &[u32],
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        let (pooled, x) =
+            self.forward_pooled_hidden_and_output(backend, token_ids, token_index_groups)?;
+        let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
+        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &last)?;
+        Ok((
+            pooled,
+            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
+        ))
+    }
+
+    pub fn forward_pooled_hidden_states(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<Vec<Vec<f32>>, B::Error> {
+        self.forward_pooled_hidden_and_output(backend, token_ids, token_index_groups)
+            .map(|(pooled, _)| pooled)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn forward_pooled_hidden_and_output(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
         let embed_dim = self.config.embed_dim;
         let mut pooled = token_index_groups
             .iter()
@@ -1105,13 +1142,7 @@ impl<B: Backend> Gemma4<B> {
         for _ in 0..token_ids.len() {
             cache.advance_cursor();
         }
-        let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
-        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
-        let logits = self.head.forward(backend, &last)?;
-        Ok((
-            pooled,
-            softcap_logits(backend, &logits, self.config.final_logit_softcap)?,
-        ))
+        Ok((pooled, x))
     }
 
     fn ple_vectors(
@@ -1877,6 +1908,15 @@ mod tests {
             .unwrap();
         assert_eq!(logits.shape(), &[2, 4]);
         assert!(logits.data().iter().all(|v| v.is_finite()));
+
+        let groups = vec![vec![0, 1]];
+        let hidden_only = model
+            .forward_pooled_hidden_states(&backend, &[0, 1], &groups)
+            .unwrap();
+        let (with_logits, _) = model
+            .forward_pooled_activations(&backend, &[0, 1], &groups)
+            .unwrap();
+        assert_eq!(hidden_only, with_logits);
     }
 
     #[test]
