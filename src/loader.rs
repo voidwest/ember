@@ -34,6 +34,31 @@ pub struct GgufLoader {
     pub tensors: HashMap<String, LoadedTensor>,
 }
 
+impl GgufLoader {
+    pub(crate) fn take_tensor(&mut self, name: &str) -> Result<LoadedTensor> {
+        self.tensors
+            .remove(name)
+            .with_context(|| format!("Missing tensor: {name}"))
+    }
+
+    pub(crate) fn take_f32(&mut self, name: &str) -> Result<CpuTensor> {
+        match self.take_tensor(name)? {
+            LoadedTensor::F32(tensor) => Ok(tensor),
+            LoadedTensor::Q8_0(weight) => Ok(weight.dequantize_all()),
+        }
+    }
+
+    pub(crate) fn take_optional_f32(&mut self, names: &[String]) -> Option<CpuTensor> {
+        let name = names
+            .iter()
+            .find(|name| self.tensors.contains_key(name.as_str()))?;
+        match self.tensors.remove(name.as_str())? {
+            LoadedTensor::F32(tensor) => Some(tensor),
+            LoadedTensor::Q8_0(weight) => Some(weight.dequantize_all()),
+        }
+    }
+}
+
 /// a typed value from GGUF metadata.
 #[derive(Debug)]
 pub enum GgufValue {
@@ -334,5 +359,24 @@ fn read_gguf_value<R: Read>(f: &mut R, val_type: u32) -> Result<GgufValue> {
             Ok(GgufValue::Array(elements))
         }
         _ => bail!("unsupported GGUF value type: {}", val_type),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn take_f32_moves_tensor_storage() {
+        let tensor = CpuTensor::from_data(vec![2], vec![1.0, 2.0]);
+        let allocation = tensor.data().as_ptr();
+        let mut loader = GgufLoader {
+            metadata: HashMap::new(),
+            tensors: HashMap::from([("weight".to_string(), LoadedTensor::F32(tensor))]),
+        };
+
+        let taken = loader.take_f32("weight").unwrap();
+        assert_eq!(taken.data().as_ptr(), allocation);
+        assert!(!loader.tensors.contains_key("weight"));
     }
 }

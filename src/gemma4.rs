@@ -665,42 +665,18 @@ impl<B: Backend> ForwardModel<B> for Gemma4<B> {
 }
 
 impl Gemma4<CpuBackend> {
-    pub fn from_loader(loader: GgufLoader) -> anyhow::Result<Self> {
+    pub fn from_loader(mut loader: GgufLoader) -> anyhow::Result<Self> {
         let config = Gemma4Config::from_gguf_metadata(&loader)?;
         log::debug!("gemma4 config: {:?}", config);
 
-        let get_f32 = |name: &str| -> anyhow::Result<CpuTensor> {
-            match loader.tensors.get(name) {
-                Some(LoadedTensor::F32(t)) => Ok(t.clone()),
-                Some(LoadedTensor::Q8_0(qw)) => Ok(qw.dequantize_all()),
-                None => anyhow::bail!("Missing tensor: {}", name),
-            }
-        };
-        let get_optional_f32 = |names: &[String]| -> Option<CpuTensor> {
-            names
-                .iter()
-                .find_map(|name| match loader.tensors.get(name) {
-                    Some(LoadedTensor::F32(t)) => Some(t.clone()),
-                    Some(LoadedTensor::Q8_0(qw)) => Some(qw.dequantize_all()),
-                    None => None,
-                })
-        };
-        let get_linear = |name: &str| -> anyhow::Result<Linear<CpuBackend>> {
-            match loader.tensors.get(name) {
-                Some(LoadedTensor::F32(t)) => Ok(Linear::new(t.clone().transpose(), None)),
-                Some(LoadedTensor::Q8_0(qw)) => Ok(Linear::new_q8_0(qw.clone(), None)),
-                None => anyhow::bail!("Missing tensor: {}", name),
-            }
-        };
-        let embed_tokens = match loader.tensors.get("token_embd.weight") {
-            Some(LoadedTensor::F32(t)) => Gemma4Embedding::F32(Arc::new(t.clone())),
-            Some(LoadedTensor::Q8_0(qw)) => Gemma4Embedding::Q8_0(Arc::new(qw.clone())),
-            None => anyhow::bail!("Missing tensor: token_embd.weight"),
+        let embed_tokens = match loader.take_tensor("token_embd.weight")? {
+            LoadedTensor::F32(tensor) => Gemma4Embedding::F32(Arc::new(tensor)),
+            LoadedTensor::Q8_0(weight) => Gemma4Embedding::Q8_0(Arc::new(weight)),
         };
 
         // Load rope_freqs for partial RoPE application (global layers)
-        let rope_freqs: Option<Vec<f32>> = match loader.tensors.get("rope_freqs.weight") {
-            Some(LoadedTensor::F32(t)) => Some(t.data().to_vec()),
+        let rope_freqs: Option<Vec<f32>> = match loader.tensors.remove("rope_freqs.weight") {
+            Some(LoadedTensor::F32(tensor)) => Some(tensor.data),
             _ => None,
         };
 
@@ -771,20 +747,26 @@ impl Gemma4<CpuBackend> {
             let head_dim = config.head_dim_for(layer_type);
 
             let attn = Gemma4Attention {
-                q_proj: get_linear(&format!("blk.{}.attn_q.weight", i))?,
+                q_proj: take_gemma4_linear(&mut loader, &format!("blk.{}.attn_q.weight", i))?,
                 k_proj: if shared_source_layer.is_some() {
                     None
                 } else {
-                    Some(get_linear(&format!("blk.{}.attn_k.weight", i))?)
+                    Some(take_gemma4_linear(
+                        &mut loader,
+                        &format!("blk.{}.attn_k.weight", i),
+                    )?)
                 },
                 v_proj: if shared_source_layer.is_some() {
                     None
                 } else {
-                    Some(get_linear(&format!("blk.{}.attn_v.weight", i))?)
+                    Some(take_gemma4_linear(
+                        &mut loader,
+                        &format!("blk.{}.attn_v.weight", i),
+                    )?)
                 },
-                o_proj: get_linear(&format!("blk.{}.attn_output.weight", i))?,
-                q_norm: get_f32(&format!("blk.{}.attn_q_norm.weight", i))?,
-                k_norm: get_f32(&format!("blk.{}.attn_k_norm.weight", i))?,
+                o_proj: take_gemma4_linear(&mut loader, &format!("blk.{}.attn_output.weight", i))?,
+                q_norm: loader.take_f32(&format!("blk.{}.attn_q_norm.weight", i))?,
+                k_norm: loader.take_f32(&format!("blk.{}.attn_k_norm.weight", i))?,
                 rope_cos,
                 rope_sin,
                 layer_type,
@@ -797,21 +779,26 @@ impl Gemma4<CpuBackend> {
                 shared_source_layer,
             };
 
-            let post_attn_norm = get_optional_f32(&[
-                format!("blk.{}.attn_post_norm.weight", i),
-                format!("blk.{}.post_attention_norm.weight", i),
-            ])
-            .ok_or_else(|| anyhow::anyhow!("Missing tensor: blk.{}.attn_post_norm.weight", i))?;
-            let post_ffn_norm = get_optional_f32(&[
-                format!("blk.{}.ffn_post_norm.weight", i),
-                format!("blk.{}.post_ffw_norm.weight", i),
-            ])
-            .ok_or_else(|| anyhow::anyhow!("Missing tensor: blk.{}.ffn_post_norm.weight", i))?;
+            let post_attn_norm = loader
+                .take_optional_f32(&[
+                    format!("blk.{}.attn_post_norm.weight", i),
+                    format!("blk.{}.post_attention_norm.weight", i),
+                ])
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Missing tensor: blk.{}.attn_post_norm.weight", i)
+                })?;
+            let post_ffn_norm = loader
+                .take_optional_f32(&[
+                    format!("blk.{}.ffn_post_norm.weight", i),
+                    format!("blk.{}.post_ffw_norm.weight", i),
+                ])
+                .ok_or_else(|| anyhow::anyhow!("Missing tensor: blk.{}.ffn_post_norm.weight", i))?;
 
             let proj_name = format!("blk.{}.proj.weight", i);
             let has_ple = loader.tensors.contains_key(&proj_name);
             let inp_gate = if has_ple {
-                let linear = get_linear(&format!("blk.{}.inp_gate.weight", i))?;
+                let linear =
+                    take_gemma4_linear(&mut loader, &format!("blk.{}.inp_gate.weight", i))?;
                 if linear.in_features(&CpuBackend) != config.embed_dim
                     || linear.out_features(&CpuBackend) != per_layer_dim
                 {
@@ -829,7 +816,7 @@ impl Gemma4<CpuBackend> {
                 None
             };
             let ple_proj = if has_ple {
-                let linear = get_linear(&proj_name)?;
+                let linear = take_gemma4_linear(&mut loader, &proj_name)?;
                 if linear.in_features(&CpuBackend) != per_layer_dim
                     || linear.out_features(&CpuBackend) != config.embed_dim
                 {
@@ -847,29 +834,35 @@ impl Gemma4<CpuBackend> {
                 None
             };
             let post_ple_norm = if has_ple {
-                Some(get_f32(&format!("blk.{}.post_norm.weight", i))?)
+                Some(loader.take_f32(&format!("blk.{}.post_norm.weight", i))?)
             } else {
                 None
             };
             let layer_output_scale = if has_ple {
-                Some(get_f32(&format!("blk.{}.layer_output_scale.weight", i))?)
+                Some(loader.take_f32(&format!("blk.{}.layer_output_scale.weight", i))?)
             } else {
                 None
             };
 
             blocks.push(Gemma4Block {
-                input_norm: get_f32(&format!("blk.{}.attn_norm.weight", i))?,
+                input_norm: loader.take_f32(&format!("blk.{}.attn_norm.weight", i))?,
                 attn,
                 inp_gate,
                 ple_proj,
                 post_ple_norm,
                 layer_output_scale,
                 post_attn_norm,
-                pre_ffn_norm: get_f32(&format!("blk.{}.ffn_norm.weight", i))?,
+                pre_ffn_norm: loader.take_f32(&format!("blk.{}.ffn_norm.weight", i))?,
                 mlp: Gemma4Mlp {
-                    gate_proj: get_linear(&format!("blk.{}.ffn_gate.weight", i))?,
-                    up_proj: get_linear(&format!("blk.{}.ffn_up.weight", i))?,
-                    down_proj: get_linear(&format!("blk.{}.ffn_down.weight", i))?,
+                    gate_proj: take_gemma4_linear(
+                        &mut loader,
+                        &format!("blk.{}.ffn_gate.weight", i),
+                    )?,
+                    up_proj: take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_up.weight", i))?,
+                    down_proj: take_gemma4_linear(
+                        &mut loader,
+                        &format!("blk.{}.ffn_down.weight", i),
+                    )?,
                 },
                 post_ffn_norm,
                 norm_eps: config.norm_eps,
@@ -881,7 +874,7 @@ impl Gemma4<CpuBackend> {
             "token_embd_per_layer.weight".to_string(),
             "per_layer_embd.weight".to_string(),
         ];
-        let ple = match get_optional_f32_only(&loader, &ple_names) {
+        let ple = match take_optional_f32_only(&mut loader, &ple_names) {
             Some(t) => {
                 if t.shape().len() != 3
                     || t.shape()[0] != config.n_layers
@@ -896,15 +889,12 @@ impl Gemma4<CpuBackend> {
                 }
                 Some(Gemma4Ple::Hidden(t))
             }
-            None => ple_names
-                .iter()
-                .find_map(|name| match loader.tensors.get(name) {
-                    Some(LoadedTensor::Q8_0(qw)) => Some(Gemma4Ple::PackedQ8 {
-                        embeddings: qw.clone(),
-                        per_layer_dim,
-                    }),
-                    _ => None,
-                }),
+            None => {
+                take_optional_q8(&mut loader, &ple_names).map(|embeddings| Gemma4Ple::PackedQ8 {
+                    embeddings,
+                    per_layer_dim,
+                })
+            }
         };
         if ple.is_none()
             && (config.vocab_size_per_layer_input.is_some()
@@ -915,23 +905,23 @@ impl Gemma4<CpuBackend> {
             );
         }
 
-        let head = match loader.tensors.get("output.weight") {
-            Some(LoadedTensor::F32(t)) => {
-                Gemma4Head::Linear(Linear::new(t.clone().transpose(), None))
+        let head = match loader.tensors.remove("output.weight") {
+            Some(LoadedTensor::F32(tensor)) => {
+                Gemma4Head::Linear(Linear::new(tensor.transpose(), None))
             }
-            Some(LoadedTensor::Q8_0(qw)) => Gemma4Head::Linear(Linear::new_q8_0(qw.clone(), None)),
+            Some(LoadedTensor::Q8_0(weight)) => Gemma4Head::Linear(Linear::new_q8_0(weight, None)),
             None => Gemma4Head::TiedEmbedding(embed_tokens.clone()),
         };
 
         // Global PLE projection (llama.cpp pathway): combines hidden state
         // with per-layer token embeddings before the per-layer gate.
         let (per_layer_model_proj, per_layer_proj_norm) =
-            if let Some(t) = loader.tensors.get("per_layer_model_proj.weight") {
+            if let Some(t) = loader.tensors.remove("per_layer_model_proj.weight") {
                 let proj = match t {
-                    LoadedTensor::F32(t) => Linear::new(t.clone(), None),
-                    LoadedTensor::Q8_0(qw) => Linear::new_q8_0(qw.clone(), None),
+                    LoadedTensor::F32(tensor) => Linear::new(tensor, None),
+                    LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
                 };
-                let norm = get_f32("per_layer_proj_norm.weight")?;
+                let norm = loader.take_f32("per_layer_proj_norm.weight")?;
                 (Some(proj), Some(norm))
             } else {
                 (None, None)
@@ -940,7 +930,7 @@ impl Gemma4<CpuBackend> {
         Ok(Self {
             embed_tokens,
             blocks,
-            norm: get_f32("output_norm.weight")?,
+            norm: loader.take_f32("output_norm.weight")?,
             head,
             ple,
             per_layer_model_proj,
@@ -1673,13 +1663,40 @@ fn get_optional_f32(loader: &GgufLoader, keys: &[&str]) -> Option<f32> {
     })
 }
 
-fn get_optional_f32_only(loader: &GgufLoader, names: &[String]) -> Option<CpuTensor> {
-    names
-        .iter()
-        .find_map(|name| match loader.tensors.get(name) {
-            Some(LoadedTensor::F32(t)) => Some(t.clone()),
-            Some(LoadedTensor::Q8_0(_)) | None => None,
-        })
+fn take_gemma4_linear(loader: &mut GgufLoader, name: &str) -> anyhow::Result<Linear<CpuBackend>> {
+    match loader.take_tensor(name)? {
+        LoadedTensor::F32(tensor) => Ok(Linear::new(tensor.transpose(), None)),
+        LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, None)),
+    }
+}
+
+fn take_optional_f32_only(loader: &mut GgufLoader, names: &[String]) -> Option<CpuTensor> {
+    let name = names.iter().find(|name| {
+        matches!(
+            loader.tensors.get(name.as_str()),
+            Some(LoadedTensor::F32(_))
+        )
+    })?;
+    match loader.tensors.remove(name.as_str())? {
+        LoadedTensor::F32(tensor) => Some(tensor),
+        LoadedTensor::Q8_0(_) => unreachable!("tensor kind checked before removal"),
+    }
+}
+
+fn take_optional_q8(
+    loader: &mut GgufLoader,
+    names: &[String],
+) -> Option<crate::quant::QuantizedWeight> {
+    let name = names.iter().find(|name| {
+        matches!(
+            loader.tensors.get(name.as_str()),
+            Some(LoadedTensor::Q8_0(_))
+        )
+    })?;
+    match loader.tensors.remove(name.as_str())? {
+        LoadedTensor::Q8_0(weight) => Some(weight),
+        LoadedTensor::F32(_) => unreachable!("tensor kind checked before removal"),
+    }
 }
 
 #[cfg(test)]

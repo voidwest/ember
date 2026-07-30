@@ -1694,7 +1694,7 @@ impl Llama<CpuBackend> {
     }
 
     fn from_loader_impl(
-        loader: crate::loader::GgufLoader,
+        mut loader: crate::loader::GgufLoader,
         max_seq_len: Option<usize>,
         allow_automatic_packing: bool,
     ) -> anyhow::Result<Self> {
@@ -1723,58 +1723,41 @@ impl Llama<CpuBackend> {
         let rope_cos = Arc::new(rope_cos);
         let rope_sin = Arc::new(rope_sin);
 
-        // helper: get a tensor as f32 (for embeddings, norms, etc.)
-        let get_f32 = |name: &str| -> anyhow::Result<CpuTensor> {
-            match loader.tensors.get(name) {
-                Some(LoadedTensor::F32(t)) => Ok(t.clone()),
-                Some(LoadedTensor::Q8_0(qw)) => Ok(qw.dequantize_all()),
-                None => anyhow::bail!("Missing tensor: {}", name),
-            }
-        };
-
-        // helper: build a linear from a weight tensor (may be f32 or q8_0).
-        // llama weights have no bias, so this takes only the weight name.
-        let get_linear = |name: &str| -> anyhow::Result<Linear<CpuBackend>> {
-            let mut linear = match loader.tensors.get(name) {
-                Some(LoadedTensor::F32(t)) => Linear::new(t.clone().transpose(), None),
-                Some(LoadedTensor::Q8_0(qw)) => Linear::new_q8_0(qw.clone(), None),
-                None => anyhow::bail!("Missing tensor: {}", name),
+        let embed_tokens: LlamaEmbedding<CpuBackend> =
+            match loader.take_tensor("token_embd.weight")? {
+                LoadedTensor::F32(tensor) => LlamaEmbedding::F32(tensor),
+                LoadedTensor::Q8_0(weight) => LlamaEmbedding::Q8_0(weight),
             };
-            if packed_decode_enabled {
-                linear.prepare_packed_decode();
-            }
-            Ok(linear)
-        };
-
-        let embed_tokens = match loader.tensors.get("token_embd.weight") {
-            Some(LoadedTensor::F32(tensor)) => LlamaEmbedding::F32(tensor.clone()),
-            Some(LoadedTensor::Q8_0(weight)) => LlamaEmbedding::Q8_0(weight.clone()),
-            None => anyhow::bail!("Missing tensor: token_embd.weight"),
-        };
 
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
             // optionally load qk norm weights (qwen3, etc.)
-            let qk_q_norm = loader
-                .tensors
-                .get(&format!("blk.{}.attn_q_norm.weight", i))
-                .and_then(|t| match t {
-                    LoadedTensor::F32(t) => Some(t.clone()),
-                    _ => None,
-                });
-            let qk_k_norm = loader
-                .tensors
-                .get(&format!("blk.{}.attn_k_norm.weight", i))
-                .and_then(|t| match t {
-                    LoadedTensor::F32(t) => Some(t.clone()),
-                    _ => None,
-                });
+            let qk_q_norm =
+                take_optional_llama_norm(&mut loader, &format!("blk.{}.attn_q_norm.weight", i));
+            let qk_k_norm =
+                take_optional_llama_norm(&mut loader, &format!("blk.{}.attn_k_norm.weight", i));
 
             let attn = LlamaAttention::new_shared(
-                get_linear(&format!("blk.{}.attn_q.weight", i))?,
-                get_linear(&format!("blk.{}.attn_k.weight", i))?,
-                get_linear(&format!("blk.{}.attn_v.weight", i))?,
-                get_linear(&format!("blk.{}.attn_output.weight", i))?,
+                take_llama_linear(
+                    &mut loader,
+                    &format!("blk.{}.attn_q.weight", i),
+                    packed_decode_enabled,
+                )?,
+                take_llama_linear(
+                    &mut loader,
+                    &format!("blk.{}.attn_k.weight", i),
+                    packed_decode_enabled,
+                )?,
+                take_llama_linear(
+                    &mut loader,
+                    &format!("blk.{}.attn_v.weight", i),
+                    packed_decode_enabled,
+                )?,
+                take_llama_linear(
+                    &mut loader,
+                    &format!("blk.{}.attn_output.weight", i),
+                    packed_decode_enabled,
+                )?,
                 Arc::clone(&rope_cos),
                 Arc::clone(&rope_sin),
                 config.n_heads,
@@ -1787,32 +1770,47 @@ impl Llama<CpuBackend> {
             );
 
             let mlp = LlamaMlp::new(
-                get_linear(&format!("blk.{}.ffn_gate.weight", i))?,
-                get_linear(&format!("blk.{}.ffn_up.weight", i))?,
-                get_linear(&format!("blk.{}.ffn_down.weight", i))?,
+                take_llama_linear(
+                    &mut loader,
+                    &format!("blk.{}.ffn_gate.weight", i),
+                    packed_decode_enabled,
+                )?,
+                take_llama_linear(
+                    &mut loader,
+                    &format!("blk.{}.ffn_up.weight", i),
+                    packed_decode_enabled,
+                )?,
+                take_llama_linear(
+                    &mut loader,
+                    &format!("blk.{}.ffn_down.weight", i),
+                    packed_decode_enabled,
+                )?,
             );
 
             blocks.push(LlamaBlock::new(
-                get_f32(&format!("blk.{}.attn_norm.weight", i))?,
+                loader.take_f32(&format!("blk.{}.attn_norm.weight", i))?,
                 attn,
-                get_f32(&format!("blk.{}.ffn_norm.weight", i))?,
+                loader.take_f32(&format!("blk.{}.ffn_norm.weight", i))?,
                 mlp,
                 config.norm_eps,
             ));
         }
 
         // lm_head: use output.weight if present, otherwise tie with embed_tokens
-        let mut head = match loader.tensors.get("output.weight") {
-            Some(LoadedTensor::F32(t)) => Linear::new(t.clone().transpose(), None),
-            Some(LoadedTensor::Q8_0(qw)) => Linear::new_q8_0(qw.clone(), None),
-            None => match loader.tensors.get("token_embd.weight") {
+        let mut head = match loader.tensors.remove("output.weight") {
+            Some(LoadedTensor::F32(tensor)) => Linear::new(tensor.transpose(), None),
+            Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight, None),
+            None => match &embed_tokens {
                 // Tied embeddings are already laid out as [vocab, embed] in
                 // QuantizedWeight, exactly the [out, in] layout the Q8 matmul
                 // expects. Reusing the mapping avoids a second ~1 GiB F32
                 // embedding copy and keeps decode on the packed integer path.
-                Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight.clone(), None),
-                Some(LoadedTensor::F32(tensor)) => Linear::new(tensor.clone().transpose(), None),
-                None => anyhow::bail!("Missing tensor: token_embd.weight"),
+                LlamaEmbedding::Q8_0(weight) => {
+                    Linear::<CpuBackend>::new_q8_0(weight.clone(), None)
+                }
+                LlamaEmbedding::F32(tensor) => {
+                    Linear::<CpuBackend>::new(tensor.clone().transpose(), None)
+                }
             },
         };
         head.prepare_interleaved(INTERLEAVED_MIN_OUT_FEATURES);
@@ -1820,7 +1818,7 @@ impl Llama<CpuBackend> {
         let mut model = Self {
             embed_tokens,
             blocks,
-            norm: get_f32("output_norm.weight")?,
+            norm: loader.take_f32("output_norm.weight")?,
             head,
             config,
             fast_decode_inter_dim: None,
@@ -1955,6 +1953,33 @@ impl Llama<CpuBackend> {
             }
         }
         (weights, bytes)
+    }
+}
+
+fn take_llama_linear(
+    loader: &mut crate::loader::GgufLoader,
+    name: &str,
+    prepare_packed: bool,
+) -> anyhow::Result<Linear<CpuBackend>> {
+    use crate::loader::LoadedTensor;
+
+    let mut linear = match loader.take_tensor(name)? {
+        LoadedTensor::F32(tensor) => Linear::new(tensor.transpose(), None),
+        LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
+    };
+    if prepare_packed {
+        linear.prepare_packed_decode();
+    }
+    Ok(linear)
+}
+
+fn take_optional_llama_norm(
+    loader: &mut crate::loader::GgufLoader,
+    name: &str,
+) -> Option<CpuTensor> {
+    match loader.tensors.remove(name) {
+        Some(crate::loader::LoadedTensor::F32(tensor)) => Some(tensor),
+        _ => None,
     }
 }
 

@@ -696,36 +696,7 @@ impl Gpt2<CpuBackend> {
     ///
     /// metadata keys `gpt2.block_count` and `gpt2.attention.head_count` control
     /// the number of layers and heads (default 12 each if missing).
-    pub fn from_loader(loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
-        use crate::loader::LoadedTensor;
-
-        // helper: get a tensor that must be available as f32.
-        // embeddings, norms, and biases go through this path.
-        // if a tensor happens to be q8_0 (e.g. a quantized embedding),
-        // it is fully dequantized here so index_select still works.
-        let get_f32 = |name: &str| -> anyhow::Result<CpuTensor> {
-            match loader.tensors.get(name) {
-                Some(LoadedTensor::F32(t)) => Ok(t.clone()),
-                Some(LoadedTensor::Q8_0(qw)) => Ok(qw.dequantize_all()),
-                None => anyhow::bail!("Missing tensor: {}", name),
-            }
-        };
-
-        // helper: build a linear from a weight tensor (may be f32 or q8_0)
-        // and an optional f32 bias tensor.
-        let get_linear =
-            |name: &str, bias_name: Option<&str>| -> anyhow::Result<Linear<CpuBackend>> {
-                let bias = match bias_name {
-                    Some(bname) => Some(get_f32(bname)?),
-                    None => None,
-                };
-                match loader.tensors.get(name) {
-                    Some(LoadedTensor::F32(t)) => Ok(Linear::new(t.clone().transpose(), bias)),
-                    Some(LoadedTensor::Q8_0(qw)) => Ok(Linear::new_q8_0(qw.clone(), bias)),
-                    None => anyhow::bail!("Missing tensor: {}", name),
-                }
-            };
-
+    pub fn from_loader(mut loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
         // metadata
         let n_layers = match loader.metadata.get("gpt2.block_count") {
             Some(crate::loader::GgufValue::U32(n)) => *n as usize,
@@ -740,11 +711,13 @@ impl Gpt2<CpuBackend> {
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
             let attn = Attention::new(
-                get_linear(
+                take_gpt2_linear(
+                    &mut loader,
                     &format!("blk.{}.attn_qkv.weight", i),
                     Some(&format!("blk.{}.attn_qkv.bias", i)),
                 )?,
-                get_linear(
+                take_gpt2_linear(
+                    &mut loader,
                     &format!("blk.{}.attn_output.weight", i),
                     Some(&format!("blk.{}.attn_output.bias", i)),
                 )?,
@@ -752,11 +725,13 @@ impl Gpt2<CpuBackend> {
             );
 
             let mlp = Mlp::new(
-                get_linear(
+                take_gpt2_linear(
+                    &mut loader,
                     &format!("blk.{}.ffn_up.weight", i),
                     Some(&format!("blk.{}.ffn_up.bias", i)),
                 )?,
-                get_linear(
+                take_gpt2_linear(
+                    &mut loader,
                     &format!("blk.{}.ffn_down.weight", i),
                     Some(&format!("blk.{}.ffn_down.bias", i)),
                 )?,
@@ -764,36 +739,50 @@ impl Gpt2<CpuBackend> {
 
             blocks.push(Block::new(
                 LayerNorm::new(
-                    get_f32(&format!("blk.{}.attn_norm.weight", i))?,
-                    get_f32(&format!("blk.{}.attn_norm.bias", i))?,
+                    loader.take_f32(&format!("blk.{}.attn_norm.weight", i))?,
+                    loader.take_f32(&format!("blk.{}.attn_norm.bias", i))?,
                     1e-5,
                 ),
                 attn,
                 LayerNorm::new(
-                    get_f32(&format!("blk.{}.ffn_norm.weight", i))?,
-                    get_f32(&format!("blk.{}.ffn_norm.bias", i))?,
+                    loader.take_f32(&format!("blk.{}.ffn_norm.weight", i))?,
+                    loader.take_f32(&format!("blk.{}.ffn_norm.bias", i))?,
                     1e-5,
                 ),
                 mlp,
             ));
         }
 
-        let wte = get_f32("token_embd.weight")?;
+        let wte = loader.take_f32("token_embd.weight")?;
         let embed_dim = wte.shape[1];
 
         Ok(Self {
             wte,
-            wpe: get_f32("position_embd.weight")?,
+            wpe: loader.take_f32("position_embd.weight")?,
             blocks,
             ln_f: LayerNorm::new(
-                get_f32("output_norm.weight")?,
-                get_f32("output_norm.bias")?,
+                loader.take_f32("output_norm.weight")?,
+                loader.take_f32("output_norm.bias")?,
                 1e-5,
             ),
-            head: get_linear("output.weight", None)?,
+            head: take_gpt2_linear(&mut loader, "output.weight", None)?,
             n_heads,
             embed_dim,
         })
+    }
+}
+
+fn take_gpt2_linear(
+    loader: &mut crate::loader::GgufLoader,
+    name: &str,
+    bias_name: Option<&str>,
+) -> anyhow::Result<Linear<CpuBackend>> {
+    use crate::loader::LoadedTensor;
+
+    let bias = bias_name.map(|name| loader.take_f32(name)).transpose()?;
+    match loader.take_tensor(name)? {
+        LoadedTensor::F32(tensor) => Ok(Linear::new(tensor.transpose(), bias)),
+        LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, bias)),
     }
 }
 
