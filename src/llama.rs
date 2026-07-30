@@ -4,6 +4,7 @@ use crate::tensor::CpuTensor;
 use crate::workspace::Workspace;
 use alloc::vec::Vec;
 use std::cell::RefCell;
+use std::sync::Arc;
 
 const INTERLEAVED_MIN_OUT_FEATURES: usize = 65_536;
 
@@ -347,9 +348,9 @@ pub struct LlamaAttention<B: Backend> {
     /// Q/K RMSNorm placement relative to RoPE.
     qk_norm_order: QkNormOrder,
     /// precomputed rope cos table, shape [max_seq_len, head_dim]
-    rope_cos: B::Tensor,
+    rope_cos: Arc<B::Tensor>,
     /// precomputed rope sin table, shape [max_seq_len, head_dim]
-    rope_sin: B::Tensor,
+    rope_sin: Arc<B::Tensor>,
     /// optional qk normalization weight (qwen3): applied to q after rope, shape [head_dim]
     q_norm: Option<B::Tensor>,
     /// optional qk normalization weight (qwen3): applied to k after rope, shape [head_dim]
@@ -365,6 +366,39 @@ impl<B: Backend> LlamaAttention<B> {
         o_proj: Linear<B>,
         rope_cos: B::Tensor,
         rope_sin: B::Tensor,
+        n_heads: usize,
+        n_kv_heads: usize,
+        head_dim: usize,
+        rope_layout: RopeLayout,
+        qk_norm_order: QkNormOrder,
+        q_norm: Option<B::Tensor>,
+        k_norm: Option<B::Tensor>,
+    ) -> Self {
+        Self::new_shared(
+            q_proj,
+            k_proj,
+            v_proj,
+            o_proj,
+            Arc::new(rope_cos),
+            Arc::new(rope_sin),
+            n_heads,
+            n_kv_heads,
+            head_dim,
+            rope_layout,
+            qk_norm_order,
+            q_norm,
+            k_norm,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_shared(
+        q_proj: Linear<B>,
+        k_proj: Linear<B>,
+        v_proj: Linear<B>,
+        o_proj: Linear<B>,
+        rope_cos: Arc<B::Tensor>,
+        rope_sin: Arc<B::Tensor>,
         n_heads: usize,
         n_kv_heads: usize,
         head_dim: usize,
@@ -1799,6 +1833,9 @@ impl Llama<CpuBackend> {
             rope_sin.shape()
         );
 
+        let rope_cos = Arc::new(rope_cos);
+        let rope_sin = Arc::new(rope_sin);
+
         // helper: get a tensor as f32 (for embeddings, norms, etc.)
         let get_f32 = |name: &str| -> anyhow::Result<CpuTensor> {
             match loader.tensors.get(name) {
@@ -1846,13 +1883,13 @@ impl Llama<CpuBackend> {
                     _ => None,
                 });
 
-            let attn = LlamaAttention::new(
+            let attn = LlamaAttention::new_shared(
                 get_linear(&format!("blk.{}.attn_q.weight", i))?,
                 get_linear(&format!("blk.{}.attn_k.weight", i))?,
                 get_linear(&format!("blk.{}.attn_v.weight", i))?,
                 get_linear(&format!("blk.{}.attn_output.weight", i))?,
-                rope_cos.clone(),
-                rope_sin.clone(),
+                Arc::clone(&rope_cos),
+                Arc::clone(&rope_sin),
                 config.n_heads,
                 config.n_kv_heads,
                 config.head_dim,
@@ -2416,6 +2453,40 @@ mod tests {
             QuantizedWeight::try_new(data, vec![out_features, in_features]).unwrap(),
             None,
         )
+    }
+
+    fn test_attention_with_rope(
+        rope_cos: Arc<CpuTensor>,
+        rope_sin: Arc<CpuTensor>,
+        seed: usize,
+    ) -> LlamaAttention<CpuBackend> {
+        LlamaAttention::new_shared(
+            test_q8_linear(32, 32, seed),
+            test_q8_linear(16, 32, seed + 1),
+            test_q8_linear(16, 32, seed + 2),
+            test_q8_linear(32, 32, seed + 3),
+            rope_cos,
+            rope_sin,
+            2,
+            1,
+            16,
+            RopeLayout::AdjacentPair,
+            QkNormOrder::AfterRope,
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn attention_layers_share_rope_tables() {
+        let (rope_cos, rope_sin) = crate::tensor::compute_rope_freqs(8, 16, 10_000.0, None);
+        let rope_cos = Arc::new(rope_cos);
+        let rope_sin = Arc::new(rope_sin);
+        let first = test_attention_with_rope(Arc::clone(&rope_cos), Arc::clone(&rope_sin), 1);
+        let second = test_attention_with_rope(Arc::clone(&rope_cos), Arc::clone(&rope_sin), 5);
+
+        assert!(Arc::ptr_eq(&first.rope_cos, &second.rope_cos));
+        assert!(Arc::ptr_eq(&first.rope_sin, &second.rope_sin));
     }
 
     fn test_llama_model() -> Llama<CpuBackend> {
