@@ -1271,18 +1271,6 @@ fn embed_tokens<B: Backend>(
     Ok(x)
 }
 
-#[allow(dead_code)]
-fn add_optional<B: Backend>(
-    backend: &B,
-    x: &B::Tensor,
-    residual: Option<&B::Tensor>,
-) -> Result<B::Tensor, B::Error> {
-    match residual {
-        Some(r) => backend.add(x, r),
-        None => Ok(x.clone()),
-    }
-}
-
 fn tied_embedding_logits<B: Backend>(
     backend: &B,
     x: &B::Tensor,
