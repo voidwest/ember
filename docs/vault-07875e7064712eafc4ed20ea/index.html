@@ -4,10 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="قراءة تفاعلية ثنائية اللغة لورقة Attention Is All You Need" />
+    <meta name="theme-color" content="#11110f" />
     <meta name="robots" content="noindex, nofollow, noarchive" />
     <title>Attention Is All You Need — قراءة تفاعلية</title>
-    <script type="module" crossorigin src="./assets/index-CHePc7Pt.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DCO1aI2G.css">
+    <script>
+      (() => {
+        const requested = new URLSearchParams(location.search).get("theme");
+        const saved = localStorage.getItem("paper-theme");
+        const theme = requested === "light" || requested === "dark"
+          ? requested
+          : saved || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content = theme === "light" ? "#f5f1e8" : "#11110f";
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-BajkTv3P.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CeLonbyD.css">
   </head>
   <body>
     <div id="app"></div>
