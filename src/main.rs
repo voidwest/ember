@@ -1707,6 +1707,7 @@ where
     let mut total_decode_ms = 0.0;
     let mut total_prompt_tokens = 0usize;
     let mut total_generated = 0usize;
+    let mut total_decode_evaluations = 0usize;
 
     for (i, (prompt, category)) in prompts.iter().enumerate() {
         let prompt_tokens = tokenizer.encode(prompt)?;
@@ -1733,6 +1734,7 @@ where
         // -- decode with typewriter streaming ----------------------
         let decode_start = std::time::Instant::now();
         let mut generated = Vec::with_capacity(max_tokens);
+        let mut decode_evaluations = 0usize;
         let eos_ids = tokenizer.eos_token_ids();
 
         // print prompt card
@@ -1777,12 +1779,16 @@ where
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
             }
 
+            if !has_next_decode_evaluation(step, max_tokens) {
+                break;
+            }
             logits = model.forward_last_logits_with_cache(
                 backend,
                 &[next as u32],
                 &mut cache,
                 prompt_len + step,
             )?;
+            decode_evaluations += 1;
         }
         // reset color after completion
         println!("{RST}");
@@ -1804,10 +1810,11 @@ where
             prompt_len as f64 / (prefill_ms / 1000.0)
         );
         println!(
-            "{} {:.1} ms ({:.0} tok/s)",
+            "{} {:.1} ms ({} evals, {:.0} eval/s)",
             s(DIM, &"| decode:    "),
             decode_ms,
-            generated.len() as f64 / (decode_ms / 1000.0)
+            decode_evaluations,
+            decode_evaluations as f64 / (decode_ms / 1000.0)
         );
         println!(
             "{}",
@@ -1823,6 +1830,7 @@ where
         total_decode_ms += decode_ms;
         total_prompt_tokens += prompt_len;
         total_generated += generated.len();
+        total_decode_evaluations += decode_evaluations;
 
         // brief pause between prompts so the viewer can absorb
         if delay_ms > 0 {
@@ -1859,9 +1867,10 @@ where
         total_prompt_tokens as f64 / (total_prefill_ms / 1000.0)
     );
     println!(
-        "  decode avg:    {:.1} ms - {:.0} tok/s",
+        "  decode avg:    {:.1} ms - {} evals at {:.0} eval/s",
         total_decode_ms / prompts.len() as f64,
-        total_generated as f64 / (total_decode_ms / 1000.0)
+        total_decode_evaluations,
+        total_decode_evaluations as f64 / (total_decode_ms / 1000.0)
     );
     println!();
     println!(
@@ -1985,6 +1994,7 @@ where
     let mut generated = Vec::with_capacity(max_tokens);
     let mut next_token: usize;
     let mut decode_traces: Vec<trace::TraceReport> = Vec::new();
+    let mut decode_evaluations = 0usize;
 
     for step in 0..max_tokens {
         let logit_data = backend.data(&logits);
@@ -2007,6 +2017,10 @@ where
         all_tokens.push(next_token as u32);
         generated.push(next_token as u32);
 
+        if !has_next_decode_evaluation(step, max_tokens) {
+            break;
+        }
+
         // decode step: forward with just the new token, using cached K/V
         if trace_ops {
             trace::enable_tracing("decode", step);
@@ -2017,6 +2031,7 @@ where
             &mut cache,
             prompt_len + step, // absolute position offset
         )?;
+        decode_evaluations += 1;
         if trace_ops {
             if let Some(report) = trace::disable_tracing() {
                 decode_traces.push(report);
@@ -2037,10 +2052,10 @@ where
             prompt_len as f64 / prefill_elapsed.unwrap().as_secs_f64()
         );
         eprintln!(
-            "decode:  {} tokens in {:.1}ms -> {:.0} tok/s",
-            generated.len(),
+            "decode:  {} evals in {:.1}ms -> {:.0} eval/s",
+            decode_evaluations,
             decode_ms,
-            generated.len() as f64 / decode_start.unwrap().elapsed().as_secs_f64()
+            decode_evaluations as f64 / decode_start.unwrap().elapsed().as_secs_f64()
         );
     }
 
@@ -2231,6 +2246,13 @@ fn argmax_token(logits: &[f32]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_requested_token_needs_no_followup_evaluation() {
+        assert!(!has_next_decode_evaluation(0, 1));
+        assert!(has_next_decode_evaluation(0, 2));
+        assert!(!has_next_decode_evaluation(1, 2));
+    }
 
     #[test]
     fn default_tokenizer_tracks_architecture() {
@@ -2707,6 +2729,11 @@ fn match_generated_text(generated: &str, expected: &str) -> (bool, bool) {
     )
 }
 
+#[inline]
+fn has_next_decode_evaluation(step: usize, max_tokens: usize) -> bool {
+    step + 1 < max_tokens
+}
+
 fn generate_probe_continuation<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
@@ -2740,6 +2767,9 @@ where
         }
 
         generated.push(next_token as u32);
+        if !has_next_decode_evaluation(step, max_tokens) {
+            break;
+        }
         logits = model.forward_last_logits_with_cache(
             backend,
             &[next_token as u32],
