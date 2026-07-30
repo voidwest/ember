@@ -276,6 +276,27 @@ impl<B: Backend> Linear<B> {
         Ok((first, second))
     }
 
+    /// Apply a packed pair when the backend and measured row regime support
+    /// it, otherwise retain the generic Q8_0 pair as the correctness oracle.
+    ///
+    /// Traced runs deliberately stay generic so operation inspection and
+    /// value fingerprints always follow the authoritative validation path.
+    pub(crate) fn forward_packed_pair_or_generic(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        other: &Self,
+    ) -> Result<(B::Tensor, B::Tensor), B::Error> {
+        if !crate::trace::is_tracing() {
+            if let (Some(first), Some(second)) = (&self.packed_decode, &other.packed_decode) {
+                if let Some(result) = backend.matmul_q8_0_packed_pair(x, first, second)? {
+                    return Ok(result);
+                }
+            }
+        }
+        self.forward_pair(backend, x, other)
+    }
+
     /// Apply this layer and two peers to the same input.
     pub fn forward_triple(
         &self,

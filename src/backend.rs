@@ -85,6 +85,21 @@ pub trait Backend {
         Ok((self.matmul_q8_0(x, first)?, self.matmul_q8_0(x, second)?))
     }
 
+    /// Apply two projections using an optional packed Q8_0 representation.
+    ///
+    /// `None` asks the caller to use its generic Q8_0 path. This keeps packed
+    /// scheduling an optional CPU optimization without making alternate
+    /// backends implement or understand the CPU-specific layout.
+    #[allow(clippy::type_complexity)]
+    fn matmul_q8_0_packed_pair(
+        &self,
+        _x: &Self::Tensor,
+        _first: &QuantizedWeightVnni,
+        _second: &QuantizedWeightVnni,
+    ) -> Result<Option<(Self::Tensor, Self::Tensor)>, Self::Error> {
+        Ok(None)
+    }
+
     /// Apply three Q8_0 projections to the same activations.
     ///
     /// This is primarily used by separate Q/K/V projection weights.
@@ -816,6 +831,74 @@ impl Backend for CpuBackend {
         ))
     }
 
+    fn matmul_q8_0_packed_pair(
+        &self,
+        x: &CpuTensor,
+        first: &QuantizedWeightVnni,
+        second: &QuantizedWeightVnni,
+    ) -> Result<Option<(CpuTensor, CpuTensor)>, CpuError> {
+        if x.ndim() != 2 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "matmul_q8_0_packed_pair: input must be 2D, got shape {:?}",
+                x.shape()
+            )));
+        }
+        let (rows, in_features) = (x.shape()[0], x.shape()[1]);
+        if in_features != first.in_features() || in_features != second.in_features() {
+            return Err(CpuError::ShapeMismatch(format!(
+                "matmul_q8_0_packed_pair: inner dims must match (got {}, {} and {})",
+                in_features,
+                first.in_features(),
+                second.in_features()
+            )));
+        }
+        if first.out_features() != second.out_features() {
+            return Err(CpuError::ShapeMismatch(format!(
+                "matmul_q8_0_packed_pair: output dims must match (got {} and {})",
+                first.out_features(),
+                second.out_features()
+            )));
+        }
+
+        // Real-shape A/B measurements show the packed matrix-vector schedule
+        // wins for decode and very short prompts, while the generic tiled
+        // batch kernel is faster from eight rows onward. Multi-row packed
+        // dispatch also needs enough workers to offset its per-row scheduling.
+        if rows > 6 || (rows > 1 && rayon::current_num_threads() < 4) {
+            return Ok(None);
+        }
+
+        let output_features = first.out_features();
+        let output_len = rows.checked_mul(output_features).ok_or_else(|| {
+            CpuError::ShapeMismatch("matmul_q8_0_packed_pair: output size overflow".into())
+        })?;
+        let mut first_out = vec![0.0; output_len];
+        let mut second_out = vec![0.0; output_len];
+        let encoded_row_len = crate::quant::q8_0_encoded_len(in_features);
+        Q8_0_DECODE_INPUT.with(|input| {
+            let mut input = input.borrow_mut();
+            crate::quant::quantize_q8_0_into(x.data(), &mut input);
+            for row in 0..rows {
+                let input_row = &input[row * encoded_row_len..(row + 1) * encoded_row_len];
+                let output_range = row * output_features..(row + 1) * output_features;
+                crate::simd::matmul_q8_0_decode_packed16_parallel(
+                    input_row,
+                    first,
+                    &mut first_out[output_range.clone()],
+                );
+                crate::simd::matmul_q8_0_decode_packed16_parallel(
+                    input_row,
+                    second,
+                    &mut second_out[output_range],
+                );
+            }
+        });
+        Ok(Some((
+            CpuTensor::from_data(vec![rows, output_features], first_out),
+            CpuTensor::from_data(vec![rows, output_features], second_out),
+        )))
+    }
+
     fn matmul_q8_0_triple(
         &self,
         x: &CpuTensor,
@@ -1518,6 +1601,74 @@ fn scatter_attention_heads(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_q8_weight(out_features: usize, in_features: usize, phase: f32) -> QuantizedWeight {
+        let values = (0..out_features * in_features)
+            .map(|index| {
+                let value = index as f32 * 0.03125 + phase;
+                value.sin() * 0.75 + value.cos() * 0.125
+            })
+            .collect::<Vec<_>>();
+        let mut data = Vec::new();
+        crate::quant::quantize_q8_0_into(&values, &mut data);
+        QuantizedWeight::new(data, vec![out_features, in_features])
+    }
+
+    #[test]
+    fn packed_pair_matches_generic_for_measured_short_prompt_regime() {
+        if !crate::simd::packed_q8_0_vnni_supported() {
+            return;
+        }
+
+        let backend = CpuBackend;
+        let rows = 6;
+        let in_features = 64;
+        let first = test_q8_weight(64, in_features, 0.25);
+        let second = test_q8_weight(64, in_features, 1.5);
+        let packed_first = QuantizedWeightVnni::from_quantized(&first);
+        let packed_second = QuantizedWeightVnni::from_quantized(&second);
+        let input = CpuTensor::from_data(
+            vec![rows, in_features],
+            (0..rows * in_features)
+                .map(|index| (index as f32 * 0.017).sin())
+                .collect(),
+        );
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+
+        let expected = pool
+            .install(|| backend.matmul_q8_0_pair(&input, &first, &second))
+            .unwrap();
+        let actual = pool
+            .install(|| backend.matmul_q8_0_packed_pair(&input, &packed_first, &packed_second))
+            .unwrap()
+            .expect("four-thread, six-row input should use packed pair");
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn packed_pair_defers_to_generic_batch_kernel_after_six_rows() {
+        if !crate::simd::packed_q8_0_vnni_supported() {
+            return;
+        }
+
+        let backend = CpuBackend;
+        let first = test_q8_weight(16, 32, 0.25);
+        let second = test_q8_weight(16, 32, 1.5);
+        let input = CpuTensor::zeroes(&[8, 32]);
+        let actual = backend
+            .matmul_q8_0_packed_pair(
+                &input,
+                &QuantizedWeightVnni::from_quantized(&first),
+                &QuantizedWeightVnni::from_quantized(&second),
+            )
+            .unwrap();
+
+        assert!(actual.is_none());
+    }
 
     #[test]
     fn cached_attention_into_matches_tensor_api() {

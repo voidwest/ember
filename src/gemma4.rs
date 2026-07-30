@@ -288,7 +288,9 @@ impl<B: Backend> Gemma4Mlp<B> {
             ),
             trace::flops_matmul(seq_len, inter_dim, embed_dim) * 2,
         );
-        let (gate, up) = self.gate_proj.forward_pair(backend, x, &self.up_proj)?;
+        let (gate, up) =
+            self.gate_proj
+                .forward_packed_pair_or_generic(backend, x, &self.up_proj)?;
         if let Some(span) = gate_up_span {
             span.end(
                 vec![seq_len, inter_dim * 2],
@@ -1096,6 +1098,12 @@ impl Gemma4<CpuBackend> {
                 None
             };
 
+            let mut gate_proj =
+                take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_gate.weight", i))?;
+            let mut up_proj = take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_up.weight", i))?;
+            gate_proj.prepare_packed_decode();
+            up_proj.prepare_packed_decode();
+
             blocks.push(Gemma4Block {
                 input_norm: loader.take_f32(&format!("blk.{}.attn_norm.weight", i))?,
                 attn,
@@ -1106,11 +1114,8 @@ impl Gemma4<CpuBackend> {
                 post_attn_norm,
                 pre_ffn_norm: loader.take_f32(&format!("blk.{}.ffn_norm.weight", i))?,
                 mlp: Gemma4Mlp {
-                    gate_proj: take_gemma4_linear(
-                        &mut loader,
-                        &format!("blk.{}.ffn_gate.weight", i),
-                    )?,
-                    up_proj: take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_up.weight", i))?,
+                    gate_proj,
+                    up_proj,
                     down_proj: take_gemma4_linear(
                         &mut loader,
                         &format!("blk.{}.ffn_down.weight", i),
