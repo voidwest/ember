@@ -148,6 +148,20 @@ pub trait Backend {
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
     fn scale_in_place(&self, x: &mut Self::Tensor, scale: f32);
+    /// Apply Gemma-style final-logit softcapping.
+    ///
+    /// The default preserves compatibility for non-CPU backends. Backends
+    /// with mutable tensor storage can override this to reuse `x`.
+    fn softcap_in_place(&self, x: &mut Self::Tensor, cap: f32) -> Result<(), Self::Error> {
+        let shape = self.shape(x).to_vec();
+        let data = self
+            .data(x)
+            .iter()
+            .map(|&value| (value / cap).tanh() * cap)
+            .collect();
+        *x = self.load_from_cpu(data, &shape)?;
+        Ok(())
+    }
     /// load host-side f32 data into a backend tensor.
     fn load_from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<Self::Tensor, Self::Error>;
     fn add_broadcast(
@@ -923,6 +937,12 @@ impl Backend for CpuBackend {
         for value in x.data_mut() {
             *value *= scale;
         }
+    }
+    fn softcap_in_place(&self, x: &mut CpuTensor, cap: f32) -> Result<(), CpuError> {
+        for value in x.data_mut() {
+            *value = (*value / cap).tanh() * cap;
+        }
+        Ok(())
     }
     fn load_from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<CpuTensor, Self::Error> {
         Ok(CpuTensor::from_data(shape.to_vec(), data))

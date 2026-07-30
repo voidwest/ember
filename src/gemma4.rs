@@ -1312,18 +1312,14 @@ fn gelu_tanh<B: Backend>(backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Err
 
 fn softcap_logits<B: Backend>(
     backend: &B,
-    logits: B::Tensor,
+    mut logits: B::Tensor,
     softcap: Option<f32>,
 ) -> Result<B::Tensor, B::Error> {
     let Some(cap) = softcap else {
         return Ok(logits);
     };
-    let data = backend
-        .data(&logits)
-        .iter()
-        .map(|&v| (v / cap).tanh() * cap)
-        .collect();
-    backend.load_from_cpu(data, backend.shape(&logits))
+    backend.softcap_in_place(&mut logits, cap)?;
+    Ok(logits)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1788,7 +1784,9 @@ mod tests {
     fn softcap_transforms_logits() {
         let backend = CpuBackend;
         let logits = CpuTensor::from_data(vec![1, 3], vec![-100.0, 0.0, 100.0]);
+        let allocation = logits.data().as_ptr();
         let capped = softcap_logits(&backend, logits, Some(30.0)).unwrap();
+        assert_eq!(capped.data().as_ptr(), allocation);
         assert!(capped.data()[0] > -30.0);
         assert_eq!(capped.data()[1], 0.0);
         assert!(capped.data()[2] < 30.0);
