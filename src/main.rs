@@ -2939,13 +2939,12 @@ where
             let n_tokens = block_token_counts[bi];
             let token_slice = &all_token_ids[base..base + n_tokens];
 
-            // extract per-stimulus logits slice (chunk-relative positions)
+            // Block-aware probing returns one last-token logit row per stimulus.
             let logit_data = backend.data(&logits);
             let logit_shape = backend.shape(&logits);
             let vocab_size = logit_shape[1];
-            let rel_base = remapped_boundaries[local_bi];
-            let last_row_start = (rel_base + n_tokens - 1) * vocab_size;
-            let last_logits = &logit_data[last_row_start..];
+            let last_row_start = local_bi * vocab_size;
+            let last_logits = &logit_data[last_row_start..last_row_start + vocab_size];
             let predicted_id = last_logits
                 .iter()
                 .enumerate()

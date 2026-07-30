@@ -85,19 +85,62 @@ pub trait ForwardModel<B: Backend> {
 
     /// batched forward pass with block-diagonal attention for independent sequences.
     ///
-    /// default implementation falls back to per-group `forward_pooled_activations`.
-    /// models with native block-masking support (e.g. Llama) override this for
-    /// substantially better throughput when processing many short independent prompts.
-    #[allow(dead_code)]
+    /// The returned logits contain one row per block, evaluated at that block's
+    /// final token. The default implementation evaluates blocks independently;
+    /// models with native block-masking support can override it for throughput.
     #[allow(clippy::type_complexity)]
     fn forward_pooled_with_blocks(
         &self,
         backend: &B,
         token_ids: &[u32],
-        _block_boundaries: &[usize],
+        block_boundaries: &[usize],
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
-        self.forward_pooled_activations(backend, token_ids, token_index_groups)
+        if block_boundaries.is_empty() {
+            return self.forward_pooled_activations(backend, token_ids, token_index_groups);
+        }
+
+        let mut pooled = vec![None; token_index_groups.len()];
+        let mut block_logits = Vec::new();
+        let mut vocab_size = 0;
+
+        for (block_index, &start) in block_boundaries.iter().enumerate() {
+            let end = block_boundaries
+                .get(block_index + 1)
+                .copied()
+                .unwrap_or(token_ids.len());
+            debug_assert!(start < end && end <= token_ids.len());
+
+            let mut group_indices = Vec::new();
+            let mut local_groups = Vec::new();
+            for (group_index, group) in token_index_groups.iter().enumerate() {
+                if group.iter().all(|&index| index >= start && index < end) {
+                    group_indices.push(group_index);
+                    local_groups.push(group.iter().map(|&index| index - start).collect());
+                }
+            }
+
+            let (local_pooled, logits) =
+                self.forward_pooled_activations(backend, &token_ids[start..end], &local_groups)?;
+            for (group_index, values) in group_indices.into_iter().zip(local_pooled) {
+                pooled[group_index] = Some(values);
+            }
+
+            let shape = backend.shape(&logits);
+            vocab_size = *shape
+                .last()
+                .expect("logits tensor must have a vocabulary axis");
+            let data = backend.data(&logits);
+            block_logits.extend_from_slice(&data[data.len() - vocab_size..]);
+        }
+
+        debug_assert!(pooled.iter().all(Option::is_some));
+        let pooled = pooled
+            .into_iter()
+            .map(|values| values.expect("probe group must belong to one block"))
+            .collect();
+        let logits = backend.load_from_cpu(block_logits, &[block_boundaries.len(), vocab_size])?;
+        Ok((pooled, logits))
     }
 }
 
@@ -963,22 +1006,5 @@ impl<B: Backend> Gpt2<B> {
         let last = self.ln_f.forward(backend, &last)?;
         let logits = self.head.forward(backend, &last)?;
         Ok((pooled, logits))
-    }
-
-    /// batched forward pass with block-diagonal attention for independent sequences.
-    ///
-    /// default implementation falls back to per-group `forward_pooled_activations`.
-    /// models with native block-masking support (e.g. Llama) override this for
-    /// substantially better throughput when processing many short independent prompts.
-    #[allow(dead_code)]
-    #[allow(clippy::type_complexity)]
-    fn forward_pooled_with_blocks(
-        &self,
-        backend: &B,
-        token_ids: &[u32],
-        _block_boundaries: &[usize],
-        token_index_groups: &[Vec<usize>],
-    ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
-        self.forward_pooled_activations(backend, token_ids, token_index_groups)
     }
 }

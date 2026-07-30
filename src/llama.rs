@@ -429,6 +429,7 @@ fn apply_rope_and_qk_norm<B: Backend>(
     rope_sin: &B::Tensor,
     spec: RopeQkNormSpec,
     norm: Option<&B::Tensor>,
+    block_boundaries: Option<&[usize]>,
 ) -> Result<B::Tensor, B::Error> {
     let seq_len = backend.shape(x)[0];
     let width = spec.n_heads * spec.head_dim;
@@ -450,8 +451,16 @@ fn apply_rope_and_qk_norm<B: Backend>(
         }
     }
 
+    let mut block_start = 0;
+    let mut boundary_index = 0;
     for s in 0..seq_len {
-        let pos = spec.start_pos + s;
+        if let Some(boundaries) = block_boundaries {
+            while boundary_index < boundaries.len() && boundaries[boundary_index] <= s {
+                block_start = boundaries[boundary_index];
+                boundary_index += 1;
+            }
+        }
+        let pos = spec.start_pos + s - block_start;
         let cos_row = &cos_data[pos * half..(pos + 1) * half];
         let sin_row = &sin_data[pos * half..(pos + 1) * half];
 
@@ -560,6 +569,7 @@ impl<B: Backend> LlamaAttention<B> {
                 qk_norm_order: self.qk_norm_order,
             },
             self.q_norm.as_ref(),
+            None,
         )?;
 
         let k = apply_rope_and_qk_norm(
@@ -575,6 +585,7 @@ impl<B: Backend> LlamaAttention<B> {
                 qk_norm_order: self.qk_norm_order,
             },
             self.k_norm.as_ref(),
+            None,
         )?;
 
         let result_tensor = backend.causal_attention(
@@ -619,6 +630,7 @@ impl<B: Backend> LlamaAttention<B> {
                 qk_norm_order: self.qk_norm_order,
             },
             self.q_norm.as_ref(),
+            Some(block_boundaries),
         )?;
 
         let k = apply_rope_and_qk_norm(
@@ -634,6 +646,7 @@ impl<B: Backend> LlamaAttention<B> {
                 qk_norm_order: self.qk_norm_order,
             },
             self.k_norm.as_ref(),
+            Some(block_boundaries),
         )?;
 
         let result_tensor = backend.causal_attention(
@@ -748,6 +761,7 @@ impl<B: Backend> LlamaAttention<B> {
                 qk_norm_order: self.qk_norm_order,
             },
             self.q_norm.as_ref(),
+            None,
         )?;
         if let Some(s) = _span_rope_q {
             s.end(
@@ -779,6 +793,7 @@ impl<B: Backend> LlamaAttention<B> {
                 qk_norm_order: self.qk_norm_order,
             },
             self.k_norm.as_ref(),
+            None,
         )?;
         if let Some(s) = _span_rope_k {
             s.end(
@@ -1285,6 +1300,22 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
         Llama::forward_pooled_activations(self, backend, token_ids, token_index_groups)
+    }
+
+    fn forward_pooled_with_blocks(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        block_boundaries: &[usize],
+        token_index_groups: &[Vec<usize>],
+    ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
+        Llama::forward_pooled_with_blocks(
+            self,
+            backend,
+            token_ids,
+            block_boundaries,
+            token_index_groups,
+        )
     }
 }
 
@@ -2332,8 +2363,18 @@ impl<B: Backend> Llama<B> {
                 );
             }
         }
-        let x = backend.rms_norm(&x, &self.norm, self.config.norm_eps)?;
-        let logits = self.head.forward(backend, &x)?;
+        let mut last_rows = backend.zeroes(&[block_boundaries.len(), embed_dim])?;
+        for (block_index, &start) in block_boundaries.iter().enumerate() {
+            let end = block_boundaries
+                .get(block_index + 1)
+                .copied()
+                .unwrap_or(token_ids.len());
+            debug_assert!(start < end && end <= token_ids.len());
+            let row = backend.row_as_2d(&x, end - 1)?;
+            backend.assign_row(&mut last_rows, block_index, &row);
+        }
+        let last_rows = backend.rms_norm(&last_rows, &self.norm, self.config.norm_eps)?;
+        let logits = self.head.forward(backend, &last_rows)?;
         Ok((pooled, logits))
     }
 }
@@ -2377,8 +2418,7 @@ mod tests {
         )
     }
 
-    #[test]
-    fn fast_q8_decode_matches_generic_path() {
+    fn test_llama_model() -> Llama<CpuBackend> {
         let embed_dim = 32;
         let head_dim = 16;
         let n_heads = 2;
@@ -2418,7 +2458,7 @@ mod tests {
         let embedding = (0..vocab_size * embed_dim)
             .map(|index| ((index * 19 % 101) as f32 - 50.0) * 0.002)
             .collect();
-        let model = Llama {
+        Llama {
             embed_tokens: LlamaEmbedding::F32(CpuTensor::from_data(
                 vec![vocab_size, embed_dim],
                 embedding,
@@ -2440,13 +2480,18 @@ mod tests {
                 vocab_size,
             },
             decode_plan: LlamaDecodePlan::rayon(),
-        };
+        }
+    }
+
+    #[test]
+    fn fast_q8_decode_matches_generic_path() {
+        let model = test_llama_model();
         let backend = CpuBackend;
-        let mut generic_cache = model.create_cache(&backend, max_seq_len);
+        let mut generic_cache = model.create_cache(&backend, model.config.max_seq_len);
         let generic =
             Llama::forward_last_logits_with_cache(&model, &backend, &[3], &mut generic_cache, 0)
                 .unwrap();
-        let mut fast_cache = model.create_cache(&backend, max_seq_len);
+        let mut fast_cache = model.create_cache(&backend, model.config.max_seq_len);
         let fast = ForwardModel::forward_last_logits_with_cache(
             &model,
             &backend,
@@ -2462,6 +2507,48 @@ mod tests {
                 (expected - actual).abs() <= tolerance,
                 "logit {index}: generic={expected} fast={actual}"
             );
+        }
+    }
+
+    #[test]
+    fn block_pooled_forward_matches_independent_sequences() {
+        let model = test_llama_model();
+        let backend = CpuBackend;
+        let first_tokens = [3, 5];
+        let second_tokens = [7, 11, 13];
+        let token_ids = [first_tokens.as_slice(), second_tokens.as_slice()].concat();
+        let boundaries = [0, first_tokens.len()];
+        let groups = vec![vec![0, 1], vec![2, 3, 4]];
+
+        let (batched_pooled, batched_logits) = ForwardModel::forward_pooled_with_blocks(
+            &model,
+            &backend,
+            &token_ids,
+            &boundaries,
+            &groups,
+        )
+        .unwrap();
+
+        for (block_index, tokens) in [first_tokens.as_slice(), second_tokens.as_slice()]
+            .into_iter()
+            .enumerate()
+        {
+            let local_group = vec![(0..tokens.len()).collect()];
+            let (independent_pooled, independent_logits) = model
+                .forward_pooled_activations(&backend, tokens, &local_group)
+                .unwrap();
+            assert_eq!(
+                batched_pooled[block_index], independent_pooled[0],
+                "pooled activations differ for block {block_index}"
+            );
+
+            let vocab_size = model.config.vocab_size;
+            let batched_row =
+                &batched_logits.data()[block_index * vocab_size..(block_index + 1) * vocab_size];
+            let independent_data = independent_logits.data();
+            let independent_row =
+                &independent_data[independent_data.len() - vocab_size..independent_data.len()];
+            assert_eq!(batched_row, independent_row);
         }
     }
 }
