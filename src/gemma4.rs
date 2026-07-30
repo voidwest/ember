@@ -7,6 +7,32 @@ use alloc::vec::Vec;
 use half::f16;
 use std::sync::Arc;
 
+macro_rules! gemma_trace_span {
+    ($($argument:tt)*) => {
+        if crate::trace::is_tracing() {
+            crate::trace::span($($argument)*)
+        } else {
+            None
+        }
+    };
+}
+
+fn finish_trace_span<B: Backend>(
+    span: Option<crate::trace::TraceSpan>,
+    backend: &B,
+    output: &B::Tensor,
+) {
+    if let Some(span) = span {
+        let values = crate::trace::values_enabled()
+            .then(|| crate::trace::compute_tensor_values(backend.data(output)));
+        span.end_with_values(
+            backend.shape(output).to_vec(),
+            crate::trace::bytes_from_shape(backend.shape(output)),
+            values,
+        );
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gemma4AttentionType {
     Local,
@@ -245,13 +271,63 @@ struct Gemma4Mlp<B: Backend> {
 
 impl<B: Backend> Gemma4Mlp<B> {
     fn forward(&self, backend: &B, x: &B::Tensor) -> Result<B::Tensor, B::Error> {
+        use crate::trace::{self, OpKind};
+
+        let seq_len = backend.shape(x)[0];
+        let embed_dim = backend.shape(x)[1];
+        let inter_dim = self.gate_proj.out_features(backend);
+        let gate_up_span = gemma_trace_span!(
+            "gate_up_proj",
+            trace::current_layer(),
+            OpKind::MatMulQ8_0,
+            vec![seq_len, embed_dim],
+            trace::bytes_matmul_input(
+                seq_len,
+                embed_dim,
+                self.gate_proj.weight_bytes(backend) + self.up_proj.weight_bytes(backend),
+            ),
+            trace::flops_matmul(seq_len, inter_dim, embed_dim) * 2,
+        );
         let (gate, up) = self.gate_proj.forward_pair(backend, x, &self.up_proj)?;
+        if let Some(span) = gate_up_span {
+            span.end(
+                vec![seq_len, inter_dim * 2],
+                trace::bytes_matmul_output(seq_len, inter_dim) * 2,
+            );
+        }
 
+        let gelu_span = gemma_trace_span!(
+            "gelu",
+            trace::current_layer(),
+            OpKind::Other,
+            vec![seq_len, inter_dim],
+            trace::bytes_from_shape(&[seq_len, inter_dim]),
+            trace::flops_silu(seq_len * inter_dim),
+        );
         let gate = gelu_tanh(backend, &gate)?;
+        finish_trace_span(gelu_span, backend, &gate);
 
+        let elemul_span = gemma_trace_span!(
+            "elemul",
+            trace::current_layer(),
+            OpKind::Elemul,
+            vec![seq_len, inter_dim],
+            trace::bytes_from_shape(&[seq_len, inter_dim]) * 2,
+            trace::flops_elemul(seq_len * inter_dim),
+        );
         let gated = backend.elemul(&gate, &up)?;
+        finish_trace_span(elemul_span, backend, &gated);
 
+        let down_span = gemma_trace_span!(
+            "down_proj",
+            trace::current_layer(),
+            OpKind::MatMulQ8_0,
+            vec![seq_len, inter_dim],
+            trace::bytes_matmul_input(seq_len, inter_dim, self.down_proj.weight_bytes(backend),),
+            trace::flops_matmul(seq_len, embed_dim, inter_dim),
+        );
         let out = self.down_proj.forward(backend, &gated)?;
+        finish_trace_span(down_span, backend, &out);
 
         Ok(out)
     }
@@ -286,9 +362,38 @@ impl<B: Backend> Gemma4Attention<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        use crate::trace::{self, OpKind};
+
         let seq_len = backend.shape(x)[0];
+        let embed_dim = backend.shape(x)[1];
         let q_dim = self.n_heads * self.head_dim;
         let kv_dim = self.n_kv_heads * self.head_dim;
+        let projection_weight_bytes = self.q_proj.weight_bytes(backend)
+            + self
+                .k_proj
+                .as_ref()
+                .map_or(0, |projection| projection.weight_bytes(backend))
+            + self
+                .v_proj
+                .as_ref()
+                .map_or(0, |projection| projection.weight_bytes(backend));
+        let projection_output_dim = if self.shared_source_layer.is_some() {
+            q_dim
+        } else {
+            q_dim + 2 * kv_dim
+        };
+        let projection_span = gemma_trace_span!(
+            if self.shared_source_layer.is_some() {
+                "q_proj_shared_kv"
+            } else {
+                "qkv_proj"
+            },
+            layer,
+            OpKind::MatMulQ8_0,
+            vec![seq_len, embed_dim],
+            trace::bytes_matmul_input(seq_len, embed_dim, projection_weight_bytes),
+            trace::flops_matmul(seq_len, projection_output_dim, embed_dim),
+        );
         let (mut q, projected_kv) = if self.shared_source_layer.is_some() {
             (self.q_proj.forward(backend, x)?, None)
         } else {
@@ -303,6 +408,21 @@ impl<B: Backend> Gemma4Attention<B> {
             let (q, k, v) = self.q_proj.forward_triple(backend, x, k_proj, v_proj)?;
             (q, Some((k, v)))
         };
+        if let Some(span) = projection_span {
+            span.end(
+                vec![seq_len, projection_output_dim],
+                trace::bytes_matmul_output(seq_len, projection_output_dim),
+            );
+        }
+
+        let rope_q_span = gemma_trace_span!(
+            "rope_q_qk_norm",
+            layer,
+            OpKind::RoPE,
+            vec![seq_len, q_dim],
+            trace::bytes_from_shape(&[seq_len, q_dim]),
+            trace::flops_rope(seq_len, q_dim) + trace::flops_rms_norm(seq_len, q_dim),
+        );
         q = apply_rope_and_qk_norm(
             backend,
             &q,
@@ -314,12 +434,21 @@ impl<B: Backend> Gemma4Attention<B> {
             self.head_dim,
             self.norm_eps,
         )?;
+        finish_trace_span(rope_q_span, backend, &q);
 
         let source_layer = if let Some(source_layer) = self.shared_source_layer {
             source_layer
         } else {
             let (k, v) =
                 projected_kv.expect("non-shared Gemma 4 layer must project K/V activations");
+            let rope_k_span = gemma_trace_span!(
+                "rope_k_qk_norm",
+                layer,
+                OpKind::RoPE,
+                vec![seq_len, kv_dim],
+                trace::bytes_from_shape(&[seq_len, kv_dim]),
+                trace::flops_rope(seq_len, kv_dim) + trace::flops_rms_norm(seq_len, kv_dim),
+            );
             let k = apply_rope_and_qk_norm(
                 backend,
                 &k,
@@ -331,8 +460,17 @@ impl<B: Backend> Gemma4Attention<B> {
                 self.head_dim,
                 self.norm_eps,
             )?;
+            finish_trace_span(rope_k_span, backend, &k);
             let k_data = backend.data(&k);
             let v_data = backend.data(&v);
+            let kv_store_span = gemma_trace_span!(
+                "kv_cache_store",
+                layer,
+                OpKind::Other,
+                vec![seq_len, kv_dim],
+                (k_data.len() + v_data.len()) * std::mem::size_of::<f32>(),
+                0,
+            );
             let cursor = cache.cursor();
             for pos in 0..seq_len {
                 let offset = pos * kv_dim;
@@ -344,12 +482,24 @@ impl<B: Backend> Gemma4Attention<B> {
                     self.head_dim,
                 );
             }
+            if let Some(span) = kv_store_span {
+                span.end(vec![], 0);
+            }
             layer
         };
 
         let total_seq_len = cache.cursor() + seq_len;
         let cache_head_dim = cache.head_dim();
         let max_seq_len = cache.max_seq_len();
+        let attention_span = gemma_trace_span!(
+            "attention_score",
+            layer,
+            OpKind::AttentionScore,
+            vec![seq_len, q_dim],
+            trace::bytes_from_shape(&[seq_len, q_dim])
+                + total_seq_len * kv_dim * std::mem::size_of::<f16>() * 2,
+            trace::flops_attention(seq_len, self.n_heads, self.head_dim, total_seq_len),
+        );
         let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(source_layer);
         let out = cached_attention_with_scratch(
             backend,
@@ -372,8 +522,19 @@ impl<B: Backend> Gemma4Attention<B> {
             },
             qk_scratch,
         )?;
+        finish_trace_span(attention_span, backend, &out);
         debug_assert_eq!(backend.shape(&out), &[seq_len, q_dim]);
-        self.o_proj.forward(backend, &out)
+        let output_span = gemma_trace_span!(
+            "o_proj",
+            layer,
+            OpKind::MatMulQ8_0,
+            vec![seq_len, q_dim],
+            trace::bytes_matmul_input(seq_len, q_dim, self.o_proj.weight_bytes(backend)),
+            trace::flops_matmul(seq_len, embed_dim, q_dim),
+        );
+        let output = self.o_proj.forward(backend, &out)?;
+        finish_trace_span(output_span, backend, &output);
+        Ok(output)
     }
 
     #[allow(dead_code)]
@@ -473,29 +634,110 @@ impl<B: Backend> Gemma4Block<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        use crate::trace::{self, OpKind};
+
+        trace::set_current_layer(layer);
+        let seq_len = backend.shape(x)[0];
+        let embed_dim = backend.shape(x)[1];
+        let hidden_shape = [seq_len, embed_dim];
+        let hidden_bytes = trace::bytes_from_shape(&hidden_shape);
+
         // 1. Self-attention
         let residual = x.clone();
+        let input_norm_span = gemma_trace_span!(
+            "attn_rms_norm",
+            layer,
+            OpKind::RmsNorm,
+            hidden_shape.to_vec(),
+            hidden_bytes + trace::bytes_from_shape(backend.shape(&self.input_norm)),
+            trace::flops_rms_norm(seq_len, embed_dim),
+        );
         let normed = backend.rms_norm(x, &self.input_norm, self.norm_eps)?;
+        finish_trace_span(input_norm_span, backend, &normed);
         let attn_out = self
             .attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
+        let post_attn_norm_span = gemma_trace_span!(
+            "post_attn_rms_norm",
+            layer,
+            OpKind::RmsNorm,
+            hidden_shape.to_vec(),
+            hidden_bytes + trace::bytes_from_shape(backend.shape(&self.post_attn_norm)),
+            trace::flops_rms_norm(seq_len, embed_dim),
+        );
         let attn_out = backend.rms_norm(&attn_out, &self.post_attn_norm, self.norm_eps)?;
+        finish_trace_span(post_attn_norm_span, backend, &attn_out);
+        let attn_add_span = gemma_trace_span!(
+            "attn_residual_add",
+            layer,
+            OpKind::ResidualAdd,
+            hidden_shape.to_vec(),
+            hidden_bytes * 2,
+            trace::flops_residual_add(seq_len * embed_dim),
+        );
         let x = backend.add(&residual, &attn_out)?;
+        finish_trace_span(attn_add_span, backend, &x);
+
         // 2. Feed-forward network
         let residual = x.clone();
+        let pre_ffn_norm_span = gemma_trace_span!(
+            "ffn_rms_norm",
+            layer,
+            OpKind::RmsNorm,
+            hidden_shape.to_vec(),
+            hidden_bytes + trace::bytes_from_shape(backend.shape(&self.pre_ffn_norm)),
+            trace::flops_rms_norm(seq_len, embed_dim),
+        );
         let normed = backend.rms_norm(&x, &self.pre_ffn_norm, self.norm_eps)?;
+        finish_trace_span(pre_ffn_norm_span, backend, &normed);
         let mlp_out = self.mlp.forward(backend, &normed)?;
+        let post_ffn_norm_span = gemma_trace_span!(
+            "post_ffn_rms_norm",
+            layer,
+            OpKind::RmsNorm,
+            hidden_shape.to_vec(),
+            hidden_bytes + trace::bytes_from_shape(backend.shape(&self.post_ffn_norm)),
+            trace::flops_rms_norm(seq_len, embed_dim),
+        );
         let mlp_out = backend.rms_norm(&mlp_out, &self.post_ffn_norm, self.norm_eps)?;
+        finish_trace_span(post_ffn_norm_span, backend, &mlp_out);
+        let ffn_add_span = gemma_trace_span!(
+            "ffn_residual_add",
+            layer,
+            OpKind::ResidualAdd,
+            hidden_shape.to_vec(),
+            hidden_bytes * 2,
+            trace::flops_residual_add(seq_len * embed_dim),
+        );
         let mut x = backend.add(&residual, &mlp_out)?;
+        finish_trace_span(ffn_add_span, backend, &x);
 
         // 3. Per-layer embedding (PLE)
         if let Some(ple) = ple {
+            let ple_span = gemma_trace_span!(
+                "per_layer_embedding",
+                layer,
+                OpKind::Other,
+                hidden_shape.to_vec(),
+                hidden_bytes + trace::bytes_from_shape(backend.shape(ple)),
+                0,
+            );
             x = self.add_ple(backend, &x, ple)?;
+            finish_trace_span(ple_span, backend, &x);
         }
 
         // 4. Layer output scaling
         if let Some(ref scale) = self.layer_output_scale {
+            let scale_span = gemma_trace_span!(
+                "layer_output_scale",
+                layer,
+                OpKind::Other,
+                hidden_shape.to_vec(),
+                hidden_bytes + std::mem::size_of::<f32>(),
+                (seq_len * embed_dim) as u64,
+            );
             backend.scale_in_place(&mut x, backend.data(scale)[0]);
+            finish_trace_span(scale_span, backend, &x);
         }
         Ok(x)
     }
@@ -578,6 +820,16 @@ impl<B: Backend> Gemma4Head<B> {
                 tied_embedding_logits(backend, x, table)
             }
             Self::TiedEmbedding(Gemma4Embedding::Q8_0(table)) => backend.matmul_q8_0(x, table),
+        }
+    }
+
+    fn weight_bytes(&self, backend: &B) -> usize {
+        match self {
+            Self::Linear(head) => head.weight_bytes(backend),
+            Self::TiedEmbedding(Gemma4Embedding::F32(table)) => {
+                backend.shape(table).iter().product::<usize>() * std::mem::size_of::<f32>()
+            }
+            Self::TiedEmbedding(Gemma4Embedding::Q8_0(table)) => table.byte_len(),
         }
     }
 }
@@ -974,12 +1226,20 @@ impl<B: Backend> Gemma4<B> {
         cache: &mut KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
-        let mut x = embed_tokens(
-            backend,
-            &self.embed_tokens,
-            token_ids,
-            self.config.embed_dim,
-        )?;
+        use crate::trace::{self, OpKind};
+
+        let seq_len = token_ids.len();
+        let embed_dim = self.config.embed_dim;
+        let embedding_span = gemma_trace_span!(
+            "embedding",
+            usize::MAX,
+            OpKind::Embedding,
+            vec![seq_len, embed_dim],
+            trace::bytes_from_shape(&[seq_len, embed_dim]),
+            trace::flops_embedding(),
+        );
+        let mut x = embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
+        finish_trace_span(embedding_span, backend, &x);
         let ple = self.ple_vectors(backend, token_ids, &x)?;
         for (layer, block) in self.blocks.iter().enumerate() {
             let layer_ple = ple.as_ref().map(|v| &v[layer]);
@@ -989,9 +1249,38 @@ impl<B: Backend> Gemma4<B> {
             cache.advance_cursor();
         }
         let last = backend.row_as_2d(&x, token_ids.len() - 1)?;
+        let final_norm_span = gemma_trace_span!(
+            "final_norm",
+            usize::MAX,
+            OpKind::RmsNorm,
+            vec![1, embed_dim],
+            trace::bytes_from_shape(&[1, embed_dim])
+                + trace::bytes_from_shape(backend.shape(&self.norm)),
+            trace::flops_rms_norm(1, embed_dim),
+        );
         let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        finish_trace_span(final_norm_span, backend, &last);
+        let head_span = gemma_trace_span!(
+            "lm_head",
+            usize::MAX,
+            OpKind::MatMulQ8_0,
+            vec![1, embed_dim],
+            trace::bytes_matmul_input(1, embed_dim, self.head.weight_bytes(backend)),
+            trace::flops_matmul(1, self.config.vocab_size, embed_dim),
+        );
         let logits = self.head.forward(backend, &last)?;
-        softcap_logits(backend, logits, self.config.final_logit_softcap)
+        finish_trace_span(head_span, backend, &logits);
+        let softcap_span = gemma_trace_span!(
+            "logit_softcap",
+            usize::MAX,
+            OpKind::Other,
+            backend.shape(&logits).to_vec(),
+            trace::bytes_from_shape(backend.shape(&logits)),
+            backend.data(&logits).len() as u64,
+        );
+        let logits = softcap_logits(backend, logits, self.config.final_logit_softcap)?;
+        finish_trace_span(softcap_span, backend, &logits);
+        Ok(logits)
     }
 
     /// Run a forward pass and return (per-layer states, logits).
@@ -1913,6 +2202,42 @@ mod tests {
             .unwrap();
         assert_eq!(logits.shape(), &[2, 4]);
         assert!(logits.data().iter().all(|v| v.is_finite()));
+
+        let mut trace_cache = model.create_cache(&backend, 4);
+        assert!(crate::trace::enable_tracing("prefill", 0));
+        let traced = model.forward_last_logits_with_cache(&backend, &[0, 1], &mut trace_cache, 0);
+        let report = crate::trace::disable_tracing().expect("Gemma trace report");
+        traced.unwrap();
+        let names = report
+            .events
+            .iter()
+            .map(|event| event.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            [
+                "embedding",
+                "attn_rms_norm",
+                "qkv_proj",
+                "rope_q_qk_norm",
+                "rope_k_qk_norm",
+                "kv_cache_store",
+                "attention_score",
+                "o_proj",
+                "post_attn_rms_norm",
+                "attn_residual_add",
+                "ffn_rms_norm",
+                "gate_up_proj",
+                "gelu",
+                "elemul",
+                "down_proj",
+                "post_ffn_rms_norm",
+                "ffn_residual_add",
+                "final_norm",
+                "lm_head",
+                "logit_softcap",
+            ]
+        );
 
         let groups = vec![vec![0, 1]];
         let hidden_only = model
