@@ -277,7 +277,6 @@ dependencies = [
  "clap",
  "env_logger",
  "half",
- "libc",
  "libm",
  "log",
  "matrixmultiply",

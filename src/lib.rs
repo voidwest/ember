@@ -1,7 +1,6 @@
 extern crate alloc;
 pub mod backend;
 pub mod decode_profile;
-pub mod decode_scheduler;
 pub mod extraction;
 pub mod gemma4;
 pub mod kv_cache;

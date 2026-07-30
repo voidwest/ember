@@ -11,7 +11,6 @@ thiserror = "1"
 anyhow = "1"
 memmap2 = "0.9"
 libm = "0.2.16"
-libc = "0.2"
 half = "2.7.1"
 matrixmultiply = "0.3.10"
 clap = { version = "4", features = ["derive"] }

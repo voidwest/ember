@@ -230,8 +230,6 @@ pub enum CpuError {
     Tensor(#[from] TensorError),
     #[error("shape mismatch: {0}")]
     ShapeMismatch(String),
-    #[error(transparent)]
-    DecodeWorker(#[from] crate::decode_scheduler::WorkerTeamError),
 }
 
 fn q8_matmul_output_len(x: &CpuTensor, w: &QuantizedWeight) -> Result<(usize, usize), CpuError> {
@@ -275,33 +273,6 @@ impl CpuBackend {
                 crate::simd::matmul_q8_0_batch(&input, rows, w, dst);
             }
         });
-    }
-
-    /// Explicit serial single-row projection for execution-mode baselines.
-    pub fn matmul_q8_0_serial_into(&self, src: &[f32], w: &QuantizedWeight, dst: &mut [f32]) {
-        debug_assert_eq!(dst.len(), w.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            crate::simd::matmul_q8_0_decode_serial(&input, w, dst);
-        });
-    }
-
-    /// Static row-parallel projection on a persistent model-owned worker team.
-    pub fn matmul_q8_0_worker_into(
-        &self,
-        workers: &crate::decode_scheduler::WorkerTeam,
-        src: &[f32],
-        w: &QuantizedWeight,
-        dst: &mut [f32],
-    ) -> Result<(), CpuError> {
-        debug_assert_eq!(dst.len(), w.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            workers.matmul(&input, w, dst)?;
-            Ok(())
-        })
     }
 
     /// Instrumented single-row projection used only by operator profiling.
@@ -511,54 +482,6 @@ impl CpuBackend {
         });
     }
 
-    /// Explicit serial pair projection with one shared activation packing.
-    pub fn matmul_q8_0_pair_serial_into(
-        &self,
-        src: &[f32],
-        w_a: &QuantizedWeight,
-        w_b: &QuantizedWeight,
-        dst_a: &mut [f32],
-        dst_b: &mut [f32],
-    ) {
-        debug_assert_eq!(dst_a.len(), w_a.out_features());
-        debug_assert_eq!(dst_b.len(), w_b.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            crate::simd::matmul_q8_0_decode_serial(&input, w_a, dst_a);
-            crate::simd::matmul_q8_0_decode_serial(&input, w_b, dst_b);
-        });
-    }
-
-    /// Pair projection on a persistent worker team. With `task_parallel`,
-    /// workers are split between the projections; otherwise all workers
-    /// row-partition each projection in sequence.
-    #[allow(clippy::too_many_arguments)]
-    pub fn matmul_q8_0_pair_worker_into(
-        &self,
-        workers: &crate::decode_scheduler::WorkerTeam,
-        task_parallel: bool,
-        src: &[f32],
-        w_a: &QuantizedWeight,
-        w_b: &QuantizedWeight,
-        dst_a: &mut [f32],
-        dst_b: &mut [f32],
-    ) -> Result<(), CpuError> {
-        debug_assert_eq!(dst_a.len(), w_a.out_features());
-        debug_assert_eq!(dst_b.len(), w_b.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            if task_parallel {
-                workers.matmul_pair(&input, w_a, dst_a, w_b, dst_b)?;
-            } else {
-                workers.matmul(&input, w_a, dst_a)?;
-                workers.matmul(&input, w_b, dst_b)?;
-            }
-            Ok(())
-        })
-    }
-
     /// Instrumented fused-input pair projection used only by operator profiling.
     pub fn matmul_q8_0_pair_into_timed(
         &self,
@@ -617,55 +540,6 @@ impl CpuBackend {
 
     /// Explicit serial Q/K/V projection with one shared activation packing.
     #[allow(clippy::too_many_arguments)]
-    pub fn matmul_q8_0_triple_serial_into(
-        &self,
-        src: &[f32],
-        w_q: &QuantizedWeight,
-        w_k: &QuantizedWeight,
-        w_v: &QuantizedWeight,
-        dst_q: &mut [f32],
-        dst_k: &mut [f32],
-        dst_v: &mut [f32],
-    ) {
-        debug_assert_eq!(dst_q.len(), w_q.out_features());
-        debug_assert_eq!(dst_k.len(), w_k.out_features());
-        debug_assert_eq!(dst_v.len(), w_v.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            crate::simd::matmul_q8_0_decode_serial(&input, w_q, dst_q);
-            crate::simd::matmul_q8_0_decode_serial(&input, w_k, dst_k);
-            crate::simd::matmul_q8_0_decode_serial(&input, w_v, dst_v);
-        });
-    }
-
-    /// Sequential static row partitions for Q/K/V on one persistent worker
-    /// team, with one shared activation packing.
-    #[allow(clippy::too_many_arguments)]
-    pub fn matmul_q8_0_triple_worker_into(
-        &self,
-        workers: &crate::decode_scheduler::WorkerTeam,
-        src: &[f32],
-        w_q: &QuantizedWeight,
-        w_k: &QuantizedWeight,
-        w_v: &QuantizedWeight,
-        dst_q: &mut [f32],
-        dst_k: &mut [f32],
-        dst_v: &mut [f32],
-    ) -> Result<(), CpuError> {
-        debug_assert_eq!(dst_q.len(), w_q.out_features());
-        debug_assert_eq!(dst_k.len(), w_k.out_features());
-        debug_assert_eq!(dst_v.len(), w_v.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            workers.matmul(&input, w_q, dst_q)?;
-            workers.matmul(&input, w_k, dst_k)?;
-            workers.matmul(&input, w_v, dst_v)?;
-            Ok(())
-        })
-    }
-
     /// Instrumented fused-input triple projection used only by operator
     /// profiling.
     #[allow(clippy::too_many_arguments)]

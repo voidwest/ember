@@ -21,8 +21,6 @@ thread_local! {
 pub enum DecodeExecutionMode {
     Serial,
     RowParallelRayon,
-    RowParallelPersistent,
-    ProjectionTaskPersistent,
     PackedRowParallelRayon,
     InterleavedSerial,
     InterleavedRowParallelRayon,

@@ -2004,6 +2004,7 @@ fn matmul_q8_0_decode_parallel(
 ///
 /// This bypasses the global work threshold while retaining the same
 /// architecture-specific kernel and per-output-row arithmetic.
+#[cfg(test)]
 pub(crate) fn matmul_q8_0_decode_serial(x: &[u8], w: &QuantizedWeight, out: &mut [f32]) {
     let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
     matmul_q8_0_decode_dispatch_chunk(x, w.data(), blocks_per_row, out);
@@ -2015,18 +2016,6 @@ pub(crate) fn matmul_q8_0_decode_serial(x: &[u8], w: &QuantizedWeight, out: &mut
 pub(crate) fn matmul_q8_0_decode_row_parallel(x: &[u8], w: &QuantizedWeight, out: &mut [f32]) {
     let blocks_per_row = w.in_features() / Q8_0_BLOCK_SIZE;
     matmul_q8_0_decode_parallel(x, w, blocks_per_row, out);
-}
-
-/// Execute a contiguous output-row chunk using the architecture-specific
-/// serial kernel. The caller is responsible for passing weight data whose
-/// first row corresponds to `out[0]`.
-pub(crate) fn matmul_q8_0_decode_raw_chunk(
-    x: &[u8],
-    data: &[u8],
-    blocks_per_row: usize,
-    out: &mut [f32],
-) {
-    matmul_q8_0_decode_dispatch_chunk(x, data, blocks_per_row, out);
 }
 
 fn matmul_q8_0_decode_dispatch_chunk(

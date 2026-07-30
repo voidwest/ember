@@ -1139,8 +1139,8 @@ pub struct Llama<B: Backend> {
     pub head: Linear<B>,
     /// model configuration
     pub config: LlamaConfig,
-    /// Stable decode execution plan selected once when the model is built.
-    decode_plan: LlamaDecodePlan,
+    /// Cached eligibility result for the allocation-free single-token path.
+    fast_decode_inter_dim: Option<usize>,
 }
 
 /// Existing Llama projection groups that can receive the packed Q8_0 decode
@@ -1192,103 +1192,6 @@ pub struct LlamaEvictionStats {
     pub eviction_attempts: usize,
     pub eviction_successes: usize,
     pub eviction_ns: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LlamaProjectionMode {
-    Rayon,
-    PrivateRayon,
-    Serial,
-    PersistentRows,
-    PersistentTasks,
-}
-
-#[derive(Debug)]
-struct LlamaDecodePlan {
-    projection_mode: LlamaProjectionMode,
-    workers: Option<crate::decode_scheduler::WorkerTeam>,
-    rayon_pool: Option<crate::decode_scheduler::PinnedRayonPool>,
-}
-
-impl LlamaDecodePlan {
-    fn rayon() -> Self {
-        Self {
-            projection_mode: LlamaProjectionMode::Rayon,
-            workers: None,
-            rayon_pool: None,
-        }
-    }
-
-    fn from_environment(fast_path_available: bool) -> anyhow::Result<Self> {
-        if !fast_path_available {
-            return Ok(Self::rayon());
-        }
-        let mode = std::env::var("EMBER_LLAMA_DECODE_MODE")
-            .unwrap_or_else(|_| "rayon".to_string())
-            .to_ascii_lowercase();
-        let projection_mode = match mode.as_str() {
-            "rayon" => LlamaProjectionMode::Rayon,
-            "private-rayon" => LlamaProjectionMode::PrivateRayon,
-            "serial" => LlamaProjectionMode::Serial,
-            "persistent-row" => LlamaProjectionMode::PersistentRows,
-            "persistent-task" => LlamaProjectionMode::PersistentTasks,
-            _ => anyhow::bail!(
-                "invalid EMBER_LLAMA_DECODE_MODE '{mode}'; expected rayon, serial, \
-                 private-rayon, persistent-row, or persistent-task"
-            ),
-        };
-        if matches!(
-            projection_mode,
-            LlamaProjectionMode::Rayon | LlamaProjectionMode::Serial
-        ) {
-            return Ok(Self {
-                projection_mode,
-                workers: None,
-                rayon_pool: None,
-            });
-        }
-
-        let physical_cpus = crate::decode_scheduler::physical_cpu_ids();
-        let requested_workers = std::env::var("EMBER_DECODE_THREADS")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or_else(rayon::current_num_threads);
-        let worker_count = requested_workers.min(physical_cpus.len()).max(1);
-        let pin_workers = std::env::var("EMBER_DECODE_AFFINITY")
-            .map(|value| value != "0")
-            .unwrap_or(true);
-        if projection_mode == LlamaProjectionMode::PrivateRayon {
-            return Ok(Self {
-                projection_mode,
-                workers: None,
-                rayon_pool: Some(crate::decode_scheduler::PinnedRayonPool::new(
-                    worker_count,
-                    pin_workers,
-                )?),
-            });
-        }
-
-        let wait_strategy = match std::env::var("EMBER_DECODE_WAIT")
-            .unwrap_or_else(|_| "sleep".to_string())
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "sleep" => crate::decode_scheduler::WorkerWaitStrategy::Sleep,
-            "hybrid" => crate::decode_scheduler::WorkerWaitStrategy::Hybrid {
-                spin_iterations: 10_000,
-            },
-            value => {
-                anyhow::bail!("invalid EMBER_DECODE_WAIT '{value}'; expected sleep or hybrid")
-            }
-        };
-        let workers =
-            crate::decode_scheduler::WorkerTeam::new(worker_count, wait_strategy, pin_workers)?;
-        Ok(Self {
-            projection_mode,
-            workers: Some(workers),
-            rayon_pool: None,
-        })
-    }
 }
 
 impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
@@ -1374,7 +1277,7 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
 }
 
 impl Llama<CpuBackend> {
-    fn fast_decode_inter_dim(&self) -> Option<usize> {
+    fn eligible_fast_decode_inter_dim(&self) -> Option<usize> {
         // The allocation-free path is currently validated for Llama's
         // adjacent-pair RoPE. Keep Qwen's split-half layout on the generic
         // implementation until it has real-model logit parity coverage.
@@ -1441,45 +1344,38 @@ impl Llama<CpuBackend> {
         if token_ids.len() != 1 || crate::trace::is_tracing() {
             return None;
         }
-        let inter_dim = self.fast_decode_inter_dim()?;
+        let inter_dim = self.fast_decode_inter_dim?;
         let embed_dim = self.config.embed_dim;
         let q_dim = self.config.n_heads * self.config.head_dim;
         let kv_dim = self.config.n_kv_heads * self.config.head_dim;
 
-        let mut execute = || {
-            LLAMA_DECODE_WORKSPACE.with(|workspace| {
-                let mut workspace = workspace.borrow_mut();
-                let needs_resize = workspace.as_ref().is_none_or(|current| {
-                    current.max_rows() != 1
-                        || current.embed_dim() != embed_dim
-                        || current.inter_dim() != inter_dim
-                        || current.q_dim() != q_dim
-                        || current.kv_dim() != kv_dim
-                });
-                if needs_resize {
-                    *workspace = Some(Workspace::new(
-                        1,
-                        embed_dim,
-                        inter_dim,
-                        self.config.n_heads,
-                        self.config.n_kv_heads,
-                        self.config.head_dim,
-                    ));
-                }
-                self.forward_decode_with_workspace(
-                    backend,
-                    token_ids[0],
-                    cache,
-                    start_pos,
-                    workspace.as_mut().expect("decode workspace initialized"),
-                )
-            })
-        };
-        Some(if let Some(pool) = self.decode_plan.rayon_pool.as_ref() {
-            pool.install(execute)
-        } else {
-            execute()
-        })
+        Some(LLAMA_DECODE_WORKSPACE.with(|workspace| {
+            let mut workspace = workspace.borrow_mut();
+            let needs_resize = workspace.as_ref().is_none_or(|current| {
+                current.max_rows() != 1
+                    || current.embed_dim() != embed_dim
+                    || current.inter_dim() != inter_dim
+                    || current.q_dim() != q_dim
+                    || current.kv_dim() != kv_dim
+            });
+            if needs_resize {
+                *workspace = Some(Workspace::new(
+                    1,
+                    embed_dim,
+                    inter_dim,
+                    self.config.n_heads,
+                    self.config.n_kv_heads,
+                    self.config.head_dim,
+                ));
+            }
+            self.forward_decode_with_workspace(
+                backend,
+                token_ids[0],
+                cache,
+                start_pos,
+                workspace.as_mut().expect("decode workspace initialized"),
+            )
+        }))
     }
 
     fn forward_decode_with_workspace(
@@ -1495,8 +1391,6 @@ impl Llama<CpuBackend> {
         let kv_dim = self.config.n_kv_heads * self.config.head_dim;
         let inter_dim = workspace.inter_dim();
         let profile_operators = crate::decode_profile::is_enabled();
-        let projection_mode = self.decode_plan.projection_mode;
-        let persistent_workers = self.decode_plan.workers.as_ref();
 
         let Workspace {
             norm_out,
@@ -1567,14 +1461,7 @@ impl Llama<CpuBackend> {
             let packed_q = block.self_attn.q_proj.packed_q8_weight_without_bias();
             let packed_k = block.self_attn.k_proj.packed_q8_weight_without_bias();
             let packed_v = block.self_attn.v_proj.packed_q8_weight_without_bias();
-            if projection_mode == LlamaProjectionMode::Serial {
-                backend.matmul_q8_0_triple_serial_into(norm, q_weight, k_weight, v_weight, q, k, v);
-            } else if let Some(workers) = persistent_workers {
-                backend.matmul_q8_0_triple_worker_into(
-                    workers, norm, q_weight, k_weight, v_weight, q, k, v,
-                )?;
-            } else if let (Some(packed_q), Some(packed_k), Some(packed_v)) =
-                (packed_q, packed_k, packed_v)
+            if let (Some(packed_q), Some(packed_k), Some(packed_v)) = (packed_q, packed_k, packed_v)
             {
                 if profile_operators {
                     let elapsed = backend.matmul_q8_0_packed_triple_into_timed(
@@ -1636,11 +1523,7 @@ impl Llama<CpuBackend> {
                 .q8_weight_without_bias()
                 .expect("fast path eligibility checked");
             let packed_o = block.self_attn.o_proj.packed_q8_weight_without_bias();
-            if projection_mode == LlamaProjectionMode::Serial {
-                backend.matmul_q8_0_serial_into(attention, o_weight, projected);
-            } else if let Some(workers) = persistent_workers {
-                backend.matmul_q8_0_worker_into(workers, attention, o_weight, projected)?;
-            } else if let Some(packed_o) = packed_o {
+            if let Some(packed_o) = packed_o {
                 if profile_operators {
                     let elapsed =
                         backend.matmul_q8_0_packed_into_timed(attention, packed_o, projected);
@@ -1674,19 +1557,7 @@ impl Llama<CpuBackend> {
                 .expect("fast path eligibility checked");
             let packed_gate = block.mlp.gate_proj.packed_q8_weight_without_bias();
             let packed_up = block.mlp.up_proj.packed_q8_weight_without_bias();
-            if projection_mode == LlamaProjectionMode::Serial {
-                backend.matmul_q8_0_pair_serial_into(norm, gate_weight, up_weight, gate, up);
-            } else if let Some(workers) = persistent_workers {
-                backend.matmul_q8_0_pair_worker_into(
-                    workers,
-                    projection_mode == LlamaProjectionMode::PersistentTasks,
-                    norm,
-                    gate_weight,
-                    up_weight,
-                    gate,
-                    up,
-                )?;
-            } else if let (Some(packed_gate), Some(packed_up)) = (packed_gate, packed_up) {
+            if let (Some(packed_gate), Some(packed_up)) = (packed_gate, packed_up) {
                 if profile_operators {
                     let elapsed = backend.matmul_q8_0_packed_pair_into_timed(
                         norm,
@@ -1716,11 +1587,7 @@ impl Llama<CpuBackend> {
                 .q8_weight_without_bias()
                 .expect("fast path eligibility checked");
             let packed_down = block.mlp.down_proj.packed_q8_weight_without_bias();
-            if projection_mode == LlamaProjectionMode::Serial {
-                backend.matmul_q8_0_serial_into(gated, down_weight, projected);
-            } else if let Some(workers) = persistent_workers {
-                backend.matmul_q8_0_worker_into(workers, gated, down_weight, projected)?;
-            } else if let Some(packed_down) = packed_down {
+            if let Some(packed_down) = packed_down {
                 if profile_operators {
                     let elapsed =
                         backend.matmul_q8_0_packed_into_timed(gated, packed_down, projected);
@@ -1956,18 +1823,16 @@ impl Llama<CpuBackend> {
             norm: get_f32("output_norm.weight")?,
             head,
             config,
-            decode_plan: LlamaDecodePlan::rayon(),
+            fast_decode_inter_dim: None,
         };
-        model.decode_plan =
-            LlamaDecodePlan::from_environment(model.fast_decode_inter_dim().is_some())?;
+        model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
         log::debug!(
-            "llama q8 decode workspace: {}; projection plan: {:?}",
-            if model.fast_decode_inter_dim().is_some() {
+            "llama q8 decode workspace: {}",
+            if model.fast_decode_inter_dim.is_some() {
                 "enabled"
             } else {
                 "unavailable (mixed or unsupported weight shapes)"
-            },
-            model.decode_plan
+            }
         );
         Ok(model)
     }
@@ -2592,7 +2457,7 @@ mod tests {
                 qk_norm_order: QkNormOrder::AfterRope,
                 vocab_size,
             },
-            decode_plan: LlamaDecodePlan::rayon(),
+            fast_decode_inter_dim: Some(inter_dim),
         }
     }
 
