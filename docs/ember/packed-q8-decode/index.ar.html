@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="Q8 decode أسرع بدون إبقاء نسختين من النموذج في الذاكرة" />
+        <meta property="og:description" content="كيف رفع مسار packed Q8 سرعة decode بنسبة 40.6% في workload واحد، ولماذا كانت قراءة الذاكرة الأولى ناقصة، وأي projections احتفظت بمعظم التحسن." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/packed-q8-decode/index.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>Q8 decode أسرع بدون إبقاء نسختين من النموذج في الذاكرة</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260718" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/packed-q8-decode/">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            <a href="/ember/index.ar.html" class="ltr">ember</a>
+            <a href="/ember/engineering/index.ar.html" class="ltr">engineering</a>
+            <a href="/ember/simd-qwen-gemma/index.ar.html" class="ltr">earlier SIMD work</a>
+        </div>
+
+        <h1><bdi>Q8 decode</bdi> أسرع بدون إبقاء نسختين من النموذج في الذاكرة</h1>
+
+        <div class="meta">
+            <bdi>2026-07-30</bdi> · تقرير هندسي عن دورة حياة
+            <bdi>packed Q8_0</bdi> · نموذج <bdi>Llama-3.2-1B</bdi> على معالج
+            <bdi>Tiger Lake</bdi> واحد
+        </div>
+
+        <p>
+            مسار <bdi>packed Q8</bdi> الجديد رفع median للـ full-model decode من
+            <bdi>21.968</bdi> إلى <bdi>30.888 tok/s</bdi> في تشغيل
+            <bdi>Llama-3.2-1B</bdi> المقاس هنا. التحسن <bdi>40.6%</bdi>. لكن
+            النسخة الأولى بدت أيضاً كأنها تحتاج نسخة إضافية بحجم نموذج تقريباً
+            داخل الذاكرة. رقم السرعة كان حقيقياً. قراءة الذاكرة الأولى كانت
+            ناقصة.
+        </p>
+
+        <p>
+            السؤال صار أضيق: هل أقدر أحتفظ بالـ layout المناسب للـ decode، ثم
+            أخرج صفحات source projections بعد prefill، بدون ما يتغير الخرج؟
+            في هذا النموذج وعلى هذا المعالج، نعم. هذا دليل هندسي محلي، مو claim
+            عامة عن Q8 inference.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table scan-table">
+                <tbody>
+                    <tr><td>النتيجة المقاسة</td><td><bdi>21.968 → 30.888 tok/s</bdi> في median full-model decode، بزيادة <bdi>40.6%</bdi>.</td></tr>
+                    <tr><td>أفضل اختيار جزئي</td><td><bdi>30.199 tok/s</bdi> بدون down projections؛ احتفظ بـ <bdi>92.9%</bdi> من التحسن الكامل المقاس.</td></tr>
+                    <tr><td>كلفة البداية</td><td>packing لكل projections أخذ قرابة <bdi>450 ms</bdi>؛ الاختيار الجزئي أخذ <bdi>350 ms</bdi>.</td></tr>
+                    <tr><td>حد الادعاء</td><td>نموذج <bdi>Llama-3.2-1B Q8_0</bdi> واحد، لابتوب Intel بأربع cores، وثلاث إعادات بترتيب عشوائي.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>ما الذي تغير في <bdi>hot path</bdi></h2>
+
+        <p>
+            التحديث السابق خفف الشغل حول matrix kernels. single-token decode صار
+            يعيد استخدام workspace محاذي للـ cache بدل بناء tensors وسيطة في كل
+            طبقة. KV cache صار FP16. مسارات Q/K/V وgate/up تشارك activation
+            quantization واحدة. والـ LM head الكبير أخذ interleaved VNNI layout
+            خاص. كذلك kernel الصفوف العادي توسع من <bdi>4</bdi> إلى
+            <bdi>8</bdi> output rows وأضاف prefetch صريح.
+        </p>
+
+        <p>
+            التحديث الأخير يغير layout الأوزان نفسها. Llama projections المؤهلة
+            تنحزم في tiles من <bdi>16</bdi> output rows. لكل block من
+            <bdi>32</bdi> input coordinates، بايتات نفس الأربع coordinates عبر
+            الصفوف الستة عشر تجلس بجانب بعض. بعدها يقدر AVX-512 VNNI يبث أربع
+            activation bytes، يقرأ weight group واحد بحجم <bdi>64 bytes</bdi>،
+            ويجمع <bdi>16</bdi> outputs.
+        </p>
+
+        <pre dir="ltr"><code>row-contiguous source
+row 0  [scale][q0 q1 ... q31]
+row 1  [scale][q0 q1 ... q31]
+...
+
+packed 16-row tile
+[rows 0..15, q0..q3]
+[rows 0..15, q4..q7]
+...
+[rows 0..15, q28..q31]
+[16 fp16 scales]</code></pre>
+
+        <p>
+            كل packed tile/block حجمه <bdi>544 bytes</bdi>، وهو نفس الحجم
+            المشفر لـ <bdi>16</bdi> Q8_0 blocks عادية. packing ما يضغط الوزن أكثر؛
+            فقط يغير أي بايتات تصل مع بعض. المعالجات غير المدعومة، ومسار Qwen
+            ذي split-half RoPE، والـ projections التي فيها bias، ومفتاح الرجوع
+            <span class="mono" dir="ltr">EMBER_LLAMA_PACKED_Q8=0</span> تبقى على
+            المسار العام.
+        </p>
+
+        <h2>القياس يغطي <bdi>decode loop</bdi> كامل</h2>
+
+        <p>
+            كل trial اشتغل في process جديد على <bdi>Intel i5-1135G7</bdi>. ثبتت
+            أربعة Rayon workers على physical CPUs من <bdi>0</bdi> إلى
+            <bdi>3</bdi> واستبعدت SMT siblings. حرارة package عند البداية كانت
+            <bdi>80 °C</bdi> أو أقل. prompt من ستة tokens مر عبر generic
+            prefill، ثم النموذج ولد <bdi>128</bdi> greedy tokens بحتمية. أوضاع
+            lifecycle واختيارات projections العشرة تغير ترتيبها ببذرة ثابتة
+            عبر ثلاث إعادات.
+        </p>
+
+        <p>
+            كل الـ <bdi>30</bdi> trials المقبولة أعطت نفس hash للـ generated
+            tokens:
+            <span class="mono" dir="ltr">fnv1a64:9f8e8158645ba677</span>.
+            تشغيل أقدم جمع الأوضاع بدل خلطها، ووضع إعدادين متطابقين على فرق
+            <bdi>13%</bdi>. رفضت أرقامه. في التشغيل العشوائي صار الفرق بين نفس
+            الإعدادين <bdi>0.2%</bdi>.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="/plots/packed_q8_decode_dark.svg"
+                 alt="رسم أعمدة أفقي لسرعة full-model decode: control عند 21.968 token في الثانية، gate وup عند 27.659، attention وgate وup بدون down عند 30.199، وكل projections المؤهلة عند 30.827." />
+            <img class="chart theme-chart-light" src="/plots/packed_q8_decode_light.svg"
+                 alt="رسم أعمدة أفقي لسرعة full-model decode: control عند 21.968 token في الثانية، gate وup عند 27.659، attention وgate وup بدون down عند 30.199، وكل projections المؤهلة عند 30.827." />
+            <figcaption>
+                median لثلاث processes جديدة بترتيب عشوائي. هذا full-model
+                decode بعد generic prefill، وليس kernel microbenchmark. قيمة
+                packed MiB هي حجم representation للـ projections المختارة.
+            </figcaption>
+        </figure>
+
+        <p>
+            packing لكل شيء وصل إلى <bdi>30.827 tok/s</bdi> داخل selection
+            matrix. لما حزمت gate/up وQ/K/V/O وتركت down على layout الصفوف،
+            وصلت النتيجة إلى <bdi>30.199 tok/s</bdi>. الاختيار الأصغر حجمه
+            <bdi>714 MiB</bdi> واحتفظ بـ <bdi>92.9%</bdi> من التحسن، مع خفض
+            packing time من <bdi>452.9</bdi> إلى <bdi>350.3 ms</bdi> وخفض
+            transient peak RSS من <bdi>3,104.5</bdi> إلى
+            <bdi>2,827.4 MiB</bdi>.
+        </p>
+
+        <p>
+            down هو negative result المفيد. إضافته فوق gate/up حجزت
+            <bdi>272 MiB</bdi> أخرى، لكن median ارتفع فقط
+            <bdi>0.393 tok/s</bdi>. operator profile يعطي نفس الصورة المحلية:
+            Q وO وgate وup تحسنت تقريباً <bdi>1.7–1.8x</bdi> داخل projection
+            calls، بينما down كان <bdi>1.03x</bdi> والـ LM head المنفصل
+            <bdi>1.01x</bdi>. هذا لا يفسر السبب. ما زلت أحتاج hardware counters
+            وحجم نموذج ثانٍ.
+        </p>
+
+        <h2>ليش كانت قراءة <bdi>RSS</bdi> الأولى ناقصة</h2>
+
+        <p>
+            GGUF loader يبقي أوزان Q8_0 الأصلية row-contiguous داخل read-only
+            mmap. الأوزان packed تذهب إلى anonymous memory. بعد packing مباشرة
+            يقدر Ember يستدعي <span class="mono" dir="ltr">MADV_DONTNEED</span>
+            على source ranges. في decode-only run، هذا يبدو مثل استبدال layout
+            بآخر.
+        </p>
+
+        <p>
+            generation العادي يبدأ بـ prefill. generic prefill يقرأ source
+            layout ويرجع صفحاته إلى الذاكرة. إذا ما صار eviction ثانية عند حد
+            الانتقال، يبقى layoutان resident. لذلك نتيجة decode-only قليلة
+            الزيادة في الذاكرة ما كانت تصف دورة التشغيل العادية.
+        </p>
+
+        <ol class="flow-list">
+            <li><strong>pack</strong><span>ابنِ layout الستة عشر صفاً من projection bytes الموجودة في mmap.</span></li>
+            <li><strong>generic prefill</strong><span>استخدم source layout عندما تعيد صفوف prompt المتعددة استخدام الأوزان.</span></li>
+            <li><strong>re-evict</strong><span>أخرج mapped projection pages بعد prefill مع إبقاء mapping صالحاً.</span></li>
+            <li><strong>packed decode</strong><span>ولد token واحداً في كل مرة بدون إعادة fault لتلك source pages.</span></li>
+        </ol>
+
+        <p>
+            في durable all-projection mode هبط file-backed PSS من
+            <bdi>1,265.1</bdi> إلى <bdi>279.0 MiB</bdi> بعد re-eviction، وبقي
+            هناك خلال <bdi>127</bdi> packed decode evaluations. final RSS كان
+            <bdi>2,113.6 MiB</bdi>. أما duplicate-layout mode المقصود للمقارنة
+            فانتهى عند <bdi>3,099.7 MiB</bdi> بدون decode أسرع. هذه هي النتيجة
+            التي تدعم replacement-style residency.
+        </p>
+
+        <h2>كلفة البداية لازم تسترد نفسها</h2>
+
+        <p>
+            decode الأسرع في steady state لا يعني أن generation القصير يصير
+            أسرع. all-projection mode أضاف قرابة <bdi>450 ms</bdi> من packing
+            إلى time-to-first-token، ووصل break-even عند قرابة
+            <bdi>36</bdi> generated tokens لهذا prompt. استبعاد down خفض النقطة
+            المقاسة إلى <bdi>29</bdi> tokens.
+        </p>
+
+        <p>
+            ممكن نؤجل packing إلى ما بعد prefill ونخرج token الأول قبل الوقفة.
+            لكن هذا يصنع فجوة تقارب <bdi>438 ms</bdi> بين التوكن الأول والثاني.
+            نقلنا latency من مكان إلى آخر؛ ما أزلناها. السياسة المناسبة تعتمد
+            على عمر process وعدد tokens المتوقع.
+        </p>
+
+        <h2>حدود النتيجة</h2>
+
+        <ul>
+            <li>لا تقول إن نفس التحسن سيظهر على AVX2 أو AMD أو ARM أو quantization مختلف.</li>
+            <li>لا تقيس cold-storage faults؛ كل runs المقبولة سجلت صفر major faults.</li>
+            <li>لا تثبت أن attention-only packing ضعيف بشكل عام.</li>
+            <li>لا تحول نتيجة لابتوب واحد إلى shape-selection policy.</li>
+            <li>لا تزيل transient peak أثناء وجود layoutين خلال packing.</li>
+        </ul>
+
+        <p>
+            الادعاء الأضيق يكفي الآن: packed kernel سرّع decode، وحد المرحلة جعل
+            السرعة متوافقة مع durable source-page eviction في هذا workload.
+            الاختبار التالي هو <bdi>Llama-3.2-3B</bdi>، قبل تعديل kernel مرة
+            ثانية.
+        </p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/index.ar.html">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/index.ar.html">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/index.ar.html">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/index.ar.html">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/index.ar.html">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

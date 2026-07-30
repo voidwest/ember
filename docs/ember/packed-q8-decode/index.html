@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="faster Q8 decode without keeping two models resident" />
+        <meta property="og:description" content="How Ember's packed Q8 decode path gained 40.6% on one Llama 1B workload, why the first memory result was misleading, and which projections kept most of the gain." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/packed-q8-decode/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>faster Q8 decode without keeping two models resident</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260718" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/packed-q8-decode/index.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            <a href="/ember/">ember</a>
+            <a href="/ember/engineering/">engineering</a>
+            <a href="/ember/simd-qwen-gemma/">earlier SIMD work</a>
+        </div>
+
+        <h1>faster Q8 decode without keeping two models resident</h1>
+
+        <div class="meta">
+            2026-07-30 · packed Q8_0 lifecycle report · Llama-3.2-1B on one
+            Tiger Lake CPU
+        </div>
+
+        <p>
+            the newest packed Q8 path raises median full-model decode from
+            21.968 to 30.888 tok/s on the measured Llama-3.2-1B workload. that
+            is a 40.6% gain. the first implementation also appeared to need
+            almost another model-sized resident copy. the speed number was real;
+            the first memory interpretation was not complete.
+        </p>
+
+        <p>
+            the engineering question became narrower: can Ember keep the
+            decode-oriented layout, evict the source projection pages after
+            prefill, and preserve deterministic output? on this one model and
+            CPU, yes. that is an engineering result, not a general claim about
+            Q8 inference.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table scan-table">
+                <tbody>
+                    <tr><td>measured result</td><td>21.968 → 30.888 tok/s for median full-model decode, +40.6%.</td></tr>
+                    <tr><td>best selective result</td><td>30.199 tok/s while excluding the down projections: 92.9% of the full measured gain.</td></tr>
+                    <tr><td>startup cost</td><td>all-projection packing took about 450 ms; the selective configuration took 350 ms.</td></tr>
+                    <tr><td>claim boundary</td><td>one Llama-3.2-1B Q8_0 model, one 4-core Intel laptop, three randomized repetitions.</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>what changed in the hot path</h2>
+
+        <p>
+            the preceding runtime pass removed work around the matrix kernels.
+            single-token decode now reuses a cache-aligned workspace instead of
+            rebuilding intermediate tensors, stores the KV cache as FP16, shares
+            one activation quantization across Q/K/V and gate/up projections,
+            and uses an interleaved VNNI layout for the large LM head. the
+            row-contiguous VNNI kernel also widened from 4 to 8 output rows and
+            gained explicit prefetching.
+        </p>
+
+        <p>
+            the latest pass changes the per-layer projection layout itself.
+            eligible Llama Q8_0 weights are packed in tiles of 16 output rows.
+            for every block of 32 input coordinates, bytes for the same four
+            coordinates across all 16 rows sit together. an AVX-512 VNNI kernel
+            can broadcast four activation bytes, load one contiguous 64-byte
+            weight group, and accumulate 16 outputs.
+        </p>
+
+        <pre><code>row-contiguous source
+row 0  [scale][q0 q1 ... q31]
+row 1  [scale][q0 q1 ... q31]
+...
+
+packed 16-row tile
+[rows 0..15, q0..q3]
+[rows 0..15, q4..q7]
+...
+[rows 0..15, q28..q31]
+[16 fp16 scales]</code></pre>
+
+        <p>
+            one packed tile/block record is 544 bytes, exactly the encoded size
+            of 16 ordinary Q8_0 blocks. packing does not make the weights denser.
+            it changes which bytes arrive together. unsupported CPUs, Qwen's
+            split-half RoPE path, biased projections, and an explicit
+            <span class="mono">EMBER_LLAMA_PACKED_Q8=0</span> switch stay on the
+            generic path.
+        </p>
+
+        <h2>the benchmark measures a complete decode loop</h2>
+
+        <p>
+            each trial ran in a fresh process on an Intel i5-1135G7. four Rayon
+            workers were pinned to physical CPUs 0–3, SMT siblings were
+            excluded, and the process started at or below 80 °C package
+            temperature. a six-token prompt ran through generic prefill, then
+            the model generated 128 deterministic greedy tokens. the ten
+            lifecycle and projection-selection modes were shuffled with a fixed
+            seed across three repetitions.
+        </p>
+
+        <p>
+            all 30 accepted trials produced the same generated-token hash:
+            <span class="mono">fnv1a64:9f8e8158645ba677</span>. an earlier
+            mode-grouped run was rejected because two identical configurations
+            landed 13% apart. in the randomized run, those controls were only
+            0.2% apart.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="/plots/packed_q8_decode_dark.svg"
+                 alt="Horizontal bars showing median full-model decode throughput: control 21.968 tokens per second; gate and up packed 27.659; attention, gate, and up packed with down excluded 30.199; all eligible projections packed 30.827." />
+            <img class="chart theme-chart-light" src="/plots/packed_q8_decode_light.svg"
+                 alt="Horizontal bars showing median full-model decode throughput: control 21.968 tokens per second; gate and up packed 27.659; attention, gate, and up packed with down excluded 30.199; all eligible projections packed 30.827." />
+            <figcaption>
+                medians of three randomized fresh processes. this is full-model
+                decode throughput after generic prefill, not an isolated kernel
+                benchmark. packed MiB counts the selected per-layer projection
+                representation.
+            </figcaption>
+        </figure>
+
+        <p>
+            packing everything reached 30.827 tok/s in the projection-selection
+            matrix. packing gate/up plus Q/K/V/O, but leaving down row-contiguous,
+            reached 30.199 tok/s. that smaller 714 MiB selection retained 92.9%
+            of the measured all-projection gain while cutting packing time from
+            452.9 to 350.3 ms and transient peak RSS from 3,104.5 to 2,827.4 MiB.
+        </p>
+
+        <p>
+            down is the useful negative result. adding it to gate/up packed
+            another 272 MiB but added only 0.393 tok/s in the median. the
+            operator profile tells the same local story: Q, O, gate, and up
+            improved by roughly 1.7–1.8x inside their projection calls; down was
+            1.03x and the separately interleaved LM head was 1.01x. this does not
+            yet explain why. hardware counters and another model size are still
+            missing.
+        </p>
+
+        <h2>why the first RSS result was misleading</h2>
+
+        <p>
+            the GGUF loader keeps row-contiguous Q8_0 weights in a read-only
+            memory map. packed weights are anonymous memory. immediately after
+            packing, Ember can issue <span class="mono">MADV_DONTNEED</span> for
+            the mapped source ranges. a decode-only run then looks close to
+            replacement storage.
+        </p>
+
+        <p>
+            ordinary generation has a prefill phase first. generic prefill reads
+            the row-contiguous source and faults those pages back into memory.
+            without another eviction at the phase boundary, the process keeps
+            both layouts resident. the initial low-overhead decode result did
+            not describe that normal lifecycle.
+        </p>
+
+        <ol class="flow-list">
+            <li><strong>pack</strong><span>build the 16-row decode layout from mapped Q8_0 projection bytes.</span></li>
+            <li><strong>generic prefill</strong><span>use the source layout where multiple prompt rows can reuse it.</span></li>
+            <li><strong>re-evict</strong><span>drop mapped projection pages after prefill, while retaining the valid mapping.</span></li>
+            <li><strong>packed decode</strong><span>generate one token at a time without re-faulting those projection sources.</span></li>
+        </ol>
+
+        <p>
+            in the durable all-projection mode, file-backed PSS fell from
+            1,265.1 MiB after prefill to 279.0 MiB after re-eviction and stayed
+            there through 127 packed decode evaluations. final RSS was
+            2,113.6 MiB. the deliberate duplicate-layout mode ended at
+            3,099.7 MiB and did not decode faster. that is the result that
+            supports replacement-style residency.
+        </p>
+
+        <h2>startup still has to earn itself back</h2>
+
+        <p>
+            faster steady-state decode does not guarantee faster short
+            generations. the durable all-projection mode moved about 450 ms of
+            packing into time-to-first-token and broke even at approximately 36
+            generated tokens for this prompt. excluding down reduced the
+            measured break-even to 29 tokens.
+        </p>
+
+        <p>
+            packing after prefill can emit token one before the packing pause,
+            but then creates a roughly 438 ms first-to-second-token gap. that is
+            a timing relocation, not a latency win. the right policy depends on
+            whether a process is long-lived and how many tokens it will produce.
+        </p>
+
+        <h2>what this result does not establish</h2>
+
+        <ul>
+            <li>it does not show the same gain on AVX2, AMD, ARM, another quantization, or another model size.</li>
+            <li>it does not measure cold-storage faults; every accepted run had zero major faults.</li>
+            <li>it does not show that attention-only packing is generally weak.</li>
+            <li>it does not turn one laptop result into a shape-selection policy.</li>
+            <li>it does not remove the transient peak created while both layouts exist during packing.</li>
+        </ul>
+
+        <p>
+            the narrow result is enough: the packed kernel made decode faster,
+            and the phase boundary made that speed compatible with durable
+            source-page eviction on this workload. the next test is whether the
+            same tradeoff survives Llama-3.2-3B before changing the kernel again.
+        </p>
+        <!-- docs:footer start -->
+        <footer>
+            <a href="/">voidwest</a>
+            &nbsp;·&nbsp;
+            <a href="https://github.com/voidwest">github</a>
+            &nbsp;·&nbsp;
+            <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+            &nbsp;·&nbsp;
+            <a href="mailto:mthobaiti@outlook.com">email</a>
+            &nbsp;·&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;·&nbsp;
+            <a href="/research-notes/">research notes</a>
+            &nbsp;·&nbsp;
+            <a href="/tools/">tools</a>
+            &nbsp;·&nbsp;
+            <a href="/terms/">terms</a>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
