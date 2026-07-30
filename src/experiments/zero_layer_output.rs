@@ -264,4 +264,29 @@ mod tests {
         assert_eq!(tensor.values(), &[0.0; 4]);
         assert_eq!(experiment.intervention_count(), 1);
     }
+
+    #[test]
+    fn intervention_count_includes_prefill_and_decode() {
+        let model = model_context(2);
+        let prefill = LayerContext::new(
+            ExecutionContext::new(model, ExecutionPhase::Prefill, 0, 2, TracingState::Disabled),
+            1,
+        );
+        let decode = LayerContext::new(
+            ExecutionContext::new(model, ExecutionPhase::Decode, 2, 1, TracingState::Disabled),
+            1,
+        );
+        let mut experiment =
+            ZeroLayerOutput::new(ZeroLayerOutputSpec::new(1, ZeroLayerOutputStage::Mlp));
+        let mut prefill_values = [1.0; 8];
+        let mut prefill_tensor = TensorAccess::new(2, 4, &mut prefill_values);
+        experiment.after_mlp(&prefill, &mut prefill_tensor).unwrap();
+        let mut decode_values = [1.0; 4];
+        let mut decode_tensor = TensorAccess::new(1, 4, &mut decode_values);
+        experiment.after_mlp(&decode, &mut decode_tensor).unwrap();
+
+        assert_eq!(experiment.intervention_count(), 2);
+        assert!(prefill_tensor.values().iter().all(|value| *value == 0.0));
+        assert!(decode_tensor.values().iter().all(|value| *value == 0.0));
+    }
 }

@@ -207,7 +207,6 @@ pub struct TensorAccess<'a> {
 }
 
 impl<'a> TensorAccess<'a> {
-    #[allow(dead_code)] // Wired into model execution in the next implementation commit.
     pub(crate) fn new(rows: usize, columns: usize, values: &'a mut [f32]) -> Self {
         debug_assert_eq!(rows.saturating_mul(columns), values.len());
         Self {

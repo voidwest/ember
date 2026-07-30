@@ -1,4 +1,8 @@
-use crate::backend::{Backend, CpuBackend};
+use crate::backend::{Backend, CpuBackend, CpuError};
+use crate::experiments::{
+    ActiveHooks, DisabledHooks, ExecutionContext, ExperimentRunner, ExperimentalForwardModel,
+    LayerHooks,
+};
 use crate::kv_cache::KVCache;
 use crate::loader::{GgufLoader, GgufValue, LoadedTensor};
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
@@ -636,6 +640,24 @@ impl<B: Backend> Gemma4Block<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        let mut hooks = DisabledHooks;
+        self.forward_with_cache_hooked(backend, x, ple, cache, layer, start_pos, &mut hooks)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn forward_with_cache_hooked<H>(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        ple: Option<&B::Tensor>,
+        cache: &mut KVCache,
+        layer: usize,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Result<B::Tensor, B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
         use crate::trace::{self, OpKind};
 
         trace::set_current_layer(layer);
@@ -667,8 +689,9 @@ impl<B: Backend> Gemma4Block<B> {
             hidden_bytes + trace::bytes_from_shape(backend.shape(&self.post_attn_norm)),
             trace::flops_rms_norm(seq_len, embed_dim),
         );
-        let attn_out = backend.rms_norm(&attn_out, &self.post_attn_norm, self.norm_eps)?;
+        let mut attn_out = backend.rms_norm(&attn_out, &self.post_attn_norm, self.norm_eps)?;
         finish_trace_span(post_attn_norm_span, backend, &attn_out);
+        hooks.after_attention(layer, &mut attn_out)?;
         let attn_add_span = gemma_trace_span!(
             "attn_residual_add",
             layer,
@@ -701,8 +724,9 @@ impl<B: Backend> Gemma4Block<B> {
             hidden_bytes + trace::bytes_from_shape(backend.shape(&self.post_ffn_norm)),
             trace::flops_rms_norm(seq_len, embed_dim),
         );
-        let mlp_out = backend.rms_norm(&mlp_out, &self.post_ffn_norm, self.norm_eps)?;
+        let mut mlp_out = backend.rms_norm(&mlp_out, &self.post_ffn_norm, self.norm_eps)?;
         finish_trace_span(post_ffn_norm_span, backend, &mlp_out);
+        hooks.after_mlp(layer, &mut mlp_out)?;
         let ffn_add_span = gemma_trace_span!(
             "ffn_residual_add",
             layer,
@@ -915,6 +939,21 @@ impl<B: Backend> ForwardModel<B> for Gemma4<B> {
         token_index_groups: &[Vec<usize>],
     ) -> Result<Vec<Vec<f32>>, B::Error> {
         Gemma4::forward_pooled_hidden_states(self, backend, token_ids, token_index_groups)
+    }
+}
+
+impl ExperimentalForwardModel for Gemma4<CpuBackend> {
+    fn forward_last_logits_with_experiment(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut KVCache,
+        start_pos: usize,
+        execution: ExecutionContext<'_>,
+        runner: &mut ExperimentRunner,
+    ) -> Result<CpuTensor, CpuError> {
+        let mut hooks = ActiveHooks::new(runner, execution);
+        self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
     }
 }
 
@@ -1231,6 +1270,21 @@ impl<B: Backend> Gemma4<B> {
         cache: &mut KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        let mut hooks = DisabledHooks;
+        self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+    }
+
+    fn forward_last_logits_with_cache_hooked<H>(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut KVCache,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Result<B::Tensor, B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
         use crate::trace::{self, OpKind};
 
         let seq_len = token_ids.len();
@@ -1247,8 +1301,12 @@ impl<B: Backend> Gemma4<B> {
         finish_trace_span(embedding_span, backend, &x);
         let ple = self.ple_vectors(backend, token_ids, &x)?;
         for (layer, block) in self.blocks.iter().enumerate() {
+            hooks.before_layer(layer, &mut x)?;
             let layer_ple = ple.as_ref().map(|v| &v[layer]);
-            x = block.forward_with_cache(backend, &x, layer_ple, cache, layer, start_pos)?;
+            x = block.forward_with_cache_hooked(
+                backend, &x, layer_ple, cache, layer, start_pos, hooks,
+            )?;
+            hooks.after_layer(layer, &mut x)?;
         }
         for _ in 0..token_ids.len() {
             cache.advance_cursor();
@@ -1263,8 +1321,9 @@ impl<B: Backend> Gemma4<B> {
                 + trace::bytes_from_shape(backend.shape(&self.norm)),
             trace::flops_rms_norm(1, embed_dim),
         );
-        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        let mut last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         finish_trace_span(final_norm_span, backend, &last);
+        hooks.before_logits(&mut last)?;
         let head_span = gemma_trace_span!(
             "lm_head",
             usize::MAX,
@@ -1283,8 +1342,9 @@ impl<B: Backend> Gemma4<B> {
             trace::bytes_from_shape(backend.shape(&logits)),
             backend.data(&logits).len() as u64,
         );
-        let logits = softcap_logits(backend, logits, self.config.final_logit_softcap)?;
+        let mut logits = softcap_logits(backend, logits, self.config.final_logit_softcap)?;
         finish_trace_span(softcap_span, backend, &logits);
+        hooks.after_logits(&mut logits)?;
         Ok(logits)
     }
 
@@ -1980,6 +2040,11 @@ fn take_optional_q8(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::experiments::test_support::RecordingExperiment;
+    use crate::experiments::{
+        ExecutionPhase, ExperimentHook, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
+        ZeroLayerOutputSpec, ZeroLayerOutputStage,
+    };
     use std::collections::HashMap;
 
     fn loader_with(metadata: HashMap<String, GgufValue>) -> GgufLoader {
@@ -2051,6 +2116,33 @@ mod tests {
         tensors.insert("output_norm.weight".to_string(), tiny_tensor(&[2], 1.0));
         tensors.insert("output.weight".to_string(), tiny_weight(&[4, 2]));
         insert_tiny_gemma4_block_tensors(tensors, 0, true);
+    }
+
+    fn tiny_gemma4_model() -> Gemma4<CpuBackend> {
+        let mut metadata = HashMap::new();
+        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
+        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
+        metadata.insert(
+            "gemma4.attention.head_count_kv".to_string(),
+            GgufValue::U32(1),
+        );
+        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
+        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        metadata.insert(
+            "gemma4.attention.sliding_window".to_string(),
+            GgufValue::U32(2),
+        );
+        metadata.insert(
+            "gemma4.final_logit_softcap".to_string(),
+            GgufValue::F32(10.0),
+        );
+
+        let mut tensors = HashMap::new();
+        insert_tiny_gemma4_tensors(&mut tensors);
+        Gemma4::from_loader(GgufLoader { metadata, tensors }).unwrap()
     }
 
     #[test]
@@ -2175,31 +2267,7 @@ mod tests {
 
     #[test]
     fn tiny_gemma4_loader_runs_forward_pass() {
-        let mut metadata = HashMap::new();
-        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
-        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
-        metadata.insert(
-            "gemma4.attention.head_count_kv".to_string(),
-            GgufValue::U32(1),
-        );
-        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
-        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
-        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
-        metadata.insert(
-            "gemma4.attention.sliding_window".to_string(),
-            GgufValue::U32(2),
-        );
-        metadata.insert(
-            "gemma4.final_logit_softcap".to_string(),
-            GgufValue::F32(10.0),
-        );
-
-        let mut tensors = HashMap::new();
-        insert_tiny_gemma4_tensors(&mut tensors);
-        let loader = GgufLoader { metadata, tensors };
-        let model = Gemma4::from_loader(loader).unwrap();
+        let model = tiny_gemma4_model();
         let backend = CpuBackend;
         let mut cache = model.create_cache(&backend, 4);
         let logits = model
@@ -2252,6 +2320,95 @@ mod tests {
             .forward_pooled_activations(&backend, &[0, 1], &groups)
             .unwrap();
         assert_eq!(hidden_only, with_logits);
+    }
+
+    #[test]
+    fn gemma_observation_hooks_preserve_logits_and_stage_order() {
+        let model = tiny_gemma4_model();
+        let backend = CpuBackend;
+        let mut normal_cache = model.create_cache(&backend, 4);
+        let normal = model
+            .forward_last_logits_with_cache(&backend, &[0, 1], &mut normal_cache, 0)
+            .unwrap();
+
+        let model_context = ModelContext::new(ModelFamily::Gemma4, None, "gemma4", 1, 2);
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Prefill,
+            0,
+            2,
+            TracingState::Disabled,
+        );
+        let (experiment, records) = RecordingExperiment::new();
+        let mut runner = ExperimentRunner::new(experiment);
+        let mut observed_cache = model.create_cache(&backend, 4);
+        let observed = ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[0, 1],
+            &mut observed_cache,
+            0,
+            execution,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(observed, normal);
+        let records = records.lock().unwrap();
+        assert_eq!(
+            records.iter().map(|record| record.hook).collect::<Vec<_>>(),
+            [
+                ExperimentHook::BeforeLayer,
+                ExperimentHook::AfterAttention,
+                ExperimentHook::AfterMlp,
+                ExperimentHook::AfterLayer,
+                ExperimentHook::BeforeLogits,
+                ExperimentHook::AfterLogits,
+            ]
+        );
+        assert_eq!(records[0].shape, Some([2, 2]));
+        assert_eq!(records[4].shape, Some([1, 2]));
+        assert_eq!(records[5].shape, Some([1, 4]));
+        assert!(records
+            .iter()
+            .all(|record| record.phase == Some(ExecutionPhase::Prefill)));
+    }
+
+    #[test]
+    fn zero_attention_intervention_changes_gemma_logits() {
+        let model = tiny_gemma4_model();
+        let backend = CpuBackend;
+        let mut normal_cache = model.create_cache(&backend, 4);
+        let normal = model
+            .forward_last_logits_with_cache(&backend, &[0, 1], &mut normal_cache, 0)
+            .unwrap();
+
+        let model_context = ModelContext::new(ModelFamily::Gemma4, None, "gemma4", 1, 2);
+        let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(ZeroLayerOutputSpec::new(
+            0,
+            ZeroLayerOutputStage::Attention,
+        )));
+        runner.on_model_loaded(&model_context).unwrap();
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Prefill,
+            0,
+            2,
+            TracingState::Disabled,
+        );
+        let mut experiment_cache = model.create_cache(&backend, 4);
+        let intervened = ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[0, 1],
+            &mut experiment_cache,
+            0,
+            execution,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_ne!(intervened, normal);
     }
 
     #[test]

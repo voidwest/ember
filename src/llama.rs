@@ -1,4 +1,8 @@
 use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, CpuError, Module};
+use crate::experiments::{
+    ActiveHooks, DisabledHooks, ExecutionContext, ExperimentRunner, ExperimentalForwardModel,
+    LayerHooks, SliceActivation,
+};
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::tensor::CpuTensor;
 use crate::workspace::Workspace;
@@ -985,6 +989,22 @@ impl<B: Backend> LlamaBlock<B> {
         layer: usize,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        let mut hooks = DisabledHooks;
+        self.forward_with_cache_hooked(backend, x, cache, layer, start_pos, &mut hooks)
+    }
+
+    fn forward_with_cache_hooked<H>(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        layer: usize,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Result<B::Tensor, B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
         use crate::trace::{self, OpKind};
 
         trace::set_current_layer(layer);
@@ -1012,9 +1032,10 @@ impl<B: Backend> LlamaBlock<B> {
         }
 
         // attention (cached) — sub-spans are inside LlamaAttention::forward_with_cache
-        let attn_out = self
+        let mut attn_out = self
             .self_attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
+        hooks.after_attention(layer, &mut attn_out)?;
 
         // -- attn residual add --
         let attn_out_bytes = trace::bytes_from_shape(backend.shape(&attn_out));
@@ -1053,7 +1074,8 @@ impl<B: Backend> LlamaBlock<B> {
         }
 
         // swiglu mlp — sub-spans are inside LlamaMlp::forward
-        let mlp_out = self.mlp.forward(backend, &normed)?;
+        let mut mlp_out = self.mlp.forward(backend, &normed)?;
+        hooks.after_mlp(layer, &mut mlp_out)?;
 
         // -- mlp residual add --
         let mlp_out_bytes = trace::bytes_from_shape(backend.shape(&mlp_out));
@@ -1276,6 +1298,26 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
     }
 }
 
+impl ExperimentalForwardModel for Llama<CpuBackend> {
+    fn forward_last_logits_with_experiment(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        execution: ExecutionContext<'_>,
+        runner: &mut ExperimentRunner,
+    ) -> Result<CpuTensor, CpuError> {
+        let mut hooks = ActiveHooks::new(runner, execution);
+        if let Some(result) =
+            self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+        {
+            return result;
+        }
+        self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+    }
+}
+
 impl Llama<CpuBackend> {
     fn eligible_fast_decode_inter_dim(&self) -> Option<usize> {
         // The allocation-free path is validated for Llama's adjacent-pair
@@ -1342,6 +1384,21 @@ impl Llama<CpuBackend> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Option<Result<CpuTensor, CpuError>> {
+        let mut hooks = DisabledHooks;
+        self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+    }
+
+    fn forward_decode_fast_hooked<H>(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Option<Result<CpuTensor, CpuError>>
+    where
+        H: for<'a> LayerHooks<SliceActivation<'a>, CpuError>,
+    {
         if token_ids.len() != 1 || crate::trace::is_tracing() {
             return None;
         }
@@ -1375,18 +1432,23 @@ impl Llama<CpuBackend> {
                 cache,
                 start_pos,
                 workspace.as_mut().expect("decode workspace initialized"),
+                hooks,
             )
         }))
     }
 
-    fn forward_decode_with_workspace(
+    fn forward_decode_with_workspace<H>(
         &self,
         backend: &CpuBackend,
         token_id: u32,
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
         workspace: &mut Workspace,
-    ) -> Result<CpuTensor, CpuError> {
+        hooks: &mut H,
+    ) -> Result<CpuTensor, CpuError>
+    where
+        H: for<'a> LayerHooks<SliceActivation<'a>, CpuError>,
+    {
         let embed_dim = self.config.embed_dim;
         let q_dim = self.config.n_heads * self.config.head_dim;
         let kv_dim = self.config.n_kv_heads * self.config.head_dim;
@@ -1442,6 +1504,10 @@ impl Llama<CpuBackend> {
         let projected = &mut mlp_out[..embed_dim];
 
         for (layer, block) in self.blocks.iter().enumerate() {
+            {
+                let mut hidden = SliceActivation::new(1, embed_dim, x);
+                hooks.before_layer(layer, &mut hidden)?;
+            }
             crate::simd::rms_norm_into(x, block.input_layernorm.data(), block.norm_eps, norm);
 
             let q_weight = block
@@ -1538,6 +1604,10 @@ impl Llama<CpuBackend> {
             } else {
                 backend.matmul_q8_0_into(attention, 1, o_weight, projected);
             }
+            {
+                let mut attention_output = SliceActivation::new(1, embed_dim, projected);
+                hooks.after_attention(layer, &mut attention_output)?;
+            }
             crate::simd::add_assign(x, projected);
 
             crate::simd::rms_norm_into(
@@ -1602,11 +1672,23 @@ impl Llama<CpuBackend> {
             } else {
                 backend.matmul_q8_0_into(gated, 1, down_weight, projected);
             }
+            {
+                let mut mlp_output = SliceActivation::new(1, embed_dim, projected);
+                hooks.after_mlp(layer, &mut mlp_output)?;
+            }
             crate::simd::add_assign(x, projected);
+            {
+                let mut hidden = SliceActivation::new(1, embed_dim, x);
+                hooks.after_layer(layer, &mut hidden)?;
+            }
         }
         cache.advance_cursor();
 
         crate::simd::rms_norm_into(x, self.norm.data(), self.config.norm_eps, norm);
+        {
+            let mut hidden = SliceActivation::new(1, embed_dim, norm);
+            hooks.before_logits(&mut hidden)?;
+        }
         let head_weight = self
             .head
             .q8_weight_without_bias()
@@ -1638,6 +1720,10 @@ impl Llama<CpuBackend> {
             } else {
                 backend.matmul_q8_0_into(norm, 1, head_weight, &mut logits);
             }
+        }
+        {
+            let mut output = SliceActivation::new(1, head_weight.out_features(), &mut logits);
+            hooks.after_logits(&mut output)?;
         }
         Ok(CpuTensor::from_data(
             vec![1, head_weight.out_features()],
@@ -2141,6 +2227,21 @@ impl<B: Backend> Llama<B> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        let mut hooks = DisabledHooks;
+        self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+    }
+
+    fn forward_last_logits_with_cache_hooked<H>(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Result<B::Tensor, B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
         use crate::trace::{self, OpKind};
 
         let seq_len = token_ids.len();
@@ -2164,7 +2265,9 @@ impl<B: Backend> Llama<B> {
         }
 
         for (layer, block) in self.blocks.iter().enumerate() {
-            x = block.forward_with_cache(backend, &x, cache, layer, start_pos)?;
+            hooks.before_layer(layer, &mut x)?;
+            x = block.forward_with_cache_hooked(backend, &x, cache, layer, start_pos, hooks)?;
+            hooks.after_layer(layer, &mut x)?;
         }
         for _ in 0..seq_len {
             cache.advance_cursor();
@@ -2181,10 +2284,11 @@ impl<B: Backend> Llama<B> {
             trace::bytes_from_shape(&[1, embed_dim]) + trace::bytes_from_shape(&[1, embed_dim]),
             trace::flops_rms_norm(1, embed_dim),
         );
-        let last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
+        let mut last = backend.rms_norm(&last, &self.norm, self.config.norm_eps)?;
         if let Some(s) = _span_final_norm {
             s.end(vec![1, embed_dim], trace::bytes_from_shape(&[1, embed_dim]));
         }
+        hooks.before_logits(&mut last)?;
 
         // -- LM head --
         let _span_head = llama_trace_span!(
@@ -2195,7 +2299,7 @@ impl<B: Backend> Llama<B> {
             trace::bytes_matmul_input(1, embed_dim, self.head.weight_bytes(backend)),
             trace::flops_matmul(1, self.config.vocab_size, embed_dim),
         );
-        let result = self.head.forward(backend, &last)?;
+        let mut result = self.head.forward(backend, &last)?;
         let vocab_size = backend.shape(&result)[1];
         if let Some(s) = _span_head {
             s.end(
@@ -2203,6 +2307,7 @@ impl<B: Backend> Llama<B> {
                 trace::bytes_matmul_output(1, vocab_size),
             );
         }
+        hooks.after_logits(&mut result)?;
 
         Ok(result)
     }
@@ -2352,9 +2457,74 @@ impl<B: Backend> Llama<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::experiments::test_support::RecordingExperiment;
+    use crate::experiments::{
+        ExecutionPhase, ExperimentHook, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
+        ZeroLayerOutputSpec, ZeroLayerOutputStage,
+    };
     use crate::loader::{GgufLoader, GgufValue};
     use crate::quant::{QuantizedWeight, Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
     use std::collections::HashMap;
+
+    struct ThreadCountingAllocator;
+
+    thread_local! {
+        static TRACK_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+        static ALLOCATION_COUNT: Cell<usize> = const { Cell::new(0) };
+    }
+
+    unsafe impl GlobalAlloc for ThreadCountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            TRACK_ALLOCATIONS
+                .try_with(|tracking| {
+                    if tracking.get() {
+                        ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
+                    }
+                })
+                .ok();
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(pointer, layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            TRACK_ALLOCATIONS
+                .try_with(|tracking| {
+                    if tracking.get() {
+                        ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
+                    }
+                })
+                .ok();
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            TRACK_ALLOCATIONS
+                .try_with(|tracking| {
+                    if tracking.get() {
+                        ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
+                    }
+                })
+                .ok();
+            unsafe { System.realloc(pointer, layout, new_size) }
+        }
+    }
+
+    #[global_allocator]
+    static TEST_ALLOCATOR: ThreadCountingAllocator = ThreadCountingAllocator;
+
+    fn count_current_thread_allocations<T>(run: impl FnOnce() -> T) -> (T, usize) {
+        ALLOCATION_COUNT.with(|count| count.set(0));
+        TRACK_ALLOCATIONS.with(|tracking| tracking.set(true));
+        let result = run();
+        TRACK_ALLOCATIONS.with(|tracking| tracking.set(false));
+        let allocations = ALLOCATION_COUNT.with(Cell::get);
+        (result, allocations)
+    }
 
     #[test]
     fn llama_config_honors_full_context_length_metadata() {
@@ -2423,6 +2593,10 @@ mod tests {
     }
 
     fn test_llama_model() -> Llama<CpuBackend> {
+        test_llama_model_with_layers(1)
+    }
+
+    fn test_llama_model_with_layers(n_layers: usize) -> Llama<CpuBackend> {
         let embed_dim = 32;
         let head_dim = 16;
         let n_heads = 2;
@@ -2430,35 +2604,40 @@ mod tests {
         let inter_dim = 64;
         let vocab_size = 32;
         let max_seq_len = 8;
-        let (rope_cos, rope_sin) =
-            crate::tensor::compute_rope_freqs(max_seq_len, head_dim, 10_000.0, None);
-        let attention = LlamaAttention::new(
-            test_q8_linear(embed_dim, embed_dim, 1),
-            test_q8_linear(head_dim, embed_dim, 2),
-            test_q8_linear(head_dim, embed_dim, 3),
-            test_q8_linear(embed_dim, embed_dim, 4),
-            rope_cos,
-            rope_sin,
-            n_heads,
-            n_kv_heads,
-            head_dim,
-            RopeLayout::AdjacentPair,
-            QkNormOrder::AfterRope,
-            None,
-            None,
-        );
-        let mlp = LlamaMlp::new(
-            test_q8_linear(inter_dim, embed_dim, 5),
-            test_q8_linear(inter_dim, embed_dim, 6),
-            test_q8_linear(embed_dim, inter_dim, 7),
-        );
-        let block = LlamaBlock::new(
-            CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
-            attention,
-            CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
-            mlp,
-            1e-5,
-        );
+        let blocks = (0..n_layers)
+            .map(|layer| {
+                let seed = layer * 8 + 1;
+                let (rope_cos, rope_sin) =
+                    crate::tensor::compute_rope_freqs(max_seq_len, head_dim, 10_000.0, None);
+                let attention = LlamaAttention::new(
+                    test_q8_linear(embed_dim, embed_dim, seed),
+                    test_q8_linear(head_dim, embed_dim, seed + 1),
+                    test_q8_linear(head_dim, embed_dim, seed + 2),
+                    test_q8_linear(embed_dim, embed_dim, seed + 3),
+                    rope_cos,
+                    rope_sin,
+                    n_heads,
+                    n_kv_heads,
+                    head_dim,
+                    RopeLayout::AdjacentPair,
+                    QkNormOrder::AfterRope,
+                    None,
+                    None,
+                );
+                let mlp = LlamaMlp::new(
+                    test_q8_linear(inter_dim, embed_dim, seed + 4),
+                    test_q8_linear(inter_dim, embed_dim, seed + 5),
+                    test_q8_linear(embed_dim, inter_dim, seed + 6),
+                );
+                LlamaBlock::new(
+                    CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+                    attention,
+                    CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
+                    mlp,
+                    1e-5,
+                )
+            })
+            .collect();
         let embedding = (0..vocab_size * embed_dim)
             .map(|index| ((index * 19 % 101) as f32 - 50.0) * 0.002)
             .collect();
@@ -2467,11 +2646,11 @@ mod tests {
                 vec![vocab_size, embed_dim],
                 embedding,
             )),
-            blocks: vec![block],
+            blocks,
             norm: CpuTensor::from_data(vec![embed_dim], vec![1.0; embed_dim]),
             head: test_q8_linear(vocab_size, embed_dim, 8),
             config: LlamaConfig {
-                n_layers: 1,
+                n_layers,
                 n_heads,
                 n_kv_heads,
                 embed_dim,
@@ -2485,6 +2664,24 @@ mod tests {
             },
             fast_decode_inter_dim: Some(inter_dim),
         }
+    }
+
+    fn configure_as_test_qwen(model: &mut Llama<CpuBackend>) {
+        model.config.rope_layout = RopeLayout::SplitHalf;
+        model.config.qk_norm_order = QkNormOrder::BeforeRope;
+        for block in &mut model.blocks {
+            block.self_attn.rope_layout = RopeLayout::SplitHalf;
+            block.self_attn.qk_norm_order = QkNormOrder::BeforeRope;
+            block.self_attn.q_norm = Some(CpuTensor::from_data(
+                vec![model.config.head_dim],
+                vec![1.0; model.config.head_dim],
+            ));
+            block.self_attn.k_norm = Some(CpuTensor::from_data(
+                vec![model.config.head_dim],
+                vec![1.0; model.config.head_dim],
+            ));
+        }
+        model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
     }
 
     #[test]
@@ -2514,25 +2711,221 @@ mod tests {
         }
     }
 
+    fn warmed_disabled_decode_allocation_count(n_layers: usize) -> usize {
+        let model = test_llama_model_with_layers(n_layers);
+        let backend = CpuBackend;
+        let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+        ForwardModel::forward_last_logits_with_cache(&model, &backend, &[3], &mut cache, 0)
+            .unwrap();
+        let (result, allocations) = count_current_thread_allocations(|| {
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &[5], &mut cache, 1)
+        });
+        result.unwrap();
+        allocations
+    }
+
+    #[test]
+    fn disabled_hooks_add_no_per_layer_allocations() {
+        let one_layer = warmed_disabled_decode_allocation_count(1);
+        let four_layers = warmed_disabled_decode_allocation_count(4);
+
+        assert_eq!(
+            four_layers, one_layer,
+            "disabled hook dispatch must not allocate once per layer"
+        );
+    }
+
     #[test]
     fn split_half_rope_remains_on_generic_decode_path() {
         let mut model = test_llama_model();
-        model.config.rope_layout = RopeLayout::SplitHalf;
-        model.config.qk_norm_order = QkNormOrder::BeforeRope;
-        for block in &mut model.blocks {
-            block.self_attn.rope_layout = RopeLayout::SplitHalf;
-            block.self_attn.qk_norm_order = QkNormOrder::BeforeRope;
-            block.self_attn.q_norm = Some(CpuTensor::from_data(
-                vec![model.config.head_dim],
-                vec![1.0; model.config.head_dim],
-            ));
-            block.self_attn.k_norm = Some(CpuTensor::from_data(
-                vec![model.config.head_dim],
-                vec![1.0; model.config.head_dim],
-            ));
-        }
-        model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
+        configure_as_test_qwen(&mut model);
         assert!(model.fast_decode_inter_dim.is_none());
+    }
+
+    #[test]
+    fn experiment_hook_order_covers_prefill_and_fast_decode() {
+        let model = test_llama_model();
+        let backend = CpuBackend;
+        let model_context =
+            ModelContext::new(ModelFamily::Llama, None, "llama", 1, model.config.embed_dim);
+        let (experiment, records) = RecordingExperiment::new();
+        let mut runner = ExperimentRunner::new(experiment);
+        let mut cache = model.create_cache(&backend, model.config.max_seq_len);
+
+        let prefill = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Prefill,
+            0,
+            2,
+            TracingState::Disabled,
+        );
+        ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[3, 5],
+            &mut cache,
+            0,
+            prefill,
+            &mut runner,
+        )
+        .unwrap();
+
+        let decode = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Decode,
+            2,
+            1,
+            TracingState::Disabled,
+        );
+        ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[7],
+            &mut cache,
+            2,
+            decode,
+            &mut runner,
+        )
+        .unwrap();
+
+        let records = records.lock().unwrap();
+        let expected_per_evaluation = [
+            ExperimentHook::BeforeLayer,
+            ExperimentHook::AfterAttention,
+            ExperimentHook::AfterMlp,
+            ExperimentHook::AfterLayer,
+            ExperimentHook::BeforeLogits,
+            ExperimentHook::AfterLogits,
+        ];
+        assert_eq!(records.len(), expected_per_evaluation.len() * 2);
+        assert_eq!(
+            records.iter().map(|record| record.hook).collect::<Vec<_>>(),
+            expected_per_evaluation
+                .into_iter()
+                .chain(expected_per_evaluation)
+                .collect::<Vec<_>>()
+        );
+        for record in &records[..expected_per_evaluation.len()] {
+            assert_eq!(record.phase, Some(ExecutionPhase::Prefill));
+            assert_eq!(record.sequence_length, Some(2));
+        }
+        for record in &records[expected_per_evaluation.len()..] {
+            assert_eq!(record.phase, Some(ExecutionPhase::Decode));
+            assert_eq!(record.sequence_length, Some(3));
+        }
+        assert_eq!(records[0].shape, Some([2, model.config.embed_dim]));
+        assert_eq!(records[4].shape, Some([1, model.config.embed_dim]));
+        assert_eq!(records[5].shape, Some([1, model.config.vocab_size]));
+        assert_eq!(records[6].shape, Some([1, model.config.embed_dim]));
+        for record in records.iter().filter(|record| record.layer_index.is_some()) {
+            assert_eq!(record.layer_index, Some(0));
+        }
+    }
+
+    #[test]
+    fn qwen_observation_hooks_preserve_generic_logits_exactly() {
+        let mut model = test_llama_model();
+        configure_as_test_qwen(&mut model);
+        let backend = CpuBackend;
+        let mut normal_cache = model.create_cache(&backend, model.config.max_seq_len);
+        let normal = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[3],
+            &mut normal_cache,
+            0,
+        )
+        .unwrap();
+
+        let model_context =
+            ModelContext::new(ModelFamily::Qwen3, None, "qwen3", 1, model.config.embed_dim);
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Decode,
+            0,
+            1,
+            TracingState::Disabled,
+        );
+        let (experiment, records) = RecordingExperiment::new();
+        let mut runner = ExperimentRunner::new(experiment);
+        let mut observed_cache = model.create_cache(&backend, model.config.max_seq_len);
+        let observed = ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[3],
+            &mut observed_cache,
+            0,
+            execution,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(observed, normal);
+        let records = records.lock().unwrap();
+        assert_eq!(records.len(), 6);
+        assert!(records
+            .iter()
+            .all(|record| record.phase == Some(ExecutionPhase::Decode)));
+    }
+
+    #[test]
+    fn zero_attention_intervention_changes_fast_decode_logits() {
+        let model = test_llama_model();
+        let backend = CpuBackend;
+
+        let mut normal_cache = model.create_cache(&backend, model.config.max_seq_len);
+        ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[3, 5],
+            &mut normal_cache,
+            0,
+        )
+        .unwrap();
+        let normal = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[7],
+            &mut normal_cache,
+            2,
+        )
+        .unwrap();
+
+        let mut experiment_cache = model.create_cache(&backend, model.config.max_seq_len);
+        ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[3, 5],
+            &mut experiment_cache,
+            0,
+        )
+        .unwrap();
+        let model_context =
+            ModelContext::new(ModelFamily::Llama, None, "llama", 1, model.config.embed_dim);
+        let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(ZeroLayerOutputSpec::new(
+            0,
+            ZeroLayerOutputStage::Attention,
+        )));
+        runner.on_model_loaded(&model_context).unwrap();
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Decode,
+            2,
+            1,
+            TracingState::Disabled,
+        );
+        let intervened = ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[7],
+            &mut experiment_cache,
+            2,
+            execution,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_ne!(intervened, normal);
     }
 
     #[test]
