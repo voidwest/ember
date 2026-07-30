@@ -196,66 +196,6 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct LlamaCppBackend {
-    executable: Option<String>,
-}
-
-impl LlamaCppBackend {
-    pub fn from_config(config: &ExtractionConfig) -> Result<Self> {
-        config.validate()?;
-        Ok(Self {
-            executable: config.llama_cpp_binary.clone(),
-        })
-    }
-}
-
-impl ModelBackend for LlamaCppBackend {
-    fn backend_metadata(&self) -> BackendMetadata {
-        BackendMetadata {
-            name: ExecutionBackendName::LlamaCpp.as_str().to_string(),
-            version: llama_cpp_version(self.executable.as_deref()),
-            executable: self.executable.clone(),
-            commit: None,
-            details: serde_json::json!({
-                "integration": "external-process",
-                "status": "not implemented",
-                "requires": "patched/custom llama.cpp hidden-state extraction binary",
-            }),
-        }
-    }
-
-    fn model_metadata(&self) -> ModelMetadata {
-        ModelMetadata {
-            path: String::new(),
-            architecture: None,
-            n_layers: 0,
-            embed_dim: 0,
-            max_seq_len: 0,
-            file_size_bytes: None,
-            sha256: None,
-            gguf_metadata: Value::Null,
-        }
-    }
-
-    fn tokenize(&self, _prompt: &str) -> Result<TokenizedPrompt> {
-        anyhow::bail!(
-            "llama-cpp backend not implemented for hidden-state extraction yet; \
-             expected a patched/custom external extraction binary"
-        )
-    }
-
-    fn extract_hidden_states(
-        &mut self,
-        _request: HiddenStateRequest<'_>,
-    ) -> Result<BackendHiddenStateOutput> {
-        anyhow::bail!(
-            "llama-cpp backend not implemented for hidden-state extraction yet; \
-             expected a patched/custom external extraction binary"
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
 pub struct LlamaCppExternalBackend {
     executable: String,
 }
@@ -985,39 +925,6 @@ mod tests {
         );
         assert_eq!(backend.model.hidden_calls.get(), 1);
         assert_eq!(backend.model.logits_calls.get(), 1);
-    }
-
-    #[test]
-    fn llama_cpp_placeholder_reports_not_implemented() {
-        let config = ExtractionConfig {
-            run_id: None,
-            model_path: "model.gguf".to_string(),
-            architecture: Some("llama".to_string()),
-            tokenizer_path: None,
-            backend: ExecutionBackendName::LlamaCpp,
-            prompt_template: "{word}".to_string(),
-            input_jsonl_path: "input.jsonl".to_string(),
-            output_dir: "out".to_string(),
-            layers: vec![0],
-            token_position: crate::extraction::TokenPositionMode::PromptFinal,
-            word_field: "word".to_string(),
-            sample_id_field: "id".to_string(),
-            batch_size: 1,
-            dtype: crate::extraction::ArtifactDType::F32,
-            output_format: crate::extraction::ArtifactOutputFormat::Npy,
-            prompt_hashes_only: false,
-            write_logits: false,
-            resume: false,
-            max_seq_len: None,
-            record_model_sha256: false,
-            llama_cpp_binary: None,
-            run_metadata: Value::Null,
-        };
-        let backend = LlamaCppBackend::from_config(&config).expect("valid placeholder backend");
-        let err = backend
-            .tokenize("hello")
-            .expect_err("placeholder should fail");
-        assert!(err.to_string().contains("not implemented"));
     }
 
     #[cfg(unix)]

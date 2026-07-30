@@ -20,7 +20,6 @@ use ember::model::Gpt2;
 use ember::model_backend::compare_backend_artifacts;
 use ember::model_backend::run_extraction_with_backend;
 use ember::model_backend::run_llama_cpp_external_backend;
-use ember::model_backend::LlamaCppBackend;
 use ember::model_backend::NativeModelBackend;
 use ember::npy::{write_npy_2d, NpyStreamWriter};
 use ember::sampler::sample_token;
@@ -640,7 +639,6 @@ fn run_extract_command(command: &ExtractCommand) -> anyhow::Result<()> {
     match config.backend {
         ExecutionBackendName::Native => run_native_extract_command(&config),
         ExecutionBackendName::LlamaCpp => {
-            let _backend = LlamaCppBackend::from_config(&config)?;
             anyhow::bail!(
                 "llama-cpp backend not implemented for hidden-state extraction yet; \
                  config '{}' is valid, but Ember still needs the external patched/custom \
