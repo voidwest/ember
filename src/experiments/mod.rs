@@ -4,9 +4,11 @@
 //! supports one statically compiled experiment per generation run. It is not
 //! a dynamic plugin ABI, registry, event bus, or compatibility commitment.
 
+mod activation_stats;
 mod context;
 mod zero_layer_output;
 
+pub use activation_stats::ActivationStats;
 pub use context::{
     ExecutionContext, ExecutionPhase, GenerationContext, LayerContext, ModelContext, ModelFamily,
     TensorAccess, TensorDType, TracingState,

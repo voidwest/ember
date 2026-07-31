@@ -9,10 +9,58 @@ LLaMA, Qwen3, or Gemma 4 generation run. The interface is deliberately small:
 an experiment can observe stable execution metadata, inspect selected owned
 activations, and explicitly modify those activations in place.
 
-## Example
+The v0.1 release contains exactly two built-in proof points:
 
-The built-in `zero-layer-output` research example zeros one residual
-contribution at a selected layer:
+- `activation-stats`, an observation-only artifact recorder;
+- `zero-layer-output`, an explicit intervention.
+
+The MVP stops there. It does not include a registry or generalized experiment
+configuration.
+
+## Observation example
+
+`activation-stats` records value summaries at every tensor-bearing hook:
+
+```bash
+cargo run --release -- \
+  --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" \
+  --max-tokens 4 \
+  --temperature 0 \
+  --activation-stats activation-stats.json
+```
+
+The JSON artifact contains model and generation metadata followed by ordered
+records. Each record contains:
+
+- prefill or decode phase;
+- semantic hook stage and optional layer index;
+- start position, input token count, and resulting sequence length;
+- tensor shape and f32 dtype;
+- L2 norm, absolute maximum, and a stable lightweight fingerprint.
+
+The fingerprint reuses Ember's structured-tracing algorithm. It samples every
+64th value and is intended for divergence detection, not cryptographic
+identity. Norm calculation reads every value. Neither operation mutates the
+tensor, but both add work and the experiment stores one record per hook.
+
+Inspect the residual stream without loading the artifact into a custom tool:
+
+```bash
+jq '.records[] | select(.stage == "after_layer") |
+    {phase, layer_index, sequence_length, l2_norm, fingerprint}' \
+  activation-stats.json
+```
+
+Generated text keeps the normal stdout format. Activation notices and the
+artifact summary are written to stderr. Existing run-manifest provenance marks
+the experiment with `"modifies_execution": false`.
+
+## Intervention example
+
+`zero-layer-output` zeros one residual contribution at a selected layer:
 
 ```bash
 cargo run --release -- \
@@ -29,8 +77,7 @@ The accepted stages are `attention`, `mlp`, and `layer`. Layer indices are
 zero-based. Ember rejects malformed stages and validates the layer index after
 the model is loaded.
 
-Generated text keeps the normal stdout format. The activation warning and
-completion summary are written to stderr:
+The intervention warning and completion summary are written to stderr:
 
 ```text
 research experiment active: zero-layer-output layer=4 stage=attention; execution will be modified
@@ -43,9 +90,9 @@ experiment field is emitted for a normal run.
 
 ## Observation and intervention
 
-Hook methods do nothing by default. An experiment observes an activation with
-`TensorAccess::values()` and must explicitly call `values_mut()` or `zero()` to
-intervene.
+Hook methods do nothing by default. `activation-stats` observes activations
+through `TensorAccess::values()`. An experiment must explicitly call
+`values_mut()` or `zero()` to intervene.
 
 `TensorAccess` borrows Ember's existing contiguous f32 allocation. It cannot:
 
@@ -154,8 +201,10 @@ not claim numerical validity, latency stability, or benchmark comparability
 for an intervention run.
 
 Treat all benchmark numbers collected with an active experiment as a distinct
-workload. Run provenance and stderr make the intervention explicit, but they
-do not make it comparable to unmodified inference.
+workload. Even an observation-only experiment can scan tensors, allocate
+records, and write artifacts. Run provenance and stderr identify the
+experiment, but they do not make its timing comparable to unmodified
+inference.
 
 Dynamic `.so`/`.dll` loading, WASM, Python plugins, runtime discovery,
 multiple concurrent experiments, async hooks, arbitrary weight mutation,

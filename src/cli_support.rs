@@ -160,6 +160,18 @@ pub(super) fn build_run_manifest(
                     "modifies_execution": true,
                 }),
             );
+    } else if let Some(path) = &args.activation_stats {
+        execution
+            .as_object_mut()
+            .expect("execution manifest is an object")
+            .insert(
+                "experiment".to_string(),
+                serde_json::json!({
+                    "name": "activation-stats",
+                    "output": path,
+                    "modifies_execution": false,
+                }),
+            );
     }
 
     serde_json::json!({

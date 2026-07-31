@@ -10,7 +10,7 @@ use cli_support::{
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::experiments::{
-    ExecutionContext, ExecutionPhase, ExperimentRunner, ExperimentalForwardModel,
+    ActivationStats, ExecutionContext, ExecutionPhase, ExperimentRunner, ExperimentalForwardModel,
     GenerationContext, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
     ZeroLayerOutputSpec,
 };
@@ -115,9 +115,31 @@ struct Args {
     #[arg(
         long,
         value_name = "LAYER:STAGE",
-        conflicts_with_all = ["demo", "interactive", "dump_logits", "dump_layers", "probe"]
+        conflicts_with_all = [
+            "demo",
+            "interactive",
+            "dump_logits",
+            "dump_layers",
+            "probe",
+            "activation_stats"
+        ]
     )]
     zero_layer_output: Option<ZeroLayerOutputSpec>,
+
+    /// write observation-only activation norms and fingerprints to JSON
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = [
+            "demo",
+            "interactive",
+            "dump_logits",
+            "dump_layers",
+            "probe",
+            "zero_layer_output"
+        ]
+    )]
+    activation_stats: Option<String>,
 
     /// enable execution tracing (ops = per-operation breakdown)
     #[arg(long, value_parser = ["ops"])]
@@ -578,6 +600,28 @@ fn main() -> anyhow::Result<()> {
                     model_context,
                     &mut runner,
                 )?;
+            } else if let Some(path) = &args.activation_stats {
+                let family = if args.arch == "qwen3" {
+                    ModelFamily::Qwen3
+                } else {
+                    ModelFamily::Llama
+                };
+                let model_context = ModelContext::new(
+                    family,
+                    Some(&args.model),
+                    &args.arch,
+                    model.n_layers(),
+                    model.embed_dim(),
+                );
+                let mut runner = start_activation_stats(path, &model_context)?;
+                run_single_prompt_with_experiment(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args,
+                    model_context,
+                    &mut runner,
+                )?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -645,6 +689,23 @@ fn main() -> anyhow::Result<()> {
                     model_context,
                     &mut runner,
                 )?;
+            } else if let Some(path) = &args.activation_stats {
+                let model_context = ModelContext::new(
+                    ModelFamily::Gemma4,
+                    Some(&args.model),
+                    &args.arch,
+                    model.n_layers(),
+                    model.embed_dim(),
+                );
+                let mut runner = start_activation_stats(path, &model_context)?;
+                run_single_prompt_with_experiment(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args,
+                    model_context,
+                    &mut runner,
+                )?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -656,16 +717,18 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn validate_experiment_options(args: &Args) -> anyhow::Result<()> {
-    if args.zero_layer_output.is_none() {
+    let option = if args.zero_layer_output.is_some() {
+        "--zero-layer-output"
+    } else if args.activation_stats.is_some() {
+        "--activation-stats"
+    } else {
         return Ok(());
-    }
+    };
     if args.command.is_some() {
-        anyhow::bail!("--zero-layer-output is supported only for normal generation");
+        anyhow::bail!("{option} is supported only for normal generation");
     }
     if args.arch == "gpt2" {
-        anyhow::bail!(
-            "--zero-layer-output is supported for --arch llama, qwen3, and gemma4, not gpt2"
-        );
+        anyhow::bail!("{option} is supported for --arch llama, qwen3, and gemma4, not gpt2");
     }
     Ok(())
 }
@@ -1539,6 +1602,18 @@ fn start_zero_layer_output(
         "research experiment active: zero-layer-output layer={} stage={}; execution will be modified",
         spec.layer(),
         spec.stage()
+    );
+    Ok(runner)
+}
+
+fn start_activation_stats(
+    output_path: &str,
+    model_context: &ModelContext<'_>,
+) -> anyhow::Result<ExperimentRunner> {
+    let mut runner = ExperimentRunner::new(ActivationStats::new(output_path));
+    runner.on_model_loaded(model_context)?;
+    eprintln!(
+        "research experiment active: activation-stats output={output_path}; execution is observation-only"
     );
     Ok(runner)
 }
@@ -2610,6 +2685,57 @@ mod tests {
     }
 
     #[test]
+    fn activation_stats_cli_parses_and_rejects_incompatible_uses() {
+        let args = Args::try_parse_from([
+            "ember",
+            "--arch",
+            "qwen3",
+            "--activation-stats",
+            "activation-stats.json",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.activation_stats.as_deref(),
+            Some("activation-stats.json")
+        );
+        validate_experiment_options(&args).unwrap();
+
+        assert!(Args::try_parse_from([
+            "ember",
+            "--arch",
+            "qwen3",
+            "--activation-stats",
+            "stats.json",
+            "--zero-layer-output",
+            "1:mlp",
+        ])
+        .is_err());
+        assert!(Args::try_parse_from([
+            "ember",
+            "--arch",
+            "gemma4",
+            "--activation-stats",
+            "stats.json",
+            "--dump-layers",
+            "layers.bin",
+        ])
+        .is_err());
+
+        let gpt2 = Args::try_parse_from([
+            "ember",
+            "--arch",
+            "gpt2",
+            "--activation-stats",
+            "stats.json",
+        ])
+        .unwrap();
+        assert!(validate_experiment_options(&gpt2)
+            .unwrap_err()
+            .to_string()
+            .contains("not gpt2"));
+    }
+
+    #[test]
     fn run_manifest_omits_disabled_experiment_and_records_active_one() {
         let normal = Args::try_parse_from(["ember", "--arch", "llama"]).unwrap();
         let normal_manifest = build_run_manifest(
@@ -2638,6 +2764,30 @@ mod tests {
                 "layer": 2,
                 "stage": "mlp",
                 "modifies_execution": true,
+            })
+        );
+
+        let observation = Args::try_parse_from([
+            "ember",
+            "--arch",
+            "qwen3",
+            "--activation-stats",
+            "stats.json",
+        ])
+        .unwrap();
+        let observation_manifest = build_run_manifest(
+            &observation,
+            "tokenizer-qwen3.json",
+            None,
+            None,
+            &serde_json::json!({}),
+        );
+        assert_eq!(
+            observation_manifest["execution"]["experiment"],
+            serde_json::json!({
+                "name": "activation-stats",
+                "output": "stats.json",
+                "modifies_execution": false,
             })
         );
     }
