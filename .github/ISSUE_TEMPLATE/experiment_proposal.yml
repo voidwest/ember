@@ -1,0 +1,47 @@
+name: Built-in experiment proposal
+description: Propose a narrow static Rust research experiment
+title: "[Experiment]: "
+labels:
+  - experiment
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ember v0.1 intentionally ships only activation-stats and zero-layer-output. Dynamic plugins, registries, multiple concurrent experiments, and broad event systems are out of scope.
+  - type: textarea
+    id: question
+    attributes:
+      label: Research question
+      description: What concrete hypothesis would this experiment test?
+    validations:
+      required: true
+  - type: dropdown
+    id: behavior
+    attributes:
+      label: Behavior
+      options:
+        - Observation only
+        - Tensor intervention
+    validations:
+      required: true
+  - type: textarea
+    id: hooks
+    attributes:
+      label: Existing hook points used
+      description: Explain why the current hooks are sufficient. New hooks require separate justification.
+    validations:
+      required: true
+  - type: textarea
+    id: artifact
+    attributes:
+      label: Output artifact
+      description: Describe the smallest useful experiment-specific output and its analysis workflow.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation plan
+      description: Cover numerical parity or intended divergence, hook order, model families, tracing, allocations, and timing.
+    validations:
+      required: true

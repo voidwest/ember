@@ -25,6 +25,8 @@ docs/plots/root_probe_scale_comparison.png
 # only README.md is tracked — design notes and logs stay local
 *.md
 !README.md
+!/CHANGELOG.md
+!/CONTRIBUTING.md
 !docs/dataset_pipeline.md
 !docs/experiments.md
 /REPRODUCIBILITY.md

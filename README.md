@@ -148,6 +148,31 @@ Use these levels when interpreting Ember runs:
   cross-model comparison plots, and
   tokenizer fertility analysis.
 
+## supported models and quantization
+
+| CLI architecture | Supported model family | Status and boundaries |
+|------------------|------------------------|-----------------------|
+| `gpt2` | GPT-2 GGUF | baseline generation and tensor tests; experiment hooks are not integrated |
+| `llama` | dense LLaMA-family decoders | generation, KV-cached decode, tracing, extraction, and both built-in experiments |
+| `qwen3` | Qwen3 dense decoders | explicit split-half RoPE and pre-RoPE QK normalization; generation, tracing, extraction, and both experiments |
+| `qwen3` | Qwen2/Qwen2.5 metadata through the shared loader | experimental; tokenizer and real-model validation remain model-specific |
+| `gemma4` | dense text-only Gemma 4 | generation, tracing, extraction, packed gate/up dispatch, and both experiments; no MoE or multimodal path |
+
+The GGUF loader accepts these tensor encodings:
+
+| GGUF tensor type | In-memory treatment | CPU execution |
+|------------------|---------------------|---------------|
+| F32 | materialized as f32 | generic f32 kernels |
+| F16 | converted once to f32 while loading | generic f32 kernels |
+| BF16 | converted once to f32 while loading | generic f32 kernels |
+| Q8_0 | retained block-compressed, mmap-backed for file loads | scalar/AVX2/AVX-512 decode and tiled/packed prefill dispatch |
+
+Other quantization formats, including K-quants, are not supported. A GGUF may
+mix the listed types, as real models commonly do for norms, embeddings, and
+linear weights. “Supported” here means Ember has an execution path; external
+golden-logit or activation-reference status is tracked separately in the
+validation tables below.
+
 ## what this demonstrates
 
 - **systems programming in rust**: manual memory layout for the kv cache
@@ -334,6 +359,46 @@ evaluation, then times deterministic single-token evaluations. It emits JSON
 with every timing sample, median throughput, thread count, CPU metadata, model
 size, commit, and explicit timing exclusions. Use `--token-id` to change the
 fixed input token and `--max-seq-len` to cap the benchmark context.
+
+### reproducible release benchmarks
+
+The release measurements use a fixed power policy, one worker per physical
+core, warmups, retained raw samples, and alternating revision order such as
+`ABBA BAAB`. On Intel P-state systems, verify both the selected power profile
+and `energy_performance_preference`; the exposed scaling-governor name may
+remain `powersave`.
+
+```bash
+powerprofilesctl set performance
+
+taskset -c 0-3 env RAYON_NUM_THREADS=4 target/release/ember bench-decode \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --arch qwen3 \
+  --tokens 32 \
+  --warmups 2 \
+  --repetitions 3 \
+  --max-seq-len 128 \
+  > qwen-decode.json
+
+taskset -c 0-3 env RAYON_NUM_THREADS=4 target/release/ember \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --arch qwen3 \
+  --prompt "Explain why CPU cache locality matters in transformer inference." \
+  --max-seq-len 128 \
+  --max-tokens 1 \
+  --temperature 0 \
+  --benchmark
+
+powerprofilesctl set balanced
+```
+
+Repeat both commands with clean binaries from revisions A and B in
+counterbalanced order. See
+[the cleanup validation report](docs/cleanup-audit-validation.md) and
+[the packed Q8 note](docs/q8-packed-gate-up.md) for complete protocols,
+correctness gates, raw-shape operator commands, and external llama.cpp
+reference numbers.
 
 ### execution tracing
 

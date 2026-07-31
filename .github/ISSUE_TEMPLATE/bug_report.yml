@@ -1,0 +1,65 @@
+name: Bug report
+description: Report incorrect inference, crashes, regressions, or documentation problems
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please exclude model weights and private data. Include enough metadata to reproduce the issue.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Model loading
+        - Prefill
+        - Decode
+        - Quantized kernels
+        - Tracing or hidden states
+        - Research experiments
+        - CLI or benchmark reporting
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Ember revision
+      description: Git commit or release tag
+      placeholder: v0.1.0
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model and architecture
+      description: Public model identifier, GGUF quantization, and --arch value
+      placeholder: Qwen3-0.6B Q8_0, --arch qwen3
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Reproduction command
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Numerical or performance evidence
+      description: Include hashes, tolerances, trace fingerprints, raw timing samples, and host controls where relevant.
