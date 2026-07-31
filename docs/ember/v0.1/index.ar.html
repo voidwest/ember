@@ -1,26 +1,26 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta
             name="description"
-            content="ember v0.1 release notes: a CPU-first Rust inference engine built to be inspected, traced, and changed."
+            content="ملاحظات إصدار ember v0.1: محرك inference مكتوب بـ Rust ومصمم للـ CPU، ويمكن فحص مسار تنفيذه وتتبعه وتغييره."
         />
-        <meta property="og:title" content="ember v0.1: inspect the model while it runs" />
+        <meta property="og:title" content="ember v0.1: افحص النموذج أثناء التشغيل" />
         <meta
             property="og:description"
-            content="a small CPU-first Rust inference engine with packed Q8 kernels, exact validation paths, and two focused research experiments."
+            content="محرك inference صغير مكتوب بـ Rust ومصمم للـ CPU، مع packed Q8 kernels ومسارات تحقق دقيقة وتجربتين بحثيتين محددتين."
         />
         <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/ember/v0.1/" />
+        <meta property="og:url" content="https://voidwest.dev/ember/v0.1/index.ar.html" />
         <meta property="og:site_name" content="voidwest" />
         <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
         <meta name="twitter:card" content="summary_large_image" />
         <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
-        <title>ember v0.1: inspect the model while it runs</title>
+        <title>ember v0.1: افحص النموذج أثناء التشغيل</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
         <link rel="stylesheet" href="/style.css?v=20260731" />
         <script src="/theme.js"></script>
@@ -545,23 +545,76 @@
                     margin-inline: 0;
                 }
             }
+
+            [dir="rtl"] .release-kicker,
+            [dir="rtl"] .release-deck,
+            [dir="rtl"] .launch-lead h2,
+            [dir="rtl"] .artifact-layout h2,
+            [dir="rtl"] .release-coordinates h2 {
+                font-family: var(--arabic-font);
+                letter-spacing: 0;
+            }
+
+            [dir="rtl"] .release-kicker {
+                text-transform: none;
+            }
+
+            [dir="rtl"] .command-shell,
+            [dir="rtl"] .artifact-window pre {
+                direction: ltr;
+                text-align: left;
+                unicode-bidi: isolate;
+            }
+
+            [dir="rtl"] code {
+                direction: ltr;
+                unicode-bidi: isolate;
+            }
+
+            [dir="rtl"] .release-index,
+            [dir="rtl"] .coordinate-grid dd,
+            [dir="rtl"] .validation-status {
+                unicode-bidi: isolate;
+            }
+
+            .artifact-caption {
+                margin: 0;
+                padding: 10px 13px;
+                border-block-start: 1px solid var(--border-soft);
+                color: var(--subtle);
+                font-size: 0.72rem;
+                line-height: 1.7;
+            }
+
+            .benchmark-note {
+                margin-block: 18px 0;
+                padding: 14px 16px;
+                border: 1px solid var(--border-soft);
+                border-inline-start: 2px solid var(--release-hot);
+                background: var(--surface);
+                color: var(--muted);
+            }
+
+            .benchmark-note strong {
+                color: var(--heading);
+            }
         </style>
     </head>
     <body>
-        <nav class="site-nav" aria-label="Primary">
-            <a class="brand" href="/">voidwest</a>
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
+            <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
-                <a href="/ember/" aria-current="page">ember</a>
-                <a href="/research-notes/">research notes</a>
-                <a href="/tools/">tools</a>
-                <a href="/terms/">terms</a>
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/ember/v0.1/index.ar.html">عربي</a>
+                <a class="nav-lang" href="/ember/v0.1/">en</a>
                 <button
                     class="theme-toggle"
                     type="button"
-                    aria-label="Switch to light theme"
+                    aria-label="التبديل إلى المظهر الفاتح"
                     aria-pressed="false"
                 >
                     light
@@ -570,24 +623,25 @@
         </nav>
 
         <div class="back">
-            <a href="/ember/">← ember</a>
-            <a href="/ember/engineering/">engineering</a>
+            <a href="/ember/index.ar.html">ember ←</a>
+            <a href="/ember/engineering/index.ar.html">engineering</a>
             <a href="https://github.com/voidwest/ember">github</a>
         </div>
 
         <header class="hero release-hero">
             <div>
-                <div class="release-kicker">release note 001 · 31 July 2026</div>
-                <h1 class="release-title">ember <span>v0.1</span></h1>
+                <div class="release-kicker">ملاحظة الإصدار 001 · 31 يوليو 2026</div>
+                <h1 class="release-title"><bdi>ember</bdi> <span>v0.1</span></h1>
                 <p class="release-deck">
-                    notes on a small CPU-first Rust inference engine whose
-                    execution path is meant to remain visible.
+                    <bdi>ember</bdi> محرك inference صغير للـ <bdi>CPU</bdi>،
+                    مخصص لتجارب تحتاج أن تعرف بدقة ماذا نُفذ، وأين، وبأي ترتيب،
+                    وما الذي تغيّر أثناء التشغيل.
                 </p>
-                <div class="release-index" aria-label="Release index">
-                    <a href="https://github.com/voidwest/ember/tree/v0.1.0">source</a>
-                    <a href="/ember/experiments/">experiment guide</a>
-                    <a href="/ember/experiments/hooks/">hook contract</a>
-                    <span>MIT · commit 663a979</span>
+                <div class="release-index" aria-label="فهرس الإصدار">
+                    <a href="https://github.com/voidwest/ember/tree/v0.1.0">المصدر</a>
+                    <a href="/ember/experiments/index.ar.html">دليل التجارب</a>
+                    <a href="/ember/experiments/hooks/index.ar.html">عقد الـ hooks</a>
+                    <span><bdi>MIT · commit 663a979</bdi></span>
                 </div>
             </div>
 
@@ -603,48 +657,51 @@
         </header>
 
         <section class="launch-lead">
-            <h2>a runtime for work that needs an audit trail</h2>
+            <h2>لماذا يوجد <bdi>ember</bdi></h2>
             <div class="launch-copy">
                 <p>
-                    ember is for the part of inference research where the
-                    representation boundary, execution order, and exact
-                    intervention point need to be accounted for.
+                    <bdi>ember</bdi> ليس بديلاً عن <bdi>llama.cpp</bdi>.
+                    يبقى <bdi>llama.cpp</bdi> مرجع الأداء الخارجي، بينما يركز
+                    <bdi>ember</bdi> على قابلية الفحص والتدقيق.
                 </p>
                 <p>
-                    it loads GGUF models, runs prefill and KV-cached decode on
-                    CPU, keeps Q8 weights compressed, exposes structured
-                    tracing and hidden states, and retains generic kernels as
-                    correctness oracles beside optimized paths.
+                    يحمّل نماذج <bdi>GGUF</bdi>، ويشغّل <bdi>prefill</bdi>
+                    و<bdi>decode</bdi> مع <bdi>KV cache</bdi> على
+                    <bdi>CPU</bdi>. في المسارات المدعومة في هذا الإصدار، تبقى
+                    أوزان <bdi>Q8</bdi> مضغوطة في الذاكرة أثناء التنفيذ. ويوفّر
+                    أيضاً structured tracing واستخراج hidden states.
                 </p>
                 <p>
-                    llama.cpp remains the external performance reference.
-                    ember keeps a generic correctness path beside optimized
-                    kernels so a research change can be localized and checked.
+                    يحتفظ <bdi>ember</bdi> بمسار reference قابل للمراجعة بجانب
+                    الـ kernels المحسّنة. وهذا يسمح بعزل التغيير البحثي والتحقق
+                    من صحة الـ dispatch بدلاً من دفنه داخل runtime أكبر.
                 </p>
             </div>
         </section>
 
-        <h2 id="experiments">the experiment boundary in v0.1</h2>
+        <h2 id="experiments">واجهة التجارب في <bdi>v0.1</bdi></h2>
         <p>
-            the release fixes the scope at one observer and one intervention.
-            both pass through the same narrow, statically compiled Rust hook
-            lifecycle. they show what the boundary can support without turning
-            it into a general plugin platform.
+            يدعم الإصدار تجربة <bdi>Rust</bdi> واحدة،
+            <bdi>statically compiled</bdi>، في كل <bdi>generation run</bdi>.
+            التجربتان المدمجتان تقدمان مسار observation ومسار intervention.
+            الغرض هو إظهار أن واجهة الـ hooks تكفي لتجارب فعلية من دون تحويل
+            <bdi>ember</bdi> إلى منصة plugins عامة.
         </p>
 
         <div class="experiment-grid">
             <article class="experiment-card observe">
-                <div class="experiment-kind">built-in 01 · observation-only</div>
-                <h3>activation-stats</h3>
+                <div class="experiment-kind">مدمج 01 · observation فقط</div>
+                <h3><bdi>activation-stats</bdi></h3>
                 <p>
-                    records L2 norms, absolute maxima, and lightweight
-                    fingerprints at every approved activation boundary. the
-                    result is ordered JSON you can diff, plot, or inspect with
-                    <code>jq</code>.
+                    يقرأ activations الحالية من نوع <bdi>f32</bdi>، ويسجل
+                    <bdi>L2 norm</bdi> وأعلى قيمة مطلقة وfingerprint خفيفة عند
+                    كل semantic hook معتمد. الناتج <bdi>JSON</bdi> مرتب، صالح
+                    للمقارنة والرسم والفحص بـ <code>jq</code>. لا يطلب mutable
+                    access، ويحافظ على الناتج العددي لا على التوقيت.
                 </p>
                 <div class="command-shell">
                     <button class="copy-button" type="button" data-copy="observe-command">
-                        copy
+                        نسخ
                     </button>
                     <code id="observe-command">ember --arch qwen3 \
   --model Qwen3-0.6B-Q8_0.gguf \
@@ -656,16 +713,18 @@
             </article>
 
             <article class="experiment-card intervene">
-                <div class="experiment-kind">built-in 02 · mutates execution</div>
-                <h3>zero-layer-output</h3>
+                <div class="experiment-kind">مدمج 02 · يغيّر التنفيذ</div>
+                <h3><bdi>zero-layer-output</bdi></h3>
                 <p>
-                    chooses a layer and zeros its attention, MLP, or completed
-                    layer output during prefill and decode. ember counts every
-                    intervention and makes the modified run obvious on stderr.
+                    يختار طبقة ويصفّر مساهمة attention أو <bdi>MLP</bdi> أو
+                    الـ hidden state المكتملة للطبقة أثناء <bdi>prefill</bdi>،
+                    ثم مرة في كل تقييم <bdi>decode</bdi> يصل إلى الطبقة المحددة.
+                    يسجل <bdi>ember</bdi> عدد التدخلات، ويعلن بوضوح على
+                    <code>stderr</code> أن التشغيل معدّل.
                 </p>
                 <div class="command-shell">
                     <button class="copy-button" type="button" data-copy="intervene-command">
-                        copy
+                        نسخ
                     </button>
                     <code id="intervene-command">ember --arch gemma4 \
   --model gemma-4-E2B-it.Q8_0.gguf \
@@ -679,25 +738,26 @@
 
         <section class="artifact-layout">
             <div>
-                <h2>the artifact is the interface</h2>
+                <h2>شكل الـ artifact</h2>
                 <p>
-                    observation records carry phase, semantic stage, layer,
-                    token range, shape, dtype, norm, maximum, and fingerprint.
-                    no token buffers or model metadata are cloned per hook.
+                    كل سجل observation يحدد الـ phase والمرحلة الدلالية والطبقة
+                    ونطاق التوكنات وshape وdtype والـ norm والقيمة القصوى
+                    والـ fingerprint. الـ hooks تستعير البيانات؛ لا تُنسخ token
+                    buffers أو metadata خاصة بالنموذج عند كل hook.
                 </p>
                 <p>
-                    the same generated text still lands on stdout. experiment
-                    notices stay on stderr. run manifests identify whether an
-                    experiment modified execution.
+                    النص المولّد يستمر على <code>stdout</code> بالتنسيق نفسه،
+                    وتنبيهات التجربة تبقى على <code>stderr</code>. والـ run
+                    manifest يحدد هل غيّرت التجربة التنفيذ أم لا.
                 </p>
                 <div class="project-links">
-                    <a href="/ember/experiments/">experiment guide</a>
-                    <a href="/ember/experiments/hooks/">hook contract</a>
+                    <a href="/ember/experiments/index.ar.html">دليل التجارب</a>
+                    <a href="/ember/experiments/hooks/index.ar.html">عقد الـ hooks</a>
                 </div>
             </div>
-            <div class="artifact-window" aria-label="Example activation statistics JSON">
+            <div class="artifact-window" aria-label="مثال JSON مختصر لإحصاءات activations">
                 <div class="artifact-bar">
-                    <i></i><i></i><i></i><span>activation-stats.json</span>
+                    <i></i><i></i><i></i><span>activation-stats.json · مثال مختصر</span>
                 </div>
                 <pre><code>{
   <span class="json-key">"experiment"</span>: <span class="json-string">"activation-stats"</span>,
@@ -711,150 +771,175 @@
     <span class="json-key">"dtype"</span>: <span class="json-string">"f32"</span>,
     <span class="json-key">"l2_norm"</span>: <span class="json-number">6.117406</span>,
     <span class="json-key">"abs_max"</span>: <span class="json-number">0.782913</span>,
-    <span class="json-key">"fingerprint"</span>: <span class="json-number">152836286671...</span>
+    <span class="json-key">"fingerprint"</span>: <span class="json-string">"&lt;uint64&gt;"</span>
   }]
 }</code></pre>
+                <p class="artifact-caption">
+                    الـ JSON صالح نحوياً، لكن قيمة <code>fingerprint</code>
+                    هنا placeholder. يكتب ملف artifact الفعلي قيمة
+                    <code>u64</code> كاملة.
+                </p>
             </div>
         </section>
 
-        <h2>validation record</h2>
+        <h2>سجل التحقق</h2>
         <p>
-            the experiment hooks were admitted only after the unmodified path
-            cleared real-model parity, artifact, allocation, optimized-code,
-            and controlled A/B checks.
+            هذه فحوص regression لمسارات الإصدار مقابل
+            <bdi>frozen artifacts</bdi>، وليست
+            ادعاء parity شامل مع كل engine أو model. شملت logits لنماذج
+            <bdi>Qwen</bdi> و<bdi>Gemma</bdi>، وgeneration عبر ثلاث عائلات،
+            وفحوص inspection وallocation والكود الناتج و<bdi>A/B</bdi>.
         </p>
 
         <div class="table-wrap">
             <table class="simd-table">
                 <thead>
                     <tr>
-                        <th>check</th>
-                        <th>surface</th>
-                        <th>result</th>
+                        <th>الفحص</th>
+                        <th>النطاق</th>
+                        <th>النتيجة</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td>real-model parity</td>
-                        <td>Qwen and Gemma logits; three-family generation</td>
-                        <td class="validation-status">matched frozen artifacts</td>
+                        <td>parity على نماذج فعلية</td>
+                        <td>logits لـ <bdi>Qwen</bdi> و<bdi>Gemma</bdi>؛ وgeneration لثلاث عائلات</td>
+                        <td class="validation-status">طابقت frozen artifacts للإصدار</td>
                     </tr>
                     <tr>
-                        <td>inspection parity</td>
-                        <td>Gemma layer dumps and normalized trace fingerprints</td>
-                        <td class="validation-status">byte-identical</td>
+                        <td>parity لمسار الفحص</td>
+                        <td><bdi>Gemma layer dumps</bdi> وnormalized trace fingerprints</td>
+                        <td class="validation-status"><bdi>byte-identical</bdi></td>
                     </tr>
                     <tr>
-                        <td>allocation behavior</td>
-                        <td>warmed no-experiment layer execution</td>
-                        <td class="validation-status">no per-layer growth</td>
+                        <td>سلوك الـ allocations</td>
+                        <td>تنفيذ طبقة بعد warm-up، من دون تجربة</td>
+                        <td class="validation-status">لا نمو per-layer بعد warm-up</td>
                     </tr>
                     <tr>
-                        <td>optimized code</td>
-                        <td>representative LLaMA block</td>
-                        <td class="validation-status">disabled dispatch erased</td>
+                        <td>الكود المحسّن</td>
+                        <td>disabled path في block نموذجي من <bdi>LLaMA</bdi></td>
+                        <td class="validation-status">لم يبق experiment-related dispatch في الكود الناتج</td>
                     </tr>
                     <tr>
-                        <td>controlled A/B</td>
-                        <td>pinned prefill and single-token decode</td>
-                        <td class="validation-status">inside measurement noise</td>
+                        <td>مقارنة <bdi>A/B</bdi> مضبوطة</td>
+                        <td>تشغيل <bdi>prefill</bdi> وsingle-token decode بإعدادات مثبتة</td>
+                        <td class="validation-status">ضمن ضجيج القياس</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <h2>release measurements</h2>
+        <h2>قياسات الإصدار</h2>
         <p>
-            these are host-specific validation numbers, included to make the
-            release state inspectable rather than to claim a leaderboard.
+            هذه أرقام تحقق محلية على <bdi>Intel i5-1135G7</bdi>. الغرض توثيق
+            حالة الإصدار، لا ترتيب المحركات.
         </p>
 
         <div class="table-wrap">
             <table class="simd-table">
                 <thead>
                     <tr>
-                        <th>release workload</th>
+                        <th>حمل الاختبار</th>
                         <th>decode</th>
                         <th>prefill</th>
-                        <th>read</th>
+                        <th>القراءة</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td>Qwen3 0.6B Q8_0</td>
-                        <td>40.88 tok/s</td>
-                        <td>52 tokens · 489 ms</td>
-                        <td>local i5-1135G7 validation host</td>
+                        <td><bdi>Qwen3 0.6B Q8_0</bdi></td>
+                        <td><bdi>40.88 tok/s</bdi></td>
+                        <td><bdi>52 tokens · 489 ms · ≈106.3 tok/s</bdi></td>
+                        <td>جهاز التحقق المحلي <bdi>i5-1135G7</bdi></td>
                     </tr>
                     <tr>
-                        <td>LLaMA 3.2 1B Q8_0</td>
-                        <td>33.10 tok/s</td>
-                        <td>53 tokens · 943 ms</td>
-                        <td>local i5-1135G7 validation host</td>
+                        <td><bdi>LLaMA 3.2 1B Q8_0</bdi></td>
+                        <td><bdi>33.10 tok/s</bdi></td>
+                        <td><bdi>53 tokens · 943 ms · ≈56.2 tok/s</bdi></td>
+                        <td>جهاز التحقق المحلي <bdi>i5-1135G7</bdi></td>
                     </tr>
                     <tr>
-                        <td>Gemma 4 E2B Q8_0</td>
-                        <td>10.05 tok/s</td>
-                        <td>52 tokens · 2,006 ms</td>
-                        <td>local i5-1135G7 validation host</td>
+                        <td><bdi>Gemma 4 E2B Q8_0</bdi></td>
+                        <td><bdi>10.05 tok/s</bdi></td>
+                        <td><bdi>52 tokens · 2,006 ms · ≈25.9 tok/s</bdi></td>
+                        <td>جهاز التحقق المحلي <bdi>i5-1135G7</bdi></td>
                     </tr>
                 </tbody>
             </table>
         </div>
-        <p class="caption">
-            host-specific release validation, not a cross-engine speed claim.
-            llama.cpp remains the external performance reference.
+        <p class="benchmark-note">
+            <strong>هذه قياسات تحقق محلية، وليست cross-engine leaderboard.</strong>
+            تختلف باختلاف الجهاز والإعداد، ويبقى <bdi>llama.cpp</bdi> مرجع
+            الأداء الخارجي.
         </p>
 
-        <h2>support boundary</h2>
+        <h2>حدود الدعم</h2>
         <div class="table-wrap">
             <table class="simd-table">
                 <thead>
                     <tr>
-                        <th>surface</th>
-                        <th>included</th>
-                        <th>boundary</th>
+                        <th>النطاق</th>
+                        <th>المشمول</th>
+                        <th>الحد</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td>models</td>
-                        <td>GPT-2, LLaMA, Qwen3, dense text-only Gemma 4</td>
-                        <td>Qwen2.5 remains experimental</td>
+                        <td>normal inference</td>
+                        <td><bdi>GPT-2</bdi> و<bdi>LLaMA</bdi> و<bdi>Qwen3</bdi> و<bdi>Gemma 4</bdi> dense للنص فقط</td>
+                        <td>
+                            دعم <bdi>Qwen2.5</bdi> experimental؛ لم تكتمل
+                            validation المعمارية والـ tokenizer، ولا يشمله
+                            validated parity record
+                        </td>
                     </tr>
                     <tr>
-                        <td>GGUF tensors</td>
-                        <td>F32, F16, BF16, Q8_0</td>
-                        <td>no K-quants</td>
+                        <td>experiment hooks</td>
+                        <td><bdi>LLaMA</bdi> و<bdi>Qwen3</bdi> و<bdi>Gemma 4</bdi></td>
+                        <td>غير مدمجة لـ <bdi>GPT-2</bdi> في <bdi>v0.1</bdi></td>
                     </tr>
                     <tr>
-                        <td>inspectability</td>
-                        <td>structured tracing, value fingerprints, hidden-state extraction</td>
-                        <td>active experiments do not enter dump/probe surfaces yet</td>
+                        <td>tensors من <bdi>GGUF</bdi></td>
+                        <td><bdi>F32, F16, BF16, Q8_0</bdi></td>
+                        <td><bdi>K-quants</bdi> غير مدعومة</td>
                     </tr>
                     <tr>
-                        <td>Q8 execution</td>
-                        <td>mmap weights, scalar/AVX2/AVX-512, tiled and packed paths</td>
-                        <td>generic path stays available as oracle</td>
+                        <td>قابلية الفحص</td>
+                        <td>structured tracing وvalue fingerprints واستخراج hidden states</td>
+                        <td>
+                            التجارب النشطة مرفوضة مع hidden-state extraction
+                            والـ probes وlayer/logits dumps وأوامر demo
+                            وinteractive وbenchmark الفرعية، لأن دلالات ما
+                            قبل/بعد intervention غير معرّفة
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>تنفيذ <bdi>Q8</bdi></td>
+                        <td>أوزان <bdi>mmap</bdi> ومسارات scalar و<bdi>AVX2</bdi> و<bdi>AVX-512</bdi> ومسارات tiled وpacked</td>
+                        <td>generic kernel وreference path يبقيان متاحين للتحقق من صحة التنفيذ</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <h2>non-goals</h2>
+        <h2>ما لا يستهدفه <bdi>v0.1</bdi></h2>
         <ul class="scope-list">
-            <li>dynamic <code>.so</code> or <code>.dll</code> plugins</li>
-            <li>WASM or Python hooks</li>
-            <li>runtime experiment discovery</li>
-            <li>multiple concurrent experiments</li>
-            <li>configuration DSLs or registries</li>
-            <li>async hooks or broad event buses</li>
-            <li>arbitrary model-weight mutation</li>
-            <li>a claim to production inference breadth</li>
+            <li>plugins ديناميكية من نوع <code>.so</code> أو <code>.dll</code></li>
+            <li>hooks عبر <bdi>WASM</bdi></li>
+            <li>Python bindings</li>
+            <li>اكتشاف التجارب وقت التشغيل</li>
+            <li>تشغيل أكثر من تجربة في الوقت نفسه</li>
+            <li>configuration DSLs أو registries</li>
+            <li>async hooks</li>
+            <li>event bus عامة</li>
+            <li>تعديل اعتباطي لأوزان النموذج</li>
+            <li>tokenizers أو execution backends مخصصة</li>
+            <li>ادعاء تغطية واسعة لـ production inference</li>
         </ul>
 
         <section class="release-coordinates">
-            <h2>release coordinates</h2>
+            <h2>بيانات الإصدار</h2>
             <dl class="coordinate-grid">
                 <div>
                     <dt>tag</dt>
@@ -865,7 +950,7 @@
                     <dd>663a979</dd>
                 </div>
                 <div>
-                    <dt>license</dt>
+                    <dt>الرخصة</dt>
                     <dd>MIT</dd>
                 </div>
                 <div>
@@ -873,24 +958,24 @@
                     <dd>Rust 1.92</dd>
                 </div>
                 <div>
-                    <dt>guide</dt>
-                    <dd><a href="/ember/experiments/">experiments</a></dd>
+                    <dt>الدليل</dt>
+                    <dd><a href="/ember/experiments/index.ar.html">التجارب</a></dd>
                 </div>
                 <div>
-                    <dt>reference</dt>
-                    <dd><a href="/ember/experiments/hooks/">hook contract</a></dd>
+                    <dt>المرجع</dt>
+                    <dd><a href="/ember/experiments/hooks/index.ar.html">عقد الـ hooks</a></dd>
                 </div>
                 <div>
-                    <dt>changes</dt>
+                    <dt>التغييرات</dt>
                     <dd><a href="https://github.com/voidwest/ember/blob/v0.1.0/CHANGELOG.md">changelog</a></dd>
                 </div>
                 <div>
-                    <dt>source</dt>
+                    <dt>المصدر</dt>
                     <dd><a href="https://github.com/voidwest/ember">repository</a></dd>
                 </div>
             </dl>
             <div class="release-note">
-                experiment API: unstable in v0.1 · linux CPU validation
+                <bdi>experiment API: unstable in v0.1 · Linux CPU validation</bdi>
             </div>
         </section>
 
@@ -910,7 +995,7 @@
                     if (!target || !navigator.clipboard) return;
                     navigator.clipboard.writeText(target.textContent).then(function () {
                         var previous = button.textContent;
-                        button.textContent = "copied";
+                        button.textContent = "تم النسخ";
                         window.setTimeout(function () {
                             button.textContent = previous;
                         }, 1400);

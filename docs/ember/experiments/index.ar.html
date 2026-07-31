@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="دليل تجارب ember البحثية المدمجة: activation-stats وzero-layer-output."
+        />
+        <meta property="og:title" content="تجارب ember البحثية" />
+        <meta
+            property="og:description"
+            content="راقب activations أو تدخّل عند حدود واضحة في transformer من دون تحويل ember إلى إطار plugins عام."
+        />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/experiments/index.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>تجارب ember البحثية</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260731" />
+        <link rel="stylesheet" href="/ember/experiments/docs.css?v=20260731" />
+        <script src="/theme.js"></script>
+
+        <style>
+            [dir="rtl"] .docs-mast h1,
+            [dir="rtl"] .doc-main h2,
+            [dir="rtl"] .doc-main .lead,
+            [dir="rtl"] .principle strong {
+                font-family: var(--arabic-font);
+                letter-spacing: 0;
+            }
+
+            [dir="rtl"] .doc-main h3:not(#activation-stats):not(#zero-layer-output),
+            [dir="rtl"] .docs-eyebrow,
+            [dir="rtl"] .specimen-label,
+            [dir="rtl"] .specimen-note,
+            [dir="rtl"] .doc-nav-label,
+            [dir="rtl"] .doc-toc-label,
+            [dir="rtl"] .contract-note strong {
+                font-family: var(--arabic-font);
+                letter-spacing: 0;
+                text-transform: none;
+            }
+
+            [dir="rtl"] pre,
+            [dir="rtl"] .mast-specimen pre,
+            [dir="rtl"] .command pre {
+                direction: ltr;
+                text-align: left;
+                unicode-bidi: isolate;
+            }
+
+            [dir="rtl"] .field-list dt,
+            [dir="rtl"] .mode-badge,
+            [dir="rtl"] .status-ok,
+            [dir="rtl"] .status-warn,
+            [dir="rtl"] .status-no {
+                unicode-bidi: isolate;
+            }
+        </style>
+    </head>
+    <body>
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/experiments/">en</a>
+                <button
+                    class="theme-toggle"
+                    type="button"
+                    aria-label="التبديل إلى المظهر الفاتح"
+                    aria-pressed="false"
+                >
+                    light
+                </button>
+            </div>
+        </nav>
+
+        <div class="back">
+            <a href="/ember/index.ar.html">ember ←</a>
+            <a href="/ember/v0.1/index.ar.html">ملاحظات إصدار v0.1</a>
+            <a href="https://github.com/voidwest/ember">المصدر</a>
+        </div>
+
+        <header class="docs-mast">
+            <div>
+                <div class="docs-eyebrow">ember / experiments / دليل</div>
+                <h1>تجارب <em>بحثية</em></h1>
+                <p class="docs-deck">
+                    تجربة <bdi>Rust</bdi> واحدة، <bdi>statically compiled</bdi>،
+                    في كل generation run. تراقب التنفيذ أو تعدّل activation
+                    موجودة في مكانها، من دون أن تجعل <bdi>ember</bdi> منصة
+                    plugins عامة. والعقد غير مستقر عمداً في <bdi>v0.1</bdi>.
+                </p>
+                <div class="docs-meta">
+                    <span>دليل</span>
+                    <span>عقد v0.1</span>
+                    <span><bdi>LLaMA · Qwen3 · Gemma 4</bdi></span>
+                </div>
+            </div>
+
+            <div class="mast-specimen">
+                <div class="specimen-label">واجهة v0.1</div>
+                <pre><code><span class="comment">// observation</span>
+<span class="observe">tensor.values()</span>
+output remains numerically unchanged
+
+<span class="comment">// intervention</span>
+<span class="intervene">tensor.values_mut()</span>
+<span class="intervene">tensor.zero()</span>
+output may change</code></pre>
+                <div class="specimen-note">
+                    تجربة واحدة لكل run · استعر، لا تنسخ
+                </div>
+            </div>
+        </header>
+
+        <div class="docs-layout">
+            <aside class="doc-sidebar" aria-label="توثيق التجارب">
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">التجارب</div>
+                    <a href="/ember/experiments/index.ar.html" aria-current="page">الدليل</a>
+                    <a href="#quick-start">بداية سريعة</a>
+                    <a href="#built-ins">التجارب المدمجة</a>
+                    <a href="#output-contract">الناتج والـ provenance</a>
+                    <a href="#compatibility">حدود التوافق</a>
+                    <a href="#new-experiment">إضافة تجربة مدمجة</a>
+                    <a href="#non-goals">ما لا يستهدفه v0.1</a>
+                </div>
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">المرجع</div>
+                    <a href="/ember/experiments/hooks/index.ar.html">عقد الـ hooks</a>
+                    <a href="https://github.com/voidwest/ember/blob/v0.1.0/docs/experiments.md">
+                        مصدر Markdown ↗
+                    </a>
+                </div>
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">الإصدار</div>
+                    <a href="/ember/v0.1/index.ar.html">ملاحظات v0.1</a>
+                    <a href="https://github.com/voidwest/ember/tree/v0.1.0">tag v0.1.0 ↗</a>
+                </div>
+            </aside>
+
+            <main class="doc-main">
+                <div class="contract-note">
+                    <strong>API تجريبي</strong>
+                    <p>
+                        واجهة التجارب في <bdi>Rust</bdi> غير مستقرة في
+                        <bdi>ember v0.1</bdi>. هي ليست plugin ABI ديناميكية، ولا
+                        تعطي وعد توافق ضمن <bdi>semver</bdi>.
+                    </p>
+                </div>
+
+                <p class="lead">
+                    يوفّر <bdi>ember</bdi> hooks عند حدود دلالية معتمدة داخل
+                    generation العادي. تبقى الدلالات العددية الخاصة بكل
+                    معمارية ظاهرة، ولا تُنسخ tensors لمجرد تشغيل hook.
+                </p>
+
+                <p>
+                    لا ينشئ المسار العادي <code>ExperimentRunner</code>. وعند
+                    التفعيل يحمل الـ run تنفيذاً واحداً لتجربة مجمّعة مع
+                    البرنامج، ويستدعي الـ methods الخاصة بها عند حدود الطبقات
+                    والـ logits المعتمدة. الأصل هو observation؛ أما التدخل
+                    فيتطلب وصولاً mutable وصريحاً إلى activation موجودة. الغرض
+                    هو إظهار أن واجهة الـ hooks تكفي لتجارب فعلية من دون تحويل
+                    <bdi>ember</bdi> إلى منصة plugins عامة.
+                </p>
+
+                <div class="principle-grid" aria-label="قواعد تصميم التجارب">
+                    <article class="principle">
+                        <code>01</code>
+                        <strong>تجربة واحدة لكل run</strong>
+                        <p>
+                            لا pipeline ولا registry ولا discovery وقت التشغيل،
+                            ولا دلالات لتفاعل عدة تجارب.
+                        </p>
+                    </article>
+                    <article class="principle">
+                        <code>02</code>
+                        <strong>استعر، لا تنسخ</strong>
+                        <p>
+                            تستعير الـ contexts الـ metadata. أما
+                            <code>TensorAccess</code> فهي view غير مالكة فوق
+                            allocation يملكه runtime.
+                        </p>
+                    </article>
+                    <article class="principle">
+                        <code>03</code>
+                        <strong>المعمارية تبقى ظاهرة</strong>
+                        <p>
+                            أسماء الـ hooks المشتركة لا تمحو normalization أو
+                            <bdi>RoPE</bdi> أو ترتيب العمليات الخاص بكل عائلة.
+                        </p>
+                    </article>
+                </div>
+
+                <figure class="flow-anchor" aria-labelledby="ownership-flow-title">
+                    <figcaption class="flow-title" id="ownership-flow-title">
+                        الملكية والاختيار بين المراقبة والتدخل
+                    </figcaption>
+                    <div class="flow-stack">
+                        <div class="flow-node"><bdi>runtime-owned activation</bdi></div>
+                        <div class="flow-arrow" aria-hidden="true"><bdi>↓ borrow</bdi></div>
+                        <div class="flow-node"><code>TensorAccess&lt;'_&gt;</code></div>
+                        <div class="flow-arrow" aria-hidden="true">↓ اختيار صريح</div>
+                        <div class="flow-branches">
+                            <div class="flow-branch observe">
+                                <code>values()</code>
+                                <small>مراقبة؛ لا تغيّر الناتج العددي</small>
+                            </div>
+                            <div class="flow-branch intervene">
+                                <code>values_mut()</code> / <code>zero()</code>
+                                <small>تدخّل؛ قد يغيّر التنفيذ</small>
+                            </div>
+                        </div>
+                    </div>
+                </figure>
+
+                <div class="contract-note">
+                    <strong>مسؤولية تنفيذ التجربة</strong>
+                    <p>
+                        الواجهة نفسها لا تفرض سلوك observation-only عبر نظام
+                        الأنواع. يقع هذا الضمان على تنفيذ التجربة:
+                        استخدام <code>values()</code> يحافظ على التنفيذ، بينما
+                        قد يغيّره <code>values_mut()</code> أو
+                        <code>zero()</code>.
+                    </p>
+                </div>
+
+                <h2 id="quick-start">بداية سريعة</h2>
+
+                <p>
+                    ابنِ <bdi>ember</bdi> مرة واحدة، ثم استخدم خيار تجربة واحداً
+                    مع أمر generation عادي. الأمثلة تفترض أن ملفات النموذج
+                    والـ tokenizer موجودة في المجلد الحالي.
+                </p>
+
+                <div class="command" data-label="build">
+                    <button class="copy-doc" type="button" data-copy="build-command">نسخ</button>
+                    <pre><code id="build-command">cargo build --release</code></pre>
+                </div>
+
+                <p>
+                    تنبيهات التجربة وملخصاتها تُكتب إلى <code>stderr</code>.
+                    النص المولّد يحافظ على تنسيق <code>stdout</code> الحالي.
+                    ولا يمكن جمع الخيارين المدمجين لأن الـ run لا يقبل أكثر من
+                    تجربة نشطة.
+                </p>
+
+                <h2 id="built-ins">التجارب المدمجة</h2>
+
+                <article class="experiment-doc">
+                    <header class="experiment-header">
+                        <div>
+                            <h3 id="activation-stats"><bdi>activation-stats</bdi></h3>
+                            <p>
+                                يسجل <bdi>L2 norm</bdi> والقيمة المطلقة القصوى
+                                وfingerprint خفيفة عند كل tensor hook.
+                            </p>
+                        </div>
+                        <span class="mode-badge">observation فقط</span>
+                    </header>
+
+                    <p>
+                        تعرض جميع الـ tensor hooks في <bdi>v0.1</bdi> activations من
+                        نوع <bdi>f32</bdi>. تقرأ
+                        <code>activation-stats</code> القيم الموجودة من دون
+                        طلب mutable access، وتسجل
+                        <bdi>L2 norm</bdi> والقيمة المطلقة القصوى وfingerprint
+                        خفيفة. وبعد اكتمال generation بنجاح، تكتب السجلات
+                        بالترتيب في artifact بصيغة <bdi>JSON</bdi>. لا تغيّر
+                        logits أو التوكنات المولدة.
+                    </p>
+
+                    <div class="command" data-label="shell">
+                        <button class="copy-doc" type="button" data-copy="stats-command">نسخ</button>
+                        <pre><code id="stats-command">target/release/ember \
+  --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" \
+  --max-tokens 4 \
+  --temperature 0 \
+  --activation-stats activation-stats.json</code></pre>
+                    </div>
+
+                    <h3>حقول الـ artifact</h3>
+
+                    <dl class="field-list">
+                        <div>
+                            <dt>phase</dt>
+                            <dd><code>prefill</code> أو <code>decode</code></dd>
+                        </div>
+                        <div>
+                            <dt>stage</dt>
+                            <dd>اسم الـ hook الدلالي</dd>
+                        </div>
+                        <div>
+                            <dt>layer_index</dt>
+                            <dd>ترقيمه يبدأ من الصفر؛ الحقل غير موجود عند logits</dd>
+                        </div>
+                        <div>
+                            <dt>token range</dt>
+                            <dd>البداية، وعدد توكنات الإدخال، وطول التسلسل</dd>
+                        </div>
+                        <div>
+                            <dt>tensor</dt>
+                            <dd>shape ثنائي الأبعاد وdtype بقيمة <bdi>f32</bdi></dd>
+                        </div>
+                        <div>
+                            <dt>values</dt>
+                            <dd><bdi>L2 norm</bdi>، والقيمة المطلقة القصوى، والـ fingerprint</dd>
+                        </div>
+                    </dl>
+
+                    <p>
+                        يُحسب الـ fingerprint بخوارزمية structured tracing نفسها
+                        في <bdi>ember</bdi>، باستخدام عينة واحدة كل
+                        <bdi>64</bdi> قيمة. يفيد في تحديد موضع divergence، لكنه
+                        ليس إثباتاً تشفيرياً للتطابق. أما حساب الـ norm
+                        فيقرأ كل القيم.
+                    </p>
+
+                    <div class="command" data-label="inspect with jq">
+                        <button class="copy-doc" type="button" data-copy="jq-command">نسخ</button>
+                        <pre><code id="jq-command">jq '.records[] | select(.stage == "after_layer") |
+    {phase, layer_index, sequence_length, l2_norm, fingerprint}' \
+  activation-stats.json</code></pre>
+                    </div>
+
+                    <div class="callout">
+                        <div class="label">التوقيت</div>
+                        <p>
+                            <strong>الـ observation يحافظ على الناتج العددي، لا
+                            على التوقيت.</strong>
+                            مسح activations وتخزين السجلات يضيفان عملاً؛ لذلك
+                            ينبغي قياس هذا الحمل في benchmark منفصل.
+                        </p>
+                    </div>
+                </article>
+
+                <article class="experiment-doc intervention">
+                    <header class="experiment-header">
+                        <div>
+                            <h3 id="zero-layer-output"><bdi>zero-layer-output</bdi></h3>
+                            <p>
+                                يصفّر مرحلة دلالية واحدة أثناء <bdi>prefill</bdi>،
+                                ومرة في كل تقييم decode أحادي التوكن يصل إلى
+                                الطبقة المختارة.
+                            </p>
+                        </div>
+                        <span class="mode-badge">intervention</span>
+                    </header>
+
+                    <p>
+                        الخيار يأخذ رقم طبقة يبدأ ترقيمه من الصفر ومرحلة دلالية
+                        بالصيغة <code>LAYER:STAGE</code>. يتحقق
+                        <bdi>ember</bdi> من الرقم بعد تحميل النموذج، ويعدل الـ
+                        tensor نفسها في مكانها، ويسجل عدد التدخلات. يحدث التدخل
+                        مرة في prefill، ثم مرة في كل تقييم decode يصل إلى
+                        الطبقة المختارة.
+                    </p>
+
+                    <div class="command" data-label="shell">
+                        <button class="copy-doc" type="button" data-copy="zero-command">نسخ</button>
+                        <pre><code id="zero-command">target/release/ember \
+  --arch gemma4 \
+  --model models/gemma-4-E2B-it.Q8_0.gguf \
+  --tokenizer tokenizer-gemma4.json \
+  --prompt "The capital of France is" \
+  --max-tokens 8 \
+  --temperature 0 \
+  --zero-layer-output 4:attention</code></pre>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table class="simd-table">
+                            <thead>
+                                <tr>
+                                    <th>المرحلة</th>
+                                    <th>الـ tensor التي تُستبدل بالصفر</th>
+                                    <th>الموضع</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><code>attention</code></td>
+                                    <td>مساهمة attention</td>
+                                    <td>مباشرة قبل residual addition</td>
+                                </tr>
+                                <tr>
+                                    <td><code>mlp</code></td>
+                                    <td>مساهمة <bdi>MLP</bdi></td>
+                                    <td>مباشرة قبل residual addition</td>
+                                </tr>
+                                <tr>
+                                    <td><code>layer</code></td>
+                                    <td>hidden state المكتملة</td>
+                                    <td>بعد اكتمال كل العمليات الخاصة بعائلة النموذج داخل الطبقة</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <p>
+                        إذا كان اسم المرحلة غير صالح يفشل الأمر أثناء تحليل
+                        <bdi>CLI</bdi>. وإذا كان رقم الطبقة خارج نطاق النموذج
+                        المحمّل، يعرض الخطأ معرّف النموذج وعائلته والرقم المطلوب
+                        والنطاق الصحيح.
+                    </p>
+
+                    <pre><code>research experiment active: zero-layer-output layer=4 stage=attention; execution will be modified
+experiment zero-layer-output: 8 intervention(s) at layer 4 stage attention</code></pre>
+
+                    <p>
+                        قد يعرض الملخص عدة تدخلات في generation run واحد لأن
+                        العداد يشمل prefill وكل تقييم decode لاحق يصل إلى
+                        الطبقة. ولا يعني الرقم أن التجربة عدّلت عدة طبقات.
+                    </p>
+                </article>
+
+                <h2 id="output-contract">الناتج والـ provenance</h2>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>الواجهة</th>
+                                <th>من دون تجربة</th>
+                                <th>مع تجربة نشطة</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>stdout</code></td>
+                                <td>تنسيق النص المولّد الحالي</td>
+                                <td>التنسيق نفسه</td>
+                            </tr>
+                            <tr>
+                                <td><code>stderr</code></td>
+                                <td>لا تنبيه خاص بالتجربة</td>
+                                <td>تنبيه تفعيل، وملخص عند الاكتمال الناجح</td>
+                            </tr>
+                            <tr>
+                                <td>run manifest</td>
+                                <td>لا يوجد حقل للتجربة</td>
+                                <td>الاسم، والإعدادات، وهل عدّلت التنفيذ</td>
+                            </tr>
+                            <tr>
+                                <td>artifact</td>
+                                <td>لا يوجد</td>
+                                <td><code>activation-stats</code> يكتب <bdi>JSON</bdi></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <p>
+                    مع <code>activation-stats</code> يسجل الـ manifest القيمة
+                    <code>"modifies_execution": false</code>. أما intervention
+                    فيسجل الطبقة والمرحلة، ومعهما
+                    <code>"modifies_execution": true</code>. ويظل artifact
+                    الخاص بالتجربة ملفاً منفصلاً عن run manifest وعن النص
+                    المولّد.
+                </p>
+
+                <h2 id="compatibility">حدود التوافق</h2>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>الواجهة</th>
+                                <th>الحالة</th>
+                                <th>ملاحظات</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>generation عادي لـ <bdi>LLaMA</bdi> و<bdi>Qwen3</bdi> و<bdi>Gemma 4</bdi></td>
+                                <td class="status-ok">مدعوم</td>
+                                <td>دعم النموذج لا يعني تلقائياً دعم experiment hooks</td>
+                            </tr>
+                            <tr>
+                                <td>generation لـ <bdi>Qwen2.5</bdi></td>
+                                <td class="status-warn">experimental</td>
+                                <td>
+                                    لم تكتمل validation المعمارية والـ tokenizer،
+                                    ولا يشمله سجل parity المتحقق منه
+                                </td>
+                            </tr>
+                            <tr>
+                                <td>experiment hooks لـ <bdi>LLaMA</bdi> و<bdi>Qwen3</bdi> و<bdi>Gemma 4</bdi></td>
+                                <td class="status-ok">مدعوم</td>
+                                <td><bdi>prefill</bdi> وsingle-token decode عبر الحدود الدلالية نفسها</td>
+                            </tr>
+                            <tr>
+                                <td>experiment hooks لـ <bdi>GPT-2</bdi></td>
+                                <td class="status-no">غير مدمج</td>
+                                <td>لا يوجد له مسار experiment hooks في <bdi>v0.1</bdi></td>
+                            </tr>
+                            <tr>
+                                <td>استخراج hidden states والـ probes</td>
+                                <td class="status-warn">مرفوض مع تجربة نشطة</td>
+                                <td>دلالات التمثيل غير معرّفة حتى الآن</td>
+                            </tr>
+                            <tr>
+                                <td>layer/logit dumps</td>
+                                <td class="status-warn">مرفوض مع تجربة نشطة</td>
+                                <td>الواجهات العادية من دون تجربة لم تتغير</td>
+                            </tr>
+                            <tr>
+                                <td>أوامر demo وinteractive وbenchmark الفرعية</td>
+                                <td class="status-warn">مرفوض مع تجربة نشطة</td>
+                                <td>التجارب تستهدف generation العادي حالياً</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="contract-note">
+                    <strong>قيد حالي مهم</strong>
+                    <p>
+                        التجارب النشطة لا تعمل مع استخراج hidden states أو
+                        probes أو layer dumps أو logits dumps. لم يعرّف
+                        <bdi>ember</bdi> بعد هل ينبغي أن تعرض واجهات الفحص هذه
+                        القيم قبل intervention أم بعده.
+                    </p>
+                </div>
+
+                <h2 id="new-experiment">إضافة تجربة مدمجة</h2>
+
+                <p>
+                    التجارب كود <bdi>Rust</bdi> مجمّع داخل
+                    <bdi>ember</bdi>. أبقِ الإضافة ضيقة، ولا توسّع الإطار لخدمة
+                    تنفيذ واحد.
+                </p>
+
+                <ol>
+                    <li>أضف تنفيذ التجربة داخل <code>src/experiments/</code>.</li>
+                    <li>طبّق <code>Experiment</code>، واترك الـ hooks غير المستخدمة على defaults الخاصة بها.</li>
+                    <li>أبقِ state والسجلات الخاصة بالتجربة داخل تنفيذها.</li>
+                    <li>استخدم <code>TensorAccess</code> فقط عند tensor hook معتمد.</li>
+                    <li>أضف خيار <bdi>CLI</bdi> واحداً وضيّقاً ومحدد النوع، مع مسار إنشاء صريح.</li>
+                    <li>مرّر الأخطاء عبر <code>ExperimentError</code>.</li>
+                    <li>أضف تغطية لترتيب الـ hooks، ودلالات التدخل، والعائلات، والـ parity، والـ allocations، والـ benchmarks.</li>
+                </ol>
+
+                <p>
+                    اقرأ <a href="/ember/experiments/hooks/index.ar.html">عقد الـ hooks</a>
+                    قبل اختيار موضع الإدخال. العقد يوثق ملكية tensors والدلالات
+                    الخاصة بكل عائلة وحقول الـ context وmetadata عند الفشل
+                    والمسار المعطّل.
+                </p>
+
+                <h2 id="non-goals">ما لا يستهدفه v0.1</h2>
+
+                <p>
+                    النطاق ضيق عمداً. لا توجد plugins ديناميكية بصيغة
+                    <code>.so</code> أو <code>.dll</code>، ولا
+                    <bdi>WASM hooks</bdi>، ولا Python bindings، ولا discovery
+                    وقت التشغيل. كذلك لا توجد عدة تجارب متزامنة أو async hooks
+                    أو event bus عامة أو إمكانية لتعديل الأوزان اعتباطياً أو
+                    tokenizers وexecution backends مخصصة. ولا يقدّم الإصدار
+                    ادعاءً واسعاً عن ملاءمته لـ production inference.
+                </p>
+
+                <div class="docs-next">
+                    <a href="/ember/v0.1/index.ar.html">
+                        <small>السابق</small>
+                        ملاحظات إصدار v0.1
+                    </a>
+                    <a href="/ember/experiments/hooks/index.ar.html">
+                        <small>المرجع</small>
+                        عقد الـ hooks ←
+                    </a>
+                </div>
+            </main>
+
+            <aside class="doc-toc" aria-label="في هذه الصفحة">
+                <div class="doc-toc-label">في هذه الصفحة</div>
+                <a href="#quick-start">بداية سريعة</a>
+                <a href="#built-ins">التجارب المدمجة</a>
+                <a href="#activation-stats">activation-stats</a>
+                <a href="#zero-layer-output">zero-layer-output</a>
+                <a href="#output-contract">الناتج والـ provenance</a>
+                <a href="#compatibility">حدود التوافق</a>
+                <a href="#new-experiment">إضافة تجربة مدمجة</a>
+                <a href="#non-goals">ما لا يستهدفه v0.1</a>
+            </aside>
+        </div>
+
+        <footer class="site-footer">
+            <span>دليل تجارب ember v0.1</span>
+            <span class="footer-social">
+                <a href="/ember/experiments/hooks/index.ar.html">عقد الـ hooks</a>
+                <a href="https://github.com/voidwest/ember">github</a>
+            </span>
+        </footer>
+
+        <script>
+            document.querySelectorAll("[data-copy]").forEach(function (button) {
+                button.addEventListener("click", function () {
+                    var target = document.getElementById(button.dataset.copy);
+                    if (!target || !navigator.clipboard) return;
+                    navigator.clipboard.writeText(target.textContent).then(function () {
+                        var previous = button.textContent;
+                        button.textContent = "تم النسخ";
+                        window.setTimeout(function () {
+                            button.textContent = previous;
+                        }, 1400);
+                    });
+                });
+            });
+        </script>
+    </body>
+</html>
