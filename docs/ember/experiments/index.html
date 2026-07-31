@@ -1,0 +1,525 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="guide to ember's built-in research experiments: activation-stats and zero-layer-output."
+        />
+        <meta property="og:title" content="ember research experiments" />
+        <meta
+            property="og:description"
+            content="observe activations or intervene at explicit transformer boundaries without turning ember into a plugin framework."
+        />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/experiments/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>ember research experiments</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260731" />
+        <link rel="stylesheet" href="/ember/experiments/docs.css?v=20260731" />
+        <script src="/theme.js"></script>
+    </head>
+    <body>
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <button
+                    class="theme-toggle"
+                    type="button"
+                    aria-label="Switch to light theme"
+                    aria-pressed="false"
+                >
+                    light
+                </button>
+            </div>
+        </nav>
+
+        <div class="back">
+            <a href="/ember/">← ember</a>
+            <a href="/ember/v0.1/">v0.1 release notes</a>
+            <a href="https://github.com/voidwest/ember">source</a>
+        </div>
+
+        <header class="docs-mast">
+            <div>
+                <div class="docs-eyebrow">ember / experiments / guide</div>
+                <h1>research <em>experiments</em></h1>
+                <p class="docs-deck">
+                    one narrow interface for observing execution or changing
+                    an owned activation in place. statically compiled, one per
+                    run, and intentionally unstable in v0.1.
+                </p>
+                <div class="docs-meta">
+                    <span>guide</span>
+                    <span>v0.1 contract</span>
+                    <span>LLaMA · Qwen3 · Gemma 4</span>
+                </div>
+            </div>
+
+            <div class="mast-specimen">
+                <div class="specimen-label">v0.1 surface</div>
+                <pre><code><span class="comment">// observation</span>
+<span class="observe">tensor.values()</span>
+output remains numerically unchanged
+
+<span class="comment">// intervention</span>
+<span class="intervene">tensor.values_mut()</span>
+<span class="intervene">tensor.zero()</span>
+output may change</code></pre>
+                <div class="specimen-note">
+                    one compiled experiment per generation run
+                </div>
+            </div>
+        </header>
+
+        <div class="docs-layout">
+            <aside class="doc-sidebar" aria-label="Experiment documentation">
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">experiments</div>
+                    <a href="/ember/experiments/" aria-current="page">guide</a>
+                    <a href="#quick-start">quick start</a>
+                    <a href="#built-ins">built-ins</a>
+                    <a href="#output-contract">output contract</a>
+                    <a href="#compatibility">compatibility</a>
+                    <a href="#new-experiment">add a built-in</a>
+                </div>
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">reference</div>
+                    <a href="/ember/experiments/hooks/">hook contract</a>
+                    <a href="https://github.com/voidwest/ember/blob/v0.1.0/docs/experiments.md">
+                        markdown source ↗
+                    </a>
+                </div>
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">release</div>
+                    <a href="/ember/v0.1/">v0.1 notes</a>
+                    <a href="https://github.com/voidwest/ember/tree/v0.1.0">tag v0.1.0 ↗</a>
+                </div>
+            </aside>
+
+            <main class="doc-main">
+                <div class="contract-note">
+                    <strong>experimental API</strong>
+                    <p>
+                        the Rust experiment interface is unstable in ember
+                        v0.1. it is not a dynamic plugin ABI or a semver
+                        compatibility promise.
+                    </p>
+                </div>
+
+                <p class="lead">
+                    ember exposes semantic points in ordinary generation
+                    without flattening the distinctions between LLaMA, Qwen,
+                    and Gemma or copying tensors just to make a hook possible.
+                </p>
+
+                <p>
+                    the normal path constructs no experiment object. an active
+                    run owns exactly one statically compiled experiment and
+                    calls it at the approved layer and logits boundaries. the
+                    default operation is observation; changing execution
+                    requires explicit mutable access to an existing activation.
+                </p>
+
+                <div class="principle-grid" aria-label="Experiment design rules">
+                    <article class="principle">
+                        <code>01</code>
+                        <strong>one per run</strong>
+                        <p>
+                            no pipeline ordering, registry, discovery system,
+                            or interaction semantics.
+                        </p>
+                    </article>
+                    <article class="principle">
+                        <code>02</code>
+                        <strong>borrow, do not copy</strong>
+                        <p>
+                            contexts borrow metadata. tensor access wraps an
+                            owned mutable intermediate in place.
+                        </p>
+                    </article>
+                    <article class="principle">
+                        <code>03</code>
+                        <strong>architecture stays visible</strong>
+                        <p>
+                            shared hook names do not erase family-specific
+                            normalization, RoPE, or layer semantics.
+                        </p>
+                    </article>
+                </div>
+
+                <h2 id="quick-start">quick start</h2>
+
+                <p>
+                    build ember once, then use one experiment option on a normal
+                    generation command. the examples below assume the model and
+                    tokenizer files are in the current directory.
+                </p>
+
+                <div class="command" data-label="build">
+                    <button class="copy-doc" type="button" data-copy="build-command">copy</button>
+                    <pre><code id="build-command">cargo build --release</code></pre>
+                </div>
+
+                <p>
+                    experiment notices and summaries are written to stderr.
+                    generated text keeps its existing stdout format. the two
+                    built-in options conflict because only one experiment can
+                    be active.
+                </p>
+
+                <h2 id="built-ins">built-in experiments</h2>
+
+                <article class="experiment-doc">
+                    <header class="experiment-header">
+                        <div>
+                            <h3 id="activation-stats">activation-stats</h3>
+                            <p>
+                                records norms, maxima, and fingerprints at every
+                                tensor-bearing hook.
+                            </p>
+                        </div>
+                        <span class="mode-badge">observation-only</span>
+                    </header>
+
+                    <p>
+                        this experiment reads existing f32 activation values
+                        and writes ordered JSON after successful generation. it
+                        never requests mutable tensor access and does not alter
+                        logits or generated tokens.
+                    </p>
+
+                    <div class="command" data-label="shell">
+                        <button class="copy-doc" type="button" data-copy="stats-command">copy</button>
+                        <pre><code id="stats-command">target/release/ember \
+  --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" \
+  --max-tokens 4 \
+  --temperature 0 \
+  --activation-stats activation-stats.json</code></pre>
+                    </div>
+
+                    <h3>artifact fields</h3>
+
+                    <dl class="field-list">
+                        <div>
+                            <dt>phase</dt>
+                            <dd><code>prefill</code> or <code>decode</code></dd>
+                        </div>
+                        <div>
+                            <dt>stage</dt>
+                            <dd>semantic hook name</dd>
+                        </div>
+                        <div>
+                            <dt>layer_index</dt>
+                            <dd>zero-based; absent at logits</dd>
+                        </div>
+                        <div>
+                            <dt>token range</dt>
+                            <dd>start, input count, sequence length</dd>
+                        </div>
+                        <div>
+                            <dt>tensor</dt>
+                            <dd>2D shape and f32 dtype</dd>
+                        </div>
+                        <div>
+                            <dt>values</dt>
+                            <dd>L2 norm, absolute max, fingerprint</dd>
+                        </div>
+                    </dl>
+
+                    <p>
+                        the fingerprint reuses ember's structured-tracing
+                        algorithm and samples every 64th value. it is useful
+                        for locating divergence, not for cryptographic identity.
+                        norm calculation reads every value.
+                    </p>
+
+                    <div class="command" data-label="inspect with jq">
+                        <button class="copy-doc" type="button" data-copy="jq-command">copy</button>
+                        <pre><code id="jq-command">jq '.records[] | select(.stage == "after_layer") |
+    {phase, layer_index, sequence_length, l2_norm, fingerprint}' \
+  activation-stats.json</code></pre>
+                    </div>
+
+                    <div class="callout">
+                        <div class="label">timing</div>
+                        <p>
+                            observation preserves numerical output, not timing.
+                            scanning every activation and storing records adds
+                            work, so benchmark it as a separate workload.
+                        </p>
+                    </div>
+                </article>
+
+                <article class="experiment-doc intervention">
+                    <header class="experiment-header">
+                        <div>
+                            <h3 id="zero-layer-output">zero-layer-output</h3>
+                            <p>
+                                zeros one selected contribution during prefill
+                                and every decode evaluation.
+                            </p>
+                        </div>
+                        <span class="mode-badge">intervention</span>
+                    </header>
+
+                    <p>
+                        pass a zero-based layer and semantic stage as
+                        <code>LAYER:STAGE</code>. ember validates the layer
+                        after loading the model, modifies the existing tensor
+                        in place, and counts each intervention.
+                    </p>
+
+                    <div class="command" data-label="shell">
+                        <button class="copy-doc" type="button" data-copy="zero-command">copy</button>
+                        <pre><code id="zero-command">target/release/ember \
+  --arch gemma4 \
+  --model models/gemma-4-E2B-it.Q8_0.gguf \
+  --tokenizer tokenizer-gemma4.json \
+  --prompt "The capital of France is" \
+  --max-tokens 8 \
+  --temperature 0 \
+  --zero-layer-output 4:attention</code></pre>
+                    </div>
+
+                    <div class="table-wrap">
+                        <table class="simd-table">
+                            <thead>
+                                <tr>
+                                    <th>stage</th>
+                                    <th>tensor replaced with zero</th>
+                                    <th>location</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><code>attention</code></td>
+                                    <td>attention residual contribution</td>
+                                    <td>immediately before residual addition</td>
+                                </tr>
+                                <tr>
+                                    <td><code>mlp</code></td>
+                                    <td>MLP residual contribution</td>
+                                    <td>immediately before residual addition</td>
+                                </tr>
+                                <tr>
+                                    <td><code>layer</code></td>
+                                    <td>completed hidden state</td>
+                                    <td>after all family-specific layer work</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <p>
+                        a malformed stage fails during CLI parsing. a layer
+                        outside the loaded model reports the model identifier,
+                        family, requested index, and valid range.
+                    </p>
+
+                    <pre><code>research experiment active: zero-layer-output layer=4 stage=attention; execution will be modified
+experiment zero-layer-output: 8 intervention(s) at layer 4 stage attention</code></pre>
+                </article>
+
+                <h2 id="output-contract">output and provenance</h2>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>surface</th>
+                                <th>no experiment</th>
+                                <th>active experiment</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>stdout</td>
+                                <td>existing generated-text format</td>
+                                <td>same formatting behavior</td>
+                            </tr>
+                            <tr>
+                                <td>stderr</td>
+                                <td>no experiment notice</td>
+                                <td>activation notice and completion summary</td>
+                            </tr>
+                            <tr>
+                                <td>run manifest</td>
+                                <td>no experiment field</td>
+                                <td>name, configuration, and mutation status</td>
+                            </tr>
+                            <tr>
+                                <td>artifact</td>
+                                <td>none</td>
+                                <td><code>activation-stats</code> writes JSON</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <p>
+                    a manifest marks <code>activation-stats</code> with
+                    <code>"modifies_execution": false</code>. the intervention
+                    records its layer, stage, and
+                    <code>"modifies_execution": true</code>.
+                </p>
+
+                <h2 id="compatibility">compatibility boundary</h2>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>surface</th>
+                                <th>status</th>
+                                <th>notes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>ordinary LLaMA generation</td>
+                                <td class="status-ok">supported</td>
+                                <td>prefill and fast single-token decode</td>
+                            </tr>
+                            <tr>
+                                <td>ordinary Qwen3 generation</td>
+                                <td class="status-ok">supported</td>
+                                <td>family-specific RoPE and QK norm preserved</td>
+                            </tr>
+                            <tr>
+                                <td>ordinary Gemma 4 generation</td>
+                                <td class="status-ok">supported</td>
+                                <td>post norms, PLE, and scaling preserved</td>
+                            </tr>
+                            <tr>
+                                <td>GPT-2 generation</td>
+                                <td class="status-no">not integrated</td>
+                                <td>no experiment hook path in v0.1</td>
+                            </tr>
+                            <tr>
+                                <td>hidden-state extraction and probes</td>
+                                <td class="status-warn">active runs rejected</td>
+                                <td>representation semantics are not defined yet</td>
+                            </tr>
+                            <tr>
+                                <td>layer/logit dumps</td>
+                                <td class="status-warn">active runs rejected</td>
+                                <td>normal no-experiment surfaces are unchanged</td>
+                            </tr>
+                            <tr>
+                                <td>demo, interactive, benchmark subcommands</td>
+                                <td class="status-warn">active runs rejected</td>
+                                <td>experiments currently target ordinary generation</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="contract-note">
+                    <strong>important current limitation</strong>
+                    <p>
+                        active experiments do not participate in hidden-state
+                        extraction, probing, layer dumps, or logits dumps.
+                        ember does not yet define whether those surfaces should
+                        expose pre-intervention or post-intervention values.
+                    </p>
+                </div>
+
+                <h2 id="new-experiment">adding another built-in</h2>
+
+                <p>
+                    experiments are Rust code compiled into ember. keep the
+                    addition narrow and resist extending the framework to make
+                    one implementation convenient.
+                </p>
+
+                <ol>
+                    <li>add an implementation under <code>src/experiments/</code>.</li>
+                    <li>implement <code>Experiment</code>; leave unused hooks at their defaults.</li>
+                    <li>keep experiment-specific records inside the implementation.</li>
+                    <li>use <code>TensorAccess</code> only at an approved tensor hook.</li>
+                    <li>add one narrow typed CLI option and explicit construction path.</li>
+                    <li>propagate failures with <code>ExperimentError</code>.</li>
+                    <li>add hook-order, family, parity, allocation, and benchmark coverage.</li>
+                </ol>
+
+                <p>
+                    read the <a href="/ember/experiments/hooks/">hook contract</a>
+                    before choosing an insertion point. the contract documents
+                    tensor ownership, family-specific semantics, context
+                    fields, failure metadata, and the disabled path.
+                </p>
+
+                <h2 id="non-goals">non-goals</h2>
+
+                <p>
+                    the v0.1 interface intentionally does not provide dynamic
+                    shared libraries, WASM, Python bindings, runtime discovery,
+                    multiple experiments, async hooks, arbitrary weight
+                    mutation, custom tokenizers, custom backends, or a general
+                    event bus.
+                </p>
+
+                <div class="docs-next">
+                    <a href="/ember/v0.1/">
+                        <small>previous</small>
+                        v0.1 release notes
+                    </a>
+                    <a href="/ember/experiments/hooks/">
+                        <small>reference</small>
+                        hook contract →
+                    </a>
+                </div>
+            </main>
+
+            <aside class="doc-toc" aria-label="On this page">
+                <div class="doc-toc-label">on this page</div>
+                <a href="#quick-start">quick start</a>
+                <a href="#built-ins">built-ins</a>
+                <a href="#activation-stats">activation-stats</a>
+                <a href="#zero-layer-output">zero-layer-output</a>
+                <a href="#output-contract">output contract</a>
+                <a href="#compatibility">compatibility</a>
+                <a href="#new-experiment">add a built-in</a>
+                <a href="#non-goals">non-goals</a>
+            </aside>
+        </div>
+
+        <footer class="site-footer">
+            <span>ember v0.1 experiment guide</span>
+            <span class="footer-social">
+                <a href="/ember/experiments/hooks/">hook contract</a>
+                <a href="https://github.com/voidwest/ember">github</a>
+            </span>
+        </footer>
+
+        <script>
+            document.querySelectorAll("[data-copy]").forEach(function (button) {
+                button.addEventListener("click", function () {
+                    var target = document.getElementById(button.dataset.copy);
+                    if (!target || !navigator.clipboard) return;
+                    navigator.clipboard.writeText(target.textContent).then(function () {
+                        var previous = button.textContent;
+                        button.textContent = "copied";
+                        window.setTimeout(function () {
+                            button.textContent = previous;
+                        }, 1400);
+                    });
+                });
+            });
+        </script>
+    </body>
+</html>

@@ -1,0 +1,921 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="ember v0.1 release notes: a CPU-first Rust inference engine built to be inspected, traced, and changed."
+        />
+        <meta property="og:title" content="ember v0.1: inspect the model while it runs" />
+        <meta
+            property="og:description"
+            content="a small CPU-first Rust inference engine with packed Q8 kernels, exact validation paths, and two focused research experiments."
+        />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/v0.1/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <title>ember v0.1: inspect the model while it runs</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260731" />
+        <script src="/theme.js"></script>
+        <style>
+            :root {
+                --release-hot: #f1895b;
+                --release-violet: #a89bdf;
+            }
+
+            :root[data-theme="light"] {
+                --release-hot: #bd5f38;
+                --release-violet: #7063ae;
+            }
+
+            body {
+                --page-width: 1120px;
+            }
+
+            .release-hero {
+                position: relative;
+                display: grid;
+                grid-template-columns: minmax(0, 1.35fr) minmax(260px, 0.65fr);
+                gap: clamp(32px, 6vw, 72px);
+                align-items: center;
+                min-block-size: 500px;
+                margin-block: 0 28px;
+                padding-block: clamp(42px, 7vw, 78px);
+                overflow: hidden;
+                border-block-start: 1px solid var(--border-soft);
+                border-block-end: 1px solid var(--border);
+            }
+
+            .release-kicker {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                margin-block-end: 28px;
+                color: var(--release-hot);
+                font-family: var(--mono-font);
+                font-size: 10px;
+                letter-spacing: 0.07em;
+                text-transform: uppercase;
+            }
+
+            .release-kicker::before {
+                content: "";
+                inline-size: 28px;
+                block-size: 1px;
+                background: currentColor;
+            }
+
+            .release-title {
+                max-inline-size: 770px;
+                margin: 0;
+                font-family: var(--body-font);
+                font-size: clamp(4rem, 8.3vw, 7rem);
+                font-weight: 520;
+                letter-spacing: -0.075em;
+                line-height: 0.86;
+            }
+
+            .release-title span {
+                display: block;
+                margin-block-start: 12px;
+                margin-inline-start: 2px;
+                color: var(--release-hot);
+                font-family: var(--mono-font);
+                font-size: 0.58em;
+                font-style: normal;
+                font-weight: 400;
+                letter-spacing: -0.065em;
+            }
+
+            .release-deck {
+                max-inline-size: 600px;
+                margin-block: 30px 0;
+                color: var(--muted);
+                font-size: clamp(1rem, 1.4vw, 1.12rem);
+                line-height: 1.7;
+            }
+
+            .release-index {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px 22px;
+                margin-block-start: 29px;
+                font-family: var(--mono-font);
+                font-size: 11px;
+            }
+
+            .release-index a {
+                color: var(--muted);
+                text-decoration: none;
+            }
+
+            .release-index a::before {
+                content: "[";
+                color: var(--release-hot);
+            }
+
+            .release-index a::after {
+                content: "]";
+                color: var(--release-hot);
+            }
+
+            .release-index a:hover {
+                color: var(--release-hot);
+            }
+
+            .release-index span {
+                color: var(--subtle);
+            }
+
+            .runtime-orbit {
+                position: relative;
+                display: grid;
+                place-items: center;
+                min-block-size: 360px;
+                isolation: isolate;
+            }
+
+            .orbit-ring {
+                position: absolute;
+                inline-size: min(100%, 330px);
+                aspect-ratio: 1;
+                border: 1px solid var(--border-soft);
+                border-radius: 50%;
+            }
+
+            .orbit-ring:nth-child(2) {
+                inline-size: min(72%, 238px);
+                border-style: dashed;
+            }
+
+            .orbit-ring:nth-child(3) {
+                inline-size: min(44%, 146px);
+                border-color: var(--release-hot);
+            }
+
+            .orbit-core {
+                position: relative;
+                z-index: 2;
+                display: grid;
+                place-items: center;
+                inline-size: 72px;
+                aspect-ratio: 1;
+                border: 1px solid var(--release-hot);
+                border-radius: 50%;
+                background: var(--bg);
+                color: var(--heading);
+                font-family: var(--mono-font);
+                font-size: 1.25rem;
+            }
+
+            .orbit-dot {
+                position: absolute;
+                z-index: 4;
+                inline-size: 6px;
+                aspect-ratio: 1;
+                border-radius: 50%;
+                background: var(--release-hot);
+            }
+
+            .orbit-dot.one { inset: 13% 25% auto auto; }
+            .orbit-dot.two { inset: auto 18% 19% auto; animation-delay: -0.8s; }
+            .orbit-dot.three { inset: 31% auto auto 14%; animation-delay: -1.6s; }
+
+            .launch-lead {
+                display: grid;
+                grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr);
+                gap: clamp(32px, 6vw, 76px);
+                align-items: start;
+                margin-block: 56px 78px;
+            }
+
+            .launch-lead h2 {
+                margin-block-start: 0;
+                border: 0;
+                font-family: var(--body-font);
+                font-size: clamp(1.9rem, 3.5vw, 2.85rem);
+                font-weight: 500;
+                letter-spacing: -0.045em;
+                line-height: 1.08;
+            }
+
+            .launch-lead h2::before {
+                display: block;
+                margin-block-end: 13px;
+            }
+
+            .launch-copy p {
+                color: var(--muted);
+                font-size: 1.02rem;
+            }
+
+            .launch-copy p:first-child {
+                color: var(--heading);
+                font-size: 1.12rem;
+                line-height: 1.68;
+            }
+
+            .experiment-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 18px;
+                margin-block: 30px 48px;
+            }
+
+            .experiment-card {
+                position: relative;
+                min-inline-size: 0;
+                padding: clamp(22px, 3vw, 30px);
+                overflow: hidden;
+                border: 1px solid var(--border-soft);
+                background: var(--bg);
+            }
+
+            .experiment-card.observe {
+                border-block-start: 2px solid var(--release-violet);
+            }
+
+            .experiment-card.intervene {
+                border-block-start: 2px solid var(--release-hot);
+            }
+
+            .experiment-kind {
+                margin-block-end: 20px;
+                color: var(--muted);
+                font-family: var(--mono-font);
+                font-size: 10px;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+
+            .experiment-card h3 {
+                position: relative;
+                margin: 0 0 12px;
+                font-family: var(--body-font);
+                font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+                font-weight: 550;
+                letter-spacing: -0.035em;
+            }
+
+            .experiment-card > p {
+                position: relative;
+                min-block-size: 82px;
+                color: var(--muted);
+                font-size: 0.9rem;
+            }
+
+            .command-shell {
+                position: relative;
+                margin-block: 22px 0;
+                padding: 40px 16px 15px;
+                border: 1px solid var(--border-soft);
+                background: var(--code-bg);
+            }
+
+            .command-shell::before {
+                content: "shell";
+                position: absolute;
+                inset: 12px auto auto 15px;
+                color: var(--subtle);
+                font-family: var(--mono-font);
+                font-size: 9px;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+
+            .command-shell code {
+                display: block;
+                overflow-x: auto;
+                color: var(--text);
+                font-family: var(--mono-font);
+                font-size: 0.72rem;
+                line-height: 1.65;
+                white-space: pre;
+            }
+
+            .copy-button {
+                position: absolute;
+                inset: 8px 8px auto auto;
+                padding: 5px 7px;
+                border: 1px solid var(--border-soft);
+                background: transparent;
+                color: var(--muted);
+                font-family: var(--mono-font);
+                font-size: 9px;
+                cursor: pointer;
+            }
+
+            .copy-button:hover {
+                border-color: var(--release-hot);
+                color: var(--release-hot);
+            }
+
+            .artifact-layout {
+                display: grid;
+                grid-template-columns: minmax(0, 0.65fr) minmax(0, 1.35fr);
+                gap: clamp(30px, 6vw, 70px);
+                align-items: center;
+                margin-block: 82px;
+                padding-block: clamp(34px, 5vw, 54px);
+                border-block: 1px solid var(--border);
+            }
+
+            .artifact-layout h2 {
+                margin-block-start: 0;
+                border: 0;
+                font-family: var(--body-font);
+                font-size: clamp(1.8rem, 3.3vw, 2.7rem);
+                font-weight: 500;
+                letter-spacing: -0.04em;
+                line-height: 1.1;
+            }
+
+            .artifact-layout p {
+                color: var(--muted);
+            }
+
+            .artifact-window {
+                min-inline-size: 0;
+                border: 1px solid var(--border);
+                background: var(--code-bg);
+            }
+
+            .artifact-bar {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 11px 13px;
+                border-block-end: 1px solid var(--border-soft);
+                color: var(--muted);
+                font-family: var(--mono-font);
+                font-size: 9px;
+            }
+
+            .artifact-bar i {
+                display: block;
+                inline-size: 7px;
+                aspect-ratio: 1;
+                border-radius: 50%;
+                background: var(--border);
+            }
+
+            .artifact-bar span {
+                margin-inline-start: 7px;
+            }
+
+            .artifact-window pre {
+                max-block-size: 390px;
+                margin: 0;
+                padding: 22px;
+                border: 0;
+                background: transparent;
+            }
+
+            .json-key { color: var(--release-violet); }
+            .json-string { color: var(--release-hot); }
+            .json-number { color: var(--heading); }
+
+            .validation-status {
+                color: var(--release-hot);
+                font-family: var(--mono-font);
+                font-size: 10px;
+                white-space: nowrap;
+            }
+
+            .scope-list {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 0 44px;
+                margin-block: 25px 54px;
+                padding: 0;
+                border-block-start: 1px solid var(--border);
+                list-style: none;
+            }
+
+            .scope-list li {
+                display: grid;
+                grid-template-columns: auto 1fr;
+                gap: 13px;
+                align-items: baseline;
+                margin: 0;
+                padding: 14px 0;
+                border-block-end: 1px solid var(--border-soft);
+                color: var(--muted);
+                font-size: 0.87rem;
+            }
+
+            .scope-list li::before {
+                content: "×";
+                color: var(--release-hot);
+                font-family: var(--mono-font);
+            }
+
+            .release-coordinates {
+                position: relative;
+                margin-block: 82px 38px;
+                padding-block: clamp(30px, 5vw, 48px);
+                overflow: hidden;
+                border-block: 1px solid var(--border);
+            }
+
+            .release-coordinates > * {
+                position: relative;
+            }
+
+            .release-coordinates h2 {
+                max-inline-size: 700px;
+                margin: 0 0 24px;
+                padding: 0;
+                border: 0;
+                font-family: var(--body-font);
+                font-size: clamp(1.7rem, 3vw, 2.5rem);
+                font-weight: 500;
+                letter-spacing: -0.04em;
+                line-height: 1.08;
+            }
+
+            .release-coordinates h2::before {
+                display: none;
+            }
+
+            .coordinate-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                max-inline-size: 690px;
+                margin: 0;
+                border-block-start: 1px solid var(--border-soft);
+            }
+
+            .coordinate-grid div {
+                display: grid;
+                grid-template-columns: 8rem 1fr;
+                gap: 16px;
+                padding-block: 10px;
+                border-block-end: 1px solid var(--border-soft);
+            }
+
+            .coordinate-grid div:nth-child(odd) {
+                margin-inline-end: 24px;
+            }
+
+            .coordinate-grid dt,
+            .coordinate-grid dd {
+                margin: 0;
+                font-family: var(--mono-font);
+                font-size: 10px;
+            }
+
+            .coordinate-grid dt {
+                color: var(--subtle);
+                text-transform: uppercase;
+            }
+
+            .coordinate-grid dd {
+                color: var(--heading);
+            }
+
+            .coordinate-grid a {
+                color: var(--release-hot);
+                text-decoration: none;
+            }
+
+            .release-note {
+                margin-block-start: 34px;
+                color: var(--subtle);
+                font-family: var(--mono-font);
+                font-size: 9px;
+                letter-spacing: 0.03em;
+                text-transform: uppercase;
+            }
+
+            @media (max-width: 840px) {
+                .release-hero {
+                    grid-template-columns: 1fr;
+                    min-block-size: 0;
+                }
+
+                .runtime-orbit {
+                    min-block-size: 300px;
+                }
+
+                .launch-lead,
+                .artifact-layout {
+                    grid-template-columns: 1fr;
+                }
+
+                .coordinate-grid {
+                    grid-template-columns: 1fr;
+                }
+
+                .coordinate-grid div:nth-child(odd) {
+                    margin-inline-end: 0;
+                }
+            }
+
+            @media (max-width: 620px) {
+                .release-hero {
+                    padding-block-start: 20px;
+                }
+
+                .release-title {
+                    font-size: clamp(3.25rem, 17vw, 4.9rem);
+                }
+
+                .release-title span {
+                    margin-inline-start: 1px;
+                }
+
+                .runtime-orbit {
+                    min-block-size: 270px;
+                }
+
+                .experiment-grid,
+                .scope-list {
+                    grid-template-columns: 1fr;
+                }
+
+                .artifact-layout {
+                    margin-inline: 0;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <button
+                    class="theme-toggle"
+                    type="button"
+                    aria-label="Switch to light theme"
+                    aria-pressed="false"
+                >
+                    light
+                </button>
+            </div>
+        </nav>
+
+        <div class="back">
+            <a href="/ember/">← ember</a>
+            <a href="/ember/engineering/">engineering</a>
+            <a href="https://github.com/voidwest/ember">github</a>
+        </div>
+
+        <header class="hero release-hero">
+            <div>
+                <div class="release-kicker">release note 001 · 31 July 2026</div>
+                <h1 class="release-title">ember <span>v0.1</span></h1>
+                <p class="release-deck">
+                    notes on a small CPU-first Rust inference engine whose
+                    execution path is meant to remain visible.
+                </p>
+                <div class="release-index" aria-label="Release index">
+                    <a href="https://github.com/voidwest/ember/tree/v0.1.0">source</a>
+                    <a href="/ember/experiments/">experiment guide</a>
+                    <a href="/ember/experiments/hooks/">hook contract</a>
+                    <span>MIT · commit 663a979</span>
+                </div>
+            </div>
+
+            <div class="runtime-orbit" aria-hidden="true">
+                <div class="orbit-ring"></div>
+                <div class="orbit-ring"></div>
+                <div class="orbit-ring"></div>
+                <div class="orbit-core">e</div>
+                <i class="orbit-dot one" aria-hidden="true"></i>
+                <i class="orbit-dot two" aria-hidden="true"></i>
+                <i class="orbit-dot three" aria-hidden="true"></i>
+            </div>
+        </header>
+
+        <section class="launch-lead">
+            <h2>a runtime for work that needs an audit trail</h2>
+            <div class="launch-copy">
+                <p>
+                    ember is for the part of inference research where the
+                    representation boundary, execution order, and exact
+                    intervention point need to be accounted for.
+                </p>
+                <p>
+                    it loads GGUF models, runs prefill and KV-cached decode on
+                    CPU, keeps Q8 weights compressed, exposes structured
+                    tracing and hidden states, and retains generic kernels as
+                    correctness oracles beside optimized paths.
+                </p>
+                <p>
+                    llama.cpp remains the external performance reference.
+                    ember keeps a generic correctness path beside optimized
+                    kernels so a research change can be localized and checked.
+                </p>
+            </div>
+        </section>
+
+        <h2 id="experiments">the experiment boundary in v0.1</h2>
+        <p>
+            the release fixes the scope at one observer and one intervention.
+            both pass through the same narrow, statically compiled Rust hook
+            lifecycle. they show what the boundary can support without turning
+            it into a general plugin platform.
+        </p>
+
+        <div class="experiment-grid">
+            <article class="experiment-card observe">
+                <div class="experiment-kind">built-in 01 · observation-only</div>
+                <h3>activation-stats</h3>
+                <p>
+                    records L2 norms, absolute maxima, and lightweight
+                    fingerprints at every approved activation boundary. the
+                    result is ordered JSON you can diff, plot, or inspect with
+                    <code>jq</code>.
+                </p>
+                <div class="command-shell">
+                    <button class="copy-button" type="button" data-copy="observe-command">
+                        copy
+                    </button>
+                    <code id="observe-command">ember --arch qwen3 \
+  --model Qwen3-0.6B-Q8_0.gguf \
+  --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" \
+  --max-tokens 4 --temperature 0 \
+  --activation-stats stats.json</code>
+                </div>
+            </article>
+
+            <article class="experiment-card intervene">
+                <div class="experiment-kind">built-in 02 · mutates execution</div>
+                <h3>zero-layer-output</h3>
+                <p>
+                    chooses a layer and zeros its attention, MLP, or completed
+                    layer output during prefill and decode. ember counts every
+                    intervention and makes the modified run obvious on stderr.
+                </p>
+                <div class="command-shell">
+                    <button class="copy-button" type="button" data-copy="intervene-command">
+                        copy
+                    </button>
+                    <code id="intervene-command">ember --arch gemma4 \
+  --model gemma-4-E2B-it.Q8_0.gguf \
+  --tokenizer tokenizer-gemma4.json \
+  --prompt "The capital of France is" \
+  --max-tokens 4 --temperature 0 \
+  --zero-layer-output 4:attention</code>
+                </div>
+            </article>
+        </div>
+
+        <section class="artifact-layout">
+            <div>
+                <h2>the artifact is the interface</h2>
+                <p>
+                    observation records carry phase, semantic stage, layer,
+                    token range, shape, dtype, norm, maximum, and fingerprint.
+                    no token buffers or model metadata are cloned per hook.
+                </p>
+                <p>
+                    the same generated text still lands on stdout. experiment
+                    notices stay on stderr. run manifests identify whether an
+                    experiment modified execution.
+                </p>
+                <div class="project-links">
+                    <a href="/ember/experiments/">experiment guide</a>
+                    <a href="/ember/experiments/hooks/">hook contract</a>
+                </div>
+            </div>
+            <div class="artifact-window" aria-label="Example activation statistics JSON">
+                <div class="artifact-bar">
+                    <i></i><i></i><i></i><span>activation-stats.json</span>
+                </div>
+                <pre><code>{
+  <span class="json-key">"experiment"</span>: <span class="json-string">"activation-stats"</span>,
+  <span class="json-key">"observation_only"</span>: true,
+  <span class="json-key">"records"</span>: [{
+    <span class="json-key">"phase"</span>: <span class="json-string">"prefill"</span>,
+    <span class="json-key">"stage"</span>: <span class="json-string">"after_attention"</span>,
+    <span class="json-key">"layer_index"</span>: <span class="json-number">4</span>,
+    <span class="json-key">"sequence_length"</span>: <span class="json-number">5</span>,
+    <span class="json-key">"shape"</span>: [<span class="json-number">5</span>, <span class="json-number">1024</span>],
+    <span class="json-key">"dtype"</span>: <span class="json-string">"f32"</span>,
+    <span class="json-key">"l2_norm"</span>: <span class="json-number">6.117406</span>,
+    <span class="json-key">"abs_max"</span>: <span class="json-number">0.782913</span>,
+    <span class="json-key">"fingerprint"</span>: <span class="json-number">152836286671...</span>
+  }]
+}</code></pre>
+            </div>
+        </section>
+
+        <h2>validation record</h2>
+        <p>
+            the experiment hooks were admitted only after the unmodified path
+            cleared real-model parity, artifact, allocation, optimized-code,
+            and controlled A/B checks.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr>
+                        <th>check</th>
+                        <th>surface</th>
+                        <th>result</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>real-model parity</td>
+                        <td>Qwen and Gemma logits; three-family generation</td>
+                        <td class="validation-status">matched frozen artifacts</td>
+                    </tr>
+                    <tr>
+                        <td>inspection parity</td>
+                        <td>Gemma layer dumps and normalized trace fingerprints</td>
+                        <td class="validation-status">byte-identical</td>
+                    </tr>
+                    <tr>
+                        <td>allocation behavior</td>
+                        <td>warmed no-experiment layer execution</td>
+                        <td class="validation-status">no per-layer growth</td>
+                    </tr>
+                    <tr>
+                        <td>optimized code</td>
+                        <td>representative LLaMA block</td>
+                        <td class="validation-status">disabled dispatch erased</td>
+                    </tr>
+                    <tr>
+                        <td>controlled A/B</td>
+                        <td>pinned prefill and single-token decode</td>
+                        <td class="validation-status">inside measurement noise</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>release measurements</h2>
+        <p>
+            these are host-specific validation numbers, included to make the
+            release state inspectable rather than to claim a leaderboard.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr>
+                        <th>release workload</th>
+                        <th>decode</th>
+                        <th>prefill</th>
+                        <th>read</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Qwen3 0.6B Q8_0</td>
+                        <td>40.88 tok/s</td>
+                        <td>52 tokens · 489 ms</td>
+                        <td>local i5-1135G7 validation host</td>
+                    </tr>
+                    <tr>
+                        <td>LLaMA 3.2 1B Q8_0</td>
+                        <td>33.10 tok/s</td>
+                        <td>53 tokens · 943 ms</td>
+                        <td>local i5-1135G7 validation host</td>
+                    </tr>
+                    <tr>
+                        <td>Gemma 4 E2B Q8_0</td>
+                        <td>10.05 tok/s</td>
+                        <td>52 tokens · 2,006 ms</td>
+                        <td>local i5-1135G7 validation host</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <p class="caption">
+            host-specific release validation, not a cross-engine speed claim.
+            llama.cpp remains the external performance reference.
+        </p>
+
+        <h2>support boundary</h2>
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr>
+                        <th>surface</th>
+                        <th>included</th>
+                        <th>boundary</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>models</td>
+                        <td>GPT-2, LLaMA, Qwen3, dense text-only Gemma 4</td>
+                        <td>Qwen2.5 remains experimental</td>
+                    </tr>
+                    <tr>
+                        <td>GGUF tensors</td>
+                        <td>F32, F16, BF16, Q8_0</td>
+                        <td>no K-quants</td>
+                    </tr>
+                    <tr>
+                        <td>inspectability</td>
+                        <td>structured tracing, value fingerprints, hidden-state extraction</td>
+                        <td>active experiments do not enter dump/probe surfaces yet</td>
+                    </tr>
+                    <tr>
+                        <td>Q8 execution</td>
+                        <td>mmap weights, scalar/AVX2/AVX-512, tiled and packed paths</td>
+                        <td>generic path stays available as oracle</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <h2>non-goals</h2>
+        <ul class="scope-list">
+            <li>dynamic <code>.so</code> or <code>.dll</code> plugins</li>
+            <li>WASM or Python hooks</li>
+            <li>runtime experiment discovery</li>
+            <li>multiple concurrent experiments</li>
+            <li>configuration DSLs or registries</li>
+            <li>async hooks or broad event buses</li>
+            <li>arbitrary model-weight mutation</li>
+            <li>a claim to production inference breadth</li>
+        </ul>
+
+        <section class="release-coordinates">
+            <h2>release coordinates</h2>
+            <dl class="coordinate-grid">
+                <div>
+                    <dt>tag</dt>
+                    <dd><a href="https://github.com/voidwest/ember/tree/v0.1.0">v0.1.0</a></dd>
+                </div>
+                <div>
+                    <dt>commit</dt>
+                    <dd>663a979</dd>
+                </div>
+                <div>
+                    <dt>license</dt>
+                    <dd>MIT</dd>
+                </div>
+                <div>
+                    <dt>toolchain</dt>
+                    <dd>Rust 1.92</dd>
+                </div>
+                <div>
+                    <dt>guide</dt>
+                    <dd><a href="/ember/experiments/">experiments</a></dd>
+                </div>
+                <div>
+                    <dt>reference</dt>
+                    <dd><a href="/ember/experiments/hooks/">hook contract</a></dd>
+                </div>
+                <div>
+                    <dt>changes</dt>
+                    <dd><a href="https://github.com/voidwest/ember/blob/v0.1.0/CHANGELOG.md">changelog</a></dd>
+                </div>
+                <div>
+                    <dt>source</dt>
+                    <dd><a href="https://github.com/voidwest/ember">repository</a></dd>
+                </div>
+            </dl>
+            <div class="release-note">
+                experiment API: unstable in v0.1 · linux CPU validation
+            </div>
+        </section>
+
+        <footer class="site-footer">
+            <span>© 2026 voidwest · ember v0.1.0</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest/ember">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+
+        <script>
+            document.querySelectorAll("[data-copy]").forEach(function (button) {
+                button.addEventListener("click", function () {
+                    var target = document.getElementById(button.dataset.copy);
+                    if (!target || !navigator.clipboard) return;
+                    navigator.clipboard.writeText(target.textContent).then(function () {
+                        var previous = button.textContent;
+                        button.textContent = "copied";
+                        window.setTimeout(function () {
+                            button.textContent = previous;
+                        }, 1400);
+                    });
+                });
+            });
+        </script>
+    </body>
+</html>

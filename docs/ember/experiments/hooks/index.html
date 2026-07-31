@@ -1,0 +1,674 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta
+            name="description"
+            content="reference for ember v0.1 experiment hooks, contexts, tensor access, lifecycle, and model-family semantics."
+        />
+        <meta property="og:title" content="ember experiment hook contract" />
+        <meta
+            property="og:description"
+            content="the exact lifecycle, activation boundaries, contexts, mutation rules, and failure behavior of ember's experimental Rust interface."
+        />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/experiments/hooks/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>ember experiment hook contract</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260731" />
+        <link rel="stylesheet" href="/ember/experiments/docs.css?v=20260731" />
+        <script src="/theme.js"></script>
+    </head>
+    <body>
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <button
+                    class="theme-toggle"
+                    type="button"
+                    aria-label="Switch to light theme"
+                    aria-pressed="false"
+                >
+                    light
+                </button>
+            </div>
+        </nav>
+
+        <div class="back">
+            <a href="/ember/experiments/">← experiment guide</a>
+            <a href="/ember/v0.1/">v0.1 release notes</a>
+            <a href="https://github.com/voidwest/ember/tree/v0.1.0/src/experiments">source</a>
+        </div>
+
+        <header class="docs-mast">
+            <div>
+                <div class="docs-eyebrow">ember / experiments / reference</div>
+                <h1>hook <em>contract</em></h1>
+                <p class="docs-deck">
+                    nine lifecycle points, three immutable context types, and
+                    one non-owning tensor view. this page defines what each
+                    boundary means in ember v0.1.
+                </p>
+                <div class="docs-meta">
+                    <span>API reference</span>
+                    <span>unstable v0.1</span>
+                    <span>single active experiment</span>
+                </div>
+            </div>
+
+            <div class="mast-specimen">
+                <div class="specimen-label">successful generation</div>
+                <pre><code>on_model_loaded()
+before_prefill()
+
+prefill:
+  layer hooks
+  logits hooks
+
+each decode evaluation:
+  layer hooks
+  logits hooks
+
+on_generation_complete()</code></pre>
+                <div class="specimen-note">
+                    ordered and synchronous
+                </div>
+            </div>
+        </header>
+
+        <div class="docs-layout">
+            <aside class="doc-sidebar" aria-label="Experiment documentation">
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">experiments</div>
+                    <a href="/ember/experiments/">guide</a>
+                    <a href="/ember/experiments/#activation-stats">activation-stats</a>
+                    <a href="/ember/experiments/#zero-layer-output">zero-layer-output</a>
+                </div>
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">reference</div>
+                    <a href="/ember/experiments/hooks/" aria-current="page">hook contract</a>
+                    <a href="#contexts">contexts</a>
+                    <a href="#tensor-access">TensorAccess</a>
+                    <a href="#family-semantics">family semantics</a>
+                    <a href="#failures">failures</a>
+                </div>
+                <div class="doc-nav-group">
+                    <div class="doc-nav-label">source</div>
+                    <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/experiments/mod.rs">
+                        mod.rs ↗
+                    </a>
+                    <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/experiments/context.rs">
+                        context.rs ↗
+                    </a>
+                </div>
+            </aside>
+
+            <main class="doc-main">
+                <div class="contract-note">
+                    <strong>contract status</strong>
+                    <p>
+                        public experiment items are marked experimental and
+                        use <code>#[non_exhaustive]</code> where appropriate.
+                        names and fields may change before this API stabilizes.
+                    </p>
+                </div>
+
+                <p class="lead">
+                    hooks describe semantic stages, not interchangeable
+                    implementation steps. ember invokes them in a fixed order,
+                    but each model family reaches that boundary through its own
+                    numerically explicit path.
+                </p>
+
+                <h2 id="lifecycle">lifecycle</h2>
+
+                <p>
+                    a successful ordinary generation run has one model-load
+                    callback, one prefill callback, one hooked prefill
+                    evaluation, zero or more hooked decode evaluations, and one
+                    completion callback.
+                </p>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>scope</th>
+                                <th>hook</th>
+                                <th>exposed value</th>
+                                <th>access</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>model</td>
+                                <td><code>on_model_loaded</code></td>
+                                <td><code>ModelContext</code></td>
+                                <td>metadata</td>
+                            </tr>
+                            <tr>
+                                <td>setup</td>
+                                <td><code>before_prefill</code></td>
+                                <td><code>ExecutionContext</code></td>
+                                <td>metadata</td>
+                            </tr>
+                            <tr>
+                                <td>each layer</td>
+                                <td><code>before_layer</code></td>
+                                <td>incoming hidden state</td>
+                                <td>mutable view</td>
+                            </tr>
+                            <tr>
+                                <td>each layer</td>
+                                <td><code>after_attention</code></td>
+                                <td>attention residual contribution</td>
+                                <td>mutable view</td>
+                            </tr>
+                            <tr>
+                                <td>each layer</td>
+                                <td><code>after_mlp</code></td>
+                                <td>MLP residual contribution</td>
+                                <td>mutable view</td>
+                            </tr>
+                            <tr>
+                                <td>each layer</td>
+                                <td><code>after_layer</code></td>
+                                <td>completed layer hidden state</td>
+                                <td>mutable view</td>
+                            </tr>
+                            <tr>
+                                <td>evaluation</td>
+                                <td><code>before_logits</code></td>
+                                <td>final-normalized last-token hidden state</td>
+                                <td>mutable view</td>
+                            </tr>
+                            <tr>
+                                <td>evaluation</td>
+                                <td><code>after_logits</code></td>
+                                <td>returned logits after family postprocessing</td>
+                                <td>mutable view</td>
+                            </tr>
+                            <tr>
+                                <td>generation</td>
+                                <td><code>on_generation_complete</code></td>
+                                <td><code>GenerationContext</code></td>
+                                <td>metadata</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <p>
+                    the six tensor-bearing hooks repeat first with
+                    <code>phase=Prefill</code>, then with
+                    <code>phase=Decode</code> for each single-token
+                    evaluation. layer indices are zero-based and increase in
+                    model execution order.
+                </p>
+
+                <h2 id="trait">trait surface</h2>
+
+                <p>
+                    only <code>name</code> is required. every lifecycle method
+                    defaults to a successful no-op. a built-in experiment
+                    implements only the stages it needs.
+                </p>
+
+                <pre><code>pub trait Experiment: Send {
+    fn name(&amp;self) -&gt; &amp;'static str;
+
+    fn on_model_loaded(
+        &amp;mut self,
+        ctx: &amp;ModelContext&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn before_prefill(
+        &amp;mut self,
+        ctx: &amp;ExecutionContext&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn before_layer(
+        &amp;mut self,
+        ctx: &amp;LayerContext&lt;'_&gt;,
+        hidden: &amp;mut TensorAccess&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn after_attention(
+        &amp;mut self,
+        ctx: &amp;LayerContext&lt;'_&gt;,
+        attention_output: &amp;mut TensorAccess&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn after_mlp(
+        &amp;mut self,
+        ctx: &amp;LayerContext&lt;'_&gt;,
+        mlp_output: &amp;mut TensorAccess&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn after_layer(
+        &amp;mut self,
+        ctx: &amp;LayerContext&lt;'_&gt;,
+        hidden: &amp;mut TensorAccess&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn before_logits(
+        &amp;mut self,
+        ctx: &amp;ExecutionContext&lt;'_&gt;,
+        hidden: &amp;mut TensorAccess&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn after_logits(
+        &amp;mut self,
+        ctx: &amp;ExecutionContext&lt;'_&gt;,
+        logits: &amp;mut TensorAccess&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+
+    fn on_generation_complete(
+        &amp;mut self,
+        ctx: &amp;GenerationContext&lt;'_&gt;,
+    ) -&gt; Result&lt;(), ExperimentError&gt; { Ok(()) }
+}</code></pre>
+
+                <h2 id="contexts">context types</h2>
+
+                <p>
+                    contexts are lightweight immutable values. model strings
+                    are borrowed; token buffers, weight handles, full GGUF
+                    metadata, caches, and backend internals are not exposed.
+                </p>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>context</th>
+                                <th>fields</th>
+                                <th>used by</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>ModelContext</code></td>
+                                <td>
+                                    family, optional identifier, architecture,
+                                    layer count, hidden size
+                                </td>
+                                <td>model load; embedded in other contexts</td>
+                            </tr>
+                            <tr>
+                                <td><code>ExecutionContext</code></td>
+                                <td>
+                                    model, phase, start position, input token
+                                    count, resulting sequence length, tracing state
+                                </td>
+                                <td>prefill, layer, and logits hooks</td>
+                            </tr>
+                            <tr>
+                                <td><code>LayerContext</code></td>
+                                <td>execution context plus zero-based layer index</td>
+                                <td>four per-layer tensor hooks</td>
+                            </tr>
+                            <tr>
+                                <td><code>GenerationContext</code></td>
+                                <td>
+                                    model, prompt tokens, generated tokens,
+                                    decode evaluation count, tracing state
+                                </td>
+                                <td>successful completion</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3>execution position</h3>
+
+                <p>
+                    <code>sequence_length</code> is
+                    <code>start_position + input_token_count</code>.
+                    <code>token_position()</code> returns an absolute position
+                    only when the evaluation contains one token, which is the
+                    ordinary decode case.
+                </p>
+
+                <h3>small enums</h3>
+
+                <dl class="field-list">
+                    <div>
+                        <dt>ModelFamily</dt>
+                        <dd><code>Llama</code>, <code>Qwen3</code>, <code>Gemma4</code></dd>
+                    </div>
+                    <div>
+                        <dt>ExecutionPhase</dt>
+                        <dd><code>Prefill</code>, <code>Decode</code></dd>
+                    </div>
+                    <div>
+                        <dt>TracingState</dt>
+                        <dd><code>Disabled</code>, <code>Enabled</code></dd>
+                    </div>
+                    <div>
+                        <dt>TensorDType</dt>
+                        <dd><code>F32</code> in v0.1</dd>
+                    </div>
+                </dl>
+
+                <h2 id="tensor-access">TensorAccess</h2>
+
+                <p>
+                    <code>TensorAccess</code> is a narrow view over an existing
+                    contiguous two-dimensional f32 activation. it stores a
+                    fixed <code>[rows, columns]</code> shape and borrows the
+                    model-owned value slice.
+                </p>
+
+                <div class="boundary-grid">
+                    <section class="boundary-box allowed">
+                        <strong>permitted</strong>
+                        <ul>
+                            <li>read the fixed 2D shape;</li>
+                            <li>read the exposed f32 values;</li>
+                            <li>mutate values in the existing slice;</li>
+                            <li>replace every value with zero.</li>
+                        </ul>
+                    </section>
+                    <section class="boundary-box denied">
+                        <strong>not permitted</strong>
+                        <ul>
+                            <li>resize or reallocate storage;</li>
+                            <li>change shape or dtype;</li>
+                            <li>transfer ownership or replace the buffer;</li>
+                            <li>reach weights, caches, scratch, or token data.</li>
+                        </ul>
+                    </section>
+                </div>
+
+                <pre><code>let shape: &amp;[usize; 2] = tensor.shape();
+let dtype: TensorDType = tensor.dtype();
+let observed: &amp;[f32] = tensor.values();
+
+// explicit intervention on the same allocation:
+for value in tensor.values_mut() {
+    *value *= 0.5;
+}
+
+// or replace existing values with zero:
+tensor.zero();</code></pre>
+
+                <p>
+                    ember does not create an activation copy for a hook.
+                    mutation is possible only because these points already own
+                    a mutable intermediate. observation is a convention
+                    enforced by the experiment implementation: reading
+                    <code>values()</code> preserves execution; calling
+                    <code>values_mut()</code> or <code>zero()</code> does not.
+                </p>
+
+                <h2 id="family-semantics">model-family semantics</h2>
+
+                <p>
+                    the shared names identify genuinely equivalent semantic
+                    stages. they do not make the underlying blocks identical.
+                </p>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>boundary</th>
+                                <th>LLaMA / Qwen3</th>
+                                <th>Gemma 4</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><code>after_attention</code></td>
+                                <td>after O projection, before residual add</td>
+                                <td>
+                                    after O projection and post-attention RMS
+                                    norm, before residual add
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>after_mlp</code></td>
+                                <td>after down projection, before residual add</td>
+                                <td>
+                                    after down projection and post-FFN RMS norm,
+                                    before residual add
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>after_layer</code></td>
+                                <td>after the MLP residual add</td>
+                                <td>
+                                    after residual work, PLE, and layer-output
+                                    scaling
+                                </td>
+                            </tr>
+                            <tr>
+                                <td><code>before_logits</code></td>
+                                <td>final-normalized last-token hidden state</td>
+                                <td>final-normalized last-token hidden state</td>
+                            </tr>
+                            <tr>
+                                <td><code>after_logits</code></td>
+                                <td>LM-head output</td>
+                                <td>LM-head output after final logit softcap</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="callout">
+                    <div class="label">Qwen remains explicit</div>
+                    <p>
+                        Qwen3 uses the LLaMA-family block implementation while
+                        retaining split-half RoPE, QK normalization, and its
+                        ordering rules. the hook surface does not collapse
+                        those numerical differences.
+                    </p>
+                </div>
+
+                <p>
+                    LLaMA's active single-token hooks operate directly on its
+                    preallocated decode workspace. they do not force the
+                    generic tensor path. Gemma's packed versus generic MLP
+                    dispatch is also unchanged.
+                </p>
+
+                <h2 id="disabled-path">disabled path</h2>
+
+                <p>
+                    normal generation never builds an
+                    <code>ExperimentRunner</code>. model methods instantiate
+                    the zero-sized <code>DisabledHooks</code> adapter, whose
+                    methods are <code>#[inline(always)]</code> no-ops. hooked
+                    model functions are generic over the adapter type.
+                </p>
+
+                <pre><code>pub(crate) struct DisabledHooks;
+
+impl&lt;T, E&gt; LayerHooks&lt;T, E&gt; for DisabledHooks {
+    #[inline(always)]
+    fn after_attention(
+        &amp;mut self,
+        _layer_index: usize,
+        _tensor: &amp;mut T,
+    ) -&gt; Result&lt;(), E&gt; {
+        Ok(())
+    }
+    // the other disabled methods have the same shape.
+}</code></pre>
+
+                <p>
+                    the v0.1 validation inspected optimized code for a
+                    representative LLaMA layer and found no remaining disabled
+                    experiment dispatch. warmed allocation tests found no
+                    per-layer allocation from the absent path, and controlled
+                    prefill/decode A/B runs stayed inside measurement noise.
+                </p>
+
+                <h2 id="failures">failure propagation</h2>
+
+                <p>
+                    hook implementations return <code>ExperimentError</code>.
+                    <code>ExperimentRunner</code> wraps it in
+                    <code>ExperimentFailure</code> before ember's normal error
+                    path sees it.
+                </p>
+
+                <div class="table-wrap">
+                    <table class="simd-table">
+                        <thead>
+                            <tr>
+                                <th>field</th>
+                                <th>included when available</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>experiment name</td>
+                                <td>always</td>
+                            </tr>
+                            <tr>
+                                <td>hook name</td>
+                                <td>always</td>
+                            </tr>
+                            <tr>
+                                <td>execution phase</td>
+                                <td>prefill, layer, and logits failures</td>
+                            </tr>
+                            <tr>
+                                <td>layer index</td>
+                                <td>per-layer failures</td>
+                            </tr>
+                            <tr>
+                                <td>underlying message</td>
+                                <td>always</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <pre><code>experiment 'my-experiment' failed in after_attention
+(phase=decode, layer=7): expected a finite activation</code></pre>
+
+                <p>
+                    hooks are synchronous. a failure stops the current
+                    generation; completion is not reported as successful and
+                    later hooks do not run.
+                </p>
+
+                <h2 id="visibility">inspection-surface boundary</h2>
+
+                <div class="contract-note">
+                    <strong>active experiment values are not dump values</strong>
+                    <p>
+                        in v0.1, active experiments do not participate in
+                        hidden-state extraction, probing,
+                        <code>--dump-layers</code>, or
+                        <code>--dump-logits</code>. those option combinations
+                        are rejected rather than exposing an ambiguous mix of
+                        pre- and post-intervention representations.
+                    </p>
+                </div>
+
+                <p>
+                    normal no-experiment tracing, hidden-state extraction,
+                    layer dumps, logits dumps, benchmark reporting, and packed
+                    kernel dispatch remain unchanged. structured tracing can be
+                    active during an experiment, and its state is reported in
+                    the immutable execution context, but hooks do not replace
+                    or redefine the trace stream.
+                </p>
+
+                <h2 id="source-map">source map</h2>
+
+                <div class="source-map">
+                    <div>
+                        <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/experiments/mod.rs">
+                            src/experiments/mod.rs
+                        </a>
+                        <span class="branch">: trait, runner, failure context, active/disabled adapters</span>
+                    </div>
+                    <div>
+                        <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/experiments/context.rs">
+                            src/experiments/context.rs
+                        </a>
+                        <span class="branch">: contexts, enums, TensorAccess</span>
+                    </div>
+                    <div>
+                        <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/experiments/activation_stats.rs">
+                            src/experiments/activation_stats.rs
+                        </a>
+                        <span class="branch">: observation reference implementation</span>
+                    </div>
+                    <div>
+                        <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/experiments/zero_layer_output.rs">
+                            src/experiments/zero_layer_output.rs
+                        </a>
+                        <span class="branch">: intervention reference implementation</span>
+                    </div>
+                    <div>
+                        <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/llama.rs">
+                            src/llama.rs
+                        </a>
+                        <span class="branch">: LLaMA/Qwen prefill and fast-decode boundaries</span>
+                    </div>
+                    <div>
+                        <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/gemma4.rs">
+                            src/gemma4.rs
+                        </a>
+                        <span class="branch">: Gemma 4 family-specific boundaries</span>
+                    </div>
+                    <div>
+                        <a href="https://github.com/voidwest/ember/blob/v0.1.0/src/main.rs">
+                            src/main.rs
+                        </a>
+                        <span class="branch">: CLI construction, lifecycle, provenance</span>
+                    </div>
+                </div>
+
+                <div class="docs-next">
+                    <a href="/ember/experiments/">
+                        <small>guide</small>
+                        ← research experiments
+                    </a>
+                    <a href="https://github.com/voidwest/ember/tree/v0.1.0/src/experiments">
+                        <small>implementation</small>
+                        browse source ↗
+                    </a>
+                </div>
+            </main>
+
+            <aside class="doc-toc" aria-label="On this page">
+                <div class="doc-toc-label">on this page</div>
+                <a href="#lifecycle">lifecycle</a>
+                <a href="#trait">trait surface</a>
+                <a href="#contexts">contexts</a>
+                <a href="#tensor-access">TensorAccess</a>
+                <a href="#family-semantics">family semantics</a>
+                <a href="#disabled-path">disabled path</a>
+                <a href="#failures">failures</a>
+                <a href="#visibility">inspection surfaces</a>
+                <a href="#source-map">source map</a>
+            </aside>
+        </div>
+
+        <footer class="site-footer">
+            <span>ember v0.1 hook contract</span>
+            <span class="footer-social">
+                <a href="/ember/experiments/">experiment guide</a>
+                <a href="https://github.com/voidwest/ember">github</a>
+            </span>
+        </footer>
+    </body>
+</html>
