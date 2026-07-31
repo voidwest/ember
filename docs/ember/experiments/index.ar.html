@@ -94,10 +94,11 @@
                 <div class="docs-eyebrow">ember / experiments / دليل</div>
                 <h1>تجارب <em>بحثية</em></h1>
                 <p class="docs-deck">
-                    تجربة <bdi>Rust</bdi> واحدة، <bdi>statically compiled</bdi>،
-                    في كل generation run. تراقب التنفيذ أو تعدّل activation
-                    موجودة في مكانها، من دون أن تجعل <bdi>ember</bdi> منصة
-                    plugins عامة. والعقد غير مستقر عمداً في <bdi>v0.1</bdi>.
+                    لا يتيح كل generation run إلا تجربة <bdi>Rust</bdi> واحدة،
+                    على أن تكون <bdi>statically compiled</bdi>. ومن خلالها يمكن
+                    مراقبة التنفيذ أو تعديل activation قائمة في موضعها، من دون
+                    أن يتحول <bdi>ember</bdi> إلى منصة plugins عامة. ويظل العقد
+                    في <bdi>v0.1</bdi> غير مستقر عن قصد.
                 </p>
                 <div class="docs-meta">
                     <span>دليل</span>
@@ -152,26 +153,26 @@ output may change</code></pre>
                 <div class="contract-note">
                     <strong>API تجريبي</strong>
                     <p>
-                        واجهة التجارب في <bdi>Rust</bdi> غير مستقرة في
-                        <bdi>ember v0.1</bdi>. هي ليست plugin ABI ديناميكية، ولا
-                        تعطي وعد توافق ضمن <bdi>semver</bdi>.
+                        لا تزال واجهة التجارب في <bdi>Rust</bdi> غير مستقرة ضمن
+                        <bdi>ember v0.1</bdi>؛ فهي لا تمثل plugin ABI ديناميكية
+                        ولا تضمن التوافق وفق <bdi>semver</bdi>.
                     </p>
                 </div>
 
                 <p class="lead">
-                    يوفّر <bdi>ember</bdi> hooks عند حدود دلالية معتمدة داخل
-                    generation العادي. تبقى الدلالات العددية الخاصة بكل
-                    معمارية ظاهرة، ولا تُنسخ tensors لمجرد تشغيل hook.
+                    في مسار generation العادي، يضع <bdi>ember</bdi> hooks عند
+                    حدود دلالية معتمدة؛ فتظل الفروق العددية بين المعماريات
+                    ظاهرة، ولا يحتاج تشغيل hook إلى نسخ tensors.
                 </p>
 
                 <p>
                     لا ينشئ المسار العادي <code>ExperimentRunner</code>. وعند
-                    التفعيل يحمل الـ run تنفيذاً واحداً لتجربة مجمّعة مع
-                    البرنامج، ويستدعي الـ methods الخاصة بها عند حدود الطبقات
-                    والـ logits المعتمدة. الأصل هو observation؛ أما التدخل
-                    فيتطلب وصولاً mutable وصريحاً إلى activation موجودة. الغرض
-                    هو إظهار أن واجهة الـ hooks تكفي لتجارب فعلية من دون تحويل
-                    <bdi>ember</bdi> إلى منصة plugins عامة.
+                    تفعيل التجارب، لا يضم الـ run سوى تنفيذ واحد لتجربة مجمّعة
+                    مع البرنامج؛ ثم يستدعي الـ methods الخاصة بها عند الحدود
+                    المعتمدة للطبقات والـ logits. ويقتصر السلوك الافتراضي على
+                    observation، ولا يحدث أي تدخل إلا بوصول mutable وصريح إلى
+                    activation قائمة. وهكذا تكفي واجهة الـ hooks لإجراء تجارب
+                    فعلية من دون تحويل <bdi>ember</bdi> إلى منصة plugins عامة.
                 </p>
 
                 <div class="principle-grid" aria-label="قواعد تصميم التجارب">
@@ -180,16 +181,16 @@ output may change</code></pre>
                         <strong>تجربة واحدة لكل run</strong>
                         <p>
                             لا pipeline ولا registry ولا discovery وقت التشغيل،
-                            ولا دلالات لتفاعل عدة تجارب.
+                            ولا قواعد تضبط تفاعل عدة تجارب.
                         </p>
                     </article>
                     <article class="principle">
                         <code>02</code>
                         <strong>استعر، لا تنسخ</strong>
                         <p>
-                            تستعير الـ contexts الـ metadata. أما
-                            <code>TensorAccess</code> فهي view غير مالكة فوق
-                            allocation يملكه runtime.
+                            تستعير الـ contexts ما تحتاج إليه من metadata،
+                            وتعرض <code>TensorAccess</code> الـ allocation في
+                            صورة view، مع بقاء ملكيته للـ runtime.
                         </p>
                     </article>
                     <article class="principle">
@@ -227,10 +228,10 @@ output may change</code></pre>
                 <div class="contract-note">
                     <strong>مسؤولية تنفيذ التجربة</strong>
                     <p>
-                        الواجهة نفسها لا تفرض سلوك observation-only عبر نظام
-                        الأنواع. يقع هذا الضمان على تنفيذ التجربة:
-                        استخدام <code>values()</code> يحافظ على التنفيذ، بينما
-                        قد يغيّره <code>values_mut()</code> أو
+                        لا يفرض نظام الأنواع في الواجهة سلوك observation-only؛
+                        لذلك يتحمل تنفيذ التجربة مسؤولية هذا الضمان. يحافظ
+                        استخدام <code>values()</code> على التنفيذ، في حين قد
+                        يغيّره استخدام <code>values_mut()</code> أو
                         <code>zero()</code>.
                     </p>
                 </div>
@@ -249,10 +250,10 @@ output may change</code></pre>
                 </div>
 
                 <p>
-                    تنبيهات التجربة وملخصاتها تُكتب إلى <code>stderr</code>.
-                    النص المولّد يحافظ على تنسيق <code>stdout</code> الحالي.
-                    ولا يمكن جمع الخيارين المدمجين لأن الـ run لا يقبل أكثر من
-                    تجربة نشطة.
+                    تظهر تنبيهات التجربة وملخصاتها في <code>stderr</code>،
+                    فيما يحتفظ النص المولّد بتنسيق <code>stdout</code> الحالي.
+                    وبما أن الـ run لا يقبل أكثر من تجربة نشطة، فلا يمكن جمع
+                    الخيارين المدمجين.
                 </p>
 
                 <h2 id="built-ins">التجارب المدمجة</h2>
@@ -262,8 +263,8 @@ output may change</code></pre>
                         <div>
                             <h3 id="activation-stats"><bdi>activation-stats</bdi></h3>
                             <p>
-                                يسجل <bdi>L2 norm</bdi> والقيمة المطلقة القصوى
-                                وfingerprint خفيفة عند كل tensor hook.
+                                عند كل tensor hook، يسجل <bdi>L2 norm</bdi>
+                                والقيمة المطلقة القصوى وfingerprint خفيفة.
                             </p>
                         </div>
                         <span class="mode-badge">observation فقط</span>
@@ -271,12 +272,11 @@ output may change</code></pre>
 
                     <p>
                         تعرض جميع الـ tensor hooks في <bdi>v0.1</bdi> activations من
-                        نوع <bdi>f32</bdi>. تقرأ
-                        <code>activation-stats</code> القيم الموجودة من دون
-                        طلب mutable access، وتسجل
+                        نوع <bdi>f32</bdi>. ومن دون طلب mutable access، تستخرج
+                        <code>activation-stats</code> من هذه القيم
                         <bdi>L2 norm</bdi> والقيمة المطلقة القصوى وfingerprint
-                        خفيفة. وبعد اكتمال generation بنجاح، تكتب السجلات
-                        بالترتيب في artifact بصيغة <bdi>JSON</bdi>. لا تغيّر
+                        خفيفة. فإذا اكتمل generation بنجاح، كتبت السجلات مرتبة
+                        في artifact بصيغة <bdi>JSON</bdi>. ولا تمس هذه العملية
                         logits أو التوكنات المولدة.
                     </p>
 
@@ -322,11 +322,11 @@ output may change</code></pre>
                     </dl>
 
                     <p>
-                        يُحسب الـ fingerprint بخوارزمية structured tracing نفسها
-                        في <bdi>ember</bdi>، باستخدام عينة واحدة كل
-                        <bdi>64</bdi> قيمة. يفيد في تحديد موضع divergence، لكنه
-                        ليس إثباتاً تشفيرياً للتطابق. أما حساب الـ norm
-                        فيقرأ كل القيم.
+                        تعتمد الـ fingerprint خوارزمية structured tracing نفسها
+                        المستخدمة في <bdi>ember</bdi>، وتأخذ عينة واحدة من كل
+                        <bdi>64</bdi> قيمة. لذا تفيد في تحديد موضع divergence لا
+                        في إثبات التطابق تشفيريًا. ولا يكتفي حساب الـ norm
+                        بالعينة، بل يفحص القيم كلها.
                     </p>
 
                     <div class="command" data-label="inspect with jq">
@@ -361,12 +361,11 @@ output may change</code></pre>
                     </header>
 
                     <p>
-                        الخيار يأخذ رقم طبقة يبدأ ترقيمه من الصفر ومرحلة دلالية
-                        بالصيغة <code>LAYER:STAGE</code>. يتحقق
-                        <bdi>ember</bdi> من الرقم بعد تحميل النموذج، ويعدل الـ
-                        tensor نفسها في مكانها، ويسجل عدد التدخلات. يحدث التدخل
-                        مرة في prefill، ثم مرة في كل تقييم decode يصل إلى
-                        الطبقة المختارة.
+                        يتلقى الخيار رقم طبقة يبدأ من الصفر ومرحلة دلالية
+                        بالصيغة <code>LAYER:STAGE</code>. وبعد تحميل النموذج،
+                        يتحقق <bdi>ember</bdi> من الرقم، ثم يعدّل الـ tensor
+                        نفسها في موضعها ويحصي التدخلات. ويجري التدخل مرة في
+                        prefill، ثم مرة كلما بلغ تقييم decode الطبقة المختارة.
                     </p>
 
                     <div class="command" data-label="shell">
@@ -411,19 +410,20 @@ output may change</code></pre>
                     </div>
 
                     <p>
-                        إذا كان اسم المرحلة غير صالح يفشل الأمر أثناء تحليل
-                        <bdi>CLI</bdi>. وإذا كان رقم الطبقة خارج نطاق النموذج
-                        المحمّل، يعرض الخطأ معرّف النموذج وعائلته والرقم المطلوب
-                        والنطاق الصحيح.
+                        يفشل الأمر أثناء تحليل <bdi>CLI</bdi> إذا كان اسم
+                        المرحلة غير صالح. وإذا خرج رقم الطبقة عن نطاق النموذج
+                        المحمّل، تعرض رسالة الخطأ معرّف النموذج وعائلته والرقم
+                        المطلوب والنطاق الصحيح.
                     </p>
 
                     <pre><code>research experiment active: zero-layer-output layer=4 stage=attention; execution will be modified
 experiment zero-layer-output: 8 intervention(s) at layer 4 stage attention</code></pre>
 
                     <p>
-                        قد يعرض الملخص عدة تدخلات في generation run واحد لأن
-                        العداد يشمل prefill وكل تقييم decode لاحق يصل إلى
-                        الطبقة. ولا يعني الرقم أن التجربة عدّلت عدة طبقات.
+                        يشمل العداد تدخل prefill وكل تقييم decode لاحق يبلغ
+                        الطبقة؛ لذلك قد يظهر في ملخص generation run واحد أكثر
+                        من تدخل. ولا يدل هذا العدد على أن التجربة عدّلت عدة
+                        طبقات.
                     </p>
                 </article>
 
@@ -464,12 +464,13 @@ experiment zero-layer-output: 8 intervention(s) at layer 4 stage attention</code
                 </div>
 
                 <p>
-                    مع <code>activation-stats</code> يسجل الـ manifest القيمة
-                    <code>"modifies_execution": false</code>. أما intervention
-                    فيسجل الطبقة والمرحلة، ومعهما
-                    <code>"modifies_execution": true</code>. ويظل artifact
-                    الخاص بالتجربة ملفاً منفصلاً عن run manifest وعن النص
-                    المولّد.
+                    يسجل الـ manifest عند استخدام
+                    <code>activation-stats</code> القيمة
+                    <code>"modifies_execution": false</code>. وعند إجراء
+                    intervention، يسجل الطبقة والمرحلة والقيمة
+                    <code>"modifies_execution": true</code>. وفي الحالتين، يبقى
+                    artifact الخاص بالتجربة ملفًا منفصلًا عن run manifest
+                    والنص المولّد.
                 </p>
 
                 <h2 id="compatibility">حدود التوافق</h2>
@@ -529,9 +530,9 @@ experiment zero-layer-output: 8 intervention(s) at layer 4 stage attention</code
                 <div class="contract-note">
                     <strong>قيد حالي مهم</strong>
                     <p>
-                        التجارب النشطة لا تعمل مع استخراج hidden states أو
-                        probes أو layer dumps أو logits dumps. لم يعرّف
-                        <bdi>ember</bdi> بعد هل ينبغي أن تعرض واجهات الفحص هذه
+                        لا يمكن استخدام التجارب النشطة عند استخراج hidden states
+                        أو probes أو layer dumps أو logits dumps، إذ لم يحدد
+                        <bdi>ember</bdi> بعد ما إذا كانت واجهات الفحص هذه ستعرض
                         القيم قبل intervention أم بعده.
                     </p>
                 </div>
@@ -539,9 +540,9 @@ experiment zero-layer-output: 8 intervention(s) at layer 4 stage attention</code
                 <h2 id="new-experiment">إضافة تجربة مدمجة</h2>
 
                 <p>
-                    التجارب كود <bdi>Rust</bdi> مجمّع داخل
-                    <bdi>ember</bdi>. أبقِ الإضافة ضيقة، ولا توسّع الإطار لخدمة
-                    تنفيذ واحد.
+                    تأتي التجارب في صورة كود <bdi>Rust</bdi> يجمّعه
+                    <bdi>ember</bdi> ضمن البرنامج. فاحصر الإضافة في نطاق ضيق،
+                    ولا توسّع الإطار لخدمة تنفيذ واحد.
                 </p>
 
                 <ol>
@@ -556,8 +557,8 @@ experiment zero-layer-output: 8 intervention(s) at layer 4 stage attention</code
 
                 <p>
                     اقرأ <a href="/ember/experiments/hooks/index.ar.html">عقد الـ hooks</a>
-                    قبل اختيار موضع الإدخال. العقد يوثق ملكية tensors والدلالات
-                    الخاصة بكل عائلة وحقول الـ context وmetadata عند الفشل
+                    قبل اختيار موضع الإدخال. ففيه توثيق لملكية tensors، والسلوك
+                    الخاص بكل عائلة، وحقول الـ context، وmetadata عند الفشل،
                     والمسار المعطّل.
                 </p>
 

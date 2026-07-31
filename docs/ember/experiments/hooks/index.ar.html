@@ -95,10 +95,10 @@
                 <div class="docs-eyebrow">ember / experiments / مرجع</div>
                 <h1>عقد الـ <em>hooks</em></h1>
                 <p class="docs-deck">
-                    تسعة hooks في الـ lifecycle، وأربعة أنواع context
-                    immutable، وview واحدة mutable وغير مالكة للـ tensor:
-                    <code>TensorAccess</code>. تحدد هذه الصفحة معنى كل حد
-                    دلالي وضماناته في <bdi>ember v0.1</bdi>.
+                    تضم الواجهة تسعة hooks في الـ lifecycle وأربعة أنواع context
+                    لا يمكن تعديلها. وللوصول إلى الـ tensor وتعديلها، توفر
+                    <code>TensorAccess</code> view لا تملك البيانات. وتوضح هذه
+                    الصفحة معنى كل حد وضماناته في <bdi>ember v0.1</bdi>.
                 </p>
                 <div class="docs-meta">
                     <span>مرجع API</span>
@@ -163,29 +163,30 @@ on_generation_complete()</code></pre>
                 <div class="contract-note">
                     <strong>حالة العقد</strong>
                     <p>
-                        عناصر experiment الظاهرة في الـ public API موسومة
-                        experimental، ويستخدم الكود
-                        <code>#[non_exhaustive]</code> حيث يلزم. الأسماء
-                        والحقول قابلة للتغيير قبل استقرار هذه الـ API.
+                        يصنّف الـ public API عناصر experiment الظاهرة فيه على
+                        أنها experimental، ويستخدم الكود
+                        <code>#[non_exhaustive]</code> حيث يلزم. وحتى تستقر هذه
+                        الـ API، قد تتغير الأسماء والحقول.
                     </p>
                 </div>
 
                 <p class="lead">
-                    تصف أسماء الـ hooks مراحل دلالية، لا خطوات implementation
-                    قابلة للتبديل. ينفذها <bdi>ember</bdi> synchronously
-                    وبترتيب ثابت، بينما تصل كل معمارية إلى الحد نفسه عبر مسار
-                    عددي صريح خاص بها.
+                    لا تشير أسماء الـ hooks إلى خطوات implementation قابلة
+                    للتبديل، بل إلى مراحل ذات معنى محدد. وينفذها
+                    <bdi>ember</bdi> synchronously وبترتيب ثابت، مع احتفاظ كل
+                    معمارية بمسارها العددي الصريح إلى الحد نفسه.
                 </p>
 
                 <h2 id="lifecycle">الـ lifecycle</h2>
 
                 <p>
-                    يتكون generation run عادي وناجح من استدعاء واحد لـ
-                    <code>on_model_loaded()</code>، ثم استدعاء واحد لـ
-                    <code>before_prefill()</code>، ثم تقييم prefill واحد يمر
-                    عبر layer hooks وlogits hooks. بعده تمر صفر أو أكثر من
-                    تقييمات decode عبر الـ hooks نفسها، ثم يُستدعى
-                    <code>on_generation_complete()</code> مرة واحدة.
+                    في generation run عادي وناجح، يستدعي <bdi>ember</bdi>
+                    <code>on_model_loaded()</code> مرة واحدة، ثم
+                    <code>before_prefill()</code> مرة واحدة. بعد ذلك يجري تقييم
+                    prefill واحدًا عبر layer hooks وlogits hooks، ويليه صفر أو
+                    أكثر من تقييمات decode عبر الـ hooks نفسها. وعند اكتمال
+                    المسار، يستدعي <code>on_generation_complete()</code> مرة
+                    واحدة.
                 </p>
 
                 <figure class="flow-anchor" aria-labelledby="lifecycle-flow-title">
@@ -208,8 +209,9 @@ on_generation_complete()</code></pre>
                 <div class="contract-note">
                     <strong>ترتيب ثابت وتنفيذ synchronous</strong>
                     <p>
-                        لا تستأنف عملية التنفيذ حتى يرجع الـ hook الحالي. وإذا
-                        فشل، يتوقف generation الحالي ولا تعمل الـ hooks اللاحقة.
+                        لا يواصل <bdi>ember</bdi> التنفيذ إلا بعد عودة الـ hook
+                        الحالي. فإذا فشل الـ hook، يتوقف generation الحالي، ولا
+                        يستدعي <bdi>ember</bdi> الـ hooks اللاحقة.
                     </p>
                 </div>
 
@@ -283,18 +285,19 @@ on_generation_complete()</code></pre>
                 </div>
 
                 <p>
-                    تعمل الـ hooks الستة التي تحمل tensors أولاً تحت
-                    <code>phase=Prefill</code>، ثم تحت
-                    <code>phase=Decode</code> في كل تقييم decode أحادي التوكن.
-                    ترقيم الطبقات يبدأ من الصفر ويتبع ترتيب تنفيذ النموذج.
+                    يبدأ تشغيل الـ hooks الستة التي تحمل tensors تحت
+                    <code>phase=Prefill</code>. ثم يشغلها
+                    <bdi>ember</bdi> تحت <code>phase=Decode</code> مع كل تقييم
+                    decode أحادي التوكن. ويبدأ ترقيم الطبقات من الصفر، وفق
+                    ترتيب تنفيذ النموذج.
                 </p>
 
                 <h2 id="trait">واجهة الـ trait</h2>
 
                 <p>
-                    <code>name</code> وحده إلزامي. كل method في الـ lifecycle
-                    ترجع افتراضياً بنجاح من دون تنفيذ عمل. تطبق التجربة
-                    المدمجة الـ methods التي تحتاجها فقط.
+                    لا يلزم تنفيذ سوى <code>name</code>. وتعيد كل method في
+                    الـ lifecycle افتراضيًا نتيجة ناجحة من دون أي عمل؛ وبذلك
+                    لا تطبّق التجربة المدمجة إلا الـ methods التي تحتاج إليها.
                 </p>
 
                 <pre><code>pub trait Experiment: Send {
@@ -355,10 +358,11 @@ on_generation_complete()</code></pre>
                 <h2 id="contexts">أنواع الـ context</h2>
 
                 <p>
-                    يعرّف العقد أربعة أنواع context. كلها بُنى خفيفة
-                    وimmutable تستعير البيانات التي تحتاجها. لا تعرض token
-                    buffers، ولا metadata <bdi>GGUF</bdi> الكاملة، ولا weight
-                    handles أو caches أو تفاصيل الـ backend الداخلية.
+                    يعرّف العقد أربعة أنواع context، تأتي جميعها في بُنى خفيفة
+                    لا يمكن تعديلها، وتستعير البيانات التي تحتاج إليها. ولا
+                    تتيح هذه البُنى token buffers أو metadata <bdi>GGUF</bdi>
+                    الكاملة أو weight handles أو caches أو تفاصيل الـ backend
+                    الداخلية.
                 </p>
 
                 <div class="table-wrap">
@@ -453,11 +457,12 @@ on_generation_complete()</code></pre>
                 <h2 id="tensor-access"><bdi>TensorAccess</bdi></h2>
 
                 <p>
-                    <code>TensorAccess</code> هي view mutable وغير مالكة فوق
-                    activation موجودة. في <bdi>v0.1</bdi> تكون activation
-                    contiguous وثنائية الأبعاد ومن نوع <bdi>f32</bdi>، ولها
-                    shape ثابت <code>[rows, columns]</code>. يملك runtime
-                    allocation والـ buffer، ولا ينشئ نسخة خاصة بالـ hook.
+                    تتيح <code>TensorAccess</code> الوصول إلى activation قائمة
+                    من خلال view لا تملك البيانات، مع السماح بتعديلها. وفي
+                    <bdi>v0.1</bdi>، تكون هذه الـ activation contiguous وثنائية
+                    الأبعاد ومن نوع <bdi>f32</bdi>، ويثبت shape على
+                    <code>[rows, columns]</code>. وتظل ملكية allocation والـ
+                    buffer للـ runtime، فلا يحتاج الـ hook إلى نسخة مستقلة.
                 </p>
 
                 <div class="boundary-grid">
@@ -495,9 +500,9 @@ for value in tensor.values_mut() {
 tensor.zero();</code></pre>
 
                 <p>
-                    لا تفرض الواجهة نفسها سلوك observation-only عبر نظام
-                    الأنواع. يقع هذا الضمان على implementation: استخدام
-                    <code>values()</code> يحافظ على التنفيذ، بينما قد يغيّره
+                    لا يفرض نظام الأنواع في الواجهة سلوك observation-only؛
+                    لذلك يتحمل implementation مسؤولية هذا الضمان. يحافظ استخدام
+                    <code>values()</code> على التنفيذ، في حين قد يغيّره استخدام
                     <code>values_mut()</code> أو <code>zero()</code>.
                 </p>
 
@@ -521,10 +526,10 @@ tensor.zero();</code></pre>
                 <h2 id="family-semantics">دلالات عائلات النماذج</h2>
 
                 <p>
-                    تشير الأسماء المشتركة إلى الحدود الدلالية نفسها، لكنها لا
-                    تعني أن الـ blocks الداخلية متطابقة. تصل كل معمارية إلى
-                    الحد عبر ترتيبها وعملياتها العددية الخاصة؛ ولا تمحو واجهة
-                    الـ hooks هذه الفروق.
+                    تدل الأسماء المشتركة على الحدود نفسها، لكنها لا تجعل الـ
+                    blocks الداخلية متطابقة. فلكل معمارية ترتيبها وعملياتها
+                    العددية في الوصول إلى الحد، وتبقي واجهة الـ hooks هذه
+                    الفروق ظاهرة.
                 </p>
 
                 <div class="table-wrap">
@@ -581,27 +586,26 @@ tensor.zero();</code></pre>
                         يستخدم <bdi>Qwen3</bdi> تنفيذ الـ block المشترك مع
                         عائلة <bdi>LLaMA</bdi>، مع الحفاظ على split-half
                         <bdi>RoPE</bdi> و<bdi>QK normalization</bdi> وترتيب
-                        العمليات الخاص به. اسم الـ hook المشترك لا يجعل هذه
-                        الدلالات قابلة للتبادل.
+                        العمليات الخاص به. لذلك لا يعني اشتراكه في اسم الـ hook
+                        أن ما تكشفه المعماريتان قابل للتبادل.
                     </p>
                 </div>
 
                 <p>
-                    في <bdi>LLaMA</bdi>، تعمل single-token hooks النشطة مباشرة
-                    على decode workspace مخصصة مسبقاً؛ ولا تفرض الـ hooks
-                    generic tensor path. ويبقى dispatch في
-                    <bdi>Gemma</bdi> بين مساري <bdi>MLP</bdi> الـ packed والـ
-                    generic من دون تغيير.
+                    تعمل single-token hooks النشطة في <bdi>LLaMA</bdi> مباشرة
+                    على decode workspace مخصصة مسبقًا، من غير أن تفرض generic
+                    tensor path. وفي <bdi>Gemma</bdi>، لا يتغير dispatch بين
+                    مساري <bdi>MLP</bdi> الـ packed والـ generic.
                 </p>
 
                 <h2 id="disabled-path">المسار المعطّل</h2>
 
                 <p>
-                    generation العادي لا يبني <code>ExperimentRunner</code>
-                    أصلاً. دوال النموذج generic على نوع hooks adapter، وتستخدم
-                    عند التعطيل <code>DisabledHooks</code>، وهو adapter بحجم
-                    صفر. والـ methods المعطلة داخله
-                    <code>#[inline(always)]</code> no-ops.
+                    لا يبني generation العادي
+                    <code>ExperimentRunner</code> أصلًا. وتكون دوال النموذج
+                    generic على نوع hooks adapter؛ فعند التعطيل تستخدم
+                    <code>DisabledHooks</code>، وهو adapter بحجم صفر، وتكون
+                    الـ methods داخله <code>#[inline(always)]</code> no-ops.
                 </p>
 
                 <pre><code>pub(crate) struct DisabledHooks;
@@ -621,29 +625,28 @@ impl&lt;T, E&gt; LayerHooks&lt;T, E&gt; for DisabledHooks {
                 <div class="callout">
                     <div class="label">ضمان المسار المعطّل</div>
                     <p>
-                        <strong>في المسار المعطّل الذي جرى التحقق منه، لم يبق
-                        أي experiment-related dispatch في الكود الناتج.</strong>
-                        ولم يظهر أي نمو في عدد allocations لكل طبقة بعد warm-up،
-                        وبقيت قياسات <bdi>A/B</bdi> المضبوطة للـ prefill والـ
-                        single-token decode ضمن ضجيج القياس.
+                        <strong>أظهر فحص المسار المعطّل أن الكود الناتج لا يتضمن
+                        أي experiment-related dispatch.</strong>
+                        كذلك لم ترصد الاختبارات أي نمو في عدد allocations لكل
+                        طبقة بعد warm-up، وظلت قياسات <bdi>A/B</bdi> المضبوطة
+                        للـ prefill والـ single-token decode ضمن ضجيج القياس.
                     </p>
                 </div>
 
                 <p>
-                    يستمر decode المحسّن في
-                    <bdi>LLaMA</bdi> باستخدام workspace المخصصة مسبقاً، ولا
-                    تفرض الـ hooks الـ generic tensor path، ولا تغيّر dispatch
-                    الـ <bdi>MLP</bdi> بين packed وgeneric في
-                    <bdi>Gemma</bdi>.
+                    يواصل decode المحسّن في <bdi>LLaMA</bdi> استخدام workspace
+                    المخصصة مسبقًا، من غير أن تفرض الـ hooks الـ generic tensor
+                    path. ولا يتغير في <bdi>Gemma</bdi> dispatch الـ
+                    <bdi>MLP</bdi> بين packed وgeneric.
                 </p>
 
                 <h2 id="failures">Failure path</h2>
 
                 <p>
-                    تنفيذات الـ hooks ترجع
-                    <code>ExperimentError</code>. يغلّف
-                    <code>ExperimentRunner</code> هذا الخطأ داخل
-                    <code>ExperimentFailure</code> قبل وصوله إلى مسار الأخطاء
+                    تعيد تنفيذات الـ hooks
+                    <code>ExperimentError</code>، ثم يغلّفه
+                    <code>ExperimentRunner</code> داخل
+                    <code>ExperimentFailure</code> قبل أن يمر إلى مسار الأخطاء
                     العادي في <bdi>ember</bdi>.
                 </p>
 
@@ -684,8 +687,9 @@ impl&lt;T, E&gt; LayerHooks&lt;T, E&gt; for DisabledHooks {
 (phase=decode, layer=7): expected a finite activation</code></pre>
 
                 <p>
-                    الـ hooks synchronous. أي فشل يوقف generation الحالي؛ لا
-                    يُسجل الاكتمال كنجاح، ولا تعمل الـ hooks اللاحقة.
+                    تعمل الـ hooks synchronously. فإذا فشل أحدها، توقف
+                    generation الحالي، ولم يسجل <bdi>ember</bdi> اكتماله على
+                    أنه ناجح، ولم يستدعِ الـ hooks اللاحقة.
                 </p>
 
                 <h2 id="visibility">حدود واجهات الفحص</h2>
@@ -693,27 +697,28 @@ impl&lt;T, E&gt; LayerHooks&lt;T, E&gt; for DisabledHooks {
                 <div class="contract-note">
                     <strong>قيم التجربة النشطة ليست قيم dump</strong>
                     <p>
-                        في <bdi>v0.1</bdi>، التجارب النشطة لا تعمل مع استخراج
+                        لا تعمل التجارب النشطة في <bdi>v0.1</bdi> مع استخراج
                         hidden states أو probes أو <code>--dump-layers</code>
                         أو <code>--dump-logits</code>، ولا مع أوامر demo أو
-                        interactive أو benchmark الفرعية. تُرفض هذه التركيبات
-                        بدلاً من عرض قيم ذات دلالة ملتبسة.
+                        interactive أو benchmark الفرعية. ويرفض
+                        <bdi>ember</bdi> هذه التركيبات حتى لا يعرض قيمًا يلتبس
+                        معناها.
                     </p>
                 </div>
 
                 <p>
-                    لم يعرّف <bdi>ember</bdi> بعد هل ينبغي أن تعرض واجهات الفحص
-                    القيم قبل intervention أم بعده. وهذا سؤال دلالي غير محسوم،
-                    لا نقص في وسيلة نسخ البيانات.
+                    لم يحدد <bdi>ember</bdi> بعد ما إذا كانت واجهات الفحص ستعرض
+                    القيم قبل intervention أم بعده. فالمسألة تتعلق بمعنى القيم
+                    المعروضة، لا بغياب وسيلة لنسخ البيانات.
                 </p>
 
                 <p>
-                    tracing العادي من دون تجربة، واستخراج hidden states، وlayer
-                    dumps، وlogits dumps، وتقارير benchmark، وdispatch للـ packed
-                    kernels كلها تبقى كما هي. يمكن تفعيل structured tracing مع
-                    تجربة، وتظهر حالته داخل <code>ExecutionContext</code>، وهي
-                    immutable. لكن الـ hooks لا تستبدل trace stream ولا تعيد
-                    تعريفه.
+                    لا يغيّر هذا العقد tracing العادي من دون تجربة، ولا استخراج
+                    hidden states أو layer dumps أو logits dumps أو تقارير
+                    benchmark أو dispatch للـ packed kernels. ويمكن تشغيل
+                    structured tracing مع تجربة؛ وعندئذ يتيح
+                    <code>ExecutionContext</code> الاطلاع على حالته من دون
+                    تعديلها. ولا تستبدل الـ hooks trace stream أو تعيد تعريفه.
                 </p>
 
                 <h2 id="source-map">خريطة المصدر</h2>
