@@ -1824,7 +1824,17 @@ impl Llama<CpuBackend> {
 
         let embed_tokens: LlamaEmbedding<CpuBackend> =
             match loader.take_tensor("token_embd.weight")? {
-                LoadedTensor::F32(tensor) => LlamaEmbedding::F32(tensor),
+                LoadedTensor::F32(tensor) => {
+                    // GGUF stores the embedding as [embed, vocab] with vocab
+                    // rows contiguous, i.e. already row-major [vocab, embed];
+                    // only the dims need swapping for the row lookup.
+                    let shape = tensor.shape();
+                    debug_assert_eq!(shape.len(), 2);
+                    LlamaEmbedding::F32(crate::tensor::CpuTensor::from_data(
+                        vec![shape[1], shape[0]],
+                        tensor.data().to_vec(),
+                    ))
+                }
                 LoadedTensor::Q8_0(weight) => LlamaEmbedding::Q8_0(weight),
             };
 
@@ -1900,7 +1910,7 @@ impl Llama<CpuBackend> {
 
         // lm_head: use output.weight if present, otherwise tie with embed_tokens
         let mut head = match loader.tensors.remove("output.weight") {
-            Some(LoadedTensor::F32(tensor)) => Linear::new(tensor.transpose(), None),
+            Some(LoadedTensor::F32(tensor)) => Linear::new(gguf_to_row_major_f32(tensor), None),
             Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight, None),
             None => match &embed_tokens {
                 // Tied embeddings are already laid out as [vocab, embed] in
@@ -1911,7 +1921,7 @@ impl Llama<CpuBackend> {
                     Linear::<CpuBackend>::new_q8_0(weight.clone(), None)
                 }
                 LlamaEmbedding::F32(tensor) => {
-                    Linear::<CpuBackend>::new(tensor.clone().transpose(), None)
+                    Linear::<CpuBackend>::new(gguf_to_row_major_f32(tensor.clone()), None)
                 }
             },
         };
@@ -2058,6 +2068,17 @@ impl Llama<CpuBackend> {
     }
 }
 
+/// GGUF stores 2D tensors with the first dim contiguous, i.e. the data is
+/// row-major over `[out, in]` for a logical `[in, out]` tensor. The f32
+/// matmul expects row-major `[in, out]`, so reinterpret and transpose once.
+fn gguf_to_row_major_f32(tensor: crate::tensor::CpuTensor) -> crate::tensor::CpuTensor {
+    let shape = tensor.shape();
+    debug_assert_eq!(shape.len(), 2);
+    let reordered =
+        crate::tensor::CpuTensor::from_data(vec![shape[1], shape[0]], tensor.data().to_vec());
+    reordered.transpose()
+}
+
 fn take_llama_linear(
     loader: &mut crate::loader::GgufLoader,
     name: &str,
@@ -2066,7 +2087,7 @@ fn take_llama_linear(
     use crate::loader::LoadedTensor;
 
     let mut linear = match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => Linear::new(tensor.transpose(), None),
+        LoadedTensor::F32(tensor) => Linear::new(gguf_to_row_major_f32(tensor), None),
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
     };
     if prepare_packed {
@@ -2090,7 +2111,7 @@ fn take_llama_linear_with_bias(
 
     let bias = loader.take_optional_f32(&[bias_name.to_string()]);
     let mut linear = match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => Linear::new(tensor.transpose(), bias),
+        LoadedTensor::F32(tensor) => Linear::new(gguf_to_row_major_f32(tensor), bias),
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, bias),
     };
     if prepare_packed {
