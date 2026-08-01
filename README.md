@@ -884,9 +884,11 @@ qwen3-specific metadata handling. the following models have been tested:
 
 Both `--arch llama` and `--arch qwen3` dispatch to the shared Llama-family
 implementation; the GGUF `general.architecture` metadata selects the `llama`,
-`qwen2`, or `qwen3` configuration keys. The smoke wrapper currently labels
-Qwen2.5 as `qwen3` and passes `tokenizer-qwen2.5.json` explicitly, but Qwen2.5
-remains experimental because its generated smoke output has been degenerate.
+`qwen2`, or `qwen3` configuration keys. The smoke wrapper labels Qwen2.5 as
+`qwen3` and passes `tokenizer-qwen2.5.json` explicitly. Qwen2/Qwen2.5
+attention projections carry q/k/v biases, which the loader now picks up;
+a golden-logit check on Qwen2.5-1.5B matches llama.cpp (top-1 agreement,
+max abs diff 0.29).
 
 ### support status
 
@@ -894,7 +896,7 @@ remains experimental because its generated smoke output has been degenerate.
 |--------------|-------|-----------|-------------|--------------------------|----------------|
 | gpt-2 | yes | yes | yes | not standard | no |
 | llama | yes | yes | yes | yes, local/cloud depending on size | no |
-| qwen2.5 | experimental through the shared Llama-family path | warning-prone | selected smoke runs | pending architecture/tokenizer validation | no |
+| qwen2.5 | yes, via `--arch qwen3` (attention projection biases loaded) | yes, coherent after bias fix | selected smoke runs | pending | yes, 1.5B vs llama.cpp (top-1 match, max diff 0.29) |
 | qwen3 | yes, via `--arch qwen3` | yes | yes, 5-stimulus local smoke | yes, Qwen3 0.6B local run | no |
 | gemma4 | yes | yes, coherent English | one-stimulus local smoke | pending | no (cosine ~0.87; L0 bit-identical; remaining gap unresolved) |
 

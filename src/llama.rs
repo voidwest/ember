@@ -328,7 +328,9 @@ impl<B: Backend> Module<B> for LlamaMlp<B> {
 /// llama's multi-head self-attention with rotary position embeddings and gqa.
 ///
 /// unlike gpt-2's combined qkv projection, llama uses three separate
-/// linear layers (q_proj, k_proj, v_proj) with **no bias terms**.
+/// linear layers (q_proj, k_proj, v_proj) with optional bias terms; qwen2/
+/// qwen2.5 gguFs also carry `blk.{i}.attn_q.bias` (+ k/v) which are loaded
+/// by `take_llama_linear_with_bias`.
 /// rotary position embeddings are applied to q and k before attention.
 /// grouped query attention (gqa) repeats k/v heads when `n_kv_heads < n_heads`.
 ///
@@ -1825,19 +1827,22 @@ impl Llama<CpuBackend> {
                 take_optional_llama_norm(&mut loader, &format!("blk.{}.attn_k_norm.weight", i));
 
             let attn = LlamaAttention::new_shared(
-                take_llama_linear(
+                take_llama_linear_with_bias(
                     &mut loader,
                     &format!("blk.{}.attn_q.weight", i),
+                    &format!("blk.{}.attn_q.bias", i),
                     packed_decode_enabled,
                 )?,
-                take_llama_linear(
+                take_llama_linear_with_bias(
                     &mut loader,
                     &format!("blk.{}.attn_k.weight", i),
+                    &format!("blk.{}.attn_k.bias", i),
                     packed_decode_enabled,
                 )?,
-                take_llama_linear(
+                take_llama_linear_with_bias(
                     &mut loader,
                     &format!("blk.{}.attn_v.weight", i),
+                    &format!("blk.{}.attn_v.bias", i),
                     packed_decode_enabled,
                 )?,
                 take_llama_linear(
@@ -2053,6 +2058,30 @@ fn take_llama_linear(
     let mut linear = match loader.take_tensor(name)? {
         LoadedTensor::F32(tensor) => Linear::new(tensor.transpose(), None),
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
+    };
+    if prepare_packed {
+        linear.prepare_packed_decode();
+    }
+    Ok(linear)
+}
+
+/// like `take_llama_linear`, but also loads an optional f32 bias tensor.
+///
+/// qwen2/qwen2.5 attention projections carry `blk.{i}.attn_q.bias` /
+/// `attn_k.bias` / `attn_v.bias`; llama and qwen3 GGUFs do not, and pass
+/// through with no bias.
+fn take_llama_linear_with_bias(
+    loader: &mut crate::loader::GgufLoader,
+    name: &str,
+    bias_name: &str,
+    prepare_packed: bool,
+) -> anyhow::Result<Linear<CpuBackend>> {
+    use crate::loader::LoadedTensor;
+
+    let bias = loader.take_optional_f32(&[bias_name.to_string()]);
+    let mut linear = match loader.take_tensor(name)? {
+        LoadedTensor::F32(tensor) => Linear::new(tensor.transpose(), bias),
+        LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, bias),
     };
     if prepare_packed {
         linear.prepare_packed_decode();
