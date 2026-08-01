@@ -47,6 +47,11 @@ ingest.py
 /SVGs/
 
 # paper source is tracked; latex build junk is not
+# NOTE: paper/ is fully ignored while the TACL submission is under review.
+# Remove the `/paper/` line (and the paper junk rules below) to track the
+# paper source again after acceptance. The paper commit is preserved on the
+# local-only `paper-private` branch.
+/paper/
 /paper/*.aux
 /paper/*.log
 /paper/*.out
