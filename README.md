@@ -360,6 +360,11 @@ with every timing sample, median throughput, thread count, CPU metadata, model
 size, commit, and explicit timing exclusions. Use `--token-id` to change the
 fixed input token and `--max-seq-len` to cap the benchmark context.
 
+`bench-lifecycle` measures the weight-layout side instead of decode throughput:
+it times generic vs packed gate/up dispatch across lifecycle strategies on
+short Llama-family batches and records peak process residency alongside the
+timings. See `docs/packed-q8-lifecycle.md`.
+
 ### reproducible release benchmarks
 
 The release measurements use a fixed power policy, one worker per physical
@@ -430,6 +435,7 @@ schema, recorded operation types, and caveats.
 | `validate-run` | validate checksums, metadata, row counts, and optional layer shards for one run directory |
 | `validate-backends` | compare existing native and external artifact runs |
 | `bench-decode` | measure model-only single-token decode and emit JSON |
+| `bench-lifecycle` | time the Llama packed vs generic Q8 weight lifecycle across strategies and report process residency |
 
 ### demo mode
 
@@ -952,7 +958,7 @@ for hidden-state extraction. a one-stimulus smoke probe on
 ```bash
 cargo run --release -- \
   --arch gemma4 \
-  --model Gemma-4-E2B-Q8_0.gguf \
+  --model models/gemma-4-E2B-it.Q8_0.gguf \
   --tokenizer tokenizer-gemma4.json \
   --prompt "The capital of France is" \
   -n 8 --temperature 0 --benchmark
@@ -1086,7 +1092,7 @@ prevents the generation loop from producing NaNs on degenerate input.
 
 - rust stable toolchain
 - a gguf model file (e.g. gpt2 in q8_0)
-- a tokenizer file for the model (`tokenizer.json` for llama, `tokenizer-gpt2.json` for gpt-2; both are included in the repo)
+- a tokenizer file for the model (`tokenizer-gpt2.json` for gpt-2, `tokenizer.json` for llama/qwen, `tokenizer-qwen3.json` for qwen3, `tokenizer-gemma4.json` for gemma 4; all four are included in the repo)
 
 ## current limitations
 
