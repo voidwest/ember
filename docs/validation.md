@@ -43,9 +43,23 @@ Use these levels when interpreting Ember runs:
 
 The gemma4 loader's f32/f16 orientation bug was fixed in the 2026-08
 optimization pass (commit `bd1591c`): gemma 4 Q8 models now **load**,
-which they previously could not. The pre-existing numerical gap (L0
-cosine ~0.87 vs llama.cpp, garbage-ish generation) is unchanged, and the
-older tiny-gemma golden report under `artifacts/golden_logits_gemma/`
+which they previously could not. A later debugging pass (same date) added
+three reference-derived fixes — attention scale 1.0 (gemma4 uses no
+pre-attn scaling), per-head RMS norm on V before caching, and ggml-exact
+rope factor division semantics — which moved single-token logits from
+uncorrelated to cosine ~0.86 vs llama.cpp, but the model still does not
+match (multi-token cosine ~0.45 and worse). Layer-by-layer comparison
+against llama.cpp localizes the remaining divergence to accumulation
+across the network rather than any single confirmed defect: early
+layers agree to within numerical noise, and cosine erodes toward zero
+by mid-network as per-layer fp differences (FMA contraction, matmul
+accumulation order, norm epsilon) compound through the residual stream
+over 35 layers. An apparent embedding-level "permutation" did not
+survive exact-tolerance comparison (loose 1e-3 matches collapsed to
+noise at 1e-6), so no layout defect is asserted. The rope
+layout that matches the bundled llama-cpp-python reference is split-half;
+master's LLAMA_ROPE_TYPE_NONE (adjacent-pair) does **not** match it.
+The older tiny-gemma golden report under `artifacts/golden_logits_gemma/`
 **predates the fix** and is stale — it can no longer be regenerated (the
 tiny reference model is not on disk). Treat gemma 4 outputs as
 numerically untrusted until a fresh golden run exists.

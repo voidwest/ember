@@ -169,17 +169,26 @@ impl Gemma4Config {
             1e-6,
         )?;
 
-        let query_pre_attn_scalar = get_f32_any(
-            loader,
-            &[
-                "gemma4.attention.query_pre_attn_scalar",
-                "gemma4.query_pre_attn_scalar",
-                "gemma3.attention.query_pre_attn_scalar",
-                "gemma3.query_pre_attn_scalar",
-            ],
-            local_head_dim as f32,
-        )?;
-        let attention_scale = query_pre_attn_scalar.sqrt().recip();
+        let is_gemma4 = loader.metadata.contains_key("gemma4.block_count");
+        let attention_scale = if is_gemma4 {
+            // llama.cpp gemma4: "Gemma4 uses self.scaling = 1.0 (no pre-attn
+            // scaling)". The gemma3-style 1/sqrt(query_pre_attn_scalar)
+            // scaling would sharpen every attention distribution 16x on the
+            // E2B (which carries no query_pre_attn_scalar key).
+            1.0
+        } else {
+            let query_pre_attn_scalar = get_f32_any(
+                loader,
+                &[
+                    "gemma4.attention.query_pre_attn_scalar",
+                    "gemma4.query_pre_attn_scalar",
+                    "gemma3.attention.query_pre_attn_scalar",
+                    "gemma3.query_pre_attn_scalar",
+                ],
+                local_head_dim as f32,
+            )?;
+            query_pre_attn_scalar.sqrt().recip()
+        };
         let sliding_window = get_u32_any(
             loader,
             &[
@@ -468,6 +477,9 @@ impl<B: Backend> Gemma4Attention<B> {
                 self.norm_eps,
             )?;
             finish_trace_span(rope_k_span, backend, &k);
+            // llama.cpp applies a plain per-head RMS norm to V (no learned
+            // weights, using f_norm_rms_eps) before storing it in the cache.
+            let v = apply_v_rms_norm(backend, &v, self.n_kv_heads, self.head_dim, self.norm_eps)?;
             let k_data = backend.data(&k);
             let v_data = backend.data(&v);
             let kv_store_span = gemma_trace_span!(
@@ -987,11 +999,13 @@ impl Gemma4<CpuBackend> {
         };
 
         let local_rope = {
+            // SWA (local) layers rotate with the plain SWA base frequency;
+            // llama.cpp passes no freq_factors for them.
             let (cos, sin) = compute_rope_freqs(
                 config.max_seq_len,
                 config.local_head_dim,
                 config.local_rope_theta,
-                rope_freqs.as_deref(),
+                None,
             );
             (Arc::new(cos), Arc::new(sin))
         };
@@ -1725,6 +1739,10 @@ fn apply_rope_and_qk_norm<B: Backend>(
                 data[base + d] = data[base + d] * rstd * norm_data[d];
             }
 
+            // NOTE: the bundled llama_cpp reference matches the SPLIT-HALF
+            // layout at L0/L1 empirically (master's LLAMA_ROPE_TYPE_NONE is
+            // adjacent-pair and does NOT match); keep split-half until the
+            // bundled reference version is pinned.
             for d in 0..half {
                 let a = data[base + d];
                 let b = data[base + d + half];
@@ -1736,6 +1754,38 @@ fn apply_rope_and_qk_norm<B: Backend>(
     backend.load_from_cpu(data, &[seq_len, width])
 }
 
+/// Plain per-head RMS norm (no learned weights): llama.cpp's gemma4 path
+/// normalizes V with `ggml_rms_norm(eps)` before caching it.
+fn apply_v_rms_norm<B: Backend>(
+    backend: &B,
+    x: &B::Tensor,
+    n_heads: usize,
+    head_dim: usize,
+    norm_eps: f32,
+) -> Result<B::Tensor, B::Error> {
+    let seq_len = backend.shape(x)[0];
+    let width = n_heads * head_dim;
+    let mut data = backend.data(x).to_vec();
+    for s in 0..seq_len {
+        for h in 0..n_heads {
+            let base = s * width + h * head_dim;
+            let mut sq_sum = 0.0f32;
+            for d in 0..head_dim {
+                sq_sum += data[base + d] * data[base + d];
+            }
+            let rstd = (sq_sum / head_dim as f32 + norm_eps).sqrt().recip();
+            for d in 0..head_dim {
+                data[base + d] *= rstd;
+            }
+        }
+    }
+    backend.load_from_cpu(data, &[seq_len, width])
+}
+
+/// Debug: compute ember's L15 V for tokens [2, 818] (BOS + "The") using
+/// ember's own ops and dump the raw f32 (last position) for comparison
+/// Debug: dump blk.15 weights (attn_norm f32, attn_v Q8_0 dequantized) as
+/// Debug: dump the RAW dequantized embedding row for token 818 (pre-scale)
 #[allow(dead_code)]
 struct Gemma4FullAttentionSpec {
     n_heads: usize,

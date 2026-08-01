@@ -706,6 +706,32 @@ mod tests {
         }
     }
 
+    /// Debug: print dequantized Q8_0 tensor rows (EMBER_K_TEST_GGUF +
+    /// EMBER_K_DEBUG_TENSOR + EMBER_K_DEBUG_ROWS).
+    #[test]
+    fn debug_dump_q8_rows() {
+        let Ok(q_path) = std::env::var("EMBER_K_TEST_GGUF") else {
+            return;
+        };
+        let Ok(name) = std::env::var("EMBER_K_DEBUG_TENSOR") else {
+            return;
+        };
+        let rows: usize = std::env::var("EMBER_K_DEBUG_ROWS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2);
+        let loader = crate::loader::load_gguf(&q_path).unwrap();
+        let crate::loader::LoadedTensor::Q8_0(weight) = &loader.tensors[&name] else {
+            eprintln!("{name}: not Q8_0");
+            return;
+        };
+        let mut row = vec![0.0f32; weight.shape[1]];
+        for r in 0..rows.min(weight.shape[0]) {
+            weight.dequantize_row(r, &mut row);
+            eprintln!("{name} row {r}: {:?}", &row[..8.min(row.len())]);
+        }
+    }
+
     #[test]
     fn dequant_tensor_validates_lengths() {
         let mut out = vec![0.0f32; QK_K];

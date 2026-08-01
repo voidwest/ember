@@ -556,15 +556,12 @@ pub fn compute_rope_freqs(
         // factor==1.0 → full RoPE; factor is large (1e30) → freq→0 (no rotation)
         // freq_factors has one scalar per frequency pair (half elements of freq_factors tensor)
         // factor is 1e30 for pairs that should NOT rotate, 1.0 for pairs that should
-        let factor = freq_factors.map_or(1.0, |f| {
-            let ff = f.get(i).copied().unwrap_or(1.0);
-            if ff > 1e10 {
-                0.0
-            } else {
-                1.0
-            }
-        });
-        let freq = base_freq * factor;
+        // The ggml kernel computes theta = pos * base_freq / ff with the
+        // per-pair factor ff (freq_factors[i]); a huge factor therefore
+        // drives the rotation to zero. Division semantics, matching
+        // ggml_rope_cache_init.
+        let factor = freq_factors.map_or(1.0, |f| f.get(i).copied().unwrap_or(1.0));
+        let freq = base_freq / factor;
         for p in 0..max_seq_len {
             let angle = p as f32 * freq;
             cos[p * half + i] = angle.cos();
