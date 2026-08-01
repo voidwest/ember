@@ -29,6 +29,30 @@ pub trait ForwardModel<B: Backend> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error>;
+
+    /// Greedy (argmax) next-token inference: returns the top token id and
+    /// its logit. Defaults to the full-logits path plus an in-place argmax;
+    /// models with a fused fast path (e.g. LLaMA's Q8_0 workspace decode)
+    /// may override this to avoid materializing the full vocabulary.
+    fn greedy_next_token_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<(u32, f32), B::Error> {
+        let logits = self.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)?;
+        let data = backend.data(&logits);
+        let mut best = 0usize;
+        let mut best_val = f32::NEG_INFINITY;
+        for (i, &value) in data.iter().enumerate() {
+            if value > best_val {
+                best_val = value;
+                best = i;
+            }
+        }
+        Ok((best as u32, best_val))
+    }
     /// number of transformer layers (for display/debug).
     fn n_layers(&self) -> usize;
     /// hidden dimension (for display/debug).

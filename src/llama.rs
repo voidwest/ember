@@ -1166,6 +1166,9 @@ pub struct Llama<B: Backend> {
     pub config: LlamaConfig,
     /// Cached eligibility result for the allocation-free single-token path.
     fast_decode_inter_dim: Option<usize>,
+    /// Lazily computed suffix-norm table for the fused greedy lm_head
+    /// (only present when the head is Q8_0).
+    head_topk_norms: std::sync::OnceLock<Option<std::sync::Arc<crate::quant::Q8TopkNorms>>>,
 }
 
 /// Existing Llama projection groups that can receive the packed Q8_0 decode
@@ -1252,6 +1255,29 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
         }
         Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
     }
+    fn greedy_next_token_with_cache(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<(u32, f32), CpuError> {
+        if let Some(result) = self.forward_decode_fast_greedy(backend, token_ids, cache, start_pos)
+        {
+            return result;
+        }
+        let logits = self.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)?;
+        let data = backend.data(&logits);
+        let mut best = 0usize;
+        let mut best_val = f32::NEG_INFINITY;
+        for (i, &value) in data.iter().enumerate() {
+            if value > best_val {
+                best_val = value;
+                best = i;
+            }
+        }
+        Ok((best as u32, best_val))
+    }
     fn n_layers(&self) -> usize {
         self.blocks.len()
     }
@@ -1330,6 +1356,19 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
 }
 
 impl Llama<CpuBackend> {
+    /// Suffix-norm table for the fused greedy lm_head, or `None` when the
+    /// head is not Q8_0. Computed once on first greedy fast-path use.
+    fn head_topk_norms(&self) -> Option<std::sync::Arc<crate::quant::Q8TopkNorms>> {
+        self.head_topk_norms
+            .get_or_init(|| {
+                let weight = self.head.q8_weight_without_bias()?;
+                Some(std::sync::Arc::new(crate::quant::Q8TopkNorms::compute(
+                    weight,
+                )))
+            })
+            .clone()
+    }
+
     fn eligible_fast_decode_inter_dim(&self) -> Option<usize> {
         // The allocation-free path is validated for Llama's adjacent-pair
         // RoPE. Real Qwen3 end-to-end coverage showed decode divergence with
@@ -1399,6 +1438,58 @@ impl Llama<CpuBackend> {
         self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
     }
 
+    /// Single-token greedy decode via the fast workspace path with the
+    /// fused branch-and-bound lm_head. Returns `None` when ineligible
+    /// (multi-token, tracing active, no fast path, non-Q8_0 head).
+    fn forward_decode_fast_greedy(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Option<Result<(u32, f32), CpuError>> {
+        if token_ids.len() != 1 || crate::trace::is_tracing() {
+            return None;
+        }
+        let inter_dim = self.fast_decode_inter_dim?;
+        let norms = self.head_topk_norms()?;
+        let embed_dim = self.config.embed_dim;
+        let q_dim = self.config.n_heads * self.config.head_dim;
+        let kv_dim = self.config.n_kv_heads * self.config.head_dim;
+        let mut hooks = DisabledHooks;
+        Some(LLAMA_DECODE_WORKSPACE.with(|workspace| {
+            let mut workspace = workspace.borrow_mut();
+            let needs_resize = workspace.as_ref().is_none_or(|current| {
+                current.max_rows() != 1
+                    || current.embed_dim() != embed_dim
+                    || current.inter_dim() != inter_dim
+                    || current.q_dim() != q_dim
+                    || current.kv_dim() != kv_dim
+            });
+            if needs_resize {
+                *workspace = Some(Workspace::new(
+                    1,
+                    embed_dim,
+                    inter_dim,
+                    self.config.n_heads,
+                    self.config.n_kv_heads,
+                    self.config.head_dim,
+                ));
+            }
+            let result = self.forward_decode_with_workspace(
+                backend,
+                token_ids[0],
+                cache,
+                start_pos,
+                workspace.as_mut().expect("decode workspace initialized"),
+                &mut hooks,
+                Some(&norms),
+            )?;
+            let data = result.data();
+            Ok((data[0] as u32, data[1]))
+        }))
+    }
+
     fn forward_decode_fast_hooked<H>(
         &self,
         backend: &CpuBackend,
@@ -1445,10 +1536,12 @@ impl Llama<CpuBackend> {
                 start_pos,
                 workspace.as_mut().expect("decode workspace initialized"),
                 hooks,
+                None,
             )
         }))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn forward_decode_with_workspace<H>(
         &self,
         backend: &CpuBackend,
@@ -1457,6 +1550,7 @@ impl Llama<CpuBackend> {
         start_pos: usize,
         workspace: &mut Workspace,
         hooks: &mut H,
+        greedy_norms: Option<&crate::quant::Q8TopkNorms>,
     ) -> Result<CpuTensor, CpuError>
     where
         H: for<'a> LayerHooks<SliceActivation<'a>, CpuError>,
@@ -1705,6 +1799,16 @@ impl Llama<CpuBackend> {
             .head
             .q8_weight_without_bias()
             .expect("fast path eligibility checked");
+        if let Some(norms) = greedy_norms {
+            // Fused greedy lm_head: exact branch-and-bound argmax over the
+            // quantized activation; only a [1, 2] tensor (token, logit) is
+            // materialized instead of the full vocabulary.
+            let mut encoded = Vec::new();
+            crate::quant::quantize_q8_0_into(norm, &mut encoded);
+            let (token, logit) =
+                crate::simd::matmul_q8_0_decode_argmax(&encoded, head_weight, norms, 1.001);
+            return Ok(CpuTensor::from_data(vec![1, 2], vec![token as f32, logit]));
+        }
         let mut logits = vec![0.0; head_weight.out_features()];
         if let Some(interleaved) = self.head.interleaved.as_ref() {
             if profile_operators {
@@ -1910,7 +2014,9 @@ impl Llama<CpuBackend> {
 
         // lm_head: use output.weight if present, otherwise tie with embed_tokens
         let mut head = match loader.tensors.remove("output.weight") {
-            Some(LoadedTensor::F32(tensor)) => Linear::new(gguf_to_row_major_f32(tensor), None),
+            Some(LoadedTensor::F32(tensor)) => {
+                Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
+            }
             Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight, None),
             None => match &embed_tokens {
                 // Tied embeddings are already laid out as [vocab, embed] in
@@ -1938,6 +2044,7 @@ impl Llama<CpuBackend> {
             head,
             config,
             fast_decode_inter_dim: None,
+            head_topk_norms: std::sync::OnceLock::new(),
         };
         model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
         log::debug!(
@@ -2072,17 +2179,6 @@ impl Llama<CpuBackend> {
     }
 }
 
-/// GGUF stores 2D tensors with the first dim contiguous, i.e. the data is
-/// row-major over `[out, in]` for a logical `[in, out]` tensor. The f32
-/// matmul expects row-major `[in, out]`, so reinterpret and transpose once.
-fn gguf_to_row_major_f32(tensor: crate::tensor::CpuTensor) -> crate::tensor::CpuTensor {
-    let shape = tensor.shape();
-    debug_assert_eq!(shape.len(), 2);
-    let reordered =
-        crate::tensor::CpuTensor::from_data(vec![shape[1], shape[0]], tensor.data().to_vec());
-    reordered.transpose()
-}
-
 fn take_llama_linear(
     loader: &mut crate::loader::GgufLoader,
     name: &str,
@@ -2091,7 +2187,9 @@ fn take_llama_linear(
     use crate::loader::LoadedTensor;
 
     let mut linear = match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => Linear::new(gguf_to_row_major_f32(tensor), None),
+        LoadedTensor::F32(tensor) => {
+            Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
+        }
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
     };
     if prepare_packed {
@@ -2115,7 +2213,9 @@ fn take_llama_linear_with_bias(
 
     let bias = loader.take_optional_f32(&[bias_name.to_string()]);
     let mut linear = match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => Linear::new(gguf_to_row_major_f32(tensor), bias),
+        LoadedTensor::F32(tensor) => {
+            Linear::new(crate::loader::gguf_to_row_major_f32(tensor), bias)
+        }
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, bias),
     };
     if prepare_packed {
@@ -2727,6 +2827,7 @@ mod tests {
                 vocab_size,
             },
             fast_decode_inter_dim: Some(inter_dim),
+            head_topk_norms: std::sync::OnceLock::new(),
         }
     }
 

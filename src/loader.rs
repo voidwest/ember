@@ -26,6 +26,17 @@ pub enum LoadedTensor {
 
 /// holds the parsed contents of a GGUF v3 file:
 /// metadata key-value pairs and named tensors.
+/// GGUF stores 2D tensors with the first dim contiguous, i.e. the data is
+/// row-major over `[out, in]` for a logical `[in, out]` tensor. The f32
+/// matmul expects row-major `[in, out]`, so reinterpret and transpose once.
+pub fn gguf_to_row_major_f32(tensor: crate::tensor::CpuTensor) -> crate::tensor::CpuTensor {
+    let shape = tensor.shape();
+    debug_assert_eq!(shape.len(), 2);
+    let reordered =
+        crate::tensor::CpuTensor::from_data(vec![shape[1], shape[0]], tensor.data().to_vec());
+    reordered.transpose()
+}
+
 pub struct GgufLoader {
     /// metadata key-value pairs from the gguf header
     pub metadata: HashMap<String, GgufValue>,

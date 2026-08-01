@@ -412,6 +412,7 @@ pub(crate) trait GenerationExecution<B, M>
 where
     B: Backend,
     M: ForwardModel<B>,
+    B::Error: Send + Sync + 'static,
 {
     fn before_prefill(&mut self, prompt_token_count: usize) -> anyhow::Result<()>;
 
@@ -433,6 +434,35 @@ where
         input_token_ids: &[u32],
         generated_token_ids: &[u32],
     ) -> anyhow::Result<()>;
+
+    /// Greedy next-token inference, fused with the decode forward.
+    ///
+    /// Default: full-logits forward plus an in-place argmax (identical to
+    /// the ordinary greedy path, so experiment/capture hooks still see the
+    /// full logits). `StandardGeneration` overrides this to the model's
+    /// fused fast path, which avoids materializing the vocabulary.
+    fn forward_greedy_token(
+        &mut self,
+        backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        phase: ExecutionPhase,
+    ) -> anyhow::Result<(u32, f32)> {
+        let logits =
+            self.forward_last_logits(backend, model, token_ids, cache, start_pos, phase)?;
+        let data = backend.data(&logits);
+        let mut best = 0usize;
+        let mut best_val = f32::NEG_INFINITY;
+        for (i, &value) in data.iter().enumerate() {
+            if value > best_val {
+                best_val = value;
+                best = i;
+            }
+        }
+        Ok((best as u32, best_val))
+    }
 }
 
 pub(crate) struct StandardGeneration;
@@ -441,6 +471,7 @@ impl<B, M> GenerationExecution<B, M> for StandardGeneration
 where
     B: Backend,
     M: ForwardModel<B>,
+    B::Error: Send + Sync + 'static,
 {
     #[inline(always)]
     fn before_prefill(&mut self, _prompt_token_count: usize) -> anyhow::Result<()> {
@@ -470,6 +501,20 @@ where
         _generated_token_ids: &[u32],
     ) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    fn forward_greedy_token(
+        &mut self,
+        _backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        _phase: ExecutionPhase,
+    ) -> anyhow::Result<(u32, f32)> {
+        model
+            .greedy_next_token_with_cache(_backend, token_ids, cache, start_pos)
+            .map_err(anyhow::Error::msg)
     }
 }
 
@@ -667,6 +712,14 @@ where
     E: GenerationExecution<B, M>,
     B::Error: Send + Sync + 'static,
 {
+    // The fused greedy decode path (branch-and-bound argmax lm_head) is
+    // off by default: its exact-scalar accumulation can differ from the
+    // SIMD full-logits path's argmax on near-tie tokens, which would change
+    // greedy output. Opt in with EMBER_FUSED_GREEDY=1.
+    let fused_greedy = std::env::var("EMBER_FUSED_GREEDY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
     let mut rng = rand::thread_rng();
 
     let mut all_tokens = tokenizer
@@ -731,18 +784,39 @@ where
     let mut decode_evaluations = 0usize;
 
     for step in 0..max_tokens {
-        let logit_data = backend.data(&logits);
-        let last_logits = &logit_data[..vocab_size];
-
-        next_token = if temperature == 0.0 {
-            argmax_token(last_logits)
-        } else {
-            sample_token(last_logits, temperature, top_k, top_p, &mut rng)
-        };
-
-        log::debug!("step {}: predicted token {}", step, next_token);
-
         let eos_ids = tokenizer.eos_token_ids();
+        // Greedy decode steps after the first can use the fused argmax path
+        // (the model may compute only the top token instead of the full
+        // vocabulary). Tracing and sampling always use the full path.
+        let greedy_fused = fused_greedy && step > 0 && temperature == 0.0 && !trace_ops;
+        if greedy_fused {
+            let (token, logit) = execution.forward_greedy_token(
+                backend,
+                model,
+                &[all_tokens[all_tokens.len() - 1]],
+                &mut cache,
+                prompt_len + step - 1, // position of the previous token
+                ExecutionPhase::Decode,
+            )?;
+            next_token = token as usize;
+            log::debug!(
+                "step {}: greedy token {} (logit {logit:.4})",
+                step,
+                next_token
+            );
+        } else {
+            let logit_data = backend.data(&logits);
+            let last_logits = &logit_data[..vocab_size];
+
+            next_token = if temperature == 0.0 {
+                argmax_token(last_logits)
+            } else {
+                sample_token(last_logits, temperature, top_k, top_p, &mut rng)
+            };
+
+            log::debug!("step {}: predicted token {}", step, next_token);
+        }
+
         if eos_ids.contains(&(next_token as u32)) {
             log::info!("eos token reached after {} generated tokens", step);
             break;
@@ -755,23 +829,27 @@ where
             break;
         }
 
-        // decode step: forward with just the new token, using cached K/V
-        if trace_ops {
-            trace::enable_tracing("decode", step);
-        }
-        logits = execution.forward_last_logits(
-            backend,
-            model,
-            &[next_token as u32],
-            &mut cache,
-            prompt_len + step, // absolute position offset
-            ExecutionPhase::Decode,
-        )?;
-        decode_evaluations += 1;
-        if trace_ops {
-            if let Some(report) = trace::disable_tracing() {
-                decode_traces.push(report);
+        if !greedy_fused {
+            // decode step: forward with just the new token, using cached K/V
+            if trace_ops {
+                trace::enable_tracing("decode", step);
             }
+            logits = execution.forward_last_logits(
+                backend,
+                model,
+                &[next_token as u32],
+                &mut cache,
+                prompt_len + step, // absolute position offset
+                ExecutionPhase::Decode,
+            )?;
+            decode_evaluations += 1;
+            if trace_ops {
+                if let Some(report) = trace::disable_tracing() {
+                    decode_traces.push(report);
+                }
+            }
+        } else {
+            decode_evaluations += 1;
         }
     }
 

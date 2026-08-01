@@ -10,6 +10,68 @@ pub const Q8_0_BLOCK_SIZE: usize = 32;
 /// total byte size of one q8_0 block (2 byte fp16 scale + 32 int8 values)
 pub const Q8_0_TYPE_SIZE: usize = 34;
 
+/// Precomputed per-row suffix norms for exact branch-and-bound argmax
+/// decode on a Q8_0 weight.
+///
+/// For row `i` and in-block boundary `b`, `suffix[i][b]` is the L2 norm of
+/// the row's *actual* weight values (quantized ints times block scale) from
+/// in-block `b` onward. Cauchy-Schwarz then bounds the remaining contribution
+/// of a partially-accumulated row, so rows that provably cannot beat the
+/// running maximum are pruned without changing the argmax.
+pub struct Q8TopkNorms {
+    out_features: usize,
+    in_blocks: usize,
+    suffix: Vec<f32>,
+}
+
+impl Q8TopkNorms {
+    /// Compute the suffix-norm table for a Q8_0 weight.
+    pub fn compute(weight: &QuantizedWeight) -> Self {
+        let out_features = weight.shape[0];
+        let in_features = weight.shape[1];
+        let in_blocks = in_features / Q8_0_BLOCK_SIZE;
+        let bytes = weight.data();
+        let mut suffix = vec![0.0f32; out_features * (in_blocks + 1)];
+        for row in 0..out_features {
+            let mut acc = 0.0f64;
+            for b in (0..in_blocks).rev() {
+                let offset = (row * in_blocks + b) * Q8_0_TYPE_SIZE;
+                let scale = half::f16::from_bits(u16::from_le_bytes(
+                    bytes[offset..offset + 2].try_into().unwrap(),
+                ))
+                .to_f32();
+                let block = &bytes[offset + 2..offset + 2 + Q8_0_BLOCK_SIZE];
+                let q_norm: f64 = block
+                    .iter()
+                    .map(|&v| f64::from(f32::from(i8::from_le_bytes([v]))).powi(2))
+                    .sum();
+                acc += f64::from(scale).powi(2) * q_norm;
+                suffix[row * (in_blocks + 1) + b] = acc.sqrt() as f32;
+            }
+        }
+        Self {
+            out_features,
+            in_blocks,
+            suffix,
+        }
+    }
+
+    #[inline]
+    pub fn out_features(&self) -> usize {
+        self.out_features
+    }
+
+    #[inline]
+    pub fn in_blocks(&self) -> usize {
+        self.in_blocks
+    }
+
+    /// Suffix norm of row `row` from in-block `b` onward.
+    #[inline]
+    pub fn suffix(&self, row: usize, b: usize) -> f32 {
+        self.suffix[row * (self.in_blocks + 1) + b]
+    }
+}
 /// Compute the encoded byte length for `n_floats` values.
 ///
 /// Each 32-float block → 34 bytes (2B f16 scale + 32B i8 quants).

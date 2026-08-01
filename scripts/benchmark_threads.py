@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 BENCH_RE = re.compile(
-    r"^(prefill|decode):\s+(\d+)\s+tokens in ([0-9.]+)ms -> ([0-9.]+) tok/s$"
+    r"^(prefill|decode):\s+(\d+)\s+(?:tokens|evals) in ([0-9.]+)ms -> ([0-9.]+) (?:tok|eval)/s$"
 )
 
 

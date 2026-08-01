@@ -965,7 +965,18 @@ impl Gemma4<CpuBackend> {
         log::debug!("gemma4 config: {:?}", config);
 
         let embed_tokens = match loader.take_tensor("token_embd.weight")? {
-            LoadedTensor::F32(tensor) => Gemma4Embedding::F32(Arc::new(tensor)),
+            LoadedTensor::F32(tensor) => {
+                // GGUF stores the embedding with the vocab dim contiguous,
+                // i.e. already row-major [vocab, embed]; swap dims only so
+                // assign_row_from_table / tied_embedding_logits see the
+                // orientation they expect.
+                let shape = tensor.shape();
+                debug_assert_eq!(shape.len(), 2);
+                Gemma4Embedding::F32(Arc::new(crate::tensor::CpuTensor::from_data(
+                    vec![shape[1], shape[0]],
+                    tensor.data().to_vec(),
+                )))
+            }
             LoadedTensor::Q8_0(weight) => Gemma4Embedding::Q8_0(Arc::new(weight)),
         };
 
@@ -1204,9 +1215,10 @@ impl Gemma4<CpuBackend> {
         }
 
         let head = match loader.tensors.remove("output.weight") {
-            Some(LoadedTensor::F32(tensor)) => {
-                Gemma4Head::Linear(Linear::new(tensor.transpose(), None))
-            }
+            Some(LoadedTensor::F32(tensor)) => Gemma4Head::Linear(Linear::new(
+                crate::loader::gguf_to_row_major_f32(tensor),
+                None,
+            )),
             Some(LoadedTensor::Q8_0(weight)) => Gemma4Head::Linear(Linear::new_q8_0(weight, None)),
             None => Gemma4Head::TiedEmbedding(embed_tokens.clone()),
         };
@@ -2005,7 +2017,10 @@ fn get_optional_f32(loader: &GgufLoader, keys: &[&str]) -> Option<f32> {
 
 fn take_gemma4_linear(loader: &mut GgufLoader, name: &str) -> anyhow::Result<Linear<CpuBackend>> {
     match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => Ok(Linear::new(tensor.transpose(), None)),
+        LoadedTensor::F32(tensor) => Ok(Linear::new(
+            crate::loader::gguf_to_row_major_f32(tensor),
+            None,
+        )),
         LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, None)),
     }
 }
@@ -2111,12 +2126,14 @@ mod tests {
         tensors.insert(
             "token_embd.weight".to_string(),
             LoadedTensor::F32(CpuTensor::from_data(
-                vec![4, 2],
+                // GGUF logical dims are [embed, vocab] with the vocab dim
+                // contiguous (data stays vocab-major as written below).
+                vec![2, 4],
                 vec![0.1, 0.2, 0.2, 0.1, 0.0, 0.3, 0.3, 0.0],
             )),
         );
         tensors.insert("output_norm.weight".to_string(), tiny_tensor(&[2], 1.0));
-        tensors.insert("output.weight".to_string(), tiny_weight(&[4, 2]));
+        tensors.insert("output.weight".to_string(), tiny_weight(&[2, 4]));
         insert_tiny_gemma4_block_tensors(tensors, 0, true);
     }
 
