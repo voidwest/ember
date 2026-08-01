@@ -13,6 +13,7 @@ pub mod model;
 pub mod model_backend;
 pub mod npy;
 pub mod quant;
+pub mod quant_k;
 pub mod residency;
 pub mod sampler;
 pub mod simd;

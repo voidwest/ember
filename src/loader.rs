@@ -238,6 +238,32 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                     };
                     LoadedTensor::Q8_0(weight)
                 }
+                10..=14 => {
+                    // K-family super-blocks (Q2_K/Q3_K/Q4_K/Q5_K/Q6_K):
+                    // dequantize to f32 at load time. Keep the logical GGUF
+                    // shape; linear-weight transpose handling is identical to
+                    // the f32/f16 arms.
+                    if !element_count.is_multiple_of(crate::quant_k::QK_K) {
+                        bail!(
+                            "tensor '{}' dtype {} element count {} is not 256-block-aligned",
+                            info.name,
+                            info.dtype,
+                            element_count
+                        );
+                    }
+                    let n_blocks = element_count / crate::quant_k::QK_K;
+                    let block_bytes = crate::quant_k::k_block_bytes(info.dtype)
+                        .with_context(|| format!("tensor '{}'", info.name))?;
+                    let byte_len = n_blocks.checked_mul(block_bytes).with_context(|| {
+                        format!("tensor '{}' K-quant byte size overflow", info.name)
+                    })?;
+                    let mut raw = vec![0u8; byte_len];
+                    reader.read_exact(&mut raw)?;
+                    let mut data = vec![0.0f32; element_count];
+                    crate::quant_k::dequant_tensor(info.dtype, &raw, &mut data)
+                        .map_err(|e| anyhow::anyhow!("tensor '{}': {e}", info.name))?;
+                    LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+                }
                 30 => {
                     // bf16: brain floating point — upper 16 bits of f32.
                     let byte_len = element_count.checked_mul(2).with_context(|| {
