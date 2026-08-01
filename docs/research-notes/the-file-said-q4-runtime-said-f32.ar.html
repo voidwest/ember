@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta property="og:title" content="الملف قال Q4. والـruntime قال f32." />
-        <meta property="og:description" content="مراجعة صغيرة في Ember لحجم checkpoint وذاكرة runtime وأداء decode." />
+        <meta property="og:description" content="خط أساس مجمّد في Ember: تُقرأ K-quants بشكل صحيح، ثم تتحول إلى أوزان f32 وتعمل عبر kernels عامة." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/the-file-said-q4-runtime-said-f32.ar.html" />
         <meta property="og:site_name" content="voidwest" />
@@ -60,7 +60,7 @@
         <h1>الملف قال <bdi>Q4</bdi>. والـ<bdi>runtime</bdi> قال <bdi>f32</bdi>.</h1>
 
         <div class="meta">
-            ملاحظة قياس صغيرة عن حجم <bdi>checkpoint</bdi> وذاكرة <bdi>runtime</bdi> وأداء <bdi>decode</bdi> في <bdi>Ember</bdi><br>
+            خط أساس مجمّد لمسار <bdi>K-quant loader</bdi> الحالي ومسار التنفيذ الأصلي المفقود في <bdi>Ember</bdi><br>
             محمد الثبيتي · 2026-08-01<br>
             <span class="tag key">Ember</span>
             <span class="tag key">GGUF</span>
@@ -72,28 +72,32 @@
         </div>
 
         <p>
-            الملف الأصغر يوحي عادةً بـ<bdi>deployment</bdi> أصغر. في مسار
-            <bdi>Ember</bdi> الحالي، هالحدس ما يصح مع مسارات
-            <bdi>K-quant</bdi>. ملفات <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi>
-            أصغر على القرص، لكن الأوزان تتوسع إلى <bdi>f32</bdi> وقت التحميل
-            وتبقى بهذا الشكل داخل الذاكرة.
+            مسار <bdi>K-quant</bdi> الحالي في <bdi>Ember</bdi> يقرأ التمثيل
+            بشكل صحيح، لكنه يتخلص من فائدته وقت التشغيل. أوزان
+            <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi> تتحول من ملف <bdi>GGUF</bdi> إلى
+            <bdi>f32</bdi> وتبقى في الذاكرة، ثم تمر عبر <bdi>generic f32
+            kernels</bdi>. ما فيه حالياً <bdi>native K-quant matmul</bdi> أو
+            <bdi>packed execution path</bdi> لها. يعني هذا
+            <bdi>reference loader</bdi>، مو <bdi>low-memory K-quant deployment</bdi>.
         </p>
 
         <p>
-            هذه مراجعة لتمثيل <bdi>runtime</bdi>، مو ادعاء أن
-            <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> غير فعالة بطبيعتها. النتيجة
-            ناتجة عن سياسة الـ<bdi>loader</bdi> والـ<bdi>backend</bdi> الحالية
-            في <bdi>Ember</bdi>. ما ينفع نعممها على <bdi>GGUF</bdi> أو
+            وهذا يخلي المسار الحالي غير مناسب كـ<bdi>deployment</bdi> منخفض
+            الذاكرة أو منخفض التأخير. الصفحة تثبت هذا الـ<bdi>baseline</bdi>
+            قبل تنفيذ مسار <bdi>native K-quant</bdi>. النتيجة مو ادعاء أن
+            <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> غير فعالة بطبيعتها؛ هي ناتجة
+            عن سياسة الـ<bdi>loader</bdi> والـ<bdi>backend</bdi> الحالية في
+            <bdi>Ember</bdi>، وما ينفع نعممها على <bdi>GGUF</bdi> أو
             <bdi>K-quants</bdi> أو <bdi>low-bit quantization</bdi> عموماً.
         </p>
 
         <div class="callout observation">
             <div class="label">الحالة</div>
             <p>
-                <bdi>engineering audit</bdi> فقط. الجدول يغطي عائلتين صغيرتين
-                على جهاز محلي واحد. هذه مو نتيجة جديدة في <bdi>quantization</bdi>،
-                ولا ادعاء <bdi>production deployment</bdi>، ولا مقارنة تقول إن
-                <bdi>Ember</bdi> أسرع من <bdi>llama.cpp</bdi>.
+                <bdi>pre-optimization engineering baseline</bdi> فقط. الجدول
+                يغطي عائلتين صغيرتين على جهاز محلي واحد. هذه مو نتيجة جديدة في
+                <bdi>quantization</bdi>، ولا ادعاء <bdi>production deployment</bdi>،
+                ولا مقارنة تقول إن <bdi>Ember</bdi> أسرع من <bdi>llama.cpp</bdi>.
             </p>
         </div>
 
@@ -146,6 +150,13 @@
         </p>
 
         <p>
+            عبر مقارنات <bdi>Q4/Q6</bdi> الأربع، يصبح <bdi>decode</bdi> أبطأ
+            بين 15.6× و51.6×، وترتفع <bdi>peak RSS</bdi> بين 2.59× و4.49×.
+            الحد الأعلى 51.6× هو <bdi>Llama Q6_K</bdi>، والأدنى 15.6× هو
+            <bdi>Qwen Q4_K_M</bdi>.
+        </p>
+
+        <p>
             الصورة نفسها تتكرر في العائلتين: الشيء الوحيد الذي يصغر مع
             <bdi>Q6/Q4</bdi> هو الملف على القرص. ووقت التحميل يرتفع أيضاً من
             نحو ثانية أو ثانيتين في <bdi>Q8_0</bdi> إلى نحو 13–16 ثانية في
@@ -163,11 +174,13 @@
         </p>
 
         <p>
-            مسار <bdi>K-quant</bdi> الحالي مختلف. الـ<bdi>loader</bdi> يفك
-            التكميم إلى <bdi>f32</bdi> وقت التحميل، ويحتفظ بالـ<bdi>buffers</bdi>
-            الموسعة، ثم يرسل العمل إلى تنفيذ <bdi>f32</bdi> عام. الملف ما زال
-            <bdi>Q4</bdi> أو <bdi>Q6</bdi> على القرص، لكن تمثيل الـ<bdi>deployment</bdi>
-            داخل الذاكرة ليس كذلك.
+            مسار <bdi>K-quant</bdi> الحالي هو <bdi>reference loader</bdi>، مو
+            <bdi>native K-quant backend</bdi>. الـ<bdi>loader</bdi> يفك التكميم
+            إلى <bdi>f32</bdi> وقت التحميل، ويحتفظ بالـ<bdi>buffers</bdi>
+            الموسعة، ثم يرسل العمل إلى تنفيذ <bdi>f32</bdi> عام. ما فيه
+            <bdi>K-specific matmul</bdi> أو <bdi>packed kernel</bdi> حالياً في
+            <bdi>Ember</bdi>. الملف ما زال <bdi>Q4</bdi> أو <bdi>Q6</bdi> على
+            القرص، لكن تمثيل الـ<bdi>deployment</bdi> داخل الذاكرة ليس كذلك.
         </p>
 
         <pre><code>Q8_0:
@@ -175,7 +188,7 @@ GGUF Q8 blocks
   → compressed-resident weights
   → packed Q8 kernels
 
-Q4_K_M / Q6_K today:
+Q4_K_M / Q6_K today (reference path):
 GGUF K-quant blocks
   → full f32 expansion
   → generic f32 execution</code></pre>
@@ -210,6 +223,7 @@ GGUF K-quant blocks
         <h2>وش اللي تثبته هذه المراجعة؟</h2>
 
         <ul>
+            <li>دعم <bdi>K-quant</bdi> الحالي في <bdi>Ember</bdi> مسار تحقق ومرجع، مو مسار <bdi>low-bit deployment</bdi> أصلي؛</li>
             <li>حجم الملف مو proxy موثوق لذاكرة العملية؛</li>
             <li>تمثيل الـ<bdi>runtime</bdi> ممكن يعكس فائدة الذاكرة المتوقعة من <bdi>low-bit</bdi>؛</li>
             <li>تصميم الـ<bdi>backend</bdi> يحدد هل يبقى التكميم موجوداً في الـ<bdi>deployment</bdi>؛</li>
@@ -220,6 +234,7 @@ GGUF K-quant blocks
         <h2>وش اللي ما تثبته؟</h2>
 
         <ul>
+            <li>أن مسار فك التكميم في <bdi>K-quant</bdi> غير صحيح؛ هو مسار مرجعي متحقق منه، لكنه مو مسار تشغيل محسّن؛</li>
             <li>أن <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> أبطأ بطبيعتها من <bdi>Q8_0</bdi>؛</li>
             <li>أن <bdi>low-bit quantization</bdi> غير فعالة؛</li>
             <li>أن <bdi>GGUF K-quants</bdi> غير كفؤة؛</li>

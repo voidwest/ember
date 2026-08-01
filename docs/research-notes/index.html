@@ -61,9 +61,10 @@
                     >
                 </div>
                 <div class="desc">
-                    a runtime-representation audit showing why smaller Q6_K and
-                    Q4_K_M files can use more memory and decode more slowly than
-                    Q8_0 in Ember's current loader and backend.
+                    a frozen baseline showing how Ember's current K-quant loader
+                    expands smaller Q6_K and Q4_K_M files into resident f32
+                    weights, making them use more memory and decode more slowly
+                    than Q8_0.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-08-01</span>

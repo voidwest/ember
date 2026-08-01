@@ -4,7 +4,7 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta property="og:title" content="The File Said Q4. The Runtime Said f32." />
-        <meta property="og:description" content="A small Ember audit of checkpoint size, runtime memory, and decode performance." />
+        <meta property="og:description" content="A frozen Ember baseline: K-quants are loaded correctly, then expanded to resident f32 weights and run through generic kernels." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/the-file-said-q4-runtime-said-f32.html" />
         <meta property="og:site_name" content="voidwest" />
@@ -60,7 +60,7 @@
         <h1>The File Said Q4. The Runtime Said f32.</h1>
 
         <div class="meta">
-            research note · a small audit of checkpoint size, runtime memory, and decode performance in Ember<br>
+            research note · a frozen baseline for Ember's current K-quant loader and missing native execution path<br>
             mohammed al-thobaiti · 2026-08-01<br>
             <span class="tag key">Ember</span>
             <span class="tag key">GGUF</span>
@@ -72,26 +72,31 @@
         </div>
 
         <p>
-            a smaller GGUF file looks like a smaller deployment. in Ember's
-            current implementation, that intuition fails for the K-quant
-            paths. Q6_K and Q4_K_M are smaller on disk, but their weights are
-            expanded to f32 at load and kept in that expanded form.
+            Ember currently loads K-quants correctly, then discards their
+            deployment advantage. Q6_K and Q4_K_M are decoded from the GGUF
+            file into resident f32 weights and sent through generic f32
+            kernels; Ember has no native K-quant matmul or packed execution
+            path for them yet. this is a reference loader, not a low-memory
+            K-quant deployment.
         </p>
 
         <p>
-            this is a runtime-representation audit, not a claim that Q4_K_M or
-            Q6_K are inherently inefficient. the result comes from Ember's
-            current loader and backend policy. it should not be generalized to
-            GGUF, K-quants, or low-bit quantization as a whole.
+            that makes the current path unsuitable as a low-memory or
+            low-latency deployment backend. this note freezes that
+            pre-optimization baseline before native K-quant execution is
+            implemented. it is not a claim that Q4_K_M or Q6_K are inherently
+            inefficient: the result comes from Ember's current loader and
+            backend policy and should not be generalized to GGUF, K-quants,
+            or low-bit quantization as a whole.
         </p>
 
         <div class="callout observation">
             <div class="label">status</div>
             <p>
-                engineering audit only. the table covers two small model
-                families on one local machine. it is not a novel quantization
-                result, a production deployment claim, or a comparison that
-                makes Ember faster than llama.cpp.
+                pre-optimization engineering baseline only. the table covers
+                two small model families on one local machine. it is not a
+                novel quantization result, a production deployment claim, or
+                a comparison that makes Ember faster than llama.cpp.
             </p>
         </div>
 
@@ -143,6 +148,12 @@
         </p>
 
         <p>
+            across the four Q4/Q6 comparisons, decode is 15.6× to 51.6×
+            slower and peak RSS is 2.59× to 4.49× higher. the 51.6× endpoint
+            is Llama Q6_K; the 15.6× endpoint is Qwen Q4_K_M.
+        </p>
+
+        <p>
             the inversion is consistent across both families: the only axis on
             which the lower-bit files are smaller is the file itself. load time
             also rises from roughly one or two seconds for Q8_0 to roughly
@@ -159,10 +170,12 @@
         </p>
 
         <p>
-            the current K-quant path is different. the loader dequantizes the
-            weights to f32 at load time, keeps the expanded buffers resident,
-            and sends the work through generic f32 execution. the checkpoint is
-            still Q4 or Q6 on disk; the ordinary in-memory deployment is not.
+            the current K-quant path is a reference loader, not a native
+            K-quant backend. the loader dequantizes the weights to f32 at load
+            time, keeps the expanded buffers resident, and sends the work
+            through generic f32 execution. there is no K-specific matmul or
+            packed kernel in Ember's current backend. the checkpoint is still
+            Q4 or Q6 on disk; the ordinary in-memory deployment is not.
         </p>
 
         <pre><code>Q8_0:
@@ -170,7 +183,7 @@ GGUF Q8 blocks
   → compressed-resident weights
   → packed Q8 kernels
 
-Q4_K_M / Q6_K today:
+Q4_K_M / Q6_K today (reference path):
 GGUF K-quant blocks
   → full f32 expansion
   → generic f32 execution</code></pre>
@@ -204,6 +217,7 @@ GGUF K-quant blocks
         <h2>what this does show</h2>
 
         <ul>
+            <li>current Ember K-quant support is a correctness/reference path, not a native low-bit deployment path;</li>
             <li>file size is not a reliable proxy for process memory;</li>
             <li>runtime representation can reverse the expected low-bit memory benefit;</li>
             <li>backend design determines whether quantization survives deployment;</li>
@@ -214,6 +228,7 @@ GGUF K-quant blocks
         <h2>what this does not show</h2>
 
         <ul>
+            <li>the K-quant dequantizer is numerically wrong; it is a validated reference path, but not an optimized deployment path;</li>
             <li>Q4_K_M or Q6_K are inherently slower than Q8_0;</li>
             <li>low-bit quantization is ineffective;</li>
             <li>GGUF K-quants are inefficient;</li>
