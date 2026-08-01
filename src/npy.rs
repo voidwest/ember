@@ -46,9 +46,17 @@ fn write_npy_header(w: &mut impl Write, shape: &[usize]) -> anyhow::Result<()> {
 }
 
 fn write_f32_slice(w: &mut impl Write, data: &[f32]) -> anyhow::Result<()> {
-    let data_bytes: &[u8] =
-        unsafe { std::slice::from_raw_parts(data.as_ptr() as *const u8, data.len() * 4) };
-    w.write_all(data_bytes)?;
+    const FLOATS_PER_CHUNK: usize = 1024;
+    let mut bytes = [0u8; FLOATS_PER_CHUNK * std::mem::size_of::<f32>()];
+    for values in data.chunks(FLOATS_PER_CHUNK) {
+        for (slot, value) in bytes
+            .chunks_exact_mut(std::mem::size_of::<f32>())
+            .zip(values)
+        {
+            slot.copy_from_slice(&value.to_le_bytes());
+        }
+        w.write_all(&bytes[..std::mem::size_of_val(values)])?;
+    }
     Ok(())
 }
 
