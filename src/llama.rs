@@ -1921,7 +1921,11 @@ impl Llama<CpuBackend> {
                     Linear::<CpuBackend>::new_q8_0(weight.clone(), None)
                 }
                 LlamaEmbedding::F32(tensor) => {
-                    Linear::<CpuBackend>::new(gguf_to_row_major_f32(tensor.clone()), None)
+                    // The embedding is already reinterpreted as [vocab, embed]
+                    // row-major; the linear needs [embed, vocab], so a real
+                    // transpose (data reorder) is required — not the raw-GGUF
+                    // helper, which would double-transpose.
+                    Linear::<CpuBackend>::new(tensor.clone().transpose(), None)
                 }
             },
         };
