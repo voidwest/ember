@@ -4,17 +4,10 @@
 [![ci](https://github.com/voidwest/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/voidwest/ember/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-**Paper 1 artifact status.** This repository is preserved as the research
-artifact for “Leakage-Aware Probing of Arabic Morphology in Small Language
-Models.” Treat paper outputs, figures, tables, datasets, and probe reports as
-citable artifacts; do not change them casually. Future Ember backend/refactor
-work, including further llama.cpp integration, should happen in a separate
-repository.
-
 a lightweight research layer for hidden-state extraction, leakage-aware probing,
 and reproducible morphology experiments over GGUF models. Ember keeps an
-inspectable Rust inference path for validation. This Paper 1 artifact includes
-some backend-ready scaffolding, but ongoing external-backend work should happen
+inspectable Rust inference path for validation. The repository includes some
+backend-ready scaffolding, but ongoing external-backend work should happen
 outside this repository.
 
 research write-up: https://voidwest.dev/ember
@@ -117,7 +110,7 @@ Use these levels when interpreting Ember runs:
 | gemma4 | local BOS smoke and llama.cpp reference comparison run | final-logit cosine ~0.87; not a golden pass | per-layer comparison pipeline operational; L0 attn_norm bit-identical | pending full runs | structural fixes applied, but the remaining numerical gap still prevents a parity claim; RMSNorm amplification is the current working explanation |
 | hf encoders | external Hugging Face extraction path works for mBERT smoke | not applicable to Ember GGUF numerics | external stack not activation-checked here | mBERT PADT smoke; full encoder suite pending | useful benchmark path, not an Ember inference validation result |
 
-## recent validation wave (post-paper)
+## recent validation wave
 
 A validation + bounded pilot wave (2026-08) added K-quant support and ran an
 Arabic-quantization pilot (Qwen2.5-1.5B and Llama-3.2-1B across Q8/Q6/Q4;
