@@ -4,11 +4,13 @@
 //! supports one statically compiled experiment per generation run. It is not
 //! a dynamic plugin ABI, registry, event bus, or compatibility commitment.
 
+mod activation_patch;
 mod activation_stats;
 mod capture;
 mod context;
 mod zero_layer_output;
 
+pub use activation_patch::{ActivationPatch, PatchTarget};
 pub use activation_stats::ActivationStats;
 pub use capture::CaptureSink;
 pub use context::{

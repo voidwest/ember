@@ -23,8 +23,8 @@ use cli_support::{
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::experiments::{
-    ActivationStats, CaptureSink, ExperimentRunner, ModelContext, ModelFamily, ZeroLayerOutput,
-    ZeroLayerOutputSpec,
+    ActivationPatch, ActivationStats, CaptureSink, ExperimentRunner, ModelContext, ModelFamily,
+    PatchTarget, ZeroLayerOutput, ZeroLayerOutputSpec,
 };
 use ember::extraction::{sha256_file, ExecutionBackendName};
 use ember::loader::load_gguf;
@@ -141,6 +141,21 @@ pub(crate) struct Args {
         conflicts_with_all = ["demo", "interactive", "dump_logits", "dump_layers", "probe"]
     )]
     capture_activations: Option<String>,
+
+    /// v0.2 activation-patch source artifact (manifest.json); requires at
+    /// least one --patch-target. Conflicts with other experiments.
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["zero_layer_output", "activation_stats"]
+    )]
+    activation_patch: Option<String>,
+
+    /// patch target LAYER:STAGE:PHASE[:POSITION] for --activation-patch
+    /// (repeatable; stage in before-layer, after-attention, after-mlp,
+    /// after-layer, before-logits, after-logits)
+    #[arg(long, value_name = "TARGET")]
+    patch_target: Vec<String>,
 
     /// enable execution tracing (ops = per-operation breakdown)
     #[arg(long, value_parser = ["ops"])]
@@ -664,6 +679,7 @@ fn main() -> anyhow::Result<()> {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
             } else if args.zero_layer_output.is_some()
                 || args.activation_stats.is_some()
+                || args.activation_patch.is_some()
                 || args.capture_activations.is_some()
             {
                 let family = if args.arch == "qwen3" {
@@ -742,6 +758,7 @@ fn main() -> anyhow::Result<()> {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
             } else if args.zero_layer_output.is_some()
                 || args.activation_stats.is_some()
+                || args.activation_patch.is_some()
                 || args.capture_activations.is_some()
             {
                 let model_context = ModelContext::new(
@@ -817,6 +834,22 @@ fn build_experiment_runner(
             "research experiment active: activation-stats output={path}; execution is observation-only"
         );
         Some(ExperimentRunner::new(ActivationStats::new(path)))
+    } else if let Some(source) = &args.activation_patch {
+        if args.patch_target.is_empty() {
+            anyhow::bail!("--activation-patch requires at least one --patch-target");
+        }
+        let targets = args
+            .patch_target
+            .iter()
+            .map(|target| target.parse::<PatchTarget>())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| anyhow::anyhow!("invalid --patch-target: {error}"))?;
+        let experiment = ActivationPatch::new(source, targets)
+            .map_err(|error| anyhow::anyhow!("activation-patch: {error}"))?;
+        eprintln!(
+            "research experiment active: activation-patch source={source}; execution will be modified"
+        );
+        Some(ExperimentRunner::new(experiment))
     } else {
         None
     };
