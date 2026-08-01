@@ -34,6 +34,7 @@ docs/plots/root_probe_scale_comparison.png
 !docs/experiments.md
 !docs/activation-artifacts.md
 !docs/activation-patching.md
+!docs/v02-validation.md
 /REPRODUCIBILITY.md
 /ARTIFACT_STATUS.md
 /CITATION.cff
