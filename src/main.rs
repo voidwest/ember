@@ -11,8 +11,7 @@ use cli_commands::{
 };
 use cli_generation::{
     bail_dump_layers_unsupported, demo_mode, dump_last_logits, dump_layers_gemma4,
-    interactive_mode, run_single_prompt, run_single_prompt_with_experiment, start_activation_stats,
-    start_zero_layer_output,
+    interactive_mode, run_single_prompt, run_single_prompt_with_experiment,
 };
 use cli_probe::{run_probe_jobs, LogitDumpConfig};
 
@@ -23,7 +22,10 @@ use cli_support::{
 };
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
-use ember::experiments::{ModelContext, ModelFamily, ZeroLayerOutputSpec};
+use ember::experiments::{
+    ActivationStats, CaptureSink, ExperimentRunner, ModelContext, ModelFamily, ZeroLayerOutput,
+    ZeroLayerOutputSpec,
+};
 use ember::extraction::{sha256_file, ExecutionBackendName};
 use ember::loader::load_gguf;
 use ember::model::ForwardModel;
@@ -130,6 +132,15 @@ pub(crate) struct Args {
         ]
     )]
     activation_stats: Option<String>,
+
+    /// capture selected activations during generation into a v0.2 artifact
+    /// (typed TOML selection; see docs/activation-artifacts.md)
+    #[arg(
+        long,
+        value_name = "FILE",
+        conflicts_with_all = ["demo", "interactive", "dump_logits", "dump_layers", "probe"]
+    )]
+    capture_activations: Option<String>,
 
     /// enable execution tracing (ops = per-operation breakdown)
     #[arg(long, value_parser = ["ops"])]
@@ -524,7 +535,8 @@ fn main() -> anyhow::Result<()> {
         || args.write_run_manifest.is_some()
         || args.probe
         || args.dump_logits.is_some()
-        || args.dump_layers.is_some();
+        || args.dump_layers.is_some()
+        || args.capture_activations.is_some();
     let model_sha256 = if record_model_sha256 {
         sha256_file(&args.model)
     } else {
@@ -650,7 +662,10 @@ fn main() -> anyhow::Result<()> {
                 bail_dump_layers_unsupported(&args.arch)?;
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
-            } else if let Some(spec) = args.zero_layer_output {
+            } else if args.zero_layer_output.is_some()
+                || args.activation_stats.is_some()
+                || args.capture_activations.is_some()
+            {
                 let family = if args.arch == "qwen3" {
                     ModelFamily::Qwen3
                 } else {
@@ -663,36 +678,17 @@ fn main() -> anyhow::Result<()> {
                     model.n_layers(),
                     model.embed_dim(),
                 );
-                let mut runner = start_zero_layer_output(spec, &model_context)?;
+                let mut runner = build_experiment_runner(&args, &run_metadata, &model_context)?;
+                let runner = runner
+                    .as_mut()
+                    .expect("experiment or capture requested in the arm condition");
                 run_single_prompt_with_experiment(
                     &backend,
                     &model,
                     &tokenizer,
                     &args,
                     model_context,
-                    &mut runner,
-                )?;
-            } else if let Some(path) = &args.activation_stats {
-                let family = if args.arch == "qwen3" {
-                    ModelFamily::Qwen3
-                } else {
-                    ModelFamily::Llama
-                };
-                let model_context = ModelContext::new(
-                    family,
-                    Some(&args.model),
-                    &args.arch,
-                    model.n_layers(),
-                    model.embed_dim(),
-                );
-                let mut runner = start_activation_stats(path, &model_context)?;
-                run_single_prompt_with_experiment(
-                    &backend,
-                    &model,
-                    &tokenizer,
-                    &args,
-                    model_context,
-                    &mut runner,
+                    runner,
                 )?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
@@ -744,7 +740,10 @@ fn main() -> anyhow::Result<()> {
                 )?;
             } else if args.probe {
                 run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
-            } else if let Some(spec) = args.zero_layer_output {
+            } else if args.zero_layer_output.is_some()
+                || args.activation_stats.is_some()
+                || args.capture_activations.is_some()
+            {
                 let model_context = ModelContext::new(
                     ModelFamily::Gemma4,
                     Some(&args.model),
@@ -752,31 +751,17 @@ fn main() -> anyhow::Result<()> {
                     model.n_layers(),
                     model.embed_dim(),
                 );
-                let mut runner = start_zero_layer_output(spec, &model_context)?;
+                let mut runner = build_experiment_runner(&args, &run_metadata, &model_context)?;
+                let runner = runner
+                    .as_mut()
+                    .expect("experiment or capture requested in the arm condition");
                 run_single_prompt_with_experiment(
                     &backend,
                     &model,
                     &tokenizer,
                     &args,
                     model_context,
-                    &mut runner,
-                )?;
-            } else if let Some(path) = &args.activation_stats {
-                let model_context = ModelContext::new(
-                    ModelFamily::Gemma4,
-                    Some(&args.model),
-                    &args.arch,
-                    model.n_layers(),
-                    model.embed_dim(),
-                );
-                let mut runner = start_activation_stats(path, &model_context)?;
-                run_single_prompt_with_experiment(
-                    &backend,
-                    &model,
-                    &tokenizer,
-                    &args,
-                    model_context,
-                    &mut runner,
+                    runner,
                 )?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
@@ -786,4 +771,63 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Build the v0.2 capture sink from `--capture-activations`, if requested.
+fn build_capture_sink(
+    args: &Args,
+    run_metadata: &RunMetadata,
+) -> anyhow::Result<Option<CaptureSink>> {
+    let Some(path) = &args.capture_activations else {
+        return Ok(None);
+    };
+    let sink = CaptureSink::from_toml_path(
+        path,
+        &args.prompt,
+        rayon_current_num_threads(),
+        serde_json::to_value(&run_metadata.run_manifest).unwrap_or_else(|_| serde_json::json!({})),
+        run_metadata.model_sha256.clone(),
+        run_metadata.tokenizer_sha256.clone(),
+        run_metadata.gguf_metadata.clone(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    eprintln!(
+        "research capture active: config={path} output_dir={}",
+        sink.selection().output_dir.display()
+    );
+    Ok(Some(sink))
+}
+
+/// Build the experiment runner (one experiment, optional capture) for a
+/// generation run, or `None` when neither is requested.
+fn build_experiment_runner(
+    args: &Args,
+    run_metadata: &RunMetadata,
+    model_context: &ModelContext<'_>,
+) -> anyhow::Result<Option<ExperimentRunner>> {
+    let mut runner = if let Some(spec) = args.zero_layer_output {
+        eprintln!(
+            "research experiment active: zero-layer-output layer={} stage={}; execution will be modified",
+            spec.layer(),
+            spec.stage()
+        );
+        Some(ExperimentRunner::new(ZeroLayerOutput::new(spec)))
+    } else if let Some(path) = &args.activation_stats {
+        eprintln!(
+            "research experiment active: activation-stats output={path}; execution is observation-only"
+        );
+        Some(ExperimentRunner::new(ActivationStats::new(path)))
+    } else {
+        None
+    };
+    if let Some(sink) = build_capture_sink(args, run_metadata)? {
+        runner = Some(match runner {
+            Some(runner) => runner.with_capture(sink),
+            None => ExperimentRunner::capture_only(sink),
+        });
+    }
+    if let Some(runner) = runner.as_mut() {
+        runner.on_model_loaded(model_context)?;
+    }
+    Ok(runner)
 }

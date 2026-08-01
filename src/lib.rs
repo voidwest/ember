@@ -1,4 +1,5 @@
 extern crate alloc;
+pub mod artifact;
 pub mod backend;
 pub mod decode_profile;
 pub mod experiments;

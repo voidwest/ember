@@ -1,3 +1,4 @@
+use crate::artifact::DispatchPath;
 use crate::backend::{AttentionSpec, Backend, CachedAttentionSpec, CpuBackend, CpuError, Module};
 use crate::experiments::{
     ActiveHooks, DisabledHooks, ExecutionContext, ExperimentRunner, ExperimentalForwardModel,
@@ -1310,11 +1311,19 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
         execution: ExecutionContext<'_>,
         runner: &mut ExperimentRunner,
     ) -> Result<CpuTensor, CpuError> {
+        let fast_eligible = token_ids.len() == 1
+            && !crate::trace::is_tracing()
+            && self.fast_decode_inter_dim.is_some();
+        if !fast_eligible {
+            runner.note_dispatch(execution.phase, DispatchPath::Generic);
+        }
         let mut hooks = ActiveHooks::new(runner, execution);
-        if let Some(result) =
-            self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
-        {
-            return result;
+        if fast_eligible {
+            if let Some(result) =
+                self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+            {
+                return result;
+            }
         }
         self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
     }
@@ -1405,6 +1414,7 @@ impl Llama<CpuBackend> {
             return None;
         }
         let inter_dim = self.fast_decode_inter_dim?;
+        hooks.note_dispatch(DispatchPath::Fast);
         let embed_dim = self.config.embed_dim;
         let q_dim = self.config.n_heads * self.config.head_dim;
         let kv_dim = self.config.n_kv_heads * self.config.head_dim;

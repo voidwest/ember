@@ -1,3 +1,4 @@
+use crate::artifact::DispatchPath;
 use crate::backend::{Backend, CpuBackend, CpuError};
 use crate::experiments::{
     ActiveHooks, DisabledHooks, ExecutionContext, ExperimentRunner, ExperimentalForwardModel,
@@ -952,6 +953,7 @@ impl ExperimentalForwardModel for Gemma4<CpuBackend> {
         execution: ExecutionContext<'_>,
         runner: &mut ExperimentRunner,
     ) -> Result<CpuTensor, CpuError> {
+        runner.note_dispatch(execution.phase, DispatchPath::Generic);
         let mut hooks = ActiveHooks::new(runner, execution);
         self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
     }

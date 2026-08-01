@@ -161,6 +161,13 @@ impl Experiment for ActivationStats {
         EXPERIMENT_NAME
     }
 
+    fn arguments(&self) -> serde_json::Value {
+        serde_json::json!({
+            "output_path": self.output_path.to_string_lossy(),
+            "observation_only": true,
+        })
+    }
+
     fn on_model_loaded(&mut self, ctx: &ModelContext<'_>) -> Result<(), ExperimentError> {
         self.model = Some(ActivationStatsModel {
             family: ctx.family.to_string(),
@@ -285,6 +292,8 @@ mod tests {
                 1,
                 0,
                 TracingState::Enabled,
+                &[1, 2],
+                &[3],
             ))
             .unwrap();
 
@@ -324,6 +333,8 @@ mod tests {
                 1,
                 0,
                 TracingState::Disabled,
+                &[1],
+                &[2],
             ))
             .unwrap_err();
         assert!(error

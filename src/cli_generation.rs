@@ -9,8 +9,8 @@ use anyhow::Context;
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::experiments::{
-    ActivationStats, ExecutionContext, ExecutionPhase, ExperimentRunner, ExperimentalForwardModel,
-    GenerationContext, ModelContext, TracingState, ZeroLayerOutput, ZeroLayerOutputSpec,
+    ExecutionContext, ExecutionPhase, ExperimentRunner, ExperimentalForwardModel,
+    GenerationContext, ModelContext, TracingState,
 };
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
@@ -20,32 +20,6 @@ use ember::trace;
 use std::fs;
 use std::io::{self, Write};
 use std::time::Instant;
-
-pub(crate) fn start_zero_layer_output(
-    spec: ZeroLayerOutputSpec,
-    model_context: &ModelContext<'_>,
-) -> anyhow::Result<ExperimentRunner> {
-    let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(spec));
-    runner.on_model_loaded(model_context)?;
-    eprintln!(
-        "research experiment active: zero-layer-output layer={} stage={}; execution will be modified",
-        spec.layer(),
-        spec.stage()
-    );
-    Ok(runner)
-}
-
-pub(crate) fn start_activation_stats(
-    output_path: &str,
-    model_context: &ModelContext<'_>,
-) -> anyhow::Result<ExperimentRunner> {
-    let mut runner = ExperimentRunner::new(ActivationStats::new(output_path));
-    runner.on_model_loaded(model_context)?;
-    eprintln!(
-        "research experiment active: activation-stats output={output_path}; execution is observation-only"
-    );
-    Ok(runner)
-}
 
 pub(crate) fn run_single_prompt_with_experiment(
     backend: &CpuBackend,
@@ -456,6 +430,8 @@ where
         prompt_token_count: usize,
         generated_token_count: usize,
         decode_evaluations: usize,
+        input_token_ids: &[u32],
+        generated_token_ids: &[u32],
     ) -> anyhow::Result<()>;
 }
 
@@ -490,6 +466,8 @@ where
         _prompt_token_count: usize,
         _generated_token_count: usize,
         _decode_evaluations: usize,
+        _input_token_ids: &[u32],
+        _generated_token_ids: &[u32],
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -548,6 +526,8 @@ where
         prompt_token_count: usize,
         generated_token_count: usize,
         decode_evaluations: usize,
+        input_token_ids: &[u32],
+        generated_token_ids: &[u32],
     ) -> anyhow::Result<()> {
         let context = GenerationContext::new(
             self.model_context,
@@ -555,6 +535,8 @@ where
             generated_token_count,
             decode_evaluations,
             self.tracing,
+            input_token_ids,
+            generated_token_ids,
         );
         self.runner.on_generation_complete(&context)?;
         Ok(())
@@ -859,7 +841,13 @@ where
         log::debug!("generated: {:?}", output);
     }
 
-    execution.generation_complete(prompt_len, generated.len(), decode_evaluations)?;
+    execution.generation_complete(
+        prompt_len,
+        generated.len(),
+        decode_evaluations,
+        &all_tokens[..prompt_len],
+        &generated,
+    )?;
     Ok(output)
 }
 

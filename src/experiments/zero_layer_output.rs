@@ -136,6 +136,14 @@ impl Experiment for ZeroLayerOutput {
         "zero-layer-output"
     }
 
+    fn arguments(&self) -> serde_json::Value {
+        serde_json::json!({
+            "layer": self.spec.layer(),
+            "stage": self.spec.stage().to_string(),
+            "modifies_execution": true,
+        })
+    }
+
     fn on_model_loaded(&mut self, ctx: &ModelContext<'_>) -> Result<(), ExperimentError> {
         if self.spec.layer >= ctx.layer_count {
             return Err(ExperimentError::new(format!(

@@ -175,6 +175,10 @@ pub struct GenerationContext<'a> {
     pub generated_token_count: usize,
     pub decode_evaluations: usize,
     pub tracing: TracingState,
+    /// Input (prompt) token IDs, for experiment artifact provenance.
+    pub input_token_ids: &'a [u32],
+    /// Generated token IDs, for experiment artifact provenance.
+    pub generated_token_ids: &'a [u32],
 }
 
 impl<'a> GenerationContext<'a> {
@@ -185,6 +189,8 @@ impl<'a> GenerationContext<'a> {
         generated_token_count: usize,
         decode_evaluations: usize,
         tracing: TracingState,
+        input_token_ids: &'a [u32],
+        generated_token_ids: &'a [u32],
     ) -> Self {
         Self {
             model,
@@ -192,6 +198,8 @@ impl<'a> GenerationContext<'a> {
             generated_token_count,
             decode_evaluations,
             tracing,
+            input_token_ids,
+            generated_token_ids,
         }
     }
 }

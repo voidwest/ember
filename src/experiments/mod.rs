@@ -5,16 +5,19 @@
 //! a dynamic plugin ABI, registry, event bus, or compatibility commitment.
 
 mod activation_stats;
+mod capture;
 mod context;
 mod zero_layer_output;
 
 pub use activation_stats::ActivationStats;
+pub use capture::CaptureSink;
 pub use context::{
     ExecutionContext, ExecutionPhase, GenerationContext, LayerContext, ModelContext, ModelFamily,
     TensorAccess, TensorDType, TracingState,
 };
 pub use zero_layer_output::{ZeroLayerOutput, ZeroLayerOutputSpec, ZeroLayerOutputStage};
 
+use crate::artifact::{DispatchObservation, DispatchPath, ManifestExperiment};
 use crate::backend::{CpuBackend, CpuError};
 use crate::kv_cache::KVCache;
 use crate::model::ForwardModel;
@@ -174,6 +177,12 @@ impl core::error::Error for ExperimentFailure {
 pub trait Experiment: Send {
     fn name(&self) -> &'static str;
 
+    /// Structured arguments describing this experiment instance, recorded in
+    /// capture artifacts for provenance.
+    fn arguments(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
+
     fn on_model_loaded(&mut self, _ctx: &ModelContext<'_>) -> Result<(), ExperimentError> {
         Ok(())
     }
@@ -240,40 +249,110 @@ pub trait Experiment: Send {
 
 /// Owns the single experiment active for a generation run.
 pub struct ExperimentRunner {
-    experiment: Box<dyn Experiment>,
+    experiment: Option<Box<dyn Experiment>>,
+    capture: Option<CaptureSink>,
+    current_dispatch: DispatchPath,
+    dispatch_observations: Vec<DispatchObservation>,
 }
 
 impl ExperimentRunner {
     #[must_use]
     pub fn new(experiment: impl Experiment + 'static) -> Self {
         Self {
-            experiment: Box::new(experiment),
+            experiment: Some(Box::new(experiment)),
+            capture: None,
+            current_dispatch: DispatchPath::Unknown,
+            dispatch_observations: Vec::new(),
         }
+    }
+
+    /// A runner with no experiment, used for capture-only runs.
+    #[must_use]
+    pub fn capture_only(capture: CaptureSink) -> Self {
+        Self {
+            experiment: None,
+            capture: Some(capture),
+            current_dispatch: DispatchPath::Unknown,
+            dispatch_observations: Vec::new(),
+        }
+    }
+
+    /// Attach the v0.2 capture facility to this runner. Capture rides
+    /// alongside the single experiment; it is not itself an experiment.
+    #[must_use]
+    pub fn with_capture(mut self, capture: CaptureSink) -> Self {
+        self.capture = Some(capture);
+        self
+    }
+
+    #[must_use]
+    pub fn has_experiment(&self) -> bool {
+        self.experiment.is_some()
+    }
+
+    #[must_use]
+    pub fn has_capture(&self) -> bool {
+        self.capture.is_some()
+    }
+
+    /// Record the kernel/dispatch path used by the current evaluation.
+    /// A run can mix paths (generic prefill, fast/workspace decode), so this
+    /// is recorded per evaluation and per captured record.
+    pub(crate) fn note_dispatch(&mut self, phase: ExecutionPhase, path: DispatchPath) {
+        self.current_dispatch = path;
+        self.dispatch_observations.push(DispatchObservation {
+            phase: match phase {
+                ExecutionPhase::Prefill => "prefill",
+                ExecutionPhase::Decode => "decode",
+            }
+            .to_string(),
+            dispatch: path,
+        });
     }
 
     #[must_use]
     pub fn name(&self) -> &'static str {
-        self.experiment.name()
+        match &self.experiment {
+            Some(experiment) => experiment.name(),
+            None => "none",
+        }
     }
 
     pub fn on_model_loaded(&mut self, ctx: &ModelContext<'_>) -> Result<(), ExperimentFailure> {
         let name = self.name();
-        self.experiment.on_model_loaded(ctx).map_err(|source| {
-            ExperimentFailure::new(name, ExperimentHook::ModelLoaded, None, None, source)
-        })
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment.on_model_loaded(ctx).map_err(|source| {
+                ExperimentFailure::new(name, ExperimentHook::ModelLoaded, None, None, source)
+            })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            capture.on_model_loaded(ctx).map_err(|source| {
+                ExperimentFailure::new(
+                    "capture-activations",
+                    ExperimentHook::ModelLoaded,
+                    None,
+                    None,
+                    source,
+                )
+            })?;
+        }
+        Ok(())
     }
 
     pub fn before_prefill(&mut self, ctx: &ExecutionContext<'_>) -> Result<(), ExperimentFailure> {
         let name = self.name();
-        self.experiment.before_prefill(ctx).map_err(|source| {
-            ExperimentFailure::new(
-                name,
-                ExperimentHook::BeforePrefill,
-                Some(ctx.phase),
-                None,
-                source,
-            )
-        })
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment.before_prefill(ctx).map_err(|source| {
+                ExperimentFailure::new(
+                    name,
+                    ExperimentHook::BeforePrefill,
+                    Some(ctx.phase),
+                    None,
+                    source,
+                )
+            })?;
+        }
+        Ok(())
     }
 
     pub fn on_generation_complete(
@@ -281,11 +360,34 @@ impl ExperimentRunner {
         ctx: &GenerationContext<'_>,
     ) -> Result<(), ExperimentFailure> {
         let name = self.name();
-        self.experiment
-            .on_generation_complete(ctx)
-            .map_err(|source| {
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment.on_generation_complete(ctx).map_err(|source| {
                 ExperimentFailure::new(name, ExperimentHook::GenerationComplete, None, None, source)
-            })
+            })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let experiment_meta = ManifestExperiment {
+                name: name.to_string(),
+                arguments: self
+                    .experiment
+                    .as_ref()
+                    .map(|experiment| experiment.arguments())
+                    .unwrap_or_else(|| serde_json::Value::Null),
+            };
+            let observations = core::mem::take(&mut self.dispatch_observations);
+            capture
+                .finalize(ctx, experiment_meta, observations)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        "capture-activations",
+                        ExperimentHook::GenerationComplete,
+                        None,
+                        None,
+                        source,
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn before_layer(
@@ -296,9 +398,8 @@ impl ExperimentRunner {
     ) -> Result<(), ExperimentFailure> {
         let name = self.name();
         let ctx = LayerContext::new(execution, layer_index);
-        self.experiment
-            .before_layer(&ctx, tensor)
-            .map_err(|source| {
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment.before_layer(&ctx, tensor).map_err(|source| {
                 ExperimentFailure::new(
                     name,
                     ExperimentHook::BeforeLayer,
@@ -306,7 +407,23 @@ impl ExperimentRunner {
                     Some(layer_index),
                     source,
                 )
-            })
+            })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let dispatch = self.current_dispatch;
+            capture
+                .before_layer(&execution, layer_index, tensor, dispatch)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        "capture-activations",
+                        ExperimentHook::BeforeLayer,
+                        Some(execution.phase),
+                        Some(layer_index),
+                        source,
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn after_attention(
@@ -317,9 +434,8 @@ impl ExperimentRunner {
     ) -> Result<(), ExperimentFailure> {
         let name = self.name();
         let ctx = LayerContext::new(execution, layer_index);
-        self.experiment
-            .after_attention(&ctx, tensor)
-            .map_err(|source| {
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment.after_attention(&ctx, tensor).map_err(|source| {
                 ExperimentFailure::new(
                     name,
                     ExperimentHook::AfterAttention,
@@ -327,7 +443,23 @@ impl ExperimentRunner {
                     Some(layer_index),
                     source,
                 )
-            })
+            })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let dispatch = self.current_dispatch;
+            capture
+                .after_attention(&execution, layer_index, tensor, dispatch)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        "capture-activations",
+                        ExperimentHook::AfterAttention,
+                        Some(execution.phase),
+                        Some(layer_index),
+                        source,
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn after_mlp(
@@ -338,15 +470,32 @@ impl ExperimentRunner {
     ) -> Result<(), ExperimentFailure> {
         let name = self.name();
         let ctx = LayerContext::new(execution, layer_index);
-        self.experiment.after_mlp(&ctx, tensor).map_err(|source| {
-            ExperimentFailure::new(
-                name,
-                ExperimentHook::AfterMlp,
-                Some(execution.phase),
-                Some(layer_index),
-                source,
-            )
-        })
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment.after_mlp(&ctx, tensor).map_err(|source| {
+                ExperimentFailure::new(
+                    name,
+                    ExperimentHook::AfterMlp,
+                    Some(execution.phase),
+                    Some(layer_index),
+                    source,
+                )
+            })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let dispatch = self.current_dispatch;
+            capture
+                .after_mlp(&execution, layer_index, tensor, dispatch)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        "capture-activations",
+                        ExperimentHook::AfterMlp,
+                        Some(execution.phase),
+                        Some(layer_index),
+                        source,
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn after_layer(
@@ -357,15 +506,32 @@ impl ExperimentRunner {
     ) -> Result<(), ExperimentFailure> {
         let name = self.name();
         let ctx = LayerContext::new(execution, layer_index);
-        self.experiment.after_layer(&ctx, tensor).map_err(|source| {
-            ExperimentFailure::new(
-                name,
-                ExperimentHook::AfterLayer,
-                Some(execution.phase),
-                Some(layer_index),
-                source,
-            )
-        })
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment.after_layer(&ctx, tensor).map_err(|source| {
+                ExperimentFailure::new(
+                    name,
+                    ExperimentHook::AfterLayer,
+                    Some(execution.phase),
+                    Some(layer_index),
+                    source,
+                )
+            })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let dispatch = self.current_dispatch;
+            capture
+                .after_layer(&execution, layer_index, tensor, dispatch)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        "capture-activations",
+                        ExperimentHook::AfterLayer,
+                        Some(execution.phase),
+                        Some(layer_index),
+                        source,
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn before_logits(
@@ -374,17 +540,34 @@ impl ExperimentRunner {
         tensor: &mut TensorAccess<'_>,
     ) -> Result<(), ExperimentFailure> {
         let name = self.name();
-        self.experiment
-            .before_logits(execution, tensor)
-            .map_err(|source| {
-                ExperimentFailure::new(
-                    name,
-                    ExperimentHook::BeforeLogits,
-                    Some(execution.phase),
-                    None,
-                    source,
-                )
-            })
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment
+                .before_logits(execution, tensor)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        name,
+                        ExperimentHook::BeforeLogits,
+                        Some(execution.phase),
+                        None,
+                        source,
+                    )
+                })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let dispatch = self.current_dispatch;
+            capture
+                .before_logits(execution, tensor, dispatch)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        "capture-activations",
+                        ExperimentHook::BeforeLogits,
+                        Some(execution.phase),
+                        None,
+                        source,
+                    )
+                })?;
+        }
+        Ok(())
     }
 
     pub(crate) fn after_logits(
@@ -393,17 +576,34 @@ impl ExperimentRunner {
         tensor: &mut TensorAccess<'_>,
     ) -> Result<(), ExperimentFailure> {
         let name = self.name();
-        self.experiment
-            .after_logits(execution, tensor)
-            .map_err(|source| {
-                ExperimentFailure::new(
-                    name,
-                    ExperimentHook::AfterLogits,
-                    Some(execution.phase),
-                    None,
-                    source,
-                )
-            })
+        if let Some(experiment) = self.experiment.as_mut() {
+            experiment
+                .after_logits(execution, tensor)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        name,
+                        ExperimentHook::AfterLogits,
+                        Some(execution.phase),
+                        None,
+                        source,
+                    )
+                })?;
+        }
+        if let Some(capture) = self.capture.as_mut() {
+            let dispatch = self.current_dispatch;
+            capture
+                .after_logits(execution, tensor, dispatch)
+                .map_err(|source| {
+                    ExperimentFailure::new(
+                        "capture-activations",
+                        ExperimentHook::AfterLogits,
+                        Some(execution.phase),
+                        None,
+                        source,
+                    )
+                })?;
+        }
+        Ok(())
     }
 }
 
@@ -412,6 +612,7 @@ impl core::fmt::Debug for ExperimentRunner {
         formatter
             .debug_struct("ExperimentRunner")
             .field("experiment", &self.name())
+            .field("capture", &self.capture.is_some())
             .finish()
     }
 }
@@ -435,6 +636,7 @@ pub trait ExperimentalForwardModel: ForwardModel<CpuBackend> {
 }
 
 pub(crate) trait LayerHooks<T, E> {
+    fn note_dispatch(&mut self, _path: DispatchPath) {}
     fn before_layer(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
     fn after_attention(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
     fn after_mlp(&mut self, layer_index: usize, tensor: &mut T) -> Result<(), E>;
@@ -577,6 +779,10 @@ impl<T: ActivationStorage> LayerHooks<T, CpuError> for ActiveHooks<'_, '_> {
         let mut access = TensorAccess::new(rows, columns, tensor.values_mut());
         self.runner.after_logits(&self.execution, &mut access)?;
         Ok(())
+    }
+
+    fn note_dispatch(&mut self, path: DispatchPath) {
+        self.runner.note_dispatch(self.execution.phase, path);
     }
 }
 
@@ -823,6 +1029,8 @@ mod tests {
                 1,
                 0,
                 TracingState::Disabled,
+                &[],
+                &[],
             ))
             .unwrap();
 
