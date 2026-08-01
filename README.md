@@ -294,6 +294,35 @@ the patched extractor contract is implemented.
 
 ### research experiments
 
+### v0.2 research experiments: capture, patch, compare
+
+v0.2 makes experiment runs first-class research artifacts:
+
+```bash
+# capture selected activations into an artifact (manifest.json + tensors/)
+ember --arch qwen3 --model Qwen3-0.6B-Q8_0.gguf --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" --max-tokens 8 --temperature 0 \
+  --capture-activations capture.toml
+
+# replace one live activation with a captured tensor (unambiguous source)
+ember --arch qwen3 --model Qwen3-0.6B-Q8_0.gguf --tokenizer tokenizer-qwen3.json \
+  --prompt "The capital of France is" --max-tokens 8 --temperature 0 \
+  --activation-patch runs/baseline/manifest.json \
+  --patch-target 4:after-mlp:prefill --patch-target 4:after-mlp:decode:5
+
+# compare two artifacts record-by-record (deterministic, strict alignment)
+ember compare-artifacts --left runs/a/manifest.json --right runs/b/manifest.json
+```
+
+Capture is a run-level facility that rides alongside the single experiment
+(or runs alone); patching is one built-in experiment. Both are documented in
+[docs/activation-artifacts.md](docs/activation-artifacts.md) and
+[docs/activation-patching.md](docs/activation-patching.md). The complete
+capture -> intervene -> compare -> patch -> restore workflow is
+`scripts/research_example_capture_patch.sh`, which enforces the frozen
+restoration criterion: a patched run's captured logits must be bit-identical
+to the baseline's.
+
 Ember v0.1 has an intentionally unstable, statically compiled experiment API.
 It intentionally ships with two proof points: one observation experiment and
 one intervention experiment.

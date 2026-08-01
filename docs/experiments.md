@@ -210,3 +210,36 @@ Dynamic `.so`/`.dll` loading, WASM, Python plugins, runtime discovery,
 multiple concurrent experiments, async hooks, arbitrary weight mutation,
 custom tokenizers, and custom backends are intentionally unsupported in the
 MVP.
+
+## v0.2: capture, patching, and artifact comparison (experimental)
+
+The v0.2 additions keep the single-experiment invariant and add two
+run-level facilities:
+
+- **Selective activation capture** (`--capture-activations capture.toml`):
+  a run-level recorder that rides alongside the single experiment (or runs
+  alone). It copies tensor values only for explicitly selected records at the
+  six semantic stages, filtered by layer, phase, and decode position, with an
+  optional record cap. Capture runs **after** the experiment, so captured
+  values reflect post-intervention state. See
+  [activation-artifacts.md](activation-artifacts.md).
+- **`activation-patch`** (`--activation-patch manifest.json` +
+  repeatable `--patch-target LAYER:STAGE:PHASE[:POSITION]`): replaces one
+  live activation in place with a captured tensor. Source resolution is
+  unambiguous (exactly one record per target), validation covers family,
+  layer, width, dtype, and byte order, and every target must be applied or
+  generation fails. See [activation-patching.md](activation-patching.md).
+- **`compare-artifacts`** subcommand: deterministic record-by-record
+  comparison of two artifacts with hard refusal on ambiguous alignment and
+  exact-or-reported semantics for every field except `created_at_unix`.
+  See [activation-artifacts.md](activation-artifacts.md).
+
+Dispatch-path provenance: the runner records the kernel path (fast/workspace
+vs generic) per evaluation and per captured record, and the manifest lists
+phase-specific dispatch observations, since a single run can mix generic
+prefill with fast/workspace decode.
+
+The v0.1 guarantees below still hold: with no experiment and no capture, the
+disabled per-layer hook calls compile away and outputs are unchanged. With
+capture active but no record selected at a hook, the overhead is a branch
+plus no-op. Patching allocates nothing inside the hook after initialization.

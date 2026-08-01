@@ -3,7 +3,65 @@
 All notable changes to Ember are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Ember's Rust experiment API is explicitly unstable during the 0.1 series.
+Ember's Rust experiment API is explicitly unstable during the 0.1 series;
+the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
+carries no compatibility guarantee.
+
+## [0.2.0] - 2026-08-01
+
+### Added
+
+- Selective activation capture (`--capture-activations capture.toml`): a
+  run-level recorder that copies live tensors only for explicitly selected
+  records at the six semantic hook stages (before-layer, after-attention,
+  after-mlp, after-layer, before-logits, after-logits), filtered by layer,
+  phase, and decode position, with an optional record cap. Captures run
+  after the experiment, so records reflect post-intervention values.
+- Experimental activation artifacts (`0.2.0-experimental` schema): manifest
+  + little-endian f32 npy tensors with deterministic naming, tensor hashes,
+  model/tokenizer/GGUF provenance, prompt hash with optional prompt
+  omission, input and generated token IDs, per-evaluation dispatch path
+  observations, and the exact capture-config hash.
+- `activation-patch` experiment: replaces one live activation in place from
+  a captured artifact; targets resolve to exactly one source record
+  (position-qualified or unique match, hard error otherwise); validates
+  family, layer, width, dtype, and byte order; fails clearly when a target
+  is never applied; zero allocation inside the hook after initialization.
+- `compare-artifacts` subcommand: strict record alignment on
+  (phase, layer, stage, start position) with hard refusal on duplicates;
+  per-record bit-exact equality, max/mean/RMS diff, cosine, L2 norms,
+  relative L2 error, shape/dtype match; missing/extra record reporting;
+  deterministic JSON output; only `created_at_unix` is ignored.
+- Per-evaluation dispatch recording (fast/workspace vs generic) surfaced in
+  capture manifests as phase-specific observations.
+- `GenerationContext` now carries input and generated token IDs.
+- Research example workflow: `scripts/research_example_capture_patch.sh`
+  (capture -> intervene -> compare -> patch -> restore) with a frozen
+  restoration criterion: patched-run logits must be bit-identical to the
+  baseline's.
+
+### Changed
+
+- `ExperimentRunner` now holds an optional experiment and an optional
+  capture sink; the single-experiment invariant is unchanged.
+- CLI: `--capture-activations`, `--activation-patch`,
+  `--patch-target` (repeatable), and the `compare-artifacts` subcommand;
+  capture and patching participate only in the generation path.
+
+### Unchanged
+
+- No-experiment parity: outputs, tracing, layer dumps, hidden-state
+  extraction, and kernel selection are untouched when no experiment or
+  capture is active; disabled per-layer hook calls still compile away.
+
+### Known limitations
+
+- `token_positions` filters decode steps only; prefill records are
+  whole-sequence.
+- One target layer/stage per patch experiment (multiple phase/position
+  targets allowed).
+- Capture and patching do not participate in probe/extract/dump modes.
+- The v0.2 artifact schema is experimental and may change without notice.
 
 ## [0.1.0] - 2026-07-31
 

@@ -32,6 +32,8 @@ docs/plots/root_probe_scale_comparison.png
 !docs/packed-q8-research-memo.md
 !docs/packed-q8-lifecycle.md
 !docs/experiments.md
+!docs/activation-artifacts.md
+!docs/activation-patching.md
 /REPRODUCIBILITY.md
 /ARTIFACT_STATUS.md
 /CITATION.cff
