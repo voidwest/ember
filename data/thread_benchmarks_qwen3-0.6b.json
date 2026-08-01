@@ -1,0 +1,318 @@
+{
+  "created_at": "2026-08-01T18:00:24.277682+00:00",
+  "arch": "qwen3",
+  "tokenizer": "tokenizer-qwen3.json",
+  "prompt": "The capital of France is",
+  "tokens": 32,
+  "max_seq_len": null,
+  "threads": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "repeats": 3,
+  "results": [
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 1,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 2.810716109999703,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 159.0,
+          "tok_s": 31.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 159.0ms -> 31 tok/s",
+        "decode:  31 evals in 2178.8ms -> 14 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 1,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 2.8064909800013993,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 159.9,
+          "tok_s": 31.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 159.9ms -> 31 tok/s",
+        "decode:  31 evals in 2174.2ms -> 14 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 1,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 2.8236508240006515,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 149.2,
+          "tok_s": 34.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 149.2ms -> 34 tok/s",
+        "decode:  31 evals in 2193.9ms -> 14 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 2,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 1.8342623569988064,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 113.5,
+          "tok_s": 44.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 113.5ms -> 44 tok/s",
+        "decode:  31 evals in 1250.2ms -> 25 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 2,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 1.8483530010016693,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 112.3,
+          "tok_s": 45.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 112.3ms -> 45 tok/s",
+        "decode:  31 evals in 1267.0ms -> 24 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 2,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 1.8889725099998032,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 137.4,
+          "tok_s": 36.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 137.4ms -> 36 tok/s",
+        "decode:  31 evals in 1280.9ms -> 24 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 4,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 1.414345974000753,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 91.9,
+          "tok_s": 54.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 91.9ms -> 54 tok/s",
+        "decode:  31 evals in 849.6ms -> 36 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 4,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 1.3844684489995416,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 90.8,
+          "tok_s": 55.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 90.8ms -> 55 tok/s",
+        "decode:  31 evals in 816.4ms -> 38 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 4,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 1.413761304000218,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 88.9,
+          "tok_s": 56.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 88.9ms -> 56 tok/s",
+        "decode:  31 evals in 843.1ms -> 37 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 8,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 1.3177737980004167,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 66.7,
+          "tok_s": 75.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 66.7ms -> 75 tok/s",
+        "decode:  31 evals in 761.1ms -> 41 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 8,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 1.3407341959991754,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 67.7,
+          "tok_s": 74.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 67.7ms -> 74 tok/s",
+        "decode:  31 evals in 764.2ms -> 41 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 8,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 1.3336590230010188,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 67.2,
+          "tok_s": 74.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 67.2ms -> 74 tok/s",
+        "decode:  31 evals in 769.9ms -> 40 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 16,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 1.5018076640008076,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 80.3,
+          "tok_s": 62.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 80.3ms -> 62 tok/s",
+        "decode:  31 evals in 894.1ms -> 35 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 16,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 1.487709115999678,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 75.6,
+          "tok_s": 66.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 75.6ms -> 66 tok/s",
+        "decode:  31 evals in 897.3ms -> 35 eval/s"
+      ]
+    },
+    {
+      "label": "qwen3-0.6b",
+      "model": "Qwen3-0.6B-Q8_0.gguf",
+      "threads": 16,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 1.5047182660000544,
+      "benchmark": {
+        "prefill": {
+          "tokens": 5,
+          "ms": 76.6,
+          "tok_s": 65.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 5 tokens in 76.6ms -> 65 tok/s",
+        "decode:  31 evals in 904.7ms -> 34 eval/s"
+      ]
+    }
+  ]
+}

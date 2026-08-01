@@ -1,0 +1,1204 @@
+{
+ "results": [
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 2.810716109999703,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 159.0,
+     "tok_s": 31.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 159.0ms -> 31 tok/s",
+    "decode:  31 evals in 2178.8ms -> 14 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 2.8064909800013993,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 159.9,
+     "tok_s": 31.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 159.9ms -> 31 tok/s",
+    "decode:  31 evals in 2174.2ms -> 14 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 2.8236508240006515,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 149.2,
+     "tok_s": 34.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 149.2ms -> 34 tok/s",
+    "decode:  31 evals in 2193.9ms -> 14 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 1.8342623569988064,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 113.5,
+     "tok_s": 44.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 113.5ms -> 44 tok/s",
+    "decode:  31 evals in 1250.2ms -> 25 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 1.8483530010016693,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 112.3,
+     "tok_s": 45.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 112.3ms -> 45 tok/s",
+    "decode:  31 evals in 1267.0ms -> 24 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 1.8889725099998032,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 137.4,
+     "tok_s": 36.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 137.4ms -> 36 tok/s",
+    "decode:  31 evals in 1280.9ms -> 24 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 1.414345974000753,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 91.9,
+     "tok_s": 54.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 91.9ms -> 54 tok/s",
+    "decode:  31 evals in 849.6ms -> 36 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 1.3844684489995416,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 90.8,
+     "tok_s": 55.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 90.8ms -> 55 tok/s",
+    "decode:  31 evals in 816.4ms -> 38 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 1.413761304000218,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 88.9,
+     "tok_s": 56.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 88.9ms -> 56 tok/s",
+    "decode:  31 evals in 843.1ms -> 37 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 1.3177737980004167,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 66.7,
+     "tok_s": 75.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 66.7ms -> 75 tok/s",
+    "decode:  31 evals in 761.1ms -> 41 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 1.3407341959991754,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 67.7,
+     "tok_s": 74.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 67.7ms -> 74 tok/s",
+    "decode:  31 evals in 764.2ms -> 41 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 1.3336590230010188,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 67.2,
+     "tok_s": 74.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 67.2ms -> 74 tok/s",
+    "decode:  31 evals in 769.9ms -> 40 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 1.5018076640008076,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 80.3,
+     "tok_s": 62.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 80.3ms -> 62 tok/s",
+    "decode:  31 evals in 894.1ms -> 35 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 1.487709115999678,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 75.6,
+     "tok_s": 66.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 75.6ms -> 66 tok/s",
+    "decode:  31 evals in 897.3ms -> 35 eval/s"
+   ]
+  },
+  {
+   "label": "qwen3-0.6b",
+   "model": "Qwen3-0.6B-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 1.5047182660000544,
+   "benchmark": {
+    "prefill": {
+     "tokens": 5,
+     "ms": 76.6,
+     "tok_s": 65.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 5 tokens in 76.6ms -> 65 tok/s",
+    "decode:  31 evals in 904.7ms -> 34 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 4.084022068000195,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 347.0,
+     "tok_s": 17.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 347.0ms -> 17 tok/s",
+    "decode:  31 evals in 2616.7ms -> 12 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 3.9738047450009617,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 334.7,
+     "tok_s": 18.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 334.7ms -> 18 tok/s",
+    "decode:  31 evals in 2522.7ms -> 12 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 3.9794349370004056,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 333.9,
+     "tok_s": 18.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 333.9ms -> 18 tok/s",
+    "decode:  31 evals in 2524.7ms -> 12 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 2.909953215999849,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 298.0,
+     "tok_s": 20.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 298.0ms -> 20 tok/s",
+    "decode:  31 evals in 1500.8ms -> 21 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 2.9189906249994237,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 283.8,
+     "tok_s": 21.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 283.8ms -> 21 tok/s",
+    "decode:  31 evals in 1507.0ms -> 21 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 2.9750851419994433,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 274.6,
+     "tok_s": 22.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 274.6ms -> 22 tok/s",
+    "decode:  31 evals in 1515.1ms -> 20 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 2.444494945999395,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 242.8,
+     "tok_s": 25.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 242.8ms -> 25 tok/s",
+    "decode:  31 evals in 993.8ms -> 31 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 2.412848899000892,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 230.5,
+     "tok_s": 26.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 230.5ms -> 26 tok/s",
+    "decode:  31 evals in 976.8ms -> 32 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 2.3722914410009253,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 229.4,
+     "tok_s": 26.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 229.4ms -> 26 tok/s",
+    "decode:  31 evals in 975.5ms -> 32 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 2.29528483499962,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 170.8,
+     "tok_s": 35.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 170.8ms -> 35 tok/s",
+    "decode:  31 evals in 951.1ms -> 33 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 2.2547093979992496,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 166.6,
+     "tok_s": 36.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 166.6ms -> 36 tok/s",
+    "decode:  31 evals in 898.3ms -> 35 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 2.3122518429991032,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 170.4,
+     "tok_s": 35.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 170.4ms -> 35 tok/s",
+    "decode:  31 evals in 897.8ms -> 35 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 2.4246073190006427,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 178.5,
+     "tok_s": 34.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 178.5ms -> 34 tok/s",
+    "decode:  31 evals in 990.9ms -> 31 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 2.4355822290017386,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 180.1,
+     "tok_s": 33.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 180.1ms -> 33 tok/s",
+    "decode:  31 evals in 1004.3ms -> 31 eval/s"
+   ]
+  },
+  {
+   "label": "llama-1b",
+   "model": "Llama-3.2-1B-Instruct-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 2.443589040000006,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 182.4,
+     "tok_s": 33.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 182.4ms -> 33 tok/s",
+    "decode:  31 evals in 996.1ms -> 31 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 15.144953716999225,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 3223.9,
+     "tok_s": 2.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 3223.9ms -> 2 tok/s",
+    "decode:  31 evals in 7036.4ms -> 4 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 9.947297816999708,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 925.9,
+     "tok_s": 6.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 925.9ms -> 6 tok/s",
+    "decode:  31 evals in 6555.3ms -> 5 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 10.271268428001349,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 926.3,
+     "tok_s": 6.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 926.3ms -> 6 tok/s",
+    "decode:  31 evals in 6903.4ms -> 4 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 7.107071869999345,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 788.8,
+     "tok_s": 8.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 788.8ms -> 8 tok/s",
+    "decode:  31 evals in 3993.0ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 7.003850056998999,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 807.3,
+     "tok_s": 7.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 807.3ms -> 7 tok/s",
+    "decode:  31 evals in 3813.0ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 7.297059185000762,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 828.4,
+     "tok_s": 7.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 828.4ms -> 7 tok/s",
+    "decode:  31 evals in 4055.7ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 5.56760816699898,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 574.0,
+     "tok_s": 10.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 574.0ms -> 10 tok/s",
+    "decode:  31 evals in 2561.1ms -> 12 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 5.564978899999915,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 596.9,
+     "tok_s": 10.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 596.9ms -> 10 tok/s",
+    "decode:  31 evals in 2476.0ms -> 13 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 5.672561064000547,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 587.7,
+     "tok_s": 10.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 587.7ms -> 10 tok/s",
+    "decode:  31 evals in 2551.8ms -> 12 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 5.328221144000054,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 454.9,
+     "tok_s": 13.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 454.9ms -> 13 tok/s",
+    "decode:  31 evals in 2331.8ms -> 13 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 5.360152774999733,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 468.1,
+     "tok_s": 13.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 468.1ms -> 13 tok/s",
+    "decode:  31 evals in 2319.3ms -> 13 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 5.7951087890014605,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 470.6,
+     "tok_s": 13.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 470.6ms -> 13 tok/s",
+    "decode:  31 evals in 2728.8ms -> 11 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 6.878672504999486,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 552.8,
+     "tok_s": 11.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 552.8ms -> 11 tok/s",
+    "decode:  31 evals in 3169.3ms -> 10 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 6.26163291299963,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 598.0,
+     "tok_s": 10.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 598.0ms -> 10 tok/s",
+    "decode:  31 evals in 2951.6ms -> 11 eval/s"
+   ]
+  },
+  {
+   "label": "llama-3b",
+   "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 6.138609206998808,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 538.3,
+     "tok_s": 11.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 538.3ms -> 11 tok/s",
+    "decode:  31 evals in 2718.5ms -> 11 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 11.37547818799976,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 740.2,
+     "tok_s": 8.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 740.2ms -> 8 tok/s",
+    "decode:  31 evals in 7313.7ms -> 4 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 11.427398696001546,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 787.9,
+     "tok_s": 8.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 787.9ms -> 8 tok/s",
+    "decode:  31 evals in 7389.5ms -> 4 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 1,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 11.132740551000097,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 703.1,
+     "tok_s": 9.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 703.1ms -> 9 tok/s",
+    "decode:  31 evals in 7302.6ms -> 4 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 8.53412167300121,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 595.7,
+     "tok_s": 10.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 595.7ms -> 10 tok/s",
+    "decode:  31 evals in 4856.2ms -> 6 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 8.610304920999624,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 662.0,
+     "tok_s": 9.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 662.0ms -> 9 tok/s",
+    "decode:  31 evals in 4801.1ms -> 6 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 2,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 9.31297265000103,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 608.1,
+     "tok_s": 10.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 608.1ms -> 10 tok/s",
+    "decode:  31 evals in 5374.6ms -> 6 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 7.527451874999315,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 389.6,
+     "tok_s": 15.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 389.6ms -> 15 tok/s",
+    "decode:  31 evals in 3950.8ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 7.662249459999657,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 404.2,
+     "tok_s": 15.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 404.2ms -> 15 tok/s",
+    "decode:  31 evals in 4046.4ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 4,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 7.797961272000975,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 422.3,
+     "tok_s": 14.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 422.3ms -> 14 tok/s",
+    "decode:  31 evals in 3959.7ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 7.30008705399996,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 354.4,
+     "tok_s": 17.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 354.4ms -> 17 tok/s",
+    "decode:  31 evals in 3652.8ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 7.31511882400082,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 355.1,
+     "tok_s": 17.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 355.1ms -> 17 tok/s",
+    "decode:  31 evals in 3675.4ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 8,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 7.374962617999699,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 365.0,
+     "tok_s": 16.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 365.0ms -> 16 tok/s",
+    "decode:  31 evals in 3702.4ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 0,
+   "returncode": 0,
+   "elapsed_s": 7.745965271000387,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 372.5,
+     "tok_s": 16.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 372.5ms -> 16 tok/s",
+    "decode:  31 evals in 4067.8ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 1,
+   "returncode": 0,
+   "elapsed_s": 7.740631151000343,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 375.8,
+     "tok_s": 16.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 375.8ms -> 16 tok/s",
+    "decode:  31 evals in 4082.5ms -> 8 eval/s"
+   ]
+  },
+  {
+   "label": "gemma-e2b",
+   "model": "gemma-4-E2B-it-Q8_0.gguf",
+   "threads": 16,
+   "repeat": 2,
+   "returncode": 0,
+   "elapsed_s": 7.784509918001277,
+   "benchmark": {
+    "prefill": {
+     "tokens": 6,
+     "ms": 372.6,
+     "tok_s": 16.0
+    }
+   },
+   "stderr_tail": [
+    "--- benchmark ---",
+    "prefill: 6 tokens in 372.6ms -> 16 tok/s",
+    "decode:  31 evals in 4072.8ms -> 8 eval/s"
+   ]
+  }
+ ]
+}

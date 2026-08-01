@@ -1,0 +1,318 @@
+{
+  "created_at": "2026-08-01T18:02:56.088718+00:00",
+  "arch": "llama",
+  "tokenizer": "tokenizer.json",
+  "prompt": "The capital of France is",
+  "tokens": 32,
+  "max_seq_len": null,
+  "threads": [
+    1,
+    2,
+    4,
+    8,
+    16
+  ],
+  "repeats": 3,
+  "results": [
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 1,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 15.144953716999225,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 3223.9,
+          "tok_s": 2.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 3223.9ms -> 2 tok/s",
+        "decode:  31 evals in 7036.4ms -> 4 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 1,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 9.947297816999708,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 925.9,
+          "tok_s": 6.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 925.9ms -> 6 tok/s",
+        "decode:  31 evals in 6555.3ms -> 5 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 1,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 10.271268428001349,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 926.3,
+          "tok_s": 6.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 926.3ms -> 6 tok/s",
+        "decode:  31 evals in 6903.4ms -> 4 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 2,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 7.107071869999345,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 788.8,
+          "tok_s": 8.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 788.8ms -> 8 tok/s",
+        "decode:  31 evals in 3993.0ms -> 8 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 2,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 7.003850056998999,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 807.3,
+          "tok_s": 7.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 807.3ms -> 7 tok/s",
+        "decode:  31 evals in 3813.0ms -> 8 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 2,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 7.297059185000762,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 828.4,
+          "tok_s": 7.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 828.4ms -> 7 tok/s",
+        "decode:  31 evals in 4055.7ms -> 8 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 4,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 5.56760816699898,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 574.0,
+          "tok_s": 10.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 574.0ms -> 10 tok/s",
+        "decode:  31 evals in 2561.1ms -> 12 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 4,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 5.564978899999915,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 596.9,
+          "tok_s": 10.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 596.9ms -> 10 tok/s",
+        "decode:  31 evals in 2476.0ms -> 13 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 4,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 5.672561064000547,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 587.7,
+          "tok_s": 10.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 587.7ms -> 10 tok/s",
+        "decode:  31 evals in 2551.8ms -> 12 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 8,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 5.328221144000054,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 454.9,
+          "tok_s": 13.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 454.9ms -> 13 tok/s",
+        "decode:  31 evals in 2331.8ms -> 13 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 8,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 5.360152774999733,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 468.1,
+          "tok_s": 13.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 468.1ms -> 13 tok/s",
+        "decode:  31 evals in 2319.3ms -> 13 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 8,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 5.7951087890014605,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 470.6,
+          "tok_s": 13.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 470.6ms -> 13 tok/s",
+        "decode:  31 evals in 2728.8ms -> 11 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 16,
+      "repeat": 0,
+      "returncode": 0,
+      "elapsed_s": 6.878672504999486,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 552.8,
+          "tok_s": 11.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 552.8ms -> 11 tok/s",
+        "decode:  31 evals in 3169.3ms -> 10 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 16,
+      "repeat": 1,
+      "returncode": 0,
+      "elapsed_s": 6.26163291299963,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 598.0,
+          "tok_s": 10.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 598.0ms -> 10 tok/s",
+        "decode:  31 evals in 2951.6ms -> 11 eval/s"
+      ]
+    },
+    {
+      "label": "llama-3b",
+      "model": "Llama-3.2-3B-Instruct-Q8_0.gguf",
+      "threads": 16,
+      "repeat": 2,
+      "returncode": 0,
+      "elapsed_s": 6.138609206998808,
+      "benchmark": {
+        "prefill": {
+          "tokens": 6,
+          "ms": 538.3,
+          "tok_s": 11.0
+        }
+      },
+      "stderr_tail": [
+        "--- benchmark ---",
+        "prefill: 6 tokens in 538.3ms -> 11 tok/s",
+        "decode:  31 evals in 2718.5ms -> 11 eval/s"
+      ]
+    }
+  ]
+}
