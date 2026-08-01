@@ -6,8 +6,8 @@ mod cli_probe;
 
 use cli_commands::{
     effective_context_limit, run_bench_decode_command, run_bench_lifecycle_command,
-    run_extract_command, run_native_logits_reference_command, run_validate_backends_command,
-    run_validate_run_command, validate_experiment_options,
+    run_compare_artifacts_command, run_extract_command, run_native_logits_reference_command,
+    run_validate_backends_command, run_validate_run_command, validate_experiment_options,
 };
 use cli_generation::{
     bail_dump_layers_unsupported, demo_mode, dump_last_logits, dump_layers_gemma4,
@@ -250,6 +250,9 @@ pub(crate) enum Commands {
     ValidateRun(ValidateRunCommand),
     /// compare native and llama.cpp backend outputs where comparable
     ValidateBackends(ValidateBackendsCommand),
+
+    /// compare two v0.2 activation artifacts record-by-record
+    CompareArtifacts(CompareArtifactsCommand),
     /// benchmark model-only single-token decode with llama-bench-compatible timing
     BenchDecode(BenchDecodeCommand),
     /// measure Llama packed-weight lifecycle timing and process residency
@@ -449,6 +452,25 @@ pub(crate) struct ValidateBackendsCommand {
 }
 
 #[derive(ClapArgs)]
+pub(crate) struct CompareArtifactsCommand {
+    /// left v0.2 activation artifact manifest.json
+    #[arg(long)]
+    left: String,
+
+    /// right v0.2 activation artifact manifest.json
+    #[arg(long)]
+    right: String,
+
+    /// emit machine-readable JSON to stdout (default: human-readable)
+    #[arg(long)]
+    json: bool,
+
+    /// write the report JSON to this path
+    #[arg(long)]
+    output: Option<String>,
+}
+
+#[derive(ClapArgs)]
 pub(crate) struct ValidateRunCommand {
     /// existing Ember artifact run directory
     run_dir: String,
@@ -526,6 +548,7 @@ fn main() -> anyhow::Result<()> {
             }
             Commands::ValidateRun(command) => run_validate_run_command(command),
             Commands::ValidateBackends(command) => run_validate_backends_command(command),
+            Commands::CompareArtifacts(command) => run_compare_artifacts_command(command),
             Commands::BenchDecode(command) => run_bench_decode_command(command),
             Commands::BenchLifecycle(command) => run_bench_lifecycle_command(command),
         };

@@ -1,10 +1,13 @@
 //! Subcommand implementations: extraction, validation, logits reference, benchmarks.
 //! Split out of `main.rs` (2026-08-01) to keep the CLI dispatcher thin.
 
-use crate::cli_support::{default_tokenizer_for_arch, gguf_metadata_json, parse_layers_list};
+use crate::cli_support::{
+    default_tokenizer_for_arch, gguf_metadata_json, parse_layers_list, write_json_file,
+};
 use crate::{
-    rayon_current_num_threads, Args, BenchDecodeCommand, BenchLifecycleCommand, ExtractCommand,
-    LifecycleModeArg, NativeLogitsReferenceCommand, ValidateBackendsCommand, ValidateRunCommand,
+    rayon_current_num_threads, Args, BenchDecodeCommand, BenchLifecycleCommand,
+    CompareArtifactsCommand, ExtractCommand, LifecycleModeArg, NativeLogitsReferenceCommand,
+    ValidateBackendsCommand, ValidateRunCommand,
 };
 use anyhow::Context;
 use ember::backend::Backend;
@@ -80,6 +83,23 @@ pub(crate) fn run_validate_backends_command(
     }
     let _ = (&command.model, &command.prompts, &command.layers);
     anyhow::bail!("validate-backends requires --native-run and --external-run for Milestone 3")
+}
+
+pub(crate) fn run_compare_artifacts_command(
+    command: &CompareArtifactsCommand,
+) -> anyhow::Result<()> {
+    let report = ember::compare::compare_artifacts(&command.left, &command.right)
+        .map_err(|error| anyhow::anyhow!("compare-artifacts: {error}"))?;
+    if command.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", ember::compare::render_human(&report));
+    }
+    if let Some(output) = &command.output {
+        write_json_file(output, &serde_json::to_value(&report)?)?;
+        eprintln!("wrote comparison report to {output}");
+    }
+    Ok(())
 }
 
 pub(crate) fn run_native_logits_reference_command(
