@@ -10,7 +10,7 @@ use std::process::Command;
 /// tokenizer file is absent.
 static EMBEDDED_LLAMA_TOKENIZER: &str = include_str!("../tokenizer.json");
 
-pub(super) fn default_tokenizer_for_arch(arch: &str) -> &'static str {
+pub(crate) fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     match arch {
         "gpt2" => "tokenizer-gpt2.json",
         "llama" => "tokenizer.json",
@@ -20,7 +20,7 @@ pub(super) fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     }
 }
 
-pub(super) fn resolve_tokenizer(path: &str) -> String {
+pub(crate) fn resolve_tokenizer(path: &str) -> String {
     if std::path::Path::new(path).exists() {
         return path.to_string();
     }
@@ -37,7 +37,7 @@ pub(super) fn resolve_tokenizer(path: &str) -> String {
     path.to_string()
 }
 
-pub(super) fn parse_layers_list(value: Option<&str>) -> anyhow::Result<Vec<usize>> {
+pub(crate) fn parse_layers_list(value: Option<&str>) -> anyhow::Result<Vec<usize>> {
     let Some(value) = value else {
         return Ok(Vec::new());
     };
@@ -53,7 +53,7 @@ pub(super) fn parse_layers_list(value: Option<&str>) -> anyhow::Result<Vec<usize
         .collect()
 }
 
-pub(super) fn parse_temperature(value: &str) -> Result<f32, String> {
+pub(crate) fn parse_temperature(value: &str) -> Result<f32, String> {
     let temperature = value
         .parse::<f32>()
         .map_err(|_| format!("invalid temperature '{value}'"))?;
@@ -64,7 +64,7 @@ pub(super) fn parse_temperature(value: &str) -> Result<f32, String> {
     }
 }
 
-pub(super) fn parse_top_k(value: &str) -> Result<usize, String> {
+pub(crate) fn parse_top_k(value: &str) -> Result<usize, String> {
     let top_k = value
         .parse::<usize>()
         .map_err(|_| format!("invalid top-k '{value}'"))?;
@@ -75,7 +75,7 @@ pub(super) fn parse_top_k(value: &str) -> Result<usize, String> {
     }
 }
 
-pub(super) fn parse_top_p(value: &str) -> Result<f32, String> {
+pub(crate) fn parse_top_p(value: &str) -> Result<f32, String> {
     let top_p = value
         .parse::<f32>()
         .map_err(|_| format!("invalid top-p '{value}'"))?;
@@ -86,7 +86,7 @@ pub(super) fn parse_top_p(value: &str) -> Result<f32, String> {
     }
 }
 
-pub(super) fn parse_max_seq_len(value: &str) -> Result<usize, String> {
+pub(crate) fn parse_max_seq_len(value: &str) -> Result<usize, String> {
     let max_seq_len = value
         .parse::<usize>()
         .map_err(|_| format!("invalid max sequence length '{value}'"))?;
@@ -97,7 +97,7 @@ pub(super) fn parse_max_seq_len(value: &str) -> Result<usize, String> {
     }
 }
 
-pub(super) fn gguf_metadata_json(loader: &GgufLoader) -> serde_json::Value {
+pub(crate) fn gguf_metadata_json(loader: &GgufLoader) -> serde_json::Value {
     let mut entries = serde_json::Map::new();
     for (key, value) in &loader.metadata {
         entries.insert(key.clone(), gguf_value_json(value));
@@ -120,12 +120,12 @@ fn gguf_value_json(value: &GgufValue) -> serde_json::Value {
     }
 }
 
-pub(super) fn write_json_file(path: &str, value: &serde_json::Value) -> anyhow::Result<()> {
+pub(crate) fn write_json_file(path: &str, value: &serde_json::Value) -> anyhow::Result<()> {
     fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
 }
 
-pub(super) fn build_run_manifest(
+pub(crate) fn build_run_manifest(
     args: &Args,
     tokenizer_path: &str,
     model_sha256: Option<&str>,
@@ -264,7 +264,7 @@ fn cpu_features_detected() -> Vec<&'static str> {
     features
 }
 
-pub(super) fn token_audit_json(
+pub(crate) fn token_audit_json(
     prompt: &str,
     tokenizer_path: &str,
     tokenizer_sha256: Option<&str>,

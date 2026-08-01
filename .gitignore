@@ -28,6 +28,9 @@ docs/plots/root_probe_scale_comparison.png
 !/CHANGELOG.md
 !/CONTRIBUTING.md
 !docs/dataset_pipeline.md
+!docs/packed-q8-phase0.md
+!docs/packed-q8-research-memo.md
+!docs/packed-q8-lifecycle.md
 !docs/experiments.md
 /REPRODUCIBILITY.md
 /ARTIFACT_STATUS.md
@@ -42,3 +45,27 @@ ingest.py
 
 # generated SVG assets
 /SVGs/
+
+# paper source is tracked; latex build junk is not
+/paper/*.aux
+/paper/*.log
+/paper/*.out
+/paper/*.bbl
+/paper/*.blg
+/paper/*.fls
+/paper/*.fdb_latexmk
+/paper/*.bak
+/paper/*.synctex.gz
+/paper/*.zip
+/paper/.codex/
+/paper/.agents/
+/paper/.deepseek/
+# overleaf backup zip
+/paper-overleaf.zip
+# paper markdown is artifact content, not scratch
+!paper/*.md
+
+# regenerable probe activations anywhere under data/
+data/**/activations.npy
+data/**/*_activations_correctness.json
+data/**/*_activations_metadata.json

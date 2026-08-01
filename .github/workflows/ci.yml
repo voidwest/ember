@@ -47,3 +47,8 @@ jobs:
           python -m compileall -q probes stimuli scripts
           python probes/run_probe_matrix.py --model smoke:dummy.gguf --templates en_zero --positions last --generate-tokens 1 --dry-run
           python probes/test_probe_workflows.py
+
+      - name: python tests
+        run: |
+          python -m pip install -e ".[dev]"
+          python -m pytest tests -q
