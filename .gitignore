@@ -74,6 +74,8 @@ ingest.py
 !paper/*.md
 
 # regenerable probe activations anywhere under data/
+data/**/*.npy
+data/**/*.npz
 data/**/activations.npy
 data/**/*_activations_correctness.json
 data/**/*_activations_metadata.json
