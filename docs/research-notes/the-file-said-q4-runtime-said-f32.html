@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="The File Said Q4. The Runtime Said f32." />
+        <meta property="og:description" content="A small Ember audit of checkpoint size, runtime memory, and decode performance." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/the-file-said-q4-runtime-said-f32.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>The File Said Q4. The Runtime Said f32. · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>The File Said Q4. The Runtime Said f32.</h1>
+
+        <div class="meta">
+            research note · a small audit of checkpoint size, runtime memory, and decode performance in Ember<br>
+            mohammed al-thobaiti · 2026-08-01<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">quantization</span>
+            <span class="tag key">CPU inference</span>
+            <span class="tag key">runtime systems</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>
+            a smaller GGUF file looks like a smaller deployment. in Ember's
+            current implementation, that intuition fails for the K-quant
+            paths. Q6_K and Q4_K_M are smaller on disk, but their weights are
+            expanded to f32 at load and kept in that expanded form.
+        </p>
+
+        <p>
+            this is a runtime-representation audit, not a claim that Q4_K_M or
+            Q6_K are inherently inefficient. the result comes from Ember's
+            current loader and backend policy. it should not be generalized to
+            GGUF, K-quants, or low-bit quantization as a whole.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">status</div>
+            <p>
+                engineering audit only. the table covers two small model
+                families on one local machine. it is not a novel quantization
+                result, a production deployment claim, or a comparison that
+                makes Ember faster than llama.cpp.
+            </p>
+        </div>
+
+        <h2>the question</h2>
+
+        <p>
+            <em>does a smaller quantized checkpoint necessarily produce a
+            smaller and faster local deployment?</em>
+        </p>
+
+        <h2>the result</h2>
+
+        <p>
+            the frozen deployment benchmark measures file size, load plus
+            prefill time, decode throughput, and peak RSS. the last column is
+            the important one for interpreting the table: it records what
+            Ember keeps in memory and executes, not only what the filename says.
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>model</th>
+                        <th>quantization</th>
+                        <th>file size</th>
+                        <th>load + prefill</th>
+                        <th>decode tok/s</th>
+                        <th>peak RSS</th>
+                        <th>runtime representation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td>Qwen2.5-1.5B-Instruct</td><td>Q8_0</td><td>1807 MB</td><td>0.97 s</td><td>40.6</td><td>1941 MB</td><td>compressed-resident</td></tr>
+                    <tr><td>Qwen2.5-1.5B-Instruct</td><td>Q6_K</td><td>1396 MB</td><td>14.4 s</td><td>2.5</td><td>8713 MB</td><td>persistent f32 expansion</td></tr>
+                    <tr><td>Qwen2.5-1.5B-Instruct</td><td>Q4_K_M</td><td>1066 MB</td><td>13.0 s</td><td>2.6</td><td>8712 MB</td><td>persistent f32 expansion</td></tr>
+                    <tr><td>Llama-3.2-1B</td><td>Q8_0</td><td>1260 MB</td><td>2.03 s</td><td>149.6</td><td>2685 MB</td><td>compressed-resident</td></tr>
+                    <tr><td>Llama-3.2-1B</td><td>Q6_K</td><td>974 MB</td><td>16.4 s</td><td>2.9</td><td>6965 MB</td><td>persistent f32 expansion</td></tr>
+                    <tr><td>Llama-3.2-1B</td><td>Q4_K_M</td><td>770 MB</td><td>15.9 s</td><td>3.2</td><td>6965 MB</td><td>persistent f32 expansion</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            Qwen Q4_K_M is about 41% smaller on disk than Q8_0, but uses about
+            4.49× the peak RSS and decodes about 15.6× more slowly. Llama
+            Q4_K_M is about 39% smaller, but uses about 2.59× the peak RSS and
+            decodes about 46.8× more slowly.
+        </p>
+
+        <p>
+            the inversion is consistent across both families: the only axis on
+            which the lower-bit files are smaller is the file itself. load time
+            also rises from roughly one or two seconds for Q8_0 to roughly
+            thirteen to sixteen seconds for Q6_K and Q4_K_M.
+        </p>
+
+        <h2>why the inversion happens</h2>
+
+        <p>
+            checkpoint quantization describes how tensors are encoded in the
+            file. it does not guarantee how a runtime stores those tensors or
+            which kernels execute them. Ember's Q8_0 path keeps quantized blocks
+            resident and uses its packed Q8 execution path.
+        </p>
+
+        <p>
+            the current K-quant path is different. the loader dequantizes the
+            weights to f32 at load time, keeps the expanded buffers resident,
+            and sends the work through generic f32 execution. the checkpoint is
+            still Q4 or Q6 on disk; the ordinary in-memory deployment is not.
+        </p>
+
+        <pre><code>Q8_0:
+GGUF Q8 blocks
+  → compressed-resident weights
+  → packed Q8 kernels
+
+Q4_K_M / Q6_K today:
+GGUF K-quant blocks
+  → full f32 expansion
+  → generic f32 execution</code></pre>
+
+        <p>
+            if the mapped compressed file also remains resident, RSS can reflect
+            both the source mapping and the expanded representation. that is
+            one reason a single RSS number needs a residency breakdown before it
+            is treated as a complete memory explanation.
+        </p>
+
+        <h2>checkpoint quantization is not deployment quantization</h2>
+
+        <p>
+            a filename or GGUF suffix does not determine process memory, startup
+            cost, decode speed, temporary workspace, kernel behavior, or whether
+            the source mapping remains resident. those properties are decisions
+            made by the loader, tensor layout, dispatch policy, and backend.
+        </p>
+
+        <blockquote>
+            <p>a quantized checkpoint is only a storage format until the runtime decides how to materialize and execute it.</p>
+        </blockquote>
+
+        <p>
+            that is the conceptual boundary in this audit. “Q4” is true as a
+            statement about the file. it is incomplete as a statement about the
+            deployment.
+        </p>
+
+        <h2>what this does show</h2>
+
+        <ul>
+            <li>file size is not a reliable proxy for process memory;</li>
+            <li>runtime representation can reverse the expected low-bit memory benefit;</li>
+            <li>backend design determines whether quantization survives deployment;</li>
+            <li>quantization comparisons should report runtime representation and kernel path;</li>
+            <li>peak RSS needs interpretation under mmap and duplicated representations.</li>
+        </ul>
+
+        <h2>what this does not show</h2>
+
+        <ul>
+            <li>Q4_K_M or Q6_K are inherently slower than Q8_0;</li>
+            <li>low-bit quantization is ineffective;</li>
+            <li>GGUF K-quants are inefficient;</li>
+            <li>llama.cpp has the same behavior;</li>
+            <li>eager f32 expansion is a production-quality strategy;</li>
+            <li>the observed inversion is a novel scientific discovery;</li>
+            <li>raw RSS alone fully explains memory residency.</li>
+        </ul>
+
+        <h2>reference implementation context</h2>
+
+        <p>
+            llama.cpp is the external correctness and performance reference for
+            this work. its optimized CPU backend keeps K-quant weights
+            compressed in ordinary paths and uses native quantized vector-dot
+            kernels for Q4_K, Q6_K, and Q8_0, rather than retaining a whole-model
+            f32 copy for ordinary execution.
+        </p>
+
+        <p>
+            that is the relevant contrast here. the external reference preserves
+            a low-bit runtime representation; Ember's current K-quant research
+            path preserves low-bit storage but materializes f32 weights.
+        </p>
+
+        <h2>measurement caveats</h2>
+
+        <ul>
+            <li>load and prefill are combined in the reported numbers;</li>
+            <li>RSS may include mapped file-backed pages and anonymous expanded buffers;</li>
+            <li>Q4_K_M is a mixed quantization preset rather than one uniform tensor type;</li>
+            <li>the test covers two small model families on one local machine;</li>
+            <li>repeated runs and memory decomposition are required for stronger systems claims;</li>
+            <li>a tuned f32/f16 baseline is needed to isolate representation cost from generic-kernel quality.</li>
+        </ul>
+
+        <p>
+            the benchmark used the same CPU affinity and thread setting across
+            configurations. that improves comparability inside this table, but
+            it does not turn the run into a broad hardware study.
+        </p>
+
+        <h2>what should be reported in future comparisons</h2>
+
+        <ul>
+            <li>checkpoint size;</li>
+            <li>tensor-type inventory;</li>
+            <li>source representation;</li>
+            <li>runtime representation;</li>
+            <li>mapped bytes;</li>
+            <li>anonymous memory;</li>
+            <li>RSS and preferably PSS;</li>
+            <li>conversion time;</li>
+            <li>load time;</li>
+            <li>prefill throughput;</li>
+            <li>decode throughput;</li>
+            <li>kernel dispatch;</li>
+            <li>source mapping lifetime;</li>
+            <li>model and runtime commit hashes.</li>
+        </ul>
+
+        <h2>next step</h2>
+
+        <p>
+            Ember's next relevant systems task is to compare eager whole-model
+            f32 expansion, one bounded-memory alternative, native
+            compressed-resident K-quant execution, and llama.cpp as the external
+            baseline.
+        </p>
+
+        <p>
+            any optimized path also has to preserve Ember's activation tracing,
+            capture, and patching semantics. lower memory or higher throughput is
+            useful only if the research instrument still observes and intervenes
+            on the same computation.
+        </p>
+
+        <h2>artifacts</h2>
+
+        <p>
+            the exact frozen deployment output and runner exist locally in
+            <code>research/pilots/arabic_quantization_001/deployment_benchmark.{json,csv}</code>
+            on the local <code>pilot-001</code> branch. that branch is not a
+            public path, so this page does not pretend there is a public link to
+            those measurements.
+        </p>
+
+        <p>
+            the public implementation context is available in
+            <a href="https://github.com/voidwest/ember/blob/main/src/quant_k.rs"><code>src/quant_k.rs</code></a>,
+            <a href="https://github.com/voidwest/ember/blob/main/src/loader.rs"><code>src/loader.rs</code></a>,
+            <a href="https://github.com/voidwest/ember/blob/main/src/residency.rs"><code>src/residency.rs</code></a>,
+            and the packed-Q8 engineering notes
+            <a href="https://github.com/voidwest/ember/blob/main/docs/packed-q8-research-memo.md"><code>packed-q8-research-memo.md</code></a>
+            and
+            <a href="https://github.com/voidwest/ember/blob/main/docs/packed-q8-lifecycle.md"><code>packed-q8-lifecycle.md</code></a>.
+        </p>
+
+        <!-- TODO: publish the frozen deployment benchmark artifact before adding a public URL. -->
+
+        <h2>closing</h2>
+
+        <p>
+            the checkpoint said Q4. the runtime chose f32. the deployment cost
+            followed the runtime.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>

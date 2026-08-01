@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="الملف قال Q4. والـruntime قال f32." />
+        <meta property="og:description" content="مراجعة صغيرة في Ember لحجم checkpoint وذاكرة runtime وأداء decode." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/the-file-said-q4-runtime-said-f32.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>الملف قال Q4. والـruntime قال f32. · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=20260717" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/the-file-said-q4-runtime-said-f32.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>الملف قال <bdi>Q4</bdi>. والـ<bdi>runtime</bdi> قال <bdi>f32</bdi>.</h1>
+
+        <div class="meta">
+            ملاحظة قياس صغيرة عن حجم <bdi>checkpoint</bdi> وذاكرة <bdi>runtime</bdi> وأداء <bdi>decode</bdi> في <bdi>Ember</bdi><br>
+            محمد الثبيتي · 2026-08-01<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">quantization</span>
+            <span class="tag key">CPU inference</span>
+            <span class="tag key">runtime systems</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>
+            الملف الأصغر يوحي عادةً بـ<bdi>deployment</bdi> أصغر. في مسار
+            <bdi>Ember</bdi> الحالي، هالحدس ما يصح مع مسارات
+            <bdi>K-quant</bdi>. ملفات <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi>
+            أصغر على القرص، لكن الأوزان تتوسع إلى <bdi>f32</bdi> وقت التحميل
+            وتبقى بهذا الشكل داخل الذاكرة.
+        </p>
+
+        <p>
+            هذه مراجعة لتمثيل <bdi>runtime</bdi>، مو ادعاء أن
+            <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> غير فعالة بطبيعتها. النتيجة
+            ناتجة عن سياسة الـ<bdi>loader</bdi> والـ<bdi>backend</bdi> الحالية
+            في <bdi>Ember</bdi>. ما ينفع نعممها على <bdi>GGUF</bdi> أو
+            <bdi>K-quants</bdi> أو <bdi>low-bit quantization</bdi> عموماً.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">الحالة</div>
+            <p>
+                <bdi>engineering audit</bdi> فقط. الجدول يغطي عائلتين صغيرتين
+                على جهاز محلي واحد. هذه مو نتيجة جديدة في <bdi>quantization</bdi>،
+                ولا ادعاء <bdi>production deployment</bdi>، ولا مقارنة تقول إن
+                <bdi>Ember</bdi> أسرع من <bdi>llama.cpp</bdi>.
+            </p>
+        </div>
+
+        <h2>السؤال</h2>
+
+        <p>
+            هل <bdi>quantized checkpoint</bdi> الأصغر ينتج بالضرورة
+            <bdi>deployment</bdi> محلياً أصغر وأسرع؟
+        </p>
+
+        <h2>النتيجة</h2>
+
+        <p>
+            الـ<bdi>benchmark</bdi> المجمّد يقيس حجم الملف، ووقت التحميل مع
+            <bdi>prefill</bdi>، وسرعة <bdi>decode</bdi>، و<bdi>peak RSS</bdi>.
+            العمود الأخير هو المفتاح: يسجل ما يحتفظ به <bdi>Ember</bdi> في
+            الذاكرة ويشغله، مو فقط ما يقوله اسم الملف.
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>النموذج</th>
+                        <th><bdi>quantization</bdi></th>
+                        <th>حجم الملف</th>
+                        <th><bdi>load + prefill</bdi></th>
+                        <th><bdi>decode tok/s</bdi></th>
+                        <th><bdi>peak RSS</bdi></th>
+                        <th>تمثيل <bdi>runtime</bdi></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td><bdi>Qwen2.5-1.5B-Instruct</bdi></td><td><bdi>Q8_0</bdi></td><td><bdi>1807 MB</bdi></td><td><bdi>0.97 s</bdi></td><td><bdi>40.6</bdi></td><td><bdi>1941 MB</bdi></td><td><bdi>compressed-resident</bdi></td></tr>
+                    <tr><td><bdi>Qwen2.5-1.5B-Instruct</bdi></td><td><bdi>Q6_K</bdi></td><td><bdi>1396 MB</bdi></td><td><bdi>14.4 s</bdi></td><td><bdi>2.5</bdi></td><td><bdi>8713 MB</bdi></td><td><bdi>persistent f32 expansion</bdi></td></tr>
+                    <tr><td><bdi>Qwen2.5-1.5B-Instruct</bdi></td><td><bdi>Q4_K_M</bdi></td><td><bdi>1066 MB</bdi></td><td><bdi>13.0 s</bdi></td><td><bdi>2.6</bdi></td><td><bdi>8712 MB</bdi></td><td><bdi>persistent f32 expansion</bdi></td></tr>
+                    <tr><td><bdi>Llama-3.2-1B</bdi></td><td><bdi>Q8_0</bdi></td><td><bdi>1260 MB</bdi></td><td><bdi>2.03 s</bdi></td><td><bdi>149.6</bdi></td><td><bdi>2685 MB</bdi></td><td><bdi>compressed-resident</bdi></td></tr>
+                    <tr><td><bdi>Llama-3.2-1B</bdi></td><td><bdi>Q6_K</bdi></td><td><bdi>974 MB</bdi></td><td><bdi>16.4 s</bdi></td><td><bdi>2.9</bdi></td><td><bdi>6965 MB</bdi></td><td><bdi>persistent f32 expansion</bdi></td></tr>
+                    <tr><td><bdi>Llama-3.2-1B</bdi></td><td><bdi>Q4_K_M</bdi></td><td><bdi>770 MB</bdi></td><td><bdi>15.9 s</bdi></td><td><bdi>3.2</bdi></td><td><bdi>6965 MB</bdi></td><td><bdi>persistent f32 expansion</bdi></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            في <bdi>Qwen</bdi>، ملف <bdi>Q4_K_M</bdi> أصغر من
+            <bdi>Q8_0</bdi> على القرص بنحو 41%، لكنه يستهلك تقريباً
+            4.49× من <bdi>peak RSS</bdi> ويكون <bdi>decode</bdi> أبطأ بنحو
+            15.6×. وفي <bdi>Llama</bdi>، يصغر الملف بنحو 39%، بينما ترتفع
+            الذاكرة إلى 2.59× وتصبح السرعة أبطأ بنحو 46.8×.
+        </p>
+
+        <p>
+            الصورة نفسها تتكرر في العائلتين: الشيء الوحيد الذي يصغر مع
+            <bdi>Q6/Q4</bdi> هو الملف على القرص. ووقت التحميل يرتفع أيضاً من
+            نحو ثانية أو ثانيتين في <bdi>Q8_0</bdi> إلى نحو 13–16 ثانية في
+            <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi>.
+        </p>
+
+        <h2>ليش تنقلب الصورة؟</h2>
+
+        <p>
+            <bdi>quantization</bdi> في الـ<bdi>checkpoint</bdi> تصف طريقة
+            ترميز الـ<bdi>tensors</bdi> داخل الملف. ما تصف تلقائياً كيف
+            يخزنها الـ<bdi>runtime</bdi> أو أي <bdi>kernels</bdi> يشغلها.
+            مسار <bdi>Q8_0</bdi> في <bdi>Ember</bdi> يبقي الـ<bdi>blocks</bdi>
+            مكمّمة في الذاكرة ويستخدم مسار <bdi>packed Q8</bdi>.
+        </p>
+
+        <p>
+            مسار <bdi>K-quant</bdi> الحالي مختلف. الـ<bdi>loader</bdi> يفك
+            التكميم إلى <bdi>f32</bdi> وقت التحميل، ويحتفظ بالـ<bdi>buffers</bdi>
+            الموسعة، ثم يرسل العمل إلى تنفيذ <bdi>f32</bdi> عام. الملف ما زال
+            <bdi>Q4</bdi> أو <bdi>Q6</bdi> على القرص، لكن تمثيل الـ<bdi>deployment</bdi>
+            داخل الذاكرة ليس كذلك.
+        </p>
+
+        <pre><code>Q8_0:
+GGUF Q8 blocks
+  → compressed-resident weights
+  → packed Q8 kernels
+
+Q4_K_M / Q6_K today:
+GGUF K-quant blocks
+  → full f32 expansion
+  → generic f32 execution</code></pre>
+
+        <p>
+            إذا بقي <bdi>compressed file mapping</bdi> موجوداً في الذاكرة،
+            فقد يعكس <bdi>RSS</bdi> التمثيل الأصلي والـ<bdi>buffers</bdi>
+            الموسعة معاً. لذلك رقم <bdi>RSS</bdi> الواحد يحتاج تفكيكاً إلى
+            <bdi>file-backed</bdi> و<bdi>anonymous</bdi> قبل ما نعامله كتفسير
+            كامل للإقامة في الذاكرة.
+        </p>
+
+        <h2><bdi>checkpoint quantization</bdi> مو هي <bdi>deployment quantization</bdi></h2>
+
+        <p>
+            لاحقة <bdi>GGUF</bdi> أو اسم الملف ما تحدد وحدها ذاكرة العملية،
+            تكلفة البداية، سرعة <bdi>decode</bdi>، الـ<bdi>workspace</bdi>
+            المؤقت، سلوك الـ<bdi>kernels</bdi>، أو مدة بقاء الـ<bdi>source mapping</bdi>.
+            هذه قرارات يحددها الـ<bdi>loader</bdi> وتخطيط الـ<bdi>tensors</bdi>
+            وسياسة الـ<bdi>dispatch</bdi> والـ<bdi>backend</bdi>.
+        </p>
+
+        <blockquote>
+            <p>الـ<bdi>quantized checkpoint</bdi> مجرد <bdi>storage format</bdi> إلى أن يحدد الـ<bdi>runtime</bdi> كيف يجهزه ويشغله.</p>
+        </blockquote>
+
+        <p>
+            هذا هو الحد المفاهيمي في المراجعة. قول إن الملف <bdi>Q4</bdi> صحيح.
+            لكنه ما يكفي لوصف الـ<bdi>deployment</bdi> كله.
+        </p>
+
+        <h2>وش اللي تثبته هذه المراجعة؟</h2>
+
+        <ul>
+            <li>حجم الملف مو proxy موثوق لذاكرة العملية؛</li>
+            <li>تمثيل الـ<bdi>runtime</bdi> ممكن يعكس فائدة الذاكرة المتوقعة من <bdi>low-bit</bdi>؛</li>
+            <li>تصميم الـ<bdi>backend</bdi> يحدد هل يبقى التكميم موجوداً في الـ<bdi>deployment</bdi>؛</li>
+            <li>مقارنات الـ<bdi>quantization</bdi> لازم تذكر تمثيل الـ<bdi>runtime</bdi> ومسار الـ<bdi>kernel</bdi>؛</li>
+            <li><bdi>peak RSS</bdi> يحتاج تفسيراً عند وجود <bdi>mmap</bdi> وتمثيلات مكررة.</li>
+        </ul>
+
+        <h2>وش اللي ما تثبته؟</h2>
+
+        <ul>
+            <li>أن <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> أبطأ بطبيعتها من <bdi>Q8_0</bdi>؛</li>
+            <li>أن <bdi>low-bit quantization</bdi> غير فعالة؛</li>
+            <li>أن <bdi>GGUF K-quants</bdi> غير كفؤة؛</li>
+            <li>أن <bdi>llama.cpp</bdi> يتصرف بالطريقة نفسها؛</li>
+            <li>أن التوسيع المبكر إلى <bdi>f32</bdi> استراتيجية مناسبة للإنتاج؛</li>
+            <li>أن هذا الانقلاب اكتشاف علمي جديد؛</li>
+            <li>أن <bdi>RSS</bdi> الخام وحده يشرح الإقامة في الذاكرة بالكامل.</li>
+        </ul>
+
+        <h2>سياق <bdi>reference implementation</bdi></h2>
+
+        <p>
+            <bdi>llama.cpp</bdi> هو الـ<bdi>external correctness and performance reference</bdi>
+            هنا. الـ<bdi>CPU backend</bdi> المحسّن فيه يحافظ على أوزان
+            <bdi>K-quant</bdi> مضغوطة في المسارات العادية، ويستخدم
+            <bdi>native quantized vector-dot kernels</bdi> لـ<bdi>Q4_K</bdi> و<bdi>Q6_K</bdi>
+            و<bdi>Q8_0</bdi>، بدل الاحتفاظ بنسخة <bdi>f32</bdi> كاملة من النموذج
+            في التنفيذ العادي.
+        </p>
+
+        <p>
+            هذا هو الفرق المهم للمقارنة: الـ<bdi>reference</bdi> يحافظ على تمثيل
+            <bdi>low-bit</bdi> أثناء التشغيل، بينما مسار <bdi>K-quant</bdi>
+            البحثي الحالي في <bdi>Ember</bdi> يحافظ على التخزين المكمّم ثم
+            يحوله إلى أوزان <bdi>f32</bdi>.
+        </p>
+
+        <h2>قيود القياس</h2>
+
+        <ul>
+            <li>الوقت المعلن يجمع التحميل مع <bdi>prefill</bdi>؛</li>
+            <li><bdi>RSS</bdi> قد يشمل صفحات ملف مربوطة في الذاكرة و<bdi>buffers</bdi> موسعة مجهولة المصدر؛</li>
+            <li><bdi>Q4_K_M</bdi> إعداد تكميم مختلط، مو نوعاً واحداً لكل <bdi>tensor</bdi>؛</li>
+            <li>الاختبار يغطي عائلتين صغيرتين وعلى جهاز محلي واحد؛</li>
+            <li>الادعاءات الأقوى عن الأنظمة تحتاج تكرار التشغيل وتفكيك الذاكرة؛</li>
+            <li>نحتاج <bdi>f32/f16 baseline</bdi> مضبوطاً لعزل تكلفة التمثيل عن جودة الـ<bdi>generic kernels</bdi>.</li>
+        </ul>
+
+        <p>
+            استخدم الـ<bdi>benchmark</bdi> نفس <bdi>CPU affinity</bdi> وإعداد
+            الـ<bdi>threads</bdi> بين التهيئات. هذا يحسن المقارنة داخل الجدول،
+            لكنه ما يحول التشغيل إلى دراسة واسعة للأجهزة.
+        </p>
+
+        <h2>وش لازم يظهر في المقارنات الجاية؟</h2>
+
+        <ul>
+            <li>حجم الـ<bdi>checkpoint</bdi>؛</li>
+            <li>قائمة أنواع الـ<bdi>tensors</bdi>؛</li>
+            <li>تمثيل المصدر؛</li>
+            <li>تمثيل الـ<bdi>runtime</bdi>؛</li>
+            <li>حجم الذاكرة المربوطة؛</li>
+            <li>الذاكرة المجهولة؛</li>
+            <li><bdi>RSS</bdi> ويفضل <bdi>PSS</bdi>؛</li>
+            <li>وقت التحويل؛</li>
+            <li>وقت التحميل؛</li>
+            <li>سرعة <bdi>prefill</bdi>؛</li>
+            <li>سرعة <bdi>decode</bdi>؛</li>
+            <li>توزيع الـ<bdi>kernel dispatch</bdi>؛</li>
+            <li>مدة بقاء <bdi>source mapping</bdi>؛</li>
+            <li>معرّفات <bdi>commit</bdi> للنموذج والـ<bdi>runtime</bdi>.</li>
+        </ul>
+
+        <h2>الخطوة الجاية</h2>
+
+        <p>
+            المهمة التالية في <bdi>Ember</bdi> هي مقارنة التوسيع الكامل المبكر
+            إلى <bdi>f32</bdi>، وبديل بذاكرة محدودة، وتنفيذ <bdi>K-quant</bdi>
+            أصلي يحتفظ بالتمثيل المضغوط، مع <bdi>llama.cpp</bdi> كـ<bdi>external baseline</bdi>.
+        </p>
+
+        <p>
+            المسارات المحسّنة لازم تحافظ أيضاً على دلالات <bdi>activation tracing</bdi>
+            و<bdi>capture</bdi> و<bdi>patching</bdi> في <bdi>Ember</bdi>. الذاكرة
+            الأقل أو السرعة الأعلى ما تكفي إذا تغيّر الشيء الذي تقيسه أداة البحث
+            أو تتدخل فيه.
+        </p>
+
+        <h2><bdi>artifacts</bdi></h2>
+
+        <p>
+            مخرجات الـ<bdi>deployment benchmark</bdi> المجمدة والـ<bdi>runner</bdi>
+            موجودة محلياً في
+            <code>research/pilots/arabic_quantization_001/deployment_benchmark.{json,csv}</code>
+            على فرع <code>pilot-001</code> المحلي. هذا الفرع مو مساراً عاماً،
+            لذلك ما أضيف رابطاً يوحي بعكس ذلك.
+        </p>
+
+        <p>
+            سياق التنفيذ العام موجود في
+            <a href="https://github.com/voidwest/ember/blob/main/src/quant_k.rs"><code>src/quant_k.rs</code></a>،
+            <a href="https://github.com/voidwest/ember/blob/main/src/loader.rs"><code>src/loader.rs</code></a>،
+            <a href="https://github.com/voidwest/ember/blob/main/src/residency.rs"><code>src/residency.rs</code></a>،
+            ومذكرتي <bdi>packed-Q8</bdi>
+            <a href="https://github.com/voidwest/ember/blob/main/docs/packed-q8-research-memo.md"><code>packed-q8-research-memo.md</code></a>
+            و<a href="https://github.com/voidwest/ember/blob/main/docs/packed-q8-lifecycle.md"><code>packed-q8-lifecycle.md</code></a>.
+        </p>
+
+        <!-- TODO: publish the frozen deployment benchmark artifact before adding a public URL. -->
+
+        <h2>الخاتمة</h2>
+
+        <p>
+            الملف قال <bdi>Q4</bdi>. الـ<bdi>runtime</bdi> اختار
+            <bdi>f32</bdi>. وتكلفة الـ<bdi>deployment</bdi> تبعت تمثيل
+            الـ<bdi>runtime</bdi>.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+    </body>
+</html>
