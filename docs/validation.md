@@ -39,6 +39,17 @@ Use these levels when interpreting Ember runs:
 | hf encoders | external Hugging Face extraction path works for mBERT smoke | not applicable to Ember GGUF numerics | external stack not activation-checked here | mBERT PADT smoke; full encoder suite pending | useful benchmark path, not an Ember inference validation result |
 
 
+## gemma 4 status note (2026-08)
+
+The gemma4 loader's f32/f16 orientation bug was fixed in the 2026-08
+optimization pass (commit `bd1591c`): gemma 4 Q8 models now **load**,
+which they previously could not. The pre-existing numerical gap (L0
+cosine ~0.87 vs llama.cpp, garbage-ish generation) is unchanged, and the
+older tiny-gemma golden report under `artifacts/golden_logits_gemma/`
+**predates the fix** and is stale — it can no longer be regenerated (the
+tiny reference model is not on disk). Treat gemma 4 outputs as
+numerically untrusted until a fresh golden run exists.
+
 ## recent validation wave
 
 A validation + bounded pilot wave (2026-08) added K-quant support and ran an
