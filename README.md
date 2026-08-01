@@ -111,11 +111,33 @@ Use these levels when interpreting Ember runs:
 | architecture | smoke | golden logits | activation reference | probe runs | status |
 |--------------|-------|---------------|----------------------|------------|--------|
 | gpt-2 | structural smoke works when local GGUF is present | none | none | not a standard Arabic morphology run yet | loader baseline; negative-control work pending |
-| llama | local/cloud structural smokes and probe extraction | pending | pending | preliminary LLaMA 1B/3B/8B decoder probe runs | research findings are preliminary until references and reports are complete |
-| qwen2.5 | selected warning-prone smokes through llama-family path | none | none | pending validation | experimental; do not treat as quality-compatible |
+| llama | local/cloud structural smokes and probe extraction | q8/q6/q4 golden vs llama.cpp (top-1 match, max abs diff ≤ 0.33) | pending | preliminary LLaMA 1B/3B/8B decoder probe runs | research findings are preliminary until references and reports are complete |
+| qwen2.5 | selected warning-prone smokes through llama-family path | q8/fp16/q4 golden vs llama.cpp (top-1 match, max abs diff ≤ 0.72) | pending | pending validation | experimental; do not treat as quality-compatible |
 | qwen3 | Qwen3 0.6B smoke/probe paths run locally | pending target | pending | Qwen3 0.6B local probe run exists | promising engineering path, not yet numerically validated |
 | gemma4 | local BOS smoke and llama.cpp reference comparison run | final-logit cosine ~0.87; not a golden pass | per-layer comparison pipeline operational; L0 attn_norm bit-identical | pending full runs | structural fixes applied, but the remaining numerical gap still prevents a parity claim; RMSNorm amplification is the current working explanation |
 | hf encoders | external Hugging Face extraction path works for mBERT smoke | not applicable to Ember GGUF numerics | external stack not activation-checked here | mBERT PADT smoke; full encoder suite pending | useful benchmark path, not an Ember inference validation result |
+
+## recent validation wave (post-paper)
+
+A validation + bounded pilot wave (2026-08) added K-quant support and ran an
+Arabic-quantization pilot (Qwen2.5-1.5B and Llama-3.2-1B across Q8/Q6/Q4;
+~500 deterministic runs). Items, results, and reports live on the local
+`pilot-001` branch under `research/pilots/arabic_quantization_001/`
+(PILOT_REPORT.md has the full record):
+
+- **No Arabic-selective quantization degradation replicates** — a null at
+  every precision/family combination tested.
+- The robust output is the **causal-localization toolchain**: single-layer
+  activation patches restore quantized-boundary failures, with the causal
+  locus one layer before the divergence ramp (qwen L7/28, llama L1/16),
+  demonstrated end-to-end by the pilot's `causal_demo.sh`. The mechanism is
+  near-threshold flips: quantization noise crosses the model's smallest
+  decision margins.
+- Deployment: see the K-quant note above — dequant-to-f32 is a research
+  loader, not a deployment path.
+
+The v0.2 capture/patch/compare facilities that powered this are documented
+in the research-experiments section below.
 
 ## features
 
@@ -166,12 +188,19 @@ The GGUF loader accepts these tensor encodings:
 | F16 | converted once to f32 while loading | generic f32 kernels |
 | BF16 | converted once to f32 while loading | generic f32 kernels |
 | Q8_0 | retained block-compressed, mmap-backed for file loads | scalar/AVX2/AVX-512 decode and tiled/packed prefill dispatch |
+| Q2_K / Q3_K / Q4_K / Q5_K / Q6_K | dequantized once to f32 while loading | generic f32 kernels |
 
-Other quantization formats, including K-quants, are not supported. A GGUF may
-mix the listed types, as real models commonly do for norms, embeddings, and
-linear weights. “Supported” here means Ember has an execution path; external
-golden-logit or activation-reference status is tracked separately in the
-validation tables below.
+K-quant tensors are dequantized to f32 at load (transcribed from llama.cpp;
+validated against llama.cpp logits and fp16 source tensors — see
+`src/quant_k.rs`). A GGUF may mix the listed types, as real models commonly
+do for norms, embeddings, and linear weights. “Supported” here means Ember
+has an execution path; external golden-logit or activation-reference status
+is tracked separately in the validation tables below.
+
+Note: the K-quant path is a research loader, not a deployment path —
+dequant-to-f32 makes Q4/Q6 models use 2.6–4.5× more RAM and run 16–52×
+slower than Q8 (the Q8 path keeps weights compressed and uses the fast
+decode path).
 
 ## what this demonstrates
 
