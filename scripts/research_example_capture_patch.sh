@@ -31,6 +31,20 @@ STAGE="${STAGE:-after-mlp}"
 TOKENS="${TOKENS:-4}"
 WORKDIR="${WORKDIR:-/tmp/ember-v02-example}"
 
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) MODEL="$2"; shift 2 ;;
+    --arch) ARCH="$2"; shift 2 ;;
+    --tokenizer) TOKENIZER="$2"; shift 2 ;;
+    --prompt) PROMPT="$2"; shift 2 ;;
+    --layer) LAYER="$2"; shift 2 ;;
+    --stage) STAGE="$2"; shift 2 ;;
+    --tokens) TOKENS="$2"; shift 2 ;;
+    --workdir) WORKDIR="$2"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+
 # zero-layer-output stage name for the intervention run
 case "$STAGE" in
   after-attention) ZLO_STAGE=attention ;;
