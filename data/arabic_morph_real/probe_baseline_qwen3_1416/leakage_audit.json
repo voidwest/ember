@@ -1,0 +1,523 @@
+{
+  "n_rows": 1416,
+  "duplicates": {
+    "surface": {
+      "field": "surface",
+      "n_unique": 900,
+      "n_duplicate_values": 257,
+      "n_duplicate_items": 773,
+      "max_dup_count": 12,
+      "top_dupes": [
+        [
+          "المتحدة",
+          12
+        ],
+        [
+          "اليوم",
+          12
+        ],
+        [
+          "السبت",
+          10
+        ],
+        [
+          "الولايات",
+          10
+        ],
+        [
+          "الروسية",
+          8
+        ],
+        [
+          "الفلسطينية",
+          8
+        ],
+        [
+          "الاميركية",
+          8
+        ],
+        [
+          "عدد",
+          8
+        ],
+        [
+          "جروح",
+          7
+        ],
+        [
+          "الشرطة",
+          7
+        ]
+      ]
+    },
+    "lemma": {
+      "field": "lemma",
+      "n_unique": 654,
+      "n_duplicate_values": 279,
+      "n_duplicate_items": 1041,
+      "max_dup_count": 20,
+      "top_dupes": [
+        [
+          "يَوْم",
+          20
+        ],
+        [
+          "طائِرَة",
+          16
+        ],
+        [
+          "كان",
+          15
+        ],
+        [
+          "أَمْرِيكِيّ",
+          14
+        ],
+        [
+          "رَجُل",
+          13
+        ],
+        [
+          "رَئِيس",
+          12
+        ],
+        [
+          "مُتَّحِد",
+          12
+        ],
+        [
+          "فِلَسْطِينِيّ",
+          11
+        ],
+        [
+          "سَبَت",
+          10
+        ],
+        [
+          "وِلايَة",
+          10
+        ]
+      ]
+    },
+    "root": {
+      "field": "root",
+      "n_unique": 413,
+      "n_duplicate_values": 241,
+      "n_duplicate_items": 1244,
+      "max_dup_count": 83,
+      "top_dupes": [
+        [
+          "NTWS",
+          83
+        ],
+        [
+          "#.ح.د",
+          27
+        ],
+        [
+          "ر.#.س",
+          24
+        ],
+        [
+          "#.#.م",
+          20
+        ],
+        [
+          "ط.#.ر",
+          19
+        ],
+        [
+          "ك.#.ن",
+          16
+        ],
+        [
+          "ح.د.ث",
+          16
+        ],
+        [
+          "ر.ج.ل",
+          14
+        ],
+        [
+          "#.م.ر.ك",
+          14
+        ],
+        [
+          "ع.د.د",
+          14
+        ]
+      ]
+    },
+    "abstract_pattern": {
+      "field": "abstract_pattern",
+      "n_unique": 621,
+      "n_duplicate_values": 268,
+      "n_duplicate_items": 1063,
+      "max_dup_count": 38,
+      "top_dupes": [
+        [
+          "الNTWSَةِ",
+          38
+        ],
+        [
+          "1َ2ْ3ِ",
+          34
+        ],
+        [
+          "تَ1ْ2ِي3ِ",
+          17
+        ],
+        [
+          "ال1َ2ْ3ِ",
+          16
+        ],
+        [
+          "1ا3َ",
+          14
+        ],
+        [
+          "ال1ُ2ُو3ِ",
+          13
+        ],
+        [
+          "ال1ِ2ا3ِ",
+          13
+        ],
+        [
+          "1َ2َ3َ",
+          12
+        ],
+        [
+          "1ا3َت",
+          12
+        ],
+        [
+          "المُتَّ2ِ3َةِ",
+          12
+        ]
+      ]
+    },
+    "concrete_pattern": {
+      "field": "concrete_pattern",
+      "n_unique": 697,
+      "n_duplicate_values": 281,
+      "n_duplicate_items": 1000,
+      "max_dup_count": 16,
+      "top_dupes": [
+        [
+          "طائِر",
+          16
+        ],
+        [
+          "يَوْم",
+          16
+        ],
+        [
+          "أَمِيرْكِيّ",
+          14
+        ],
+        [
+          "كان",
+          13
+        ],
+        [
+          "رَئِيس",
+          12
+        ],
+        [
+          "مُتَّحِد",
+          12
+        ],
+        [
+          "فِلَسْطِينِيّ",
+          11
+        ],
+        [
+          "سَبَت",
+          10
+        ],
+        [
+          "رِجال",
+          10
+        ],
+        [
+          "وِلاي",
+          10
+        ]
+      ]
+    },
+    "root+abstract_pattern": {
+      "field": "root+abstract_pattern",
+      "n_unique": 861,
+      "n_duplicate_values": 254,
+      "n_duplicate_items": 809,
+      "max_dup_count": 38,
+      "top_dupes": [
+        [
+          "NTWS::الNTWSَةِ",
+          38
+        ],
+        [
+          "#.ح.د::المُتَّ2ِ3َةِ",
+          12
+        ],
+        [
+          "#.#.م::اليَوْ3َ",
+          12
+        ],
+        [
+          "س.ب.ت::ال1َ2َ3َ",
+          10
+        ],
+        [
+          "NTWS::الNTWSِ",
+          10
+        ],
+        [
+          "#.ل.#::الوِ2اياتِ",
+          10
+        ],
+        [
+          "NTWS::الNTWSَةُ",
+          9
+        ],
+        [
+          "#.م.ر.ك::الأَ2ِي3ْ4ِيَّةِ",
+          9
+        ],
+        [
+          "ر.#.س::ال1ُو3ِيَّةِ",
+          8
+        ],
+        [
+          "ع.د.د::1َ2َ3ٍ",
+          8
+        ]
+      ]
+    },
+    "root+concrete_pattern": {
+      "field": "root+concrete_pattern",
+      "n_unique": 697,
+      "n_duplicate_values": 281,
+      "n_duplicate_items": 1000,
+      "max_dup_count": 16,
+      "top_dupes": [
+        [
+          "ط.#.ر::طائِر",
+          16
+        ],
+        [
+          "#.#.م::يَوْم",
+          16
+        ],
+        [
+          "#.م.ر.ك::أَمِيرْكِيّ",
+          14
+        ],
+        [
+          "ك.#.ن::كان",
+          13
+        ],
+        [
+          "ر.#.س::رَئِيس",
+          12
+        ],
+        [
+          "#.ح.د::مُتَّحِد",
+          12
+        ],
+        [
+          "NTWS::فِلَسْطِينِيّ",
+          11
+        ],
+        [
+          "س.ب.ت::سَبَت",
+          10
+        ],
+        [
+          "ر.ج.ل::رِجال",
+          10
+        ],
+        [
+          "#.ل.#::وِلاي",
+          10
+        ]
+      ]
+    },
+    "lemma+abstract_pattern": {
+      "field": "lemma+abstract_pattern",
+      "n_unique": 892,
+      "n_duplicate_values": 260,
+      "n_duplicate_items": 784,
+      "max_dup_count": 12,
+      "top_dupes": [
+        [
+          "مُتَّحِد::المُتَّ2ِ3َةِ",
+          12
+        ],
+        [
+          "يَوْم::اليَوْ3َ",
+          12
+        ],
+        [
+          "سَبَت::ال1َ2َ3َ",
+          10
+        ],
+        [
+          "وِلايَة::الوِ2اياتِ",
+          10
+        ],
+        [
+          "أَمْرِيكِيّ::الأَ2ِي3ْ4ِيَّةِ",
+          9
+        ],
+        [
+          "رُوسِيّ::ال1ُو3ِيَّةِ",
+          8
+        ],
+        [
+          "فِلَسْطِينِيّ::الNTWSَةِ",
+          8
+        ],
+        [
+          "عَدَد::1َ2َ3ٍ",
+          8
+        ],
+        [
+          "جُرْح::1ُ2ُو3",
+          7
+        ],
+        [
+          "شُرْطَة::ال1ُ2ْ3َةِ",
+          7
+        ]
+      ]
+    }
+  },
+  "cross_fold_leakage": {
+    "surface": {
+      "field": "surface",
+      "total_unique_values": 900,
+      "values_appearing_in_multiple_folds": 0,
+      "leakage_rate": 0.0,
+      "examples": []
+    },
+    "lemma": {
+      "field": "lemma",
+      "total_unique_values": 654,
+      "values_appearing_in_multiple_folds": 0,
+      "leakage_rate": 0.0,
+      "examples": []
+    },
+    "root": {
+      "field": "root",
+      "total_unique_values": 413,
+      "values_appearing_in_multiple_folds": 0,
+      "leakage_rate": 0.0,
+      "examples": []
+    }
+  },
+  "near_duplicates": {
+    "n_groups": 259,
+    "n_items_in_groups": 788,
+    "max_group_size": 12,
+    "examples": [
+      {
+        "normalized": "المتحده",
+        "count": 12,
+        "surface_examples": [
+          "المتحدة",
+          "المتحدة",
+          "المتحدة"
+        ]
+      },
+      {
+        "normalized": "اليوم",
+        "count": 12,
+        "surface_examples": [
+          "اليوم",
+          "اليوم",
+          "اليوم"
+        ]
+      },
+      {
+        "normalized": "السبت",
+        "count": 10,
+        "surface_examples": [
+          "السبت",
+          "السبت",
+          "السبت"
+        ]
+      },
+      {
+        "normalized": "الولايات",
+        "count": 10,
+        "surface_examples": [
+          "الولايات",
+          "الولايات",
+          "الولايات"
+        ]
+      },
+      {
+        "normalized": "الاميركيه",
+        "count": 9,
+        "surface_examples": [
+          "الاميركية",
+          "الاميركية",
+          "الاميركية"
+        ]
+      },
+      {
+        "normalized": "الروسيه",
+        "count": 8,
+        "surface_examples": [
+          "الروسية",
+          "الروسية",
+          "الروسية"
+        ]
+      },
+      {
+        "normalized": "الفلسطينيه",
+        "count": 8,
+        "surface_examples": [
+          "الفلسطينية",
+          "الفلسطينية",
+          "الفلسطينية"
+        ]
+      },
+      {
+        "normalized": "عدد",
+        "count": 8,
+        "surface_examples": [
+          "عدد",
+          "عدد",
+          "عدد"
+        ]
+      },
+      {
+        "normalized": "الاسبانيه",
+        "count": 7,
+        "surface_examples": [
+          "الاسبانية",
+          "الاسبانية",
+          "الاسبانية"
+        ]
+      },
+      {
+        "normalized": "جروح",
+        "count": 7,
+        "surface_examples": [
+          "جروح",
+          "جروح",
+          "جروح"
+        ]
+      }
+    ]
+  },
+  "summary": {
+    "any_surface_duplicates": true,
+    "any_root_duplicates": true,
+    "any_cross_fold_leakage": false,
+    "abstract_pattern_leakage_concern": true
+  }
+}

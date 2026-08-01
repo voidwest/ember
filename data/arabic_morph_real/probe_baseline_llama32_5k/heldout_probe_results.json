@@ -1,0 +1,1082 @@
+{
+  "pos": {
+    "num_examples": 4701,
+    "num_classes": 3,
+    "majority_baseline": 0.6290151031695383,
+    "strategies": {
+      "random": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 5,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9417,
+          0.9272,
+          0.899,
+          0.8913,
+          0.8875,
+          0.8834,
+          0.8743,
+          0.8802,
+          0.8536,
+          0.8526,
+          0.8524,
+          0.8498,
+          0.8513,
+          0.8422,
+          0.8262,
+          0.8217
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.9417,
+        "char_ngram_accuracy": 0.9168,
+        "majority_baseline": 0.6290151031695383,
+        "probe_minus_char": 0.0249,
+        "probe_minus_majority": 0.3127
+      },
+      "surface-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 941
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "surface_dediac"
+        },
+        "probe_layerwise": [
+          0.879,
+          0.8671,
+          0.8571,
+          0.8409,
+          0.8366,
+          0.8349,
+          0.8294,
+          0.832,
+          0.8243,
+          0.8222,
+          0.8217,
+          0.8177,
+          0.8171,
+          0.8069,
+          0.779,
+          0.7741
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.879,
+        "char_ngram_accuracy": 0.7809,
+        "majority_baseline": 0.6290151031695383,
+        "probe_minus_char": 0.0981,
+        "probe_minus_majority": 0.25
+      },
+      "lemma-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 941
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "lemma"
+        },
+        "probe_layerwise": [
+          0.8456,
+          0.8441,
+          0.8196,
+          0.8143,
+          0.8185,
+          0.8222,
+          0.8188,
+          0.8296,
+          0.8049,
+          0.8054,
+          0.8083,
+          0.7943,
+          0.793,
+          0.7869,
+          0.7792,
+          0.7656
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.8456,
+        "char_ngram_accuracy": 0.6935,
+        "majority_baseline": 0.6290151031695383,
+        "probe_minus_char": 0.1521,
+        "probe_minus_majority": 0.2166
+      },
+      "root-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 941
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "root"
+        },
+        "probe_layerwise": [
+          0.829,
+          0.8073,
+          0.8158,
+          0.8052,
+          0.8062,
+          0.7964,
+          0.795,
+          0.8043,
+          0.7958,
+          0.8037,
+          0.7924,
+          0.7867,
+          0.7828,
+          0.7665,
+          0.762,
+          0.7473
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.829,
+        "char_ngram_accuracy": 0.7109,
+        "majority_baseline": 0.6290151031695383,
+        "probe_minus_char": 0.1181,
+        "probe_minus_majority": 0.2
+      }
+    }
+  },
+  "features.gender": {
+    "num_examples": 4699,
+    "num_classes": 2,
+    "majority_baseline": 0.6260906575867206,
+    "strategies": {
+      "random": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 5,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9787,
+          0.9749,
+          0.9555,
+          0.9549,
+          0.9483,
+          0.9432,
+          0.9349,
+          0.931,
+          0.9217,
+          0.9232,
+          0.9042,
+          0.9004,
+          0.8981,
+          0.8985,
+          0.8776,
+          0.8568
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.9787,
+        "char_ngram_accuracy": 0.9662,
+        "majority_baseline": 0.6260906575867206,
+        "probe_minus_char": 0.0126,
+        "probe_minus_majority": 0.3526
+      },
+      "surface-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 939
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "surface_dediac"
+        },
+        "probe_layerwise": [
+          0.96,
+          0.9619,
+          0.9313,
+          0.9315,
+          0.9251,
+          0.9289,
+          0.917,
+          0.9121,
+          0.9104,
+          0.9117,
+          0.8983,
+          0.8951,
+          0.8825,
+          0.8876,
+          0.8632,
+          0.8466
+        ],
+        "probe_best_layer": 1,
+        "probe_best_accuracy": 0.9619,
+        "char_ngram_accuracy": 0.927,
+        "majority_baseline": 0.6260906575867206,
+        "probe_minus_char": 0.0349,
+        "probe_minus_majority": 0.3358
+      },
+      "lemma-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 939
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "lemma"
+        },
+        "probe_layerwise": [
+          0.9545,
+          0.9549,
+          0.9315,
+          0.9315,
+          0.9247,
+          0.9191,
+          0.9134,
+          0.9025,
+          0.9002,
+          0.9053,
+          0.8923,
+          0.8819,
+          0.8753,
+          0.8757,
+          0.8553,
+          0.8332
+        ],
+        "probe_best_layer": 1,
+        "probe_best_accuracy": 0.9549,
+        "char_ngram_accuracy": 0.9106,
+        "majority_baseline": 0.6260906575867206,
+        "probe_minus_char": 0.0443,
+        "probe_minus_majority": 0.3288
+      },
+      "root-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 939
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "root"
+        },
+        "probe_layerwise": [
+          0.9202,
+          0.9162,
+          0.9081,
+          0.8959,
+          0.9096,
+          0.9057,
+          0.8947,
+          0.8949,
+          0.8798,
+          0.8847,
+          0.8715,
+          0.874,
+          0.8723,
+          0.8678,
+          0.851,
+          0.8257
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.9202,
+        "char_ngram_accuracy": 0.9057,
+        "majority_baseline": 0.6260906575867206,
+        "probe_minus_char": 0.0145,
+        "probe_minus_majority": 0.2941
+      }
+    }
+  },
+  "features.number": {
+    "num_examples": 4699,
+    "num_classes": 3,
+    "majority_baseline": 0.8414556288572037,
+    "strategies": {
+      "random": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 5,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9706,
+          0.9649,
+          0.9406,
+          0.9485,
+          0.9489,
+          0.9376,
+          0.9421,
+          0.9302,
+          0.9281,
+          0.923,
+          0.927,
+          0.9119,
+          0.9004,
+          0.8993,
+          0.89,
+          0.8659
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.9706,
+        "char_ngram_accuracy": 0.9613,
+        "majority_baseline": 0.8414556288572037,
+        "probe_minus_char": 0.0094,
+        "probe_minus_majority": 0.1292
+      },
+      "surface-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 939
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "surface_dediac"
+        },
+        "probe_layerwise": [
+          0.9528,
+          0.9459,
+          0.921,
+          0.923,
+          0.9251,
+          0.9168,
+          0.9238,
+          0.9104,
+          0.9051,
+          0.9085,
+          0.904,
+          0.8896,
+          0.8778,
+          0.8747,
+          0.8666,
+          0.8521
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.9528,
+        "char_ngram_accuracy": 0.9204,
+        "majority_baseline": 0.8414556288572037,
+        "probe_minus_char": 0.0323,
+        "probe_minus_majority": 0.1113
+      },
+      "lemma-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 939
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "lemma"
+        },
+        "probe_layerwise": [
+          0.94,
+          0.9362,
+          0.907,
+          0.917,
+          0.9121,
+          0.9138,
+          0.9176,
+          0.9059,
+          0.9074,
+          0.9057,
+          0.9064,
+          0.8859,
+          0.881,
+          0.8736,
+          0.8574,
+          0.8487
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.94,
+        "char_ngram_accuracy": 0.894,
+        "majority_baseline": 0.8414556288572037,
+        "probe_minus_char": 0.046,
+        "probe_minus_majority": 0.0985
+      },
+      "root-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 940
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 939
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "root"
+        },
+        "probe_layerwise": [
+          0.9166,
+          0.8874,
+          0.8778,
+          0.8762,
+          0.8796,
+          0.8808,
+          0.8764,
+          0.8721,
+          0.864,
+          0.864,
+          0.894,
+          0.8749,
+          0.8527,
+          0.8485,
+          0.8281,
+          0.8255
+        ],
+        "probe_best_layer": 0,
+        "probe_best_accuracy": 0.9166,
+        "char_ngram_accuracy": 0.8874,
+        "majority_baseline": 0.8414556288572037,
+        "probe_minus_char": 0.0292,
+        "probe_minus_majority": 0.0751
+      }
+    }
+  }
+}

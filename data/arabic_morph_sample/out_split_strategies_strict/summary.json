@@ -1,0 +1,379 @@
+{
+  "config_path": "configs/arabic_morph_imbalanced_strict.toml",
+  "filter_report": {
+    "drop_reasons": {
+      "ambiguous_analysis": 20,
+      "missing_abstract_pattern": 15,
+      "missing_concrete_pattern": 15,
+      "missing_lemma": 7,
+      "missing_root": 15,
+      "pos_not_allowed": 8
+    },
+    "dropped_records": 50,
+    "filters": {
+      "drop_ambiguous": true,
+      "drop_missing_lemma": true,
+      "drop_missing_root": true,
+      "max_examples_per_pattern": 0,
+      "max_examples_per_root": 0,
+      "min_examples_per_pattern": 1,
+      "min_examples_per_root": 1,
+      "pos_allowlist": [
+        "NOUN",
+        "VERB",
+        "ADJ"
+      ],
+      "require_abstract_pattern": true,
+      "require_concrete_pattern": true
+    },
+    "input_records": 393,
+    "output_records": 343
+  },
+  "input_path": "data/arabic_morph_sample/camelmorph_imbalanced_sample.jsonl",
+  "kept_records": 343,
+  "strategies": {
+    "abstract_pattern_heldout": {
+      "deviation": {
+        "dev": {
+          "absolute_error": -7.449999999999996,
+          "absolute_error_abs": 7.449999999999996,
+          "actual": 44,
+          "relative_error": -0.1448007774538386,
+          "target": 51.449999999999996
+        },
+        "test": {
+          "absolute_error": -9.449999999999996,
+          "absolute_error_abs": 9.449999999999996,
+          "actual": 42,
+          "relative_error": -0.18367346938775503,
+          "target": 51.449999999999996
+        },
+        "train": {
+          "absolute_error": 16.900000000000006,
+          "absolute_error_abs": 16.900000000000006,
+          "actual": 257,
+          "relative_error": 0.07038733860891298,
+          "target": 240.1
+        }
+      },
+      "kept_records": 343,
+      "leakage_passed": true,
+      "leakage_status": "checked",
+      "record_counts": {
+        "dev": 44,
+        "test": 42,
+        "train": 257
+      },
+      "unique_abstract_patterns_per_split": {
+        "dev": 1,
+        "test": 1,
+        "train": 5
+      },
+      "unique_concrete_patterns_per_split": {
+        "dev": 24,
+        "test": 25,
+        "train": 125
+      },
+      "unique_roots_per_split": {
+        "dev": 24,
+        "test": 25,
+        "train": 30
+      },
+      "validation_passed": true
+    },
+    "concrete_pattern_heldout": {
+      "deviation": {
+        "dev": {
+          "absolute_error": 0.5500000000000043,
+          "absolute_error_abs": 0.5500000000000043,
+          "actual": 52,
+          "relative_error": 0.0106899902818271,
+          "target": 51.449999999999996
+        },
+        "test": {
+          "absolute_error": -0.44999999999999574,
+          "absolute_error_abs": 0.44999999999999574,
+          "actual": 51,
+          "relative_error": -0.008746355685131112,
+          "target": 51.449999999999996
+        },
+        "train": {
+          "absolute_error": -0.09999999999999432,
+          "absolute_error_abs": 0.09999999999999432,
+          "actual": 240,
+          "relative_error": -0.0004164931278633666,
+          "target": 240.1
+        }
+      },
+      "kept_records": 343,
+      "leakage_passed": true,
+      "leakage_status": "checked",
+      "record_counts": {
+        "dev": 52,
+        "test": 51,
+        "train": 240
+      },
+      "unique_abstract_patterns_per_split": {
+        "dev": 7,
+        "test": 7,
+        "train": 7
+      },
+      "unique_concrete_patterns_per_split": {
+        "dev": 41,
+        "test": 42,
+        "train": 91
+      },
+      "unique_roots_per_split": {
+        "dev": 21,
+        "test": 20,
+        "train": 25
+      },
+      "validation_passed": true
+    },
+    "lemma_heldout": {
+      "deviation": {
+        "dev": {
+          "absolute_error": 0.5500000000000043,
+          "absolute_error_abs": 0.5500000000000043,
+          "actual": 52,
+          "relative_error": 0.0106899902818271,
+          "target": 51.449999999999996
+        },
+        "test": {
+          "absolute_error": -0.44999999999999574,
+          "absolute_error_abs": 0.44999999999999574,
+          "actual": 51,
+          "relative_error": -0.008746355685131112,
+          "target": 51.449999999999996
+        },
+        "train": {
+          "absolute_error": -0.09999999999999432,
+          "absolute_error_abs": 0.09999999999999432,
+          "actual": 240,
+          "relative_error": -0.0004164931278633666,
+          "target": 240.1
+        }
+      },
+      "kept_records": 343,
+      "leakage_passed": true,
+      "leakage_status": "checked",
+      "record_counts": {
+        "dev": 52,
+        "test": 51,
+        "train": 240
+      },
+      "unique_abstract_patterns_per_split": {
+        "dev": 7,
+        "test": 7,
+        "train": 7
+      },
+      "unique_concrete_patterns_per_split": {
+        "dev": 41,
+        "test": 42,
+        "train": 91
+      },
+      "unique_roots_per_split": {
+        "dev": 21,
+        "test": 20,
+        "train": 25
+      },
+      "validation_passed": true
+    },
+    "lemma_random": {
+      "deviation": {
+        "dev": {
+          "absolute_error": 0.5500000000000043,
+          "absolute_error_abs": 0.5500000000000043,
+          "actual": 52,
+          "relative_error": 0.0106899902818271,
+          "target": 51.449999999999996
+        },
+        "test": {
+          "absolute_error": -0.44999999999999574,
+          "absolute_error_abs": 0.44999999999999574,
+          "actual": 51,
+          "relative_error": -0.008746355685131112,
+          "target": 51.449999999999996
+        },
+        "train": {
+          "absolute_error": -0.09999999999999432,
+          "absolute_error_abs": 0.09999999999999432,
+          "actual": 240,
+          "relative_error": -0.0004164931278633666,
+          "target": 240.1
+        }
+      },
+      "kept_records": 343,
+      "leakage_passed": true,
+      "leakage_status": "checked",
+      "record_counts": {
+        "dev": 52,
+        "test": 51,
+        "train": 240
+      },
+      "unique_abstract_patterns_per_split": {
+        "dev": 7,
+        "test": 7,
+        "train": 7
+      },
+      "unique_concrete_patterns_per_split": {
+        "dev": 41,
+        "test": 42,
+        "train": 91
+      },
+      "unique_roots_per_split": {
+        "dev": 21,
+        "test": 20,
+        "train": 25
+      },
+      "validation_passed": true
+    },
+    "random": {
+      "deviation": {
+        "dev": {
+          "absolute_error": 0.5500000000000043,
+          "absolute_error_abs": 0.5500000000000043,
+          "actual": 52,
+          "relative_error": 0.0106899902818271,
+          "target": 51.449999999999996
+        },
+        "test": {
+          "absolute_error": -0.44999999999999574,
+          "absolute_error_abs": 0.44999999999999574,
+          "actual": 51,
+          "relative_error": -0.008746355685131112,
+          "target": 51.449999999999996
+        },
+        "train": {
+          "absolute_error": -0.09999999999999432,
+          "absolute_error_abs": 0.09999999999999432,
+          "actual": 240,
+          "relative_error": -0.0004164931278633666,
+          "target": 240.1
+        }
+      },
+      "kept_records": 343,
+      "leakage_passed": null,
+      "leakage_status": "not_applicable",
+      "record_counts": {
+        "dev": 52,
+        "test": 51,
+        "train": 240
+      },
+      "unique_abstract_patterns_per_split": {
+        "dev": 7,
+        "test": 7,
+        "train": 7
+      },
+      "unique_concrete_patterns_per_split": {
+        "dev": 41,
+        "test": 44,
+        "train": 147
+      },
+      "unique_roots_per_split": {
+        "dev": 21,
+        "test": 20,
+        "train": 30
+      },
+      "validation_passed": true
+    },
+    "root_heldout": {
+      "deviation": {
+        "dev": {
+          "absolute_error": -1.4499999999999957,
+          "absolute_error_abs": 1.4499999999999957,
+          "actual": 50,
+          "relative_error": -0.028182701652089328,
+          "target": 51.449999999999996
+        },
+        "test": {
+          "absolute_error": 0.5500000000000043,
+          "absolute_error_abs": 0.5500000000000043,
+          "actual": 52,
+          "relative_error": 0.0106899902818271,
+          "target": 51.449999999999996
+        },
+        "train": {
+          "absolute_error": 0.9000000000000057,
+          "absolute_error_abs": 0.9000000000000057,
+          "actual": 241,
+          "relative_error": 0.003748438150770536,
+          "target": 240.1
+        }
+      },
+      "kept_records": 343,
+      "leakage_passed": true,
+      "leakage_status": "checked",
+      "record_counts": {
+        "dev": 50,
+        "test": 52,
+        "train": 241
+      },
+      "unique_abstract_patterns_per_split": {
+        "dev": 7,
+        "test": 7,
+        "train": 7
+      },
+      "unique_concrete_patterns_per_split": {
+        "dev": 40,
+        "test": 42,
+        "train": 92
+      },
+      "unique_roots_per_split": {
+        "dev": 7,
+        "test": 8,
+        "train": 15
+      },
+      "validation_passed": true
+    },
+    "root_pattern_heldout": {
+      "deviation": {
+        "dev": {
+          "absolute_error": 0.5500000000000043,
+          "absolute_error_abs": 0.5500000000000043,
+          "actual": 52,
+          "relative_error": 0.0106899902818271,
+          "target": 51.449999999999996
+        },
+        "test": {
+          "absolute_error": -0.44999999999999574,
+          "absolute_error_abs": 0.44999999999999574,
+          "actual": 51,
+          "relative_error": -0.008746355685131112,
+          "target": 51.449999999999996
+        },
+        "train": {
+          "absolute_error": -0.09999999999999432,
+          "absolute_error_abs": 0.09999999999999432,
+          "actual": 240,
+          "relative_error": -0.0004164931278633666,
+          "target": 240.1
+        }
+      },
+      "kept_records": 343,
+      "leakage_passed": true,
+      "leakage_status": "checked",
+      "record_counts": {
+        "dev": 52,
+        "test": 51,
+        "train": 240
+      },
+      "unique_abstract_patterns_per_split": {
+        "dev": 7,
+        "test": 7,
+        "train": 7
+      },
+      "unique_concrete_patterns_per_split": {
+        "dev": 41,
+        "test": 42,
+        "train": 91
+      },
+      "unique_roots_per_split": {
+        "dev": 21,
+        "test": 20,
+        "train": 25
+      },
+      "validation_passed": true
+    }
+  }
+}

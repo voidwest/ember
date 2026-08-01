@@ -1,0 +1,332 @@
+{
+  "records": {
+    "dropped": 32,
+    "dropped_by_reason": {
+      "pos_not_allowed": 32
+    },
+    "input": 500,
+    "kept": 468
+  },
+  "split_leakage": {
+    "abstract_pattern_heldout": true,
+    "concrete_pattern_heldout": true,
+    "details": {
+      "abstract_pattern_heldout": {
+        "checks": {
+          "abstract_pattern": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 70,
+          "test": 70,
+          "train": 328
+        }
+      },
+      "concrete_pattern_heldout": {
+        "checks": {
+          "concrete_pattern": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 70,
+          "test": 70,
+          "train": 328
+        }
+      },
+      "root_heldout": {
+        "checks": {
+          "lemma": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          },
+          "root": {
+            "dev_test": [],
+            "passed": true,
+            "train_dev": [],
+            "train_test": []
+          }
+        },
+        "passed": true,
+        "record_counts": {
+          "dev": 70,
+          "test": 70,
+          "train": 328
+        }
+      }
+    },
+    "root_heldout": true
+  },
+  "top_20_abstract_patterns": [
+    {
+      "count": 13,
+      "pattern": "الNTWSَةِ"
+    },
+    {
+      "count": 8,
+      "pattern": "1َ2ْ3ِ"
+    },
+    {
+      "count": 7,
+      "pattern": "1ُ2ُو3ِ"
+    },
+    {
+      "count": 7,
+      "pattern": "ال1ِ2ا3ِ"
+    },
+    {
+      "count": 7,
+      "pattern": "ال1َ2ْ3ِ"
+    },
+    {
+      "count": 6,
+      "pattern": "تَ1ْ2ِي3ِ"
+    },
+    {
+      "count": 5,
+      "pattern": "الNTWSَةُ"
+    },
+    {
+      "count": 5,
+      "pattern": "ال1َوْ3َةِ"
+    },
+    {
+      "count": 5,
+      "pattern": "اليَوْ3َ"
+    },
+    {
+      "count": 5,
+      "pattern": "ال1َ2َ3َ"
+    },
+    {
+      "count": 5,
+      "pattern": "1ُ2ُو3"
+    },
+    {
+      "count": 5,
+      "pattern": "الNTWSِ"
+    },
+    {
+      "count": 4,
+      "pattern": "ال1ا2ِ3ِ"
+    },
+    {
+      "count": 4,
+      "pattern": "المَ1ْ2ُو3َةِ"
+    },
+    {
+      "count": 4,
+      "pattern": "الأَ2ِي3ْ4ِيَّةِ"
+    },
+    {
+      "count": 4,
+      "pattern": "ال1َ2ّا3َةِ"
+    },
+    {
+      "count": 4,
+      "pattern": "وَ2ِي3ُ"
+    },
+    {
+      "count": 4,
+      "pattern": "مَ1ْ2َ3ِ"
+    },
+    {
+      "count": 4,
+      "pattern": "ال1ُ2ْ3َةِ"
+    },
+    {
+      "count": 4,
+      "pattern": "مَ1ْ2ِ3ِ"
+    }
+  ],
+  "top_20_concrete_patterns": [
+    {
+      "count": 8,
+      "pattern": "دَبّاب"
+    },
+    {
+      "count": 8,
+      "pattern": "أَلْمانِيّ"
+    },
+    {
+      "count": 8,
+      "pattern": "يَوْم"
+    },
+    {
+      "count": 7,
+      "pattern": "أَمِيرْكِيّ"
+    },
+    {
+      "count": 5,
+      "pattern": "مَجْمُوع"
+    },
+    {
+      "count": 5,
+      "pattern": "سَبَت"
+    },
+    {
+      "count": 5,
+      "pattern": "عام"
+    },
+    {
+      "count": 5,
+      "pattern": "جُرُوح"
+    },
+    {
+      "count": 5,
+      "pattern": "حِزْب"
+    },
+    {
+      "count": 4,
+      "pattern": "حُصُول"
+    },
+    {
+      "count": 4,
+      "pattern": "تَصْنِيع"
+    },
+    {
+      "count": 4,
+      "pattern": "إِسْبانِيّ"
+    },
+    {
+      "count": 4,
+      "pattern": "سَنَو"
+    },
+    {
+      "count": 4,
+      "pattern": "وَزِير"
+    },
+    {
+      "count": 4,
+      "pattern": "دِفاع"
+    },
+    {
+      "count": 4,
+      "pattern": "مَقْتَل"
+    },
+    {
+      "count": 4,
+      "pattern": "شَخْص"
+    },
+    {
+      "count": 4,
+      "pattern": "مُواجَه"
+    },
+    {
+      "count": 4,
+      "pattern": "شُرْط"
+    },
+    {
+      "count": 4,
+      "pattern": "رَئِيس"
+    }
+  ],
+  "top_20_roots": [
+    {
+      "count": 31,
+      "root": "NTWS"
+    },
+    {
+      "count": 11,
+      "root": "#.#.م"
+    },
+    {
+      "count": 9,
+      "root": "#.ح.د"
+    },
+    {
+      "count": 8,
+      "root": "د.ب.ب"
+    },
+    {
+      "count": 7,
+      "root": "#.م.ر.ك"
+    },
+    {
+      "count": 7,
+      "root": "ج.م.ع"
+    },
+    {
+      "count": 7,
+      "root": "ق.ت.ل"
+    },
+    {
+      "count": 6,
+      "root": "ص.ن.ع"
+    },
+    {
+      "count": 5,
+      "root": "ح.ك.م"
+    },
+    {
+      "count": 5,
+      "root": "ر.#.س"
+    },
+    {
+      "count": 5,
+      "root": "#.خ.ر"
+    },
+    {
+      "count": 5,
+      "root": "#.ز.ر"
+    },
+    {
+      "count": 5,
+      "root": "#.ج.ه"
+    },
+    {
+      "count": 5,
+      "root": "ح.د.ث"
+    },
+    {
+      "count": 5,
+      "root": "س.ب.ت"
+    },
+    {
+      "count": 5,
+      "root": "ع.#.م"
+    },
+    {
+      "count": 5,
+      "root": "ش.خ.ص"
+    },
+    {
+      "count": 5,
+      "root": "م.ر.ر"
+    },
+    {
+      "count": 5,
+      "root": "ج.ر.ح"
+    },
+    {
+      "count": 5,
+      "root": "ح.ز.ب"
+    }
+  ],
+  "unique_abstract_patterns": 290,
+  "unique_concrete_patterns": 308,
+  "unique_roots": 220
+}

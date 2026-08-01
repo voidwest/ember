@@ -1,0 +1,33 @@
+{
+  "canonical": {
+    "duplicate_ids": [],
+    "empty": false,
+    "leakage": {
+      "checks": {},
+      "ignored_unsplit_records": 0,
+      "passed": null,
+      "status": "not_applicable",
+      "strategy": "random"
+    },
+    "missing_labels": {},
+    "missing_required": [],
+    "num_records": 25,
+    "passed": true,
+    "type": "canonical"
+  },
+  "passed": true,
+  "probes": {
+    "empty": false,
+    "errors": [],
+    "num_records": 25,
+    "passed": true,
+    "type": "probes"
+  },
+  "sft": {
+    "empty": false,
+    "errors": [],
+    "num_records": 75,
+    "passed": true,
+    "type": "sft"
+  }
+}

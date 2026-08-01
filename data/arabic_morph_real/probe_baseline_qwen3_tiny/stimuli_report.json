@@ -1,0 +1,41 @@
+{
+  "gender_classes": {
+    "fem": 48,
+    "masc": 72
+  },
+  "number_classes": {
+    "def": 2,
+    "pl": 16,
+    "sg": 102
+  },
+  "output": "data/arabic_morph_real/probe_baseline_qwen3_tiny/stimuli.json",
+  "pos_classes": {
+    "ADJ": 38,
+    "NOUN": 79,
+    "VERB": 3
+  },
+  "root_classes": {
+    "#.#.م": 8,
+    "#.ج.ه": 4,
+    "#.ح.د": 6,
+    "#.خ.ر": 4,
+    "#.ز.ر": 4,
+    "#.م.ر.ك": 7,
+    "NTWS": 23,
+    "ج.ر.ح": 5,
+    "ج.م.ع": 6,
+    "ح.د.ث": 4,
+    "ح.ز.ب": 5,
+    "ح.ك.م": 5,
+    "د.ب.ب": 5,
+    "ر.#.س": 5,
+    "س.ب.ت": 4,
+    "ش.خ.ص": 5,
+    "ص.ن.ع": 5,
+    "ع.#.م": 5,
+    "ق.ت.ل": 6,
+    "م.ر.ر": 4
+  },
+  "rows": 120,
+  "source": "data/arabic_morph_real/out_disambig_padt_strict/canonical.jsonl"
+}

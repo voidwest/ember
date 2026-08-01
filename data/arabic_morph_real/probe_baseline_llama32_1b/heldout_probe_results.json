@@ -1,0 +1,1854 @@
+{
+  "root": {
+    "num_examples": 1090,
+    "num_classes": 164,
+    "majority_baseline": 0.07614678899082569,
+    "strategies": {
+      "random": {
+        "n_folds": 3,
+        "n_valid_folds": 3,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 164,
+            "n_test_classes": 164,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 164,
+            "n_test_classes": 164,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 164,
+            "n_test_classes": 164,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 3,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9009,
+          0.9229,
+          0.9431,
+          0.9477,
+          0.9477,
+          0.9422,
+          0.9339,
+          0.9303,
+          0.9229,
+          0.9183,
+          0.9193,
+          0.9303,
+          0.9321,
+          0.922,
+          0.8862,
+          0.8908
+        ],
+        "probe_best_layer": 3,
+        "probe_best_accuracy": 0.9477,
+        "char_ngram_accuracy": 0.9138,
+        "majority_baseline": 0.07614678899082569,
+        "probe_minus_char": 0.034,
+        "probe_minus_majority": 0.8716
+      },
+      "surface-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 0.06080000000000001,
+        "overlap": [
+          {
+            "n_train_classes": 161,
+            "n_test_classes": 79,
+            "n_unseen_classes": 3,
+            "unseen_fraction": 0.038,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 158,
+            "n_test_classes": 86,
+            "n_unseen_classes": 6,
+            "unseen_fraction": 0.07,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 161,
+            "n_test_classes": 81,
+            "n_unseen_classes": 3,
+            "unseen_fraction": 0.037,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 155,
+            "n_test_classes": 89,
+            "n_unseen_classes": 9,
+            "unseen_fraction": 0.101,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 159,
+            "n_test_classes": 86,
+            "n_unseen_classes": 5,
+            "unseen_fraction": 0.058,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "lemma-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 0.2312,
+        "overlap": [
+          {
+            "n_train_classes": 149,
+            "n_test_classes": 63,
+            "n_unseen_classes": 15,
+            "unseen_fraction": 0.238,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 151,
+            "n_test_classes": 59,
+            "n_unseen_classes": 13,
+            "unseen_fraction": 0.22,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 152,
+            "n_test_classes": 60,
+            "n_unseen_classes": 12,
+            "unseen_fraction": 0.2,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 148,
+            "n_test_classes": 57,
+            "n_unseen_classes": 16,
+            "unseen_fraction": 0.281,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 151,
+            "n_test_classes": 60,
+            "n_unseen_classes": 13,
+            "unseen_fraction": 0.217,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "root-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 1.0,
+        "overlap": [
+          {
+            "n_train_classes": 135,
+            "n_test_classes": 29,
+            "n_unseen_classes": 29,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 130,
+            "n_test_classes": 34,
+            "n_unseen_classes": 34,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 131,
+            "n_test_classes": 33,
+            "n_unseen_classes": 33,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 130,
+            "n_test_classes": 34,
+            "n_unseen_classes": 34,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 130,
+            "n_test_classes": 34,
+            "n_unseen_classes": 34,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          }
+        ]
+      }
+    }
+  },
+  "lemma": {
+    "num_examples": 789,
+    "num_classes": 153,
+    "majority_baseline": 0.025348542458808618,
+    "strategies": {
+      "random": {
+        "n_folds": 3,
+        "n_valid_folds": 3,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 153,
+            "n_test_classes": 153,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 153,
+            "n_test_classes": 153,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 153,
+            "n_test_classes": 153,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 3,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9772,
+          0.9823,
+          0.9873,
+          0.9911,
+          0.9911,
+          0.9924,
+          0.9949,
+          0.9899,
+          0.9937,
+          0.9962,
+          0.9937,
+          0.9911,
+          0.9949,
+          0.9861,
+          0.9632,
+          0.962
+        ],
+        "probe_best_layer": 9,
+        "probe_best_accuracy": 0.9962,
+        "char_ngram_accuracy": 0.9797,
+        "majority_baseline": 0.025348542458808618,
+        "probe_minus_char": 0.0165,
+        "probe_minus_majority": 0.9708
+      },
+      "surface-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 0.1726,
+        "overlap": [
+          {
+            "n_train_classes": 144,
+            "n_test_classes": 59,
+            "n_unseen_classes": 9,
+            "unseen_fraction": 0.153,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 143,
+            "n_test_classes": 57,
+            "n_unseen_classes": 10,
+            "unseen_fraction": 0.175,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 139,
+            "n_test_classes": 62,
+            "n_unseen_classes": 14,
+            "unseen_fraction": 0.226,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 144,
+            "n_test_classes": 62,
+            "n_unseen_classes": 9,
+            "unseen_fraction": 0.145,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 144,
+            "n_test_classes": 55,
+            "n_unseen_classes": 9,
+            "unseen_fraction": 0.164,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "lemma-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 1.0,
+        "overlap": [
+          {
+            "n_train_classes": 123,
+            "n_test_classes": 30,
+            "n_unseen_classes": 30,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 122,
+            "n_test_classes": 31,
+            "n_unseen_classes": 31,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 122,
+            "n_test_classes": 31,
+            "n_unseen_classes": 31,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 123,
+            "n_test_classes": 30,
+            "n_unseen_classes": 30,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 122,
+            "n_test_classes": 31,
+            "n_unseen_classes": 31,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "root-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 1.0,
+        "overlap": [
+          {
+            "n_train_classes": 120,
+            "n_test_classes": 33,
+            "n_unseen_classes": 33,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 121,
+            "n_test_classes": 32,
+            "n_unseen_classes": 32,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 121,
+            "n_test_classes": 32,
+            "n_unseen_classes": 32,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 125,
+            "n_test_classes": 28,
+            "n_unseen_classes": 28,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 125,
+            "n_test_classes": 28,
+            "n_unseen_classes": 28,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          }
+        ]
+      }
+    }
+  },
+  "pos": {
+    "num_examples": 1416,
+    "num_classes": 3,
+    "majority_baseline": 0.615819209039548,
+    "strategies": {
+      "random": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 5,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9103,
+          0.9209,
+          0.9273,
+          0.9032,
+          0.9202,
+          0.9273,
+          0.9273,
+          0.9223,
+          0.9082,
+          0.9364,
+          0.9195,
+          0.9237,
+          0.9124,
+          0.9096,
+          0.8976,
+          0.8948
+        ],
+        "probe_best_layer": 9,
+        "probe_best_accuracy": 0.9364,
+        "char_ngram_accuracy": 0.8722,
+        "majority_baseline": 0.615819209039548,
+        "probe_minus_char": 0.0643,
+        "probe_minus_majority": 0.3206
+      },
+      "surface-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "surface_dediac"
+        },
+        "probe_layerwise": [
+          0.8242,
+          0.8503,
+          0.8806,
+          0.8375,
+          0.8552,
+          0.8602,
+          0.8672,
+          0.8842,
+          0.8495,
+          0.8524,
+          0.8489,
+          0.8707,
+          0.8616,
+          0.8305,
+          0.791,
+          0.8023
+        ],
+        "probe_best_layer": 7,
+        "probe_best_accuracy": 0.8842,
+        "char_ngram_accuracy": 0.7846,
+        "majority_baseline": 0.615819209039548,
+        "probe_minus_char": 0.0996,
+        "probe_minus_majority": 0.2683
+      },
+      "lemma-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "lemma"
+        },
+        "probe_layerwise": [
+          0.7754,
+          0.8171,
+          0.8255,
+          0.7888,
+          0.7966,
+          0.8121,
+          0.8397,
+          0.8333,
+          0.81,
+          0.8376,
+          0.8277,
+          0.8206,
+          0.815,
+          0.8241,
+          0.7669,
+          0.7239
+        ],
+        "probe_best_layer": 6,
+        "probe_best_accuracy": 0.8397,
+        "char_ngram_accuracy": 0.6942,
+        "majority_baseline": 0.615819209039548,
+        "probe_minus_char": 0.1455,
+        "probe_minus_majority": 0.2239
+      },
+      "root-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "root"
+        },
+        "probe_layerwise": [
+          0.7556,
+          0.7614,
+          0.7783,
+          0.7409,
+          0.7741,
+          0.7868,
+          0.755,
+          0.7854,
+          0.7875,
+          0.8263,
+          0.7685,
+          0.8249,
+          0.8185,
+          0.7783,
+          0.75,
+          0.6878
+        ],
+        "probe_best_layer": 9,
+        "probe_best_accuracy": 0.8263,
+        "char_ngram_accuracy": 0.709,
+        "majority_baseline": 0.615819209039548,
+        "probe_minus_char": 0.1173,
+        "probe_minus_majority": 0.2105
+      }
+    }
+  },
+  "abstract_pattern": {
+    "num_examples": 821,
+    "num_classes": 147,
+    "majority_baseline": 0.04628501827040195,
+    "strategies": {
+      "random": {
+        "n_folds": 3,
+        "n_valid_folds": 3,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 147,
+            "n_test_classes": 147,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 147,
+            "n_test_classes": 147,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 147,
+            "n_test_classes": 147,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 3,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.8745,
+          0.9172,
+          0.9208,
+          0.9208,
+          0.9111,
+          0.9135,
+          0.9196,
+          0.8989,
+          0.8989,
+          0.8928,
+          0.8831,
+          0.8831,
+          0.8526,
+          0.8478,
+          0.799,
+          0.7978
+        ],
+        "probe_best_layer": 3,
+        "probe_best_accuracy": 0.9208,
+        "char_ngram_accuracy": 0.7576,
+        "majority_baseline": 0.04628501827040195,
+        "probe_minus_char": 0.1632,
+        "probe_minus_majority": 0.8746
+      },
+      "surface-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 0.20859999999999998,
+        "overlap": [
+          {
+            "n_train_classes": 135,
+            "n_test_classes": 55,
+            "n_unseen_classes": 12,
+            "unseen_fraction": 0.218,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 133,
+            "n_test_classes": 60,
+            "n_unseen_classes": 14,
+            "unseen_fraction": 0.233,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 136,
+            "n_test_classes": 57,
+            "n_unseen_classes": 11,
+            "unseen_fraction": 0.193,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 132,
+            "n_test_classes": 59,
+            "n_unseen_classes": 15,
+            "unseen_fraction": 0.254,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 138,
+            "n_test_classes": 62,
+            "n_unseen_classes": 9,
+            "unseen_fraction": 0.145,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "lemma-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 0.217,
+        "overlap": [
+          {
+            "n_train_classes": 133,
+            "n_test_classes": 59,
+            "n_unseen_classes": 14,
+            "unseen_fraction": 0.237,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 133,
+            "n_test_classes": 55,
+            "n_unseen_classes": 14,
+            "unseen_fraction": 0.255,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 138,
+            "n_test_classes": 60,
+            "n_unseen_classes": 9,
+            "unseen_fraction": 0.15,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 133,
+            "n_test_classes": 56,
+            "n_unseen_classes": 14,
+            "unseen_fraction": 0.25,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 136,
+            "n_test_classes": 57,
+            "n_unseen_classes": 11,
+            "unseen_fraction": 0.193,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "root-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 0.2496,
+        "overlap": [
+          {
+            "n_train_classes": 133,
+            "n_test_classes": 49,
+            "n_unseen_classes": 14,
+            "unseen_fraction": 0.286,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 137,
+            "n_test_classes": 56,
+            "n_unseen_classes": 10,
+            "unseen_fraction": 0.179,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 130,
+            "n_test_classes": 58,
+            "n_unseen_classes": 17,
+            "unseen_fraction": 0.293,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 135,
+            "n_test_classes": 58,
+            "n_unseen_classes": 12,
+            "unseen_fraction": 0.207,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 132,
+            "n_test_classes": 53,
+            "n_unseen_classes": 15,
+            "unseen_fraction": 0.283,
+            "all_test_labels_seen": false
+          }
+        ]
+      }
+    }
+  },
+  "concrete_pattern": {
+    "num_examples": 730,
+    "num_classes": 146,
+    "majority_baseline": 0.021917808219178082,
+    "strategies": {
+      "random": {
+        "n_folds": 3,
+        "n_valid_folds": 3,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 146,
+            "n_test_classes": 146,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 146,
+            "n_test_classes": 146,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 146,
+            "n_test_classes": 146,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 3,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9877,
+          0.9918,
+          0.9945,
+          0.9959,
+          0.9959,
+          0.9959,
+          0.9959,
+          0.9973,
+          0.9945,
+          0.9986,
+          0.9959,
+          0.9986,
+          0.9986,
+          0.9932,
+          0.9712,
+          0.9712
+        ],
+        "probe_best_layer": 9,
+        "probe_best_accuracy": 0.9986,
+        "char_ngram_accuracy": 0.9931,
+        "majority_baseline": 0.021917808219178082,
+        "probe_minus_char": 0.0055,
+        "probe_minus_majority": 0.9767
+      },
+      "surface-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 0.2512,
+        "overlap": [
+          {
+            "n_train_classes": 137,
+            "n_test_classes": 50,
+            "n_unseen_classes": 9,
+            "unseen_fraction": 0.18,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 134,
+            "n_test_classes": 51,
+            "n_unseen_classes": 12,
+            "unseen_fraction": 0.235,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 133,
+            "n_test_classes": 51,
+            "n_unseen_classes": 13,
+            "unseen_fraction": 0.255,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 132,
+            "n_test_classes": 50,
+            "n_unseen_classes": 14,
+            "unseen_fraction": 0.28,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 131,
+            "n_test_classes": 49,
+            "n_unseen_classes": 15,
+            "unseen_fraction": 0.306,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "lemma-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 1.0,
+        "overlap": [
+          {
+            "n_train_classes": 117,
+            "n_test_classes": 29,
+            "n_unseen_classes": 29,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 117,
+            "n_test_classes": 29,
+            "n_unseen_classes": 29,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 116,
+            "n_test_classes": 30,
+            "n_unseen_classes": 30,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 117,
+            "n_test_classes": 29,
+            "n_unseen_classes": 29,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 117,
+            "n_test_classes": 29,
+            "n_unseen_classes": 29,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          }
+        ]
+      },
+      "root-heldout": {
+        "status": "all_folds_unseen_labels",
+        "n_folds": 5,
+        "n_valid_folds": 0,
+        "mean_unseen_fraction": 1.0,
+        "overlap": [
+          {
+            "n_train_classes": 115,
+            "n_test_classes": 31,
+            "n_unseen_classes": 31,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 116,
+            "n_test_classes": 30,
+            "n_unseen_classes": 30,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 116,
+            "n_test_classes": 30,
+            "n_unseen_classes": 30,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 119,
+            "n_test_classes": 27,
+            "n_unseen_classes": 27,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          },
+          {
+            "n_train_classes": 118,
+            "n_test_classes": 28,
+            "n_unseen_classes": 28,
+            "unseen_fraction": 1.0,
+            "all_test_labels_seen": false
+          }
+        ]
+      }
+    }
+  },
+  "features.gender": {
+    "num_examples": 1416,
+    "num_classes": 2,
+    "majority_baseline": 0.5896892655367232,
+    "strategies": {
+      "random": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 5,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9583,
+          0.9576,
+          0.9703,
+          0.9612,
+          0.9654,
+          0.952,
+          0.9534,
+          0.9505,
+          0.947,
+          0.9428,
+          0.9393,
+          0.9386,
+          0.9336,
+          0.9322,
+          0.923,
+          0.9181
+        ],
+        "probe_best_layer": 2,
+        "probe_best_accuracy": 0.9703,
+        "char_ngram_accuracy": 0.928,
+        "majority_baseline": 0.5896892655367232,
+        "probe_minus_char": 0.0424,
+        "probe_minus_majority": 0.3806
+      },
+      "surface-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "surface_dediac"
+        },
+        "probe_layerwise": [
+          0.928,
+          0.9287,
+          0.9421,
+          0.9287,
+          0.9449,
+          0.9273,
+          0.9435,
+          0.9265,
+          0.9032,
+          0.8969,
+          0.9054,
+          0.8877,
+          0.8997,
+          0.9089,
+          0.8778,
+          0.8482
+        ],
+        "probe_best_layer": 4,
+        "probe_best_accuracy": 0.9449,
+        "char_ngram_accuracy": 0.882,
+        "majority_baseline": 0.5896892655367232,
+        "probe_minus_char": 0.0629,
+        "probe_minus_majority": 0.3552
+      },
+      "lemma-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "lemma"
+        },
+        "probe_layerwise": [
+          0.9047,
+          0.8962,
+          0.9167,
+          0.8997,
+          0.9265,
+          0.9025,
+          0.9145,
+          0.9174,
+          0.887,
+          0.8941,
+          0.9025,
+          0.8962,
+          0.8785,
+          0.8835,
+          0.8199,
+          0.8121
+        ],
+        "probe_best_layer": 4,
+        "probe_best_accuracy": 0.9265,
+        "char_ngram_accuracy": 0.8884,
+        "majority_baseline": 0.5896892655367232,
+        "probe_minus_char": 0.0381,
+        "probe_minus_majority": 0.3369
+      },
+      "root-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 2,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "root"
+        },
+        "probe_layerwise": [
+          0.887,
+          0.899,
+          0.9132,
+          0.9202,
+          0.9096,
+          0.9046,
+          0.9082,
+          0.8863,
+          0.8708,
+          0.858,
+          0.8757,
+          0.8587,
+          0.8729,
+          0.8623,
+          0.8213,
+          0.8157
+        ],
+        "probe_best_layer": 3,
+        "probe_best_accuracy": 0.9202,
+        "char_ngram_accuracy": 0.8863,
+        "majority_baseline": 0.5896892655367232,
+        "probe_minus_char": 0.0339,
+        "probe_minus_majority": 0.3305
+      }
+    }
+  },
+  "features.number": {
+    "num_examples": 1416,
+    "num_classes": 3,
+    "majority_baseline": 0.8142655367231638,
+    "strategies": {
+      "random": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "effective_folds": 5,
+          "method": "StratifiedKFold"
+        },
+        "probe_layerwise": [
+          0.9583,
+          0.9555,
+          0.9562,
+          0.9435,
+          0.9477,
+          0.9513,
+          0.9605,
+          0.9647,
+          0.959,
+          0.9661,
+          0.964,
+          0.9576,
+          0.9548,
+          0.947,
+          0.94,
+          0.9287
+        ],
+        "probe_best_layer": 9,
+        "probe_best_accuracy": 0.9661,
+        "char_ngram_accuracy": 0.9329,
+        "majority_baseline": 0.8142655367231638,
+        "probe_minus_char": 0.0332,
+        "probe_minus_majority": 0.1518
+      },
+      "surface-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "surface_dediac"
+        },
+        "probe_layerwise": [
+          0.9068,
+          0.8955,
+          0.8983,
+          0.904,
+          0.8955,
+          0.9181,
+          0.9364,
+          0.9195,
+          0.9202,
+          0.9223,
+          0.9343,
+          0.9251,
+          0.9166,
+          0.9209,
+          0.8955,
+          0.8778
+        ],
+        "probe_best_layer": 6,
+        "probe_best_accuracy": 0.9364,
+        "char_ngram_accuracy": 0.8941,
+        "majority_baseline": 0.8142655367231638,
+        "probe_minus_char": 0.0424,
+        "probe_minus_majority": 0.1222
+      },
+      "lemma-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 2,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "lemma"
+        },
+        "probe_layerwise": [
+          0.8913,
+          0.8934,
+          0.8884,
+          0.8828,
+          0.8976,
+          0.9047,
+          0.9153,
+          0.9146,
+          0.9174,
+          0.9096,
+          0.9308,
+          0.9174,
+          0.9033,
+          0.8863,
+          0.8552,
+          0.8517
+        ],
+        "probe_best_layer": 10,
+        "probe_best_accuracy": 0.9308,
+        "char_ngram_accuracy": 0.8687,
+        "majority_baseline": 0.8142655367231638,
+        "probe_minus_char": 0.0621,
+        "probe_minus_majority": 0.1165
+      },
+      "root-heldout": {
+        "n_folds": 5,
+        "n_valid_folds": 5,
+        "mean_unseen_fraction": 0.0,
+        "max_unseen_fraction": 0.0,
+        "overlap": [
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          },
+          {
+            "n_train_classes": 3,
+            "n_test_classes": 3,
+            "n_unseen_classes": 0,
+            "unseen_fraction": 0.0,
+            "all_test_labels_seen": true
+          }
+        ],
+        "split_meta": {
+          "unseen_stats": [
+            {
+              "n_unseen": 0,
+              "n_test": 284
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            },
+            {
+              "n_unseen": 0,
+              "n_test": 283
+            }
+          ],
+          "n_folds": 5,
+          "method": "GroupKFold",
+          "group_field": "root"
+        },
+        "probe_layerwise": [
+          0.8222,
+          0.8736,
+          0.8567,
+          0.8468,
+          0.8736,
+          0.8722,
+          0.9047,
+          0.9209,
+          0.9026,
+          0.8933,
+          0.9301,
+          0.9054,
+          0.8722,
+          0.8503,
+          0.8637,
+          0.8729
+        ],
+        "probe_best_layer": 10,
+        "probe_best_accuracy": 0.9301,
+        "char_ngram_accuracy": 0.8728,
+        "majority_baseline": 0.8142655367231638,
+        "probe_minus_char": 0.0572,
+        "probe_minus_majority": 0.1158
+      }
+    }
+  }
+}

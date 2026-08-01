@@ -1,0 +1,54 @@
+{
+  "component_counts": {
+    "dev": 52,
+    "test": 51,
+    "train": 240
+  },
+  "deviation": {
+    "dev": {
+      "absolute_error": 0.5500000000000043,
+      "absolute_error_abs": 0.5500000000000043,
+      "actual": 52,
+      "relative_error": 0.0106899902818271,
+      "target": 51.449999999999996
+    },
+    "test": {
+      "absolute_error": -0.44999999999999574,
+      "absolute_error_abs": 0.44999999999999574,
+      "actual": 51,
+      "relative_error": -0.008746355685131112,
+      "target": 51.449999999999996
+    },
+    "train": {
+      "absolute_error": -0.09999999999999432,
+      "absolute_error_abs": 0.09999999999999432,
+      "actual": 240,
+      "relative_error": -0.0004164931278633666,
+      "target": 240.1
+    }
+  },
+  "leakage": {
+    "checks": {},
+    "ignored_unsplit_records": 0,
+    "passed": null,
+    "status": "not_applicable",
+    "strategy": "random"
+  },
+  "ratios": {
+    "dev": 0.15,
+    "test": 0.15,
+    "train": 0.7
+  },
+  "record_counts": {
+    "dev": 52,
+    "test": 51,
+    "train": 240
+  },
+  "seed": 17,
+  "strategy": "random",
+  "target_counts": {
+    "dev": 51.449999999999996,
+    "test": 51.449999999999996,
+    "train": 240.1
+  }
+}

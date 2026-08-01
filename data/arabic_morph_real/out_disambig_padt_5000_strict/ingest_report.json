@@ -1,0 +1,23 @@
+{
+  "expanded_records": 5000,
+  "id_collisions_resolved": 0,
+  "input_records": 5000,
+  "missing": {
+    "abstract_pattern": 0,
+    "concrete_pattern": 0,
+    "lemma": 0,
+    "root": 0,
+    "surface": 0
+  },
+  "output_records": 5000,
+  "pos_distribution": {
+    "ADJ": 910,
+    "ADV": 2,
+    "NOUN": 2957,
+    "NOUN_PROP": 284,
+    "NOUN_QUANT": 11,
+    "PRON_INTERROG": 1,
+    "PRON_REL": 1,
+    "VERB": 834
+  }
+}

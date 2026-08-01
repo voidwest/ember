@@ -1,0 +1,181 @@
+{
+  "examples_per_abstract_pattern": {
+    "1ا2َ3َ": 1,
+    "1ا2ِ3َتانِ": 1,
+    "1ا3َ": 1,
+    "1ا3َت": 2,
+    "1َ2َّ3َ": 2,
+    "أَ1ا3َت": 2,
+    "ال1ا2ِي": 1,
+    "ال1ُ2ا3ِيُّونَ": 1,
+    "الNTWS": 1,
+    "تَ1َ2َّت": 1,
+    "نَ1ْ2َى": 1,
+    "يَ1ْ2َ3ُونَ": 1,
+    "يَ1ْ2ُو": 1,
+    "يَتَ1ا2َ3": 1,
+    "يَتَ1َ2َّ3ُونَ": 1,
+    "يَتَ1َ2َّى": 1,
+    "يُ1ا2ِ3": 3,
+    "يُ1ا3": 1,
+    "يُ1اوِ3ُونَ": 1,
+    "ٱِسْتَ1َ2َّت": 1
+  },
+  "examples_per_concrete_pattern": {
+    "أَشار": 1,
+    "أَفاد": 1,
+    "بارِج": 1,
+    "بْحَث": 1,
+    "تَخَلّ": 1,
+    "تَخَلَّى": 1,
+    "تَعَرَّض": 1,
+    "تَنازَل": 1,
+    "تِكْنُولُوجِيا": 1,
+    "جارِي": 1,
+    "حاوِل": 1,
+    "خالِف": 1,
+    "دام": 1,
+    "دْعُو": 1,
+    "زُقاقِيّ": 1,
+    "سْعَى": 1,
+    "شارَك": 1,
+    "شَدَّد": 1,
+    "صارِع": 1,
+    "طال": 1,
+    "غادِر": 1,
+    "قال": 1,
+    "قَرَّر": 1,
+    "كان": 1,
+    "ٱِسْتَمَرّ": 1
+  },
+  "examples_per_root": {
+    "NTWS": 1,
+    "ب.ح.ث": 1,
+    "ب.ر.ج": 1,
+    "ج.ر.#": 1,
+    "ح.#.ل": 1,
+    "خ.ل.#": 2,
+    "خ.ل.ف": 1,
+    "د.#.م": 1,
+    "د.ع.#": 1,
+    "ز.ق.ق": 1,
+    "س.ع.#": 1,
+    "ش.#.ر": 1,
+    "ش.د.د": 1,
+    "ش.ر.ك": 1,
+    "ص.ر.ع": 1,
+    "ط.#.ل": 1,
+    "ع.ر.ض": 1,
+    "غ.د.ر": 1,
+    "ف.#.د": 1,
+    "ق.#.ل": 1,
+    "ق.ر.ر": 1,
+    "ك.#.ن": 1,
+    "م.ر.ر": 1,
+    "ن.ز.ل": 1
+  },
+  "feature_distribution": {
+    "aspect": {
+      "indef": 11,
+      "na": 4,
+      "pl": 10
+    },
+    "case": {
+      "n": 2,
+      "na": 21,
+      "nom": 2
+    },
+    "gender": {
+      "fem": 8,
+      "masc": 17
+    },
+    "mood": {
+      "indef": 13,
+      "na": 4,
+      "nom": 8
+    },
+    "number": {
+      "def": 1,
+      "pl": 5,
+      "sg": 19
+    },
+    "person": {
+      "1": 1,
+      "3": 20,
+      "na": 4
+    },
+    "state": {
+      "def": 3,
+      "indef": 1,
+      "na": 21
+    },
+    "voice": {
+      "acc": 20,
+      "na": 4,
+      "pl": 1
+    }
+  },
+  "num_records": 25,
+  "pos_distribution": {
+    "ADJ": 1,
+    "NOUN": 3,
+    "VERB": 21
+  },
+  "split_counts": {
+    "dev": 4,
+    "test": 4,
+    "train": 17
+  },
+  "splits": {
+    "<unsplit>": {
+      "num_records": 0,
+      "pos_distribution": {},
+      "unique_abstract_patterns": 0,
+      "unique_concrete_patterns": 0,
+      "unique_lemmas": 0,
+      "unique_roots": 0,
+      "unique_surfaces": 0
+    },
+    "dev": {
+      "num_records": 4,
+      "pos_distribution": {
+        "ADJ": 1,
+        "VERB": 3
+      },
+      "unique_abstract_patterns": 4,
+      "unique_concrete_patterns": 4,
+      "unique_lemmas": 4,
+      "unique_roots": 4,
+      "unique_surfaces": 4
+    },
+    "test": {
+      "num_records": 4,
+      "pos_distribution": {
+        "NOUN": 1,
+        "VERB": 3
+      },
+      "unique_abstract_patterns": 4,
+      "unique_concrete_patterns": 4,
+      "unique_lemmas": 4,
+      "unique_roots": 4,
+      "unique_surfaces": 4
+    },
+    "train": {
+      "num_records": 17,
+      "pos_distribution": {
+        "NOUN": 2,
+        "VERB": 15
+      },
+      "unique_abstract_patterns": 14,
+      "unique_concrete_patterns": 17,
+      "unique_lemmas": 17,
+      "unique_roots": 17,
+      "unique_surfaces": 17
+    }
+  },
+  "unique_abstract_patterns": 20,
+  "unique_concrete_patterns": 25,
+  "unique_lemmas": 24,
+  "unique_roots": 24,
+  "unique_surfaces": 25
+}

@@ -1,0 +1,554 @@
+{
+  "token_distribution": {
+    "total": 300,
+    "distribution": {
+      "1": 53,
+      "2": 134,
+      "3": 98,
+      "4": 14,
+      "5": 1
+    },
+    "single_token": 53,
+    "multi_token": 247,
+    "single_token_pct": 17.7,
+    "mean_tokens": 2.25,
+    "median_tokens": 2,
+    "min_tokens": 1,
+    "max_tokens": 5
+  },
+  "tasks": {
+    "root": {
+      "descriptive": {
+        "num_examples": 282,
+        "num_classes": 75,
+        "class_counts": {
+          "#.ج.ه": 4,
+          "#.ح.د": 5,
+          "#.خ.ر": 5,
+          "#.د.#": 3,
+          "#.ز.ر": 4,
+          "#.ص.ل": 4,
+          "#.ض.ع": 3,
+          "#.ط.ن": 4,
+          "#.ف.#": 4,
+          "#.ق.ع": 3,
+          "#.ل.#": 5,
+          "#.م.ر": 4,
+          "NTWS": 5,
+          "ب.ح.ث": 4,
+          "ب.ل.د": 4,
+          "ت.ج.ر": 3,
+          "ث.ن.#": 3,
+          "ج.ر.#": 4,
+          "ج.ر.ح": 4,
+          "ج.س.د": 3,
+          "ج.م.ع": 4,
+          "ج.ن.ب": 4,
+          "ح.#.#": 4,
+          "ح.#.ل": 4,
+          "ح.د.ث": 4,
+          "ح.د.د": 4,
+          "ح.ر.ق": 4,
+          "ح.ك.م": 4,
+          "ح.ل.ل": 3,
+          "خ.ط.ر": 4,
+          "د.#.ل": 4,
+          "ر.#.س": 4,
+          "ر.ج.ل": 5,
+          "ر.س.م": 3,
+          "س.#.ق": 4,
+          "س.#.ل": 4,
+          "س.ب.ق": 4,
+          "س.ف.ر": 3,
+          "س.م.ح": 3,
+          "ش.#.ر": 4,
+          "ش.ر.ع": 3,
+          "ش.ر.ك": 4,
+          "ص.#.ب": 4,
+          "ص.ح.ف": 4,
+          "ص.د.ر": 3,
+          "ص.ن.ع": 4,
+          "ض.ب.ط": 3,
+          "ط.#.ل": 3,
+          "ط.ب.ع": 3,
+          "ط.ل.ب": 3,
+          "ع.ب.ر": 4,
+          "ع.ث.ر": 4,
+          "ع.د.د": 4,
+          "ع.ر.ض": 4,
+          "ع.ل.م": 3,
+          "ع.م.ل": 5,
+          "ف.ت.ح": 3,
+          "ق.#.د": 4,
+          "ق.#.ل": 4,
+          "ق.#.م": 4,
+          "ق.ت.ل": 4,
+          "ق.ر.ر": 3,
+          "ق.ل.ل": 3,
+          "ك.#.ن": 5,
+          "م.ث.ل": 3,
+          "م.د.ن": 3,
+          "م.ر.ر": 5,
+          "م.ض.#": 4,
+          "م.ل.ك": 4,
+          "ن.ت.ج": 3,
+          "ن.ز.ل": 4,
+          "ن.ظ.م": 4,
+          "ن.ف.س": 3,
+          "ن.ق.ل": 3,
+          "ن.ه.#": 3
+        },
+        "majority_class": "#.ح.د",
+        "majority_baseline_accuracy": 0.01773049645390071
+      },
+      "probe_by_bucket": {
+        "single": {
+          "n": 51,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 123,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 95,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 13,
+          "accuracy": 1.0
+        },
+        "multi": {
+          "n": 231,
+          "accuracy": 1.0
+        }
+      },
+      "char_ngram_by_bucket": {
+        "single": {
+          "n": 51,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 123,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 95,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 13,
+          "accuracy": 1.0
+        },
+        "multi": {
+          "n": 231,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "lemma": {
+      "descriptive": {
+        "num_examples": 80,
+        "num_classes": 25,
+        "class_counts": {
+          "آخَر": 3,
+          "أَحَد": 4,
+          "بَلَد": 3,
+          "تَعَرَّض": 3,
+          "جَنُوب": 3,
+          "جُرْح": 3,
+          "حَرِيق": 3,
+          "حَياة": 3,
+          "دَوْلَة": 3,
+          "رَئِيس": 3,
+          "رَجُل": 4,
+          "سُوق": 3,
+          "صَحِيفَة": 3,
+          "عَدَد": 3,
+          "عَمَل": 4,
+          "كان": 4,
+          "ماضِي": 3,
+          "مَجْمُوعَة": 3,
+          "مَسْؤُول": 3,
+          "مَقْتَل": 3,
+          "نِظام": 3,
+          "وَزِير": 3,
+          "وَطَنِيّ": 3,
+          "وَفاة": 3,
+          "وِلايَة": 4
+        },
+        "majority_class": "أَحَد",
+        "majority_baseline_accuracy": 0.05
+      },
+      "probe_by_bucket": {
+        "single": {
+          "n": 13,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 43,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 22,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 2,
+          "accuracy": null,
+          "note": "too few examples"
+        },
+        "multi": {
+          "n": 67,
+          "accuracy": 1.0
+        }
+      },
+      "char_ngram_by_bucket": {
+        "single": {
+          "n": 13,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 43,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 22,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 2,
+          "accuracy": null
+        },
+        "multi": {
+          "n": 67,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "pos": {
+      "descriptive": {
+        "num_examples": 300,
+        "num_classes": 3,
+        "class_counts": {
+          "ADJ": 63,
+          "NOUN": 177,
+          "VERB": 60
+        },
+        "majority_class": "NOUN",
+        "majority_baseline_accuracy": 0.59
+      },
+      "probe_by_bucket": {
+        "single": {
+          "n": 53,
+          "accuracy": 0.9063
+        },
+        "2": {
+          "n": 134,
+          "accuracy": 0.8584
+        },
+        "3": {
+          "n": 98,
+          "accuracy": 0.8258
+        },
+        "4+": {
+          "n": 15,
+          "accuracy": 0.8
+        },
+        "multi": {
+          "n": 247,
+          "accuracy": 0.887
+        }
+      },
+      "char_ngram_by_bucket": {
+        "single": {
+          "n": 53,
+          "accuracy": 0.9248
+        },
+        "2": {
+          "n": 134,
+          "accuracy": 0.814
+        },
+        "3": {
+          "n": 98,
+          "accuracy": 0.6947
+        },
+        "4+": {
+          "n": 15,
+          "accuracy": 0.6667
+        },
+        "multi": {
+          "n": 247,
+          "accuracy": 0.83
+        }
+      }
+    },
+    "abstract_pattern": {
+      "descriptive": {
+        "num_examples": 85,
+        "num_classes": 24,
+        "class_counts": {
+          "1ا3َ": 4,
+          "1ا3َت": 3,
+          "1َ2َ3ٍ": 3,
+          "1َ2َ3َ": 4,
+          "1َ2َ3َت": 3,
+          "1َ2ُو3ِ": 3,
+          "1َ2ْ3ِ": 8,
+          "1ُ2ُو3": 4,
+          "1ِ2ا3ِ": 3,
+          "إِ1ا3َةِ": 3,
+          "ال1ا2ِ3ِ": 3,
+          "ال1ا2ِي": 4,
+          "ال1َ2َ3ِيِّ": 4,
+          "ال1ُ2ُو3ِ": 4,
+          "ال1ِ2ا3ِ": 4,
+          "الأَ2َ3َ": 3,
+          "المُ1ا2َ3َةِ": 3,
+          "الوَ2َ3ِيِّ": 3,
+          "الوِ2اياتِ": 4,
+          "تَ1ْ2َ3": 3,
+          "تَ1ْ2ِي3ِ": 3,
+          "مَ1ْ2َ3ِ": 3,
+          "وَ2اَةُ": 3,
+          "وَ2ِي3ُ": 3
+        },
+        "majority_class": "1َ2ْ3ِ",
+        "majority_baseline_accuracy": 0.09411764705882353
+      },
+      "probe_by_bucket": {
+        "single": {
+          "n": 19,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 36,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 25,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 5,
+          "accuracy": 1.0
+        },
+        "multi": {
+          "n": 66,
+          "accuracy": 1.0
+        }
+      },
+      "char_ngram_by_bucket": {
+        "single": {
+          "n": 19,
+          "accuracy": 0.8389
+        },
+        "2": {
+          "n": 36,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 25,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 5,
+          "accuracy": 1.0
+        },
+        "multi": {
+          "n": 66,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "concrete_pattern": {
+      "descriptive": {
+        "num_examples": 66,
+        "num_classes": 21,
+        "class_counts": {
+          "آخَر": 3,
+          "أَحَد": 4,
+          "أَعْمال": 3,
+          "تَعَرَّض": 3,
+          "جَنُوب": 3,
+          "جُرُوح": 3,
+          "حَيا": 3,
+          "رَئِيس": 3,
+          "رِجال": 3,
+          "صَحِيف": 3,
+          "عَدَد": 3,
+          "كان": 4,
+          "ماضِي": 3,
+          "مَجْمُوع": 3,
+          "مَسْؤُول": 3,
+          "مَقْتَل": 3,
+          "نِظام": 3,
+          "وَزِير": 3,
+          "وَطَنِيّ": 3,
+          "وَفا": 3,
+          "وِلاي": 4
+        },
+        "majority_class": "أَحَد",
+        "majority_baseline_accuracy": 0.06060606060606061
+      },
+      "probe_by_bucket": {
+        "single": {
+          "n": 12,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 32,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 20,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 2,
+          "accuracy": null,
+          "note": "too few examples"
+        },
+        "multi": {
+          "n": 54,
+          "accuracy": 1.0
+        }
+      },
+      "char_ngram_by_bucket": {
+        "single": {
+          "n": 12,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 32,
+          "accuracy": 1.0
+        },
+        "3": {
+          "n": 20,
+          "accuracy": 1.0
+        },
+        "4+": {
+          "n": 2,
+          "accuracy": null
+        },
+        "multi": {
+          "n": 54,
+          "accuracy": 1.0
+        }
+      }
+    },
+    "features.gender": {
+      "descriptive": {
+        "num_examples": 300,
+        "num_classes": 2,
+        "class_counts": {
+          "fem": 108,
+          "masc": 192
+        },
+        "majority_class": "masc",
+        "majority_baseline_accuracy": 0.64
+      },
+      "probe_by_bucket": {
+        "single": {
+          "n": 53,
+          "accuracy": 0.8673
+        },
+        "2": {
+          "n": 134,
+          "accuracy": 0.8057
+        },
+        "3": {
+          "n": 98,
+          "accuracy": 0.7242
+        },
+        "4+": {
+          "n": 15,
+          "accuracy": 0.7333
+        },
+        "multi": {
+          "n": 247,
+          "accuracy": 0.8746
+        }
+      },
+      "char_ngram_by_bucket": {
+        "single": {
+          "n": 53,
+          "accuracy": 0.8909
+        },
+        "2": {
+          "n": 134,
+          "accuracy": 0.843
+        },
+        "3": {
+          "n": 98,
+          "accuracy": 0.8158
+        },
+        "4+": {
+          "n": 15,
+          "accuracy": 0.6667
+        },
+        "multi": {
+          "n": 247,
+          "accuracy": 0.8869
+        }
+      }
+    },
+    "features.number": {
+      "descriptive": {
+        "num_examples": 300,
+        "num_classes": 3,
+        "class_counts": {
+          "def": 4,
+          "pl": 54,
+          "sg": 242
+        },
+        "majority_class": "sg",
+        "majority_baseline_accuracy": 0.8066666666666666
+      },
+      "probe_by_bucket": {
+        "single": {
+          "n": 53,
+          "accuracy": 1.0
+        },
+        "2": {
+          "n": 134,
+          "accuracy": 0.7836
+        },
+        "3": {
+          "n": 98,
+          "accuracy": 0.7959
+        },
+        "4+": {
+          "n": 15,
+          "accuracy": 1.0
+        },
+        "multi": {
+          "n": 247,
+          "accuracy": 0.8747
+        }
+      },
+      "char_ngram_by_bucket": {
+        "single": {
+          "n": 53,
+          "accuracy": 0.9811
+        },
+        "2": {
+          "n": 134,
+          "accuracy": 0.8657
+        },
+        "3": {
+          "n": 98,
+          "accuracy": 0.7959
+        },
+        "4+": {
+          "n": 15,
+          "accuracy": 0.8
+        },
+        "multi": {
+          "n": 247,
+          "accuracy": 0.8786
+        }
+      }
+    }
+  }
+}

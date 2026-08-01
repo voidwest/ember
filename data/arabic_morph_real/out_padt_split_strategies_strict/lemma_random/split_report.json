@@ -1,0 +1,60 @@
+{
+  "component_counts": {
+    "dev": 4,
+    "test": 4,
+    "train": 16
+  },
+  "deviation": {
+    "dev": {
+      "absolute_error": 0.25,
+      "absolute_error_abs": 0.25,
+      "actual": 4,
+      "relative_error": 0.06666666666666667,
+      "target": 3.75
+    },
+    "test": {
+      "absolute_error": 0.25,
+      "absolute_error_abs": 0.25,
+      "actual": 4,
+      "relative_error": 0.06666666666666667,
+      "target": 3.75
+    },
+    "train": {
+      "absolute_error": -0.5,
+      "absolute_error_abs": 0.5,
+      "actual": 17,
+      "relative_error": -0.02857142857142857,
+      "target": 17.5
+    }
+  },
+  "leakage": {
+    "checks": {
+      "lemma": {
+        "dev_test": [],
+        "passed": true,
+        "train_dev": [],
+        "train_test": []
+      }
+    },
+    "ignored_unsplit_records": 0,
+    "passed": true,
+    "strategy": "lemma_random"
+  },
+  "ratios": {
+    "dev": 0.15,
+    "test": 0.15,
+    "train": 0.7
+  },
+  "record_counts": {
+    "dev": 4,
+    "test": 4,
+    "train": 17
+  },
+  "seed": 17,
+  "strategy": "lemma_random",
+  "target_counts": {
+    "dev": 3.75,
+    "test": 3.75,
+    "train": 17.5
+  }
+}

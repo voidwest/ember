@@ -1,0 +1,66 @@
+{
+  "component_counts": {
+    "dev": 112,
+    "test": 111,
+    "train": 190
+  },
+  "deviation": {
+    "dev": {
+      "absolute_error": 0.5999999999999943,
+      "absolute_error_abs": 0.5999999999999943,
+      "actual": 213,
+      "relative_error": 0.00282485875706212,
+      "target": 212.4
+    },
+    "test": {
+      "absolute_error": -0.4000000000000057,
+      "absolute_error_abs": 0.4000000000000057,
+      "actual": 212,
+      "relative_error": -0.0018832391713747914,
+      "target": 212.4
+    },
+    "train": {
+      "absolute_error": -0.1999999999999318,
+      "absolute_error_abs": 0.1999999999999318,
+      "actual": 991,
+      "relative_error": -0.00020177562550437026,
+      "target": 991.1999999999999
+    }
+  },
+  "leakage": {
+    "checks": {
+      "lemma": {
+        "dev_test": [],
+        "passed": true,
+        "train_dev": [],
+        "train_test": []
+      },
+      "root": {
+        "dev_test": [],
+        "passed": true,
+        "train_dev": [],
+        "train_test": []
+      }
+    },
+    "ignored_unsplit_records": 0,
+    "passed": true,
+    "strategy": "root_heldout"
+  },
+  "ratios": {
+    "dev": 0.15,
+    "test": 0.15,
+    "train": 0.7
+  },
+  "record_counts": {
+    "dev": 213,
+    "test": 212,
+    "train": 991
+  },
+  "seed": 17,
+  "strategy": "root_heldout",
+  "target_counts": {
+    "dev": 212.4,
+    "test": 212.4,
+    "train": 991.1999999999999
+  }
+}
