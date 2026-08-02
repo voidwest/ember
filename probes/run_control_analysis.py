@@ -10,34 +10,59 @@ Extends run_baseline_probes with:
 
 import argparse
 import json
-import os
 import sys
 import re
 import math
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
 from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.linear_model import LogisticRegression, RidgeClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import LabelEncoder
 from sklearn.pipeline import Pipeline
 
 # reuse from baseline script
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run_baseline_probes import (
-    load_activations,
-    load_stimuli,
-    extract_labels,
-    train_layer_probes,
-    make_probe,
-    safe_key,
-    get_field,
-    DEFAULT_TASKS,
-    TASK_DISPLAY,
-)
+try:
+    from .run_baseline_probes import (
+        DEFAULT_TASKS,
+        TASK_DISPLAY,
+        extract_labels,
+        load_activations,
+        load_stimuli,
+        make_probe,
+        safe_key,
+        train_layer_probes,
+    )
+    from .train_linear_probe import (
+        atomic_write_text,
+        enforce_prompt_contract,
+        load_activation_metadata,
+        sha256_file,
+        validate_activation_provenance,
+        validate_activation_tensor,
+    )
+except ImportError:  # direct script execution
+    from run_baseline_probes import (
+        DEFAULT_TASKS,
+        TASK_DISPLAY,
+        extract_labels,
+        load_activations,
+        load_stimuli,
+        make_probe,
+        safe_key,
+        train_layer_probes,
+    )
+    from train_linear_probe import (
+        atomic_write_text,
+        enforce_prompt_contract,
+        load_activation_metadata,
+        sha256_file,
+        validate_activation_provenance,
+        validate_activation_tensor,
+    )
 
 ARABIC_DIACRITICS = re.compile(r"[\u064b-\u065f\u0670]")
 
@@ -79,18 +104,23 @@ def descriptive_stats(rows, task, min_examples_per_label=3):
 # ── shuffled-label control ────────────────────────────────────────
 
 
-def _control_probe():
-    """Fast closed-form probe for control/stability analysis."""
-    return Pipeline([
-        ("standardscaler", StandardScaler()),
-        ("ridge", RidgeClassifier(alpha=1.0)),
-    ])
+def _control_probe(max_iter=2000, solver="lbfgs", tol=1e-4, n_jobs=None):
+    """Use the same probe family and preprocessing as the real probe."""
+    return make_probe(
+        max_iter=max_iter,
+        scale=True,
+        solver=solver,
+        tol=tol,
+        n_jobs=n_jobs,
+        classifier="logistic",
+    )
 
 
 def train_control_probes(
     activations, labels, n_folds=5, n_shuffles=5, seed=42, layer_stride=4,
+    max_iter=2000, solver="lbfgs", tol=1e-4, n_jobs=None,
 ):
-    """Train probes on shuffled labels using fast RidgeClassifier.
+    """Train matched logistic probes on shuffled labels.
 
     layer_stride: only probe every Nth layer (control accuracy is ~chance everywhere).
     """
@@ -98,11 +128,19 @@ def train_control_probes(
     y = le.fit_transform(labels)
     min_per_class = int(np.bincount(y).min())
     effective_folds = min(n_folds, min_per_class)
-
-    splits = None
-    if effective_folds >= 2:
-        skf = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=seed)
-        splits = list(skf.split(np.zeros(len(y)), y))
+    if effective_folds < 2:
+        raise ValueError(
+            f"shuffled-label control requires at least 2 examples per class; minimum is {min_per_class}"
+        )
+    if n_shuffles < 2:
+        raise ValueError("at least 2 shuffles are required to estimate control variance")
+    if layer_stride < 1:
+        raise ValueError("layer_stride must be at least 1")
+    splits = list(
+        StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=seed).split(
+            np.zeros(len(y)), y
+        )
+    )
 
     n_layers = activations.shape[1]
     probe_layers = list(range(0, n_layers, layer_stride))
@@ -111,24 +149,25 @@ def train_control_probes(
     for shuffle_i in range(n_shuffles):
         rng = np.random.RandomState(seed * 31 + shuffle_i * 7 + 1)
         y_shuffled = y.copy()
-        rng.shuffle(y_shuffled)
+        for _ in range(100):
+            rng.shuffle(y_shuffled)
+            if all(len(np.unique(y_shuffled[train_idx])) >= 2 for train_idx, _ in splits):
+                break
+        else:
+            raise ValueError("could not construct a valid shuffled-label assignment")
 
         for li, layer in enumerate(probe_layers):
             X = activations[:, layer, :]
-            probe = _control_probe()
+            predictions = np.full_like(y_shuffled, -1)
+            for train_idx, test_idx in splits:
+                clone = _control_probe(max_iter, solver, tol, n_jobs)
+                clone.fit(X[train_idx], y_shuffled[train_idx])
+                predictions[test_idx] = clone.predict(X[test_idx])
+            if np.any(predictions < 0):
+                raise RuntimeError("control CV did not predict every sample")
+            all_acc[shuffle_i, li] = float(np.mean(predictions == y_shuffled))
 
-            if splits is None:
-                probe.fit(X, y_shuffled)
-                all_acc[shuffle_i, li] = float(probe.score(X, y_shuffled))
-            else:
-                scores = []
-                for train_idx, test_idx in splits:
-                    clone = _control_probe()
-                    clone.fit(X[train_idx], y_shuffled[train_idx])
-                    scores.append(clone.score(X[test_idx], y_shuffled[test_idx]))
-                all_acc[shuffle_i, li] = float(np.mean(scores))
-
-    return all_acc.mean(axis=0), all_acc.std(axis=0), probe_layers
+    return all_acc.mean(axis=0), all_acc.std(axis=0, ddof=1), probe_layers
 
 
 # ── multi-seed stability ──────────────────────────────────────────
@@ -136,9 +175,10 @@ def train_control_probes(
 
 def train_multiseed_probes(
     activations, labels, seeds=(42, 123, 456, 789, 1024),
-    n_folds=5, layer_stride=2,
+    n_folds=5, layer_stride=2, max_iter=2000, solver="lbfgs", tol=1e-4,
+    n_jobs=None,
 ):
-    """Train Ridge probes across multiple seeds. Returns (mean_acc, std_acc, probe_layers)."""
+    """Train matched logistic probes across CV seeds."""
     n_seeds = len(seeds)
     n_layers = activations.shape[1]
     probe_layers = list(range(0, n_layers, layer_stride))
@@ -148,29 +188,36 @@ def train_multiseed_probes(
     y = le.fit_transform(labels)
     min_per_class = int(np.bincount(y).min())
     effective_folds = min(n_folds, min_per_class)
+    if effective_folds < 2:
+        raise ValueError(
+            f"multi-seed CV requires at least 2 examples per class; minimum is {min_per_class}"
+        )
+    if len(seeds) < 2:
+        raise ValueError("at least 2 seeds are required to estimate stability")
+    if layer_stride < 1:
+        raise ValueError("layer_stride must be at least 1")
 
     for i, seed in enumerate(seeds):
-        splits = None
-        if effective_folds >= 2:
-            skf = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=seed)
-            splits = list(skf.split(np.zeros(len(y)), y))
+        skf = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=seed)
+        splits = list(skf.split(np.zeros(len(y)), y))
 
         for li, layer in enumerate(probe_layers):
             X = activations[:, layer, :]
-            probe = _control_probe()
+            predictions = np.full_like(y, -1)
+            for train_idx, test_idx in splits:
+                clone = _control_probe(max_iter, solver, tol, n_jobs)
+                clone.fit(X[train_idx], y[train_idx])
+                predictions[test_idx] = clone.predict(X[test_idx])
+            if np.any(predictions < 0):
+                raise RuntimeError("multi-seed CV did not predict every sample")
+            all_acc[i, li] = float(np.mean(predictions == y))
 
-            if splits is None:
-                probe.fit(X, y)
-                all_acc[i, li] = float(probe.score(X, y))
-            else:
-                scores = []
-                for train_idx, test_idx in splits:
-                    clone = _control_probe()
-                    clone.fit(X[train_idx], y[train_idx])
-                    scores.append(clone.score(X[test_idx], y[test_idx]))
-                all_acc[i, li] = float(np.mean(scores))
-
-    return all_acc.mean(axis=0), all_acc.std(axis=0), probe_layers
+    return (
+        all_acc.mean(axis=0),
+        all_acc.std(axis=0, ddof=1),
+        probe_layers,
+        all_acc,
+    )
 
 
 # ── selectivity ───────────────────────────────────────────────────
@@ -187,7 +234,15 @@ def selectivity(real_acc, control_acc, chance):
 # ── char n-gram surface baseline ──────────────────────────────────
 
 
-def char_ngram_baseline(rows, task, min_examples_per_label=3, ngram_range=(1, 4), max_iter=2000, seed=42):
+def char_ngram_baseline(
+    rows,
+    task,
+    min_examples_per_label=3,
+    ngram_range=(1, 4),
+    max_iter=2000,
+    seed=42,
+    n_folds=5,
+):
     """Train a char n-gram logistic regression on surface forms."""
     indices, labels, info = extract_labels(rows, task, min_examples_per_label)
 
@@ -200,24 +255,27 @@ def char_ngram_baseline(rows, task, min_examples_per_label=3, ngram_range=(1, 4)
     le = LabelEncoder()
     y = le.fit_transform(labels)
 
-    vec = CountVectorizer(analyzer="char", ngram_range=ngram_range, binary=True)
-    X = vec.fit_transform(surfaces)
-
     # stratified CV
     min_per_class = int(np.bincount(y).min())
-    effective_folds = min(5, min_per_class)
-    scores = []
-    if effective_folds >= 2:
-        skf = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=seed)
-        for train_idx, test_idx in skf.split(np.zeros(len(y)), y):
-            clf = LogisticRegression(max_iter=max_iter)
-            clf.fit(X[train_idx], y[train_idx])
-            scores.append(clf.score(X[test_idx], y[test_idx]))
-        acc = float(np.mean(scores))
-    else:
-        clf = LogisticRegression(max_iter=max_iter)
-        clf.fit(X, y)
-        acc = float(clf.score(X, y))
+    effective_folds = min(n_folds, min_per_class)
+    if effective_folds < 2:
+        raise ValueError(
+            f"character baseline requires at least 2 examples per class; minimum is {min_per_class}"
+        )
+    predictions = np.full_like(y, -1)
+    skf = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=seed)
+    for train_idx, test_idx in skf.split(np.zeros(len(y)), y):
+        pipeline = Pipeline(
+            [
+                ("vectorizer", CountVectorizer(analyzer="char", ngram_range=ngram_range, binary=True)),
+                ("classifier", LogisticRegression(max_iter=max_iter)),
+            ]
+        )
+        pipeline.fit([surfaces[index] for index in train_idx], y[train_idx])
+        predictions[test_idx] = pipeline.predict([surfaces[index] for index in test_idx])
+    if np.any(predictions < 0):
+        raise RuntimeError("character CV did not predict every sample")
+    acc = float(np.mean(predictions == y))
 
     return acc, info
 
@@ -248,7 +306,7 @@ def try_char_ngram_baselines(rows, tasks, min_examples_per_label=3, ngram_range=
 
 def print_control_summary(report: dict):
     """Print a formatted terminal summary."""
-    tasks = [t for t in DEFAULT_TASKS if t in report.get("tasks", {})]
+    tasks = list(report.get("tasks", {}))
 
     print()
     print("=" * 96)
@@ -280,17 +338,22 @@ def print_control_summary(report: dict):
     for t in tasks:
         display = TASK_DISPLAY.get(t, t)
         s = report["tasks"][t]
+        if "best_accuracy" not in s:
+            continue
         best = s["best_layer"]
         real = s["best_accuracy"]
-        ctrl = s["control_best_accuracy"]
-        ctrl_std = s["control_best_std"]
-        sel = s["best_selectivity"]
+        ctrl = s.get("control_best_accuracy")
+        ctrl_std = s.get("control_best_std")
+        sel = s.get("best_selectivity")
         lift = s["best_accuracy_minus_majority"]
         surf = s.get("char_ngram_accuracy")
         surf_str = f"{surf:.4f}" if surf is not None else "  —"
+        control_str = f"{ctrl:>6.4f}" if ctrl is not None else "     —"
+        std_str = f"±{ctrl_std:.4f}" if ctrl_std is not None else "     —"
+        selectivity_str = f"{sel:>6.4f}" if sel is not None else "     —"
         print(
-            f"{display:<16s} {best:>5d}  {real:>6.4f}  {ctrl:>6.4f} "
-            f"±{ctrl_std:.4f} {sel:>6.4f}  {lift:>6.4f}  {surf_str:>8s}"
+            f"{display:<16s} {best:>5d}  {real:>6.4f}  {control_str} "
+            f"{std_str} {selectivity_str}  {lift:>6.4f}  {surf_str:>8s}"
         )
 
     print()
@@ -302,7 +365,9 @@ def print_control_summary(report: dict):
     print("-" * len(header))
     for t in tasks:
         display = TASK_DISPLAY.get(t, t)
-        s = report["tasks"][t]["multiseed"]
+        s = report["tasks"][t].get("multiseed")
+        if s is None:
+            continue
         print(
             f"{display:<16s} {s['best_layer']:>5d}  {s['mean_best_accuracy']:>6.4f} "
             f"±{s['std_best_accuracy']:.4f} [{s['min_best_accuracy']:.4f}-{s['max_best_accuracy']:.4f}]"
@@ -318,6 +383,8 @@ def print_control_summary(report: dict):
     for t in tasks:
         display = TASK_DISPLAY.get(t, t)
         s = report["tasks"][t]
+        if "layerwise_selectivity" not in s:
+            continue
         sel_arr = np.array([x for x in s["layerwise_selectivity"] if x is not None])
         best_sel = s["best_selectivity"]
         mean_sel = sel_arr.mean() if len(sel_arr) > 0 else float('nan')
@@ -358,7 +425,11 @@ def main():
     parser.add_argument("--min-examples-per-label", type=int, default=3)
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--max-iter", type=int, default=2000)
-    parser.add_argument("--solver", default="lbfgs")
+    parser.add_argument(
+        "--solver",
+        default="lbfgs",
+        choices=["lbfgs", "saga", "liblinear", "newton-cg", "newton-cholesky", "sag"],
+    )
     parser.add_argument("--tol", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n-jobs", type=int, default=None)
@@ -373,11 +444,39 @@ def main():
                         help="only probe every Nth layer for shuffled-label control (default: 4)")
     parser.add_argument("--multiseed-layer-stride", type=int, default=2,
                         help="only probe every Nth layer for multi-seed stability (default: 2)")
-    parser.add_argument("--control-folds", type=int, default=3,
-                        help="CV folds for shuffled-label control (default: 3)")
-    parser.add_argument("--multinomial-threshold", type=int, default=10,
-                        help="use multinomial LR for tasks with >= this many classes (default: 10)")
+    parser.add_argument(
+        "--control-folds",
+        type=int,
+        default=5,
+        help="CV folds for shuffled-label control; must match --folds",
+    )
+    parser.add_argument("--require-activation-provenance", action="store_true")
+    parser.add_argument("--allow-label-revealed-prompts", action="store_true")
+    parser.add_argument("--allow-unverifiable-prompt-contract", action="store_true")
     args = parser.parse_args()
+
+    if args.min_examples_per_label < 2:
+        parser.error("--min-examples-per-label must be at least 2")
+    if args.folds < 2 or args.control_folds < 2:
+        parser.error("--folds and --control-folds must be at least 2")
+    if args.control_folds != args.folds:
+        parser.error(
+            "--control-folds must equal --folds so shuffled and real probes use matched train sizes"
+        )
+    if args.max_iter < 1:
+        parser.error("--max-iter must be at least 1")
+    if not math.isfinite(args.tol) or args.tol <= 0.0:
+        parser.error("--tol must be finite and greater than 0")
+    if args.n_jobs == 0:
+        parser.error("--n-jobs cannot be 0")
+    if not args.no_control and args.n_shuffles < 2:
+        parser.error("--n-shuffles must be at least 2")
+    if not args.no_multiseed and args.n_seeds < 2:
+        parser.error("--n-seeds must be at least 2")
+    if args.control_layer_stride < 1 or args.multiseed_layer_stride < 1:
+        parser.error("layer strides must be at least 1")
+    if len(args.tasks) != len(set(args.tasks)):
+        parser.error("--tasks must not contain duplicates")
 
     np.random.seed(args.seed)
 
@@ -388,11 +487,40 @@ def main():
     activations = load_activations(args.activations)
     print(f"  activations: {activations.shape}")
     rows = load_stimuli(args.stimuli)
+    activation_metadata = load_activation_metadata(args.activations)
+    validate_activation_provenance(
+        args.activations,
+        tuple(activations.shape),
+        args.stimuli,
+        activation_metadata,
+        require=args.require_activation_provenance,
+    )
+    activations = validate_activation_tensor(
+        activations,
+        args.activations,
+        expected_rows=len(rows),
+    )
+    leakage_report = enforce_prompt_contract(
+        rows,
+        args.tasks,
+        activation_metadata,
+        allow_label_revealed=args.allow_label_revealed_prompts,
+        allow_unverifiable=args.allow_unverifiable_prompt_contract,
+        context="control analysis",
+    )
     print(f"  stimuli: {len(rows)} rows")
 
     multiseed_seeds = [args.seed + i * 100 for i in range(args.n_seeds)]
 
-    report = {"config": vars(args), "tasks": {}}
+    report = {
+        "schema_version": 2,
+        "config": vars(args),
+        "prompt_leakage_audit": leakage_report,
+        "activations_sha256": sha256_file(args.activations),
+        "stimuli_sha256": sha256_file(args.stimuli),
+        "activation_shape": list(activations.shape),
+        "tasks": {},
+    }
 
     for task in args.tasks:
         print(f"\n{'='*60}")
@@ -422,21 +550,73 @@ def main():
         # ── real probes (or load existing) ──
         if args.skip_real_probes:
             existing_summary = out_dir / "baseline_probe_summary.json"
-            if existing_summary.exists():
-                existing = json.loads(existing_summary.read_text())
-                et = existing["tasks"].get(task, {})
-                task_report["layerwise_accuracy"] = et.get("layerwise_accuracy", [])
-                task_report["best_layer"] = et.get("best_layer", 0)
-                task_report["best_accuracy"] = et.get("best_accuracy", 0)
-                task_report["best_accuracy_minus_majority"] = et.get("best_accuracy_minus_majority", 0)
-                print(f"    loaded existing: best L{task_report['best_layer']} = {task_report['best_accuracy']:.4f}")
-            else:
-                print("    no existing summary, training real probes...")
-                args.skip_real_probes = False
-
-        if not args.skip_real_probes:
+            if not existing_summary.exists():
+                raise ValueError(f"--skip-real-probes requires {existing_summary}")
+            existing = json.loads(
+                existing_summary.read_text(encoding="utf-8"),
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(
+                        f"non-standard JSON constant {value!r} in {existing_summary}"
+                    )
+                ),
+            )
+            if existing.get("activation_shape") != list(activations.shape):
+                raise ValueError("existing baseline summary activation shape does not match")
+            if existing.get("activations_sha256") != sha256_file(args.activations):
+                raise ValueError("existing baseline summary does not pin these activations by SHA-256")
+            if existing.get("stimuli_sha256") != sha256_file(args.stimuli):
+                raise ValueError("existing baseline summary does not pin these stimuli by SHA-256")
+            existing_config = existing.get("config")
+            expected_config = {
+                "min_examples_per_label": args.min_examples_per_label,
+                "cv_folds": args.folds,
+                "max_iter": args.max_iter,
+                "solver": args.solver,
+                "classifier": "logistic",
+                "tol": args.tol,
+                "seed": args.seed,
+                "n_jobs": args.n_jobs,
+            }
+            if not isinstance(existing_config, dict) or any(
+                existing_config.get(key) != value
+                for key, value in expected_config.items()
+            ):
+                raise ValueError(
+                    "existing baseline summary probe configuration does not match this run"
+                )
+            et = existing.get("tasks", {}).get(task)
+            if not isinstance(et, dict):
+                raise ValueError(f"existing baseline summary has no task {task!r}")
+            layerwise = et.get("layerwise_accuracy")
+            if (
+                not isinstance(layerwise, list)
+                or len(layerwise) != activations.shape[1]
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                    or not 0.0 <= value <= 1.0
+                    for value in layerwise
+                )
+            ):
+                raise ValueError(f"existing baseline task {task!r} has invalid layerwise accuracy")
+            best_layer = int(et["best_layer"])
+            best_accuracy = float(et["best_accuracy"])
+            if (
+                best_layer != int(np.argmax(layerwise))
+                or not math.isclose(best_accuracy, layerwise[best_layer], abs_tol=1e-12)
+            ):
+                raise ValueError(f"existing baseline task {task!r} has inconsistent best metrics")
+            task_report["layerwise_accuracy"] = layerwise
+            task_report["best_layer"] = best_layer
+            task_report["best_accuracy"] = best_accuracy
+            task_report["best_accuracy_minus_majority"] = float(
+                et["best_accuracy_minus_majority"]
+            )
+            print(f"    loaded existing: best L{task_report['best_layer']} = {task_report['best_accuracy']:.4f}")
+        else:
             print("  training real probes...")
-            acc, probes, le, _ = train_layer_probes(
+            acc, _, _, _ = train_layer_probes(
                 task_acts, labels,
                 n_folds=args.folds, max_iter=args.max_iter,
                 solver=args.solver, tol=args.tol,
@@ -449,17 +629,21 @@ def main():
             task_report["best_accuracy_minus_majority"] = float(
                 acc[best_idx] - info["majority_baseline_accuracy"]
             )
+            task_report["best_layer_selection"] = "descriptive_same_cross_validation"
             print(f"    best L{best_idx} = {acc[best_idx]:.4f}  lift={task_report['best_accuracy_minus_majority']:.4f}")
 
         # ── shuffled-label control ──
         if not args.no_control:
             print(f"  shuffled-label control ({args.n_shuffles} shuffles)...")
-            n_cls = info["num_classes"]
             ctrl_mean, ctrl_std, ctrl_layers = train_control_probes(
                 task_acts, labels,
                 n_folds=args.control_folds, n_shuffles=args.n_shuffles,
                 seed=args.seed,
                 layer_stride=args.control_layer_stride,
+                max_iter=args.max_iter,
+                solver=args.solver,
+                tol=args.tol,
+                n_jobs=args.n_jobs,
             )
             best_ctrl_idx = int(np.argmax(ctrl_mean))
             task_report["control_layerwise_mean"] = [float(x) for x in ctrl_mean]
@@ -467,6 +651,8 @@ def main():
             task_report["control_best_accuracy"] = float(ctrl_mean[best_ctrl_idx])
             task_report["control_best_std"] = float(ctrl_std[best_ctrl_idx])
             task_report["control_best_layer"] = ctrl_layers[best_ctrl_idx]
+            task_report["control_best_layer_selection"] = "descriptive_same_repeats"
+            task_report["control_repeat_dispersion"] = "sample_standard_deviation"
 
             # selectivity (computed at probed layers only)
             task_report["control_layers"] = ctrl_layers
@@ -487,15 +673,19 @@ def main():
         # ── multi-seed ──
         if not args.no_multiseed:
             print(f"  multi-seed probes ({args.n_seeds} seeds)...")
-            n_cls = info["num_classes"]
-            ms_mean, ms_std, ms_layers = train_multiseed_probes(
+            ms_mean, ms_std, ms_layers, ms_all = train_multiseed_probes(
                 task_acts, labels,
                 seeds=multiseed_seeds,
                 n_folds=args.folds,
                 layer_stride=args.multiseed_layer_stride,
+                max_iter=args.max_iter,
+                solver=args.solver,
+                tol=args.tol,
+                n_jobs=args.n_jobs,
             )
             ms_best_idx = int(np.argmax(ms_mean))
             ms_best_layer = ms_layers[ms_best_idx]
+            selected_seed_scores = ms_all[:, ms_best_idx]
             task_report["multiseed"] = {
                 "mean_best_accuracy": float(ms_mean[ms_best_idx]),
                 "std_best_accuracy": float(ms_std[ms_best_idx]),
@@ -503,8 +693,13 @@ def main():
                 "probe_layers": ms_layers,
                 "layerwise_mean": [float(x) for x in ms_mean],
                 "layerwise_std": [float(x) for x in ms_std],
-                "min_best_accuracy": float(ms_mean[ms_best_idx] - 2 * ms_std[ms_best_idx]),
-                "max_best_accuracy": float(ms_mean[ms_best_idx] + 2 * ms_std[ms_best_idx]),
+                "selected_layer_seed_accuracies": [
+                    float(value) for value in selected_seed_scores
+                ],
+                "min_best_accuracy": float(np.min(selected_seed_scores)),
+                "max_best_accuracy": float(np.max(selected_seed_scores)),
+                "dispersion_interpretation": "cross_validation_split_sensitivity",
+                "best_layer_selection": "descriptive_across_same_seeds",
             }
             print(f"    mean best: L{ms_best_layer} = {ms_mean[ms_best_idx]:.4f} ±{ms_std[ms_best_idx]:.4f}")
 
@@ -520,11 +715,17 @@ def main():
                 continue
             try:
                 surf_acc, surf_info = char_ngram_baseline(
-                    rows, task, args.min_examples_per_label, (1, 4), args.max_iter, args.seed
+                    rows,
+                    task,
+                    args.min_examples_per_label,
+                    (1, 4),
+                    args.max_iter,
+                    args.seed,
+                    args.folds,
                 )
-                report["tasks"][task]["char_ngram_accuracy"] = round(surf_acc, 4)
-                report["tasks"][task]["char_ngram_lift"] = round(
-                    surf_acc - surf_info["majority_baseline_accuracy"], 4
+                report["tasks"][task]["char_ngram_accuracy"] = float(surf_acc)
+                report["tasks"][task]["char_ngram_lift"] = float(
+                    surf_acc - surf_info["majority_baseline_accuracy"]
                 )
                 print(f"  {task:<18s} acc={surf_acc:.4f}  lift={surf_acc - surf_info['majority_baseline_accuracy']:+.4f}")
             except ValueError as e:
@@ -532,7 +733,12 @@ def main():
 
     # ── save ──
     report_path = out_dir / "baseline_control_report.json"
-    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if not report["tasks"]:
+        raise ValueError("no control-analysis task could be evaluated")
+    atomic_write_text(
+        report_path,
+        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+    )
     print(f"\nSaved control report to {report_path}")
 
     # ── print terminal summary ──
