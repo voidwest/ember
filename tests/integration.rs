@@ -323,7 +323,10 @@ fn test_model_forward_pass() {
     );
 
     let data = backend.data(&logits);
-    assert!(!data.iter().any(|x| x.is_nan()), "logits contain NaN");
+    assert!(
+        data.iter().all(|value| value.is_finite()),
+        "logits contain a non-finite value"
+    );
     assert!(
         data.iter().any(|x| *x != 0.0),
         "logits are all zeros - suspicious"
@@ -332,7 +335,7 @@ fn test_model_forward_pass() {
     let top = data
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(i, _)| i)
         .unwrap();
     assert!(top < vocab_size, "predicted token out of vocab range");

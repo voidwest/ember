@@ -15,16 +15,71 @@ from build_conllu_benchmark import build_rows
 from causal_intervention import (
     build_summary,
     load_probe_direction,
+    nested_direction_probe_scores,
     remove_direction,
     render_markdown_summary,
     single_layer_probe_score,
     summarize_continuations,
     summarize_logits,
 )
-from train_linear_probe import groups_for_task, prepare_splits
+from cca_analysis import cross_validated_cca, svd_cca
+from train_linear_probe import (
+    audit_label_revealing_prompt,
+    groups_for_task,
+    prepare_splits,
+)
 
 
 class ProbeWorkflowTests(unittest.TestCase):
+    def test_cross_validated_cca_rejects_high_dimensional_sample_space_saturation(self):
+        rng = np.random.default_rng(7)
+        samples, width = 90, 120
+        independent_a = rng.normal(size=(samples, width))
+        independent_b = rng.normal(size=(samples, width))
+        latent = rng.normal(size=(samples, 5))
+        shared_a = latent @ rng.normal(size=(5, width)) + 0.2 * rng.normal(
+            size=(samples, width)
+        )
+        shared_b = latent @ rng.normal(size=(5, width)) + 0.2 * rng.normal(
+            size=(samples, width)
+        )
+
+        self.assertGreater(float(np.mean(svd_cca(independent_a, independent_b, 3))), 0.95)
+        independent_cv = cross_validated_cca(independent_a, independent_b, 3)
+        shared_cv = cross_validated_cca(shared_a, shared_b, 3)
+        self.assertLess(float(np.max(independent_cv)), 0.30)
+        self.assertGreater(float(np.min(shared_cv)), 0.80)
+
+    def test_prompt_leakage_audit_distinguishes_surface_and_revealed_prompts(self):
+        rows = [
+            {
+                "root": "q-l-z",
+                "pattern": "fa3ala",
+                "prompts": {
+                    "surface": "Analyze the word qalaza.",
+                    "revealed": "Apply fa3ala to q-l-z.",
+                },
+            }
+        ]
+        safe = audit_label_revealing_prompt(
+            rows,
+            ["root", "pattern"],
+            {"probe_template": "surface", "probe_position": "last"},
+        )
+        leaked = audit_label_revealing_prompt(
+            rows,
+            ["root", "pattern"],
+            {"probe_template": "revealed", "probe_position": "last"},
+        )
+        unverifiable = audit_label_revealing_prompt(rows, ["root"], {})
+
+        self.assertEqual(safe["status"], "passed")
+        self.assertEqual(leaked["status"], "label_revealed")
+        self.assertEqual(leaked["revealed_task_row_count"], 2)
+        self.assertEqual(
+            unverifiable["status"], "not_checked_missing_probe_template_metadata"
+        )
+
     def test_conllu_rows_keep_labels_and_group_fields(self):
         conllu = """# sent_id = s1
 # text = كتب الولد
@@ -53,15 +108,15 @@ class ProbeWorkflowTests(unittest.TestCase):
             path = Path(tmp) / "probes.npz"
             np.savez(
                 path,
-                tasks=np.array(["root", "labels.Gender"], dtype=object),
+                tasks=np.array(["root", "labels.Gender"], dtype=str),
                 probe_kind="linear",
                 root_split="pattern",
                 pattern_split="root",
                 root_accuracy=np.array([0.1, 0.8, 0.4]),
                 root_selectivity=np.array([0.0, 0.5, 0.2]),
-                root_classes=np.array(["a", "b"], dtype=object),
+                root_classes=np.array(["a", "b"], dtype=str),
                 labels_Gender_accuracy=np.array([0.6, 0.7, 0.65]),
-                labels_Gender_classes=np.array(["Fem", "Masc"], dtype=object),
+                labels_Gender_classes=np.array(["Fem", "Masc"], dtype=str),
                 labels_Gender_class_counts=np.array([3, 5]),
                 labels_Gender_chance=np.array(0.5),
                 labels_Gender_confusion_matrices=np.array(
@@ -184,11 +239,12 @@ class ProbeWorkflowTests(unittest.TestCase):
                     "0.001",
                     "--output",
                     str(output),
+                    "--allow-unverifiable-prompt-contract",
                 ],
                 cwd=ROOT,
                 check=True,
             )
-            data = np.load(output, allow_pickle=True)
+            data = np.load(output, allow_pickle=False)
             metadata = json.loads(str(data["task_split_policy_json"]))
             split_policy = str(data["split_policy"])
             has_confusions = "pattern_confusion_matrices" in data
@@ -275,7 +331,8 @@ class ProbeWorkflowTests(unittest.TestCase):
                     ],
                     dtype=np.float32,
                 ),
-                labels_Gender_classes=np.array(["a", "b"], dtype=object),
+                labels_Gender_classes=np.array(["a", "b"], dtype=str),
+                probe_weight_space=np.array("raw_activation"),
             )
             info = load_probe_direction(str(probe_path), "labels.Gender", 1, "b")
             intervened = remove_direction(activations, 1, info["direction"])
@@ -284,6 +341,18 @@ class ProbeWorkflowTests(unittest.TestCase):
         after = single_layer_probe_score(intervened, labels.tolist(), 1, "linear", 5)
         self.assertGreater(before, 0.95)
         self.assertLess(after, 0.7)
+
+        nested = nested_direction_probe_scores(
+            activations[:, :, :1],
+            labels.tolist(),
+            1,
+            "b",
+            "linear",
+            5,
+        )
+        self.assertGreater(nested["before"], 0.95)
+        self.assertLess(nested["after"], 0.7)
+        self.assertFalse(nested["direction_fit_uses_heldout_labels"])
 
     def test_causal_intervention_summary_reports_conservatively(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -324,7 +393,7 @@ class ProbeWorkflowTests(unittest.TestCase):
             )
             markdown = render_markdown_summary(summary)
 
-        self.assertEqual(summary["schema_version"], 1)
+        self.assertEqual(summary["schema_version"], 2)
         self.assertEqual(summary["probe_accuracy"]["drop"], 0.5)
         self.assertTrue(summary["probe_accuracy"]["target_probe_score_dropped"])
         self.assertTrue(summary["downstream"]["logit_shift"]["top_token_changed"])

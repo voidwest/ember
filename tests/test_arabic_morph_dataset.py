@@ -204,7 +204,7 @@ def test_sft_validation_checks_task_schema():
                     {"role": "user", "content": "x"},
                     {"role": "assistant", "content": "{\"foo\":\"bar\"}"},
                 ],
-                "metadata": {"task": "analyze_form"},
+                "metadata": {"task": "analyze_form", "source_id": "source-1", "split": "train"},
             }
         ]
     )
@@ -228,13 +228,61 @@ def test_probe_formatting_and_validation():
     assert not validate_probe_records([{**probes[0], "root": ""}])["passed"]
 
 
-def test_empty_outputs_are_valid_but_marked_empty():
-    assert validate_canonical([])["passed"]
+def test_empty_outputs_fail_validation_and_are_marked_empty():
+    assert not validate_canonical([])["passed"]
     assert validate_canonical([])["empty"]
-    assert validate_sft_examples([])["passed"]
+    assert not validate_sft_examples([])["passed"]
     assert validate_sft_examples([])["empty"]
-    assert validate_probe_records([])["passed"]
+    assert not validate_probe_records([])["passed"]
     assert validate_probe_records([])["empty"]
+
+
+def test_split_rejects_non_finite_negative_and_incomplete_ratios():
+    records = sample_records()
+    for ratios in [
+        {"train": -1.0, "dev": 1.0, "test": 1.0},
+        {"train": float("nan"), "dev": 1.0, "test": 1.0},
+        {"train": 1.0, "dev": 0.0},
+    ]:
+        try:
+            split_records(records, "random", ratios=ratios)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid ratios should fail: {ratios}")
+
+
+def test_zero_ratio_split_never_receives_records():
+    split, report = split_records(
+        sample_records(),
+        "random",
+        ratios={"train": 0.8, "dev": 0.2, "test": 0.0},
+    )
+    assert all(record.split != "test" for record in split)
+    assert report["record_counts"]["test"] == 0
+
+
+def test_leakage_report_handles_one_shot_iterables():
+    records = sample_records()
+    train = records[0].with_split("train")
+    unsplit = next(record for record in records if record.id != train.id)
+    report = leakage_report(iter([train, unsplit]), "root_heldout")
+    assert report["ignored_unsplit_records"] == 1
+
+
+def test_canonical_null_string_fields_do_not_become_literal_none():
+    record = MorphRecord.from_dict({"id": None, "surface": None})
+    assert record.id == ""
+    assert record.surface == ""
+
+
+def test_probe_exports_are_traceable_to_unique_source_records():
+    split, _ = split_records(sample_records(), "root_heldout", seed=5)
+    probes = make_probe_records(split, "root_heldout")
+    assert [row["source_id"] for row in probes] == [
+        record.id for record in sorted(split, key=lambda record: (record.split or "", record.id))
+    ]
+    assert validate_probe_records(probes)["passed"]
 
 
 def test_stats_generation_on_sample_data():
