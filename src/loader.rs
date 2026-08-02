@@ -1,7 +1,7 @@
 use crate::quant::{QuantizedWeight, Q8_0_TYPE_SIZE};
 use crate::tensor::CpuTensor;
 use anyhow::{bail, Context, Ok, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -31,7 +31,11 @@ pub enum LoadedTensor {
 /// matmul expects row-major `[in, out]`, so reinterpret and transpose once.
 pub fn gguf_to_row_major_f32(tensor: crate::tensor::CpuTensor) -> crate::tensor::CpuTensor {
     let shape = tensor.shape();
-    debug_assert_eq!(shape.len(), 2);
+    assert_eq!(
+        shape.len(),
+        2,
+        "GGUF row-major conversion requires a 2D tensor"
+    );
     let reordered =
         crate::tensor::CpuTensor::from_data(vec![shape[1], shape[0]], tensor.data().to_vec());
     reordered.transpose()
@@ -74,10 +78,15 @@ impl GgufLoader {
 #[derive(Debug)]
 pub enum GgufValue {
     U8(u8),
+    I8(i8),
+    U16(u16),
+    I16(i16),
     U32(u32),
     U64(u64),
     I32(i32),
+    I64(i64),
     F32(f32),
+    F64(f64),
     Bool(bool),
     Str(String),
     /// nested array of gguf values (val_type 9)
@@ -109,6 +118,13 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     reader: &mut R,
     mmap: Option<Arc<memmap2::Mmap>>,
 ) -> Result<GgufLoader> {
+    let initial_position = reader.stream_position()?;
+    let file_len = reader.seek(SeekFrom::End(0))?;
+    reader.seek(SeekFrom::Start(initial_position))?;
+    if file_len.saturating_sub(initial_position) < 24 {
+        bail!("GGUF file is too short to contain a complete header");
+    }
+
     let magic = read_u32(reader)?;
     if magic != GGUF_MAGIC {
         bail!("not a GGUF file (bad magic: {:#x})", magic);
@@ -119,17 +135,35 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         bail!("unsupported GGUF version: {}", version);
     }
 
-    let tensor_count = usize::try_from(read_u64(reader)?)
+    let tensor_count_raw = read_u64(reader)?;
+    let metadata_kv_count_raw = read_u64(reader)?;
+    if tensor_count_raw > file_len / 32 {
+        bail!("GGUF tensor count {tensor_count_raw} is impossible for a {file_len}-byte file");
+    }
+    if metadata_kv_count_raw > file_len / 13 {
+        bail!(
+            "GGUF metadata count {metadata_kv_count_raw} is impossible for a {file_len}-byte file"
+        );
+    }
+    let tensor_count = usize::try_from(tensor_count_raw)
         .context("GGUF tensor count does not fit in memory address space")?;
-    let metadata_kv_count = usize::try_from(read_u64(reader)?)
+    let metadata_kv_count = usize::try_from(metadata_kv_count_raw)
         .context("GGUF metadata count does not fit in memory address space")?;
 
     let mut metadata = HashMap::new();
+    metadata
+        .try_reserve(metadata_kv_count)
+        .context("failed to reserve GGUF metadata table")?;
     for _ in 0..metadata_kv_count {
         let key = read_gguf_string(reader)?;
+        if key.is_empty() {
+            bail!("GGUF metadata keys must not be empty");
+        }
         let val_type = read_u32(reader)?;
         let value = read_gguf_value(reader, val_type)?;
-        metadata.insert(key, value);
+        if metadata.insert(key.clone(), value).is_some() {
+            bail!("duplicate GGUF metadata key '{key}'");
+        }
     }
 
     let mut tensor_info = read_tensor_info(reader, tensor_count)?;
@@ -148,7 +182,42 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         .context("GGUF aligned data offset overflow")?
         & !(alignment - 1);
 
+    let mut ranges = Vec::new();
+    ranges
+        .try_reserve_exact(tensor_info.len())
+        .context("failed to reserve GGUF tensor range table")?;
+    for info in &tensor_info {
+        let byte_len = tensor_byte_len(info)?;
+        let start = data_start
+            .checked_add(info.offset)
+            .with_context(|| format!("tensor '{}' file offset overflow", info.name))?;
+        let end = start
+            .checked_add(u64::try_from(byte_len).context("tensor byte length exceeds u64")?)
+            .with_context(|| format!("tensor '{}' file range overflow", info.name))?;
+        if end > file_len {
+            bail!(
+                "tensor '{}' data range {start}..{end} exceeds file length {file_len}",
+                info.name
+            );
+        }
+        ranges.push((start, end, info.name.as_str()));
+    }
+    ranges.sort_unstable_by_key(|range| range.0);
+    for pair in ranges.windows(2) {
+        let (_, previous_end, previous_name) = pair[0];
+        let (next_start, _, next_name) = pair[1];
+        if next_start < previous_end {
+            bail!(
+                "GGUF tensor ranges overlap: '{previous_name}' ends at {previous_end}, \
+                 '{next_name}' starts at {next_start}"
+            );
+        }
+    }
+
     let mut tensors = HashMap::new();
+    tensors
+        .try_reserve(tensor_info.len())
+        .context("failed to reserve GGUF tensor table")?;
     for info in tensor_info.drain(..) {
         let tensor_offset = data_start
             .checked_add(info.offset)
@@ -294,15 +363,16 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                     LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
                 }
                 _ => {
-                    log::warn!(
-                        "skipping tensor '{}' with unknown dtype {}",
+                    bail!(
+                        "tensor '{}' uses unsupported GGML dtype {}",
                         info.name,
                         info.dtype
                     );
-                    continue;
                 }
             };
-        tensors.insert(info.name, loaded);
+        if tensors.insert(info.name.clone(), loaded).is_some() {
+            bail!("duplicate GGUF tensor name '{}'", info.name);
+        }
     }
     Ok(GgufLoader { metadata, tensors })
 }
@@ -315,17 +385,33 @@ struct TensorInfo {
 }
 
 fn read_tensor_info<R: Read + Seek>(reader: &mut R, count: usize) -> Result<Vec<TensorInfo>> {
-    let mut info = Vec::with_capacity(count);
+    let mut info = Vec::new();
+    info.try_reserve_exact(count)
+        .context("failed to reserve GGUF tensor-info table")?;
+    let mut names = HashSet::new();
+    names
+        .try_reserve(count)
+        .context("failed to reserve GGUF tensor-name table")?;
     for _ in 0..count {
         let name = read_gguf_string(reader)?;
+        if name.is_empty() {
+            bail!("GGUF tensor names must not be empty");
+        }
+        if !names.insert(name.clone()) {
+            bail!("duplicate GGUF tensor name '{name}'");
+        }
         let n_dims = read_u32(reader)?;
+        if !(1..=4).contains(&n_dims) {
+            bail!("tensor '{name}' has invalid dimension count {n_dims}; expected 1..=4");
+        }
         let mut dims = Vec::with_capacity(n_dims as usize);
         for _ in 0..n_dims {
-            dims.push(
-                usize::try_from(read_u64(reader)?).with_context(|| {
-                    format!("tensor '{}' dimension exceeds address space", name)
-                })?,
-            );
+            let dim = usize::try_from(read_u64(reader)?)
+                .with_context(|| format!("tensor '{}' dimension exceeds address space", name))?;
+            if dim == 0 {
+                bail!("tensor '{name}' has a zero-sized dimension");
+            }
+            dims.push(dim);
         }
         let dtype = read_u32(reader)?;
         let offset = read_u64(reader)?;
@@ -339,10 +425,71 @@ fn read_tensor_info<R: Read + Seek>(reader: &mut R, count: usize) -> Result<Vec<
     Ok(info)
 }
 
+fn tensor_byte_len(info: &TensorInfo) -> Result<usize> {
+    let element_count = info.dims.iter().try_fold(1usize, |count, dim| {
+        count.checked_mul(*dim).with_context(|| {
+            format!(
+                "tensor '{}' shape product overflow for dimensions {:?}",
+                info.name, info.dims
+            )
+        })
+    })?;
+    match info.dtype {
+        0 => element_count
+            .checked_mul(4)
+            .with_context(|| format!("tensor '{}' f32 byte size overflow", info.name)),
+        1 | 30 => element_count
+            .checked_mul(2)
+            .with_context(|| format!("tensor '{}' 16-bit byte size overflow", info.name)),
+        8 => {
+            if !element_count.is_multiple_of(crate::quant::Q8_0_BLOCK_SIZE) {
+                bail!(
+                    "tensor '{}' Q8_0 element count is not block-aligned",
+                    info.name
+                );
+            }
+            (element_count / crate::quant::Q8_0_BLOCK_SIZE)
+                .checked_mul(Q8_0_TYPE_SIZE)
+                .with_context(|| format!("tensor '{}' Q8_0 byte size overflow", info.name))
+        }
+        10..=14 => {
+            if !element_count.is_multiple_of(crate::quant_k::QK_K) {
+                bail!(
+                    "tensor '{}' dtype {} element count is not K-block-aligned",
+                    info.name,
+                    info.dtype
+                );
+            }
+            let block_bytes = crate::quant_k::k_block_bytes(info.dtype)
+                .with_context(|| format!("tensor '{}'", info.name))?;
+            (element_count / crate::quant_k::QK_K)
+                .checked_mul(block_bytes)
+                .with_context(|| format!("tensor '{}' K-quant byte size overflow", info.name))
+        }
+        dtype => bail!("tensor '{}' uses unsupported GGML dtype {dtype}", info.name),
+    }
+}
+
 fn read_u8<R: Read>(f: &mut R) -> Result<u8> {
     let mut buf = [0u8; 1];
     f.read_exact(&mut buf)?;
     Ok(u8::from_le_bytes(buf))
+}
+
+fn read_i8<R: Read>(f: &mut R) -> Result<i8> {
+    Ok(read_u8(f)? as i8)
+}
+
+fn read_u16<R: Read>(f: &mut R) -> Result<u16> {
+    let mut buf = [0u8; 2];
+    f.read_exact(&mut buf)?;
+    Ok(u16::from_le_bytes(buf))
+}
+
+fn read_i16<R: Read>(f: &mut R) -> Result<i16> {
+    let mut buf = [0u8; 2];
+    f.read_exact(&mut buf)?;
+    Ok(i16::from_le_bytes(buf))
 }
 
 fn read_u32<R: Read>(f: &mut R) -> Result<u32> {
@@ -363,35 +510,109 @@ fn read_i32<R: Read>(f: &mut R) -> Result<i32> {
     Ok(i32::from_le_bytes(buf))
 }
 
+fn read_i64<R: Read>(f: &mut R) -> Result<i64> {
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf)?;
+    Ok(i64::from_le_bytes(buf))
+}
+
 fn read_f32<R: Read>(f: &mut R) -> Result<f32> {
     let mut buf = [0u8; 4];
     f.read_exact(&mut buf)?;
     Ok(f32::from_le_bytes(buf))
 }
 
-fn read_gguf_string<R: Read>(f: &mut R) -> Result<String> {
+fn read_f64<R: Read>(f: &mut R) -> Result<f64> {
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf)?;
+    Ok(f64::from_le_bytes(buf))
+}
+
+fn remaining_bytes<R: Seek>(reader: &mut R) -> Result<u64> {
+    let position = reader.stream_position()?;
+    let end = reader.seek(SeekFrom::End(0))?;
+    reader.seek(SeekFrom::Start(position))?;
+    end.checked_sub(position)
+        .context("reader position exceeds its end")
+}
+
+fn read_gguf_string<R: Read + Seek>(f: &mut R) -> Result<String> {
     let len = usize::try_from(read_u64(f)?).context("GGUF string length exceeds address space")?;
-    let mut buf = vec![0u8; len];
+    let remaining = remaining_bytes(f)?;
+    if u64::try_from(len).context("GGUF string length exceeds u64")? > remaining {
+        bail!("GGUF string length {len} exceeds the {remaining} bytes remaining in the file");
+    }
+    let mut buf = Vec::new();
+    buf.try_reserve_exact(len)
+        .context("failed to reserve GGUF string buffer")?;
+    buf.resize(len, 0);
     f.read_exact(&mut buf).context("read string failed")?;
     String::from_utf8(buf).context("invalid utf8 in string")
 }
 
-fn read_gguf_value<R: Read>(f: &mut R, val_type: u32) -> Result<GgufValue> {
+fn minimum_value_size(val_type: u32) -> Result<u64> {
+    match val_type {
+        0 | 1 | 7 => Ok(1),
+        2 | 3 => Ok(2),
+        4..=6 => Ok(4),
+        8 => Ok(8),
+        9 => Ok(12),
+        10..=12 => Ok(8),
+        _ => bail!("unsupported GGUF value type: {val_type}"),
+    }
+}
+
+fn read_gguf_value<R: Read + Seek>(f: &mut R, val_type: u32) -> Result<GgufValue> {
+    read_gguf_value_inner(f, val_type, 0)
+}
+
+fn read_gguf_value_inner<R: Read + Seek>(
+    f: &mut R,
+    val_type: u32,
+    depth: usize,
+) -> Result<GgufValue> {
+    if depth > 16 {
+        bail!("GGUF metadata arrays are nested more than 16 levels deep");
+    }
     match val_type {
         0 => Ok(GgufValue::U8(read_u8(f)?)),
+        1 => Ok(GgufValue::I8(read_i8(f)?)),
+        2 => Ok(GgufValue::U16(read_u16(f)?)),
+        3 => Ok(GgufValue::I16(read_i16(f)?)),
         5 => Ok(GgufValue::I32(read_i32(f)?)),
         4 => Ok(GgufValue::U32(read_u32(f)?)),
         6 => Ok(GgufValue::F32(read_f32(f)?)),
-        7 => Ok(GgufValue::Bool(read_u8(f)? != 0)),
+        7 => {
+            let value = read_u8(f)?;
+            if value > 1 {
+                bail!("invalid GGUF boolean value {value}; expected 0 or 1");
+            }
+            Ok(GgufValue::Bool(value == 1))
+        }
         8 => Ok(GgufValue::Str(read_gguf_string(f)?)),
         10 => Ok(GgufValue::U64(read_u64(f)?)),
+        11 => Ok(GgufValue::I64(read_i64(f)?)),
+        12 => Ok(GgufValue::F64(read_f64(f)?)),
         9 => {
             let element_type = read_u32(f)?;
             let count =
                 usize::try_from(read_u64(f)?).context("GGUF array length exceeds address space")?;
-            let mut elements = Vec::with_capacity(count);
+            let minimum_bytes = minimum_value_size(element_type)?
+                .checked_mul(u64::try_from(count).context("GGUF array length exceeds u64")?)
+                .context("GGUF array minimum byte size overflow")?;
+            let remaining = remaining_bytes(f)?;
+            if minimum_bytes > remaining {
+                bail!(
+                    "GGUF array of {count} type-{element_type} values requires at least \
+                     {minimum_bytes} bytes but only {remaining} remain"
+                );
+            }
+            let mut elements = Vec::new();
+            elements
+                .try_reserve_exact(count)
+                .context("failed to reserve GGUF metadata array")?;
             for _ in 0..count {
-                elements.push(read_gguf_value(f, element_type)?);
+                elements.push(read_gguf_value_inner(f, element_type, depth + 1)?);
             }
             Ok(GgufValue::Array(elements))
         }

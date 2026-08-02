@@ -84,7 +84,9 @@ pub fn q8_0_encoded_len(n_floats: usize) -> usize {
         n_floats,
         Q8_0_BLOCK_SIZE
     );
-    (n_floats / Q8_0_BLOCK_SIZE) * Q8_0_TYPE_SIZE
+    (n_floats / Q8_0_BLOCK_SIZE)
+        .checked_mul(Q8_0_TYPE_SIZE)
+        .expect("q8_0 encoded length overflow")
 }
 
 /// Quantize one or more contiguous rows to llama.cpp-compatible Q8_0 blocks.
@@ -97,7 +99,10 @@ pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
         "q8_0 input length must be a multiple of 32"
     );
     let n_blocks = src.len() / Q8_0_BLOCK_SIZE;
-    dst.resize(n_blocks * Q8_0_TYPE_SIZE, 0);
+    let encoded_len = n_blocks
+        .checked_mul(Q8_0_TYPE_SIZE)
+        .expect("q8_0 encoded length overflow");
+    dst.resize(encoded_len, 0);
 
     for block in 0..n_blocks {
         let src_start = block * Q8_0_BLOCK_SIZE;
@@ -209,7 +214,7 @@ pub struct QuantizedWeight {
     /// and does not increase the model's resident allocation.
     data: QuantizedData,
     /// logical shape [out_features, in_features] (reversed from gguf dims)
-    pub shape: Vec<usize>,
+    pub(crate) shape: Vec<usize>,
 }
 
 impl QuantizedWeight {
@@ -242,6 +247,12 @@ impl QuantizedWeight {
     fn try_new_storage(data: QuantizedData, shape: Vec<usize>) -> Result<Self> {
         if shape.len() != 2 {
             bail!("QuantizedWeight: expected 2D shape, got {:?}", shape);
+        }
+        if shape.contains(&0) {
+            bail!(
+                "QuantizedWeight: dimensions must be non-zero, got {:?}",
+                shape
+            );
         }
         if !shape[1].is_multiple_of(Q8_0_BLOCK_SIZE) {
             bail!(
@@ -387,13 +398,13 @@ pub const INTERLEAVE: usize = 4;
 #[derive(Clone, Debug)]
 pub struct QuantizedWeightInterleaved {
     /// Interleaved quants, grouped by stripe.
-    pub quants: alloc::vec::Vec<u8>,
+    pub(crate) quants: alloc::vec::Vec<u8>,
     /// Interleaved scales, grouped by stripe.
-    pub scales: alloc::vec::Vec<u8>,
+    pub(crate) scales: alloc::vec::Vec<u8>,
     /// Logical shape [out_features, in_features].
-    pub shape: Vec<usize>,
+    pub(crate) shape: Vec<usize>,
     /// Blocks per row = in_features / 32.
-    pub blocks_per_row: usize,
+    pub(crate) blocks_per_row: usize,
 }
 
 impl QuantizedWeightInterleaved {
@@ -482,11 +493,11 @@ pub const VNNI_BLOCK_RECORD_SIZE: usize =
 #[derive(Clone, Debug)]
 pub struct QuantizedWeightVnni {
     /// Tile-major packed records described above.
-    pub data: alloc::vec::Vec<u8>,
+    pub(crate) data: alloc::vec::Vec<u8>,
     /// Logical shape `[out_features, in_features]`.
-    pub shape: Vec<usize>,
+    pub(crate) shape: Vec<usize>,
     /// Blocks per row = `in_features / 32`.
-    pub blocks_per_row: usize,
+    pub(crate) blocks_per_row: usize,
 }
 
 impl QuantizedWeightVnni {

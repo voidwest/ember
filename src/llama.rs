@@ -8,6 +8,7 @@ use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::tensor::CpuTensor;
 use crate::workspace::Workspace;
 use alloc::vec::Vec;
+use anyhow::Context;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -144,7 +145,8 @@ impl LlamaConfig {
         let embed_dim = get_u32("embedding_length", 4096) as usize;
         // some architectures (qwen3, deepseek, etc.) specify head_dim explicitly
         // in the gguf metadata. fall back to embed_dim / n_heads when absent.
-        let head_dim = get_u32("attention.key_length", (embed_dim / n_heads) as u32) as usize;
+        let default_head_dim = embed_dim.checked_div(n_heads).unwrap_or(0);
+        let head_dim = get_u32("attention.key_length", default_head_dim as u32) as usize;
         let max_seq_len = get_u32("context_length", 2048) as usize;
         let rope_theta = get_f32("rope.freq_base", 10000.0);
         let norm_eps = get_f32("attention.layer_norm_rms_epsilon", 1e-5);
@@ -163,6 +165,48 @@ impl LlamaConfig {
             qk_norm_order,
             vocab_size,
         }
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(self.n_layers > 0, "model must contain at least one layer");
+        anyhow::ensure!(
+            self.n_heads > 0,
+            "attention head_count must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.n_kv_heads > 0 && self.n_kv_heads <= self.n_heads,
+            "attention head_count_kv {} must be in 1..={}",
+            self.n_kv_heads,
+            self.n_heads
+        );
+        anyhow::ensure!(
+            self.n_heads.is_multiple_of(self.n_kv_heads),
+            "attention head_count {} must be divisible by head_count_kv {}",
+            self.n_heads,
+            self.n_kv_heads
+        );
+        anyhow::ensure!(
+            self.embed_dim > 0,
+            "embedding_length must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.head_dim > 0,
+            "attention key_length must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.max_seq_len > 0,
+            "context_length must be greater than zero"
+        );
+        anyhow::ensure!(self.vocab_size > 0, "vocab_size must be greater than zero");
+        anyhow::ensure!(
+            self.rope_theta.is_finite() && self.rope_theta > 0.0,
+            "rope.freq_base must be finite and greater than zero"
+        );
+        anyhow::ensure!(
+            self.norm_eps.is_finite() && self.norm_eps >= 0.0,
+            "attention.layer_norm_rms_epsilon must be finite and non-negative"
+        );
+        Ok(())
     }
 }
 
@@ -1267,22 +1311,37 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
             return result;
         }
         let logits = self.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)?;
-        let data = backend.data(&logits);
-        let mut best = 0usize;
-        let mut best_val = f32::NEG_INFINITY;
-        for (i, &value) in data.iter().enumerate() {
-            if value > best_val {
-                best_val = value;
-                best = i;
-            }
+        let shape = backend.shape(&logits);
+        if shape != [1, self.config.vocab_size] {
+            return Err(CpuError::ShapeMismatch(format!(
+                "greedy logits must have shape [1, {}], got {shape:?}",
+                self.config.vocab_size
+            )));
         }
-        Ok((best as u32, best_val))
+        let data = backend.data(&logits);
+        if let Some((index, value)) = data
+            .iter()
+            .enumerate()
+            .find(|(_, value)| !value.is_finite())
+        {
+            return Err(CpuError::ShapeMismatch(format!(
+                "greedy logits contain non-finite value {value} at index {index}"
+            )));
+        }
+        let best = crate::sampler::argmax_token(data);
+        let best_u32 = u32::try_from(best).map_err(|_| {
+            CpuError::ShapeMismatch("model vocabulary exceeds u32 token-ID space".into())
+        })?;
+        Ok((best_u32, data[best]))
     }
     fn n_layers(&self) -> usize {
         self.blocks.len()
     }
     fn embed_dim(&self) -> usize {
         self.config.embed_dim
+    }
+    fn vocab_size(&self, _backend: &CpuBackend) -> usize {
+        self.config.vocab_size
     }
     fn forward_with_activations(
         &self,
@@ -1448,9 +1507,13 @@ impl Llama<CpuBackend> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Option<Result<(u32, f32), CpuError>> {
-        if token_ids.len() != 1 || crate::trace::is_tracing() {
+        if token_ids.len() != 1
+            || crate::trace::is_tracing()
+            || self.config.vocab_size > (1usize << f32::MANTISSA_DIGITS)
+        {
             return None;
         }
+        cache.validate_start_pos(start_pos);
         let inter_dim = self.fast_decode_inter_dim?;
         let norms = self.head_topk_norms()?;
         let embed_dim = self.config.embed_dim;
@@ -1486,7 +1549,24 @@ impl Llama<CpuBackend> {
                 Some(&norms),
             )?;
             let data = result.data();
-            Ok((data[0] as u32, data[1]))
+            if data.len() != 2
+                || !data[0].is_finite()
+                || data[0] < 0.0
+                || data[0].fract() != 0.0
+                || !data[1].is_finite()
+            {
+                return Err(CpuError::ShapeMismatch(
+                    "fused greedy path returned an invalid token/logit pair".into(),
+                ));
+            }
+            let token = data[0] as usize;
+            if token >= self.config.vocab_size {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "fused greedy token {token} exceeds vocabulary size {}",
+                    self.config.vocab_size
+                )));
+            }
+            Ok((token as u32, data[1]))
         }))
     }
 
@@ -1504,6 +1584,7 @@ impl Llama<CpuBackend> {
         if token_ids.len() != 1 || crate::trace::is_tracing() {
             return None;
         }
+        cache.validate_start_pos(start_pos);
         let inter_dim = self.fast_decode_inter_dim?;
         hooks.note_dispatch(DispatchPath::Fast);
         let embed_dim = self.config.embed_dim;
@@ -1904,8 +1985,23 @@ impl Llama<CpuBackend> {
         use crate::loader::LoadedTensor;
         use crate::tensor::compute_rope_freqs;
 
+        if let Some(architecture) = loader.metadata.get("general.architecture") {
+            match architecture {
+                crate::loader::GgufValue::Str(architecture) => anyhow::ensure!(
+                    matches!(architecture.as_str(), "llama" | "qwen2" | "qwen3"),
+                    "unsupported Llama-family GGUF architecture '{architecture}'"
+                ),
+                _ => anyhow::bail!("GGUF general.architecture must be a string"),
+            }
+        }
+
         let mut config = LlamaConfig::from_gguf_metadata(&loader);
+        config.validate()?;
         if let Some(max_seq_len) = max_seq_len {
+            anyhow::ensure!(
+                max_seq_len > 0,
+                "max sequence length must be greater than zero"
+            );
             config.max_seq_len = config.max_seq_len.min(max_seq_len);
         }
         log::debug!("llama config: {:?}", config);
@@ -1933,7 +2029,7 @@ impl Llama<CpuBackend> {
                     // rows contiguous, i.e. already row-major [vocab, embed];
                     // only the dims need swapping for the row lookup.
                     let shape = tensor.shape();
-                    debug_assert_eq!(shape.len(), 2);
+                    anyhow::ensure!(shape.len() == 2, "token_embd.weight must be 2D");
                     LlamaEmbedding::F32(crate::tensor::CpuTensor::from_data(
                         vec![shape[1], shape[0]],
                         tensor.data().to_vec(),
@@ -2046,6 +2142,7 @@ impl Llama<CpuBackend> {
             fast_decode_inter_dim: None,
             head_topk_norms: std::sync::OnceLock::new(),
         };
+        model.validate_loaded_shapes()?;
         model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
         log::debug!(
             "llama q8 decode workspace: {}",
@@ -2056,6 +2153,97 @@ impl Llama<CpuBackend> {
             }
         );
         Ok(model)
+    }
+
+    fn validate_loaded_shapes(&self) -> anyhow::Result<()> {
+        let backend = CpuBackend;
+        let (vocab_size, embed_dim) = match &self.embed_tokens {
+            LlamaEmbedding::F32(tensor) => {
+                anyhow::ensure!(tensor.shape().len() == 2, "token embedding must be 2D");
+                (tensor.shape()[0], tensor.shape()[1])
+            }
+            LlamaEmbedding::Q8_0(weight) => (weight.out_features(), weight.in_features()),
+        };
+        anyhow::ensure!(
+            (vocab_size, embed_dim) == (self.config.vocab_size, self.config.embed_dim),
+            "token embedding must have shape [{}, {}], got [{vocab_size}, {embed_dim}]",
+            self.config.vocab_size,
+            self.config.embed_dim
+        );
+        anyhow::ensure!(
+            self.norm.shape() == [self.config.embed_dim],
+            "output_norm.weight must have shape [{}], got {:?}",
+            self.config.embed_dim,
+            self.norm.shape()
+        );
+        anyhow::ensure!(
+            self.head.in_features(&backend) == self.config.embed_dim
+                && self.head.out_features(&backend) == self.config.vocab_size,
+            "output head must be {} -> {}, got {} -> {}",
+            self.config.embed_dim,
+            self.config.vocab_size,
+            self.head.in_features(&backend),
+            self.head.out_features(&backend)
+        );
+
+        let q_width = self
+            .config
+            .n_heads
+            .checked_mul(self.config.head_dim)
+            .context("query projection width overflow")?;
+        let kv_width = self
+            .config
+            .n_kv_heads
+            .checked_mul(self.config.head_dim)
+            .context("KV projection width overflow")?;
+        for (index, block) in self.blocks.iter().enumerate() {
+            anyhow::ensure!(
+                block.input_layernorm.shape() == [self.config.embed_dim]
+                    && block.post_attention_layernorm.shape() == [self.config.embed_dim],
+                "block {index} RMS norm shapes must be [{}]",
+                self.config.embed_dim
+            );
+            let attention = &block.self_attn;
+            for (name, projection, output) in [
+                ("query", &attention.q_proj, q_width),
+                ("key", &attention.k_proj, kv_width),
+                ("value", &attention.v_proj, kv_width),
+            ] {
+                anyhow::ensure!(
+                    projection.in_features(&backend) == self.config.embed_dim
+                        && projection.out_features(&backend) == output,
+                    "block {index} {name} projection must be {} -> {output}",
+                    self.config.embed_dim
+                );
+            }
+            anyhow::ensure!(
+                attention.o_proj.in_features(&backend) == q_width
+                    && attention.o_proj.out_features(&backend) == self.config.embed_dim,
+                "block {index} attention output projection must be {q_width} -> {}",
+                self.config.embed_dim
+            );
+            for (name, norm) in [("query", &attention.q_norm), ("key", &attention.k_norm)] {
+                if let Some(norm) = norm {
+                    anyhow::ensure!(
+                        norm.shape() == [self.config.head_dim],
+                        "block {index} {name} norm must have shape [{}]",
+                        self.config.head_dim
+                    );
+                }
+            }
+            let mlp = &block.mlp;
+            let intermediate = mlp.gate_proj.out_features(&backend);
+            anyhow::ensure!(
+                intermediate > 0
+                    && mlp.gate_proj.in_features(&backend) == self.config.embed_dim
+                    && mlp.up_proj.in_features(&backend) == self.config.embed_dim
+                    && mlp.up_proj.out_features(&backend) == intermediate
+                    && mlp.down_proj.in_features(&backend) == intermediate
+                    && mlp.down_proj.out_features(&backend) == self.config.embed_dim,
+                "block {index} MLP projection shapes are inconsistent"
+            );
+        }
+        Ok(())
     }
 
     /// Construct packed representations for the selected existing projection
@@ -2369,6 +2557,11 @@ impl<B: Backend> Llama<B> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        cache.validate_start_pos(start_pos);
+        assert!(
+            !token_ids.is_empty(),
+            "Llama forward requires at least one token"
+        );
         let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
         let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
@@ -2408,6 +2601,11 @@ impl<B: Backend> Llama<B> {
     {
         use crate::trace::{self, OpKind};
 
+        cache.validate_start_pos(start_pos);
+        assert!(
+            !token_ids.is_empty(),
+            "Llama forward requires at least one token"
+        );
         let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
 
@@ -2581,6 +2779,11 @@ impl<B: Backend> Llama<B> {
         block_boundaries: &[usize],
         token_index_groups: &[Vec<usize>],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        crate::model::validate_block_partition(
+            token_ids.len(),
+            block_boundaries,
+            token_index_groups,
+        );
         let embed_dim = self.config.embed_dim;
         let mut pooled = token_index_groups
             .iter()
@@ -2608,7 +2811,7 @@ impl<B: Backend> Llama<B> {
                 .get(block_index + 1)
                 .copied()
                 .unwrap_or(token_ids.len());
-            debug_assert!(start < end && end <= token_ids.len());
+            assert!(start < end && end <= token_ids.len());
             let row = backend.row_as_2d(&x, end - 1)?;
             backend.assign_row(&mut last_rows, block_index, &row);
         }

@@ -73,6 +73,25 @@ pub fn dequantize_q8_0_row(
     blocks_per_row: usize,
     dst: &mut [f32],
 ) {
+    let end_block = block_start
+        .checked_add(blocks_per_row)
+        .expect("q8_0 block range overflow");
+    let required_bytes = end_block
+        .checked_mul(Q8_0_TYPE_SIZE)
+        .expect("q8_0 byte range overflow");
+    let required_values = blocks_per_row
+        .checked_mul(Q8_0_BLOCK_SIZE)
+        .expect("q8_0 destination length overflow");
+    assert!(
+        required_bytes <= data.len(),
+        "q8_0 source too short: need {required_bytes} bytes for blocks {block_start}..{end_block}, got {}",
+        data.len()
+    );
+    assert!(
+        required_values <= dst.len(),
+        "q8_0 destination too short: need {required_values} floats, got {}",
+        dst.len()
+    );
     // Safety: the arch-specific kernels are only called when the
     // corresponding CPU feature is detected at runtime.
     #[cfg(target_arch = "x86_64")]
@@ -103,8 +122,13 @@ pub fn dequantize_q8_0_row(
 #[inline]
 pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
     let n = x.len();
-    debug_assert_eq!(dst.len(), n);
-    debug_assert_eq!(weight.len(), n);
+    assert!(!x.is_empty(), "rms_norm_into requires a non-empty input");
+    assert_eq!(dst.len(), n, "rms_norm_into destination length mismatch");
+    assert_eq!(weight.len(), n, "rms_norm_into weight length mismatch");
+    assert!(
+        eps.is_finite() && eps >= 0.0,
+        "rms_norm_into requires finite eps >= 0"
+    );
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -121,8 +145,8 @@ pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
 #[inline]
 pub fn silu_mul_into(gate: &[f32], up: &[f32], dst: &mut [f32]) {
     let n = gate.len();
-    debug_assert_eq!(up.len(), n);
-    debug_assert_eq!(dst.len(), n);
+    assert_eq!(up.len(), n, "silu_mul_into input length mismatch");
+    assert_eq!(dst.len(), n, "silu_mul_into destination length mismatch");
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -138,7 +162,11 @@ pub fn silu_mul_into(gate: &[f32], up: &[f32], dst: &mut [f32]) {
 /// Reads from `src`, writes to `dst` (may alias).
 #[inline]
 pub fn silu_into(src: &[f32], dst: &mut [f32]) {
-    debug_assert_eq!(src.len(), dst.len());
+    assert_eq!(
+        src.len(),
+        dst.len(),
+        "silu_into destination length mismatch"
+    );
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -161,9 +189,29 @@ pub fn rms_norm_residual_into(
     dst: &mut [f32],
 ) {
     let n = x.len();
-    debug_assert_eq!(weight.len(), n);
-    debug_assert_eq!(residual.len(), n);
-    debug_assert_eq!(dst.len(), n);
+    assert!(
+        !x.is_empty(),
+        "rms_norm_residual_into requires a non-empty input"
+    );
+    assert_eq!(
+        weight.len(),
+        n,
+        "rms_norm_residual_into weight length mismatch"
+    );
+    assert_eq!(
+        residual.len(),
+        n,
+        "rms_norm_residual_into residual length mismatch"
+    );
+    assert_eq!(
+        dst.len(),
+        n,
+        "rms_norm_residual_into destination length mismatch"
+    );
+    assert!(
+        eps.is_finite() && eps >= 0.0,
+        "rms_norm_residual_into requires finite eps >= 0"
+    );
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
@@ -1587,8 +1635,29 @@ pub(crate) fn matmul_q8_0_decode_argmax(
     let out_features = norms.out_features();
     let in_blocks = norms.in_blocks();
     let data = w.data();
-    let encoded_row_len = in_blocks * Q8_0_TYPE_SIZE;
-    debug_assert_eq!(x.len(), encoded_row_len);
+    assert_eq!(
+        out_features,
+        w.out_features(),
+        "argmax norms/weight row mismatch"
+    );
+    assert_eq!(
+        in_blocks,
+        w.in_features() / Q8_0_BLOCK_SIZE,
+        "argmax norms/weight column mismatch"
+    );
+    assert!(out_features > 0, "argmax requires at least one output row");
+    assert!(
+        out_features <= u32::MAX as usize,
+        "argmax output row count exceeds u32 token range"
+    );
+    assert!(
+        margin.is_finite() && margin >= 1.0,
+        "argmax pruning margin must be finite and at least 1"
+    );
+    let encoded_row_len = in_blocks
+        .checked_mul(Q8_0_TYPE_SIZE)
+        .expect("argmax input size overflow");
+    assert_eq!(x.len(), encoded_row_len, "argmax input length mismatch");
 
     // activation suffix bound: b_g = |scale_x_g| * ||qx_g||
     let mut act_suffix = vec![0.0f32; in_blocks + 1];
@@ -1989,6 +2058,19 @@ pub(crate) fn matmul_q8_0_decode_interleaved(
     if out_rows == 0 {
         return;
     }
+    let input_len = w
+        .blocks_per_row
+        .checked_mul(Q8_0_TYPE_SIZE)
+        .expect("interleaved q8 input length overflow");
+    assert_eq!(x.len(), input_len, "interleaved q8 input length mismatch");
+    let row_end = global_row_start
+        .checked_add(out_rows)
+        .expect("interleaved q8 output range overflow");
+    assert!(
+        row_end <= w.out_features(),
+        "interleaved q8 output range {global_row_start}..{row_end} exceeds {} rows",
+        w.out_features()
+    );
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx512vnni")
@@ -2047,6 +2129,16 @@ pub(crate) fn matmul_q8_0_decode_interleaved_parallel(
     w: &QuantizedWeightInterleaved,
     out: &mut [f32],
 ) {
+    assert_eq!(
+        out.len(),
+        w.out_features(),
+        "interleaved q8 output length mismatch"
+    );
+    let input_len = w
+        .blocks_per_row
+        .checked_mul(Q8_0_TYPE_SIZE)
+        .expect("interleaved q8 input length overflow");
+    assert_eq!(x.len(), input_len, "interleaved q8 input length mismatch");
     let threads = rayon::current_num_threads().max(1);
     let chunk_rows = w
         .out_features()
@@ -2123,8 +2215,8 @@ pub(crate) fn sum_squares(x: &[f32]) -> f32 {
 /// SIMD element-wise multiply: `out[i] = a[i] * b[i]`.
 #[inline]
 pub(crate) fn elemul(a: &[f32], b: &[f32], out: &mut [f32]) {
-    debug_assert_eq!(a.len(), b.len());
-    debug_assert_eq!(a.len(), out.len());
+    assert_eq!(a.len(), b.len(), "elemul input length mismatch");
+    assert_eq!(a.len(), out.len(), "elemul output length mismatch");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -2150,7 +2242,7 @@ pub(crate) fn elemul(a: &[f32], b: &[f32], out: &mut [f32]) {
 /// SIMD dot product: `Σ a[i] · b[i]`.
 #[inline]
 pub(crate) fn dot_product(a: &[f32], b: &[f32]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "dot product length mismatch");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -2174,7 +2266,7 @@ pub(crate) fn dot_product(a: &[f32], b: &[f32]) -> f32 {
 /// SIMD dot product between an F32 row and an F16 cache row.
 #[inline]
 pub(crate) fn dot_product_f16(a: &[f32], b: &[f16]) -> f32 {
-    debug_assert_eq!(a.len(), b.len());
+    assert_eq!(a.len(), b.len(), "mixed dot product length mismatch");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -2193,7 +2285,7 @@ pub(crate) fn dot_product_f16(a: &[f32], b: &[f16]) -> f32 {
 /// SIMD weighted accumulate: `acc[i] += weight * src[i]`.
 #[inline]
 pub(crate) fn weighted_add(acc: &mut [f32], src: &[f32], weight: f32) {
-    debug_assert_eq!(acc.len(), src.len());
+    assert_eq!(acc.len(), src.len(), "weighted add length mismatch");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -2219,7 +2311,7 @@ pub(crate) fn weighted_add(acc: &mut [f32], src: &[f32], weight: f32) {
 /// SIMD weighted accumulate from an F16 cache row.
 #[inline]
 pub(crate) fn weighted_add_f16(acc: &mut [f32], src: &[f16], weight: f32) {
-    debug_assert_eq!(acc.len(), src.len());
+    assert_eq!(acc.len(), src.len(), "mixed weighted add length mismatch");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -2240,7 +2332,7 @@ pub(crate) fn weighted_add_f16(acc: &mut [f32], src: &[f16], weight: f32) {
 /// SIMD in-place addition: `dst[i] += src[i]`.
 #[inline]
 pub(crate) fn add_assign(dst: &mut [f32], src: &[f32]) {
-    debug_assert_eq!(dst.len(), src.len());
+    assert_eq!(dst.len(), src.len(), "add-assign length mismatch");
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
@@ -2257,8 +2349,8 @@ pub(crate) fn add_assign(dst: &mut [f32], src: &[f32]) {
 /// SIMD element-wise addition: `out[i] = a[i] + b[i]`.
 #[inline]
 pub(crate) fn add(a: &[f32], b: &[f32], out: &mut [f32]) {
-    debug_assert_eq!(a.len(), b.len());
-    debug_assert_eq!(a.len(), out.len());
+    assert_eq!(a.len(), b.len(), "add input length mismatch");
+    assert_eq!(a.len(), out.len(), "add output length mismatch");
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {
@@ -2285,8 +2377,8 @@ pub(crate) fn add(a: &[f32], b: &[f32], out: &mut [f32]) {
 /// Used by rms_norm for the element-wise apply step after computing rstd.
 #[inline]
 pub(crate) fn scale_weight_mul(x: &[f32], scale: f32, weight: &[f32], out: &mut [f32]) {
-    debug_assert_eq!(x.len(), weight.len());
-    debug_assert_eq!(x.len(), out.len());
+    assert_eq!(x.len(), weight.len(), "scale/weight input length mismatch");
+    assert_eq!(x.len(), out.len(), "scale/weight output length mismatch");
 
     #[cfg(target_arch = "x86_64")]
     {
@@ -2325,8 +2417,16 @@ pub(crate) fn rope_split_half(
     sin: &[f32],
 ) {
     let half = head_dim / 2;
-    debug_assert_eq!(cos.len(), half);
-    debug_assert_eq!(sin.len(), half);
+    assert!(
+        head_dim > 0 && head_dim.is_multiple_of(2),
+        "RoPE head dimension must be positive and even"
+    );
+    let expected_x = n_heads
+        .checked_mul(head_dim)
+        .expect("RoPE input length overflow");
+    assert_eq!(x.len(), expected_x, "RoPE input length mismatch");
+    assert_eq!(cos.len(), half, "RoPE cosine length mismatch");
+    assert_eq!(sin.len(), half, "RoPE sine length mismatch");
     #[cfg(target_arch = "x86_64")]
     {
         if is_x86_feature_detected!("avx2") {

@@ -10,11 +10,11 @@ use alloc::vec::Vec;
 #[derive(Clone, Debug, PartialEq)]
 pub struct CpuTensor {
     /// dimensions of the tensor
-    pub shape: Vec<usize>,
+    pub(crate) shape: Vec<usize>,
     /// strides for each dimension (contiguous row-major)
-    pub strides: Vec<usize>,
+    pub(crate) strides: Vec<usize>,
     /// flat f32 data buffer
-    pub data: Vec<f32>,
+    pub(crate) data: Vec<f32>,
 }
 
 #[derive(Debug, Clone, thiserror::Error)]
@@ -197,6 +197,7 @@ impl CpuTensor {
     pub fn softmax(&self) -> Self {
         assert!(!self.shape.is_empty(), "softmax needs 1 dim min");
         let last_dim = self.shape[self.shape.len() - 1];
+        assert!(last_dim > 0, "softmax requires a non-empty final dimension");
         let batch: usize = self.shape[..self.shape.len() - 1].iter().product();
 
         let mut out_data = vec![0.0f32; self.len()];
@@ -204,6 +205,22 @@ impl CpuTensor {
         for b in 0..batch {
             let offset = b * last_dim;
             let slice = &self.data[offset..offset + last_dim];
+
+            let positive_infinities = slice
+                .iter()
+                .filter(|value| **value == f32::INFINITY)
+                .count();
+            if positive_infinities > 0 {
+                let probability = 1.0 / positive_infinities as f32;
+                for (index, value) in slice.iter().enumerate() {
+                    out_data[offset + index] = if *value == f32::INFINITY {
+                        probability
+                    } else {
+                        0.0
+                    };
+                }
+                continue;
+            }
 
             let max = slice.iter().fold(f32::NEG_INFINITY, |a: f32, &b| a.max(b));
             if max == f32::NEG_INFINITY {
@@ -252,7 +269,12 @@ impl CpuTensor {
     pub fn rms_norm(&self, weight: &Self, eps: f32) -> Self {
         assert_eq!(self.ndim(), 2, "rms_norm expects 2d [batch, features]");
         let (batch, features) = (self.shape[0], self.shape[1]);
+        assert!(features > 0, "rms_norm requires at least one feature");
         assert_eq!(weight.len(), features);
+        assert!(
+            eps.is_finite() && eps >= 0.0,
+            "rms_norm requires finite eps >= 0"
+        );
 
         let mut out = vec![0.0f32; self.len()];
         let weight_data = weight.data();
@@ -343,8 +365,22 @@ impl CpuTensor {
             3 => (self.shape[0], self.shape[1], self.shape[2]),
             _ => panic!("apply_rotary_emb expects 2d or 3d input"),
         };
-        assert_eq!(cos.shape(), &[cos.shape[0], head_dim / 2]);
-        assert_eq!(sin.shape(), &[sin.shape[0], head_dim / 2]);
+        assert!(
+            head_dim > 0 && head_dim.is_multiple_of(2),
+            "apply_rotary_emb requires a positive, even head dimension"
+        );
+        assert_eq!(cos.ndim(), 2, "apply_rotary_emb cos table must be 2D");
+        assert_eq!(sin.ndim(), 2, "apply_rotary_emb sin table must be 2D");
+        assert_eq!(cos.shape()[1], head_dim / 2);
+        assert_eq!(sin.shape(), cos.shape(), "RoPE sin/cos table shapes differ");
+        let end_pos = start_pos
+            .checked_add(seq_len)
+            .expect("apply_rotary_emb position overflow");
+        assert!(
+            end_pos <= cos.shape()[0],
+            "apply_rotary_emb positions {start_pos}..{end_pos} exceed table length {}",
+            cos.shape()[0]
+        );
 
         let cos_data = cos.data();
         let sin_data = sin.data();
@@ -385,8 +421,13 @@ impl CpuTensor {
     pub fn layer_norm(&self, weight: &Self, bias: &Self, eps: f32) -> Self {
         assert_eq!(self.ndim(), 2, "layer_norm expects 2d [batch, features]");
         let (batch, features) = (self.shape[0], self.shape[1]);
+        assert!(features > 0, "layer_norm requires at least one feature");
         assert_eq!(weight.len(), features);
         assert_eq!(bias.len(), features);
+        assert!(
+            eps.is_finite() && eps >= 0.0,
+            "layer_norm requires finite eps >= 0"
+        );
 
         let mut out = vec![0.0f32; self.len()];
         for b in 0..batch {
@@ -433,14 +474,15 @@ impl CpuTensor {
     /// returns a **1d** tensor of shape `[row_size]` - the row is flattened.
     /// if you need a 2d `[1, row_size]` result, reshape the output.
     pub fn index_select(&self, index: usize) -> Result<Self, TensorError> {
-        if self.shape.len() < 2 {
-            return Err(TensorError::ShapeMismatch(
-                "cannot index_select a tensor with less than 2 dimensions".into(),
-            ));
+        if self.shape.len() != 2 {
+            return Err(TensorError::ShapeMismatch(format!(
+                "index_select requires a 2D tensor, got {:?}",
+                self.shape
+            )));
         }
 
         let row_size = self.shape[1];
-        let max_index = self.data.len() / row_size;
+        let max_index = self.shape[0];
         if index >= max_index {
             return Err(TensorError::IndexOutOfBounds {
                 index,
@@ -503,17 +545,22 @@ impl CpuTensor {
     #[must_use]
     #[inline]
     pub fn slice_cols(&self, start_col: usize, end_col: usize) -> Self {
-        if self.shape.len() < 2 {
-            panic!("slice_cols requires a 2D tensor [rows, cols]");
-        }
+        assert_eq!(
+            self.shape.len(),
+            2,
+            "slice_cols requires a 2D tensor [rows, cols]"
+        );
 
         let rows = self.shape[0];
         let old_cols = self.shape[1];
-        let new_cols = end_col - start_col;
-
+        assert!(
+            start_col <= end_col,
+            "column slice start {start_col} exceeds end {end_col}"
+        );
         if end_col > old_cols {
             panic!("column slice out of bounds: {} > {}", end_col, old_cols);
         }
+        let new_cols = end_col - start_col;
 
         let mut new_data = Vec::with_capacity(rows * new_cols);
 
@@ -540,16 +587,44 @@ impl CpuTensor {
 ///   cos_table[p][d] = cos(p * freq[d])
 ///   sin_table[p][d] = sin(p * freq[d])
 ///
-/// returns `(cos, sin)` - two `[max_seq_len, head_dim]` tensors.
+/// returns `(cos, sin)` - two `[max_seq_len, head_dim / 2]` tensors.
 pub fn compute_rope_freqs(
     max_seq_len: usize,
     head_dim: usize,
     theta_base: f32,
     freq_factors: Option<&[f32]>,
 ) -> (CpuTensor, CpuTensor) {
+    assert!(
+        max_seq_len > 0,
+        "RoPE table requires a positive sequence length"
+    );
+    assert!(
+        head_dim > 0 && head_dim.is_multiple_of(2),
+        "RoPE head dimension must be positive and even"
+    );
+    assert!(
+        theta_base.is_finite() && theta_base > 0.0,
+        "RoPE theta base must be finite and positive"
+    );
     let half = head_dim / 2;
-    let mut cos = vec![0.0f32; max_seq_len * half];
-    let mut sin = vec![0.0f32; max_seq_len * half];
+    if let Some(factors) = freq_factors {
+        assert_eq!(
+            factors.len(),
+            half,
+            "RoPE frequency-factor count must equal head_dim / 2"
+        );
+        assert!(
+            factors
+                .iter()
+                .all(|factor| factor.is_finite() && *factor > 0.0),
+            "RoPE frequency factors must be finite and positive"
+        );
+    }
+    let table_len = max_seq_len
+        .checked_mul(half)
+        .expect("RoPE table size overflow");
+    let mut cos = vec![0.0f32; table_len];
+    let mut sin = vec![0.0f32; table_len];
     for i in 0..half {
         let base_freq = theta_base.powf(-(2.0 * i as f32) / head_dim as f32);
         // freq_factors gate specific frequency pairs:
@@ -560,7 +635,7 @@ pub fn compute_rope_freqs(
         // per-pair factor ff (freq_factors[i]); a huge factor therefore
         // drives the rotation to zero. Division semantics, matching
         // ggml_rope_cache_init.
-        let factor = freq_factors.map_or(1.0, |f| f.get(i).copied().unwrap_or(1.0));
+        let factor = freq_factors.map_or(1.0, |factors| factors[i]);
         let freq = base_freq / factor;
         for p in 0..max_seq_len {
             let angle = p as f32 * freq;
@@ -609,5 +684,11 @@ mod tests {
         let s = t.softmax();
         let sum: f32 = s.data().iter().sum();
         assert!((sum - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn softmax_shares_mass_across_positive_infinities() {
+        let tensor = CpuTensor::from_data(vec![1, 3], vec![f32::INFINITY, 0.0, f32::INFINITY]);
+        assert_eq!(tensor.softmax().data(), &[0.5, 0.0, 0.5]);
     }
 }

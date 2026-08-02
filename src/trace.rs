@@ -342,8 +342,17 @@ pub fn collect_run_metadata(thread_count: usize) -> RunMetadata {
         .to_string();
 
     let rust_version = option_env!("EMBER_RUST_VERSION")
-        .unwrap_or(env!("CARGO_PKG_RUST_VERSION"))
-        .to_string();
+        .map(str::to_string)
+        .or_else(|| {
+            std::process::Command::new("rustc")
+                .arg("--version")
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|version| version.trim().to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
 
     RunMetadata {
         cpu_model,
@@ -663,10 +672,10 @@ impl TraceReport {
         out.push_str(&format!("\n{} summary\n{}\n", self.phase, "-".repeat(30)));
 
         let total_ms = total_ns / 1_000_000.0;
-        let tok_s = 1.0 / (total_ms / 1000.0);
+        let eval_s = 1.0 / (total_ms / 1000.0);
         out.push_str(&format!(
-            "Total duration: {:.2} ms  ({:.2} tok/s)\n",
-            total_ms, tok_s
+            "Total duration: {:.2} ms  ({:.2} eval/s)\n",
+            total_ms, eval_s
         ));
 
         // Run metadata
@@ -816,9 +825,9 @@ impl TraceReport {
         out
     }
 
-    /// Serialize all events as pretty-printed JSON.
+    /// Serialize the complete report as pretty-printed JSON.
     pub fn to_json(&self) -> String {
-        serde_json::to_string_pretty(&self.events).unwrap_or_else(|e| format!("{{error: {e}}}"))
+        serde_json::to_string_pretty(self).unwrap_or_else(|e| format!("{{\"error\":\"{e}\"}}"))
     }
 
     /// Return events sorted by layer then duration (descending within layer).
@@ -918,9 +927,10 @@ mod tests {
         let report = disable_tracing().unwrap();
 
         let json = report.to_json();
-        let parsed: Vec<OpTrace> = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].name, "gate_proj");
-        assert_eq!(parsed[0].op_kind, OpKind::MatMulQ8_0);
+        let parsed: TraceReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.phase, "decode");
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.events[0].name, "gate_proj");
+        assert_eq!(parsed.events[0].op_kind, OpKind::MatMulQ8_0);
     }
 }

@@ -60,7 +60,11 @@ impl ResidencyRecorder {
         if !self.enabled {
             self.snapshots.push(ResidencySnapshot {
                 phase,
-                elapsed_ns: self.process_start.elapsed().as_nanos() as u64,
+                elapsed_ns: self
+                    .process_start
+                    .elapsed()
+                    .as_nanos()
+                    .min(u64::MAX as u128) as u64,
                 measurement_ns: 0,
                 rss_kib: 0,
                 peak_rss_kib: 0,
@@ -77,12 +81,16 @@ impl ResidencyRecorder {
         let status = fs::read_to_string("/proc/self/status")?;
         let stat = fs::read_to_string("/proc/self/stat")?;
 
-        let measurement_ns = measurement_start.elapsed().as_nanos() as u64;
+        let measurement_ns = measurement_start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
         self.measurement_ns = self.measurement_ns.saturating_add(measurement_ns);
         let (minor_faults, major_faults) = parse_process_faults(&stat)?;
         self.snapshots.push(ResidencySnapshot {
             phase,
-            elapsed_ns: self.process_start.elapsed().as_nanos() as u64,
+            elapsed_ns: self
+                .process_start
+                .elapsed()
+                .as_nanos()
+                .min(u64::MAX as u128) as u64,
             measurement_ns,
             rss_kib: proc_kib(&smaps, "Rss:")?,
             peak_rss_kib: proc_kib(&status, "VmHWM:")?,
@@ -112,11 +120,21 @@ fn proc_kib(contents: &str, field: &str) -> anyhow::Result<u64> {
         .lines()
         .find(|line| line.starts_with(field))
         .ok_or_else(|| anyhow::anyhow!("missing procfs field {field}"))?;
-    line.split_whitespace()
-        .nth(1)
-        .ok_or_else(|| anyhow::anyhow!("missing value for procfs field {field}"))?
-        .parse()
-        .map_err(Into::into)
+    let mut parts = line.split_whitespace();
+    let observed_field = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing procfs field {field}"))?;
+    let value = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing value for procfs field {field}"))?;
+    let unit = parts
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("missing unit for procfs field {field}"))?;
+    anyhow::ensure!(
+        observed_field == field && unit == "kB" && parts.next().is_none(),
+        "malformed procfs field {field}: {line}"
+    );
+    value.parse().map_err(Into::into)
 }
 
 fn parse_process_faults(stat: &str) -> anyhow::Result<(u64, u64)> {
@@ -145,6 +163,7 @@ mod tests {
         let contents = "Rss:               12345 kB\nPss_Anon:             9 kB\n";
         assert_eq!(proc_kib(contents, "Rss:").unwrap(), 12_345);
         assert_eq!(proc_kib(contents, "Pss_Anon:").unwrap(), 9);
+        assert!(proc_kib("Rss: 12 bytes\n", "Rss:").is_err());
     }
 
     #[test]

@@ -4,6 +4,7 @@ use crate::backend::{
 use crate::quant::{QuantizedWeight, QuantizedWeightInterleaved, QuantizedWeightVnni};
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
+use anyhow::Context;
 
 pub use crate::llama::{Llama, LlamaConfig};
 
@@ -43,20 +44,28 @@ pub trait ForwardModel<B: Backend> {
     ) -> Result<(u32, f32), B::Error> {
         let logits = self.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)?;
         let data = backend.data(&logits);
-        let mut best = 0usize;
-        let mut best_val = f32::NEG_INFINITY;
-        for (i, &value) in data.iter().enumerate() {
-            if value > best_val {
-                best_val = value;
-                best = i;
-            }
-        }
-        Ok((best as u32, best_val))
+        let vocab_size = self.vocab_size(backend);
+        assert_eq!(
+            backend.shape(&logits),
+            [1, vocab_size],
+            "greedy inference requires last logits shaped [1, vocab]"
+        );
+        assert_eq!(
+            data.len(),
+            vocab_size,
+            "greedy logits payload length mismatch"
+        );
+        let best = crate::sampler::argmax_token(data);
+        let best = u32::try_from(best).expect("model vocabulary exceeds u32 token-ID space");
+        Ok((best, data[best as usize]))
     }
     /// number of transformer layers (for display/debug).
     fn n_layers(&self) -> usize;
     /// hidden dimension (for display/debug).
     fn embed_dim(&self) -> usize;
+    /// number of token IDs accepted by the embedding table and emitted by the
+    /// language-model head.
+    fn vocab_size(&self, backend: &B) -> usize;
 
     /// run forward pass and collect hidden states after each transformer block.
     ///
@@ -136,6 +145,7 @@ pub trait ForwardModel<B: Backend> {
         if block_boundaries.is_empty() {
             return self.forward_pooled_activations(backend, token_ids, token_index_groups);
         }
+        validate_block_partition(token_ids.len(), block_boundaries, token_index_groups);
 
         let mut pooled = vec![None; token_index_groups.len()];
         let mut block_logits = Vec::new();
@@ -146,7 +156,11 @@ pub trait ForwardModel<B: Backend> {
                 .get(block_index + 1)
                 .copied()
                 .unwrap_or(token_ids.len());
-            debug_assert!(start < end && end <= token_ids.len());
+            assert!(
+                start < end && end <= token_ids.len(),
+                "invalid block boundary {start}..{end} for {} tokens",
+                token_ids.len()
+            );
 
             let mut group_indices = Vec::new();
             let mut local_groups = Vec::new();
@@ -171,7 +185,10 @@ pub trait ForwardModel<B: Backend> {
             block_logits.extend_from_slice(&data[data.len() - vocab_size..]);
         }
 
-        debug_assert!(pooled.iter().all(Option::is_some));
+        assert!(
+            pooled.iter().all(Option::is_some),
+            "every probe group must belong to exactly one attention block"
+        );
         let pooled = pooled
             .into_iter()
             .map(|values| values.expect("probe group must belong to one block"))
@@ -181,15 +198,79 @@ pub trait ForwardModel<B: Backend> {
     }
 }
 
+/// Validate a concatenated independent-sequence layout used by block-diagonal
+/// probing. This remains an assertion-level contract because `ForwardModel`
+/// cannot construct an arbitrary backend's error type.
+pub(crate) fn validate_block_partition(
+    token_count: usize,
+    block_boundaries: &[usize],
+    token_index_groups: &[Vec<usize>],
+) {
+    assert!(token_count > 0, "block probing requires at least one token");
+    assert!(
+        !block_boundaries.is_empty() && block_boundaries[0] == 0,
+        "block boundaries must start at zero"
+    );
+    assert!(
+        block_boundaries.windows(2).all(|pair| pair[0] < pair[1]),
+        "block boundaries must be strictly increasing"
+    );
+    assert!(
+        block_boundaries.iter().all(|&start| start < token_count),
+        "every block boundary must be inside the token sequence"
+    );
+
+    for (group_index, group) in token_index_groups.iter().enumerate() {
+        assert!(
+            !group.is_empty(),
+            "probe token-index group {group_index} is empty"
+        );
+        assert!(
+            group.iter().all(|&index| index < token_count),
+            "probe token-index group {group_index} contains an out-of-range token"
+        );
+        let containing_blocks = block_boundaries
+            .iter()
+            .enumerate()
+            .filter(|(block_index, start)| {
+                let end = block_boundaries
+                    .get(*block_index + 1)
+                    .copied()
+                    .unwrap_or(token_count);
+                group.iter().all(|index| *index >= **start && *index < end)
+            })
+            .count();
+        assert_eq!(
+            containing_blocks, 1,
+            "probe token-index group {group_index} must lie wholly within exactly one block"
+        );
+    }
+}
+
 pub fn pool_layer_activation(
     layer_state: &[f32],
     token_indices: &[usize],
     embed_dim: usize,
     out: &mut [f32],
 ) {
-    debug_assert_eq!(out.len(), embed_dim);
+    assert!(embed_dim > 0, "pooling requires a non-zero embedding width");
+    assert_eq!(out.len(), embed_dim, "pooled output width mismatch");
+    assert!(
+        !token_indices.is_empty(),
+        "pooling requires at least one token index"
+    );
+    assert_eq!(
+        layer_state.len() % embed_dim,
+        0,
+        "layer-state length is not divisible by embedding width"
+    );
+    let token_count = layer_state.len() / embed_dim;
     out.fill(0.0);
     for &token_index in token_indices {
+        assert!(
+            token_index < token_count,
+            "pool token index {token_index} out of bounds for {token_count} tokens"
+        );
         let row_start = token_index * embed_dim;
         for (j, value) in out.iter_mut().enumerate() {
             *value += layer_state[row_start + j];
@@ -742,6 +823,14 @@ impl Gpt2<CpuBackend> {
     /// metadata keys `gpt2.block_count` and `gpt2.attention.head_count` control
     /// the number of layers and heads (default 12 each if missing).
     pub fn from_loader(mut loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
+        if let Some(crate::loader::GgufValue::Str(architecture)) =
+            loader.metadata.get("general.architecture")
+        {
+            anyhow::ensure!(
+                architecture == "gpt2",
+                "unsupported GPT-2 GGUF architecture '{architecture}'"
+            );
+        }
         // metadata
         let n_layers = match loader.metadata.get("gpt2.block_count") {
             Some(crate::loader::GgufValue::U32(n)) => *n as usize,
@@ -751,6 +840,8 @@ impl Gpt2<CpuBackend> {
             Some(crate::loader::GgufValue::U32(n)) => *n as usize,
             _ => 12,
         };
+        anyhow::ensure!(n_layers > 0, "GPT-2 model must contain at least one layer");
+        anyhow::ensure!(n_heads > 0, "GPT-2 attention head count must be non-zero");
 
         // blocks
         let mut blocks = Vec::with_capacity(n_layers);
@@ -798,23 +889,123 @@ impl Gpt2<CpuBackend> {
             ));
         }
 
-        let wte = loader.take_f32("token_embd.weight")?;
-        let embed_dim = wte.shape[1];
+        let wte = take_gpt2_embedding(&mut loader, "token_embd.weight")?;
+        let wpe = take_gpt2_embedding(&mut loader, "position_embd.weight")?;
+        anyhow::ensure!(wte.ndim() == 2, "token_embd.weight must be 2D");
+        anyhow::ensure!(wpe.ndim() == 2, "position_embd.weight must be 2D");
+        let embed_dim = wte.shape()[1];
+        anyhow::ensure!(embed_dim > 0, "GPT-2 embedding width must be non-zero");
+        anyhow::ensure!(wte.shape()[0] > 0, "GPT-2 vocabulary must be non-zero");
+        anyhow::ensure!(wpe.shape()[0] > 0, "GPT-2 context length must be non-zero");
+        anyhow::ensure!(
+            wpe.shape()[1] == embed_dim,
+            "GPT-2 token/position embedding widths differ: {} vs {}",
+            embed_dim,
+            wpe.shape()[1]
+        );
+        anyhow::ensure!(
+            embed_dim.is_multiple_of(n_heads),
+            "GPT-2 embedding width {embed_dim} is not divisible by {n_heads} heads"
+        );
+
+        let ln_f = LayerNorm::new(
+            loader.take_f32("output_norm.weight")?,
+            loader.take_f32("output_norm.bias")?,
+            1e-5,
+        );
+        let head = take_gpt2_linear(&mut loader, "output.weight", None)?;
+        validate_gpt2_norm(&ln_f, embed_dim, "output_norm")?;
+        anyhow::ensure!(
+            head.in_features(&CpuBackend) == embed_dim
+                && head.out_features(&CpuBackend) == wte.shape()[0],
+            "GPT-2 output head must be {} -> {}, got {} -> {}",
+            embed_dim,
+            wte.shape()[0],
+            head.in_features(&CpuBackend),
+            head.out_features(&CpuBackend)
+        );
+        for (index, block) in blocks.iter().enumerate() {
+            validate_gpt2_block(block, embed_dim, index)?;
+        }
 
         Ok(Self {
             wte,
-            wpe: loader.take_f32("position_embd.weight")?,
+            wpe,
             blocks,
-            ln_f: LayerNorm::new(
-                loader.take_f32("output_norm.weight")?,
-                loader.take_f32("output_norm.bias")?,
-                1e-5,
-            ),
-            head: take_gpt2_linear(&mut loader, "output.weight", None)?,
+            ln_f,
+            head,
             n_heads,
             embed_dim,
         })
     }
+}
+
+fn take_gpt2_embedding(
+    loader: &mut crate::loader::GgufLoader,
+    name: &str,
+) -> anyhow::Result<CpuTensor> {
+    use crate::loader::LoadedTensor;
+    match loader.take_tensor(name)? {
+        LoadedTensor::F32(tensor) => {
+            anyhow::ensure!(tensor.ndim() == 2, "{name} must be 2D");
+            let shape = tensor.shape();
+            Ok(CpuTensor::from_data(
+                vec![shape[1], shape[0]],
+                tensor.data().to_vec(),
+            ))
+        }
+        LoadedTensor::Q8_0(weight) => Ok(weight.dequantize_all()),
+    }
+}
+
+fn validate_gpt2_norm(
+    norm: &LayerNorm<CpuBackend>,
+    embed_dim: usize,
+    name: &str,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        norm.weight.shape() == [embed_dim] && norm.bias.shape() == [embed_dim],
+        "GPT-2 {name} weights must both have shape [{embed_dim}], got {:?} and {:?}",
+        norm.weight.shape(),
+        norm.bias.shape()
+    );
+    Ok(())
+}
+
+fn validate_gpt2_block(
+    block: &Block<CpuBackend>,
+    embed_dim: usize,
+    index: usize,
+) -> anyhow::Result<()> {
+    let backend = CpuBackend;
+    let qkv_width = embed_dim
+        .checked_mul(3)
+        .context("GPT-2 QKV width overflow")?;
+    anyhow::ensure!(
+        block.attn.c_attn.in_features(&backend) == embed_dim
+            && block.attn.c_attn.out_features(&backend) == qkv_width,
+        "GPT-2 block {index} QKV projection must be {embed_dim} -> {qkv_width}"
+    );
+    anyhow::ensure!(
+        block.attn.c_proj.in_features(&backend) == embed_dim
+            && block.attn.c_proj.out_features(&backend) == embed_dim,
+        "GPT-2 block {index} attention output projection must be {embed_dim} -> {embed_dim}"
+    );
+    let intermediate = block.mlp.c_fc.out_features(&backend);
+    anyhow::ensure!(
+        block.mlp.c_fc.in_features(&backend) == embed_dim
+            && intermediate > 0
+            && block.mlp.c_proj.in_features(&backend) == intermediate
+            && block.mlp.c_proj.out_features(&backend) == embed_dim,
+        "GPT-2 block {index} MLP projection shapes are inconsistent"
+    );
+    validate_gpt2_norm(
+        &block.ln_1,
+        embed_dim,
+        &format!("block {index} attention norm"),
+    )?;
+    validate_gpt2_norm(&block.ln_2, embed_dim, &format!("block {index} MLP norm"))?;
+    Ok(())
 }
 
 fn take_gpt2_linear(
@@ -861,6 +1052,9 @@ impl<B: Backend> ForwardModel<B> for Gpt2<B> {
     }
     fn embed_dim(&self) -> usize {
         self.embed_dim
+    }
+    fn vocab_size(&self, backend: &B) -> usize {
+        backend.shape(&self.wte)[0]
     }
     fn forward_with_activations(
         &self,
@@ -943,6 +1137,14 @@ impl<B: Backend> Gpt2<B> {
     /// create a kv cache sized for this model's parameters.
     pub fn create_cache(&self, backend: &B, max_seq_len: usize) -> crate::kv_cache::KVCache {
         let embed_dim = backend.shape(&self.wte)[1];
+        assert!(
+            self.n_heads > 0,
+            "GPT-2 attention head count must be non-zero"
+        );
+        assert!(
+            embed_dim.is_multiple_of(self.n_heads),
+            "GPT-2 embedding width must be divisible by its head count"
+        );
         let head_dim = embed_dim / self.n_heads;
         crate::kv_cache::KVCache::new(self.blocks.len(), self.n_heads, head_dim, max_seq_len)
     }
@@ -958,6 +1160,11 @@ impl<B: Backend> Gpt2<B> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        cache.validate_start_pos(start_pos);
+        assert!(
+            !token_ids.is_empty(),
+            "GPT-2 forward requires at least one token"
+        );
         let seq_len = token_ids.len();
         let mut x = self.embed_with_offset(backend, token_ids, start_pos)?;
         for (layer, block) in self.blocks.iter().enumerate() {
@@ -979,6 +1186,11 @@ impl<B: Backend> Gpt2<B> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        cache.validate_start_pos(start_pos);
+        assert!(
+            !token_ids.is_empty(),
+            "GPT-2 forward requires at least one token"
+        );
         let seq_len = token_ids.len();
         let mut x = self.embed_with_offset(backend, token_ids, start_pos)?;
         for (layer, block) in self.blocks.iter().enumerate() {
@@ -994,6 +1206,10 @@ impl<B: Backend> Gpt2<B> {
     }
 
     pub fn forward(&self, backend: &B, token_ids: &[u32]) -> Result<B::Tensor, B::Error> {
+        assert!(
+            !token_ids.is_empty(),
+            "GPT-2 forward requires at least one token"
+        );
         let mut x = self.embed(backend, token_ids)?;
 
         for block in &self.blocks {
@@ -1017,6 +1233,10 @@ impl<B: Backend> Gpt2<B> {
         backend: &B,
         token_ids: &[u32],
     ) -> Result<(Vec<Vec<f32>>, B::Tensor), B::Error> {
+        assert!(
+            !token_ids.is_empty(),
+            "GPT-2 forward requires at least one token"
+        );
         let mut x = self.embed(backend, token_ids)?;
         let mut activations = Vec::with_capacity(self.blocks.len());
 

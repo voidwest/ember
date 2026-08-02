@@ -108,13 +108,16 @@ fn take_q8(loader: &mut ember::loader::GgufLoader, name: &str) -> anyhow::Result
     }
 }
 
-fn activation_data(rows: usize, features: usize) -> Vec<f32> {
-    (0..rows * features)
+fn activation_data(rows: usize, features: usize) -> anyhow::Result<Vec<f32>> {
+    let element_count = rows
+        .checked_mul(features)
+        .context("benchmark activation size overflow")?;
+    Ok((0..element_count)
         .map(|index| {
             let phase = (index % features) as f32 * 0.013 + (index / features) as f32 * 0.17;
             phase.sin() * 0.75 + phase.cos() * 0.125
         })
-        .collect()
+        .collect())
 }
 
 fn sweep_cache(buffer: &mut [u64]) {
@@ -200,8 +203,19 @@ fn main() -> anyhow::Result<()> {
     if args.samples == 0 {
         bail!("--samples must be greater than zero");
     }
+    if args.rows.is_empty() || args.threads.is_empty() || args.cache.is_empty() {
+        bail!("--rows, --threads, and --cache must each contain at least one value");
+    }
     if args.rows.contains(&0) || args.threads.contains(&0) {
         bail!("row and thread counts must be greater than zero");
+    }
+    if args.cache_mib == 0
+        && args
+            .cache
+            .iter()
+            .any(|state| matches!(state, CacheState::Cold))
+    {
+        bail!("--cache-mib must be greater than zero when cold-cache samples are requested");
     }
 
     let model_path = model.to_string_lossy().into_owned();
@@ -241,7 +255,7 @@ fn main() -> anyhow::Result<()> {
             .build()
             .context("build benchmark Rayon pool")?;
         for &rows in &args.rows {
-            let input = activation_data(rows, first.in_features());
+            let input = activation_data(rows, first.in_features())?;
             let output_len = rows
                 .checked_mul(first.out_features())
                 .context("benchmark output size overflow")?;
@@ -377,7 +391,11 @@ fn main() -> anyhow::Result<()> {
                             &mut second_output,
                         )
                     });
-                    samples.push(started.elapsed().as_nanos().min(u64::MAX as u128) as u64);
+                    let elapsed_ns = started.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+                    if elapsed_ns == 0 {
+                        bail!("benchmark timer resolution produced a zero-duration sample");
+                    }
+                    samples.push(elapsed_ns);
                 }
 
                 let separate = stats(separate_samples);

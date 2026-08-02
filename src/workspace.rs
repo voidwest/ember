@@ -29,25 +29,25 @@ pub struct Workspace {
 
     // -- per-layer intermediates (reused across layers) --
     /// RMS norm output shape [rows, embed_dim]
-    pub norm_out: Vec<f32>,
+    pub(crate) norm_out: Vec<f32>,
     /// residual add output shape [rows, embed_dim]
-    pub residual_out: Vec<f32>,
+    pub(crate) residual_out: Vec<f32>,
     /// Q projection output shape [rows, n_heads * head_dim]
-    pub q_out: Vec<f32>,
+    pub(crate) q_out: Vec<f32>,
     /// K projection output shape [rows, n_kv_heads * head_dim]
-    pub k_out: Vec<f32>,
+    pub(crate) k_out: Vec<f32>,
     /// V projection output shape [rows, n_kv_heads * head_dim]
-    pub v_out: Vec<f32>,
+    pub(crate) v_out: Vec<f32>,
     /// Attention output projection shape [rows, embed_dim]
-    pub attn_out: Vec<f32>,
+    pub(crate) attn_out: Vec<f32>,
     /// Gate projection output shape [rows, inter_dim]
-    pub gate_out: Vec<f32>,
+    pub(crate) gate_out: Vec<f32>,
     /// Up projection output shape [rows, inter_dim]
-    pub up_out: Vec<f32>,
+    pub(crate) up_out: Vec<f32>,
     /// Silu(gate) * up (gated activation) shape [rows, inter_dim]
-    pub gated_out: Vec<f32>,
+    pub(crate) gated_out: Vec<f32>,
     /// Down projection (MLP output) shape [rows, embed_dim]
-    pub mlp_out: Vec<f32>,
+    pub(crate) mlp_out: Vec<f32>,
 
     // -- config for bounds checking --
     embed_dim: usize,
@@ -68,13 +68,27 @@ impl Workspace {
         n_kv_heads: usize,
         head_dim: usize,
     ) -> Self {
-        let q_dim = n_heads * head_dim;
-        let kv_dim = n_kv_heads * head_dim;
+        assert!(max_rows > 0, "workspace requires at least one row");
+        assert!(embed_dim > 0, "workspace embedding width must be non-zero");
+        assert!(inter_dim > 0, "workspace MLP width must be non-zero");
+        assert!(n_heads > 0, "workspace query-head count must be non-zero");
+        assert!(n_kv_heads > 0, "workspace KV-head count must be non-zero");
+        assert!(head_dim > 0, "workspace head width must be non-zero");
+        let q_dim = n_heads
+            .checked_mul(head_dim)
+            .expect("workspace query width overflow");
+        let kv_dim = n_kv_heads
+            .checked_mul(head_dim)
+            .expect("workspace KV width overflow");
         // Attention output is q_dim (n_heads * head_dim), which may differ
         // from embed_dim in some architectures. Allocate the larger.
         let attn_dim = q_dim.max(embed_dim);
 
-        let cap = |cols: usize| max_rows * cols;
+        let cap = |cols: usize| {
+            max_rows
+                .checked_mul(cols)
+                .expect("workspace buffer size overflow")
+        };
 
         Self {
             max_rows,
@@ -98,53 +112,74 @@ impl Workspace {
     // -- accessors that return correctly-sized slices for `rows` tokens --
 
     #[inline]
+    fn slice_len(&self, rows: usize, columns: usize) -> usize {
+        assert!(
+            rows <= self.max_rows,
+            "workspace request for {rows} rows exceeds capacity {}",
+            self.max_rows
+        );
+        rows.checked_mul(columns)
+            .expect("workspace slice size overflow")
+    }
+
+    #[inline]
     pub fn norm_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.norm_out[..rows * self.embed_dim]
+        let len = self.slice_len(rows, self.embed_dim);
+        &mut self.norm_out[..len]
     }
 
     #[inline]
     pub fn residual_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.residual_out[..rows * self.embed_dim]
+        let len = self.slice_len(rows, self.embed_dim);
+        &mut self.residual_out[..len]
     }
 
     #[inline]
     pub fn q_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.q_out[..rows * self.q_dim]
+        let len = self.slice_len(rows, self.q_dim);
+        &mut self.q_out[..len]
     }
 
     #[inline]
     pub fn k_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.k_out[..rows * self.kv_dim]
+        let len = self.slice_len(rows, self.kv_dim);
+        &mut self.k_out[..len]
     }
 
     #[inline]
     pub fn v_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.v_out[..rows * self.kv_dim]
+        let len = self.slice_len(rows, self.kv_dim);
+        &mut self.v_out[..len]
     }
 
     #[inline]
     pub fn attn_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.attn_out[..rows * self.embed_dim]
+        let len = self.slice_len(rows, self.embed_dim);
+        &mut self.attn_out[..len]
     }
 
     #[inline]
     pub fn gate_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.gate_out[..rows * self.inter_dim]
+        let len = self.slice_len(rows, self.inter_dim);
+        &mut self.gate_out[..len]
     }
 
     #[inline]
     pub fn up_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.up_out[..rows * self.inter_dim]
+        let len = self.slice_len(rows, self.inter_dim);
+        &mut self.up_out[..len]
     }
 
     #[inline]
     pub fn gated_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.gated_out[..rows * self.inter_dim]
+        let len = self.slice_len(rows, self.inter_dim);
+        &mut self.gated_out[..len]
     }
 
     #[inline]
     pub fn mlp_slice(&mut self, rows: usize) -> &mut [f32] {
-        &mut self.mlp_out[..rows * self.embed_dim]
+        let len = self.slice_len(rows, self.embed_dim);
+        &mut self.mlp_out[..len]
     }
 
     #[inline]

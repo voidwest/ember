@@ -51,8 +51,8 @@ fn f16_to_f32(bits: u16) -> f32 {
 /// Reference: `dequantize_row_q2_K`. Scales/mins are 4-bit pairs in
 /// `scales[16]`; quants are 2-bit, four values per byte.
 pub fn dequant_q2_k(block: &[u8], out: &mut [f32]) {
-    debug_assert_eq!(block.len(), Q2_K_BLOCK_BYTES);
-    debug_assert!(out.len() >= QK_K);
+    assert_eq!(block.len(), Q2_K_BLOCK_BYTES);
+    assert!(out.len() >= QK_K);
     let d = f16_to_f32(u16::from_le_bytes([block[80], block[81]]));
     let min = f16_to_f32(u16::from_le_bytes([block[82], block[83]]));
     let scales = &block[0..16];
@@ -91,8 +91,8 @@ pub fn dequant_q2_k(block: &[u8], out: &mut [f32]) {
 /// Reference: `dequantize_row_q3_K` (including the 12-byte scale
 /// bit-reshuffle into 16 int8 sub-block scales).
 pub fn dequant_q3_k(block: &[u8], out: &mut [f32]) {
-    debug_assert_eq!(block.len(), Q3_K_BLOCK_BYTES);
-    debug_assert!(out.len() >= QK_K);
+    assert_eq!(block.len(), Q3_K_BLOCK_BYTES);
+    assert!(out.len() >= QK_K);
     let d_all = f16_to_f32(u16::from_le_bytes([block[108], block[109]]));
     let hmask = &block[0..32];
     let qs = &block[32..96];
@@ -164,8 +164,8 @@ fn get_scale_min_k4(j: usize, scales: &[u8]) -> (u8, u8) {
 ///
 /// Reference: `dequantize_row_q4_K` + `get_scale_min_k4`.
 pub fn dequant_q4_k(block: &[u8], out: &mut [f32]) {
-    debug_assert_eq!(block.len(), Q4_K_BLOCK_BYTES);
-    debug_assert!(out.len() >= QK_K);
+    assert_eq!(block.len(), Q4_K_BLOCK_BYTES);
+    assert!(out.len() >= QK_K);
     let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
     let min = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
     let scales = &block[4..16];
@@ -198,8 +198,8 @@ pub fn dequant_q4_k(block: &[u8], out: &mut [f32]) {
 ///
 /// Reference: `dequantize_row_q5_K` (K4-style scales + 5th-bit `qh`).
 pub fn dequant_q5_k(block: &[u8], out: &mut [f32]) {
-    debug_assert_eq!(block.len(), Q5_K_BLOCK_BYTES);
-    debug_assert!(out.len() >= QK_K);
+    assert_eq!(block.len(), Q5_K_BLOCK_BYTES);
+    assert!(out.len() >= QK_K);
     let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
     let min = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
     let scales = &block[4..16];
@@ -239,8 +239,8 @@ pub fn dequant_q5_k(block: &[u8], out: &mut [f32]) {
 /// Reference: `dequantize_row_q6_K` (6-bit quants via `ql` + `qh`,
 /// int8 per-16 scales).
 pub fn dequant_q6_k(block: &[u8], out: &mut [f32]) {
-    debug_assert_eq!(block.len(), Q6_K_BLOCK_BYTES);
-    debug_assert!(out.len() >= QK_K);
+    assert_eq!(block.len(), Q6_K_BLOCK_BYTES);
+    assert!(out.len() >= QK_K);
     let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
     let ql = &block[0..128];
     let qh = &block[128..192];
@@ -290,10 +290,13 @@ pub fn dequant_tensor(dtype: u32, bytes: &[u8], out: &mut [f32]) -> Result<(), S
             bytes.len()
         ));
     }
-    if block_count * QK_K != out.len() {
+    let expected_values = block_count
+        .checked_mul(QK_K)
+        .ok_or_else(|| "K-quant output length overflow".to_string())?;
+    if expected_values != out.len() {
         return Err(format!(
             "K-quant payload dequantizes to {} values but output has {}",
-            block_count * QK_K,
+            expected_values,
             out.len()
         ));
     }

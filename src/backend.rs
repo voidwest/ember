@@ -286,6 +286,32 @@ fn q8_matmul_output_len(x: &CpuTensor, w: &QuantizedWeight) -> Result<(usize, us
     Ok((seq_len, output_len))
 }
 
+fn assert_q8_projection_layout(
+    src: &[f32],
+    rows: usize,
+    in_features: usize,
+    out_features: usize,
+    dst: &[f32],
+    operation: &str,
+) {
+    let expected_src = rows
+        .checked_mul(in_features)
+        .unwrap_or_else(|| panic!("{operation}: input shape product overflow"));
+    let expected_dst = rows
+        .checked_mul(out_features)
+        .unwrap_or_else(|| panic!("{operation}: output shape product overflow"));
+    assert_eq!(
+        src.len(),
+        expected_src,
+        "{operation}: source length does not match rows * in_features"
+    );
+    assert_eq!(
+        dst.len(),
+        expected_dst,
+        "{operation}: destination length does not match rows * out_features"
+    );
+}
+
 impl CpuBackend {
     /// Quantize flat f32 activations `src` (shape `[rows, in_features]`) and
     /// compute `dst = src × w` using packed Q8_0 integer dots. Writes into the
@@ -295,7 +321,14 @@ impl CpuBackend {
     /// thread-local quantized-activation buffer and writes directly into the
     /// caller's output slice instead of wrapping a new `Vec`.
     pub fn matmul_q8_0_into(&self, src: &[f32], rows: usize, w: &QuantizedWeight, dst: &mut [f32]) {
-        debug_assert_eq!(dst.len(), rows * w.out_features());
+        assert_q8_projection_layout(
+            src,
+            rows,
+            w.in_features(),
+            w.out_features(),
+            dst,
+            "matmul_q8_0_into",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -317,7 +350,14 @@ impl CpuBackend {
         w: &QuantizedWeight,
         dst: &mut [f32],
     ) -> std::time::Duration {
-        debug_assert_eq!(dst.len(), w.out_features());
+        assert_q8_projection_layout(
+            src,
+            1,
+            w.in_features(),
+            w.out_features(),
+            dst,
+            "matmul_q8_0_into_timed",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -373,8 +413,14 @@ impl CpuBackend {
         weight: &QuantizedWeightVnni,
         dst: &mut [f32],
     ) {
-        debug_assert_eq!(src.len(), weight.in_features());
-        debug_assert_eq!(dst.len(), weight.out_features());
+        assert_q8_projection_layout(
+            src,
+            1,
+            weight.in_features(),
+            weight.out_features(),
+            dst,
+            "matmul_q8_0_packed_into",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -389,8 +435,14 @@ impl CpuBackend {
         weight: &QuantizedWeightVnni,
         dst: &mut [f32],
     ) -> std::time::Duration {
-        debug_assert_eq!(src.len(), weight.in_features());
-        debug_assert_eq!(dst.len(), weight.out_features());
+        assert_q8_projection_layout(
+            src,
+            1,
+            weight.in_features(),
+            weight.out_features(),
+            dst,
+            "matmul_q8_0_packed_into_timed",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -410,6 +462,22 @@ impl CpuBackend {
         first_dst: &mut [f32],
         second_dst: &mut [f32],
     ) {
+        assert_q8_projection_layout(
+            src,
+            1,
+            first.in_features(),
+            first.out_features(),
+            first_dst,
+            "matmul_q8_0_packed_pair_into(first)",
+        );
+        assert_q8_projection_layout(
+            src,
+            1,
+            second.in_features(),
+            second.out_features(),
+            second_dst,
+            "matmul_q8_0_packed_pair_into(second)",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -428,6 +496,22 @@ impl CpuBackend {
         first_dst: &mut [f32],
         second_dst: &mut [f32],
     ) -> [std::time::Duration; 2] {
+        assert_q8_projection_layout(
+            src,
+            1,
+            first.in_features(),
+            first.out_features(),
+            first_dst,
+            "matmul_q8_0_packed_pair_into_timed(first)",
+        );
+        assert_q8_projection_layout(
+            src,
+            1,
+            second.in_features(),
+            second.out_features(),
+            second_dst,
+            "matmul_q8_0_packed_pair_into_timed(second)",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -452,6 +536,24 @@ impl CpuBackend {
         second_dst: &mut [f32],
         third_dst: &mut [f32],
     ) {
+        for (weight, dst, operation) in [
+            (first, &*first_dst, "matmul_q8_0_packed_triple_into(first)"),
+            (
+                second,
+                &*second_dst,
+                "matmul_q8_0_packed_triple_into(second)",
+            ),
+            (third, &*third_dst, "matmul_q8_0_packed_triple_into(third)"),
+        ] {
+            assert_q8_projection_layout(
+                src,
+                1,
+                weight.in_features(),
+                weight.out_features(),
+                dst,
+                operation,
+            );
+        }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -473,6 +575,32 @@ impl CpuBackend {
         second_dst: &mut [f32],
         third_dst: &mut [f32],
     ) -> [std::time::Duration; 3] {
+        for (weight, dst, operation) in [
+            (
+                first,
+                &*first_dst,
+                "matmul_q8_0_packed_triple_into_timed(first)",
+            ),
+            (
+                second,
+                &*second_dst,
+                "matmul_q8_0_packed_triple_into_timed(second)",
+            ),
+            (
+                third,
+                &*third_dst,
+                "matmul_q8_0_packed_triple_into_timed(third)",
+            ),
+        ] {
+            assert_q8_projection_layout(
+                src,
+                1,
+                weight.in_features(),
+                weight.out_features(),
+                dst,
+                operation,
+            );
+        }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -499,8 +627,22 @@ impl CpuBackend {
         dst_a: &mut [f32],
         dst_b: &mut [f32],
     ) {
-        debug_assert_eq!(dst_a.len(), rows * w_a.out_features());
-        debug_assert_eq!(dst_b.len(), rows * w_b.out_features());
+        assert_q8_projection_layout(
+            src,
+            rows,
+            w_a.in_features(),
+            w_a.out_features(),
+            dst_a,
+            "matmul_q8_0_pair_into(first)",
+        );
+        assert_q8_projection_layout(
+            src,
+            rows,
+            w_b.in_features(),
+            w_b.out_features(),
+            dst_b,
+            "matmul_q8_0_pair_into(second)",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -523,8 +665,22 @@ impl CpuBackend {
         dst_a: &mut [f32],
         dst_b: &mut [f32],
     ) -> [std::time::Duration; 2] {
-        debug_assert_eq!(dst_a.len(), w_a.out_features());
-        debug_assert_eq!(dst_b.len(), w_b.out_features());
+        assert_q8_projection_layout(
+            src,
+            1,
+            w_a.in_features(),
+            w_a.out_features(),
+            dst_a,
+            "matmul_q8_0_pair_into_timed(first)",
+        );
+        assert_q8_projection_layout(
+            src,
+            1,
+            w_b.in_features(),
+            w_b.out_features(),
+            dst_b,
+            "matmul_q8_0_pair_into_timed(second)",
+        );
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -552,9 +708,20 @@ impl CpuBackend {
         dst_k: &mut [f32],
         dst_v: &mut [f32],
     ) {
-        debug_assert_eq!(dst_q.len(), rows * w_q.out_features());
-        debug_assert_eq!(dst_k.len(), rows * w_k.out_features());
-        debug_assert_eq!(dst_v.len(), rows * w_v.out_features());
+        for (weight, dst, operation) in [
+            (w_q, &*dst_q, "matmul_q8_0_triple_into(q)"),
+            (w_k, &*dst_k, "matmul_q8_0_triple_into(k)"),
+            (w_v, &*dst_v, "matmul_q8_0_triple_into(v)"),
+        ] {
+            assert_q8_projection_layout(
+                src,
+                rows,
+                weight.in_features(),
+                weight.out_features(),
+                dst,
+                operation,
+            );
+        }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -585,9 +752,20 @@ impl CpuBackend {
         dst_k: &mut [f32],
         dst_v: &mut [f32],
     ) -> [std::time::Duration; 3] {
-        debug_assert_eq!(dst_q.len(), w_q.out_features());
-        debug_assert_eq!(dst_k.len(), w_k.out_features());
-        debug_assert_eq!(dst_v.len(), w_v.out_features());
+        for (weight, dst, operation) in [
+            (w_q, &*dst_q, "matmul_q8_0_triple_into_timed(q)"),
+            (w_k, &*dst_k, "matmul_q8_0_triple_into_timed(k)"),
+            (w_v, &*dst_v, "matmul_q8_0_triple_into_timed(v)"),
+        ] {
+            assert_q8_projection_layout(
+                src,
+                1,
+                weight.in_features(),
+                weight.out_features(),
+                dst,
+                operation,
+            );
+        }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
@@ -1549,6 +1727,25 @@ fn validate_gqa(n_heads: usize, n_kv_heads: usize) -> Result<usize, CpuError> {
 }
 
 fn softmax_prefix(row: &mut [f32], len: usize) {
+    assert!(
+        len > 0 && len <= row.len(),
+        "softmax prefix is out of bounds"
+    );
+    let positive_infinities = row[..len]
+        .iter()
+        .filter(|value| **value == f32::INFINITY)
+        .count();
+    if positive_infinities > 0 {
+        let probability = 1.0 / positive_infinities as f32;
+        for slot in row.iter_mut().take(len) {
+            *slot = if *slot == f32::INFINITY {
+                probability
+            } else {
+                0.0
+            };
+        }
+        return;
+    }
     let max_val = row[..len].iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     if max_val == f32::NEG_INFINITY {
         let uniform = 1.0 / (len as f32);
