@@ -1,17 +1,30 @@
 use anyhow::Context;
 use std::fs;
 use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_npy_2d(path: &str, data: &[f32], shape: &[usize; 2]) -> anyhow::Result<()> {
     write_npy_shape(path, data, shape)
 }
 
 fn write_npy_shape(path: &str, data: &[f32], shape: &[usize]) -> anyhow::Result<()> {
-    let file = fs::File::create(path)?;
-    let mut w = BufWriter::new(file);
-    write_npy_header(&mut w, shape)?;
-    write_f32_slice(&mut w, data)?;
-    w.flush()?;
+    let expected = shape
+        .iter()
+        .try_fold(1usize, |count, dim| count.checked_mul(*dim))
+        .context("npy shape product overflow")?;
+    if data.len() != expected {
+        anyhow::bail!(
+            "npy data length {} does not match shape {:?} ({expected} elements)",
+            data.len(),
+            shape
+        );
+    }
+    let mut writer = NpyStreamWriter::create(path, shape)?;
+    writer.write_f32s(data)?;
+    writer.finish()?;
     Ok(())
 }
 
@@ -31,12 +44,17 @@ fn write_npy_header(w: &mut impl Write, shape: &[usize]) -> anyhow::Result<()> {
         shape_text
     );
     let mut header_bytes = header.into_bytes();
-    let total_prefix = 10 + header_bytes.len();
-    let padding = (16 - (total_prefix % 16)) % 16;
-    if padding > 0 {
-        header_bytes.extend(std::iter::repeat_n(b' ', padding));
-    }
-    let header_len = header_bytes.len() as u16;
+    // NPY v1 headers end in a newline and the complete preamble+header is
+    // padded to a 64-byte boundary. NumPy accepts older 16-byte padding, but
+    // emitting the current canonical layout improves interoperability.
+    let unpadded_len = 10usize
+        .checked_add(header_bytes.len())
+        .and_then(|len| len.checked_add(1))
+        .context("npy header length overflow")?;
+    let padding = (64 - (unpadded_len % 64)) % 64;
+    header_bytes.extend(std::iter::repeat_n(b' ', padding));
+    header_bytes.push(b'\n');
+    let header_len = u16::try_from(header_bytes.len()).context("npy v1 header exceeds u16")?;
 
     w.write_all(b"\x93NUMPY")?;
     w.write_all(&[1u8, 0u8])?;
@@ -116,6 +134,9 @@ pub fn read_npy_2d(path: &str) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
                 .collect::<anyhow::Result<Vec<_>>>()?
         }
     };
+    if shape.len() != 2 {
+        anyhow::bail!("'{path}' has rank {}, expected a 2D tensor", shape.len());
+    }
     let element_count = shape
         .iter()
         .try_fold(1usize, |acc, dim| acc.checked_mul(*dim))
@@ -157,20 +178,35 @@ fn parse_shape_value(header: &str) -> Option<&str> {
 }
 
 pub struct NpyStreamWriter {
-    writer: BufWriter<fs::File>,
+    writer: Option<BufWriter<fs::File>>,
+    final_path: PathBuf,
+    temporary_path: PathBuf,
     expected_floats: usize,
     written_floats: usize,
+    committed: bool,
 }
 
 impl NpyStreamWriter {
     pub fn create(path: &str, shape: &[usize]) -> anyhow::Result<Self> {
-        let file = fs::File::create(path)?;
+        let expected_floats = shape
+            .iter()
+            .try_fold(1usize, |count, dim| count.checked_mul(*dim))
+            .context("npy stream shape product overflow")?;
+        let final_path = PathBuf::from(path);
+        let (file, temporary_path) = create_temporary_output(&final_path)?;
         let mut writer = BufWriter::new(file);
-        write_npy_header(&mut writer, shape)?;
+        if let Err(error) = write_npy_header(&mut writer, shape) {
+            drop(writer);
+            let _ = fs::remove_file(&temporary_path);
+            return Err(error);
+        }
         Ok(Self {
-            writer,
-            expected_floats: shape.iter().product(),
+            writer: Some(writer),
+            final_path,
+            temporary_path,
+            expected_floats,
             written_floats: 0,
+            committed: false,
         })
     }
 
@@ -187,12 +223,19 @@ impl NpyStreamWriter {
                 self.expected_floats
             );
         }
-        write_f32_slice(&mut self.writer, data)?;
+        let writer = self
+            .writer
+            .as_mut()
+            .context("cannot write to a finished npy stream")?;
+        write_f32_slice(writer, data)?;
         self.written_floats = next;
         Ok(())
     }
 
     pub fn finish(&mut self) -> anyhow::Result<()> {
+        if self.committed {
+            return Ok(());
+        }
         if self.written_floats != self.expected_floats {
             anyhow::bail!(
                 "npy stream length mismatch: wrote {} floats, expected {}",
@@ -200,9 +243,69 @@ impl NpyStreamWriter {
                 self.expected_floats
             );
         }
-        self.writer.flush()?;
+        let mut writer = self
+            .writer
+            .take()
+            .context("npy stream has already been closed")?;
+        writer.flush()?;
+        writer.get_ref().sync_all()?;
+        drop(writer);
+        fs::rename(&self.temporary_path, &self.final_path).with_context(|| {
+            format!(
+                "failed to publish npy '{}' from temporary file '{}'",
+                self.final_path.display(),
+                self.temporary_path.display()
+            )
+        })?;
+        self.committed = true;
         Ok(())
     }
+}
+
+impl Drop for NpyStreamWriter {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.temporary_path);
+        }
+    }
+}
+
+fn create_temporary_output(final_path: &Path) -> anyhow::Result<(fs::File, PathBuf)> {
+    let filename = final_path
+        .file_name()
+        .context("npy output path must include a filename")?
+        .to_string_lossy();
+    let parent = final_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    for _ in 0..128 {
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temporary_path = parent.join(format!(
+            ".{filename}.ember-tmp-{}-{sequence}",
+            std::process::id()
+        ));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+        {
+            Ok(file) => return Ok((file, temporary_path)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to create temporary npy next to '{}'",
+                        final_path.display()
+                    )
+                });
+            }
+        }
+    }
+    anyhow::bail!(
+        "could not allocate a unique temporary npy next to '{}'",
+        final_path.display()
+    )
 }
 
 #[cfg(test)]
@@ -221,6 +324,29 @@ mod tests {
         assert_eq!(shape, vec![4, 6]);
         assert_eq!(values, data);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn npy_writer_rejects_shape_data_mismatch() {
+        let path = std::env::temp_dir().join(format!(
+            "ember_npy_test_shape_mismatch_{}.npy",
+            std::process::id()
+        ));
+        let error = write_npy_2d(path.to_str().unwrap(), &[1.0], &[1, 2]).unwrap_err();
+        assert!(error.to_string().contains("does not match shape"));
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn npy_header_is_newline_terminated_and_aligned() {
+        let path =
+            std::env::temp_dir().join(format!("ember_npy_test_header_{}.npy", std::process::id()));
+        write_npy_2d(path.to_str().unwrap(), &[1.0, 2.0], &[1, 2]).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        assert_eq!((10 + header_len) % 64, 0);
+        assert_eq!(bytes[10 + header_len - 1], b'\n');
+        std::fs::remove_file(path).ok();
     }
 
     #[test]
@@ -287,5 +413,30 @@ mod tests {
         assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn incomplete_stream_never_publishes_final_path() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ember_npy_incomplete_{}_{}.npy",
+            std::process::id(),
+            unique
+        ));
+        {
+            let mut writer =
+                NpyStreamWriter::create(path.to_str().expect("temp path should be utf-8"), &[2, 2])
+                    .expect("create npy stream");
+            writer.write_f32s(&[1.0, 2.0]).expect("partial write");
+            assert!(!path.exists(), "partial output must remain staged");
+            assert!(writer.finish().is_err());
+        }
+        assert!(
+            !path.exists(),
+            "dropping a failed stream must clean staging"
+        );
     }
 }
