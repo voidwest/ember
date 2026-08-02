@@ -9,9 +9,14 @@ supports:
 """
 
 import argparse
+import hashlib
 import json
-import numpy as np
+import math
+import os
+import tempfile
 from pathlib import Path
+
+import numpy as np
 from sklearn.linear_model import SGDClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
@@ -62,12 +67,39 @@ def load_activations(path: str) -> np.ndarray:
     """
     p = Path(path)
     if p.suffix == ".npz":
-        data = np.load(path)
-        return data["activations"]
+        with np.load(path, allow_pickle=False) as data:
+            if "activations" not in data:
+                raise ValueError(f"activation archive has no 'activations' array: {path}")
+            activations = np.array(data["activations"], copy=True)
     elif p.suffix == ".npy":
-        return np.load(path)
+        activations = np.load(path, allow_pickle=False)
     else:
         raise ValueError(f"unsupported activation format: {p.suffix}")
+    return validate_activation_tensor(activations, path)
+
+
+def validate_activation_tensor(
+    activations: np.ndarray,
+    source: str = "activations",
+    expected_rows: int | None = None,
+) -> np.ndarray:
+    activations = np.asarray(activations)
+    if activations.ndim != 3:
+        raise ValueError(
+            f"{source} must have shape [samples, layers, hidden], got {activations.shape}"
+        )
+    if any(size <= 0 for size in activations.shape):
+        raise ValueError(f"{source} must have non-empty sample/layer/hidden axes")
+    if expected_rows is not None and activations.shape[0] != expected_rows:
+        raise ValueError(
+            f"activation/stimulus row mismatch: {activations.shape[0]} vs {expected_rows}"
+        )
+    if not np.issubdtype(activations.dtype, np.number):
+        raise ValueError(f"{source} must contain numeric values, got {activations.dtype}")
+    if not np.isfinite(activations).all():
+        bad = np.argwhere(~np.isfinite(activations))[0].tolist()
+        raise ValueError(f"{source} contains a non-finite value at index {bad}")
+    return activations
 
 
 def get_field(row: dict, field: str, default=None):
@@ -82,10 +114,19 @@ def get_field(row: dict, field: str, default=None):
 
 
 def load_rows(stimuli_path: str) -> list[dict]:
+    def reject_constant(value):
+        raise ValueError(
+            f"non-standard JSON constant {value!r} in stimuli file {stimuli_path}"
+        )
+
     with open(stimuli_path, encoding="utf-8") as f:
-        rows = json.load(f)
+        rows = json.load(f, parse_constant=reject_constant)
     if not isinstance(rows, list):
         raise ValueError("stimuli/benchmark file must be a JSON list")
+    if not rows:
+        raise ValueError("stimuli/benchmark file is empty")
+    if any(not isinstance(row, dict) for row in rows):
+        raise ValueError("every stimuli/benchmark row must be a JSON object")
     return rows
 
 
@@ -98,10 +139,193 @@ def load_activation_metadata(path: str) -> dict:
     metadata_path = metadata_path_for_activations(path)
     if not metadata_path.exists():
         return {}
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    def reject_constant(value):
+        raise ValueError(
+            f"non-standard JSON constant {value!r} in activation metadata {metadata_path}"
+        )
+
+    metadata = json.loads(
+        metadata_path.read_text(encoding="utf-8"), parse_constant=reject_constant
+    )
     if not isinstance(metadata, dict):
         raise ValueError(f"activation metadata must be a JSON object: {metadata_path}")
     return metadata
+
+
+def validate_activation_provenance(
+    activation_path: str,
+    activation_shape: tuple[int, ...],
+    stimuli_path: str,
+    metadata: dict,
+    *,
+    require: bool = False,
+) -> None:
+    """Verify sidecar shape and stimuli identity when available."""
+    metadata_path = metadata_path_for_activations(activation_path)
+    if not metadata:
+        if require:
+            raise ValueError(f"activation provenance sidecar is required: {metadata_path}")
+        return
+    declared_shape = metadata.get("activation_shape")
+    if declared_shape is None:
+        if require:
+            raise ValueError(f"activation metadata has no activation_shape: {metadata_path}")
+    elif declared_shape != list(activation_shape):
+        raise ValueError(
+            f"activation metadata shape {declared_shape!r} does not match tensor "
+            f"shape {list(activation_shape)!r}"
+        )
+    declared_activation_sha = metadata.get("activations_sha256")
+    if declared_activation_sha is None:
+        if require:
+            raise ValueError(f"activation metadata has no activations_sha256: {metadata_path}")
+    elif declared_activation_sha != sha256_file(activation_path):
+        raise ValueError("activation metadata activations_sha256 does not match the tensor")
+    declared_stimuli_sha = metadata.get(
+        "stimuli_sha256", metadata.get("benchmark_sha256")
+    )
+    if declared_stimuli_sha is None:
+        if require:
+            raise ValueError(f"activation metadata has no stimuli_sha256: {metadata_path}")
+    elif declared_stimuli_sha != sha256_file(stimuli_path):
+        raise ValueError("activation metadata stimuli_sha256 does not match --stimuli")
+
+
+def audit_label_revealing_prompt(
+    rows: list[dict], tasks: list[str], activation_metadata: dict
+) -> dict:
+    """Detect when a probe target was supplied verbatim in its source prompt."""
+    template = activation_metadata.get("probe_template")
+    position = activation_metadata.get("probe_position")
+    morphology_fields = {
+        "root",
+        "lemma",
+        "lex",
+        "pattern",
+        "abstract_pattern",
+        "concrete_pattern",
+        "pattern_concrete",
+    }
+    relevant_tasks = [
+        task
+        for task in tasks
+        if task.rsplit(".", 1)[-1].lower() in morphology_fields
+    ]
+    report = {
+        "status": "not_applicable" if not relevant_tasks else "not_checked",
+        "probe_template": template,
+        "probe_position": position,
+        "tasks_checked": relevant_tasks,
+        "revealed_row_count": 0,
+        "examples": [],
+    }
+    if not relevant_tasks:
+        return report
+    if not isinstance(template, str) or not template:
+        report["status"] = "not_checked_missing_probe_template_metadata"
+        return report
+
+    revealed: set[tuple[int, str]] = set()
+    for index, row in enumerate(rows):
+        prompts = row.get("prompts")
+        if not isinstance(prompts, dict) or template not in prompts:
+            raise ValueError(
+                f"activation metadata selects prompt template {template!r}, but stimuli "
+                f"row {index} does not contain that prompt"
+            )
+        prompt = prompts[template]
+        if not isinstance(prompt, str) or not prompt:
+            raise ValueError(f"stimuli row {index} prompt {template!r} must be non-empty")
+        revealed_targets: set[str] | None = None
+        contracts = row.get("prompt_contracts")
+        if contracts is not None:
+            if not isinstance(contracts, dict) or template not in contracts:
+                raise ValueError(
+                    f"stimuli row {index} has prompt contracts but none for {template!r}"
+                )
+            contract = contracts[template]
+            if not isinstance(contract, dict):
+                raise ValueError(
+                    f"stimuli row {index} prompt contract {template!r} must be an object"
+                )
+            declared_targets = contract.get("revealed_targets")
+            if not isinstance(declared_targets, list) or any(
+                not isinstance(value, str) or not value for value in declared_targets
+            ):
+                raise ValueError(
+                    f"stimuli row {index} prompt contract {template!r} requires revealed_targets"
+                )
+            declared_boolean = contract.get("target_labels_in_prompt")
+            if not isinstance(declared_boolean, bool) or declared_boolean != bool(declared_targets):
+                raise ValueError(
+                    f"stimuli row {index} prompt contract {template!r} has inconsistent leakage fields"
+                )
+            revealed_targets = {value.lower() for value in declared_targets}
+        for task in relevant_tasks:
+            value = get_field(row, task)
+            if value in (None, ""):
+                continue
+            label = _label_text(value, task, index)
+            task_leaf = task.rsplit(".", 1)[-1].lower()
+            position_reveals = (
+                position == "root" and task_leaf == "root"
+            ) or (
+                position == "pattern"
+                and task_leaf
+                in {"pattern", "abstract_pattern", "concrete_pattern", "pattern_concrete"}
+            )
+            contract_reveals = (
+                revealed_targets is not None
+                and (
+                    task_leaf in revealed_targets
+                    or (
+                        task_leaf
+                        in {"abstract_pattern", "concrete_pattern", "pattern_concrete"}
+                        and "pattern" in revealed_targets
+                    )
+                    or (task_leaf == "lex" and "lemma" in revealed_targets)
+                )
+            )
+            fallback_reveals = revealed_targets is None and label in prompt
+            if contract_reveals or fallback_reveals or position_reveals:
+                revealed.add((index, task))
+                if len(report["examples"]) < 10:
+                    report["examples"].append(
+                        {"row_index": index, "task": task, "label": label}
+                    )
+    report["revealed_row_count"] = len({index for index, _ in revealed})
+    report["revealed_task_row_count"] = len(revealed)
+    report["status"] = "label_revealed" if revealed else "passed"
+    return report
+
+
+def enforce_prompt_contract(
+    rows: list[dict],
+    tasks: list[str],
+    activation_metadata: dict,
+    *,
+    allow_label_revealed: bool = False,
+    allow_unverifiable: bool = False,
+    context: str = "probe",
+) -> dict:
+    report = audit_label_revealing_prompt(rows, tasks, activation_metadata)
+    if report["status"] == "label_revealed" and not allow_label_revealed:
+        raise ValueError(
+            f"{context} prompt leakage detected: the selected prompt contains root/pattern "
+            "target labels verbatim. Use a surface-only prompt, or explicitly mark a "
+            "positive control with --allow-label-revealed-prompts. "
+            f"Examples: {report['examples'][:3]}"
+        )
+    if (
+        report["status"] == "not_checked_missing_probe_template_metadata"
+        and not allow_unverifiable
+    ):
+        raise ValueError(
+            f"{context} root/pattern prompt contract is unverifiable because activation "
+            "metadata does not identify probe_template. Re-extract with current metadata, "
+            "or pass --allow-unverifiable-prompt-contract only after an external prompt audit."
+        )
+    return report
 
 
 def load_labels(rows: list[dict], field: str) -> list[str]:
@@ -112,7 +336,7 @@ def load_labels(rows: list[dict], field: str) -> list[str]:
         value = get_field(row, field)
         if value is None or value == "":
             missing.append(i)
-        labels.append(str(value))
+        labels.append(_label_text(value, field, i))
     if missing:
         raise ValueError(
             f"label field '{field}' missing for {len(missing)} rows; "
@@ -130,7 +354,7 @@ def load_available_labels(rows: list[dict], field: str) -> tuple[list[int], list
         if value is None or value == "":
             continue
         indices.append(i)
-        labels.append(str(value))
+        labels.append(_label_text(value, field, i))
     if not labels:
         raise ValueError(f"label field '{field}' missing for all rows")
     return indices, labels
@@ -144,7 +368,7 @@ def require_field_values(rows: list[dict], field: str, policy: str) -> list[str]
         if value is None or value == "":
             missing.append(i)
         else:
-            values.append(str(value))
+            values.append(_label_text(value, field, i))
     if missing:
         raise ValueError(
             f"split policy '{policy}' requires field '{field}', missing for "
@@ -177,6 +401,17 @@ def encode_groups(values):
     return le.fit_transform(values)
 
 
+def _label_text(value, field: str, index: int) -> str:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(f"field '{field}' at row {index} must be a scalar label")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"field '{field}' at row {index} is non-finite")
+    text = str(value)
+    if not text.strip():
+        raise ValueError(f"field '{field}' at row {index} is empty")
+    return text
+
+
 def normalize_split_policy(split: str) -> str:
     try:
         return SPLIT_ALIASES[split]
@@ -186,7 +421,7 @@ def normalize_split_policy(split: str) -> str:
         ) from exc
 
 
-def make_splits(y, n_folds=5, groups=None, split_name="random"):
+def make_splits(y, n_folds=5, groups=None, split_name="random", random_state=0):
     """make valid closed-set splits for a classification probe.
 
     Grouped splits are valid only when every test label also appears in the
@@ -194,13 +429,24 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
     predicting root identity while holding out entire roots.
     """
     y = np.asarray(y)
+    if y.ndim != 1 or y.size == 0:
+        raise ValueError("probe labels must be a non-empty rank-1 array")
+    if n_folds < 2:
+        raise ValueError("cross-validation requires at least 2 folds")
+    if len(np.unique(y)) < 2:
+        raise ValueError("classification probes require at least 2 label classes")
     min_per_class = int(np.bincount(y).min())
 
     if groups is None:
         effective_folds = min(n_folds, min_per_class)
         if effective_folds < 2:
-            return None
-        splitter = StratifiedKFold(n_splits=effective_folds, shuffle=True, random_state=0)
+            raise ValueError(
+                f"{split_name} requires at least 2 examples per class for held-out evaluation; "
+                f"minimum class count is {min_per_class}"
+            )
+        splitter = StratifiedKFold(
+            n_splits=effective_folds, shuffle=True, random_state=random_state
+        )
         return list(splitter.split(np.zeros(len(y)), y))
 
     groups = np.asarray(groups)
@@ -209,7 +455,9 @@ def make_splits(y, n_folds=5, groups=None, split_name="random"):
         raise ValueError(f"{split_name} requires at least 2 groups; found {n_groups}")
     for effective_folds in range(min(n_folds, n_groups), 1, -1):
         splitters = [
-            StratifiedGroupKFold(n_splits=effective_folds, shuffle=True, random_state=0),
+            StratifiedGroupKFold(
+                n_splits=effective_folds, shuffle=True, random_state=random_state
+            ),
             GroupKFold(n_splits=effective_folds),
         ]
         for splitter in splitters:
@@ -302,11 +550,11 @@ def prepare_splits(
     metadata = {
         "split_name": split_name,
         "requested_folds": int(n_folds),
-        "effective_folds": len(splits) if splits is not None else None,
+        "effective_folds": len(splits),
         "n_samples": int(len(labels)),
         "n_classes": int(len(le.classes_)),
         "classes": [str(value) for value in le.classes_],
-        "uses_train_accuracy": splits is None,
+        "uses_train_accuracy": False,
     }
     if groups is not None:
         values = (
@@ -316,14 +564,13 @@ def prepare_splits(
         )
         metadata["n_groups"] = len(set(values))
         metadata["groups"] = sorted(set(values))
-    if splits is not None:
-        metadata["folds"] = [
-            {
-                "train_size": int(len(train_idx)),
-                "test_size": int(len(test_idx)),
-            }
-            for train_idx, test_idx in splits
-        ]
+    metadata["folds"] = [
+        {
+            "train_size": int(len(train_idx)),
+            "test_size": int(len(test_idx)),
+        }
+        for train_idx, test_idx in splits
+    ]
     return splits, metadata
 
 
@@ -395,6 +642,10 @@ def train_probes(
     if groups is provided, uses GroupKFold (groups define
     disjoint sets like roots or patterns that must not span folds).
     """
+    activations = validate_activation_tensor(
+        activations,
+        expected_rows=len(labels),
+    )
     le = LabelEncoder()
     y = le.fit_transform(labels)
     splits = (
@@ -403,12 +654,7 @@ def train_probes(
         else make_splits(y, n_folds=n_folds, groups=groups, split_name=split_name)
     )
 
-    if splits is None:
-        min_per_class = min(np.bincount(y))
-        print(
-            f"  warning: only {min_per_class} samples per class, "
-            "skipping cross-validation (using train accuracy)"
-        )
+    _validate_splits(splits, len(y), y, split_name)
 
     n_layers = activations.shape[1]
     accuracies = []
@@ -426,26 +672,21 @@ def train_probes(
             tol=tol,
             n_jobs=n_jobs,
         )
-        if splits is None:
-            probe.fit(X, y)
-            pred = probe.predict(X)
-            acc = probe.score(X, y)  # train accuracy (optimistic)
-        else:
-            scores = []
-            pred = np.full_like(y, fill_value=-1)
-            for train_idx, test_idx in splits:
-                probe_clone = make_probe(
-                    probe_kind,
-                    max_iter=max_iter,
-                    scale=scale,
-                    solver=solver,
-                    tol=tol,
-                    n_jobs=n_jobs,
-                )
-                probe_clone.fit(X[train_idx], y[train_idx])
-                scores.append(probe_clone.score(X[test_idx], y[test_idx]))
-                pred[test_idx] = probe_clone.predict(X[test_idx])
-            acc = np.mean(scores)
+        pred = np.full_like(y, fill_value=-1)
+        for train_idx, test_idx in splits:
+            probe_clone = make_probe(
+                probe_kind,
+                max_iter=max_iter,
+                scale=scale,
+                solver=solver,
+                tol=tol,
+                n_jobs=n_jobs,
+            )
+            probe_clone.fit(X[train_idx], y[train_idx])
+            pred[test_idx] = probe_clone.predict(X[test_idx])
+        if np.any(pred < 0):
+            raise RuntimeError(f"{split_name} did not produce one prediction per sample")
+        acc = float(np.mean(pred == y))
         accuracies.append(acc)
         if collect_confusion:
             confusion_matrices.append(confusion_matrix(y, pred, labels=class_ids))
@@ -455,6 +696,32 @@ def train_probes(
     if collect_confusion:
         return np.array(accuracies), probes, le, np.array(confusion_matrices)
     return np.array(accuracies), probes, le
+
+
+def _validate_splits(splits, sample_count: int, y: np.ndarray, split_name: str) -> None:
+    if not splits:
+        raise ValueError(f"{split_name} produced no cross-validation folds")
+    test_counts = np.zeros(sample_count, dtype=np.int64)
+    all_indices = set(range(sample_count))
+    for fold_index, (train_idx, test_idx) in enumerate(splits):
+        train_idx = np.asarray(train_idx)
+        test_idx = np.asarray(test_idx)
+        if train_idx.ndim != 1 or test_idx.ndim != 1 or not len(train_idx) or not len(test_idx):
+            raise ValueError(f"{split_name} fold {fold_index} has an empty or invalid partition")
+        train_set = set(int(index) for index in train_idx)
+        test_set = set(int(index) for index in test_idx)
+        if train_set & test_set:
+            raise ValueError(f"{split_name} fold {fold_index} has train/test overlap")
+        if not (train_set | test_set) <= all_indices:
+            raise ValueError(f"{split_name} fold {fold_index} has out-of-range indices")
+        if len(np.unique(y[train_idx])) < 2:
+            raise ValueError(f"{split_name} fold {fold_index} training set has fewer than 2 classes")
+        test_counts[test_idx] += 1
+    if not np.all(test_counts == 1):
+        raise ValueError(
+            f"{split_name} must test every sample exactly once; counts range "
+            f"{int(test_counts.min())}..{int(test_counts.max())}"
+        )
 
 
 def run_control(
@@ -476,6 +743,8 @@ def run_control(
     repeats n_repeats times and returns mean + std across repeats.
     a good probe should score far above the control accuracy.
     """
+    if n_repeats < 1:
+        raise ValueError("control repeats must be at least 1")
     le = LabelEncoder()
     y = le.fit_transform(labels)
     control_splits = (
@@ -495,7 +764,12 @@ def run_control(
         # shuffle labels to break any real signal
         y_shuffled = y.copy()
         rng = np.random.RandomState(repeat * 31 + 7)
-        rng.shuffle(y_shuffled)
+        for _ in range(100):
+            rng.shuffle(y_shuffled)
+            if all(len(np.unique(y_shuffled[train_idx])) >= 2 for train_idx, _ in control_splits):
+                break
+        else:
+            raise ValueError("could not construct a valid random-label control assignment")
 
         acc, _, _ = train_probes(
             activations, le.inverse_transform(y_shuffled),
@@ -601,6 +875,105 @@ def safe_key(value: str) -> str:
     return "".join(c if c.isalnum() or c in "_-" else "_" for c in value)
 
 
+def export_linear_parameters(probe) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    estimator = probe.steps[-1][1]
+    standard_weights = np.asarray(estimator.coef_, dtype=np.float64)
+    intercept = np.asarray(estimator.intercept_, dtype=np.float64)
+    if "standardscaler" not in probe.named_steps:
+        return standard_weights, standard_weights.copy(), intercept
+    scaler = probe.named_steps["standardscaler"]
+    scale = np.asarray(scaler.scale_, dtype=np.float64)
+    mean = np.asarray(scaler.mean_, dtype=np.float64)
+    if np.any(~np.isfinite(scale)) or np.any(scale <= 0.0):
+        raise ValueError("probe scaler contains invalid feature scales")
+    raw_weights = standard_weights / scale[None, :]
+    raw_intercept = intercept - np.sum(standard_weights * mean[None, :] / scale[None, :], axis=1)
+    return standard_weights, raw_weights, raw_intercept
+
+
+def atomic_savez(path: str | Path, **arrays) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            np.savez(handle, **arrays)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def atomic_save_npy(path: str | Path, array: np.ndarray) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            np.save(handle, array, allow_pickle=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def atomic_write_text(path: str | Path, content: str) -> None:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def atomic_save_figure(figure, path: str | Path, **savefig_kwargs) -> None:
+    """Write a Matplotlib-like figure without exposing a partial destination."""
+    output = Path(path)
+    if not output.suffix:
+        raise ValueError("figure output path requires a file extension")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output.stem}.", suffix=output.suffix, dir=output.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        figure.savefig(temporary, **savefig_kwargs)
+        with temporary.open("rb") as handle:
+            os.fsync(handle.fileno())
+        os.replace(temporary, output)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="train linear probes on llm activations"
@@ -684,6 +1057,27 @@ def main():
         help="limit rows for fast benchmark smoke tests",
     )
     parser.add_argument(
+        "--require-activation-provenance",
+        action="store_true",
+        help="require a matching activation metadata sidecar and stimuli SHA-256",
+    )
+    parser.add_argument(
+        "--allow-label-revealed-prompts",
+        action="store_true",
+        help=(
+            "allow root/pattern probes when the selected prompt supplies those labels; "
+            "use only for an explicitly named positive-control analysis"
+        ),
+    )
+    parser.add_argument(
+        "--allow-unverifiable-prompt-contract",
+        action="store_true",
+        help=(
+            "allow root/pattern probing when activation metadata does not identify the "
+            "source prompt template; requires an external prompt audit"
+        ),
+    )
+    parser.add_argument(
         "--group-field",
         default=None,
         help="dotted field used for grouped CV; overrides task-specific split grouping",
@@ -723,6 +1117,24 @@ def main():
     )
     args = parser.parse_args()
 
+    if args.folds < 2:
+        parser.error("--folds must be at least 2")
+    if args.control_repeats < 1:
+        parser.error("--control-repeats must be at least 1")
+    if args.max_iter < 1:
+        parser.error("--max-iter must be at least 1")
+    if not math.isfinite(args.tol) or args.tol <= 0.0:
+        parser.error("--tol must be finite and greater than 0")
+    if args.max_rows is not None and args.max_rows < 1:
+        parser.error("--max-rows must be at least 1")
+    if args.n_jobs == 0:
+        parser.error("--n-jobs cannot be 0")
+    if len(args.tasks) != len(set(args.tasks)):
+        parser.error("--tasks must not contain duplicates")
+    task_keys = [safe_key(task) for task in args.tasks]
+    if any(not key for key in task_keys) or len(task_keys) != len(set(task_keys)):
+        parser.error("--tasks produce empty or colliding artifact keys")
+
     if args.split_root:
         print(
             "warning: --split-root is deprecated; using --pattern-split root "
@@ -733,9 +1145,28 @@ def main():
     activations = load_activations(args.activations)
     activation_metadata = load_activation_metadata(args.activations)
     rows = load_rows(args.stimuli)
+    validate_activation_provenance(
+        args.activations,
+        tuple(activations.shape),
+        args.stimuli,
+        activation_metadata,
+        require=args.require_activation_provenance,
+    )
     if args.max_rows is not None:
         rows = rows[: args.max_rows]
         activations = activations[: args.max_rows]
+    activations = validate_activation_tensor(
+        activations,
+        args.activations,
+        expected_rows=len(rows),
+    )
+    leakage_report = enforce_prompt_contract(
+        rows,
+        args.tasks,
+        activation_metadata,
+        allow_label_revealed=args.allow_label_revealed_prompts,
+        allow_unverifiable=args.allow_unverifiable_prompt_contract,
+    )
 
     print(f"activations shape: {activations.shape}")
     print(f"stimuli/benchmark rows: {len(rows)}")
@@ -830,7 +1261,7 @@ def main():
             print(f"  layer {i:2d}: {layer_acc:.3f}")
         key = safe_key(task)
         results[f"{key}_accuracy"] = acc
-        results[f"{key}_classes"] = np.array(le.classes_, dtype=object)
+        results[f"{key}_classes"] = np.array(le.classes_, dtype=str)
         results[f"{key}_class_counts"] = np.array(
             [class_count_map[str(cls)] for cls in le.classes_],
             dtype=np.int64,
@@ -891,26 +1322,43 @@ def main():
                 ensure_ascii=False,
                 sort_keys=True,
             ),
-            "tasks": np.array(args.tasks, dtype=object),
+            "schema_version": np.array(2, dtype=np.int64),
+            "probe_weight_space": np.array("raw_activation"),
+            "tasks": np.array(args.tasks, dtype=str),
+            "activations_sha256": np.array(sha256_file(args.activations)),
+            "stimuli_sha256": np.array(sha256_file(args.stimuli)),
+            "activation_shape": np.asarray(activations.shape, dtype=np.int64),
+            "max_rows": np.array(-1 if args.max_rows is None else args.max_rows),
+            "prompt_leakage_audit_json": np.array(
+                json.dumps(leakage_report, ensure_ascii=False, sort_keys=True)
+            ),
+            "label_revealed_prompt_allowed": np.array(
+                args.allow_label_revealed_prompts
+            ),
+            "unverifiable_prompt_contract_allowed": np.array(
+                args.allow_unverifiable_prompt_contract
+            ),
         }
         if args.probe_kind in {"linear", "sgd"}:
             for key, probes in trained.items():
-                save_dict[f"{key}_probe_weights"] = [
-                    (
-                        p.named_steps["logisticregression"].coef_
-                        if "logisticregression" in p.named_steps
-                        else p.named_steps["sgdclassifier"].coef_
-                    )
-                    for p in probes
-                ]
-        np.savez(args.output, **save_dict)
+                parameters = [export_linear_parameters(probe) for probe in probes]
+                save_dict[f"{key}_probe_weights_standardized"] = np.stack(
+                    [parameter[0] for parameter in parameters]
+                )
+                save_dict[f"{key}_probe_weights"] = np.stack(
+                    [parameter[1] for parameter in parameters]
+                )
+                save_dict[f"{key}_probe_intercepts"] = np.stack(
+                    [parameter[2] for parameter in parameters]
+                )
+        atomic_savez(args.output, **save_dict)
         print(f"\nsaved probe weights to {args.output}")
         split_sidecar = Path(args.output).with_name(
             f"{Path(args.output).stem}_split_policy.json"
         )
-        split_sidecar.write_text(
+        atomic_write_text(
+            split_sidecar,
             json.dumps(split_policy_records, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8",
         )
         print(f"saved split policy metadata to {split_sidecar}")
         if args.control:
