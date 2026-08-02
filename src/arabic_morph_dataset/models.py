@@ -63,22 +63,24 @@ class MorphRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "MorphRecord":
+        if not isinstance(data, dict):
+            raise TypeError("canonical morphology record must be an object")
         return cls(
-            id=str(data.get("id", "")),
-            surface=str(data.get("surface", "")),
-            surface_dediac=str(data.get("surface_dediac", "")),
-            diacritized=str(data.get("diacritized", "")),
-            lemma=str(data.get("lemma", "")),
-            root=str(data.get("root", "")),
-            abstract_pattern=str(data.get("abstract_pattern", "")),
-            concrete_pattern=str(data.get("concrete_pattern", "")),
-            pos=str(data.get("pos", "")),
+            id=_string_field(data.get("id"), "id"),
+            surface=_string_field(data.get("surface"), "surface"),
+            surface_dediac=_string_field(data.get("surface_dediac"), "surface_dediac"),
+            diacritized=_string_field(data.get("diacritized"), "diacritized"),
+            lemma=_string_field(data.get("lemma"), "lemma"),
+            root=_string_field(data.get("root"), "root"),
+            abstract_pattern=_string_field(data.get("abstract_pattern"), "abstract_pattern"),
+            concrete_pattern=_string_field(data.get("concrete_pattern"), "concrete_pattern"),
+            pos=_string_field(data.get("pos"), "pos"),
             features=_dict_field(data.get("features"), "features"),
-            source=str(data.get("source", "")),
-            analysis_id=str(data.get("analysis_id", "")),
+            source=_string_field(data.get("source"), "source"),
+            analysis_id=_string_field(data.get("analysis_id"), "analysis_id"),
             is_ambiguous=_bool_field(data.get("is_ambiguous", False)),
             metadata=_dict_field(data.get("metadata"), "metadata"),
-            split=data.get("split"),
+            split=_optional_string_field(data.get("split"), "split"),
         )
 
     def with_split(self, split: str) -> "MorphRecord":
@@ -94,6 +96,31 @@ def _dict_field(value: Any, field_name: str) -> dict[str, Any]:
 
 
 def _bool_field(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
     if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "y"}
-    return bool(value)
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y"}:
+            return True
+        if normalized in {"0", "false", "no", "n"}:
+            return False
+        raise ValueError(f"is_ambiguous has invalid boolean value {value!r}")
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    raise ValueError("is_ambiguous must be a boolean")
+
+
+def _string_field(value: Any, field_name: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"{field_name} must be a string")
+    return value
+
+
+def _optional_string_field(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    return _string_field(value, field_name)

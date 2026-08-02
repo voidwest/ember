@@ -21,7 +21,13 @@ def morphology_payload(record: MorphRecord) -> dict[str, Any]:
 
 
 def make_sft_examples(records: list[MorphRecord], tasks: list[str] | None = None) -> list[dict[str, Any]]:
-    tasks = tasks or DEFAULT_SFT_TASKS
+    tasks = list(DEFAULT_SFT_TASKS if tasks is None else tasks)
+    if not tasks:
+        raise ValueError("SFT task list must not be empty")
+    if any(not isinstance(task, str) or not task.strip() for task in tasks):
+        raise ValueError("SFT tasks must be non-empty strings")
+    if len(tasks) != len(set(tasks)):
+        raise ValueError("SFT task list must not contain duplicates")
     examples: list[dict[str, Any]] = []
     for record in sorted(records, key=lambda r: (r.split or "", r.id)):
         for task in tasks:
@@ -72,6 +78,7 @@ def make_probe_records(records: list[MorphRecord], split_type: str) -> list[dict
     for record in sorted(records, key=lambda r: (r.split or "", r.id)):
         rows.append(
             {
+                "source_id": record.id,
                 "surface": record.surface,
                 "surface_dediac": record.surface_dediac,
                 "lemma": record.lemma,

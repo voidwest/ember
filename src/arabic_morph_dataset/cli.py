@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import shutil
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +15,7 @@ from .filters import apply_filters
 from .io import load_config, read_jsonl, read_morph_records, read_raw_records, write_json, write_jsonl, write_morph_records
 from .normalize import normalize_records
 from .report import make_summary_report
-from .split import SPLIT_STRATEGIES, split_records
+from .split import SPLIT_STRATEGIES, normalize_split_ratios, split_records
 from .stats import dataset_stats
 from .validate import validate_canonical, validate_canonical_rows, validate_probe_records, validate_sft_examples
 
@@ -65,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("make-probes")
     p.add_argument("--input", required=True)
     p.add_argument("--output", required=True)
-    p.add_argument("--split-type", required=True)
+    p.add_argument("--split-type", required=True, choices=sorted(SPLIT_STRATEGIES))
 
     p = sub.add_parser("validate")
     p.add_argument("--input")
@@ -152,47 +156,242 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_config(config_path: str | Path) -> None:
-    cfg = load_config(config_path)
+    config_source = Path(config_path).resolve(strict=True)
+    config_identity = _file_identity(config_source)
+    cfg = load_config(config_source)
+    config_sha256 = _sha256_file(config_source)
+    if _file_identity(config_source) != config_identity:
+        raise CliError(f"run config changed while it was being read: {config_source}")
     _ensure_mapping(cfg, "config")
+    _validate_run_config(cfg)
     _require_config_keys(cfg, ["input_path", "output_dir"])
     output_dir = Path(cfg["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_dir.is_symlink():
+        raise CliError("output_dir must not be a symbolic link")
+    output_dir = output_dir.resolve()
+    input_resolved = Path(cfg["input_path"]).resolve(strict=True)
+    if not input_resolved.is_file():
+        raise CliError(f"input_path is not a regular file: {input_resolved}")
+    input_identity = _file_identity(input_resolved)
+    input_sha256 = _sha256_file(input_resolved)
+    if input_resolved.is_relative_to(output_dir) or config_source.is_relative_to(output_dir):
+        raise CliError("output_dir must not contain the input file or run config")
     ratios = cfg.get("split_ratios", {"train": 0.8, "dev": 0.1, "test": 0.1})
     _validate_ratios(ratios)
-    raw = read_raw_records(cfg["input_path"])
+    seed = cfg.get("seed", 13)
+    split_strategy = cfg.get("split_strategy", "root_heldout")
+    formats = cfg.get(
+        "output_formats",
+        ["canonical", "sft", "probes", "stats", "validation", "summary_report"],
+    )
+    raw = read_raw_records(input_resolved)
     records, ingest_report = normalize_records(raw, cfg.get("source_name", "camel_export"))
     records, filter_report = apply_filters(records, cfg.get("filters", {}))
     split_records_out, split_report = split_records(
         records,
-        cfg.get("split_strategy", "root_heldout"),
-        int(cfg.get("seed", 13)),
+        split_strategy,
+        seed,
         ratios,
     )
-    canonical_path = output_dir / "canonical.jsonl"
-    sft_path = output_dir / "sft.jsonl"
-    probes_path = output_dir / "probes.jsonl"
     sft_examples = make_sft_examples(split_records_out, cfg.get("sft_tasks", DEFAULT_SFT_TASKS))
-    probe_records = make_probe_records(split_records_out, cfg.get("split_strategy", "root_heldout"))
+    probe_records = make_probe_records(split_records_out, split_strategy)
     stats_report = dataset_stats(split_records_out)
-    summary_report = make_summary_report(records, filter_report, int(cfg.get("seed", 13)), ratios)
+    summary_report = make_summary_report(records, filter_report, seed, ratios)
     validation_report = {
-        "canonical": validate_canonical(split_records_out, cfg.get("split_strategy")),
+        "canonical": validate_canonical(split_records_out, split_strategy),
         "sft": validate_sft_examples(sft_examples),
         "probes": validate_probe_records(probe_records),
     }
     validation_report["passed"] = all(item["passed"] for item in validation_report.values() if isinstance(item, dict))
     if not validation_report["passed"]:
-        write_json(output_dir / "validation.json", validation_report)
-        raise CliError(f"validation failed; see {output_dir / 'validation.json'}")
-    write_morph_records(canonical_path, split_records_out)
-    write_jsonl(sft_path, sft_examples)
-    write_jsonl(probes_path, probe_records)
-    write_json(output_dir / "ingest_report.json", ingest_report)
-    write_json(output_dir / "filter_report.json", filter_report)
-    write_json(output_dir / "split_report.json", split_report)
-    write_json(output_dir / "stats.json", stats_report)
-    write_json(output_dir / "summary_report.json", summary_report)
-    write_json(output_dir / "validation.json", validation_report)
+        failure_path = output_dir.with_name(f"{output_dir.name}.validation_failed.json")
+        write_json(failure_path, validation_report)
+        raise CliError(f"validation failed; see {failure_path}")
+
+    _verify_file_snapshot(config_source, config_identity, config_sha256, "run config")
+    _verify_file_snapshot(input_resolved, input_identity, input_sha256, "input")
+
+    if output_dir == Path(output_dir.anchor):
+        raise CliError("refusing to use a filesystem root as output_dir")
+    if output_dir.exists() and not output_dir.is_dir():
+        raise CliError("output_dir exists and is not a directory")
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    staging = output_dir.with_name(f".{output_dir.name}.staging-{os.getpid()}-{uuid.uuid4().hex}")
+    staging.mkdir(mode=0o700)
+    try:
+        _copy_preserved_entries(output_dir, staging)
+        writers = {
+            "canonical": lambda: write_morph_records(staging / "canonical.jsonl", split_records_out),
+            "sft": lambda: write_jsonl(staging / "sft.jsonl", sft_examples),
+            "probes": lambda: write_jsonl(staging / "probes.jsonl", probe_records),
+            "stats": lambda: write_json(staging / "stats.json", stats_report),
+            "summary_report": lambda: write_json(staging / "summary_report.json", summary_report),
+            "validation": lambda: write_json(staging / "validation.json", validation_report),
+            "ingest_report": lambda: write_json(staging / "ingest_report.json", ingest_report),
+            "filter_report": lambda: write_json(staging / "filter_report.json", filter_report),
+            "split_report": lambda: write_json(staging / "split_report.json", split_report),
+        }
+        # Operational reports are always emitted; output_formats selects research exports.
+        selected = list(dict.fromkeys([*formats, "ingest_report", "filter_report", "split_report"]))
+        for name in selected:
+            writers[name]()
+        write_json(
+            staging / "run_manifest.json",
+            {
+                "schema_version": 1,
+                "config_path": str(config_source),
+                "config_sha256": config_sha256,
+                "input_path": str(input_resolved),
+                "input_sha256": input_sha256,
+                "seed": seed,
+                "split_strategy": split_strategy,
+                "split_ratios": normalize_split_ratios(ratios),
+                "output_formats": formats,
+                "record_count": len(split_records_out),
+            },
+        )
+        _commit_output_directory(staging, output_dir)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
+RUN_CONFIG_KEYS = {
+    "input_path",
+    "output_dir",
+    "source_name",
+    "seed",
+    "split_strategy",
+    "sft_tasks",
+    "output_formats",
+    "filters",
+    "split_ratios",
+}
+OUTPUT_FORMATS = {
+    "canonical",
+    "sft",
+    "probes",
+    "stats",
+    "summary_report",
+    "validation",
+    "ingest_report",
+    "filter_report",
+    "split_report",
+}
+
+
+def _validate_run_config(cfg: dict[str, Any]) -> None:
+    unknown = sorted(set(cfg) - RUN_CONFIG_KEYS)
+    if unknown:
+        raise CliError(f"unknown run-config keys: {unknown}")
+    _require_config_keys(cfg, ["input_path", "output_dir"])
+    for key in ("input_path", "output_dir"):
+        if not isinstance(cfg[key], str) or not cfg[key].strip():
+            raise CliError(f"{key} must be a non-empty string")
+    source = cfg.get("source_name", "camel_export")
+    if not isinstance(source, str) or not source.strip():
+        raise CliError("source_name must be a non-empty string")
+    seed = cfg.get("seed", 13)
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise CliError("seed must be an integer")
+    strategy = cfg.get("split_strategy", "root_heldout")
+    if strategy not in SPLIT_STRATEGIES:
+        raise CliError(f"unknown split_strategy: {strategy!r}")
+    tasks = cfg.get("sft_tasks", DEFAULT_SFT_TASKS)
+    if (
+        not isinstance(tasks, list)
+        or not tasks
+        or any(not isinstance(task, str) or not task.strip() for task in tasks)
+        or len(tasks) != len(set(tasks))
+    ):
+        raise CliError("sft_tasks must be a non-empty list of unique strings")
+    formats = cfg.get(
+        "output_formats",
+        ["canonical", "sft", "probes", "stats", "validation", "summary_report"],
+    )
+    if (
+        not isinstance(formats, list)
+        or not formats
+        or any(not isinstance(value, str) or value not in OUTPUT_FORMATS for value in formats)
+        or len(formats) != len(set(formats))
+    ):
+        raise CliError(
+            f"output_formats must be a non-empty unique subset of {sorted(OUTPUT_FORMATS)}"
+        )
+    _ensure_mapping(cfg.get("filters", {}), "filters")
+    _ensure_mapping(cfg.get("split_ratios", {}), "split_ratios")
+
+
+def _sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _file_identity(path: str | Path) -> tuple[int, int, int, int]:
+    stat = Path(path).stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def _verify_file_snapshot(
+    path: Path,
+    expected_identity: tuple[int, int, int, int],
+    expected_sha256: str,
+    label: str,
+) -> None:
+    if _file_identity(path) != expected_identity or _sha256_file(path) != expected_sha256:
+        raise CliError(f"{label} changed during the dataset run: {path}")
+
+
+def _commit_output_directory(staging: Path, destination: Path) -> None:
+    backup = destination.with_name(
+        f".{destination.name}.backup-{os.getpid()}-{uuid.uuid4().hex}"
+    )
+    moved_old = False
+    try:
+        if destination.exists():
+            os.replace(destination, backup)
+            moved_old = True
+        os.replace(staging, destination)
+    except Exception:
+        if moved_old and not destination.exists() and backup.exists():
+            os.replace(backup, destination)
+        raise
+    else:
+        if backup.exists():
+            shutil.rmtree(backup)
+
+
+def _copy_preserved_entries(source: Path, staging: Path) -> None:
+    """Preserve downstream/user files while replacing pipeline-owned outputs."""
+    if not source.exists():
+        return
+    generated = {
+        "canonical.jsonl",
+        "sft.jsonl",
+        "probes.jsonl",
+        "stats.json",
+        "summary_report.json",
+        "validation.json",
+        "ingest_report.json",
+        "filter_report.json",
+        "split_report.json",
+        "run_manifest.json",
+    }
+    for child in source.iterdir():
+        if child.name in generated:
+            continue
+        if child.is_symlink():
+            raise CliError(f"refusing to preserve symbolic link in output_dir: {child}")
+        destination = staging / child.name
+        if child.is_dir():
+            shutil.copytree(child, destination)
+        elif child.is_file():
+            shutil.copy2(child, destination)
+        else:
+            raise CliError(f"unsupported filesystem entry in output_dir: {child}")
 
 
 def _read_optional_json_report(path: str | None) -> dict[str, Any] | None:
@@ -205,7 +404,14 @@ def _read_optional_json_report(path: str | None) -> dict[str, Any] | None:
         if len(rows) > 1:
             raise CliError(f"expected a single report object in {path}, found {len(rows)} JSONL rows")
         return rows[0]
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    def reject_constant(value):
+        raise CliError(f"non-standard JSON constant {value!r} in {path}")
+
+    value = json.loads(
+        Path(path).read_text(encoding="utf-8"), parse_constant=reject_constant
+    )
+    _ensure_mapping(value, "report")
+    return value
 
 
 def _ensure_mapping(value: Any, name: str) -> None:
@@ -220,9 +426,10 @@ def _require_config_keys(config: dict[str, Any], keys: list[str]) -> None:
 
 
 def _validate_ratios(ratios: dict[str, Any]) -> None:
-    total = sum(float(ratios.get(name, 0.0)) for name in ["train", "dev", "test"])
-    if total <= 0:
-        raise CliError("split ratios must sum to a positive value")
+    try:
+        normalize_split_ratios(ratios)
+    except ValueError as error:
+        raise CliError(str(error)) from error
 
 
 def _write_optional_report(path: str | None, report: dict) -> None:
@@ -235,7 +442,16 @@ def _write_optional_report(path: str | None, report: dict) -> None:
 def print_report(report: dict) -> None:
     import json
 
-    sys.stdout.write(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    sys.stdout.write(
+        json.dumps(
+            report,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n"
+    )
 
 
 if __name__ == "__main__":

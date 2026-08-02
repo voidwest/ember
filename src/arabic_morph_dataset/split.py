@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Iterable
@@ -54,12 +55,16 @@ def split_records(
 ) -> tuple[list[MorphRecord], dict[str, object]]:
     if strategy not in SPLIT_STRATEGIES:
         raise ValueError(f"Unknown split strategy {strategy}; choose one of {sorted(SPLIT_STRATEGIES)}")
-    ratios = ratios or {"train": 0.8, "dev": 0.1, "test": 0.1}
-    split_names = ["train", "dev", "test"]
-    total_ratio = sum(float(ratios.get(name, 0.0)) for name in split_names)
-    if total_ratio <= 0:
-        raise ValueError("Split ratios must sum to a positive value")
-    normalized = {name: float(ratios.get(name, 0.0)) / total_ratio for name in split_names}
+    if not records:
+        raise ValueError("cannot split an empty dataset")
+    record_ids = [record.id for record in records]
+    if any(not record_id for record_id in record_ids):
+        raise ValueError("cannot split records with empty IDs")
+    if len(record_ids) != len(set(record_ids)):
+        raise ValueError("cannot split records with duplicate IDs")
+    normalized = normalize_split_ratios(ratios)
+    all_split_names = ["train", "dev", "test"]
+    eligible_split_names = [name for name in all_split_names if normalized[name] > 0.0]
 
     components = _components(records, strategy)
     rng = random.Random(seed)
@@ -68,12 +73,12 @@ def split_records(
         key=lambda group: (-len(group), rng.random(), group[0].lemma, group[0].root, group[0].id),
     )
 
-    targets = {name: normalized[name] * len(records) for name in split_names}
-    counts = {name: 0 for name in split_names}
+    targets = {name: normalized[name] * len(records) for name in all_split_names}
+    counts = {name: 0 for name in all_split_names}
     assigned: list[MorphRecord] = []
     component_assignments: dict[str, int] = defaultdict(int)
     for group in ordered:
-        split = _choose_split(counts, targets, split_names, len(group))
+        split = _choose_split(counts, targets, eligible_split_names, len(group))
         counts[split] += len(group)
         component_assignments[split] += 1
         assigned.extend(record.with_split(split) for record in group)
@@ -85,11 +90,42 @@ def split_records(
         "ratios": normalized,
         "target_counts": targets,
         "record_counts": counts,
-        "deviation": _deviation_report(counts, targets, split_names),
+        "deviation": _deviation_report(counts, targets, all_split_names),
         "component_counts": dict(component_assignments),
         "leakage": leakage_report(assigned, strategy),
     }
     return assigned, report
+
+
+def normalize_split_ratios(ratios: dict[str, float] | None) -> dict[str, float]:
+    split_names = ["train", "dev", "test"]
+    if ratios is None:
+        ratios = {"train": 0.8, "dev": 0.1, "test": 0.1}
+    if not isinstance(ratios, dict):
+        raise ValueError("split ratios must be an object")
+    missing = sorted(set(split_names) - set(ratios))
+    unknown = sorted(set(ratios) - set(split_names))
+    if missing or unknown:
+        raise ValueError(
+            f"split ratios require exactly train/dev/test; missing={missing}, unknown={unknown}"
+        )
+    parsed: dict[str, float] = {}
+    for name in split_names:
+        value = ratios[name]
+        if isinstance(value, bool):
+            raise ValueError(f"split ratio {name} must be a finite non-negative number")
+        try:
+            parsed[name] = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"split ratio {name} must be a finite non-negative number"
+            ) from error
+        if not math.isfinite(parsed[name]) or parsed[name] < 0.0:
+            raise ValueError(f"split ratio {name} must be a finite non-negative number")
+    total_ratio = sum(parsed.values())
+    if total_ratio <= 0.0:
+        raise ValueError("split ratios must sum to a positive value")
+    return {name: parsed[name] / total_ratio for name in split_names}
 
 
 def _choose_split(counts: dict[str, int], targets: dict[str, float], split_names: list[str], group_size: int = 1) -> str:
@@ -168,6 +204,9 @@ def _group_keys(record: MorphRecord, strategy: str) -> list[str]:
 
 
 def leakage_report(records: Iterable[MorphRecord], strategy: str) -> dict[str, object]:
+    if strategy not in SPLIT_STRATEGIES:
+        raise ValueError(f"Unknown split strategy {strategy}; choose one of {sorted(SPLIT_STRATEGIES)}")
+    records = list(records)
     by_split: dict[str, list[MorphRecord]] = defaultdict(list)
     for record in records:
         if record.split in {"train", "dev", "test"}:

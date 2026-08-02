@@ -75,11 +75,17 @@ def _first(data: dict[str, Any], aliases: list[str]) -> str:
     for alias in aliases:
         value = data.get(alias)
         if value not in (None, ""):
+            if isinstance(value, (dict, list)):
+                raise ValueError(f"field {alias!r} must be scalar")
             return str(value).strip()
     return ""
 
 
 def _normalize_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        raise ValueError("morphological feature values must be scalar")
     text = str(value).strip()
     return VALUE_ALIASES.get(text.lower(), text)
 
@@ -122,12 +128,17 @@ def expand_analysis_records(raw_records: list[dict[str, Any]]) -> list[dict[str,
     expanded: list[dict[str, Any]] = []
     for raw in raw_records:
         analyses = raw.get("analyses")
+        if analyses is not None and not isinstance(analyses, list):
+            raise ValueError("analyses must be an array when provided")
         if isinstance(analyses, list):
+            if not analyses:
+                raise ValueError("analyses must not be an empty array")
             base = {k: v for k, v in raw.items() if k != "analyses"}
             for i, analysis in enumerate(analyses):
+                if not isinstance(analysis, dict):
+                    raise ValueError(f"analysis {i} must be an object")
                 merged = dict(base)
-                if isinstance(analysis, dict):
-                    merged.update(analysis)
+                merged.update(analysis)
                 merged["is_ambiguous"] = len(analyses) > 1
                 merged.setdefault("analysis_id", f"{raw.get('id', raw.get('word', 'analysis'))}:{i}")
                 expanded.append(merged)
@@ -162,9 +173,17 @@ def normalize_raw_record(raw: dict[str, Any], idx: int, source_name: str) -> Mor
             normalized = _normalize_value(value)
             if normalized:
                 features[canonical] = normalized
-    features = {str(k): _normalize_value(v) for k, v in features.items() if _normalize_value(v)}
+    normalized_features = {}
+    for key, value in features.items():
+        normalized = _normalize_value(value)
+        if normalized:
+            normalized_features[str(key)] = normalized
+    features = normalized_features
 
-    metadata = dict(raw.get("metadata") or {})
+    raw_metadata = raw.get("metadata") or {}
+    if not isinstance(raw_metadata, dict):
+        raise ValueError("metadata must be an object if provided")
+    metadata = dict(raw_metadata)
     metadata.setdefault("raw_index", idx)
 
     return MorphRecord(
@@ -201,6 +220,8 @@ def _canonical_raw_record(raw: dict[str, Any]) -> str:
 
 
 def normalize_records(raw_records: list[dict[str, Any]], source_name: str) -> tuple[list[MorphRecord], dict[str, Any]]:
+    if not isinstance(source_name, str) or not source_name.strip():
+        raise ValueError("source_name must be a non-empty string")
     expanded = expand_analysis_records(raw_records)
     records = [normalize_raw_record(raw, idx, source_name) for idx, raw in enumerate(expanded)]
     records, collision_count = _deduplicate_ids(records)

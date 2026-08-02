@@ -6,8 +6,49 @@ from typing import Any
 from .models import MorphRecord
 
 
+FILTER_KEYS = {
+    "drop_missing_root",
+    "drop_missing_pattern",
+    "require_abstract_pattern",
+    "require_concrete_pattern",
+    "drop_missing_lemma",
+    "drop_ambiguous",
+    "pos_allowlist",
+    "min_examples_per_root",
+    "min_examples_per_pattern",
+    "max_examples_per_root",
+    "max_examples_per_pattern",
+}
+BOOLEAN_FILTER_KEYS = {
+    "drop_missing_root",
+    "drop_missing_pattern",
+    "require_abstract_pattern",
+    "require_concrete_pattern",
+    "drop_missing_lemma",
+    "drop_ambiguous",
+}
+COUNT_FILTER_KEYS = {
+    "min_examples_per_root",
+    "min_examples_per_pattern",
+    "max_examples_per_root",
+    "max_examples_per_pattern",
+}
+
+
 def apply_filters(records: list[MorphRecord], filters: dict[str, Any] | None) -> tuple[list[MorphRecord], dict[str, Any]]:
-    filters = filters or {}
+    filters = {} if filters is None else filters
+    if not isinstance(filters, dict):
+        raise ValueError("filters must be an object")
+    unknown = sorted(set(filters) - FILTER_KEYS)
+    if unknown:
+        raise ValueError(f"unknown filter keys: {unknown}")
+    for key in BOOLEAN_FILTER_KEYS:
+        if key in filters and not isinstance(filters[key], bool):
+            raise ValueError(f"{key} must be a boolean")
+    for key in COUNT_FILTER_KEYS:
+        value = filters.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"{key} must be a non-negative integer")
     kept: list[MorphRecord] = []
     reasons: Counter[str] = Counter()
 
@@ -18,7 +59,9 @@ def apply_filters(records: list[MorphRecord], filters: dict[str, Any] | None) ->
         raw_pos_allowlist = []
     if not isinstance(raw_pos_allowlist, list):
         raise ValueError("pos_allowlist must be a list")
-    pos_allowlist = {str(p).upper() for p in raw_pos_allowlist}
+    if any(not isinstance(pos, str) or not pos.strip() for pos in raw_pos_allowlist):
+        raise ValueError("pos_allowlist entries must be non-empty strings")
+    pos_allowlist = {pos.strip().upper() for pos in raw_pos_allowlist}
     for record in records:
         dropped = False
         if filters.get("drop_missing_root", False) and not record.root:
@@ -45,10 +88,10 @@ def apply_filters(records: list[MorphRecord], filters: dict[str, Any] | None) ->
         if not dropped:
             kept.append(record)
 
-    kept = _drop_below_min(kept, "root", int(filters.get("min_examples_per_root", 0) or 0), reasons)
-    kept = _drop_below_min(kept, "abstract_pattern", int(filters.get("min_examples_per_pattern", 0) or 0), reasons)
-    kept = _cap_group(kept, "root", int(filters.get("max_examples_per_root", 0) or 0), reasons)
-    kept = _cap_group(kept, "abstract_pattern", int(filters.get("max_examples_per_pattern", 0) or 0), reasons)
+    kept = _drop_below_min(kept, "root", filters.get("min_examples_per_root", 0), reasons)
+    kept = _drop_below_min(kept, "abstract_pattern", filters.get("min_examples_per_pattern", 0), reasons)
+    kept = _cap_group(kept, "root", filters.get("max_examples_per_root", 0), reasons)
+    kept = _cap_group(kept, "abstract_pattern", filters.get("max_examples_per_pattern", 0), reasons)
 
     report = {
         "input_records": len(records),
