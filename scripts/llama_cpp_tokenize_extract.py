@@ -1,59 +1,44 @@
 #!/usr/bin/env python3
-"""Real llama.cpp tokenization adapter for Ember external-backend smoke tests.
+"""Real llama.cpp tokenization adapter for Ember external-backend checks.
 
-This helper implements Ember's `llama-cpp-external` request contract by calling
-llama.cpp's `llama-tokenize` binary for each prompt. It performs real
-GGUF-backed tokenization only. It does not generate text, compute logits, or
-extract hidden states.
+This adapter intentionally supports prompt-final tokenization artifacts only;
+the llama-tokenize CLI does not expose the character offsets required for
+word-span extraction.
 """
 
 from __future__ import annotations
 
 import argparse
 import ast
-import json
 import os
 import subprocess
-import time
 from pathlib import Path
 
-
-FNV_OFFSET = 0xCBF29CE484222325
-FNV_PRIME = 0x00000100000001B3
-
-
-def stable_hash(text: str) -> str:
-    value = FNV_OFFSET
-    for byte in text.encode("utf-8"):
-        value ^= byte
-        value = (value * FNV_PRIME) & 0xFFFFFFFFFFFFFFFF
-    return f"fnv1a64:{value:016x}"
-
-
-def read_jsonl(path: Path) -> list[dict]:
-    rows = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
-    return rows
-
-
-def write_jsonl(path: Path, rows: list[dict]) -> None:
-    path.write_text(
-        "".join(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n" for row in rows),
-        encoding="utf-8",
+try:
+    from extraction_adapter_common import (
+        common_manifest,
+        extraction_config,
+        load_request,
+        load_samples,
+        write_common_rows,
+        write_json,
+        write_report_and_checksums,
+    )
+except ModuleNotFoundError:  # imported as scripts.llama_cpp_tokenize_extract
+    from scripts.extraction_adapter_common import (
+        common_manifest,
+        extraction_config,
+        load_request,
+        load_samples,
+        write_common_rows,
+        write_json,
+        write_report_and_checksums,
     )
 
 
-def render_prompt(template: str, row: dict) -> str:
-    rendered = template
-    for key, value in row.items():
-        rendered = rendered.replace("{" + key + "}", str(value))
-    return rendered
-
-
-def llama_tokenize(binary: str, model_path: str, prompt: str) -> list[int]:
+def llama_tokenize(
+    binary: str, model_path: str, prompt: str, *, timeout_seconds: float = 120.0
+) -> list[int]:
     output = subprocess.run(
         [
             binary,
@@ -68,13 +53,36 @@ def llama_tokenize(binary: str, model_path: str, prompt: str) -> list[int]:
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        timeout=timeout_seconds,
     )
-    parsed = ast.literal_eval(output.stdout.strip())
-    if not isinstance(parsed, list) or not all(isinstance(item, int) for item in parsed):
+    try:
+        parsed = ast.literal_eval(output.stdout.strip())
+    except (SyntaxError, ValueError) as error:
+        raise ValueError(f"unexpected llama-tokenize output: {output.stdout!r}") from error
+    if not isinstance(parsed, list):
         raise ValueError(f"unexpected llama-tokenize output: {output.stdout!r}")
-    if not parsed:
-        raise ValueError("llama-tokenize returned no token IDs")
+    if any(
+        isinstance(token_id, bool) or not isinstance(token_id, int) or token_id < 0
+        for token_id in parsed
+    ):
+        raise ValueError(f"llama-tokenize returned invalid token IDs: {parsed!r}")
     return parsed
+
+
+def llama_version(binary: str) -> str:
+    try:
+        result = subprocess.run(
+            [binary, "--version"],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+    text = (result.stdout or result.stderr).strip().splitlines()
+    return text[0][:500] if text else "unknown"
 
 
 def main() -> int:
@@ -82,75 +90,63 @@ def main() -> int:
     parser.add_argument("--request", required=True)
     args = parser.parse_args()
 
-    request = json.loads(Path(args.request).read_text(encoding="utf-8"))
+    request_path = Path(args.request)
+    request = load_request(request_path)
+    if request.get("layers"):
+        raise ValueError("llama-tokenize does not expose hidden-state layers")
+    if request.get("write_logits") or request.get("logits_path"):
+        raise ValueError("llama-tokenize does not expose logits")
+
+    config = extraction_config(request)
     metadata = request.get("run_metadata") or {}
-    tokenize_bin = os.environ.get("LLAMA_TOKENIZE_BIN") or metadata.get("llama_tokenize_bin")
-    if not tokenize_bin:
-        raise ValueError("llama-tokenize path required via LLAMA_TOKENIZE_BIN or run_metadata.llama_tokenize_bin")
+    if not isinstance(metadata, dict):
+        raise ValueError("run_metadata must be an object")
+    tokenize_bin = os.environ.get("LLAMA_TOKENIZE_BIN") or metadata.get(
+        "llama_tokenize_bin"
+    )
+    if not isinstance(tokenize_bin, str) or not tokenize_bin.strip():
+        raise ValueError(
+            "llama-tokenize path required via LLAMA_TOKENIZE_BIN or "
+            "run_metadata.llama_tokenize_bin"
+        )
     if not Path(tokenize_bin).is_file():
         raise FileNotFoundError(f"llama-tokenize binary not found: {tokenize_bin}")
-    model_arch = metadata.get("model_arch") or metadata.get("arch") or "unknown"
+    if not os.access(tokenize_bin, os.X_OK):
+        raise PermissionError(f"llama-tokenize path is not executable: {tokenize_bin}")
+    timeout_seconds = metadata.get("timeout_seconds", 120.0)
+    if (
+        isinstance(timeout_seconds, bool)
+        or not isinstance(timeout_seconds, (int, float))
+        or not 0 < float(timeout_seconds) <= 3600
+    ):
+        raise ValueError("run_metadata.timeout_seconds must be in (0, 3600]")
 
-    run_dir = Path(request["output_dir"])
-    run_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(request["manifest_path"]).parent
+    if not staging_dir.is_dir():
+        raise FileNotFoundError(f"Ember staging directory is missing: {staging_dir}")
+    samples = load_samples(request, config)
+    token_rows: list[list[int]] = []
+    max_seq_len = request.get("max_seq_len")
+    for sample in samples:
+        token_ids = llama_tokenize(
+            tokenize_bin,
+            request["model_path"],
+            sample["prompt"],
+            timeout_seconds=float(timeout_seconds),
+        )
+        if max_seq_len is not None and len(token_ids) > max_seq_len:
+            raise ValueError(
+                f"sample {sample['sample_id']!r} has {len(token_ids)} tokens, "
+                f"exceeding max_seq_len={max_seq_len}"
+            )
+        token_rows.append(token_ids)
+    observed_max_tokens = max(len(token_ids) for token_ids in token_rows)
 
-    samples = []
-    tokenization = []
-    positions = []
-    parity_prompts = []
-    order_pairs = []
-    for sample_index, row in enumerate(read_jsonl(Path(request["input_jsonl_path"]))):
-        sample_id = str(row.get(request["sample_id_field"], sample_index))
-        prompt = render_prompt(request["prompt_template"], row)
-        prompt_hash = stable_hash(prompt)
-        token_ids = llama_tokenize(tokenize_bin, request["model_path"], prompt)
-        selected = [len(token_ids) - 1]
-
-        samples.append(
-            {
-                "schema_version": request["contract_version"],
-                "sample_index": sample_index,
-                "sample_id": sample_id,
-                "input_index": sample_index,
-                "prompt": prompt,
-                "prompt_hash": prompt_hash,
-            }
-        )
-        tokenization.append(
-            {
-                "schema_version": request["contract_version"],
-                "sample_index": sample_index,
-                "sample_id": sample_id,
-                "token_ids": token_ids,
-                "token_count": len(token_ids),
-                "prompt_hash": prompt_hash,
-                "offsets": [],
-            }
-        )
-        positions.append(
-            {
-                "schema_version": request["contract_version"],
-                "sample_index": sample_index,
-                "sample_id": sample_id,
-                "position_mode": request["token_position"],
-                "pooling": "single",
-                "selected_token_positions": selected,
-                "source_field": None,
-                "source_value": None,
-                "source_byte_span": None,
-            }
-        )
-        parity_prompts.append(
-            {
-                "index": sample_index,
-                "id": sample_id,
-                "prompt": prompt,
-                "token_ids": token_ids,
-            }
-        )
-        order_pairs.append((sample_id, prompt_hash))
-
-    order_payload = "".join(f"{sample_id}\t{prompt_hash}\n" for sample_id, prompt_hash in order_pairs)
+    parity_prompts = write_common_rows(
+        request=request,
+        samples=samples,
+        token_ids=token_rows,
+    )
     provenance = {
         "real_llama_cpp": True,
         "real_tokenization": True,
@@ -158,109 +154,41 @@ def main() -> int:
         "no_logits": True,
         "no_hidden_states": True,
         "not_research_output": True,
-        "purpose": "real llama.cpp tokenization smoke test for Ember external backend plumbing",
-        "llama_tokenize_bin": tokenize_bin,
+        "purpose": "real llama.cpp tokenization check for Ember external backend plumbing",
+        "llama_tokenize_bin": str(Path(tokenize_bin).resolve()),
+        "supports_hidden_states": False,
+        "supports_logits": False,
+        "timeout_seconds": float(timeout_seconds),
+        "context_limit_source": (
+            "request.max_seq_len" if max_seq_len is not None else "observed_token_count_lower_bound"
+        ),
     }
-    extraction_config = {
-        "run_id": None,
-        "model_path": request["model_path"],
-        "architecture": model_arch,
-        "tokenizer_path": None,
-        "backend": request["backend"],
-        "prompt_template": request["prompt_template"],
-        "input_jsonl_path": request["input_jsonl_path"],
-        "output_dir": request["output_dir"],
-        "layers": request["layers"],
-        "token_position": request["token_position"],
-        "word_field": request["word_field"],
-        "sample_id_field": request["sample_id_field"],
-        "batch_size": 1,
-        "dtype": "f32",
-        "output_format": "npy",
-        "prompt_hashes_only": request["prompt_hashes_only"],
-        "write_logits": request["write_logits"],
-        "resume": False,
-        "max_seq_len": request["max_seq_len"],
-        "record_model_sha256": False,
-        "llama_cpp_binary": None,
-        "run_metadata": metadata,
-    }
-    manifest = {
-        "schema_version": request["contract_version"],
-        "layout": request["layout"],
-        "artifact_kind": "ember_hidden_states",
-        "created_at_unix": int(time.time()),
-        "run_id": None,
-        "run_dir": request["output_dir"],
-        "config_path": "config.toml",
-        "samples_path": "samples.jsonl",
-        "tokenization_path": "tokenization.jsonl",
-        "positions_path": "positions.jsonl",
-        "checksums_path": "checksums.json",
-        "report_path": "report.json",
-        "logits_path": None,
-        "tensor_contract": {
-            "storage": "layer-sharded-npy",
-            "dtype": "f32",
-            "byte_order": "little-endian",
-            "sample_axis": 0,
-            "hidden_axis": 1,
-            "layers": [],
-            "logits": None,
+    manifest = common_manifest(
+        request=request,
+        config=config,
+        samples=samples,
+        model_max_seq_len=int(max_seq_len or observed_max_tokens),
+        backend_version=llama_version(tokenize_bin),
+        backend_executable=str(Path(tokenize_bin).resolve()),
+        backend_details=provenance,
+        logits_shape=None,
+    )
+    write_json(Path(request["manifest_path"]), manifest)
+    write_report_and_checksums(
+        request=request,
+        sample_count=len(samples),
+        logits_written=False,
+    )
+    write_json(
+        staging_dir / "metadata.llamacpp.json",
+        {
+            "engine": "llama.cpp",
+            "adapter": "llama-tokenize",
+            "model": request["model_path"],
+            "arch": config.get("architecture"),
+            "prompts": parity_prompts,
+            **provenance,
         },
-        "sample_count": len(samples),
-        "sample_order_hash": stable_hash(order_payload),
-        "config_hash": "fnv1a64:0000000000000000",
-        "dtype": "f32",
-        "output_format": "npy",
-        "model": {
-            "path": request["model_path"],
-            "architecture": model_arch,
-            "n_layers": 0,
-            "embed_dim": 0,
-            "max_seq_len": 0,
-            "file_size_bytes": Path(request["model_path"]).stat().st_size,
-            "sha256": None,
-            "gguf_metadata": None,
-        },
-        "backend": {
-            "name": request["backend"],
-            "version": "llama-tokenize",
-            "executable": tokenize_bin,
-            "commit": None,
-            "details": {
-                **provenance,
-                "supports_hidden_states": False,
-                "supports_logits": False,
-            },
-        },
-        "provenance": provenance,
-        "extraction_config": extraction_config,
-    }
-    report = {
-        "schema_version": request["contract_version"],
-        "layout": request["layout"],
-        "status": "complete",
-        **provenance,
-    }
-    parity_metadata = {
-        "engine": "llama.cpp",
-        "adapter": "llama-tokenize",
-        "model": request["model_path"],
-        "arch": model_arch,
-        "prompts": parity_prompts,
-        **provenance,
-    }
-
-    write_jsonl(Path(request["samples_path"]), samples)
-    write_jsonl(Path(request["tokenization_path"]), tokenization)
-    write_jsonl(Path(request["positions_path"]), positions)
-    Path(request["manifest_path"]).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    Path(request["report_path"]).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    Path(request["checksums_path"]).write_text("{}\n", encoding="utf-8")
-    (run_dir / "metadata.llamacpp.json").write_text(
-        json.dumps(parity_metadata, ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
     return 0
 
