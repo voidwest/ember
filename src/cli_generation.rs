@@ -2,8 +2,10 @@
 //! Split out of `main.rs` (2026-08-01) to keep the CLI dispatcher thin.
 
 use crate::cli_commands::{effective_context_limit, ensure_sequence_fits};
-use crate::cli_probe::{has_next_decode_evaluation, LogitDumpConfig};
-use crate::cli_support::{token_audit_json, write_json_file};
+use crate::cli_probe::{has_next_decode_evaluation, TensorDumpConfig};
+use crate::cli_support::{
+    sidecar_path, token_audit_json, validate_token_ids_for_model, write_json_file,
+};
 use crate::{rayon_current_num_threads, Args};
 use anyhow::Context;
 use ember::backend::Backend;
@@ -19,7 +21,67 @@ use ember::sampler::{argmax_token, sample_token};
 use ember::trace;
 use std::fs;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+
+static RAW_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+struct TraceCleanup;
+
+impl Drop for TraceCleanup {
+    fn drop(&mut self) {
+        if trace::is_tracing() {
+            let _ = trace::disable_tracing();
+        }
+        trace::set_values_level(trace::TraceValuesLevel::None);
+    }
+}
+
+fn validate_last_logits<B: Backend>(
+    backend: &B,
+    logits: &B::Tensor,
+    expected_vocab_size: usize,
+) -> anyhow::Result<()> {
+    let shape = backend.shape(logits);
+    if shape != [1, expected_vocab_size] {
+        anyhow::bail!("expected last logits shape [1, {expected_vocab_size}], got {shape:?}");
+    }
+    let data = backend.data(logits);
+    if data.len() != expected_vocab_size {
+        anyhow::bail!(
+            "last-logits payload has {} values, expected {expected_vocab_size}",
+            data.len()
+        );
+    }
+    if let Some((index, value)) = data
+        .iter()
+        .enumerate()
+        .find(|(_, value)| !value.is_finite())
+    {
+        anyhow::bail!("last logits contain non-finite value {value} at vocabulary index {index}");
+    }
+    Ok(())
+}
+
+fn validate_generated_token(
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+    token: usize,
+    model_vocab_size: usize,
+) -> anyhow::Result<u32> {
+    if token >= model_vocab_size {
+        anyhow::bail!(
+            "model selected token ID {token} outside its vocabulary size {model_vocab_size}"
+        );
+    }
+    let token = u32::try_from(token).context("selected token ID exceeds u32")?;
+    if !tokenizer.contains_token_id(token) {
+        anyhow::bail!(
+            "model selected token ID {token}, but the tokenizer cannot decode it; model/tokenizer vocabularies are incompatible"
+        );
+    }
+    Ok(token)
+}
 
 pub(crate) fn run_single_prompt_with_experiment(
     backend: &CpuBackend,
@@ -414,7 +476,7 @@ where
     M: ForwardModel<B>,
     B::Error: Send + Sync + 'static,
 {
-    fn before_prefill(&mut self, prompt_token_count: usize) -> anyhow::Result<()>;
+    fn before_prefill(&mut self, prompt_token_ids: &[u32]) -> anyhow::Result<()>;
 
     fn forward_last_logits(
         &mut self,
@@ -474,7 +536,7 @@ where
     B::Error: Send + Sync + 'static,
 {
     #[inline(always)]
-    fn before_prefill(&mut self, _prompt_token_count: usize) -> anyhow::Result<()> {
+    fn before_prefill(&mut self, _prompt_token_ids: &[u32]) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -528,12 +590,12 @@ impl<M> GenerationExecution<CpuBackend, M> for ActiveGeneration<'_, '_>
 where
     M: ExperimentalForwardModel,
 {
-    fn before_prefill(&mut self, prompt_token_count: usize) -> anyhow::Result<()> {
-        let context = ExecutionContext::new(
+    fn before_prefill(&mut self, prompt_token_ids: &[u32]) -> anyhow::Result<()> {
+        let context = ExecutionContext::new_with_token_ids(
             self.model_context,
             ExecutionPhase::Prefill,
             0,
-            prompt_token_count,
+            prompt_token_ids,
             self.tracing,
         );
         self.runner.before_prefill(&context)?;
@@ -549,11 +611,11 @@ where
         start_pos: usize,
         phase: ExecutionPhase,
     ) -> Result<ember::tensor::CpuTensor, ember::backend::CpuError> {
-        let context = ExecutionContext::new(
+        let context = ExecutionContext::new_with_token_ids(
             self.model_context,
             phase,
             start_pos,
-            token_ids.len(),
+            token_ids,
             self.tracing,
         );
         model.forward_last_logits_with_experiment(
@@ -725,6 +787,11 @@ where
     let mut all_tokens = tokenizer
         .encode(prompt)
         .context("failed to tokenize prompt")?;
+    if all_tokens.is_empty() {
+        anyhow::bail!("cannot generate from a prompt that produces no token IDs");
+    }
+    let model_vocab_size = model.vocab_size(backend);
+    validate_token_ids_for_model(&all_tokens, model_vocab_size, "prompt")?;
     log::info!("prompt has {} tokens", all_tokens.len());
 
     let prompt_len = all_tokens.len();
@@ -747,14 +814,19 @@ where
     } else {
         None
     };
-    if trace_ops {
-        if trace_values_summary {
-            trace::set_values_level(trace::TraceValuesLevel::Summary);
-        }
-        trace::enable_tracing("prefill", 0);
-    }
+    let _trace_cleanup = trace_ops.then_some(TraceCleanup);
     let mut cache = model.create_cache(backend, max_seq_len);
-    execution.before_prefill(prompt_len)?;
+    execution.before_prefill(&all_tokens)?;
+    if trace_ops {
+        trace::set_values_level(if trace_values_summary {
+            trace::TraceValuesLevel::Summary
+        } else {
+            trace::TraceValuesLevel::None
+        });
+        if !trace::enable_tracing("prefill", 0) {
+            anyhow::bail!("cannot start prefill trace because a trace is already active");
+        }
+    }
     let mut logits = execution.forward_last_logits(
         backend,
         model,
@@ -763,6 +835,7 @@ where
         0,
         ExecutionPhase::Prefill,
     )?;
+    validate_last_logits(backend, &logits, model_vocab_size)?;
     let prefill_elapsed = prefill_start.map(|s| s.elapsed());
     if trace_ops {
         prefill_trace = trace::disable_tracing();
@@ -770,7 +843,7 @@ where
             pt.run_metadata = run_meta.clone();
         }
     }
-    let vocab_size = backend.shape(&logits)[1];
+    let vocab_size = model_vocab_size;
 
     // -- 2. decode loop: one new token at a time --------------------------
     let decode_start = if benchmark {
@@ -782,9 +855,9 @@ where
     let mut next_token: usize;
     let mut decode_traces: Vec<trace::TraceReport> = Vec::new();
     let mut decode_evaluations = 0usize;
+    let eos_ids = tokenizer.eos_token_ids();
 
     for step in 0..max_tokens {
-        let eos_ids = tokenizer.eos_token_ids();
         // Greedy decode steps after the first can use the fused argmax path
         // (the model may compute only the top token instead of the full
         // vocabulary). Tracing and sampling always use the full path.
@@ -799,6 +872,12 @@ where
                 ExecutionPhase::Decode,
             )?;
             next_token = token as usize;
+            if !logit.is_finite() {
+                anyhow::bail!(
+                    "fused greedy decode returned non-finite logit {logit} for token {token}"
+                );
+            }
+            decode_evaluations += 1;
             log::debug!(
                 "step {}: greedy token {} (logit {logit:.4})",
                 step,
@@ -817,59 +896,67 @@ where
             log::debug!("step {}: predicted token {}", step, next_token);
         }
 
-        if eos_ids.contains(&(next_token as u32)) {
+        let next_token = validate_generated_token(tokenizer, next_token, model_vocab_size)?;
+        if eos_ids.contains(&next_token) {
             log::info!("eos token reached after {} generated tokens", step);
             break;
         }
 
-        all_tokens.push(next_token as u32);
-        generated.push(next_token as u32);
+        all_tokens.push(next_token);
+        generated.push(next_token);
 
         if !has_next_decode_evaluation(step, max_tokens) {
             break;
         }
 
-        if !greedy_fused {
+        let next_step_uses_fused = fused_greedy && temperature == 0.0 && !trace_ops && step == 0;
+        if !greedy_fused && !next_step_uses_fused {
             // decode step: forward with just the new token, using cached K/V
             if trace_ops {
-                trace::enable_tracing("decode", step);
+                if !trace::enable_tracing("decode", step) {
+                    anyhow::bail!("cannot start decode trace because a trace is already active");
+                }
             }
             logits = execution.forward_last_logits(
                 backend,
                 model,
-                &[next_token as u32],
+                &[next_token],
                 &mut cache,
                 prompt_len + step, // absolute position offset
                 ExecutionPhase::Decode,
             )?;
+            validate_last_logits(backend, &logits, model_vocab_size)?;
             decode_evaluations += 1;
             if trace_ops {
                 if let Some(report) = trace::disable_tracing() {
                     decode_traces.push(report);
                 }
             }
-        } else {
-            decode_evaluations += 1;
         }
     }
 
     let output = tokenizer.decode(&generated)?;
 
     if benchmark {
-        let prefill_ms = prefill_elapsed.unwrap().as_secs_f64() * 1000.0;
-        let decode_ms = decode_start.unwrap().elapsed().as_secs_f64() * 1000.0;
+        // Snapshot each duration once so the printed latency and derived rate
+        // use exactly the same interval. This matters to machine parsers and
+        // is especially visible for short smoke-model runs.
+        let prefill_elapsed = prefill_elapsed.unwrap();
+        let decode_elapsed = decode_start.unwrap().elapsed();
+        let prefill_seconds = prefill_elapsed.as_secs_f64();
+        let decode_seconds = decode_elapsed.as_secs_f64();
         eprintln!("--- benchmark ---");
         eprintln!(
-            "prefill: {} tokens in {:.1}ms -> {:.0} tok/s",
+            "prefill: {} tokens in {:.3}ms -> {:.3} tok/s",
             prompt_len,
-            prefill_ms,
-            prompt_len as f64 / prefill_elapsed.unwrap().as_secs_f64()
+            prefill_seconds * 1000.0,
+            prompt_len as f64 / prefill_seconds
         );
         eprintln!(
-            "decode:  {} evals in {:.1}ms -> {:.0} eval/s",
+            "decode:  {} evals in {:.3}ms -> {:.3} eval/s",
             decode_evaluations,
-            decode_ms,
-            decode_evaluations as f64 / decode_start.unwrap().elapsed().as_secs_f64()
+            decode_seconds * 1000.0,
+            decode_evaluations as f64 / decode_seconds
         );
     }
 
@@ -892,8 +979,12 @@ where
 
         // write JSON if requested
         if let Some(path) = trace_out {
-            let json = aggregated.to_json();
-            fs::write(path, json).context("failed to write trace JSON")?;
+            let artifact = serde_json::json!({
+                "schema_version": 1,
+                "prefill": prefill_trace,
+                "decode": aggregated,
+            });
+            write_json_file(path, &artifact).context("failed to write trace JSON")?;
             eprintln!("trace JSON written to {}", path);
         }
 
@@ -933,7 +1024,7 @@ pub(crate) fn dump_last_logits<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
-    config: LogitDumpConfig<'_>,
+    config: TensorDumpConfig<'_>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -950,22 +1041,23 @@ where
     if token_ids.is_empty() {
         anyhow::bail!("cannot dump logits for an empty prompt");
     }
+    let model_vocab_size = model.vocab_size(backend);
+    tokenizer.validate_model_vocab(model_vocab_size)?;
+    validate_token_ids_for_model(&token_ids, model_vocab_size, "logit-dump prompt")?;
     let context_limit = config
         .max_seq_len
         .unwrap_or_else(|| model.max_seq_len(backend));
     ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
     let mut cache = model.create_cache(backend, context_limit);
     let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
+    validate_last_logits(backend, &logits, model_vocab_size)?;
     let shape = backend.shape(&logits);
-    if shape.len() != 2 || shape[0] != 1 {
-        anyhow::bail!("expected last logits shape [1, vocab], got {:?}", shape);
-    }
     write_npy_2d(
         config.output_path,
         backend.data(&logits),
         &[shape[0], shape[1]],
     )?;
-    let metadata_path = config.output_path.replace(".npy", "_metadata.json");
+    let metadata_path = sidecar_path(config.output_path, "_metadata.json")?;
     let metadata = serde_json::json!({
         "model_path": config.model_path,
         "architecture": config.arch,
@@ -1007,7 +1099,7 @@ pub(crate) fn bail_dump_layers_unsupported(arch: &str) -> anyhow::Result<()> {
 ///
 /// ## Binary output format
 ///
-///   dtype:      f32 (native endian)
+///   dtype:      little-endian f32
 ///   shape:      [n_layers * embed_dim] flat, layer-major
 ///   layer count: model n_layers
 ///   hidden size: model embed_dim
@@ -1019,49 +1111,174 @@ pub(crate) fn dump_layers_gemma4<B: Backend>(
     backend: &B,
     model: &ember::gemma4::Gemma4<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
-    prompt: &str,
-    output_path: &str,
-    max_seq_len: Option<usize>,
+    config: TensorDumpConfig<'_>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
 {
     let token_ids = tokenizer
-        .encode(prompt)
+        .encode(config.prompt)
         .context("failed to tokenize prompt")?;
+    let (offset_ids, offsets) = tokenizer
+        .encode_with_offsets(config.prompt)
+        .context("failed to tokenize prompt with offsets")?;
+    if offset_ids != token_ids {
+        anyhow::bail!("token audit failed: encode and encode_with_offsets emitted different ids");
+    }
     if token_ids.is_empty() {
         anyhow::bail!("cannot dump layers for an empty prompt");
     }
-    let context_limit = max_seq_len.unwrap_or_else(|| model.max_seq_len(backend));
+    let model_vocab_size = model.vocab_size(backend);
+    tokenizer.validate_model_vocab(model_vocab_size)?;
+    validate_token_ids_for_model(&token_ids, model_vocab_size, "layer-dump prompt")?;
+    let context_limit = config
+        .max_seq_len
+        .unwrap_or_else(|| model.max_seq_len(backend));
     ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
     let mut cache = model.create_cache(backend, context_limit);
-    let (layer_states, _logits) =
+    let (layer_states, logits) =
         model.forward_last_logits_with_layer_dump(backend, &token_ids, &mut cache, 0)?;
     let embed_dim = model.config.embed_dim;
     let n_layers = layer_states.len();
-    let flat: Vec<f32> = layer_states.into_iter().flatten().collect();
-    assert_eq!(flat.len(), n_layers * embed_dim);
-    let file = std::fs::File::create(output_path)?;
-    let mut writer = std::io::BufWriter::new(file);
-    let mut bytes = [0u8; 1024 * std::mem::size_of::<f32>()];
-    for values in flat.chunks(1024) {
-        for (slot, value) in bytes
-            .chunks_exact_mut(std::mem::size_of::<f32>())
-            .zip(values)
-        {
-            slot.copy_from_slice(&value.to_ne_bytes());
-        }
-        writer.write_all(&bytes[..std::mem::size_of_val(values)])?;
+    if n_layers != model.n_layers() {
+        anyhow::bail!(
+            "layer dump returned {n_layers} layers, expected {}",
+            model.n_layers()
+        );
     }
-    writer.flush()?;
+    for (layer, values) in layer_states.iter().enumerate() {
+        if values.len() != embed_dim {
+            anyhow::bail!(
+                "layer {layer} dump has {} values, expected {embed_dim}",
+                values.len()
+            );
+        }
+        if let Some((index, value)) = values
+            .iter()
+            .enumerate()
+            .find(|(_, value)| !value.is_finite())
+        {
+            anyhow::bail!(
+                "layer {layer} dump contains non-finite value {value} at hidden index {index}"
+            );
+        }
+    }
+    validate_last_logits(backend, &logits, model_vocab_size)?;
+    let flat = layer_states.into_iter().flatten().collect::<Vec<_>>();
+    let expected_values = n_layers
+        .checked_mul(embed_dim)
+        .context("layer dump shape product overflow")?;
+    if flat.len() != expected_values {
+        anyhow::bail!(
+            "layer dump payload has {} values, expected {expected_values}",
+            flat.len()
+        );
+    }
+    write_raw_f32_le_atomic(config.output_path, &flat)?;
+
+    let metadata_path = sidecar_path(config.output_path, "_metadata.json")?;
+    let metadata = serde_json::json!({
+        "schema_version": 1,
+        "model_path": config.model_path,
+        "architecture": config.arch,
+        "tokenizer_path": config.tokenizer_path,
+        "tokenizer_sha256": config.run_metadata.tokenizer_sha256,
+        "model_file_size_bytes": config.run_metadata.model_file_size_bytes,
+        "model_sha256": config.run_metadata.model_sha256,
+        "gguf_metadata": config.run_metadata.gguf_metadata,
+        "run_manifest": config.run_metadata.run_manifest,
+        "output_path": config.output_path,
+        "format": "raw-f32",
+        "dtype": "<f4",
+        "byte_order": "little-endian",
+        "shape": [n_layers, embed_dim],
+        "selection": "last-prompt-token-after-layer",
+        "context_limit": context_limit,
+        "token_audit": token_audit_json(
+            config.prompt,
+            config.tokenizer_path,
+            config.run_metadata.tokenizer_sha256.as_deref(),
+            tokenizer.bos_token_id(),
+            &token_ids,
+            &offsets,
+        ),
+    });
+    write_json_file(&metadata_path, &metadata)?;
     eprintln!(
         "saved {} layers × {} hidden = {} floats to {}",
         n_layers,
         embed_dim,
         flat.len(),
-        output_path
+        config.output_path
     );
+    eprintln!("saved layer-dump metadata to {metadata_path}");
     Ok(())
+}
+
+fn write_raw_f32_le_atomic(path: &str, values: &[f32]) -> anyhow::Result<()> {
+    let final_path = Path::new(path);
+    let filename = final_path
+        .file_name()
+        .context("raw output path must include a filename")?
+        .to_string_lossy();
+    let parent = final_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let (temporary_path, file) = (0..128)
+        .find_map(|_| {
+            let sequence = RAW_DUMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let temporary_path = parent.join(format!(
+                ".{filename}.ember-tmp-{}-{sequence}",
+                std::process::id()
+            ));
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary_path)
+            {
+                Ok(file) => Some(Ok((temporary_path, file))),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error)),
+            }
+        })
+        .transpose()
+        .with_context(|| format!("failed to create staged raw output next to {path}"))?
+        .context("could not allocate a unique staged raw output path")?;
+    let mut cleanup = RemoveFileOnDrop(Some(temporary_path.clone()));
+    let mut writer = io::BufWriter::new(file);
+    let mut bytes = [0u8; 1024 * std::mem::size_of::<f32>()];
+    for chunk in values.chunks(1024) {
+        for (slot, value) in bytes
+            .chunks_exact_mut(std::mem::size_of::<f32>())
+            .zip(chunk)
+        {
+            slot.copy_from_slice(&value.to_le_bytes());
+        }
+        writer.write_all(&bytes[..std::mem::size_of_val(chunk)])?;
+    }
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    drop(writer);
+    fs::rename(&temporary_path, final_path).with_context(|| {
+        format!(
+            "failed to publish raw output '{}' from '{}'",
+            final_path.display(),
+            temporary_path.display()
+        )
+    })?;
+    cleanup.0 = None;
+    Ok(())
+}
+
+struct RemoveFileOnDrop(Option<PathBuf>);
+
+impl Drop for RemoveFileOnDrop {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1166,13 +1383,9 @@ mod tests {
 
     #[test]
     fn default_tokenizer_tracks_architecture() {
-        let gpt2 = Args::try_parse_from(["ember"]).expect("default args should parse");
-        assert_eq!(
-            gpt2.tokenizer
-                .as_deref()
-                .unwrap_or_else(|| default_tokenizer_for_arch(&gpt2.arch)),
-            "tokenizer-gpt2.json"
-        );
+        let automatic = Args::try_parse_from(["ember"]).expect("default args should parse");
+        assert_eq!(automatic.arch, "auto");
+        assert!(automatic.tokenizer.is_none());
 
         let llama =
             Args::try_parse_from(["ember", "--arch", "llama"]).expect("llama args should parse");
@@ -1212,6 +1425,24 @@ mod tests {
         assert!(Args::try_parse_from(["ember", "--top-p", "0"]).is_err());
         assert!(Args::try_parse_from(["ember", "--top-p", "1.1"]).is_err());
         assert!(Args::try_parse_from(["ember", "--max-seq-len", "0"]).is_err());
+    }
+
+    #[test]
+    fn trace_and_probe_specific_options_cannot_be_silent_noops() {
+        assert!(Args::try_parse_from(["ember", "--trace-out", "trace.json"]).is_err());
+        assert!(Args::try_parse_from(["ember", "--trace", "ops", "--probe",]).is_err());
+
+        let trace_values = Args::try_parse_from(["ember", "--trace-values", "summary"]).unwrap();
+        assert!(validate_experiment_options(&trace_values)
+            .unwrap_err()
+            .to_string()
+            .contains("requires --trace"));
+
+        let probe_option = Args::try_parse_from(["ember", "--probe-limit", "2"]).unwrap();
+        assert!(validate_experiment_options(&probe_option)
+            .unwrap_err()
+            .to_string()
+            .contains("require --probe"));
     }
 
     #[test]
@@ -1328,6 +1559,38 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("not gpt2"));
+    }
+
+    #[test]
+    fn activation_patch_cli_requires_targets_and_rejects_silent_noop_modes() {
+        assert!(Args::try_parse_from([
+            "ember",
+            "--arch",
+            "qwen3",
+            "--activation-patch",
+            "manifest.json"
+        ])
+        .is_err());
+        assert!(Args::try_parse_from([
+            "ember",
+            "--arch",
+            "qwen3",
+            "--patch-target",
+            "1:after-mlp:prefill"
+        ])
+        .is_err());
+        assert!(Args::try_parse_from([
+            "ember",
+            "--arch",
+            "qwen3",
+            "--activation-patch",
+            "manifest.json",
+            "--patch-target",
+            "1:after-mlp:prefill",
+            "--dump-logits",
+            "logits.npy"
+        ])
+        .is_err());
     }
 
     #[test]

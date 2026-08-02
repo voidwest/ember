@@ -20,27 +20,34 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EMBER="${EMBER:-$SCRIPT_DIR/target/release/ember}"
-MODEL="${MODEL:-Qwen3-0.6B-Q8_0.gguf}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+EMBER="${EMBER:-$REPO_ROOT/target/release/ember}"
+MODEL="${MODEL:-$REPO_ROOT/Qwen3-0.6B-Q8_0.gguf}"
 ARCH="${ARCH:-qwen3}"
-TOKENIZER="${TOKENIZER:-tokenizer-qwen3.json}"
+TOKENIZER="${TOKENIZER:-$REPO_ROOT/tokenizer-qwen3.json}"
 PROMPT="${PROMPT:-The capital of France is}"
 LAYER="${LAYER:-4}"
 STAGE="${STAGE:-after-mlp}"
 TOKENS="${TOKENS:-4}"
 WORKDIR="${WORKDIR:-/tmp/ember-v02-example}"
+PYTHON_BIN="${PYTHON:-python3}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --model) MODEL="$2"; shift 2 ;;
-    --arch) ARCH="$2"; shift 2 ;;
-    --tokenizer) TOKENIZER="$2"; shift 2 ;;
-    --prompt) PROMPT="$2"; shift 2 ;;
-    --layer) LAYER="$2"; shift 2 ;;
-    --stage) STAGE="$2"; shift 2 ;;
-    --tokens) TOKENS="$2"; shift 2 ;;
-    --workdir) WORKDIR="$2"; shift 2 ;;
+    --model|--arch|--tokenizer|--prompt|--layer|--stage|--tokens|--workdir)
+      [[ $# -ge 2 ]] || { echo "$1 requires a value" >&2; exit 1; }
+      case "$1" in
+        --model) MODEL="$2" ;;
+        --arch) ARCH="$2" ;;
+        --tokenizer) TOKENIZER="$2" ;;
+        --prompt) PROMPT="$2" ;;
+        --layer) LAYER="$2" ;;
+        --stage) STAGE="$2" ;;
+        --tokens) TOKENS="$2" ;;
+        --workdir) WORKDIR="$2" ;;
+      esac
+      shift 2
+      ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -53,16 +60,51 @@ case "$STAGE" in
   *) echo "unsupported stage '$STAGE' (use after-attention, after-mlp, or after-layer)" >&2; exit 1 ;;
 esac
 
+[[ -x "$EMBER" ]] || { echo "Ember executable not found: $EMBER" >&2; exit 1; }
+[[ -f "$MODEL" ]] || { echo "model not found: $MODEL" >&2; exit 1; }
+[[ -f "$TOKENIZER" ]] || { echo "tokenizer not found: $TOKENIZER" >&2; exit 1; }
+[[ "$ARCH" =~ ^(auto|gpt2|llama|qwen3|gemma4)$ ]] || {
+  echo "unsupported architecture: $ARCH" >&2
+  exit 1
+}
+[[ "$LAYER" =~ ^[0-9]+$ ]] || { echo "--layer must be a non-negative integer" >&2; exit 1; }
+[[ "$TOKENS" =~ ^[1-9][0-9]*$ ]] || { echo "--tokens must be a positive integer" >&2; exit 1; }
+command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "Python not found: $PYTHON_BIN" >&2; exit 1; }
+
 mkdir -p "$WORKDIR"
 for name in a b c; do
-  cat > "$WORKDIR/$name.toml" <<EOF
-schema_version = 1
-output_dir = "$WORKDIR/run-$name"
-layers = [$LAYER]
-stages = ["$STAGE", "after-logits"]
-phase = "both"
-EOF
+  [[ ! -e "$WORKDIR/run-$name" ]] || {
+    echo "refusing to mix with an existing run directory: $WORKDIR/run-$name" >&2
+    exit 1
+  }
 done
+"$PYTHON_BIN" - "$WORKDIR" "$LAYER" "$STAGE" <<'PYEOF'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+workdir, layer, stage = Path(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+for name in "abc":
+    content = (
+        "schema_version = 1\n"
+        f"output_dir = {json.dumps(str(workdir / f'run-{name}'))}\n"
+        f"layers = [{layer}]\n"
+        f"stages = [{json.dumps(stage)}, \"after-logits\"]\n"
+        'phase = "both"\n'
+    )
+    fd, temporary = tempfile.mkstemp(prefix=f".{name}.toml.", dir=workdir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, workdir / f"{name}.toml")
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+PYEOF
 
 run_ember() {
   "$EMBER" --arch "$ARCH" --model "$MODEL" --tokenizer "$TOKENIZER" \
@@ -70,43 +112,56 @@ run_ember() {
 }
 
 echo "== run A: baseline with capture =="
-run_ember --capture-activations "$WORKDIR/a.toml" 2>/dev/null
+run_ember --capture-activations "$WORKDIR/a.toml"
 
 echo "== run B: zero-layer-output $LAYER:$ZLO_STAGE with capture =="
-run_ember --zero-layer-output "$LAYER:$ZLO_STAGE" --capture-activations "$WORKDIR/b.toml" 2>/dev/null
+run_ember --zero-layer-output "$LAYER:$ZLO_STAGE" --capture-activations "$WORKDIR/b.toml"
 
 echo "== compare A vs B (expect Differs) =="
 "$EMBER" compare-artifacts --left "$WORKDIR/run-a/manifest.json" \
   --right "$WORKDIR/run-b/manifest.json" --json --output "$WORKDIR/ab.json" >/dev/null
 
 echo "== run C: patch A's $LAYER:$STAGE activation back in (prefill + every decode position) =="
-TARGETS=$(python3 - "$WORKDIR/run-a/manifest.json" "$TOKENS" "$LAYER" "$STAGE" <<'PYEOF'
+TARGETS=$("$PYTHON_BIN" - "$WORKDIR/run-a/manifest.json" "$TOKENS" "$LAYER" "$STAGE" <<'PYEOF'
 import json, sys
 manifest_path, tokens, layer, stage = sys.argv[1], int(sys.argv[2]), sys.argv[3], sys.argv[4]
-manifest = json.load(open(manifest_path))
+def reject(value):
+    raise ValueError(f"non-standard JSON constant {value!r}")
+with open(manifest_path, encoding="utf-8") as handle:
+    manifest = json.load(handle, parse_constant=reject)
 prompt_len = len(manifest["run"]["input_token_ids"])
 # decode runs positions prompt_len .. prompt_len+tokens-2 (final eval is skipped)
 positions = range(prompt_len, prompt_len + tokens - 1)
 targets = [f"{layer}:{stage}:prefill"]
 targets += [f"{layer}:{stage}:decode:{p}" for p in positions]
-print(" ".join(f"--patch-target {t}" for t in targets))
+print("\n".join(targets))
 PYEOF
 )
-# shellcheck disable=SC2086
-run_ember --activation-patch "$WORKDIR/run-a/manifest.json" $TARGETS \
-  --capture-activations "$WORKDIR/c.toml" 2>/dev/null
+mapfile -t TARGET_VALUES <<< "$TARGETS"
+PATCH_ARGS=(--activation-patch "$WORKDIR/run-a/manifest.json")
+for target in "${TARGET_VALUES[@]}"; do
+  [[ -n "$target" ]] && PATCH_ARGS+=(--patch-target "$target")
+done
+run_ember "${PATCH_ARGS[@]}" --capture-activations "$WORKDIR/c.toml"
 
 echo "== compare A vs C (expect Identical: frozen restoration criterion) =="
 "$EMBER" compare-artifacts --left "$WORKDIR/run-a/manifest.json" \
   --right "$WORKDIR/run-c/manifest.json" --json --output "$WORKDIR/ac.json" >/dev/null
 
 echo "== summary =="
-python3 - "$WORKDIR" <<'PYEOF'
+"$PYTHON_BIN" - "$WORKDIR" <<'PYEOF'
 import json, sys
 workdir = sys.argv[1]
 
+def reject(value):
+    raise ValueError(f"non-standard JSON constant {value!r}")
+
+def load(path):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle, parse_constant=reject)
+
 def manifest(run):
-    return json.load(open(f"{workdir}/run-{run}/manifest.json"))
+    return load(f"{workdir}/run-{run}/manifest.json")
 
 def text(ids, tokenizer_file):
     # best-effort rendering via the ember tokenizer is not available here;
@@ -114,8 +169,8 @@ def text(ids, tokenizer_file):
     return " ".join(str(t) for t in ids)
 
 a, b, c = manifest("a"), manifest("b"), manifest("c")
-ab = json.load(open(f"{workdir}/ab.json"))
-ac = json.load(open(f"{workdir}/ac.json"))
+ab = load(f"{workdir}/ab.json")
+ac = load(f"{workdir}/ac.json")
 
 print(f"model:        {a['model']['family']} {a['model']['architecture']} "
       f"({a['model']['identifier']})")
@@ -135,6 +190,7 @@ if ac["status"] != "identical":
     print("FAIL: frozen restoration criterion not met (A vs C must be identical)", file=sys.stderr)
     sys.exit(1)
 if ab["status"] != "differs":
-    print("WARN: intervention had no observable effect (A vs B identical)", file=sys.stderr)
+    print("FAIL: intervention had no observable effect (A vs B must differ)", file=sys.stderr)
+    sys.exit(1)
 print("PASS: frozen restoration criterion met (logits bit-identical).")
 PYEOF

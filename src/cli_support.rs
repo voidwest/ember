@@ -1,14 +1,45 @@
 use crate::Args;
 use anyhow::Context;
-use ember::extraction::{git_commit, unix_timestamp};
+use ember::extraction::{git_commit, sha256_bytes, sha256_file_result, unix_timestamp};
 use ember::loader::{GgufLoader, GgufValue};
+use ember::tokenizer::EmberTokenizer;
 use std::env;
 use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 /// Embedded Llama tokenizer, materialized only when the conventional external
 /// tokenizer file is absent.
 static EMBEDDED_LLAMA_TOKENIZER: &str = include_str!("../tokenizer.json");
+
+pub(crate) enum ResolvedTokenizer {
+    File(String),
+    EmbeddedLlama,
+}
+
+impl ResolvedTokenizer {
+    pub(crate) fn identity(&self) -> &str {
+        match self {
+            Self::File(path) => path,
+            Self::EmbeddedLlama => "embedded:tokenizer.json",
+        }
+    }
+
+    pub(crate) fn sha256(&self) -> anyhow::Result<String> {
+        match self {
+            Self::File(path) => sha256_file_result(path)
+                .with_context(|| format!("failed to hash tokenizer '{path}'")),
+            Self::EmbeddedLlama => Ok(sha256_bytes(EMBEDDED_LLAMA_TOKENIZER.as_bytes())),
+        }
+    }
+
+    pub(crate) fn load(&self) -> anyhow::Result<EmberTokenizer> {
+        match self {
+            Self::File(path) => EmberTokenizer::from_file(path),
+            Self::EmbeddedLlama => EmberTokenizer::from_bytes(EMBEDDED_LLAMA_TOKENIZER),
+        }
+    }
+}
 
 pub(crate) fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     match arch {
@@ -20,21 +51,40 @@ pub(crate) fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     }
 }
 
-pub(crate) fn resolve_tokenizer(path: &str) -> String {
-    if std::path::Path::new(path).exists() {
-        return path.to_string();
+pub(crate) fn resolve_generation_architecture(
+    requested: &str,
+    loader: &GgufLoader,
+) -> anyhow::Result<String> {
+    let declared = match loader.metadata.get("general.architecture") {
+        Some(GgufValue::Str(value)) => value.as_str(),
+        Some(_) => anyhow::bail!("GGUF general.architecture must be a string"),
+        None => anyhow::bail!("GGUF is missing required general.architecture metadata"),
+    };
+    let detected = match declared {
+        "gpt2" => "gpt2",
+        "llama" => "llama",
+        "qwen2" | "qwen3" => "qwen3",
+        "gemma3" | "gemma4" => "gemma4",
+        other => anyhow::bail!(
+            "GGUF architecture '{other}' is not supported by generation; expected gpt2, llama, qwen2/qwen3, or gemma3/gemma4"
+        ),
+    };
+    if requested != "auto" && requested != detected {
+        anyhow::bail!(
+            "--arch {requested} conflicts with GGUF general.architecture='{declared}' (use --arch {detected} or omit --arch)"
+        );
+    }
+    Ok(detected.to_string())
+}
+
+pub(crate) fn resolve_tokenizer(path: &str) -> ResolvedTokenizer {
+    if Path::new(path).exists() {
+        return ResolvedTokenizer::File(path.to_string());
     }
     if path == "tokenizer.json" {
-        let tmp = env::temp_dir().join("ember-tokenizer.json");
-        if !tmp.exists() {
-            if let Err(error) = fs::write(&tmp, EMBEDDED_LLAMA_TOKENIZER) {
-                eprintln!("warning: could not write embedded tokenizer: {error}");
-                return path.to_string();
-            }
-        }
-        return tmp.to_string_lossy().into_owned();
+        return ResolvedTokenizer::EmbeddedLlama;
     }
-    path.to_string()
+    ResolvedTokenizer::File(path.to_string())
 }
 
 pub(crate) fn parse_layers_list(value: Option<&str>) -> anyhow::Result<Vec<usize>> {
@@ -108,10 +158,15 @@ pub(crate) fn gguf_metadata_json(loader: &GgufLoader) -> serde_json::Value {
 fn gguf_value_json(value: &GgufValue) -> serde_json::Value {
     match value {
         GgufValue::U8(v) => serde_json::json!(v),
+        GgufValue::I8(v) => serde_json::json!(v),
+        GgufValue::U16(v) => serde_json::json!(v),
+        GgufValue::I16(v) => serde_json::json!(v),
         GgufValue::U32(v) => serde_json::json!(v),
         GgufValue::U64(v) => serde_json::json!(v),
         GgufValue::I32(v) => serde_json::json!(v),
+        GgufValue::I64(v) => serde_json::json!(v),
         GgufValue::F32(v) => serde_json::json!(v),
+        GgufValue::F64(v) => serde_json::json!(v),
         GgufValue::Bool(v) => serde_json::json!(v),
         GgufValue::Str(v) => serde_json::json!(v),
         GgufValue::Array(values) => {
@@ -121,7 +176,50 @@ fn gguf_value_json(value: &GgufValue) -> serde_json::Value {
 }
 
 pub(crate) fn write_json_file(path: &str, value: &serde_json::Value) -> anyhow::Result<()> {
-    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    ember::atomic_file::atomic_write(path, &bytes)
+        .with_context(|| format!("failed to atomically write JSON to '{path}'"))?;
+    Ok(())
+}
+
+/// Derive a JSON sidecar next to an output without treating every occurrence
+/// of `.npy` in the path as a suffix.
+pub(crate) fn sidecar_path(output_path: &str, suffix: &str) -> anyhow::Result<String> {
+    let path = Path::new(output_path);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .with_context(|| format!("output path has no usable filename: {output_path}"))?;
+    let filename = format!("{stem}{suffix}");
+    let sidecar = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map_or_else(
+            || Path::new(&filename).to_path_buf(),
+            |parent| parent.join(&filename),
+        );
+    sidecar
+        .to_str()
+        .map(str::to_owned)
+        .with_context(|| format!("sidecar path is not valid UTF-8: {}", sidecar.display()))
+}
+
+pub(crate) fn validate_token_ids_for_model(
+    token_ids: &[u32],
+    model_vocab_size: usize,
+    context: &str,
+) -> anyhow::Result<()> {
+    if let Some((index, token_id)) = token_ids
+        .iter()
+        .enumerate()
+        .find(|(_, token_id)| **token_id as usize >= model_vocab_size)
+    {
+        anyhow::bail!(
+            "{context} token ID {token_id} at position {index} is outside model vocabulary size {model_vocab_size}"
+        );
+    }
     Ok(())
 }
 
@@ -214,6 +312,61 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn loader_with_arch(architecture: &str) -> GgufLoader {
+        GgufLoader {
+            metadata: HashMap::from([(
+                "general.architecture".to_string(),
+                GgufValue::Str(architecture.to_string()),
+            )]),
+            tensors: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn generation_architecture_is_detected_and_aliases_match_engine_families() {
+        assert_eq!(
+            resolve_generation_architecture("auto", &loader_with_arch("qwen2")).unwrap(),
+            "qwen3"
+        );
+        assert_eq!(
+            resolve_generation_architecture("auto", &loader_with_arch("gemma3")).unwrap(),
+            "gemma4"
+        );
+        assert!(resolve_generation_architecture("gpt2", &loader_with_arch("llama")).is_err());
+    }
+
+    #[test]
+    fn sidecar_paths_replace_only_the_final_extension() {
+        assert_eq!(
+            sidecar_path("runs.npy/logits.npy", "_metadata.json").unwrap(),
+            "runs.npy/logits_metadata.json"
+        );
+        assert_eq!(
+            sidecar_path("logits", "_metadata.json").unwrap(),
+            "logits_metadata.json"
+        );
+    }
+
+    #[test]
+    fn token_ids_are_checked_against_model_rows() {
+        validate_token_ids_for_model(&[0, 2], 3, "prompt").unwrap();
+        assert!(validate_token_ids_for_model(&[3], 3, "prompt").is_err());
+    }
+
+    #[test]
+    fn embedded_tokenizer_is_loaded_and_hashed_without_a_temporary_file() {
+        let resolved = ResolvedTokenizer::EmbeddedLlama;
+        assert_eq!(resolved.identity(), "embedded:tokenizer.json");
+        assert_eq!(resolved.sha256().unwrap().len(), 64);
+        assert!(resolved.load().unwrap().vocab_size() > 0);
+    }
+}
+
 fn cpu_features_detected() -> Vec<&'static str> {
     let mut features = Vec::new();
 
@@ -281,6 +434,7 @@ pub(crate) fn token_audit_json(
         "token_ids": token_ids,
         "token_count": token_ids.len(),
         "offsets": offsets,
+        "offset_unit": "unicode_character_index",
         "encode_with_offsets_matches_encode": true,
     })
 }

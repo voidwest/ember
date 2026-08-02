@@ -13,12 +13,14 @@ use cli_generation::{
     bail_dump_layers_unsupported, demo_mode, dump_last_logits, dump_layers_gemma4,
     interactive_mode, run_single_prompt, run_single_prompt_with_experiment,
 };
-use cli_probe::{run_probe_jobs, LogitDumpConfig};
+use cli_probe::{run_probe_jobs, TensorDumpConfig};
 
+use anyhow::Context;
 use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
 use cli_support::{
     build_run_manifest, default_tokenizer_for_arch, gguf_metadata_json, parse_max_seq_len,
-    parse_temperature, parse_top_k, parse_top_p, resolve_tokenizer, write_json_file,
+    parse_temperature, parse_top_k, parse_top_p, resolve_generation_architecture,
+    resolve_tokenizer, write_json_file,
 };
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
@@ -26,7 +28,7 @@ use ember::experiments::{
     ActivationPatch, ActivationStats, CaptureSink, ExperimentRunner, ModelContext, ModelFamily,
     PatchTarget, ZeroLayerOutput, ZeroLayerOutputSpec,
 };
-use ember::extraction::{sha256_file, ExecutionBackendName};
+use ember::extraction::{sha256_file_result, ExecutionBackendName};
 use ember::loader::load_gguf;
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
@@ -87,8 +89,8 @@ pub(crate) struct Args {
     #[arg(short, long)]
     interactive: bool,
 
-    /// model architecture: gpt2, llama, qwen3, or gemma4
-    #[arg(long, default_value = "gpt2", value_parser = ["gpt2", "llama", "qwen3", "gemma4"])]
+    /// model architecture override; auto reads general.architecture from GGUF
+    #[arg(long, default_value = "auto", value_parser = ["auto", "gpt2", "llama", "qwen3", "gemma4"])]
     arch: String,
 
     /// run a curated demo that showcases the project with deterministic output and timing
@@ -147,22 +149,35 @@ pub(crate) struct Args {
     #[arg(
         long,
         value_name = "FILE",
-        conflicts_with_all = ["zero_layer_output", "activation_stats"]
+        requires = "patch_target",
+        conflicts_with_all = [
+            "zero_layer_output",
+            "activation_stats",
+            "demo",
+            "interactive",
+            "dump_logits",
+            "dump_layers",
+            "probe"
+        ]
     )]
     activation_patch: Option<String>,
 
     /// patch target LAYER:STAGE:PHASE[:POSITION] for --activation-patch
     /// (repeatable; stage in before-layer, after-attention, after-mlp,
     /// after-layer, before-logits, after-logits)
-    #[arg(long, value_name = "TARGET")]
+    #[arg(long, value_name = "TARGET", requires = "activation_patch")]
     patch_target: Vec<String>,
 
     /// enable execution tracing (ops = per-operation breakdown)
-    #[arg(long, value_parser = ["ops"])]
+    #[arg(
+        long,
+        value_parser = ["ops"],
+        conflicts_with_all = ["demo", "interactive", "dump_logits", "dump_layers", "probe"]
+    )]
     trace: Option<String>,
 
     /// write trace JSON to this path (default: stderr)
-    #[arg(long)]
+    #[arg(long, requires = "trace")]
     trace_out: Option<String>,
 
     /// collect output norms and fingerprints (none = off, summary = L2 norm + fingerprint)
@@ -170,7 +185,7 @@ pub(crate) struct Args {
     trace_values: String,
 
     /// attach system metadata (CPU, governor, threads, commit) to trace report
-    #[arg(long)]
+    #[arg(long, requires = "trace")]
     trace_run_metadata: bool,
 
     /// write last-prompt logits for --prompt to a .npy file and exit
@@ -178,7 +193,7 @@ pub(crate) struct Args {
     dump_logits: Option<String>,
 
     /// dump per-layer hidden states (last prompt token) to a binary file and exit.
-    /// format: f32 flat array, [n_layers * embed_dim], layer-major, native endian.
+    /// format: little-endian f32 flat array, [n_layers * embed_dim], layer-major.
     #[arg(long, conflicts_with_all = ["demo", "interactive", "probe"])]
     dump_layers: Option<String>,
 
@@ -188,7 +203,7 @@ pub(crate) struct Args {
     probe: bool,
 
     /// path to stimuli json for probe mode
-    #[arg(long, default_value = "stimuli/nonce_root_pattern.json")]
+    #[arg(long, default_value = "stimuli/nonce_root_pattern_surface.json")]
     probe_stimuli: String,
 
     /// output path for probe activations (.npy)
@@ -196,7 +211,7 @@ pub(crate) struct Args {
     probe_output: String,
 
     /// prompt template key to read from each stimulus prompts object
-    #[arg(long, default_value = "en_zero")]
+    #[arg(long, default_value = "en_surface_probe")]
     probe_template: String,
 
     /// comma-separated prompt template keys for batch probe extraction
@@ -535,9 +550,26 @@ pub(crate) struct RunMetadata {
     run_manifest: serde_json::Value,
 }
 
+fn validate_tokenizer_model_contract<B: Backend>(
+    backend: &B,
+    model: &impl ForwardModel<B>,
+    tokenizer: &ember::tokenizer::EmberTokenizer,
+) -> anyhow::Result<()> {
+    let model_vocab_size = model.vocab_size(backend);
+    tokenizer.validate_model_vocab(model_vocab_size)?;
+    if tokenizer.vocab_size() != model_vocab_size {
+        log::warn!(
+            "tokenizer exposes {} tokens while the model head has {} rows; padded or reserved model rows may not be decodable",
+            tokenizer.vocab_size(),
+            model_vocab_size
+        );
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    let args = Args::parse();
+    let mut args = Args::parse();
     validate_experiment_options(&args)?;
 
     if let Some(command) = &args.command {
@@ -562,25 +594,31 @@ fn main() -> anyhow::Result<()> {
     // Dispatch to the selected architecture. Generation, demo, and probe paths
     // are generic over `ForwardModel`; interactive mode is still GPT-2-specific.
     let loader = load_gguf(&args.model)?;
+    args.arch = resolve_generation_architecture(&args.arch, &loader)?;
+    validate_experiment_options(&args)?;
     let n_tensors = loader.tensors.len();
     let tokenizer_path = args
         .tokenizer
         .as_deref()
         .unwrap_or_else(|| default_tokenizer_for_arch(&args.arch));
-    let tokenizer_path = resolve_tokenizer(tokenizer_path);
-    let tokenizer_path: &str = tokenizer_path.as_str();
+    let resolved_tokenizer = resolve_tokenizer(tokenizer_path);
+    let tokenizer_path = resolved_tokenizer.identity();
     let record_model_sha256 = args.record_model_sha256
         || args.write_run_manifest.is_some()
         || args.probe
         || args.dump_logits.is_some()
         || args.dump_layers.is_some()
-        || args.capture_activations.is_some();
+        || args.capture_activations.is_some()
+        || args.activation_patch.is_some();
     let model_sha256 = if record_model_sha256 {
-        sha256_file(&args.model)
+        Some(
+            sha256_file_result(&args.model)
+                .with_context(|| format!("failed to hash model '{}'", args.model))?,
+        )
     } else {
         None
     };
-    let tokenizer_sha256 = sha256_file(tokenizer_path);
+    let tokenizer_sha256 = Some(resolved_tokenizer.sha256()?);
     let gguf_metadata = gguf_metadata_json(&loader);
     let run_manifest = build_run_manifest(
         &args,
@@ -605,11 +643,12 @@ fn main() -> anyhow::Result<()> {
         eprintln!("wrote GGUF metadata to {path}");
     }
     let backend = CpuBackend;
-    let tokenizer = ember::tokenizer::EmberTokenizer::from_file(tokenizer_path)?;
+    let tokenizer = resolved_tokenizer.load()?;
 
     match args.arch.as_str() {
         "gpt2" => {
             let model = Gpt2::from_loader(loader)?;
+            validate_tokenizer_model_contract(&backend, &model, &tokenizer)?;
             log::info!("loading model from {}", args.model);
             log::info!("loaded {} tensors", n_tensors);
             log::info!("model built");
@@ -643,7 +682,7 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    LogitDumpConfig {
+                    TensorDumpConfig {
                         prompt: &args.prompt,
                         output_path: path,
                         max_seq_len: args.max_seq_len,
@@ -656,7 +695,14 @@ fn main() -> anyhow::Result<()> {
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
             } else if args.probe {
-                run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
+                run_probe_jobs(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args,
+                    tokenizer_path,
+                    &run_metadata,
+                )?;
             } else {
                 run_single_prompt(&backend, &model, &tokenizer, &args)?;
             }
@@ -664,6 +710,7 @@ fn main() -> anyhow::Result<()> {
         "llama" | "qwen3" => {
             use ember::llama::Llama;
             let model = Llama::from_loader_with_max_seq_len(loader, args.max_seq_len)?;
+            validate_tokenizer_model_contract(&backend, &model, &tokenizer)?;
             log::info!("loading model from {}", args.model);
             log::info!("loaded {} tensors", n_tensors);
             log::info!("model built (llama)");
@@ -686,7 +733,7 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    LogitDumpConfig {
+                    TensorDumpConfig {
                         prompt: &args.prompt,
                         output_path: path,
                         max_seq_len: args.max_seq_len,
@@ -699,7 +746,14 @@ fn main() -> anyhow::Result<()> {
             } else if args.dump_layers.is_some() {
                 bail_dump_layers_unsupported(&args.arch)?;
             } else if args.probe {
-                run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
+                run_probe_jobs(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args,
+                    tokenizer_path,
+                    &run_metadata,
+                )?;
             } else if args.zero_layer_output.is_some()
                 || args.activation_stats.is_some()
                 || args.activation_patch.is_some()
@@ -716,6 +770,10 @@ fn main() -> anyhow::Result<()> {
                     &args.arch,
                     model.n_layers(),
                     model.embed_dim(),
+                )
+                .with_provenance(
+                    run_metadata.model_sha256.as_deref(),
+                    run_metadata.tokenizer_sha256.as_deref(),
                 );
                 let mut runner = build_experiment_runner(&args, &run_metadata, &model_context)?;
                 let runner = runner
@@ -736,6 +794,7 @@ fn main() -> anyhow::Result<()> {
         "gemma4" => {
             use ember::gemma4::Gemma4;
             let model = Gemma4::from_loader(loader)?;
+            validate_tokenizer_model_contract(&backend, &model, &tokenizer)?;
             log::info!("loading model from {}", args.model);
             log::info!("loaded {} tensors", n_tensors);
             log::info!("model built (gemma4)");
@@ -758,7 +817,7 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    LogitDumpConfig {
+                    TensorDumpConfig {
                         prompt: &args.prompt,
                         output_path: path,
                         max_seq_len: args.max_seq_len,
@@ -773,12 +832,25 @@ fn main() -> anyhow::Result<()> {
                     &backend,
                     &model,
                     &tokenizer,
-                    &args.prompt,
-                    path,
-                    args.max_seq_len,
+                    TensorDumpConfig {
+                        prompt: &args.prompt,
+                        output_path: path,
+                        max_seq_len: args.max_seq_len,
+                        model_path: &args.model,
+                        arch: &args.arch,
+                        tokenizer_path,
+                        run_metadata: &run_metadata,
+                    },
                 )?;
             } else if args.probe {
-                run_probe_jobs(&backend, &model, &tokenizer, &args, &run_metadata)?;
+                run_probe_jobs(
+                    &backend,
+                    &model,
+                    &tokenizer,
+                    &args,
+                    tokenizer_path,
+                    &run_metadata,
+                )?;
             } else if args.zero_layer_output.is_some()
                 || args.activation_stats.is_some()
                 || args.activation_patch.is_some()
@@ -790,6 +862,10 @@ fn main() -> anyhow::Result<()> {
                     &args.arch,
                     model.n_layers(),
                     model.embed_dim(),
+                )
+                .with_provenance(
+                    run_metadata.model_sha256.as_deref(),
+                    run_metadata.tokenizer_sha256.as_deref(),
                 );
                 let mut runner = build_experiment_runner(&args, &run_metadata, &model_context)?;
                 let runner = runner

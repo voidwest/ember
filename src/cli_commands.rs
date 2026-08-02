@@ -2,7 +2,8 @@
 //! Split out of `main.rs` (2026-08-01) to keep the CLI dispatcher thin.
 
 use crate::cli_support::{
-    default_tokenizer_for_arch, gguf_metadata_json, parse_layers_list, write_json_file,
+    default_tokenizer_for_arch, gguf_metadata_json, parse_layers_list,
+    resolve_generation_architecture, validate_token_ids_for_model, write_json_file,
 };
 use crate::{
     rayon_current_num_threads, Args, BenchDecodeCommand, BenchLifecycleCommand,
@@ -14,13 +15,14 @@ use ember::backend::Backend;
 use ember::backend::CpuBackend;
 use ember::extraction::{
     canonical_config_toml, git_commit, load_input_samples, pooling_for_mode, run_dir,
-    sample_order_hash, select_token_positions, sha256_file, source_field_for_position,
+    sample_order_hash, select_token_positions, sha256_file_result, source_field_for_position,
     source_span_for_position, source_value_for_position, stable_bytes_hash, stable_prompt_hash,
     unix_timestamp, validate_artifact_contract, ArtifactManifest, BackendMetadata,
     ExecutionBackendName, ExtractionConfig, LogitsArtifact, ModelMetadata, PositionArtifactRecord,
-    SampleArtifactRecord, TensorContract, TokenizationArtifactRecord, ARTIFACT_CONTRACT_VERSION,
-    ARTIFACT_LAYOUT, CHECKSUMS_FILENAME, CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME,
-    POSITIONS_FILENAME, REPORT_FILENAME, SAMPLES_FILENAME, TOKENIZATION_FILENAME,
+    RunDirectoryTransaction, SampleArtifactRecord, TensorContract, TokenizationArtifactRecord,
+    TokenizerMetadata, ARTIFACT_CONTRACT_VERSION, ARTIFACT_LAYOUT, CHECKSUMS_FILENAME,
+    CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME,
+    SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
 use ember::loader::load_gguf;
 use ember::model::ForwardModel;
@@ -38,12 +40,97 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
+struct DecodeProfileSession {
+    active: bool,
+}
+
+impl DecodeProfileSession {
+    fn start() -> Self {
+        ember::decode_profile::start();
+        Self { active: true }
+    }
+
+    fn finish(&mut self) -> Vec<ember::decode_profile::DecodeOpSummary> {
+        self.active = false;
+        ember::decode_profile::finish()
+    }
+}
+
+impl Drop for DecodeProfileSession {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = ember::decode_profile::finish();
+        }
+    }
+}
+
 pub(crate) fn validate_experiment_options(args: &Args) -> anyhow::Result<()> {
+    if args.trace.is_none() {
+        if args.trace_out.is_some() {
+            anyhow::bail!("--trace-out requires --trace ops");
+        }
+        if args.trace_values != "none" {
+            anyhow::bail!("--trace-values summary requires --trace ops");
+        }
+        if args.trace_run_metadata {
+            anyhow::bail!("--trace-run-metadata requires --trace ops");
+        }
+    }
+
+    if args.command.is_some()
+        && (args.demo
+            || args.interactive
+            || args.probe
+            || args.dump_logits.is_some()
+            || args.dump_layers.is_some()
+            || args.trace.is_some()
+            || args.dump_gguf_metadata.is_some()
+            || args.write_run_manifest.is_some()
+            || args.record_model_sha256)
+    {
+        anyhow::bail!("top-level generation/output options cannot be combined with a subcommand");
+    }
+
+    if !args.probe
+        && (args.probe_templates.is_some()
+            || args.probe_positions.is_some()
+            || args.probe_output_dir.is_some()
+            || args.probe_limit.is_some()
+            || args.probe_stimuli != "stimuli/nonce_root_pattern_surface.json"
+            || args.probe_output != "data/activations.npy"
+            || args.probe_template != "en_surface_probe"
+            || args.probe_position != "last"
+            || args.probe_output_prefix != "probe"
+            || args.probe_generate_tokens != 16)
+    {
+        anyhow::bail!("probe-specific options require --probe");
+    }
+
+    let produces_reproducibility_output = args.probe
+        || args.dump_logits.is_some()
+        || args.dump_layers.is_some()
+        || args.write_run_manifest.is_some()
+        || args.capture_activations.is_some()
+        || args.activation_patch.is_some()
+        || args.activation_stats.is_some();
+    if args.record_model_sha256 && !produces_reproducibility_output {
+        anyhow::bail!(
+            "--record-model-sha256 requires an artifact-producing mode such as --probe, --dump-logits, --dump-layers, or --write-run-manifest"
+        );
+    }
+
     let option = if args.zero_layer_output.is_some() {
         "--zero-layer-output"
     } else if args.activation_stats.is_some() {
         "--activation-stats"
+    } else if args.activation_patch.is_some() {
+        "--activation-patch"
+    } else if args.capture_activations.is_some() {
+        "--capture-activations"
     } else {
+        if !args.patch_target.is_empty() {
+            anyhow::bail!("--patch-target requires --activation-patch");
+        }
         return Ok(());
     };
     if args.command.is_some() {
@@ -51,6 +138,9 @@ pub(crate) fn validate_experiment_options(args: &Args) -> anyhow::Result<()> {
     }
     if args.arch == "gpt2" {
         anyhow::bail!("{option} is supported for --arch llama, qwen3, and gemma4, not gpt2");
+    }
+    if args.activation_patch.is_some() && args.patch_target.is_empty() {
+        anyhow::bail!("--activation-patch requires at least one --patch-target");
     }
     Ok(())
 }
@@ -119,7 +209,7 @@ pub(crate) fn run_native_logits_reference_command(
 
     let loader = load_gguf(&config.model_path)?;
     let gguf_metadata = gguf_metadata_json(&loader);
-    let arch = infer_extraction_architecture(&config, &gguf_metadata);
+    let arch = infer_extraction_architecture(&config, &gguf_metadata)?;
     let tokenizer_path = config
         .tokenizer_path
         .as_deref()
@@ -162,9 +252,11 @@ where
     <CpuBackend as Backend>::Error: Send + Sync + 'static,
 {
     let samples = load_input_samples(config)?;
-    let run_dir = run_dir(config);
-    fs::create_dir_all(&run_dir)
-        .with_context(|| format!("failed to create run directory: {}", run_dir.display()))?;
+    let model_vocab_size = model.vocab_size(backend);
+    tokenizer.validate_model_vocab(model_vocab_size)?;
+    let final_run_dir = run_dir(config);
+    let transaction = RunDirectoryTransaction::begin(&final_run_dir)?;
+    let run_dir = transaction.staging_path().to_path_buf();
 
     let config_path = run_dir.join(CONFIG_FILENAME);
     let manifest_path = run_dir.join(MANIFEST_FILENAME);
@@ -203,6 +295,11 @@ where
         if token_ids.is_empty() {
             anyhow::bail!("sample '{}' produced no token IDs", sample.sample_id);
         }
+        validate_token_ids_for_model(
+            &token_ids,
+            model_vocab_size,
+            &format!("sample '{}'", sample.sample_id),
+        )?;
         let token_count = token_ids.len();
         ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
         let selected_token_positions = select_token_positions(
@@ -222,11 +319,8 @@ where
 
         let mut cache = model.create_cache(backend, context_limit);
         let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
-        let shape = backend.shape(&logits);
-        if shape.len() != 2 || shape[0] != 1 {
-            anyhow::bail!("expected last logits shape [1, vocab], got {:?}", shape);
-        }
-        let vocab_size = shape[1];
+        validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
+        let vocab_size = model_vocab_size;
         if logits_writer.is_none() {
             logits_writer = Some(NpyStreamWriter::create(
                 &path_to_string(&logits_path)?,
@@ -267,6 +361,7 @@ where
                 token_count,
                 prompt_hash: prompt_hash.clone(),
                 offsets,
+                offset_unit: "unicode_character_index".to_string(),
             },
         )?;
         tokenization_writer.write_all(b"\n")?;
@@ -285,7 +380,7 @@ where
                     &sample.prompt,
                     config,
                     sample.word_value.as_deref(),
-                ),
+                )?,
             },
         )?;
         positions_writer.write_all(b"\n")?;
@@ -306,13 +401,35 @@ where
         "not_research_output": true,
         "purpose": "native logits reference smoke test",
     });
+    let model_file_size_bytes = Some(
+        fs::metadata(&config.model_path)
+            .with_context(|| format!("failed to stat model: {}", config.model_path))?
+            .len(),
+    );
+    let model_sha256 = if config.record_model_sha256 {
+        Some(sha256_file_result(&config.model_path)?)
+    } else {
+        None
+    };
+    let tokenizer_path = config
+        .tokenizer_path
+        .as_deref()
+        .unwrap_or_else(|| default_tokenizer_for_arch(arch));
+    let tokenizer_file_size_bytes = fs::metadata(tokenizer_path)
+        .with_context(|| format!("failed to stat tokenizer: {tokenizer_path}"))?
+        .len();
+    let tokenizer_metadata = TokenizerMetadata {
+        path: tokenizer_path.to_string(),
+        file_size_bytes: tokenizer_file_size_bytes,
+        sha256: sha256_file_result(tokenizer_path)?,
+    };
     let manifest = ArtifactManifest {
         schema_version: ARTIFACT_CONTRACT_VERSION,
         layout: ARTIFACT_LAYOUT.to_string(),
         artifact_kind: "ember_hidden_states".to_string(),
         created_at_unix: unix_timestamp(),
         run_id: config.run_id.clone(),
-        run_dir: path_to_string(&run_dir)?,
+        run_dir: path_to_string(&final_run_dir)?,
         config_path: CONFIG_FILENAME.to_string(),
         samples_path: SAMPLES_FILENAME.to_string(),
         tokenization_path: TOKENIZATION_FILENAME.to_string(),
@@ -343,14 +460,11 @@ where
             n_layers: model.n_layers(),
             embed_dim: model.embed_dim(),
             max_seq_len: model_context_limit,
-            file_size_bytes: fs::metadata(&config.model_path).ok().map(|m| m.len()),
-            sha256: if config.record_model_sha256 {
-                sha256_file(&config.model_path)
-            } else {
-                None
-            },
+            file_size_bytes: model_file_size_bytes,
+            sha256: model_sha256,
             gguf_metadata,
         },
+        tokenizer: Some(tokenizer_metadata),
         backend: BackendMetadata {
             name: ExecutionBackendName::Native.as_str().to_string(),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -387,21 +501,27 @@ where
     fs::write(&report_path, serde_json::to_string_pretty(&report)?)?;
 
     let mut checksums = BTreeMap::new();
-    checksum_insert(&mut checksums, &config_path, CONFIG_FILENAME);
-    checksum_insert(&mut checksums, &manifest_path, MANIFEST_FILENAME);
-    checksum_insert(&mut checksums, &samples_path, SAMPLES_FILENAME);
-    checksum_insert(&mut checksums, &tokenization_path, TOKENIZATION_FILENAME);
-    checksum_insert(&mut checksums, &positions_path, POSITIONS_FILENAME);
-    checksum_insert(&mut checksums, &report_path, REPORT_FILENAME);
-    checksum_insert(&mut checksums, &logits_path, LOGITS_FILENAME);
+    checksum_insert(&mut checksums, &config_path, CONFIG_FILENAME)?;
+    checksum_insert(&mut checksums, &manifest_path, MANIFEST_FILENAME)?;
+    checksum_insert(&mut checksums, &samples_path, SAMPLES_FILENAME)?;
+    checksum_insert(&mut checksums, &tokenization_path, TOKENIZATION_FILENAME)?;
+    checksum_insert(&mut checksums, &positions_path, POSITIONS_FILENAME)?;
+    checksum_insert(&mut checksums, &report_path, REPORT_FILENAME)?;
+    checksum_insert(&mut checksums, &logits_path, LOGITS_FILENAME)?;
     fs::write(&checksums_path, serde_json::to_string_pretty(&checksums)?)?;
+
+    validate_artifact_contract(&run_dir, true)?;
+    let published_run_dir = transaction.commit()?;
 
     eprintln!(
         "native logits reference wrote {} sample(s) to {}",
         samples.len(),
-        run_dir.display()
+        published_run_dir.display()
     );
-    eprintln!("logits: {}", logits_path.display());
+    eprintln!(
+        "logits: {}",
+        published_run_dir.join(LOGITS_FILENAME).display()
+    );
     Ok(())
 }
 
@@ -415,12 +535,10 @@ pub(crate) fn checksum_insert(
     checksums: &mut BTreeMap<String, String>,
     absolute_path: &Path,
     relative: &str,
-) {
-    if let Some(path) = absolute_path.to_str() {
-        if let Some(sum) = sha256_file(path) {
-            checksums.insert(relative.to_string(), sum);
-        }
-    }
+) -> anyhow::Result<()> {
+    let sum = sha256_file_result(absolute_path)?;
+    checksums.insert(relative.to_string(), sum);
+    Ok(())
 }
 
 pub(crate) fn run_validate_run_command(command: &ValidateRunCommand) -> anyhow::Result<()> {
@@ -714,7 +832,7 @@ pub(crate) fn build_extraction_config(
 pub(crate) fn run_native_extract_command(config: &ExtractionConfig) -> anyhow::Result<()> {
     let loader = load_gguf(&config.model_path)?;
     let gguf_metadata = gguf_metadata_json(&loader);
-    let arch = infer_extraction_architecture(config, &gguf_metadata);
+    let arch = infer_extraction_architecture(config, &gguf_metadata)?;
     let tokenizer_path = config
         .tokenizer_path
         .as_deref()
@@ -757,11 +875,15 @@ where
     let mut backend = NativeModelBackend::new(
         model,
         tokenizer,
+        config
+            .tokenizer_path
+            .as_deref()
+            .unwrap_or_else(|| default_tokenizer_for_arch(arch)),
         &config.model_path,
         Some(arch.to_string()),
         gguf_metadata,
         config.record_model_sha256,
-    );
+    )?;
     let output = run_extraction_with_backend(&mut backend, config)?;
     eprintln!(
         "wrote {} sample(s) to {} with {} layer shard(s)",
@@ -798,17 +920,33 @@ pub(crate) fn run_llama_cpp_external_extract_command(
 pub(crate) fn infer_extraction_architecture(
     config: &ExtractionConfig,
     gguf_metadata: &serde_json::Value,
-) -> String {
-    config
-        .architecture
-        .clone()
-        .or_else(|| {
-            gguf_metadata
-                .get("general.architecture")
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "gpt2".to_string())
+) -> anyhow::Result<String> {
+    let declared = gguf_metadata
+        .get("general.architecture")
+        .and_then(serde_json::Value::as_str)
+        .context("GGUF is missing string metadata general.architecture")?;
+    let detected = match declared {
+        "gpt2" => "gpt2",
+        "llama" => "llama",
+        "qwen2" | "qwen3" => "qwen3",
+        "gemma3" | "gemma4" => "gemma4",
+        other => anyhow::bail!("unsupported GGUF architecture '{other}'"),
+    };
+    if let Some(requested) = config.architecture.as_deref() {
+        let requested = match requested {
+            "qwen2" | "qwen3" => "qwen3",
+            "gemma3" | "gemma4" => "gemma4",
+            "gpt2" => "gpt2",
+            "llama" => "llama",
+            other => anyhow::bail!("unsupported extraction architecture '{other}'"),
+        };
+        if requested != detected {
+            anyhow::bail!(
+                "extraction architecture '{requested}' conflicts with GGUF general.architecture='{declared}'"
+            );
+        }
+    }
+    Ok(detected.to_string())
 }
 
 pub(crate) fn effective_context_limit<B: Backend>(
@@ -842,6 +980,41 @@ pub(crate) fn ensure_sequence_fits(
     Ok(requested)
 }
 
+fn validate_logits_tensor<B: Backend>(
+    backend: &B,
+    logits: &B::Tensor,
+    expected_rows: usize,
+    expected_vocab_size: usize,
+    require_finite: bool,
+) -> anyhow::Result<()> {
+    let shape = backend.shape(logits);
+    if shape != [expected_rows, expected_vocab_size] {
+        anyhow::bail!(
+            "logits shape mismatch: expected [{expected_rows}, {expected_vocab_size}], got {shape:?}"
+        );
+    }
+    let expected_len = expected_rows
+        .checked_mul(expected_vocab_size)
+        .context("logits shape product overflow")?;
+    let values = backend.data(logits);
+    if values.len() != expected_len {
+        anyhow::bail!(
+            "logits payload has {} values, expected {expected_len}",
+            values.len()
+        );
+    }
+    if require_finite {
+        if let Some((index, value)) = values
+            .iter()
+            .enumerate()
+            .find(|(_, value)| !value.is_finite())
+        {
+            anyhow::bail!("logits contain non-finite value {value} at flat index {index}");
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn run_bench_decode_command(command: &BenchDecodeCommand) -> anyhow::Result<()> {
     if command.tokens == 0 {
         anyhow::bail!("--tokens must be greater than 0");
@@ -851,8 +1024,14 @@ pub(crate) fn run_bench_decode_command(command: &BenchDecodeCommand) -> anyhow::
     }
 
     let loader = load_gguf(&command.model)?;
+    let architecture = resolve_generation_architecture(&command.arch, &loader)?;
+    if command.profile_operators && !matches!(architecture.as_str(), "llama" | "qwen3") {
+        anyhow::bail!(
+            "--profile-operators is currently supported only for llama/qwen3 decode paths"
+        );
+    }
     let backend = CpuBackend;
-    match command.arch.as_str() {
+    match architecture.as_str() {
         "gpt2" => {
             let model = Gpt2::from_loader(loader)?;
             bench_decode_model(&backend, &model, command)
@@ -921,7 +1100,10 @@ pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> an
 
     let tokenizer_init_start = Instant::now();
     let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&command.tokenizer)?;
+    let model_vocab_size = model.config.vocab_size;
+    tokenizer.validate_model_vocab(model_vocab_size)?;
     let prompt_tokens = tokenizer.encode(&command.prompt)?;
+    validate_token_ids_for_model(&prompt_tokens, model_vocab_size, "lifecycle prompt")?;
     let tokenizer_init_ns = tokenizer_init_start.elapsed().as_nanos() as u64;
     if prompt_tokens.len() < 2 {
         anyhow::bail!(
@@ -984,10 +1166,17 @@ pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> an
     )?;
     let prefill_ns = prefill_start.elapsed().as_nanos() as u64;
     recorder.capture("prefill_complete")?;
+    validate_logits_tensor(&backend, &logits, 1, model_vocab_size, true)?;
 
     let first_token_start = Instant::now();
-    let vocab_size = backend.shape(&logits)[1];
-    let first_token = argmax_token(&backend.data(&logits)[..vocab_size]) as u32;
+    let vocab_size = model_vocab_size;
+    let first_token = u32::try_from(argmax_token(&backend.data(&logits)[..vocab_size]))
+        .context("first lifecycle token ID exceeds u32")?;
+    if !tokenizer.contains_token_id(first_token) {
+        anyhow::bail!(
+            "model selected token ID {first_token}, but the lifecycle tokenizer cannot decode it"
+        );
+    }
     let first_token_selection_ns = first_token_start.elapsed().as_nanos() as u64;
     let mut generated = Vec::with_capacity(command.tokens);
     generated.push(first_token);
@@ -1027,7 +1216,16 @@ pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> an
             &mut cache,
             prompt_tokens.len() + step,
         )?;
-        let next_token = argmax_token(&backend.data(&logits)[..vocab_size]) as u32;
+        // Keep timed decode limited to its existing argmax scan; shape and
+        // payload length remain checked here, while argmax rejects NaNs.
+        validate_logits_tensor(&backend, &logits, 1, model_vocab_size, false)?;
+        let next_token = u32::try_from(argmax_token(&backend.data(&logits)[..vocab_size]))
+            .context("lifecycle token ID exceeds u32")?;
+        if !tokenizer.contains_token_id(next_token) {
+            anyhow::bail!(
+                "model selected token ID {next_token}, but the lifecycle tokenizer cannot decode it"
+            );
+        }
         generated.push(next_token);
     }
     let decode_ns = decode_start.elapsed().as_nanos() as u64;
@@ -1042,7 +1240,7 @@ pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> an
     let (packed_weights, packed_bytes) = model.packed_decode_summary(selection);
 
     let decode_evaluations = command.tokens.saturating_sub(1);
-    let decode_tokens_per_second = if decode_ns == 0 {
+    let decode_evaluations_per_second = if decode_ns == 0 {
         None
     } else {
         Some(decode_evaluations as f64 * 1_000_000_000.0 / decode_ns as f64)
@@ -1094,7 +1292,7 @@ pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> an
     };
 
     let output = serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "benchmark": "packed_lifecycle",
         "model": command.model,
         "model_file_size_bytes": fs::metadata(&command.model).ok().map(|metadata| metadata.len()),
@@ -1125,7 +1323,7 @@ pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> an
             "whole_process_until_exit_snapshot": whole_process_until_exit_snapshot_ns,
         },
         "decode_evaluations": decode_evaluations,
-        "decode_tokens_per_second": decode_tokens_per_second,
+        "decode_evaluations_per_second": decode_evaluations_per_second,
         "packing": packing_stats,
         "post_pack_eviction": post_pack_eviction_stats,
         "post_prefill_reeviction": post_prefill_eviction_stats,
@@ -1166,6 +1364,13 @@ pub(crate) fn bench_decode_model<B: Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
+    let model_vocab_size = model.vocab_size(backend);
+    if command.token_id as usize >= model_vocab_size {
+        anyhow::bail!(
+            "benchmark token ID {} is outside model vocabulary size {model_vocab_size}",
+            command.token_id
+        );
+    }
     let required_context = command
         .tokens
         .checked_add(1)
@@ -1185,12 +1390,14 @@ where
             ember::decode_profile::pause();
         }
         let mut cache = model.create_cache(backend, required_context);
-        let _ =
+        let prefill_logits =
             model.forward_last_logits_with_cache(backend, &[command.token_id], &mut cache, 0)?;
+        validate_logits_tensor(backend, &prefill_logits, 1, model_vocab_size, true)?;
         if profile_operators {
             ember::decode_profile::resume();
         }
         let start = Instant::now();
+        let mut final_logits = None;
         for position in 0..command.tokens {
             let logits = model.forward_last_logits_with_cache(
                 backend,
@@ -1199,23 +1406,38 @@ where
                 position + 1,
             )?;
             std::hint::black_box(backend.data(&logits));
+            final_logits = Some(logits);
         }
-        Ok(start.elapsed().as_nanos() as u64)
+        let elapsed_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+        validate_logits_tensor(
+            backend,
+            final_logits
+                .as_ref()
+                .expect("positive token count guarantees final logits"),
+            1,
+            model_vocab_size,
+            true,
+        )?;
+        if elapsed_ns == 0 {
+            anyhow::bail!("decode benchmark timer resolution produced a zero-duration sample");
+        }
+        Ok(elapsed_ns)
     };
 
     for _ in 0..command.warmups {
         run_once(false)?;
     }
-    if command.profile_operators {
-        ember::decode_profile::start();
-    }
+    let mut profile_session = command.profile_operators.then(DecodeProfileSession::start);
     let mut samples_ns = Vec::with_capacity(command.repetitions);
     for _ in 0..command.repetitions {
         samples_ns.push(run_once(command.profile_operators)?);
     }
-    let operator_profile = command
-        .profile_operators
-        .then(ember::decode_profile::finish);
+    let operator_profile = profile_session.as_mut().map(DecodeProfileSession::finish);
+    if operator_profile.as_ref().is_some_and(Vec::is_empty) {
+        anyhow::bail!(
+            "operator profiling produced no events; this model does not use the instrumented packed Q8 decode path"
+        );
+    }
     let mut sorted = samples_ns.clone();
     sorted.sort_unstable();
     let median_ns = sorted[sorted.len() / 2];
