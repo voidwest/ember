@@ -19,7 +19,9 @@ use super::{
     ExecutionContext, ExecutionPhase, Experiment, ExperimentError, GenerationContext, LayerContext,
     ModelContext, TensorAccess,
 };
-use crate::artifact::{load_manifest, resolve_unique_record, ActivationStage, CaptureRecord};
+use crate::artifact::{
+    load_manifest, resolve_record_path, resolve_unique_record, ActivationStage, CaptureRecord,
+};
 use core::str::FromStr;
 
 /// One `LAYER:STAGE:PHASE[:POSITION]` patch target.
@@ -116,6 +118,13 @@ struct ResolvedPatch {
 #[derive(Debug)]
 pub struct ActivationPatch {
     source_manifest: String,
+    source_family: String,
+    source_architecture: String,
+    source_layer_count: usize,
+    source_hidden_size: usize,
+    source_model_sha256: Option<String>,
+    source_tokenizer_sha256: Option<String>,
+    source_input_token_ids: Vec<u32>,
     patches: Vec<ResolvedPatch>,
 }
 
@@ -150,14 +159,15 @@ impl ActivationPatch {
                     record.index, record.byte_order
                 )));
             }
-            let tensor_path = manifest.base_dir().join(&record.path);
+            let tensor_path =
+                resolve_record_path(source_manifest, &record.path).map_err(ExperimentError::new)?;
             let tensor_path = tensor_path.to_str().ok_or_else(|| {
                 ExperimentError::new("patch source tensor path is not valid UTF-8")
             })?;
             let (shape, values) = crate::npy::read_npy_2d(tensor_path).map_err(|e| {
                 ExperimentError::new(format!(
                     "failed to read patch source tensor '{}': {e}",
-                    manifest.base_dir().join(&record.path).display()
+                    tensor_path
                 ))
             })?;
             if shape.len() != 2 {
@@ -184,6 +194,13 @@ impl ActivationPatch {
         }
         Ok(Self {
             source_manifest: source_manifest.to_string(),
+            source_family: manifest.model.family,
+            source_architecture: manifest.model.architecture,
+            source_layer_count: manifest.model.layer_count,
+            source_hidden_size: manifest.model.hidden_size,
+            source_model_sha256: manifest.model.sha256,
+            source_tokenizer_sha256: manifest.model.tokenizer_sha256,
+            source_input_token_ids: manifest.run.input_token_ids,
             patches,
         })
     }
@@ -201,14 +218,17 @@ impl ActivationPatch {
             if patch.target.layer != ctx.layer_index || patch.target.phase != ctx.execution.phase {
                 continue;
             }
+            patch.hook_reached = true;
             if let Some(position) = patch.target.position {
-                if ctx.execution.token_position() != Some(position) {
+                let matches_position = match ctx.execution.phase {
+                    ExecutionPhase::Prefill => ctx.execution.start_position == position,
+                    ExecutionPhase::Decode => ctx.execution.token_position() == Some(position),
+                };
+                if !matches_position {
                     continue;
                 }
             }
-            patch.hook_reached = true;
-            let live = tensor.values_mut();
-            if live.len() != patch.values.len() {
+            if tensor.shape() != &patch.shape {
                 return Err(ExperimentError::new(format!(
                     "patch target {}: live tensor shape {:?} does not match source shape {:?} \
                      (same model and prompt required)",
@@ -217,6 +237,7 @@ impl ActivationPatch {
                     patch.shape
                 )));
             }
+            let live = tensor.values_mut();
             live.copy_from_slice(&patch.values);
             patch.applied += 1;
         }
@@ -252,6 +273,10 @@ impl Experiment for ActivationPatch {
     fn arguments(&self) -> serde_json::Value {
         serde_json::json!({
             "source_manifest": self.source_manifest,
+            "source_family": self.source_family,
+            "source_architecture": self.source_architecture,
+            "source_model_sha256": self.source_model_sha256,
+            "source_tokenizer_sha256": self.source_tokenizer_sha256,
             "targets": self.patches.iter().map(|patch| {
                 serde_json::json!({
                     "target": patch.target.to_string(),
@@ -264,8 +289,48 @@ impl Experiment for ActivationPatch {
     }
 
     fn on_model_loaded(&mut self, ctx: &ModelContext<'_>) -> Result<(), ExperimentError> {
-        // family validation happens in the runner's caller via the manifest
-        // comparison in new(); here we validate layer range and hidden width.
+        if self.source_family != ctx.family.to_string() {
+            return Err(ExperimentError::new(format!(
+                "patch source family '{}' does not match current model family '{}'",
+                self.source_family, ctx.family
+            )));
+        }
+        if self.source_layer_count != ctx.layer_count || self.source_hidden_size != ctx.hidden_size
+        {
+            return Err(ExperimentError::new(format!(
+                "patch source model dimensions ({} layers, width {}) do not match current model ({} layers, width {})",
+                self.source_layer_count,
+                self.source_hidden_size,
+                ctx.layer_count,
+                ctx.hidden_size
+            )));
+        }
+        match (self.source_model_sha256.as_deref(), ctx.model_sha256) {
+            (Some(source), Some(current)) if source.eq_ignore_ascii_case(current) => {}
+            (Some(source), Some(current)) => {
+                return Err(ExperimentError::new(format!(
+                    "patch source model SHA-256 {source} does not match current model {current}"
+                )))
+            }
+            _ => {
+                return Err(ExperimentError::new(
+                    "activation patching requires model SHA-256 provenance on both source and current run",
+                ))
+            }
+        }
+        match (self.source_tokenizer_sha256.as_deref(), ctx.tokenizer_sha256) {
+            (Some(source), Some(current)) if source.eq_ignore_ascii_case(current) => {}
+            (Some(source), Some(current)) => {
+                return Err(ExperimentError::new(format!(
+                    "patch source tokenizer SHA-256 {source} does not match current tokenizer {current}"
+                )))
+            }
+            _ => {
+                return Err(ExperimentError::new(
+                    "activation patching requires tokenizer SHA-256 provenance on both source and current run",
+                ))
+            }
+        }
         for patch in &self.patches {
             if patch.target.layer >= ctx.layer_count {
                 return Err(ExperimentError::new(format!(
@@ -277,12 +342,28 @@ impl Experiment for ActivationPatch {
                     ctx.layer_count
                 )));
             }
-            if patch.shape[1] != ctx.hidden_size {
+            if patch.target.stage != ActivationStage::AfterLogits
+                && patch.shape[1] != ctx.hidden_size
+            {
                 return Err(ExperimentError::new(format!(
                     "patch target {}: source width {} does not match {} hidden size {}",
                     patch.target, patch.shape[1], ctx.family, ctx.hidden_size
                 )));
             }
+        }
+        Ok(())
+    }
+
+    fn before_prefill(&mut self, ctx: &ExecutionContext<'_>) -> Result<(), ExperimentError> {
+        let current = ctx.input_token_ids.ok_or_else(|| {
+            ExperimentError::new("activation patch prefill is missing current input token IDs")
+        })?;
+        if current != self.source_input_token_ids {
+            return Err(ExperimentError::new(format!(
+                "patch source input token IDs do not match current prompt (source {}, current {})",
+                self.source_input_token_ids.len(),
+                current.len()
+            )));
         }
         Ok(())
     }
@@ -368,6 +449,21 @@ mod tests {
     use crate::artifact::{DispatchObservation, DispatchPath, ManifestExperiment};
     use crate::experiments::{CaptureSink, ModelFamily, TracingState};
 
+    const MODEL_SHA256: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const TOKENIZER_SHA256: &str =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn patch_model(layer_count: usize, hidden_size: usize) -> ModelContext<'static> {
+        ModelContext::new(
+            ModelFamily::Qwen3,
+            Some("tiny.gguf"),
+            "qwen3",
+            layer_count,
+            hidden_size,
+        )
+        .with_provenance(Some(MODEL_SHA256), Some(TOKENIZER_SHA256))
+    }
+
     fn temp_dir(name: &str) -> std::path::PathBuf {
         let dir =
             std::env::temp_dir().join(format!("ember_patch_test_{}_{name}", std::process::id()));
@@ -393,12 +489,12 @@ mod tests {
             "patch test prompt",
             1,
             serde_json::json!({}),
-            None,
-            None,
+            Some(MODEL_SHA256.to_string()),
+            Some(TOKENIZER_SHA256.to_string()),
             serde_json::json!({}),
         )
         .unwrap();
-        let model = ModelContext::new(ModelFamily::Qwen3, Some("tiny.gguf"), "qwen3", 4, 8);
+        let model = patch_model(4, 8);
         sink.on_model_loaded(&model).unwrap();
 
         let prefill =
@@ -504,25 +600,39 @@ mod tests {
     }
 
     #[test]
-    fn on_model_loaded_rejects_width_mismatch_and_bad_layer() {
+    fn on_model_loaded_rejects_dimension_and_provenance_mismatch() {
         let (manifest, _) = make_source_artifact("load_width");
         let manifest_str = manifest.to_str().unwrap();
         let mut patch =
             ActivationPatch::new(manifest_str, vec!["1:after-mlp:prefill".parse().unwrap()])
                 .unwrap();
 
-        // width 8 vs hidden size 4
-        let model = ModelContext::new(ModelFamily::Qwen3, None, "qwen3", 4, 4);
+        let model = patch_model(4, 4);
         let error = patch.on_model_loaded(&model).unwrap_err();
-        assert!(error.to_string().contains("width 8"), "{}", error);
+        assert!(error.to_string().contains("model dimensions"), "{}", error);
 
-        // layer 1 exists here, but layer 3 is out of range for 2 layers
         let mut patch2 =
             ActivationPatch::new(manifest_str, vec!["1:after-mlp:prefill".parse().unwrap()])
                 .unwrap();
-        let model2 = ModelContext::new(ModelFamily::Qwen3, None, "qwen3", 1, 8);
+        let model2 = ModelContext::new(ModelFamily::Qwen3, Some("different.gguf"), "qwen3", 4, 8)
+            .with_provenance(
+                Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
+                Some(TOKENIZER_SHA256),
+            );
         let error = patch2.on_model_loaded(&model2).unwrap_err();
-        assert!(error.to_string().contains("does not exist"), "{}", error);
+        assert!(error.to_string().contains("model SHA-256"), "{}", error);
+
+        let mut patch3 =
+            ActivationPatch::new(manifest_str, vec!["1:after-mlp:prefill".parse().unwrap()])
+                .unwrap();
+        let model3 = ModelContext::new(ModelFamily::Qwen3, None, "qwen3", 4, 8)
+            .with_provenance(Some(MODEL_SHA256), None);
+        let error = patch3.on_model_loaded(&model3).unwrap_err();
+        assert!(
+            error.to_string().contains("tokenizer SHA-256 provenance"),
+            "{}",
+            error
+        );
 
         std::fs::remove_dir_all(manifest.parent().unwrap()).ok();
     }
@@ -539,7 +649,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let model = ModelContext::new(ModelFamily::Qwen3, None, "qwen3", 4, 8);
+        let model = patch_model(4, 8);
         patch.on_model_loaded(&model).unwrap();
 
         // decode at position 2: applied (values 20.0)
@@ -601,7 +711,7 @@ mod tests {
         let mut patch =
             ActivationPatch::new(manifest_str, vec!["1:after-mlp:prefill".parse().unwrap()])
                 .unwrap();
-        let model = ModelContext::new(ModelFamily::Qwen3, None, "qwen3", 4, 8);
+        let model = patch_model(4, 8);
         patch.on_model_loaded(&model).unwrap();
 
         // wrong row count (different prompt length)
@@ -630,7 +740,7 @@ mod tests {
         let mut patch =
             ActivationPatch::new(manifest_str, vec!["1:after-mlp:prefill".parse().unwrap()])
                 .unwrap();
-        let model = ModelContext::new(ModelFamily::Qwen3, None, "qwen3", 4, 8);
+        let model = patch_model(4, 8);
         patch.on_model_loaded(&model).unwrap();
 
         let decode = LayerContext::new(
@@ -645,6 +755,40 @@ mod tests {
             GenerationContext::new(model, 2, 1, 1, TracingState::Disabled, &[1, 2], &[3]);
         let error = patch.on_generation_complete(&generation).unwrap_err();
         assert!(error.to_string().contains("never applied"), "{}", error);
+
+        std::fs::remove_dir_all(manifest.parent().unwrap()).ok();
+    }
+
+    #[test]
+    fn before_prefill_requires_identical_input_tokens() {
+        let (manifest, source_ids) = make_source_artifact("prompt_identity");
+        let mut patch = ActivationPatch::new(
+            manifest.to_str().unwrap(),
+            vec!["1:after-mlp:prefill".parse().unwrap()],
+        )
+        .unwrap();
+        let model = patch_model(4, 8);
+        patch.on_model_loaded(&model).unwrap();
+
+        let matching = ExecutionContext::new_with_token_ids(
+            model,
+            ExecutionPhase::Prefill,
+            0,
+            &source_ids,
+            TracingState::Disabled,
+        );
+        patch.before_prefill(&matching).unwrap();
+
+        let different_ids = [1, 99];
+        let different = ExecutionContext::new_with_token_ids(
+            model,
+            ExecutionPhase::Prefill,
+            0,
+            &different_ids,
+            TracingState::Disabled,
+        );
+        let error = patch.before_prefill(&different).unwrap_err();
+        assert!(error.to_string().contains("do not match current prompt"));
 
         std::fs::remove_dir_all(manifest.parent().unwrap()).ok();
     }

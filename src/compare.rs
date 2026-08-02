@@ -5,11 +5,11 @@
 //! Duplicate keys on either side are a hard error — alignment never guesses.
 //! Records present on only one side are reported as missing/extra.
 //!
-//! Determinism: the only field ignored in comparison is `created_at_unix`
-//! (explicitly nondeterministic provenance). Everything else either compares
-//! exactly or is reported. JSON output is stable for identical inputs.
+//! Determinism: `created_at_unix` and the capture output directory are ignored;
+//! both describe storage/run location rather than execution semantics.
+//! Everything else either compares exactly or is reported.
 
-use crate::artifact::{load_manifest, ActivationManifest, CaptureRecord};
+use crate::artifact::{load_manifest, resolve_record_path, ActivationManifest, CaptureRecord};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -17,15 +17,18 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CompareStatus {
-    /// Every aligned record is bit-identical; no missing or extra records.
+    /// Every aligned record and all deterministic provenance are identical.
     Identical,
+    /// Tensor payloads are bit-identical, but run or record provenance differs.
+    TensorIdentical,
     /// At least one aligned record differs, or records are missing/extra.
     Differs,
     /// One side has duplicate alignment keys; comparison refused.
     AlignmentError,
 }
 
-/// Run-level field comparison (informational; does not drive status).
+/// Run-level field comparison. Provenance differences drive the distinction
+/// between `identical` and `tensor-identical`.
 #[derive(Debug, Clone, Serialize)]
 pub struct RunComparison {
     pub model_sha256_match: Option<bool>,
@@ -37,6 +40,8 @@ pub struct RunComparison {
     pub generated_token_ids_match: bool,
     pub model_family_left: String,
     pub model_family_right: String,
+    pub provenance_match: bool,
+    pub provenance_differences: Vec<String>,
 }
 
 /// One aligned record comparison.
@@ -80,7 +85,7 @@ pub struct CompareReport {
     pub missing_right: Vec<String>,
     pub records: Vec<RecordComparison>,
     /// Fields intentionally excluded from comparison.
-    pub ignored_fields: [&'static str; 1],
+    pub ignored_fields: [&'static str; 2],
 }
 
 /// Alignment key for one record.
@@ -146,7 +151,12 @@ fn compare_manifests(
         generated_token_ids_match: left.run.generated_token_ids == right.run.generated_token_ids,
         model_family_left: left.model.family.clone(),
         model_family_right: right.model.family.clone(),
+        provenance_match: false,
+        provenance_differences: Vec::new(),
     };
+    let mut run = run;
+    run.provenance_differences = provenance_differences(left, right);
+    run.provenance_match = run.provenance_differences.is_empty();
 
     let mut records = Vec::with_capacity(keys.len());
     let mut missing_left = Vec::new();
@@ -192,8 +202,11 @@ fn compare_manifests(
         records.push(comparison);
     }
 
-    let status = if missing_left.is_empty() && missing_right.is_empty() && differing == 0 {
+    let tensors_identical = missing_left.is_empty() && missing_right.is_empty() && differing == 0;
+    let status = if tensors_identical && run.provenance_match {
         CompareStatus::Identical
+    } else if tensors_identical {
+        CompareStatus::TensorIdentical
     } else {
         CompareStatus::Differs
     };
@@ -210,7 +223,7 @@ fn compare_manifests(
         missing_left,
         missing_right,
         records,
-        ignored_fields: ["created_at_unix"],
+        ignored_fields: ["created_at_unix", "capture_selection.output_dir"],
     })
 }
 
@@ -243,14 +256,31 @@ fn compare_record(
 ) -> RecordComparison {
     let shape_match = Some(left.shape == right.shape);
     let dtype_match = Some(left.dtype == right.dtype);
-    let manifest_sha256_match = Some(left.sha256 == right.sha256);
+    let manifest_sha256_match = Some(left.sha256.eq_ignore_ascii_case(&right.sha256));
 
     let left_values = load_record_values(left_path, left);
     let right_values = load_record_values(right_path, right);
 
-    let (shape_left, shape_right) = (Some(left.shape), Some(right.shape));
+    let (shape_left, shape_right) = (
+        left_values
+            .as_ref()
+            .ok()
+            .and_then(|loaded| loaded.shape.as_slice().try_into().ok()),
+        right_values
+            .as_ref()
+            .ok()
+            .and_then(|loaded| loaded.shape.as_slice().try_into().ok()),
+    );
     let exact_equal = match (&left_values, &right_values) {
-        (Ok(left), Ok(right)) => left.values == right.values,
+        (Ok(left), Ok(right)) => {
+            left.shape == right.shape
+                && left.values.len() == right.values.len()
+                && left
+                    .values
+                    .iter()
+                    .zip(&right.values)
+                    .all(|(a, b)| a.to_bits() == b.to_bits())
+        }
         _ => false,
     };
     let metrics = match (&left_values, &right_values) {
@@ -276,10 +306,10 @@ fn compare_record(
         max_abs_diff: metrics.as_ref().map(|m| m.max_abs_diff),
         mean_abs_diff: metrics.as_ref().map(|m| m.mean_abs_diff),
         rms_diff: metrics.as_ref().map(|m| m.rms_diff),
-        cosine: metrics.as_ref().map(|m| m.cosine),
+        cosine: metrics.as_ref().and_then(|m| m.cosine),
         l2_left: metrics.as_ref().map(|m| m.l2_left),
         l2_right: metrics.as_ref().map(|m| m.l2_right),
-        rel_l2_error: metrics.as_ref().map(|m| m.rel_l2_error),
+        rel_l2_error: metrics.as_ref().and_then(|m| m.rel_l2_error),
     }
 }
 
@@ -313,11 +343,7 @@ struct LoadedRecord {
 }
 
 fn load_record_values(manifest_path: &str, record: &CaptureRecord) -> Result<LoadedRecord, String> {
-    let base = std::path::Path::new(manifest_path)
-        .parent()
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-    let path = base.join(&record.path);
+    let path = resolve_record_path(manifest_path, &record.path)?;
     let path = path
         .to_str()
         .ok_or_else(|| format!("record path is not valid UTF-8: {}", path.display()))?;
@@ -326,14 +352,73 @@ fn load_record_values(manifest_path: &str, record: &CaptureRecord) -> Result<Loa
     Ok(LoadedRecord { shape, values })
 }
 
+fn provenance_differences(left: &ActivationManifest, right: &ActivationManifest) -> Vec<String> {
+    let mut left = serde_json::to_value(left).expect("activation manifest serializes");
+    let mut right = serde_json::to_value(right).expect("activation manifest serializes");
+    normalize_provenance(&mut left);
+    normalize_provenance(&mut right);
+    let mut differences = Vec::new();
+    collect_json_differences("", &left, &right, &mut differences);
+    differences
+}
+
+fn normalize_provenance(value: &mut serde_json::Value) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    object.remove("created_at_unix");
+    if let Some(selection) = object
+        .get_mut("capture_selection")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        selection.remove("output_dir");
+    }
+}
+
+fn collect_json_differences(
+    path: &str,
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+    differences: &mut Vec<String>,
+) {
+    match (left, right) {
+        (serde_json::Value::Object(left), serde_json::Value::Object(right)) => {
+            let keys = left
+                .keys()
+                .chain(right.keys())
+                .collect::<std::collections::BTreeSet<_>>();
+            for key in keys {
+                let child = if path.is_empty() {
+                    key.to_string()
+                } else {
+                    format!("{path}.{key}")
+                };
+                match (left.get(key), right.get(key)) {
+                    (Some(left), Some(right)) => {
+                        collect_json_differences(&child, left, right, differences);
+                    }
+                    _ => differences.push(child),
+                }
+            }
+        }
+        (serde_json::Value::Array(left), serde_json::Value::Array(right)) => {
+            if left != right {
+                differences.push(path.to_string());
+            }
+        }
+        _ if left != right => differences.push(path.to_string()),
+        _ => {}
+    }
+}
+
 struct TensorMetrics {
     max_abs_diff: f64,
     mean_abs_diff: f64,
     rms_diff: f64,
-    cosine: f64,
+    cosine: Option<f64>,
     l2_left: f64,
     l2_right: f64,
-    rel_l2_error: f64,
+    rel_l2_error: Option<f64>,
 }
 
 fn tensor_metrics(left: &[f32], right: &[f32]) -> TensorMetrics {
@@ -364,16 +449,18 @@ fn tensor_metrics(left: &[f32], right: &[f32]) -> TensorMetrics {
             .zip(right.iter())
             .map(|(a, b)| (*a as f64) * (*b as f64))
             .sum();
-        dot / (l2_left * l2_right)
+        Some((dot / (l2_left * l2_right)).clamp(-1.0, 1.0))
+    } else if l2_left == 0.0 && l2_right == 0.0 {
+        Some(1.0)
     } else {
-        0.0
+        None
     };
     let rel_l2_error = if l2_left > 0.0 {
-        sum_sq_diff.sqrt() / l2_left
+        Some(sum_sq_diff.sqrt() / l2_left)
     } else if sum_sq_diff == 0.0 {
-        0.0
+        Some(0.0)
     } else {
-        f64::INFINITY
+        None
     };
     TensorMetrics {
         max_abs_diff,
@@ -413,13 +500,20 @@ pub fn render_human(report: &CompareReport) -> String {
         report.missing_right.len()
     ));
     lines.push(format!(
-        "run: model_sha256_match={:?} tokenizer_sha256_match={:?} prompt_hash_match={:?} input_ids_match={} generated_ids_match={}",
+        "run: provenance_match={} model_sha256_match={:?} tokenizer_sha256_match={:?} prompt_hash_match={:?} input_ids_match={} generated_ids_match={}",
+        report.run.provenance_match,
         report.run.model_sha256_match,
         report.run.tokenizer_sha256_match,
         report.run.prompt_hash_match,
         report.run.input_token_ids_match,
         report.run.generated_token_ids_match
     ));
+    if !report.run.provenance_differences.is_empty() {
+        lines.push(format!(
+            "provenance differences: {}",
+            report.run.provenance_differences.join(", ")
+        ));
+    }
     for record in &report.records {
         if !record.present_left || !record.present_right {
             let side = if !record.present_left {
@@ -451,7 +545,6 @@ pub fn render_human(report: &CompareReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::ActivationStage;
     use crate::experiments::{
         CaptureSink, ExecutionContext, ExecutionPhase, GenerationContext, ModelContext,
         ModelFamily, TensorAccess, TracingState,
@@ -484,7 +577,9 @@ mod tests {
                 "compare test prompt",
                 1,
                 serde_json::json!({}),
-                Some("model-hash-a".to_string()),
+                Some(
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                ),
                 None,
                 serde_json::json!({}),
             )
@@ -574,10 +669,11 @@ mod tests {
     }
 
     #[test]
-    fn exact_equality_reports_identical() {
+    fn exact_tensor_equality_distinguishes_run_provenance() {
         let (left, right) = identical_artifacts("exact");
         let report = compare_artifacts(left.to_str().unwrap(), right.to_str().unwrap()).unwrap();
-        assert_eq!(report.status, CompareStatus::Identical);
+        assert_eq!(report.status, CompareStatus::TensorIdentical);
+        assert!(!report.run.provenance_match);
         assert_eq!(report.aligned_record_count, 2);
         assert_eq!(report.identical_record_count, 2);
         assert_eq!(report.differing_record_count, 0);
@@ -589,25 +685,30 @@ mod tests {
     }
 
     #[test]
+    fn same_artifact_reports_fully_identical() {
+        let mut artifact = ArtifactBuilder::new("same_artifact", 2);
+        artifact.record_prefill(vec![1.0; 16]);
+        artifact.record_decode(2, vec![2.0; 8]);
+        let path = artifact.finalize();
+        let report = compare_artifacts(path.to_str().unwrap(), path.to_str().unwrap()).unwrap();
+        assert_eq!(report.status, CompareStatus::Identical);
+        assert!(report.run.provenance_match);
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    #[test]
     fn one_element_perturbation_detected() {
-        let (left, right) = identical_artifacts("perturb");
-        // perturb one value in the right prefill record
-        let right_manifest = load_manifest(right.to_str().unwrap()).unwrap();
-        let prefill = right_manifest
-            .records
-            .iter()
-            .find(|r| r.phase == "prefill" && r.stage == ActivationStage::AfterMlp)
-            .unwrap()
-            .clone();
-        let tensor_path = right.parent().unwrap().join(&prefill.path);
-        let (shape, mut values) = crate::npy::read_npy_2d(tensor_path.to_str().unwrap()).unwrap();
-        values[0] += 0.5;
-        crate::npy::write_npy_2d(
-            tensor_path.to_str().unwrap(),
-            &values,
-            &[shape[0], shape[1]],
-        )
-        .unwrap();
+        let mut left_builder = ArtifactBuilder::new("perturb_left", 2);
+        left_builder.record_prefill(vec![1.0; 16]);
+        left_builder.record_decode(2, vec![2.0; 8]);
+        let left = left_builder.finalize();
+
+        let mut right_builder = ArtifactBuilder::new("perturb_right", 2);
+        let mut perturbed = vec![1.0; 16];
+        perturbed[0] += 0.5;
+        right_builder.record_prefill(perturbed);
+        right_builder.record_decode(2, vec![2.0; 8]);
+        let right = right_builder.finalize();
 
         let report = compare_artifacts(left.to_str().unwrap(), right.to_str().unwrap()).unwrap();
         assert_eq!(report.status, CompareStatus::Differs);
@@ -649,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn dtype_mismatch_reported() {
+    fn invalid_dtype_is_rejected_during_manifest_validation() {
         let (left, right) = identical_artifacts("dtype");
         // hand-edit the right manifest's dtype
         let right_manifest_path = right.clone();
@@ -663,14 +764,8 @@ mod tests {
         )
         .unwrap();
 
-        let report = compare_artifacts(left.to_str().unwrap(), right.to_str().unwrap()).unwrap();
-        assert_eq!(report.status, CompareStatus::Differs);
-        let prefill = report
-            .records
-            .iter()
-            .find(|r| r.phase == "prefill" && r.stage == "after-mlp")
-            .unwrap();
-        assert_eq!(prefill.dtype_match, Some(false));
+        let error = compare_artifacts(left.to_str().unwrap(), right.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("little-endian f32"), "{error}");
         std::fs::remove_dir_all(left.parent().unwrap()).ok();
         std::fs::remove_dir_all(right.parent().unwrap()).ok();
     }
@@ -717,7 +812,7 @@ mod tests {
         let (_, right) = identical_artifacts("dup2");
         let error =
             compare_artifacts(broken_path.to_str().unwrap(), right.to_str().unwrap()).unwrap_err();
-        assert!(error.contains("ambiguous record alignment"), "{}", error);
+        assert!(error.contains("duplicate capture record"), "{}", error);
         std::fs::remove_dir_all(left.parent().unwrap()).ok();
         std::fs::remove_dir_all(right.parent().unwrap()).ok();
     }

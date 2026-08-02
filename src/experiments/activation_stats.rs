@@ -3,8 +3,6 @@ use super::{
 };
 use crate::trace::compute_tensor_values;
 use serde::Serialize;
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 const EXPERIMENT_NAME: &str = "activation-stats";
@@ -128,28 +126,16 @@ impl ActivationStats {
             },
             records: &self.records,
         };
-        let file = File::create(&self.output_path).map_err(|error| {
-            ExperimentError::new(format!(
-                "could not create activation statistics artifact '{}': {error}",
-                self.output_path.display()
-            ))
-        })?;
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, &artifact).map_err(|error| {
+        let mut bytes = serde_json::to_vec_pretty(&artifact).map_err(|error| {
             ExperimentError::new(format!(
                 "could not serialize activation statistics artifact '{}': {error}",
                 self.output_path.display()
             ))
         })?;
-        writer.write_all(b"\n").map_err(|error| {
+        bytes.push(b'\n');
+        crate::atomic_file::atomic_write(&self.output_path, &bytes).map_err(|error| {
             ExperimentError::new(format!(
-                "could not finish activation statistics artifact '{}': {error}",
-                self.output_path.display()
-            ))
-        })?;
-        writer.flush().map_err(|error| {
-            ExperimentError::new(format!(
-                "could not flush activation statistics artifact '{}': {error}",
+                "could not atomically write activation statistics artifact '{}': {error}",
                 self.output_path.display()
             ))
         })

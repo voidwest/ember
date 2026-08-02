@@ -17,6 +17,9 @@ use crate::artifact::{
     DispatchObservation, DispatchPath, ManifestExperiment, ManifestModel, ManifestRun,
 };
 use crate::extraction::{git_commit, stable_prompt_hash, unix_timestamp};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// One buffered record awaiting finalize.
 struct PendingRecord {
@@ -28,6 +31,14 @@ struct PendingRecord {
     shape: [usize; 2],
     values: Vec<f32>,
     dispatch: DispatchPath,
+}
+
+struct StagingCleanup(std::path::PathBuf);
+
+impl Drop for StagingCleanup {
+    fn drop(&mut self) {
+        std::fs::remove_dir_all(&self.0).ok();
+    }
 }
 
 /// Selective activation capture for one run.
@@ -42,6 +53,7 @@ pub struct CaptureSink {
     gguf_metadata: serde_json::Value,
     model: Option<ManifestModel>,
     records: Vec<PendingRecord>,
+    captured_bytes: usize,
     truncated: bool,
     finalized: bool,
     ember_version: &'static str,
@@ -81,6 +93,7 @@ impl CaptureSink {
             gguf_metadata,
             model: None,
             records: Vec::new(),
+            captured_bytes: 0,
             truncated: false,
             finalized: false,
             ember_version: env!("CARGO_PKG_VERSION"),
@@ -125,7 +138,10 @@ impl CaptureSink {
             layer_count: ctx.layer_count,
             hidden_size: ctx.hidden_size,
             sha256: self.model_sha256.clone(),
-            file_size_bytes: None,
+            file_size_bytes: ctx
+                .model_identifier
+                .and_then(|path| std::fs::metadata(path).ok())
+                .map(|metadata| metadata.len()),
             tokenizer_sha256: self.tokenizer_sha256.clone(),
             gguf: serde_json::json!({
                 "general.architecture": gguf.get("general.architecture"),
@@ -171,6 +187,19 @@ impl CaptureSink {
             return Ok(());
         }
         let [rows, columns] = *tensor.shape();
+        let record_bytes = tensor
+            .values()
+            .len()
+            .checked_mul(core::mem::size_of::<f32>())
+            .ok_or_else(|| ExperimentError::new("capture tensor byte size overflow"))?;
+        let next_bytes = self
+            .captured_bytes
+            .checked_add(record_bytes)
+            .ok_or_else(|| ExperimentError::new("capture buffered byte count overflow"))?;
+        if self.selection.max_bytes > 0 && next_bytes > self.selection.max_bytes {
+            self.truncated = true;
+            return Ok(());
+        }
         self.records.push(PendingRecord {
             phase,
             stage,
@@ -181,6 +210,7 @@ impl CaptureSink {
             values: tensor.values().to_vec(),
             dispatch,
         });
+        self.captured_bytes = next_bytes;
         Ok(())
     }
 
@@ -303,16 +333,42 @@ impl CaptureSink {
                 "capture finalize called more than once".to_string(),
             ));
         }
-        self.finalized = true;
         let model = self
             .model
             .clone()
             .ok_or_else(|| ExperimentError::new("capture finalized before model load"))?;
         let output_dir = self.selection.output_dir.clone();
-        let tensors_dir = output_dir.join("tensors");
-        std::fs::create_dir_all(&tensors_dir).map_err(|e| {
+        std::fs::create_dir_all(&output_dir).map_err(|e| {
             ExperimentError::new(format!(
                 "failed to create capture output dir '{}': {e}",
+                output_dir.display()
+            ))
+        })?;
+        let published_tensors = output_dir.join("tensors");
+        let published_manifest = output_dir.join("manifest.json");
+        if published_tensors.exists() || published_manifest.exists() {
+            return Err(ExperimentError::new(format!(
+                "capture output '{}' already contains an artifact; refusing to overwrite",
+                output_dir.display()
+            )));
+        }
+        let staging_dir = output_dir.join(format!(
+            ".ember-capture-staging-{}-{}-{}",
+            std::process::id(),
+            unix_timestamp(),
+            STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&staging_dir).map_err(|e| {
+            ExperimentError::new(format!(
+                "failed to create capture staging dir '{}': {e}",
+                staging_dir.display()
+            ))
+        })?;
+        let _cleanup = StagingCleanup(staging_dir.clone());
+        let tensors_dir = staging_dir.join("tensors");
+        std::fs::create_dir(&tensors_dir).map_err(|e| {
+            ExperimentError::new(format!(
+                "failed to create capture tensor staging dir '{}': {e}",
                 tensors_dir.display()
             ))
         })?;
@@ -336,7 +392,9 @@ impl CaptureSink {
             .map_err(|e| {
                 ExperimentError::new(format!("failed to write '{}': {e}", path.display()))
             })?;
-            let sha256 = crate::extraction::sha256_file(&path).unwrap_or_default();
+            let sha256 = crate::extraction::sha256_file_result(&path).map_err(|e| {
+                ExperimentError::new(format!("failed to hash '{}': {e}", path.display()))
+            })?;
             let (l2_norm, abs_max) = tensor_stats(&pending.values);
             records.push(CaptureRecord {
                 index,
@@ -384,7 +442,7 @@ impl CaptureSink {
             truncated: self.truncated,
             created_at_unix: unix_timestamp(),
         };
-        let manifest_path = output_dir.join("manifest.json");
+        let manifest_path = staging_dir.join("manifest.json");
         let text = serde_json::to_string_pretty(&manifest).map_err(|e| {
             ExperimentError::new(format!("failed to serialize capture manifest: {e}"))
         })?;
@@ -394,13 +452,35 @@ impl CaptureSink {
                 manifest_path.display()
             ))
         })?;
+        crate::artifact::load_manifest(
+            manifest_path
+                .to_str()
+                .ok_or_else(|| ExperimentError::new("capture manifest path is not valid UTF-8"))?,
+        )
+        .map_err(|e| {
+            ExperimentError::new(format!("capture artifact self-validation failed: {e}"))
+        })?;
+        std::fs::rename(&tensors_dir, &published_tensors).map_err(|e| {
+            ExperimentError::new(format!(
+                "failed to publish capture tensors to '{}': {e}",
+                published_tensors.display()
+            ))
+        })?;
+        if let Err(error) = std::fs::rename(&manifest_path, &published_manifest) {
+            std::fs::remove_dir_all(&published_tensors).ok();
+            return Err(ExperimentError::new(format!(
+                "failed to publish capture manifest to '{}': {error}",
+                published_manifest.display()
+            )));
+        }
+        self.finalized = true;
         eprintln!(
             "capture: wrote {} record(s) to {} (truncated={})",
             record_count,
             output_dir.display(),
             self.truncated
         );
-        Ok(manifest_path)
+        Ok(published_manifest)
     }
 }
 
@@ -459,6 +539,7 @@ mod tests {
             gguf_metadata: serde_json::json!({}),
             model: None,
             records: Vec::new(),
+            captured_bytes: 0,
             truncated: false,
             finalized: false,
             ember_version: "test",
@@ -487,6 +568,7 @@ mod tests {
             phase,
             token_positions: Vec::new(),
             max_records: 0,
+            max_bytes: 0,
             omit_prompt_text: false,
             config_hash: None,
         }
@@ -618,15 +700,13 @@ max_records = 8
         ));
         sink.on_model_loaded(&model_context(4, 8)).unwrap();
         let prefill = execution(ExecutionPhase::Prefill, 0, 3);
-        let mut prefill_values = [
-            1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
-        ];
-        let prefill_tensor = TensorAccess::new(3, 4, &mut prefill_values);
+        let mut prefill_values: Vec<f32> = (1..=24).map(|value| value as f32).collect();
+        let prefill_tensor = TensorAccess::new(3, 8, &mut prefill_values);
         sink.after_mlp(&prefill, 0, &prefill_tensor, DispatchPath::Generic)
             .unwrap();
         let decode = execution(ExecutionPhase::Decode, 3, 1);
-        let mut decode_values = [0.5f32; 4];
-        let decode_tensor = TensorAccess::new(1, 4, &mut decode_values);
+        let mut decode_values = [0.5f32; 8];
+        let decode_tensor = TensorAccess::new(1, 8, &mut decode_values);
         sink.after_mlp(&decode, 0, &decode_tensor, DispatchPath::Fast)
             .unwrap();
 
@@ -667,8 +747,8 @@ max_records = 8
         let tensor_path = manifest.base_dir().join(&manifest.records[0].path);
         assert!(tensor_path.exists());
         let (shape, values) = crate::npy::read_npy_2d(tensor_path.to_str().unwrap()).unwrap();
-        assert_eq!(shape, vec![3, 4]);
-        assert_eq!(values.len(), 12);
+        assert_eq!(shape, vec![3, 8]);
+        assert_eq!(values.len(), 24);
 
         // determinism: same records -> same hashes, names, and l2 norms
         let mut sink2 = make_sink(make_selection(
@@ -677,15 +757,13 @@ max_records = 8
             CapturePhase::Both,
         ));
         sink2.on_model_loaded(&model_context(4, 8)).unwrap();
-        let mut pv = [
-            1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
-        ];
-        let pt = TensorAccess::new(3, 4, &mut pv);
+        let mut pv: Vec<f32> = (1..=24).map(|value| value as f32).collect();
+        let pt = TensorAccess::new(3, 8, &mut pv);
         sink2
             .after_mlp(&prefill, 0, &pt, DispatchPath::Generic)
             .unwrap();
-        let mut dv = [0.5f32; 4];
-        let dt = TensorAccess::new(1, 4, &mut dv);
+        let mut dv = [0.5f32; 8];
+        let dt = TensorAccess::new(1, 8, &mut dv);
         sink2
             .after_mlp(&decode, 0, &dt, DispatchPath::Fast)
             .unwrap();

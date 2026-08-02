@@ -1,9 +1,11 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::collections::BTreeMap;
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const ARTIFACT_CONTRACT_VERSION: u32 = 2;
@@ -18,6 +20,8 @@ pub const REPORT_FILENAME: &str = "report.json";
 pub const LAYERS_DIRNAME: &str = "layers";
 pub const LOGITS_FILENAME: &str = "logits.npy";
 pub const LLAMA_CPP_REQUEST_FILENAME: &str = "llama_cpp_request.json";
+
+static RUN_STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -148,10 +152,22 @@ impl ExtractionConfig {
         require_non_empty(&self.input_jsonl_path, "input_jsonl_path")?;
         require_non_empty(&self.output_dir, "output_dir")?;
         require_non_empty(&self.sample_id_field, "sample_id_field")?;
+        let _ = prompt_template_fields(&self.prompt_template)?;
         if let Some(run_id) = &self.run_id {
             require_non_empty(run_id, "run_id")?;
-            if run_id.contains('/') || run_id.contains('\\') {
+            let mut components = Path::new(run_id).components();
+            if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+                || components.next().is_some()
+            {
                 anyhow::bail!("run_id must be a single path component");
+            }
+        }
+        if let Some(architecture) = &self.architecture {
+            if !matches!(
+                architecture.as_str(),
+                "gpt2" | "llama" | "qwen2" | "qwen3" | "gemma3" | "gemma4"
+            ) {
+                anyhow::bail!("unsupported architecture '{architecture}'");
             }
         }
         if self.batch_size != 1 {
@@ -174,11 +190,30 @@ impl ExtractionConfig {
         ) {
             require_non_empty(&self.word_field, "word_field")?;
         }
+        if !self.run_metadata.is_null() && !self.run_metadata.is_object() {
+            anyhow::bail!("run_metadata must be a JSON object or null");
+        }
+        match self.backend {
+            ExecutionBackendName::Native if self.llama_cpp_binary.is_some() => {
+                anyhow::bail!("llama_cpp_binary is ignored by the native backend; remove it")
+            }
+            ExecutionBackendName::LlamaCppExternal => {
+                let binary = self
+                    .llama_cpp_binary
+                    .as_deref()
+                    .context("llama-cpp-external backend requires llama_cpp_binary")?;
+                require_non_empty(binary, "llama_cpp_binary")?;
+            }
+            _ => {}
+        }
         let mut seen_layers = BTreeMap::new();
         for layer in &self.layers {
             if seen_layers.insert(*layer, ()).is_some() {
                 anyhow::bail!("layers must not contain duplicates; repeated layer {layer}");
             }
+        }
+        if !self.layers.windows(2).all(|pair| pair[0] < pair[1]) {
+            anyhow::bail!("layers must be in strictly increasing order");
         }
         Ok(())
     }
@@ -237,6 +272,13 @@ pub struct ModelMetadata {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenizerMetadata {
+    pub path: String,
+    pub file_size_bytes: u64,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactManifest {
     pub schema_version: u32,
     pub layout: String,
@@ -258,6 +300,8 @@ pub struct ArtifactManifest {
     pub dtype: String,
     pub output_format: String,
     pub model: ModelMetadata,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokenizer: Option<TokenizerMetadata>,
     pub backend: BackendMetadata,
     pub extraction_config: ExtractionConfig,
 }
@@ -306,6 +350,8 @@ pub struct TokenizationArtifactRecord {
     pub token_count: usize,
     pub prompt_hash: String,
     pub offsets: Vec<(usize, usize)>,
+    #[serde(default = "default_offset_unit")]
+    pub offset_unit: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,6 +421,10 @@ pub struct LlamaCppExternalRequest {
     pub prompt_hashes_only: bool,
     pub max_seq_len: Option<usize>,
     pub run_metadata: Value,
+    /// Complete, validated configuration used to create this request. Keeping
+    /// this in the request prevents external adapters from having to recreate
+    /// Rust defaults or infer the base output directory from staging paths.
+    pub extraction_config: ExtractionConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -390,6 +440,7 @@ pub fn load_input_samples(config: &ExtractionConfig) -> Result<Vec<ExtractionInp
     let text = fs::read_to_string(&config.input_jsonl_path)
         .with_context(|| format!("failed to read input JSONL: {}", config.input_jsonl_path))?;
     let mut samples = Vec::new();
+    let mut sample_ids = HashSet::new();
     for (line_index, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() {
@@ -412,10 +463,46 @@ pub fn load_input_samples(config: &ExtractionConfig) -> Result<Vec<ExtractionInp
         let sample_id = object
             .get(&config.sample_id_field)
             .and_then(value_to_string)
-            .unwrap_or_else(|| line_index.to_string());
+            .with_context(|| {
+                format!(
+                    "JSONL record {} is missing scalar sample_id_field '{}'",
+                    line_index + 1,
+                    config.sample_id_field
+                )
+            })?;
+        if sample_id.trim().is_empty() {
+            anyhow::bail!(
+                "JSONL record {} has an empty sample ID in field '{}'",
+                line_index + 1,
+                config.sample_id_field
+            );
+        }
+        if !sample_ids.insert(sample_id.clone()) {
+            anyhow::bail!(
+                "duplicate sample ID '{sample_id}' at JSONL record {}",
+                line_index + 1
+            );
+        }
         let prompt = render_prompt(&config.prompt_template, object)
             .with_context(|| format!("failed to render prompt for record {}", line_index + 1))?;
+        if prompt.trim().is_empty() {
+            anyhow::bail!(
+                "rendered prompt for JSONL record {} is empty",
+                line_index + 1
+            );
+        }
         let word_value = object.get(&config.word_field).and_then(value_to_string);
+        if matches!(
+            config.token_position,
+            TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean
+        ) && word_value.as_deref().is_none_or(str::is_empty)
+        {
+            anyhow::bail!(
+                "JSONL record {} is missing non-empty scalar word_field '{}'",
+                line_index + 1,
+                config.word_field
+            );
+        }
         samples.push(ExtractionInputSample {
             input_index: line_index,
             sample_id,
@@ -423,24 +510,160 @@ pub fn load_input_samples(config: &ExtractionConfig) -> Result<Vec<ExtractionInp
             word_value,
         });
     }
+    if samples.is_empty() {
+        anyhow::bail!(
+            "input JSONL contains no samples: {}",
+            config.input_jsonl_path
+        );
+    }
     Ok(samples)
 }
 
 pub fn render_prompt(template: &str, object: &Map<String, Value>) -> Result<String> {
+    let fields = prompt_template_fields(template)?;
     let mut rendered = template.to_string();
-    for (key, value) in object {
-        if let Some(text) = value_to_string(value) {
-            rendered = rendered.replace(&format!("{{{{{key}}}}}"), &text);
-            rendered = rendered.replace(&format!("{{{key}}}"), &text);
-        }
+    for key in fields {
+        let text = object
+            .get(&key)
+            .and_then(value_to_string)
+            .with_context(|| format!("prompt template field '{key}' is missing or not scalar"))?;
+        rendered = rendered.replace(&format!("{{{{{key}}}}}"), &text);
+        rendered = rendered.replace(&format!("{{{key}}}"), &text);
     }
     Ok(rendered)
+}
+
+fn prompt_template_fields(template: &str) -> Result<Vec<String>> {
+    let mut fields = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative_start) = template[cursor..].find('{') {
+        let start = cursor + relative_start;
+        if template[cursor..start].contains('}') {
+            anyhow::bail!("prompt template contains an unmatched closing brace");
+        }
+        let double = template[start..].starts_with("{{");
+        let content_start = start + if double { 2 } else { 1 };
+        let closing = if double { "}}" } else { "}" };
+        let relative_end = template[content_start..]
+            .find(closing)
+            .context("prompt template contains an unmatched opening brace")?;
+        let end = content_start + relative_end;
+        let field = &template[content_start..end];
+        if field.is_empty()
+            || !field.chars().all(|character| {
+                character.is_alphanumeric() || matches!(character, '_' | '-' | '.')
+            })
+        {
+            anyhow::bail!("invalid prompt template field '{{{field}}}'");
+        }
+        if !fields.iter().any(|existing| existing == field) {
+            fields.push(field.to_string());
+        }
+        cursor = end + closing.len();
+    }
+    if template[cursor..].contains('}') {
+        anyhow::bail!("prompt template contains an unmatched closing brace");
+    }
+    Ok(fields)
 }
 
 pub fn run_dir(config: &ExtractionConfig) -> std::path::PathBuf {
     match &config.run_id {
         Some(run_id) => Path::new(&config.output_dir).join(run_id),
         None => Path::new(&config.output_dir).to_path_buf(),
+    }
+}
+
+/// Fresh-run transaction for a complete extraction directory. Artifacts are
+/// built and validated in a sibling staging directory, then one rename
+/// publishes the run. Existing runs are never overwritten because resume is
+/// not implemented by the contract.
+pub struct RunDirectoryTransaction {
+    final_path: std::path::PathBuf,
+    staging_path: std::path::PathBuf,
+    committed: bool,
+}
+
+impl RunDirectoryTransaction {
+    pub fn begin(final_path: impl AsRef<Path>) -> Result<Self> {
+        let final_path = final_path.as_ref().to_path_buf();
+        if final_path.exists() {
+            anyhow::bail!(
+                "extraction run directory already exists and resume is unsupported: {}",
+                final_path.display()
+            );
+        }
+        let parent = final_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "failed to create extraction parent directory: {}",
+                parent.display()
+            )
+        })?;
+        let filename = final_path
+            .file_name()
+            .context("extraction output directory must have a final path component")?
+            .to_string_lossy();
+        for _ in 0..128 {
+            let sequence = RUN_STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let staging_path = parent.join(format!(
+                ".{filename}.ember-staging-{}-{sequence}",
+                std::process::id()
+            ));
+            match fs::create_dir(&staging_path) {
+                Ok(()) => {
+                    return Ok(Self {
+                        final_path,
+                        staging_path,
+                        committed: false,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "failed to create extraction staging directory next to {}",
+                            final_path.display()
+                        )
+                    });
+                }
+            }
+        }
+        anyhow::bail!(
+            "could not allocate a unique staging directory next to {}",
+            final_path.display()
+        )
+    }
+
+    pub fn final_path(&self) -> &Path {
+        &self.final_path
+    }
+
+    pub fn staging_path(&self) -> &Path {
+        &self.staging_path
+    }
+
+    pub fn commit(mut self) -> Result<std::path::PathBuf> {
+        fs::rename(&self.staging_path, &self.final_path).with_context(|| {
+            format!(
+                "failed to publish extraction run '{}' from staging '{}'",
+                self.final_path.display(),
+                self.staging_path.display()
+            )
+        })?;
+        self.committed = true;
+        Ok(self.final_path.clone())
+    }
+}
+
+impl Drop for RunDirectoryTransaction {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_dir_all(&self.staging_path);
+        }
     }
 }
 
@@ -467,15 +690,51 @@ pub fn source_span_for_position(
     prompt: &str,
     config: &ExtractionConfig,
     word_value: Option<&str>,
-) -> Option<[usize; 2]> {
+) -> Result<Option<[usize; 2]>> {
     match config.token_position {
         TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean => {
-            let value = word_value?;
-            let start = prompt.find(value)?;
-            Some([start, start + value.len()])
+            let Some(value) = word_value else {
+                return Ok(None);
+            };
+            Ok(Some(unique_substring_byte_span(prompt, value)?))
         }
-        TokenPositionMode::PromptFinal | TokenPositionMode::FullPromptMean => None,
+        TokenPositionMode::PromptFinal | TokenPositionMode::FullPromptMean => Ok(None),
     }
+}
+
+/// Locate a source value exactly once in a rendered prompt. Byte spans are
+/// retained in artifacts because they can slice UTF-8 text losslessly.
+pub fn unique_substring_byte_span(prompt: &str, needle: &str) -> Result<[usize; 2]> {
+    if needle.is_empty() {
+        anyhow::bail!("cannot locate an empty source value in a prompt");
+    }
+    let mut matches = prompt.match_indices(needle);
+    let (start, _) = matches
+        .next()
+        .with_context(|| format!("could not locate source value '{needle}' in rendered prompt"))?;
+    if matches.next().is_some() {
+        anyhow::bail!(
+            "source value '{needle}' occurs more than once in rendered prompt; token position is ambiguous"
+        );
+    }
+    Ok([start, start + needle.len()])
+}
+
+/// Convert a UTF-8 byte span into the Unicode-character offset unit emitted by
+/// Hugging Face tokenizers.
+pub fn byte_span_to_character_span(text: &str, byte_span: [usize; 2]) -> Result<[usize; 2]> {
+    let [start, end] = byte_span;
+    if start > end
+        || end > text.len()
+        || !text.is_char_boundary(start)
+        || !text.is_char_boundary(end)
+    {
+        anyhow::bail!(
+            "invalid UTF-8 byte span [{start}, {end}] for text with {} bytes",
+            text.len()
+        );
+    }
+    Ok([text[..start].chars().count(), text[..end].chars().count()])
 }
 
 pub fn source_field_for_position(config: &ExtractionConfig) -> Option<String> {
@@ -515,6 +774,18 @@ pub fn validate_artifact_contract(
     allow_missing_layers: bool,
 ) -> Result<ArtifactValidationSummary> {
     let run_dir = run_dir.as_ref();
+    if !run_dir.is_dir() {
+        anyhow::bail!(
+            "artifact run directory does not exist: {}",
+            run_dir.display()
+        );
+    }
+    let canonical_run_dir = fs::canonicalize(run_dir).with_context(|| {
+        format!(
+            "failed to canonicalize run directory: {}",
+            run_dir.display()
+        )
+    })?;
     let manifest_path = run_dir.join(MANIFEST_FILENAME);
     let manifest_text = fs::read_to_string(&manifest_path)
         .with_context(|| format!("failed to read manifest: {}", manifest_path.display()))?;
@@ -535,16 +806,210 @@ pub fn validate_artifact_contract(
             ARTIFACT_LAYOUT
         );
     }
+    if manifest.artifact_kind != "ember_hidden_states" {
+        anyhow::bail!(
+            "manifest artifact_kind '{}' does not match 'ember_hidden_states'",
+            manifest.artifact_kind
+        );
+    }
+    manifest.extraction_config.validate()?;
+    if manifest.model.path != manifest.extraction_config.model_path {
+        anyhow::bail!("manifest model path does not match extraction_config.model_path");
+    }
+    if manifest.backend.name != manifest.extraction_config.backend.as_str() {
+        anyhow::bail!(
+            "manifest backend '{}' does not match extraction config '{}'",
+            manifest.backend.name,
+            manifest.extraction_config.backend.as_str()
+        );
+    }
+    if manifest.sample_count == 0 {
+        anyhow::bail!("manifest sample_count must be greater than zero");
+    }
+    validate_stable_hash(&manifest.sample_order_hash, "manifest sample_order_hash")?;
+    validate_stable_hash(&manifest.config_hash, "manifest config_hash")?;
+    if manifest.dtype != "f32" || manifest.output_format != "npy" {
+        anyhow::bail!(
+            "manifest requires dtype=f32 and output_format=npy, got dtype='{}' output_format='{}'",
+            manifest.dtype,
+            manifest.output_format
+        );
+    }
+    if manifest.backend.name.trim().is_empty() {
+        anyhow::bail!("manifest backend.name is empty");
+    }
+    if let Some(sha256) = &manifest.model.sha256 {
+        validate_sha256(sha256, "manifest model.sha256")?;
+    }
+    let model_path = Path::new(&manifest.model.path);
+    if model_path.is_file() {
+        if let Some(expected_size) = manifest.model.file_size_bytes {
+            let actual_size = fs::metadata(model_path)
+                .with_context(|| format!("failed to stat model: {}", model_path.display()))?
+                .len();
+            if actual_size != expected_size {
+                anyhow::bail!(
+                    "model file size mismatch: manifest {expected_size}, actual {actual_size}"
+                );
+            }
+        }
+        if let Some(expected_sha256) = &manifest.model.sha256 {
+            let actual_sha256 = sha256_file_result(model_path)?;
+            if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+                anyhow::bail!("model SHA-256 does not match the manifest");
+            }
+        }
+    }
+    if let Some(tokenizer) = &manifest.tokenizer {
+        require_non_empty(&tokenizer.path, "manifest tokenizer.path")?;
+        validate_sha256(&tokenizer.sha256, "manifest tokenizer.sha256")?;
+        let tokenizer_path = Path::new(&tokenizer.path);
+        if tokenizer_path.is_file() {
+            let actual_size = fs::metadata(tokenizer_path)
+                .with_context(|| format!("failed to stat tokenizer: {}", tokenizer_path.display()))?
+                .len();
+            if actual_size != tokenizer.file_size_bytes {
+                anyhow::bail!(
+                    "tokenizer file size mismatch: manifest {}, actual {actual_size}",
+                    tokenizer.file_size_bytes
+                );
+            }
+            let actual_sha256 = sha256_file_result(tokenizer_path)?;
+            if !actual_sha256.eq_ignore_ascii_case(&tokenizer.sha256) {
+                anyhow::bail!("tokenizer SHA-256 does not match the manifest");
+            }
+        }
+    }
+    if manifest.tensor_contract.storage != "layer-sharded-npy"
+        || manifest.tensor_contract.dtype != "f32"
+        || manifest.tensor_contract.byte_order != "little-endian"
+        || manifest.tensor_contract.sample_axis != 0
+        || manifest.tensor_contract.hidden_axis != 1
+    {
+        anyhow::bail!("manifest tensor_contract does not match the layer-sharded f32 contract");
+    }
+    if manifest.config_path != CONFIG_FILENAME
+        || manifest.samples_path != SAMPLES_FILENAME
+        || manifest.tokenization_path != TOKENIZATION_FILENAME
+        || manifest.positions_path != POSITIONS_FILENAME
+        || manifest.checksums_path != CHECKSUMS_FILENAME
+        || manifest.report_path != REPORT_FILENAME
+    {
+        anyhow::bail!("manifest core paths do not match the canonical artifact layout");
+    }
     if manifest.tensor_contract.layers.is_empty() && !allow_missing_layers {
         anyhow::bail!("manifest has no layer shards");
     }
 
-    let samples: Vec<SampleArtifactRecord> =
-        read_jsonl_records(run_dir.join(&manifest.samples_path))?;
-    let tokenization: Vec<TokenizationArtifactRecord> =
-        read_jsonl_records(run_dir.join(&manifest.tokenization_path))?;
-    let positions: Vec<PositionArtifactRecord> =
-        read_jsonl_records(run_dir.join(&manifest.positions_path))?;
+    let config_path = resolve_artifact_path(
+        &canonical_run_dir,
+        &manifest.config_path,
+        "manifest config_path",
+    )?;
+    let samples_path = resolve_artifact_path(
+        &canonical_run_dir,
+        &manifest.samples_path,
+        "manifest samples_path",
+    )?;
+    let tokenization_path = resolve_artifact_path(
+        &canonical_run_dir,
+        &manifest.tokenization_path,
+        "manifest tokenization_path",
+    )?;
+    let positions_path = resolve_artifact_path(
+        &canonical_run_dir,
+        &manifest.positions_path,
+        "manifest positions_path",
+    )?;
+    let report_path = resolve_artifact_path(
+        &canonical_run_dir,
+        &manifest.report_path,
+        "manifest report_path",
+    )?;
+    let checksums_path = resolve_artifact_path(
+        &canonical_run_dir,
+        &manifest.checksums_path,
+        "manifest checksums_path",
+    )?;
+    let declared_core_paths = [
+        manifest.config_path.as_str(),
+        MANIFEST_FILENAME,
+        manifest.samples_path.as_str(),
+        manifest.tokenization_path.as_str(),
+        manifest.positions_path.as_str(),
+        manifest.report_path.as_str(),
+        manifest.checksums_path.as_str(),
+    ];
+    if declared_core_paths
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>()
+        .len()
+        != declared_core_paths.len()
+    {
+        anyhow::bail!("manifest core artifact paths must be distinct");
+    }
+
+    let config_bytes = fs::read(&config_path)
+        .with_context(|| format!("failed to read config artifact: {}", config_path.display()))?;
+    let computed_config_hash = stable_bytes_hash(&config_bytes);
+    if computed_config_hash != manifest.config_hash {
+        anyhow::bail!(
+            "config_hash mismatch: manifest {}, computed {}",
+            manifest.config_hash,
+            computed_config_hash
+        );
+    }
+
+    let mut expected_checksum_paths = HashSet::from([
+        manifest.config_path.clone(),
+        MANIFEST_FILENAME.to_string(),
+        manifest.samples_path.clone(),
+        manifest.tokenization_path.clone(),
+        manifest.positions_path.clone(),
+        manifest.report_path.clone(),
+    ]);
+    for layer in &manifest.tensor_contract.layers {
+        if !expected_checksum_paths.insert(layer.path.clone()) {
+            anyhow::bail!("layer path '{}' collides with another artifact", layer.path);
+        }
+    }
+    if let Some(path) = &manifest.logits_path {
+        if !expected_checksum_paths.insert(path.clone()) {
+            anyhow::bail!("logits path '{path}' collides with another artifact");
+        }
+    }
+
+    let checksums_text = fs::read_to_string(&checksums_path)
+        .with_context(|| format!("failed to read checksums: {}", checksums_path.display()))?;
+    let checksums: BTreeMap<String, String> = serde_json::from_str(&checksums_text)
+        .with_context(|| format!("failed to parse checksums: {}", checksums_path.display()))?;
+    for expected_path in &expected_checksum_paths {
+        if !checksums.contains_key(expected_path) {
+            anyhow::bail!("checksums.json is missing required artifact: {expected_path}");
+        }
+    }
+    for (relative_path, expected) in &checksums {
+        if !expected_checksum_paths.contains(relative_path) {
+            anyhow::bail!("checksums.json contains undeclared artifact: {relative_path}");
+        }
+        validate_sha256(expected, &format!("checksum for {relative_path}"))?;
+        let path = resolve_artifact_path(
+            &canonical_run_dir,
+            relative_path,
+            "checksums.json artifact path",
+        )?;
+        let actual = sha256_file_result(&path)?;
+        if !actual.eq_ignore_ascii_case(expected) {
+            anyhow::bail!(
+                "checksum mismatch for {relative_path}: expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    let samples: Vec<SampleArtifactRecord> = read_jsonl_records(&samples_path)?;
+    let tokenization: Vec<TokenizationArtifactRecord> = read_jsonl_records(&tokenization_path)?;
+    let positions: Vec<PositionArtifactRecord> = read_jsonl_records(&positions_path)?;
 
     if samples.len() != manifest.sample_count {
         anyhow::bail!(
@@ -563,6 +1028,7 @@ pub fn validate_artifact_contract(
     }
 
     let mut order = Vec::with_capacity(samples.len());
+    let mut sample_ids = HashSet::new();
     for (index, sample) in samples.iter().enumerate() {
         if sample.schema_version != ARTIFACT_CONTRACT_VERSION {
             anyhow::bail!(
@@ -575,6 +1041,31 @@ pub fn validate_artifact_contract(
                 "samples.jsonl row {index} has sample_index {}",
                 sample.sample_index
             );
+        }
+        if sample.sample_id.trim().is_empty() {
+            anyhow::bail!("samples.jsonl row {index} has an empty sample_id");
+        }
+        if !sample_ids.insert(sample.sample_id.clone()) {
+            anyhow::bail!(
+                "samples.jsonl contains duplicate sample_id '{}'",
+                sample.sample_id
+            );
+        }
+        validate_stable_hash(&sample.prompt_hash, &format!("sample {index} prompt_hash"))?;
+        if manifest.extraction_config.prompt_hashes_only == sample.prompt.is_some() {
+            anyhow::bail!(
+                "sample prompt presence at sample_index {index} does not match prompt_hashes_only={}",
+                manifest.extraction_config.prompt_hashes_only
+            );
+        }
+        if let Some(prompt) = &sample.prompt {
+            let computed = stable_prompt_hash(prompt);
+            if computed != sample.prompt_hash {
+                anyhow::bail!(
+                    "prompt_hash mismatch at sample_index {index}: stored {}, computed {computed}",
+                    sample.prompt_hash
+                );
+            }
         }
         let token_row = &tokenization[index];
         let position_row = &positions[index];
@@ -606,6 +1097,35 @@ pub fn validate_artifact_contract(
                 token_row.token_ids.len()
             );
         }
+        if token_row.token_ids.is_empty() {
+            anyhow::bail!("empty token_ids at sample_index {index}");
+        }
+        if token_row.offset_unit != "unicode_character_index" {
+            anyhow::bail!(
+                "unsupported offset_unit '{}' at sample_index {index}",
+                token_row.offset_unit
+            );
+        }
+        validate_token_offsets(
+            sample.prompt.as_deref(),
+            &token_row.token_ids,
+            &token_row.offsets,
+            index,
+        )?;
+        if position_row.position_mode != manifest.extraction_config.token_position.as_str() {
+            anyhow::bail!(
+                "position_mode '{}' at sample_index {index} does not match extraction config '{}'",
+                position_row.position_mode,
+                manifest.extraction_config.token_position.as_str()
+            );
+        }
+        let expected_pooling = pooling_for_mode(manifest.extraction_config.token_position);
+        if position_row.pooling != expected_pooling {
+            anyhow::bail!(
+                "pooling '{}' at sample_index {index} does not match expected '{expected_pooling}'",
+                position_row.pooling
+            );
+        }
         if position_row.selected_token_positions.is_empty() {
             anyhow::bail!("empty selected_token_positions at sample_index {index}");
         }
@@ -630,6 +1150,63 @@ pub fn validate_artifact_contract(
                 );
             }
         }
+        if !position_row
+            .selected_token_positions
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+        {
+            anyhow::bail!(
+                "selected_token_positions must be strictly increasing at sample_index {index}"
+            );
+        }
+        let expected_source_field = source_field_for_position(&manifest.extraction_config);
+        if position_row.source_field != expected_source_field {
+            anyhow::bail!("source_field mismatch at sample_index {index}");
+        }
+        if matches!(
+            manifest.extraction_config.token_position,
+            TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean
+        ) && position_row
+            .source_value
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            anyhow::bail!("word-based position has no source_value at sample_index {index}");
+        }
+        if let (Some(prompt), Some(source_value)) = (
+            sample.prompt.as_deref(),
+            position_row.source_value.as_deref(),
+        ) {
+            let expected_span = unique_substring_byte_span(prompt, source_value)?;
+            if position_row.source_byte_span != Some(expected_span) {
+                anyhow::bail!("source_byte_span mismatch at sample_index {index}");
+            }
+        }
+        if !matches!(
+            manifest.extraction_config.token_position,
+            TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean
+        ) && (position_row.source_value.is_some() || position_row.source_byte_span.is_some())
+        {
+            anyhow::bail!(
+                "prompt-wide position unexpectedly declares source value/span at sample_index {index}"
+            );
+        }
+        if let Some(prompt) = sample.prompt.as_deref() {
+            let recomputed = select_token_positions(
+                prompt,
+                &token_row.token_ids,
+                &token_row.offsets,
+                &manifest.extraction_config,
+                position_row.source_value.as_deref(),
+            )?;
+            if recomputed != position_row.selected_token_positions {
+                anyhow::bail!(
+                    "selected_token_positions do not reproduce at sample_index {index}: stored {:?}, computed {:?}",
+                    position_row.selected_token_positions,
+                    recomputed
+                );
+            }
+        }
         order.push((sample.sample_id.clone(), sample.prompt_hash.clone()));
     }
 
@@ -642,34 +1219,89 @@ pub fn validate_artifact_contract(
         );
     }
 
+    let mut previous_layer = None;
+    let mut layer_paths = HashSet::new();
     for layer in &manifest.tensor_contract.layers {
-        if layer.shape.len() != 2 {
-            anyhow::bail!("layer {} shape must be rank 2", layer.layer_name);
+        if previous_layer.is_some_and(|previous| layer.layer_index <= previous) {
+            anyhow::bail!("manifest layer indices must be strictly increasing");
         }
-        if layer.shape[0] != manifest.sample_count {
+        previous_layer = Some(layer.layer_index);
+        if layer.layer_index >= manifest.model.n_layers {
             anyhow::bail!(
-                "layer {} first dimension {} does not match sample_count {}",
+                "layer index {} exceeds model n_layers {}",
+                layer.layer_index,
+                manifest.model.n_layers
+            );
+        }
+        if layer.layer_name != layer_name(layer.layer_index)
+            || layer.path != layer_relative_path(layer.layer_index)
+        {
+            anyhow::bail!(
+                "layer {} name/path does not match canonical layer-sharded layout",
+                layer.layer_index
+            );
+        }
+        if !layer_paths.insert(layer.path.clone()) {
+            anyhow::bail!("duplicate layer artifact path '{}'", layer.path);
+        }
+        let expected_shape = vec![manifest.sample_count, manifest.model.embed_dim];
+        if layer.shape != expected_shape {
+            anyhow::bail!(
+                "layer {} shape {:?} does not match expected {:?}",
                 layer.layer_name,
-                layer.shape[0],
-                manifest.sample_count
+                layer.shape,
+                expected_shape
             );
         }
-        let path = run_dir.join(&layer.path);
-        if !path.is_file() {
-            anyhow::bail!("missing layer shard: {}", path.display());
-        }
-    }
-    if let Some(logits_path) = &manifest.logits_path {
-        let path = run_dir.join(logits_path);
-        if !path.is_file() {
+        let path = resolve_artifact_path(&canonical_run_dir, &layer.path, "layer artifact path")?;
+        let (actual_shape, values) = crate::npy::read_npy_2d(
+            path.to_str()
+                .with_context(|| format!("layer path is not UTF-8: {}", path.display()))?,
+        )?;
+        if actual_shape != layer.shape {
             anyhow::bail!(
-                "manifest declares logits but file is missing: {}",
-                path.display()
+                "layer {} npy shape {:?} does not match manifest {:?}",
+                layer.layer_name,
+                actual_shape,
+                layer.shape
             );
         }
+        validate_finite_tensor(&values, &format!("layer {}", layer.layer_name))?;
     }
 
-    let report_path = run_dir.join(&manifest.report_path);
+    match (&manifest.logits_path, &manifest.tensor_contract.logits) {
+        (None, None) => {}
+        (Some(path), Some(logits)) if path == &logits.path => {
+            if logits.shape.len() != 2
+                || logits.shape[0] != manifest.sample_count
+                || logits.shape[1] == 0
+            {
+                anyhow::bail!("invalid logits shape in tensor contract: {:?}", logits.shape);
+            }
+            let resolved = resolve_artifact_path(
+                &canonical_run_dir,
+                path,
+                "manifest logits_path",
+            )?;
+            let (actual_shape, values) = crate::npy::read_npy_2d(
+                resolved.to_str().with_context(|| {
+                    format!("logits path is not UTF-8: {}", resolved.display())
+                })?,
+            )?;
+            if actual_shape != logits.shape {
+                anyhow::bail!(
+                    "logits npy shape {:?} does not match manifest {:?}",
+                    actual_shape,
+                    logits.shape
+                );
+            }
+            validate_finite_tensor(&values, "logits")?;
+        }
+        _ => anyhow::bail!(
+            "manifest logits_path and tensor_contract.logits must either both be absent or declare the same path"
+        ),
+    }
+
     let report_text = fs::read_to_string(&report_path)
         .with_context(|| format!("failed to read report: {}", report_path.display()))?;
     let report: Value = serde_json::from_str(&report_text)
@@ -677,28 +1309,21 @@ pub fn validate_artifact_contract(
     if report.get("status").and_then(Value::as_str) != Some("complete") {
         anyhow::bail!("report status is not complete");
     }
-
-    let checksums_path = run_dir.join(&manifest.checksums_path);
-    let checksums_text = fs::read_to_string(&checksums_path)
-        .with_context(|| format!("failed to read checksums: {}", checksums_path.display()))?;
-    let checksums: BTreeMap<String, String> = serde_json::from_str(&checksums_text)
-        .with_context(|| format!("failed to parse checksums: {}", checksums_path.display()))?;
-    for (relative_path, expected) in checksums {
-        let path = run_dir.join(&relative_path);
-        if !path.is_file() {
-            anyhow::bail!("checksums.json references missing file: {relative_path}");
-        }
-        if let Some(actual) = sha256_file(&path) {
-            if actual != expected {
-                anyhow::bail!(
-                    "checksum mismatch for {relative_path}: expected {expected}, got {actual}"
-                );
-            }
-        }
+    if report.get("schema_version").and_then(Value::as_u64)
+        != Some(u64::from(ARTIFACT_CONTRACT_VERSION))
+        || report.get("layout").and_then(Value::as_str) != Some(ARTIFACT_LAYOUT)
+        || report.get("sample_count").and_then(Value::as_u64)
+            != u64::try_from(manifest.sample_count).ok()
+        || report.get("layer_count").and_then(Value::as_u64)
+            != u64::try_from(manifest.tensor_contract.layers.len()).ok()
+        || report.get("logits_written").and_then(Value::as_bool)
+            != Some(manifest.logits_path.is_some())
+    {
+        anyhow::bail!("report schema/layout/count/logits fields do not match the manifest");
     }
 
     Ok(ArtifactValidationSummary {
-        run_dir: run_dir
+        run_dir: canonical_run_dir
             .to_str()
             .map(str::to_string)
             .unwrap_or_else(|| run_dir.display().to_string()),
@@ -707,6 +1332,99 @@ pub fn validate_artifact_contract(
         logits_present: manifest.logits_path.is_some(),
         sample_order_hash: manifest.sample_order_hash,
     })
+}
+
+fn resolve_artifact_path(
+    canonical_run_dir: &Path,
+    relative_path: &str,
+    field: &str,
+) -> Result<std::path::PathBuf> {
+    require_non_empty(relative_path, field)?;
+    let relative = Path::new(relative_path);
+    if relative.is_absolute()
+        || !relative
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        anyhow::bail!("{field} must be a normalized relative artifact path: {relative_path}");
+    }
+    let joined = canonical_run_dir.join(relative);
+    if !joined.is_file() {
+        anyhow::bail!("{field} is missing: {}", joined.display());
+    }
+    let canonical = fs::canonicalize(&joined)
+        .with_context(|| format!("failed to canonicalize artifact: {}", joined.display()))?;
+    if !canonical.starts_with(canonical_run_dir) {
+        anyhow::bail!(
+            "{field} escapes the artifact run directory through a symlink: {}",
+            joined.display()
+        );
+    }
+    Ok(canonical)
+}
+
+fn validate_stable_hash(value: &str, field: &str) -> Result<()> {
+    let Some(hex) = value.strip_prefix("fnv1a64:") else {
+        anyhow::bail!("{field} must use the fnv1a64:<16 hex digits> format");
+    };
+    if hex.len() != 16 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("{field} must use the fnv1a64:<16 hex digits> format");
+    }
+    Ok(())
+}
+
+fn validate_sha256(value: &str, field: &str) -> Result<()> {
+    if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("{field} must contain exactly 64 hexadecimal digits");
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_token_offsets(
+    prompt: Option<&str>,
+    token_ids: &[u32],
+    offsets: &[(usize, usize)],
+    sample_index: usize,
+) -> Result<()> {
+    if offsets.len() != token_ids.len() {
+        anyhow::bail!(
+            "offset count {} does not match token count {} at sample_index {sample_index}",
+            offsets.len(),
+            token_ids.len()
+        );
+    }
+    let character_count = prompt.map(|text| text.chars().count());
+    let mut previous = None;
+    for (token_index, &(start, end)) in offsets.iter().enumerate() {
+        if start > end || character_count.is_some_and(|count| end > count) {
+            anyhow::bail!(
+                "invalid token offset ({start}, {end}) for token {token_index} at sample_index {sample_index}"
+            );
+        }
+        if start == end {
+            continue;
+        }
+        if previous.is_some_and(|(previous_start, previous_end)| {
+            start < previous_start || end < previous_end
+        }) {
+            anyhow::bail!(
+                "non-monotonic token offset ({start}, {end}) for token {token_index} at sample_index {sample_index}"
+            );
+        }
+        previous = Some((start, end));
+    }
+    Ok(())
+}
+
+fn validate_finite_tensor(values: &[f32], artifact: &str) -> Result<()> {
+    if let Some((index, value)) = values
+        .iter()
+        .enumerate()
+        .find(|(_, value)| !value.is_finite())
+    {
+        anyhow::bail!("{artifact} contains non-finite value {value} at flat index {index}");
+    }
+    Ok(())
 }
 
 pub fn read_jsonl_records<T>(path: impl AsRef<Path>) -> Result<Vec<T>>
@@ -828,13 +1546,11 @@ pub fn select_token_positions(
                     config.word_field
                 )
             })?;
-            let start = prompt.find(needle).with_context(|| {
-                format!(
-                    "could not locate word_field '{}' value '{}' in rendered prompt",
-                    config.word_field, needle
-                )
+            let byte_span = unique_substring_byte_span(prompt, needle).with_context(|| {
+                format!("word_field '{}' could not be selected", config.word_field)
             })?;
-            let mut indices = token_indices_for_offsets(offsets, start, start + needle.len());
+            let [start, end] = byte_span_to_character_span(prompt, byte_span)?;
+            let mut indices = token_indices_for_offsets(offsets, start, end);
             if indices.is_empty() {
                 anyhow::bail!(
                     "could not map word_field '{}' value '{}' to tokenizer offsets",
@@ -878,15 +1594,21 @@ pub fn unix_timestamp() -> u64 {
 }
 
 pub fn sha256_file(path: impl AsRef<Path>) -> Option<String> {
-    let output = std::process::Command::new("sha256sum")
-        .arg(path.as_ref())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    stdout.split_whitespace().next().map(str::to_string)
+    sha256_file_result(path).ok()
+}
+
+pub fn sha256_file_result(path: impl AsRef<Path>) -> Result<String> {
+    let path = path.as_ref();
+    let mut file = fs::File::open(path)
+        .with_context(|| format!("failed to open file for SHA-256: {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)
+        .with_context(|| format!("failed to hash file: {}", path.display()))?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 pub fn git_commit() -> Option<String> {
@@ -990,9 +1712,14 @@ fn default_output_format() -> ArtifactOutputFormat {
     ArtifactOutputFormat::Npy
 }
 
+fn default_offset_unit() -> String {
+    "unicode_character_index".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn test_config() -> ExtractionConfig {
         ExtractionConfig {
@@ -1053,6 +1780,50 @@ mod tests {
         object.insert("word".to_string(), Value::String("kataba".to_string()));
         let rendered = render_prompt("{word} / {{word}}", &object).unwrap();
         assert_eq!(rendered, "kataba / kataba");
+        assert!(render_prompt("{missing}", &object).is_err());
+        assert!(render_prompt("{word", &object).is_err());
+    }
+
+    #[test]
+    fn arabic_source_spans_convert_from_utf8_bytes_to_tokenizer_characters() {
+        let prompt = "قل كتب الآن";
+        let byte_span = unique_substring_byte_span(prompt, "كتب").unwrap();
+        assert_eq!(&prompt[byte_span[0]..byte_span[1]], "كتب");
+        assert_eq!(
+            byte_span_to_character_span(prompt, byte_span).unwrap(),
+            [3, 6]
+        );
+        assert!(unique_substring_byte_span("كتب ثم كتب", "كتب").is_err());
+    }
+
+    #[test]
+    fn run_directory_transaction_publishes_only_on_commit() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let parent = std::env::temp_dir().join(format!(
+            "ember_run_transaction_{}_{}",
+            std::process::id(),
+            unique
+        ));
+        fs::create_dir_all(&parent).unwrap();
+
+        let abandoned = parent.join("abandoned");
+        {
+            let transaction = RunDirectoryTransaction::begin(&abandoned).unwrap();
+            fs::write(transaction.staging_path().join("partial"), b"partial").unwrap();
+            assert!(!abandoned.exists());
+        }
+        assert!(!abandoned.exists());
+
+        let published = parent.join("published");
+        let transaction = RunDirectoryTransaction::begin(&published).unwrap();
+        fs::write(transaction.staging_path().join("complete"), b"complete").unwrap();
+        transaction.commit().unwrap();
+        assert_eq!(fs::read(published.join("complete")).unwrap(), b"complete");
+        assert!(RunDirectoryTransaction::begin(&published).is_err());
+        fs::remove_dir_all(parent).ok();
     }
 
     #[test]

@@ -702,7 +702,10 @@ pub(crate) struct SliceActivation<'a> {
 
 impl<'a> SliceActivation<'a> {
     pub(crate) fn new(rows: usize, columns: usize, values: &'a mut [f32]) -> Self {
-        debug_assert_eq!(rows.saturating_mul(columns), values.len());
+        let expected = rows
+            .checked_mul(columns)
+            .expect("activation shape product overflow");
+        assert_eq!(expected, values.len(), "activation shape/data mismatch");
         Self {
             shape: [rows, columns],
             values,
@@ -717,7 +720,7 @@ trait ActivationStorage {
 
 impl ActivationStorage for CpuTensor {
     fn shape_2d(&self) -> [usize; 2] {
-        debug_assert_eq!(self.shape().len(), 2);
+        assert_eq!(self.shape().len(), 2, "experiment hooks require 2D tensors");
         [self.shape()[0], self.shape()[1]]
     }
 

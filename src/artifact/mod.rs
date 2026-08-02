@@ -10,8 +10,9 @@
 //! and hashes; see `docs/activation-artifacts.md`.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 
 /// Experimental schema version for v0.2 activation artifacts.
@@ -165,6 +166,10 @@ pub struct CaptureSelection {
     pub token_positions: Vec<usize>,
     /// Maximum number of records; 0 = unlimited. Truncation is flagged.
     pub max_records: usize,
+    /// Maximum buffered tensor payload bytes; 0 = unlimited. This protects
+    /// long decode captures from exhausting process memory.
+    #[serde(default)]
+    pub max_bytes: usize,
     /// Omit prompt text from the manifest (token IDs and hash retained).
     pub omit_prompt_text: bool,
     /// Stable hash (fnv1a64) of the exact config file bytes, when loaded
@@ -187,6 +192,8 @@ pub struct CaptureConfigFile {
     pub token_positions: Vec<usize>,
     #[serde(default)]
     pub max_records: usize,
+    #[serde(default)]
+    pub max_bytes: usize,
     #[serde(default)]
     pub omit_prompt_text: bool,
 }
@@ -220,6 +227,9 @@ impl CaptureSelection {
         if stages.is_empty() {
             return Err("capture config requires at least one stage".to_string());
         }
+        reject_duplicates(&config.layers, "capture layers")?;
+        reject_duplicates(&stages, "capture stages")?;
+        reject_duplicates(&config.token_positions, "capture token positions")?;
         let phase = config.phase.parse::<CapturePhase>()?;
         let config_hash = Some(crate::extraction::stable_bytes_hash(text.as_bytes()));
         Ok(Self {
@@ -229,6 +239,7 @@ impl CaptureSelection {
             phase,
             token_positions: config.token_positions,
             max_records: config.max_records,
+            max_bytes: config.max_bytes,
             omit_prompt_text: config.omit_prompt_text,
             config_hash,
         })
@@ -468,5 +479,282 @@ pub fn load_manifest(path: &str) -> Result<ActivationManifest, String> {
             manifest.schema_version, ACTIVATION_ARTIFACT_SCHEMA
         ));
     }
+    validate_manifest(path, &manifest)?;
     Ok(manifest)
+}
+
+fn reject_duplicates<T>(values: &[T], label: &str) -> Result<(), String>
+where
+    T: Ord + Clone + fmt::Debug,
+{
+    let mut seen = BTreeSet::new();
+    for value in values {
+        if !seen.insert(value.clone()) {
+            return Err(format!("{label} contains duplicate value {value:?}"));
+        }
+    }
+    Ok(())
+}
+
+/// Resolve a record path relative to its manifest and reject absolute paths,
+/// parent traversal, and symlinks escaping the artifact directory.
+pub fn resolve_record_path(manifest_path: &str, record_path: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(record_path);
+    if relative.as_os_str().is_empty() || relative.is_absolute() {
+        return Err(format!(
+            "artifact record path must be non-empty and relative: '{record_path}'"
+        ));
+    }
+    if relative
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!(
+            "artifact record path is not normalized: '{record_path}'"
+        ));
+    }
+    let manifest = Path::new(manifest_path);
+    let base = manifest.parent().unwrap_or_else(|| Path::new("."));
+    let canonical_base = base.canonicalize().map_err(|e| {
+        format!(
+            "failed to resolve artifact directory '{}': {e}",
+            base.display()
+        )
+    })?;
+    let joined = base.join(relative);
+    let canonical = joined.canonicalize().map_err(|e| {
+        format!(
+            "failed to resolve artifact record '{}': {e}",
+            joined.display()
+        )
+    })?;
+    if !canonical.starts_with(&canonical_base) {
+        return Err(format!(
+            "artifact record '{}' resolves outside artifact directory '{}'",
+            record_path,
+            canonical_base.display()
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Validate manifest structure and every declared tensor payload.
+pub fn validate_manifest(path: &str, manifest: &ActivationManifest) -> Result<(), String> {
+    if manifest.schema_version != ACTIVATION_ARTIFACT_SCHEMA {
+        return Err(format!(
+            "unsupported artifact schema '{}' (expected '{}')",
+            manifest.schema_version, ACTIVATION_ARTIFACT_SCHEMA
+        ));
+    }
+    if manifest.artifact_kind != ACTIVATION_ARTIFACT_KIND {
+        return Err(format!(
+            "unsupported artifact kind '{}' (expected '{}')",
+            manifest.artifact_kind, ACTIVATION_ARTIFACT_KIND
+        ));
+    }
+    if manifest.ember_version.trim().is_empty() {
+        return Err("artifact ember_version must not be empty".to_string());
+    }
+    if manifest.model.family.trim().is_empty() || manifest.model.architecture.trim().is_empty() {
+        return Err("artifact model family and architecture must not be empty".to_string());
+    }
+    if manifest.model.layer_count == 0 || manifest.model.hidden_size == 0 {
+        return Err("artifact model dimensions must be non-zero".to_string());
+    }
+    for (name, hash) in [
+        ("model", manifest.model.sha256.as_deref()),
+        ("tokenizer", manifest.model.tokenizer_sha256.as_deref()),
+    ] {
+        if let Some(hash) = hash {
+            if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!("artifact {name} SHA-256 is invalid"));
+            }
+        }
+    }
+    if manifest.run.prompt_hash.trim().is_empty() {
+        return Err("artifact prompt_hash must not be empty".to_string());
+    }
+    if manifest.run.input_token_ids.is_empty() {
+        return Err("artifact input_token_ids must not be empty".to_string());
+    }
+    if manifest.run.thread_count == 0 {
+        return Err("artifact thread_count must be non-zero".to_string());
+    }
+    if let Some(prompt) = &manifest.run.prompt {
+        let expected = crate::extraction::stable_prompt_hash(prompt);
+        if manifest.run.prompt_hash != expected {
+            return Err(format!(
+                "artifact prompt_hash does not match stored prompt: expected {expected}"
+            ));
+        }
+    }
+    if !matches!(manifest.run.tracing.as_str(), "enabled" | "disabled") {
+        return Err(format!("invalid tracing state '{}'", manifest.run.tracing));
+    }
+    for observation in &manifest.run.dispatch_observations {
+        if !matches!(observation.phase.as_str(), "prefill" | "decode") {
+            return Err(format!(
+                "dispatch observation has invalid phase '{}'",
+                observation.phase
+            ));
+        }
+    }
+    if manifest.experiment.name.trim().is_empty() {
+        return Err("artifact experiment name must not be empty".to_string());
+    }
+    if manifest.capture_selection.output_dir.as_os_str().is_empty()
+        || manifest.capture_selection.layers.is_empty()
+        || manifest.capture_selection.stages.is_empty()
+    {
+        return Err(
+            "artifact capture selection requires output_dir, layers, and stages".to_string(),
+        );
+    }
+    reject_duplicates(&manifest.capture_selection.layers, "capture layers")?;
+    reject_duplicates(&manifest.capture_selection.stages, "capture stages")?;
+    reject_duplicates(
+        &manifest.capture_selection.token_positions,
+        "capture token positions",
+    )?;
+    if manifest.records.is_empty() {
+        return Err("activation artifact contains no tensor records".to_string());
+    }
+
+    let mut indices = BTreeSet::new();
+    let mut keys = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    let mut previous_sort_key = None;
+    for record in &manifest.records {
+        if !indices.insert(record.index) {
+            return Err(format!("duplicate capture record index {}", record.index));
+        }
+        if !keys.insert(record.alignment_key()) {
+            return Err(format!(
+                "duplicate capture record key: {} layer {} {} position {}",
+                record.phase, record.layer, record.stage, record.start_position
+            ));
+        }
+        if !paths.insert(record.path.clone()) {
+            return Err(format!("duplicate capture record path '{}'", record.path));
+        }
+        let sort_key = record.sort_key();
+        if previous_sort_key.is_some_and(|previous| previous > sort_key) {
+            return Err("capture records are not in deterministic sort order".to_string());
+        }
+        previous_sort_key = Some(sort_key);
+        if !matches!(record.phase.as_str(), "prefill" | "decode") {
+            return Err(format!(
+                "record {} has invalid phase '{}'",
+                record.index, record.phase
+            ));
+        }
+        let is_logits = matches!(
+            record.stage,
+            ActivationStage::BeforeLogits | ActivationStage::AfterLogits
+        );
+        if (!is_logits && record.layer >= manifest.model.layer_count)
+            || (is_logits && record.layer != 0)
+        {
+            return Err(format!(
+                "record {} layer {} is invalid for stage {} and {} model layers",
+                record.index, record.layer, record.stage, manifest.model.layer_count
+            ));
+        }
+        if record.dtype != "f32" || record.byte_order != "little-endian" {
+            return Err(format!(
+                "record {} must be little-endian f32, got {} {}",
+                record.index, record.byte_order, record.dtype
+            ));
+        }
+        if record.shape.contains(&0) || record.token_count == 0 {
+            return Err(format!(
+                "record {} has an empty tensor shape/count",
+                record.index
+            ));
+        }
+        if record.shape[0] != record.token_count {
+            return Err(format!(
+                "record {} tensor row count {} does not match token_count {}",
+                record.index, record.shape[0], record.token_count
+            ));
+        }
+        if (record.phase == "prefill" && record.start_position != 0)
+            || (record.phase == "decode" && record.token_count != 1)
+        {
+            return Err(format!(
+                "record {} has invalid {} position/count semantics",
+                record.index, record.phase
+            ));
+        }
+        let token_position = (record.phase == "decode").then_some(record.start_position);
+        if !manifest.capture_selection.selects(
+            record.stage,
+            record.layer,
+            &record.phase,
+            token_position,
+        ) {
+            return Err(format!(
+                "record {} is outside the declared capture selection",
+                record.index
+            ));
+        }
+        if record.stage != ActivationStage::AfterLogits
+            && record.shape[1] != manifest.model.hidden_size
+        {
+            return Err(format!(
+                "record {} width {} does not match model hidden size {}",
+                record.index, record.shape[1], manifest.model.hidden_size
+            ));
+        }
+        if record.sha256.len() != 64 || !record.sha256.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(format!("record {} has an invalid SHA-256", record.index));
+        }
+
+        let tensor_path = resolve_record_path(path, &record.path)?;
+        let actual_sha = crate::extraction::sha256_file_result(&tensor_path)
+            .map_err(|e| format!("failed to hash record {}: {e}", record.index))?;
+        if !actual_sha.eq_ignore_ascii_case(&record.sha256) {
+            return Err(format!(
+                "record {} SHA-256 mismatch: manifest {}, actual {}",
+                record.index, record.sha256, actual_sha
+            ));
+        }
+        let tensor_path_str = tensor_path
+            .to_str()
+            .ok_or_else(|| format!("record {} path is not valid UTF-8", record.index))?;
+        let (shape, values) = crate::npy::read_npy_2d(tensor_path_str)
+            .map_err(|e| format!("record {} tensor is invalid: {e}", record.index))?;
+        if shape.as_slice() != record.shape {
+            return Err(format!(
+                "record {} tensor shape {:?} disagrees with manifest {:?}",
+                record.index, shape, record.shape
+            ));
+        }
+        if values.iter().any(|value| !value.is_finite()) {
+            return Err(format!(
+                "record {} tensor contains non-finite values",
+                record.index
+            ));
+        }
+        let mut sum_sq = 0.0f64;
+        let mut abs_max = 0.0f32;
+        for value in &values {
+            sum_sq += f64::from(*value) * f64::from(*value);
+            abs_max = abs_max.max(value.abs());
+        }
+        let l2_norm = sum_sq.sqrt();
+        let l2_tolerance = 8.0 * f64::EPSILON * l2_norm.abs().max(1.0);
+        if !record.l2_norm.is_finite()
+            || !record.abs_max.is_finite()
+            || (record.l2_norm - l2_norm).abs() > l2_tolerance
+            || record.abs_max.to_bits() != abs_max.to_bits()
+        {
+            return Err(format!(
+                "record {} tensor statistics disagree with its payload: l2 manifest={} actual={}, abs_max manifest={} actual={}",
+                record.index, record.l2_norm, l2_norm, record.abs_max, abs_max
+            ));
+        }
+    }
+    Ok(())
 }

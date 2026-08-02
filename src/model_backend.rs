@@ -1,16 +1,16 @@
 use crate::backend::{Backend, CpuBackend};
 use crate::extraction::{
     canonical_config_toml, git_commit, layer_relative_path, load_input_samples, pooling_for_mode,
-    read_jsonl_records, run_dir, sample_order_hash, select_token_positions, sha256_file,
+    read_jsonl_records, run_dir, sample_order_hash, select_token_positions, sha256_file_result,
     source_field_for_position, source_span_for_position, source_value_for_position,
     stable_bytes_hash, stable_prompt_hash, unix_timestamp, validate_artifact_contract,
     ArtifactManifest, BackendHiddenStateOutput, BackendMetadata, ExecutionBackendName,
     ExtractionConfig, ExtractionRunOutput, LayerArtifact, LlamaCppExternalRequest, LogitsArtifact,
-    ModelMetadata, PositionArtifactRecord, SampleArtifactRecord, TensorContract,
-    TokenizationArtifactRecord, TokenizedPrompt, ARTIFACT_CONTRACT_VERSION, ARTIFACT_LAYOUT,
-    CHECKSUMS_FILENAME, CONFIG_FILENAME, LAYERS_DIRNAME, LLAMA_CPP_REQUEST_FILENAME,
-    LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME, SAMPLES_FILENAME,
-    TOKENIZATION_FILENAME,
+    ModelMetadata, PositionArtifactRecord, RunDirectoryTransaction, SampleArtifactRecord,
+    TensorContract, TokenizationArtifactRecord, TokenizedPrompt, TokenizerMetadata,
+    ARTIFACT_CONTRACT_VERSION, ARTIFACT_LAYOUT, CHECKSUMS_FILENAME, CONFIG_FILENAME,
+    LAYERS_DIRNAME, LLAMA_CPP_REQUEST_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME,
+    POSITIONS_FILENAME, REPORT_FILENAME, SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
 use crate::model::ForwardModel;
 use crate::npy::NpyStreamWriter;
@@ -26,6 +26,9 @@ use std::process::Command;
 pub trait ModelBackend {
     fn backend_metadata(&self) -> BackendMetadata;
     fn model_metadata(&self) -> ModelMetadata;
+    fn tokenizer_metadata(&self) -> Option<TokenizerMetadata> {
+        None
+    }
     fn tokenize(&self, prompt: &str) -> Result<TokenizedPrompt>;
     fn extract_hidden_states(
         &mut self,
@@ -47,6 +50,7 @@ pub struct NativeModelBackend<M> {
     model: M,
     tokenizer: EmberTokenizer,
     model_metadata: ModelMetadata,
+    tokenizer_metadata: TokenizerMetadata,
 }
 
 impl<M> NativeModelBackend<M>
@@ -56,32 +60,42 @@ where
     pub fn new(
         model: M,
         tokenizer: EmberTokenizer,
+        tokenizer_path: &str,
         model_path: &str,
         architecture: Option<String>,
         gguf_metadata: Value,
         record_model_sha256: bool,
-    ) -> Self {
+    ) -> Result<Self> {
         let compute = CpuBackend;
+        let file_metadata = fs::metadata(model_path)
+            .with_context(|| format!("failed to stat model file: {model_path}"))?;
+        let tokenizer_file_metadata = fs::metadata(tokenizer_path)
+            .with_context(|| format!("failed to stat tokenizer file: {tokenizer_path}"))?;
         let model_metadata = ModelMetadata {
             path: model_path.to_string(),
             architecture,
             n_layers: model.n_layers(),
             embed_dim: model.embed_dim(),
             max_seq_len: model.max_seq_len(&compute),
-            file_size_bytes: fs::metadata(model_path).ok().map(|m| m.len()),
+            file_size_bytes: Some(file_metadata.len()),
             sha256: if record_model_sha256 {
-                sha256_file(model_path)
+                Some(sha256_file_result(model_path)?)
             } else {
                 None
             },
             gguf_metadata,
         };
-        Self {
+        Ok(Self {
             compute,
             model,
             tokenizer,
             model_metadata,
-        }
+            tokenizer_metadata: TokenizerMetadata {
+                path: tokenizer_path.to_string(),
+                file_size_bytes: tokenizer_file_metadata.len(),
+                sha256: sha256_file_result(tokenizer_path)?,
+            },
+        })
     }
 }
 
@@ -107,11 +121,25 @@ where
         self.model_metadata.clone()
     }
 
+    fn tokenizer_metadata(&self) -> Option<TokenizerMetadata> {
+        Some(self.tokenizer_metadata.clone())
+    }
+
     fn tokenize(&self, prompt: &str) -> Result<TokenizedPrompt> {
         let (token_ids, offsets) = self
             .tokenizer
             .encode_with_offsets(prompt)
             .context("failed to tokenize prompt with offsets")?;
+        if let Some((index, token_id)) = token_ids
+            .iter()
+            .enumerate()
+            .find(|(_, token_id)| **token_id as usize >= self.model.vocab_size(&self.compute))
+        {
+            anyhow::bail!(
+                "token ID {token_id} at prompt position {index} exceeds model vocabulary size {}",
+                self.model.vocab_size(&self.compute)
+            );
+        }
         Ok(TokenizedPrompt { token_ids, offsets })
     }
 
@@ -124,6 +152,37 @@ where
         }
         if request.selected_token_positions.is_empty() {
             anyhow::bail!("selected_token_positions must not be empty");
+        }
+        if !request
+            .selected_token_positions
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+        {
+            anyhow::bail!("selected_token_positions must be strictly increasing");
+        }
+        if !request.layers.windows(2).all(|pair| pair[0] < pair[1]) {
+            anyhow::bail!("requested layers must be strictly increasing");
+        }
+        if request
+            .layers
+            .iter()
+            .any(|&layer| layer >= self.model.n_layers())
+        {
+            anyhow::bail!(
+                "requested layer exceeds model layer count {}",
+                self.model.n_layers()
+            );
+        }
+        if let Some((index, token_id)) = request
+            .token_ids
+            .iter()
+            .enumerate()
+            .find(|(_, token_id)| **token_id as usize >= self.model.vocab_size(&self.compute))
+        {
+            anyhow::bail!(
+                "token ID {token_id} at position {index} exceeds model vocabulary size {}",
+                self.model.vocab_size(&self.compute)
+            );
         }
         let model_context_limit = self.model.max_seq_len(&self.compute);
         let context_limit = request
@@ -163,28 +222,81 @@ where
                 None,
             )
         };
+        if pooled_states.len() != 1 {
+            anyhow::bail!(
+                "native model returned {} pooled groups, expected 1",
+                pooled_states.len()
+            );
+        }
         let all_layers = &pooled_states[0];
         let embed_dim = self.model.embed_dim();
-        let mut hidden_states = Vec::with_capacity(request.layers.len() * embed_dim);
+        let expected_all_layers = self
+            .model
+            .n_layers()
+            .checked_mul(embed_dim)
+            .context("pooled hidden-state shape overflow")?;
+        if all_layers.len() != expected_all_layers {
+            anyhow::bail!(
+                "native model returned {} pooled hidden values, expected {expected_all_layers}",
+                all_layers.len()
+            );
+        }
+        if let Some((index, value)) = all_layers
+            .iter()
+            .enumerate()
+            .find(|(_, value)| !value.is_finite())
+        {
+            anyhow::bail!(
+                "native pooled hidden states contain non-finite value {value} at flat index {index}"
+            );
+        }
+        let hidden_capacity = request
+            .layers
+            .len()
+            .checked_mul(embed_dim)
+            .context("selected hidden-state shape overflow")?;
+        let mut hidden_states = Vec::with_capacity(hidden_capacity);
         for &layer in request.layers {
             let start = layer * embed_dim;
             let end = start + embed_dim;
             hidden_states.extend_from_slice(&all_layers[start..end]);
         }
-        let (logits, logits_shape) = logits.map_or((None, None), |logits| {
+        let (logits, logits_shape) = logits.map_or(Ok((None, None)), |logits| {
             let raw_shape = self.compute.shape(&logits).to_vec();
-            if raw_shape.len() == 2 && raw_shape[0] > 0 {
-                let vocab_size = raw_shape[1];
+            let vocab_size = self.model.vocab_size(&self.compute);
+            if raw_shape.len() == 2 && raw_shape[0] > 0 && raw_shape[1] == vocab_size {
+                let data = self.compute.data(&logits);
+                let expected = raw_shape[0]
+                    .checked_mul(vocab_size)
+                    .context("native logits shape overflow")?;
+                if data.len() != expected {
+                    anyhow::bail!(
+                        "native logits payload has {} values, expected {expected}",
+                        data.len()
+                    );
+                }
                 let row_start = (raw_shape[0] - 1) * vocab_size;
                 let row_end = row_start + vocab_size;
-                (
-                    Some(self.compute.data(&logits)[row_start..row_end].to_vec()),
+                let last = &data[row_start..row_end];
+                if let Some((index, value)) = last
+                    .iter()
+                    .enumerate()
+                    .find(|(_, value)| !value.is_finite())
+                {
+                    anyhow::bail!(
+                        "native logits contain non-finite value {value} at vocabulary index {index}"
+                    );
+                }
+                Ok((
+                    Some(last.to_vec()),
                     Some(vec![1, vocab_size]),
-                )
+                ))
             } else {
-                (Some(self.compute.data(&logits).to_vec()), Some(raw_shape))
+                anyhow::bail!(
+                    "native logits shape must be [rows, {vocab_size}] with rows > 0, got {raw_shape:?}"
+                )
             }
-        });
+        })?;
         Ok(BackendHiddenStateOutput {
             hidden_states,
             hidden_states_shape: vec![request.layers.len(), embed_dim],
@@ -237,7 +349,9 @@ impl LlamaCppExternalBackend {
 
 pub fn run_llama_cpp_external_backend(config: &ExtractionConfig) -> Result<ExtractionRunOutput> {
     let backend = LlamaCppExternalBackend::from_config(config)?;
-    let run_dir = run_dir(config);
+    let final_run_dir = run_dir(config);
+    let transaction = RunDirectoryTransaction::begin(&final_run_dir)?;
+    let run_dir = transaction.staging_path().to_path_buf();
     fs::create_dir_all(&run_dir)
         .with_context(|| format!("failed to create run directory: {}", run_dir.display()))?;
 
@@ -266,7 +380,7 @@ pub fn run_llama_cpp_external_backend(config: &ExtractionConfig) -> Result<Extra
         backend: ExecutionBackendName::LlamaCppExternal.as_str().to_string(),
         model_path: config.model_path.clone(),
         input_jsonl_path: config.input_jsonl_path.clone(),
-        output_dir: path_to_string(&run_dir)?,
+        output_dir: path_to_string(&final_run_dir)?,
         config_path: path_to_string(&config_path)?,
         manifest_path: path_to_string(&manifest_path)?,
         samples_path: path_to_string(&samples_path)?,
@@ -287,6 +401,7 @@ pub fn run_llama_cpp_external_backend(config: &ExtractionConfig) -> Result<Extra
         prompt_hashes_only: config.prompt_hashes_only,
         max_seq_len: config.max_seq_len,
         run_metadata: config.run_metadata.clone(),
+        extraction_config: config.clone(),
     };
     fs::write(&request_path, serde_json::to_string_pretty(&request)?).with_context(|| {
         format!(
@@ -317,15 +432,17 @@ pub fn run_llama_cpp_external_backend(config: &ExtractionConfig) -> Result<Extra
     }
 
     let summary = validate_artifact_contract(&run_dir, true)?;
+    let sample_count = summary.sample_count;
+    let published_run_dir = transaction.commit()?;
     Ok(ExtractionRunOutput {
-        run_dir: summary.run_dir,
-        manifest_path: path_to_string(&manifest_path)?,
-        samples_path: path_to_string(&samples_path)?,
-        tokenization_path: path_to_string(&tokenization_path)?,
-        positions_path: path_to_string(&positions_path)?,
-        checksums_path: path_to_string(&checksums_path)?,
-        report_path: path_to_string(&report_path)?,
-        sample_count: summary.sample_count,
+        run_dir: path_to_string(&published_run_dir)?,
+        manifest_path: path_to_string(&published_run_dir.join(MANIFEST_FILENAME))?,
+        samples_path: path_to_string(&published_run_dir.join(SAMPLES_FILENAME))?,
+        tokenization_path: path_to_string(&published_run_dir.join(TOKENIZATION_FILENAME))?,
+        positions_path: path_to_string(&published_run_dir.join(POSITIONS_FILENAME))?,
+        checksums_path: path_to_string(&published_run_dir.join(CHECKSUMS_FILENAME))?,
+        report_path: path_to_string(&published_run_dir.join(REPORT_FILENAME))?,
+        sample_count,
         layer_paths: Vec::new(),
     })
 }
@@ -335,9 +452,26 @@ pub struct BackendParityReport {
     pub native_run_dir: String,
     pub external_run_dir: String,
     pub sample_count: usize,
+    pub sample_order_hash_matches: bool,
+    pub prompt_hash_mismatches: Vec<usize>,
     pub token_id_mismatches: Vec<usize>,
+    pub token_offset_mismatches: Vec<usize>,
     pub position_mismatches: Vec<usize>,
     pub logits_status: String,
+    pub logits_comparison: Option<BackendLogitsComparison>,
+    pub provenance_warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BackendLogitsComparison {
+    pub shape: Vec<usize>,
+    pub exact_bits_equal: bool,
+    pub max_abs_diff: f64,
+    pub mean_abs_diff: f64,
+    pub rmse: f64,
+    pub cosine_similarity: Option<f64>,
+    pub top1_match_count: usize,
+    pub top1_match_rate: f64,
 }
 
 pub fn compare_backend_artifacts(
@@ -353,6 +487,40 @@ pub fn compare_backend_artifacts(
             external_summary.sample_count
         );
     }
+    let native_manifest: ArtifactManifest = serde_json::from_str(&fs::read_to_string(
+        native_run_dir.as_ref().join(MANIFEST_FILENAME),
+    )?)?;
+    let external_manifest: ArtifactManifest = serde_json::from_str(&fs::read_to_string(
+        external_run_dir.as_ref().join(MANIFEST_FILENAME),
+    )?)?;
+    if let (Some(native_sha), Some(external_sha)) = (
+        native_manifest.model.sha256.as_deref(),
+        external_manifest.model.sha256.as_deref(),
+    ) {
+        if !native_sha.eq_ignore_ascii_case(external_sha) {
+            anyhow::bail!("backend comparison model SHA-256 values differ");
+        }
+    }
+    let mut provenance_warnings = Vec::new();
+    if native_manifest.model.sha256.is_none() || external_manifest.model.sha256.is_none() {
+        provenance_warnings.push(
+            "one or both runs omit model SHA-256; model identity is not cryptographically pinned"
+                .to_string(),
+        );
+    }
+    match (
+        native_manifest.tokenizer.as_ref(),
+        external_manifest.tokenizer.as_ref(),
+    ) {
+        (Some(native), Some(external)) if !native.sha256.eq_ignore_ascii_case(&external.sha256) => {
+            anyhow::bail!("backend comparison tokenizer SHA-256 values differ")
+        }
+        (None, _) | (_, None) => provenance_warnings.push(
+            "one or both runs omit tokenizer SHA-256; tokenizer identity is not fully pinned"
+                .to_string(),
+        ),
+        _ => {}
+    }
 
     let native_tokens: Vec<TokenizationArtifactRecord> =
         read_jsonl_records(native_run_dir.as_ref().join(TOKENIZATION_FILENAME))?;
@@ -364,6 +532,8 @@ pub fn compare_backend_artifacts(
         read_jsonl_records(external_run_dir.as_ref().join(POSITIONS_FILENAME))?;
 
     let mut token_id_mismatches = Vec::new();
+    let mut token_offset_mismatches = Vec::new();
+    let mut prompt_hash_mismatches = Vec::new();
     let mut position_mismatches = Vec::new();
     for i in 0..native_tokens.len() {
         if native_tokens[i].sample_id != external_tokens[i].sample_id {
@@ -377,30 +547,128 @@ pub fn compare_backend_artifacts(
         if native_tokens[i].token_ids != external_tokens[i].token_ids {
             token_id_mismatches.push(i);
         }
-        if native_positions[i].selected_token_positions
-            != external_positions[i].selected_token_positions
+        if native_tokens[i].prompt_hash != external_tokens[i].prompt_hash {
+            prompt_hash_mismatches.push(i);
+        }
+        if native_tokens[i].offsets != external_tokens[i].offsets
+            || native_tokens[i].offset_unit != external_tokens[i].offset_unit
+        {
+            token_offset_mismatches.push(i);
+        }
+        if native_positions[i].position_mode != external_positions[i].position_mode
+            || native_positions[i].pooling != external_positions[i].pooling
+            || native_positions[i].selected_token_positions
+                != external_positions[i].selected_token_positions
+            || native_positions[i].source_field != external_positions[i].source_field
+            || native_positions[i].source_value != external_positions[i].source_value
+            || native_positions[i].source_byte_span != external_positions[i].source_byte_span
         {
             position_mismatches.push(i);
         }
     }
 
-    let logits_status = match (
+    let (logits_status, logits_comparison) = match (
         native_summary.logits_present,
         external_summary.logits_present,
     ) {
-        (false, false) => "not_exposed".to_string(),
-        (true, false) => "native_only".to_string(),
-        (false, true) => "external_only".to_string(),
-        (true, true) => "both_exposed_shape_check_only".to_string(),
+        (false, false) => ("not_exposed".to_string(), None),
+        (true, false) => ("native_only".to_string(), None),
+        (false, true) => ("external_only".to_string(), None),
+        (true, true) => {
+            let comparison = compare_logits_artifacts(
+                &native_run_dir.as_ref().join(LOGITS_FILENAME),
+                &external_run_dir.as_ref().join(LOGITS_FILENAME),
+            )?;
+            let status = if comparison.exact_bits_equal {
+                "identical"
+            } else {
+                "different"
+            };
+            (status.to_string(), Some(comparison))
+        }
     };
 
     Ok(BackendParityReport {
         native_run_dir: native_summary.run_dir,
         external_run_dir: external_summary.run_dir,
         sample_count: native_summary.sample_count,
+        sample_order_hash_matches: native_summary.sample_order_hash
+            == external_summary.sample_order_hash,
+        prompt_hash_mismatches,
         token_id_mismatches,
+        token_offset_mismatches,
         position_mismatches,
         logits_status,
+        logits_comparison,
+        provenance_warnings,
+    })
+}
+
+fn compare_logits_artifacts(
+    native_path: &Path,
+    external_path: &Path,
+) -> Result<BackendLogitsComparison> {
+    let native_path_text = path_to_string(native_path)?;
+    let external_path_text = path_to_string(external_path)?;
+    let (native_shape, native) = crate::npy::read_npy_2d(&native_path_text)?;
+    let (external_shape, external) = crate::npy::read_npy_2d(&external_path_text)?;
+    if native_shape != external_shape {
+        anyhow::bail!(
+            "backend logits shape mismatch: native {:?}, external {:?}",
+            native_shape,
+            external_shape
+        );
+    }
+    if native_shape.len() != 2 || native_shape[0] == 0 || native_shape[1] == 0 {
+        anyhow::bail!("backend logits must be a non-empty rank-2 tensor");
+    }
+    let mut sum_abs = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    let mut max_abs = 0.0f64;
+    let mut dot = 0.0f64;
+    let mut native_norm = 0.0f64;
+    let mut external_norm = 0.0f64;
+    let mut exact_bits_equal = true;
+    for (&left, &right) in native.iter().zip(&external) {
+        exact_bits_equal &= left.to_bits() == right.to_bits();
+        let left = f64::from(left);
+        let right = f64::from(right);
+        let difference = left - right;
+        let absolute = difference.abs();
+        max_abs = max_abs.max(absolute);
+        sum_abs += absolute;
+        sum_sq += difference * difference;
+        dot += left * right;
+        native_norm += left * left;
+        external_norm += right * right;
+    }
+    let value_count = native.len() as f64;
+    let cosine_similarity = match (native_norm, external_norm) {
+        (0.0, 0.0) => Some(1.0),
+        (0.0, _) | (_, 0.0) => None,
+        _ => Some(dot / (native_norm.sqrt() * external_norm.sqrt())),
+    };
+    let rows = native_shape[0];
+    let vocab_size = native_shape[1];
+    let mut top1_match_count = 0usize;
+    for row in 0..rows {
+        let start = row * vocab_size;
+        let end = start + vocab_size;
+        if crate::sampler::argmax_token(&native[start..end])
+            == crate::sampler::argmax_token(&external[start..end])
+        {
+            top1_match_count += 1;
+        }
+    }
+    Ok(BackendLogitsComparison {
+        shape: native_shape,
+        exact_bits_equal,
+        max_abs_diff: max_abs,
+        mean_abs_diff: sum_abs / value_count,
+        rmse: (sum_sq / value_count).sqrt(),
+        cosine_similarity,
+        top1_match_count,
+        top1_match_rate: top1_match_count as f64 / rows as f64,
     })
 }
 
@@ -411,11 +679,25 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
     config.validate()?;
 
     let model_metadata = backend.model_metadata();
+    let tokenizer_metadata = backend.tokenizer_metadata();
     let backend_metadata = backend.backend_metadata();
+    if model_metadata.n_layers == 0
+        || model_metadata.embed_dim == 0
+        || model_metadata.max_seq_len == 0
+    {
+        anyhow::bail!(
+            "backend model metadata must have non-zero layers, hidden width, and context length"
+        );
+    }
+    if backend_metadata.name.trim().is_empty() {
+        anyhow::bail!("backend metadata name must not be empty");
+    }
     let layers = config.effective_layers(model_metadata.n_layers)?;
     let samples = load_input_samples(config)?;
 
-    let run_dir = run_dir(config);
+    let final_run_dir = run_dir(config);
+    let transaction = RunDirectoryTransaction::begin(&final_run_dir)?;
+    let run_dir = transaction.staging_path().to_path_buf();
     let layers_dir = run_dir.join(LAYERS_DIRNAME);
     fs::create_dir_all(&layers_dir).with_context(|| {
         format!(
@@ -489,6 +771,15 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
         let tokenized = backend
             .tokenize(&sample.prompt)
             .with_context(|| format!("failed to tokenize sample '{}'", sample.sample_id))?;
+        if tokenized.token_ids.is_empty() {
+            anyhow::bail!("sample '{}' produced no token IDs", sample.sample_id);
+        }
+        crate::extraction::validate_token_offsets(
+            Some(&sample.prompt),
+            &tokenized.token_ids,
+            &tokenized.offsets,
+            sample_index,
+        )?;
         let prompt_hash = stable_prompt_hash(&sample.prompt);
         let selected_token_positions = select_token_positions(
             &sample.prompt,
@@ -517,6 +808,33 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
                 vec![layers.len(), model_metadata.embed_dim]
             );
         }
+        let expected_hidden_values = layers
+            .len()
+            .checked_mul(model_metadata.embed_dim)
+            .context("hidden-state output shape overflow")?;
+        if output.hidden_states.len() != expected_hidden_values {
+            anyhow::bail!(
+                "backend returned {} hidden values, expected {expected_hidden_values}",
+                output.hidden_states.len()
+            );
+        }
+        if let Some((index, value)) = output
+            .hidden_states
+            .iter()
+            .enumerate()
+            .find(|(_, value)| !value.is_finite())
+        {
+            anyhow::bail!(
+                "backend hidden states contain non-finite value {value} at flat index {index}"
+            );
+        }
+        if output.logits_available != config.write_logits {
+            anyhow::bail!(
+                "backend logits_available={} does not match write_logits={}",
+                output.logits_available,
+                config.write_logits
+            );
+        }
         for (layer_offset, writer) in layer_writers.iter_mut().enumerate() {
             let row_start = layer_offset * model_metadata.embed_dim;
             let row_end = row_start + model_metadata.embed_dim;
@@ -539,12 +857,33 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
                 );
             }
             let vocab_size = shape[1];
+            if vocab_size == 0 {
+                anyhow::bail!("backend returned an empty logits vocabulary");
+            }
             if logits.len() != vocab_size {
                 anyhow::bail!(
                     "logits payload has {} values but logits_shape expects {}",
                     logits.len(),
                     vocab_size
                 );
+            }
+            if let Some((index, value)) = logits
+                .iter()
+                .enumerate()
+                .find(|(_, value)| !value.is_finite())
+            {
+                anyhow::bail!(
+                    "backend logits contain non-finite value {value} at vocabulary index {index}"
+                );
+            }
+            if let Some(existing_shape) = &logits_shape {
+                if existing_shape[1] != vocab_size {
+                    anyhow::bail!(
+                        "backend logits vocabulary changed from {} to {vocab_size} at sample '{}'",
+                        existing_shape[1],
+                        sample.sample_id
+                    );
+                }
             }
             if logits_writer.is_none() {
                 logits_writer = Some(NpyStreamWriter::create(
@@ -558,6 +897,8 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
                 .expect("logits writer initialized above")
                 .write_f32s(logits)?;
             logits_written = true;
+        } else if output.logits.is_some() || output.logits_shape.is_some() {
+            anyhow::bail!("backend returned logits even though write_logits=false");
         }
 
         let token_count = tokenized.token_ids.len();
@@ -586,6 +927,7 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
             token_count,
             prompt_hash,
             offsets: tokenized.offsets,
+            offset_unit: "unicode_character_index".to_string(),
         };
         serde_json::to_writer(&mut tokenization_writer, &tokenization_record)?;
         tokenization_writer.write_all(b"\n")?;
@@ -603,7 +945,7 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
                 &sample.prompt,
                 config,
                 sample.word_value.as_deref(),
-            ),
+            )?,
         };
         serde_json::to_writer(&mut positions_writer, &position_record)?;
         positions_writer.write_all(b"\n")?;
@@ -635,7 +977,7 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
         artifact_kind: "ember_hidden_states".to_string(),
         created_at_unix: unix_timestamp(),
         run_id: config.run_id.clone(),
-        run_dir: path_to_string(&run_dir)?,
+        run_dir: path_to_string(&final_run_dir)?,
         config_path: CONFIG_FILENAME.to_string(),
         samples_path: SAMPLES_FILENAME.to_string(),
         tokenization_path: TOKENIZATION_FILENAME.to_string(),
@@ -658,6 +1000,7 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
         dtype: config.dtype.as_str().to_string(),
         output_format: config.output_format.as_str().to_string(),
         model: model_metadata,
+        tokenizer: tokenizer_metadata,
         backend: backend_metadata,
         extraction_config: config.clone(),
     };
@@ -673,9 +1016,9 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
         "layers": layers,
         "logits_written": logits_written,
         "resume": {
-            "supported_by_contract": true,
+            "supported_by_contract": false,
             "native_runner_policy": "fresh-run",
-            "rule": "resume only when existing JSONL line counts, layer row counts, config_hash, and sample_order_hash agree"
+            "rule": "existing run directories are rejected; resume is not implemented"
         },
         "stale_or_corrupt_detection": {
             "checksums": CHECKSUMS_FILENAME,
@@ -688,34 +1031,38 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
         .with_context(|| format!("failed to write report artifact: {}", report_path_str))?;
 
     let mut checksums = BTreeMap::new();
-    checksum_insert(&mut checksums, &config_path, CONFIG_FILENAME);
-    checksum_insert(&mut checksums, &manifest_path, MANIFEST_FILENAME);
-    checksum_insert(&mut checksums, &samples_path, SAMPLES_FILENAME);
-    checksum_insert(&mut checksums, &tokenization_path, TOKENIZATION_FILENAME);
-    checksum_insert(&mut checksums, &positions_path, POSITIONS_FILENAME);
-    checksum_insert(&mut checksums, &report_path, REPORT_FILENAME);
+    checksum_insert(&mut checksums, &config_path, CONFIG_FILENAME)?;
+    checksum_insert(&mut checksums, &manifest_path, MANIFEST_FILENAME)?;
+    checksum_insert(&mut checksums, &samples_path, SAMPLES_FILENAME)?;
+    checksum_insert(&mut checksums, &tokenization_path, TOKENIZATION_FILENAME)?;
+    checksum_insert(&mut checksums, &positions_path, POSITIONS_FILENAME)?;
+    checksum_insert(&mut checksums, &report_path, REPORT_FILENAME)?;
     for &layer in &layers {
         let rel = layer_relative_path(layer);
-        checksum_insert(&mut checksums, &run_dir.join(&rel), &rel);
+        checksum_insert(&mut checksums, &run_dir.join(&rel), &rel)?;
     }
     if logits_written {
-        checksum_insert(&mut checksums, &logits_path, LOGITS_FILENAME);
+        checksum_insert(&mut checksums, &logits_path, LOGITS_FILENAME)?;
     }
     fs::write(&checksums_path, serde_json::to_string_pretty(&checksums)?)
         .with_context(|| format!("failed to write checksums artifact: {}", checksums_path_str))?;
 
+    validate_artifact_contract(&run_dir, false)?;
+    let published_run_dir = transaction.commit()?;
+    let published_path = |relative: &str| path_to_string(&published_run_dir.join(relative));
+
     Ok(ExtractionRunOutput {
-        run_dir: path_to_string(&run_dir)?,
-        manifest_path: manifest_path_str,
-        samples_path: samples_path_str,
-        tokenization_path: tokenization_path_str,
-        positions_path: positions_path_str,
-        checksums_path: checksums_path_str,
-        report_path: report_path_str,
+        run_dir: path_to_string(&published_run_dir)?,
+        manifest_path: published_path(MANIFEST_FILENAME)?,
+        samples_path: published_path(SAMPLES_FILENAME)?,
+        tokenization_path: published_path(TOKENIZATION_FILENAME)?,
+        positions_path: published_path(POSITIONS_FILENAME)?,
+        checksums_path: published_path(CHECKSUMS_FILENAME)?,
+        report_path: published_path(REPORT_FILENAME)?,
         sample_count: samples.len(),
         layer_paths: layers
             .iter()
-            .map(|&layer| path_to_string(&run_dir.join(layer_relative_path(layer))))
+            .map(|&layer| path_to_string(&published_run_dir.join(layer_relative_path(layer))))
             .collect::<Result<Vec<_>>>()?,
     })
 }
@@ -724,10 +1071,12 @@ fn checksum_insert(
     checksums: &mut BTreeMap<String, String>,
     absolute_path: &Path,
     relative_path: &str,
-) {
-    if let Some(sum) = sha256_file(absolute_path) {
-        checksums.insert(relative_path.to_string(), sum);
-    }
+) -> Result<()> {
+    checksums.insert(
+        relative_path.to_string(),
+        sha256_file_result(absolute_path)?,
+    );
+    Ok(())
 }
 
 fn validate_executable_path(path: &str) -> Result<()> {
@@ -843,6 +1192,10 @@ mod tests {
             2
         }
 
+        fn vocab_size(&self, _backend: &CpuBackend) -> usize {
+            3
+        }
+
         fn forward_with_activations(
             &self,
             _backend: &CpuBackend,
@@ -886,11 +1239,13 @@ mod tests {
         let mut backend = NativeModelBackend::new(
             model,
             tokenizer,
+            "tokenizer.json",
             "Cargo.toml",
             Some("test".to_string()),
             Value::Null,
             false,
-        );
+        )
+        .unwrap();
         let request = |include_logits| HiddenStateRequest {
             token_ids: &[1],
             selected_token_positions: &[0],
@@ -982,7 +1337,7 @@ mod tests {
             "samples.jsonl",
             "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
         );
-        let config = external_config(&dir, &model, &samples, &script);
+        let config = external_config(&dir.join("run"), &model, &samples, &script);
         let err = run_llama_cpp_external_backend(&config).expect_err("external failure");
         let text = err.to_string();
         assert!(text.contains("external extractor failed"));
@@ -1003,6 +1358,8 @@ mod tests {
         let prompt_hash = stable_prompt_hash("hello");
         let order_hash = sample_order_hash(&[("s0".to_string(), prompt_hash.clone())]);
         let config = external_config(&run_dir, &model, &samples, &dir.join("extract.sh"));
+        let canonical_config = canonical_config_toml(&config).unwrap();
+        let config_hash = stable_bytes_hash(canonical_config.as_bytes());
 
         let manifest = serde_json::json!({
             "schema_version": ARTIFACT_CONTRACT_VERSION,
@@ -1029,7 +1386,7 @@ mod tests {
             },
             "sample_count": 1,
             "sample_order_hash": order_hash,
-            "config_hash": "fnv1a64:0000000000000000",
+            "config_hash": config_hash,
             "dtype": "f32",
             "output_format": "npy",
             "model": {
@@ -1051,34 +1408,46 @@ mod tests {
             },
             "extraction_config": config
         });
+        let samples_content = format!(
+            "{{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"input_index\":0,\"prompt\":\"hello\",\"prompt_hash\":\"{prompt_hash}\"}}\n"
+        );
+        let tokenization_content = format!(
+            "{{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"token_ids\":[1,2,3],\"token_count\":3,\"prompt_hash\":\"{prompt_hash}\",\"offsets\":[[0,0],[0,2],[2,5]],\"offset_unit\":\"unicode_character_index\"}}\n"
+        );
+        let positions_content = "{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"position_mode\":\"prompt_final\",\"pooling\":\"single\",\"selected_token_positions\":[2],\"source_field\":null,\"source_value\":null,\"source_byte_span\":null}\n";
+        let manifest_content = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
+        let report_content = "{\"schema_version\":2,\"layout\":\"ember.layer_sharded_npy.v1\",\"status\":\"complete\",\"sample_count\":1,\"layer_count\":0,\"logits_written\":false}\n";
+        let checksums = serde_json::json!({
+            CONFIG_FILENAME: crate::extraction::sha256_bytes(canonical_config.as_bytes()),
+            MANIFEST_FILENAME: crate::extraction::sha256_bytes(manifest_content.as_bytes()),
+            SAMPLES_FILENAME: crate::extraction::sha256_bytes(samples_content.as_bytes()),
+            TOKENIZATION_FILENAME: crate::extraction::sha256_bytes(tokenization_content.as_bytes()),
+            POSITIONS_FILENAME: crate::extraction::sha256_bytes(positions_content.as_bytes()),
+            REPORT_FILENAME: crate::extraction::sha256_bytes(report_content.as_bytes()),
+        });
+        let checksums_content = format!("{}\n", serde_json::to_string_pretty(&checksums).unwrap());
         let script_body = format!(
             r#"#!/bin/sh
-cat > '{samples_path}' <<'JSON'
-{{"schema_version":2,"sample_index":0,"sample_id":"s0","input_index":0,"prompt":"hello","prompt_hash":"{prompt_hash}"}}
-JSON
-cat > '{tokenization_path}' <<'JSON'
-{{"schema_version":2,"sample_index":0,"sample_id":"s0","token_ids":[1,2,3],"token_count":3,"prompt_hash":"{prompt_hash}","offsets":[[0,0],[0,2],[2,5]]}}
-JSON
-cat > '{positions_path}' <<'JSON'
-{{"schema_version":2,"sample_index":0,"sample_id":"s0","position_mode":"prompt_final","pooling":"single","selected_token_positions":[2],"source_field":null,"source_value":null,"source_byte_span":null}}
-JSON
-cat > '{manifest_path}' <<'JSON'
-{manifest_json}
-JSON
-cat > '{report_path}' <<'JSON'
-{{"schema_version":2,"layout":"ember.layer_sharded_npy.v1","status":"complete"}}
-JSON
-cat > '{checksums_path}' <<'JSON'
-{{}}
-JSON
+run_dir=$(dirname "$2")
+cat > "$run_dir/{samples_filename}" <<'JSON'
+{samples_content}JSON
+cat > "$run_dir/{tokenization_filename}" <<'JSON'
+{tokenization_content}JSON
+cat > "$run_dir/{positions_filename}" <<'JSON'
+{positions_content}JSON
+cat > "$run_dir/{manifest_filename}" <<'JSON'
+{manifest_content}JSON
+cat > "$run_dir/{report_filename}" <<'JSON'
+{report_content}JSON
+cat > "$run_dir/{checksums_filename}" <<'JSON'
+{checksums_content}JSON
 "#,
-            samples_path = run_dir.join(SAMPLES_FILENAME).display(),
-            tokenization_path = run_dir.join(TOKENIZATION_FILENAME).display(),
-            positions_path = run_dir.join(POSITIONS_FILENAME).display(),
-            manifest_path = run_dir.join(MANIFEST_FILENAME).display(),
-            report_path = run_dir.join(REPORT_FILENAME).display(),
-            checksums_path = run_dir.join(CHECKSUMS_FILENAME).display(),
-            manifest_json = serde_json::to_string_pretty(&manifest).unwrap(),
+            samples_filename = SAMPLES_FILENAME,
+            tokenization_filename = TOKENIZATION_FILENAME,
+            positions_filename = POSITIONS_FILENAME,
+            manifest_filename = MANIFEST_FILENAME,
+            report_filename = REPORT_FILENAME,
+            checksums_filename = CHECKSUMS_FILENAME,
         );
         let script = write_executable(&dir, "extract.sh", &script_body);
         let mut config = config;

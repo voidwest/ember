@@ -85,6 +85,8 @@ pub struct ModelContext<'a> {
     pub architecture: &'a str,
     pub layer_count: usize,
     pub hidden_size: usize,
+    pub model_sha256: Option<&'a str>,
+    pub tokenizer_sha256: Option<&'a str>,
 }
 
 impl<'a> ModelContext<'a> {
@@ -102,7 +104,20 @@ impl<'a> ModelContext<'a> {
             architecture,
             layer_count,
             hidden_size,
+            model_sha256: None,
+            tokenizer_sha256: None,
         }
+    }
+
+    #[must_use]
+    pub const fn with_provenance(
+        mut self,
+        model_sha256: Option<&'a str>,
+        tokenizer_sha256: Option<&'a str>,
+    ) -> Self {
+        self.model_sha256 = model_sha256;
+        self.tokenizer_sha256 = tokenizer_sha256;
+        self
     }
 }
 
@@ -116,6 +131,9 @@ pub struct ExecutionContext<'a> {
     pub input_token_count: usize,
     pub sequence_length: usize,
     pub tracing: TracingState,
+    /// Tokens evaluated by this call when available. Prefill uses the complete
+    /// input sequence; decode uses the current token slice.
+    pub input_token_ids: Option<&'a [u32]>,
 }
 
 impl<'a> ExecutionContext<'a> {
@@ -134,6 +152,26 @@ impl<'a> ExecutionContext<'a> {
             input_token_count,
             sequence_length: start_position.saturating_add(input_token_count),
             tracing,
+            input_token_ids: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn new_with_token_ids(
+        model: ModelContext<'a>,
+        phase: ExecutionPhase,
+        start_position: usize,
+        input_token_ids: &'a [u32],
+        tracing: TracingState,
+    ) -> Self {
+        Self {
+            model,
+            phase,
+            start_position,
+            input_token_count: input_token_ids.len(),
+            sequence_length: start_position.saturating_add(input_token_ids.len()),
+            tracing,
+            input_token_ids: Some(input_token_ids),
         }
     }
 
@@ -216,7 +254,12 @@ pub struct TensorAccess<'a> {
 
 impl<'a> TensorAccess<'a> {
     pub(crate) fn new(rows: usize, columns: usize, values: &'a mut [f32]) -> Self {
-        debug_assert_eq!(rows.saturating_mul(columns), values.len());
+        assert_eq!(
+            rows.checked_mul(columns)
+                .expect("activation tensor shape product overflow"),
+            values.len(),
+            "activation tensor shape does not match backing storage"
+        );
         Self {
             shape: [rows, columns],
             values,
