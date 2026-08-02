@@ -102,7 +102,7 @@ regression iteration limit to avoid premature convergence failures:
 ```bash
 python3 probes/train_linear_probe.py \
   --activations data/activations.npy \
-  --stimuli stimuli/nonce_root_pattern.json \
+  --stimuli stimuli/nonce_root_pattern_surface.json \
   --max-iter 2000 \
   --scale
 ```

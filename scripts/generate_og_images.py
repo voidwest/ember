@@ -10,11 +10,18 @@ from __future__ import annotations
 
 import argparse
 import html
+import os
+import re
+import struct
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from voidwest_theme import DARK
+try:
+    from voidwest_theme import DARK
+except ModuleNotFoundError:  # imported as scripts.generate_og_images
+    from scripts.voidwest_theme import DARK
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -225,7 +232,15 @@ def card_html(card: OgCard) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=OUTPUT_DIR)
+    parser.add_argument("--timeout-ms", type=int, default=30_000)
     args = parser.parse_args()
+    if args.timeout_ms <= 0:
+        parser.error("--timeout-ms must be greater than zero")
+    slugs = [card.slug for card in CARDS]
+    if len(slugs) != len(set(slugs)) or any(
+        not re.fullmatch(r"[a-z0-9][a-z0-9-]*", slug) for slug in slugs
+    ):
+        raise ValueError("OG card slugs must be unique safe filenames")
 
     try:
         from playwright.sync_api import sync_playwright
@@ -238,15 +253,57 @@ def main() -> int:
     args.output.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page(viewport=SIZE, device_scale_factor=1)
-        for card in CARDS:
-            page.set_content(card_html(card), wait_until="networkidle")
-            out = args.output / f"{card.slug}.png"
-            page.screenshot(path=out, full_page=False)
-            print(out.relative_to(ROOT))
-        browser.close()
+        try:
+            page = browser.new_page(viewport=SIZE, device_scale_factor=1)
+            page.set_default_timeout(args.timeout_ms)
+            for card in CARDS:
+                page.set_content(card_html(card), wait_until="load")
+                page.evaluate("document.fonts.ready")
+                out = args.output / f"{card.slug}.png"
+                payload = page.screenshot(type="png", full_page=False)
+                if not isinstance(payload, bytes):
+                    raise RuntimeError(f"browser returned an invalid PNG for {card.slug}")
+                if _png_dimensions(payload) != (SIZE["width"], SIZE["height"]):
+                    raise RuntimeError(
+                        f"browser returned unexpected PNG dimensions for {card.slug}"
+                    )
+                _atomic_write_bytes(out, payload)
+                try:
+                    display = out.relative_to(ROOT)
+                except ValueError:
+                    display = out
+                print(display)
+        finally:
+            browser.close()
 
     return 0
+
+
+def _atomic_write_bytes(path: Path, payload: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _png_dimensions(payload: bytes) -> tuple[int, int]:
+    if (
+        len(payload) < 24
+        or not payload.startswith(b"\x89PNG\r\n\x1a\n")
+        or payload[12:16] != b"IHDR"
+    ):
+        raise ValueError("invalid PNG header")
+    return struct.unpack(">II", payload[16:24])
 
 
 if __name__ == "__main__":

@@ -134,7 +134,7 @@ LLAMACPP_DIR=/path/to/llama.cpp \
 
 Both Ember and llama.cpp dump files use the same format:
 
-- dtype: f32, native endian
+- dtype: IEEE-754 f32, little endian
 - shape: `[n_layers * hidden_size]` flat, layer-major
 - layer 0 first, layer (n_layers - 1) last
 - each layer: `hidden_size` consecutive f32 values

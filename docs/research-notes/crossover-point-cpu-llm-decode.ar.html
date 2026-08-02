@@ -4,14 +4,14 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta property="og:title" content="متى تساعد زيادة عدد الـthreads في مرحلة decode؟" />
-        <meta property="og:description" content="تجربة على ثلاثة أحجام نماذج ومسح اصطناعي لنواة ضرب المصفوفات. نقطة الانتقال تقع حوالي 25 مليون FLOP لكل عملية." />
+        <meta property="og:description" content="تجربة على ثلاثة أحجام نماذج ومسح اصطناعي يبيّن حدود انتقال مختلفة باختلاف عدد الخيوط على معالج واحد." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/crossover-point-cpu-llm-decode.ar.html" />
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>نقطة الانتقال لاستدلال النماذج اللغوية على المعالج · ملاحظات بحثية</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=20260725" />
+        <link rel="stylesheet" href="/style.css?v=f0b168ef29a5" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
         <meta property="og:image:width" content="1200" />
@@ -21,6 +21,7 @@
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
         <script defer>
             document.addEventListener('DOMContentLoaded', function() {
                 document.querySelectorAll('pre code').forEach(function(el) {
@@ -32,25 +33,20 @@
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
-        <style>
-            .theme-chart-light { display: none; }
-            :root[data-theme="light"] .theme-chart-dark { display: none; }
-            :root[data-theme="light"] .theme-chart-light { display: block; }
-        </style>
     </head>
     <body>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="التنقل الرئيسي">
-            <a class="brand" href="/">voidwest</a>
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
-                <a href="/ember/">ember</a>
-                <a href="/research-notes/" aria-current="page">research notes</a>
-                <a href="/tools/">tools</a>
-                <a href="/terms/">terms</a>
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
             </div>
             <div class="nav-actions">
                 <a class="nav-lang" href="/research-notes/crossover-point-cpu-llm-decode.html">en</a>
-                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false">light</button>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false">light</button>
             </div>
         </nav>
         <!-- docs:nav end -->
@@ -59,6 +55,11 @@
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
+        </div>
+
+        <div class="callout observation">
+            <div class="label"><bdi>implementation status · 2026-08 audit</bdi></div>
+            <p>القياسات أدناه مسح تاريخي صالح، لكن العبارة بأن بوابة <bdi>Ember</bdi> الحالية تعمل قرب 32 <bdi>MFLOP</bdi> قديمة. مسار <bdi>Q8×Q8 decode</bdi> الحالي يستخدم بوابة 1,048,576 <bdi>MAC</bdi> (نحو 2.1 <bdi>MFLOP</bdi>). كذلك نقطة العبور تعتمد على عدد الـ<bdi>threads</bdi>: أول وسيط أعلى من 1× لعدد 2 و8 يقع بين نقطتي 14.2 و25.2، بينما 4 <bdi>threads</bdi> أعلى بقليل فقط عند أول نقطة. هذه وسائط مرصودة وليست عتبة عامة للعتاد.</p>
         </div>
 
         <h1>متى تساعد زيادة عدد الـ<bdi>threads</bdi> في مرحلة <bdi>decode</bdi>؟</h1>
@@ -219,7 +220,7 @@
         <h2>المسح الاصطناعي</h2>
 
         <p>
-            عشان أحدد العتبة بالضبط، شغّلت مسح على مستوى النواة بس
+            عشان أقيس منطقة الانتقال عند نقاط محددة، شغّلت مسح على مستوى النواة بس
             بأوزان <bdi>Q8_0</bdi> اصطناعية عند 6 مستويات
             <bdi>MFLOP</bdi>. العمود <code>ms/op</code> هو
             وسيط زمن التنفيذ لاستدعاء واحد للنواة — هذا ليس
@@ -233,13 +234,13 @@
                     <th>1 thread <bdi>ms/op</bdi></th>
                     <th>2 threads <bdi>ms/op</bdi></th>
                     <th>تسارع</th>
-                    <th><bdi>±CV%</bdi></th>
+                    <th><bdi>σ/median %</bdi></th>
                     <th>4 threads <bdi>ms/op</bdi></th>
                     <th>تسارع</th>
-                    <th><bdi>±CV%</bdi></th>
+                    <th><bdi>σ/median %</bdi></th>
                     <th>8 threads <bdi>ms/op</bdi></th>
                     <th>تسارع</th>
-                    <th><bdi>±CV%</bdi></th>
+                    <th><bdi>σ/median %</bdi></th>
                 </tr>
             </thead>
             <tbody>
@@ -262,17 +263,18 @@
             <code>should_parallel_q8_decode</code> عمدًا — الهدف
             هنا قياس اللي <em>تقدر</em> تسويه النواة المتوازية لو
             شغّلتها دايم، مو اللي يصير فعلًا داخل النموذج. في
-            التشغيل الحقيقي، البوابة تعيد <code>false</code> تحت
-            ~32 <bdi>MFLOP</bdi>، فلا تدخل النواة المسار المتوازي
-            أصلًا.
+            التشغيل الحقيقي وقت إجراء هذا المسح، كانت البوابة القديمة
+            تمنع المسار المتوازي في الأحجام الصغيرة. البوابة الحالية
+            هي 1,048,576 <bdi>MAC</bdi> (نحو 2.1 <bdi>MFLOP</bdi>)؛
+            لذلك لا يجوز تفسير هذه القياسات على أنها وصف لمسار القرار الحالي.
         </p>
 
         <figure class="chart-wrap">
         <img class="chart theme-chart-dark" src="/plots/crossover_plot.png"
-             alt="رسم بياني: التسارع مقابل MFLOPs لكل عملية matmul — منحنيات 2 و4 و8 threads مع تحديد منطقة الانتقال"
+             alt="رسم للوسيط المقاس للتسارع مقابل MFLOPs لكل matmul عند 2 و4 و8 threads"
              loading="lazy" />
         <img class="chart theme-chart-light" src="/plots/crossover_plot_light.png"
-             alt="رسم بياني: التسارع مقابل MFLOPs لكل عملية matmul — منحنيات 2 و4 و8 threads مع تحديد منطقة الانتقال"
+             alt="رسم للوسيط المقاس للتسارع مقابل MFLOPs لكل matmul عند 2 و4 و8 threads"
              loading="lazy" />
         </figure>
 
@@ -281,7 +283,7 @@
             و25 <bdi>MFLOP</bdi>. 4 و8 <bdi>threads</bdi> كلهم
             يتفوقون على 2 <bdi>threads</bdi> بأغلب الأحجام فوق
             25 <bdi>MFLOP</bdi>. نتائج 8 <bdi>threads</bdi> أقل
-            استقرار، بتباين أعلى (معامل اختلاف يوصل 15% مقابل
+            استقرار، بتشتت نسبي أعلى (<bdi>σ/median</bdi> يصل 15% مقابل
             6–14% لـ 4 <bdi>threads</bdi>)، عشان كذا 4 أنوية فعلية هي
             الخيار الآمن على هالمعالج.
         </p>
@@ -310,21 +312,21 @@
             عند 14.2 <bdi>MFLOP</bdi>، زمن النواة حوالي
             1.7 <bdi>ms</bdi>، وكلفة الجدولة ما تتعدى
             4 µs مع 2 <bdi>threads</bdi>. يعني المشكلة
-            مو في كلفة الجدولة لحالها — المشكلة إن البوابة ما
-            تسمح بتشغيل النواة المتوازية أصلًا عند هالحجم.
-            إعداد الـ<bdi>thread pool</bdi> الأكبر ما يضيف شغل
-            متوازي مفيد هنا، ويصاحبه تراجع شوي بالأداء.
+            مو في كلفة الجدولة لحالها — البوابة المستخدمة وقت القياس
+            كانت تبقي هالاستدعاءات الصغيرة على المسار التسلسلي.
+            التطبيق الحالي خفّض البوابة كثيرًا؛ هالفقرة تصف التشغيل
+            التاريخي، مو السلوك الحالي.
         </p>
 
         <h2>القاعدة الهندسية</h2>
 
         <p>
             الخلاصة: على هالمعالج وبنواة <bdi>Q8_0</bdi> المعزولة،
-            يصير التوازي مفيد حوالي 25 <bdi>MFLOP</bdi> لكل عملية
-            <bdi>matmul</bdi>. بوابة <bdi>Ember</bdi> الحالية
-            للنموذج الحقيقي تنشط عند حوالي 32 <bdi>MFLOP</bdi>،
-            يعني الإسقاطات الصغيرة تبقى على مسار
-            <bdi>SIMD</bdi> التسلسلي.
+            أول وسيط تسارع مرصود يعتمد على عدد الـ<bdi>threads</bdi>.
+            خيطان و8 خيوط يعبران 1× بين نقطتي 14.2 و25.2
+            <bdi>MFLOP</bdi>، بينما 4 خيوط أعلى من 1× بفارق طفيف عند
+            14.2. هذا المسح لا يثبت عتبة عامة، وبوابة <bdi>Ember</bdi>
+            الحالية معايرة بصورة مستقلة.
         </p>
 
         <p>
@@ -407,7 +409,6 @@ else:
             جميع البيانات الخام و<bdi>code</bdi> المتتبع في
             <a href="https://github.com/voidwest/ember">مستودع <bdi>Ember</bdi></a>.
         </p>
-
         <!-- docs:footer start -->
         <footer class="site-footer">
             <span>© 2026 voidwest</span>

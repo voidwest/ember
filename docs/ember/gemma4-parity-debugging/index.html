@@ -11,7 +11,7 @@
     <meta name="twitter:card" content="summary" />
     <title>when the logits lie · gemma 4 gguf debugging</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=20260718" />
+        <link rel="stylesheet" href="/style.css?v=f0b168ef29a5" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
         <meta property="og:image:width" content="1200" />
@@ -65,6 +65,12 @@
 
     <div class="meta">
       2026-06-10 · golden-logit parity · gemma 4 · llama.cpp reference
+    </div>
+
+    <div class="quote-block">
+      <div class="text">
+        historical status (2026-08 audit): this report and its reconstructed charts predate the f32 GGUF orientation fix. current Gemma 4 output remains untrusted, and the numbers below are not a current parity result. rerun the golden-logit and layer-dump ladder before drawing implementation conclusions.
+      </div>
     </div>
 
     <div class="quote-block">
@@ -524,9 +530,11 @@ at every layer's normalization step.
       closing the remaining gap would likely require matching llama.cpp's
       numerical execution path much more closely: accumulation order,
       approximations, quantized matmul details, and attention/softmax precision.
-      the practical answer is: after structural bugs are resolved, cosine ~0.87
-      with coherent output is a reasonable stopping point, matching llama.cpp's
-      structure and behavior without cloning its exact numerical execution path.
+      the historical investigation stopped near cosine ~0.87. that is not an
+      acceptable current validation threshold: coherent-looking output and high
+      cosine do not establish parity. the result must be reproduced after the
+      loader orientation fix with exact input provenance, top-k agreement, and
+      layerwise reference tensors.
     </p>
 
     <p>

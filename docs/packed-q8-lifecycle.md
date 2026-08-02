@@ -56,13 +56,13 @@ file-backed PSS, minor faults, and major faults.
 Three repetitions were run in deterministically shuffled mode order. Every
 child process began at or below 80 C package temperature. D and J deliberately
 repeat the same configuration as a run-order validity control. Their medians
-were 30.888 and 30.827 tok/s, a 0.2% difference. An earlier mode-grouped run
+were 30.888 and 30.827 decode evaluations/s, a 0.2% difference. An earlier mode-grouped run
 placed them 13% apart and was rejected for selective-throughput interpretation.
 
 Procfs hooks ran only outside phase timers. They added 0.9-1.7% to internal
 whole-process time. In a separate two-repetition measured-versus-timing-only
 audit, hooks did not reduce decode or prefill timing: control medians were
-24.73 versus 24.16 tok/s and D medians were 32.97 versus 32.68 tok/s. The
+24.73 versus 24.16 evaluations/s and D medians were 32.97 versus 32.68 evaluations/s. The
 external process times below include hooks; phase and time-to-first-token work
 timers exclude them.
 
@@ -70,7 +70,7 @@ Break-even is:
 
 ```text
 ceil((variant predecode work - control predecode work)
-     / (control decode ns/token - variant decode ns/token)) + 1
+     / (control decode ns/evaluation - variant decode ns/evaluation)) + 1
 ```
 
 The added one is the token produced by generic prefill before decode savings
@@ -132,7 +132,7 @@ Validation after implementation:
 Values are medians of three randomized, temperature-gated fresh processes.
 Whole-process time is external Python subprocess wall time.
 
-| Mode | Pack ms | Prefill ms | Decode tok/s | vs A | TTFT ms | Process ms | Peak MiB | minflt | majflt | Break-even generated | Parity |
+| Mode | Pack ms | Prefill ms | Decode eval/s | vs A | TTFT ms | Process ms | Peak MiB | minflt | majflt | Break-even generated | Parity |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | A | 0.0 | 226.5 | 21.968 | - | 897.4 | 6,803.9 | 2,194.1 | 88,372 | 0 | 1 | yes |
 | B | 434.0 | 221.4 | 30.992 | +41.1% | 1,312.3 | 5,603.2 | 3,104.6 | 142,218 | 0 | 33 | yes |
@@ -161,7 +161,7 @@ this model:
 
 - F gate/up packed 544 MiB and retained 64.2% of J's decode gain.
 - G added the 272 MiB down projections but retained 68.7% of J's gain. The
-  incremental median was only 0.393 tok/s.
+  incremental median was only 0.393 decode evaluations/s.
 - H attention-only packed 170 MiB and retained only 14.5% of J's gain. This is
   a negative result and satisfies the selective stop condition for that policy.
 - I packed 714 MiB, omitted down, and retained 92.9% of J's decode gain.

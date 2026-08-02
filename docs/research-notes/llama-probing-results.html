@@ -11,7 +11,7 @@
         <meta name="twitter:card" content="summary_large_image" />
         <title>what LLaMA knows about Arabic morphology (and won't say) · research notes</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=20260718" />
+        <link rel="stylesheet" href="/style.css?v=f0b168ef29a5" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png" />
         <meta property="og:image:width" content="1200" />
@@ -68,6 +68,11 @@
             <span class="tag key">ember</span>
             <span class="tag model">LLaMA</span>
             <span class="tag metric">scaling</span>
+        </div>
+
+        <div class="callout observation">
+            <div class="label">method status · 2026-08 audit</div>
+            <p>the prompts used for every result on this page state the target root and pattern verbatim. these probe scores are therefore <strong>label-revealed positive controls</strong>: they show that a last-token representation retains supplied prompt variables, not that the model inferred Arabic morphology. the charts remain as historical diagnostics; the current probe runner rejects this setup by default, and morphology claims require the new surface-only prompts.</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->

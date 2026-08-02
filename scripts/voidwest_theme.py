@@ -17,7 +17,12 @@ STYLESHEET = ROOT / "docs" / "style.css"
 
 
 def _variables(block: str) -> dict[str, str]:
-    return dict(re.findall(r"--([\w-]+)\s*:\s*([^;]+);", block))
+    values: dict[str, str] = {}
+    for key, raw_value in re.findall(r"--([\w-]+)\s*:\s*([^;]+);", block):
+        if key in values:
+            raise RuntimeError(f"duplicate CSS custom property --{key} in {STYLESHEET}")
+        values[key] = raw_value.strip()
+    return values
 
 
 def _theme_blocks() -> tuple[dict[str, str], dict[str, str]]:
@@ -48,7 +53,9 @@ class Theme:
 
 
 def _hex_rgb(value: str) -> tuple[int, int, int]:
-    value = value.lstrip("#")
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", value):
+        raise ValueError(f"expected six-digit hex color, got {value!r}")
+    value = value[1:]
     return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
 
 
@@ -59,13 +66,38 @@ def _composite(css_color: str, background: str) -> str:
         return css_color
     foreground = tuple(int(match.group(i)) for i in range(1, 4))
     alpha = float(match.group(4))
+    if any(channel > 255 for channel in foreground) or not 0.0 <= alpha <= 1.0:
+        raise ValueError(f"invalid rgb color {css_color!r}")
     backdrop = _hex_rgb(background)
     mixed = tuple(round(alpha * fg + (1 - alpha) * bg) for fg, bg in zip(foreground, backdrop))
     return "#" + "".join(f"{channel:02x}" for channel in mixed)
 
 
 def _make_theme(values: dict[str, str]) -> Theme:
+    required = {
+        "bg",
+        "surface",
+        "surface-2",
+        "text",
+        "heading",
+        "muted",
+        "subtle",
+        "border",
+        "border-soft",
+        "accent",
+        "accent-strong",
+        "code-bg",
+    }
+    missing = sorted(required - values.keys())
+    if missing:
+        raise RuntimeError(f"theme in {STYLESHEET} is missing properties: {missing}")
     bg = values["bg"]
+    for key in required - {"border", "border-soft"}:
+        _hex_rgb(values[key])
+    border = _composite(values["border"], bg)
+    border_soft = _composite(values["border-soft"], bg)
+    _hex_rgb(border)
+    _hex_rgb(border_soft)
     return Theme(
         bg=bg,
         surface=values["surface"],
@@ -74,8 +106,8 @@ def _make_theme(values: dict[str, str]) -> Theme:
         heading=values["heading"],
         muted=values["muted"],
         subtle=values["subtle"],
-        border=_composite(values["border"], bg),
-        border_soft=_composite(values["border-soft"], bg),
+        border=border,
+        border_soft=border_soft,
         accent=values["accent"],
         accent_strong=values["accent-strong"],
         code_bg=values["code-bg"],
@@ -99,6 +131,8 @@ LIGHT_CYCLE = [LIGHT.accent_strong, "#526f96", "#527b68", "#8a6d35", "#925f5f", 
 
 def matplotlib_style(*, dark: bool = True, dpi: int = 160) -> dict[str, object]:
     """Return Matplotlib rcParams matching the site's editorial system."""
+    if isinstance(dpi, bool) or not isinstance(dpi, int) or dpi <= 0:
+        raise ValueError("dpi must be a positive integer")
     theme = DARK if dark else LIGHT
     cycle = DARK_CYCLE if dark else LIGHT_CYCLE
     return {

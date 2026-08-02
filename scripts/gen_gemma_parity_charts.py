@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Generate dark and light charts for the Gemma 4 parity debugging writeup.
+"""Generate historical, explicitly illustrative Gemma parity-debugging charts.
 
-All charts use a dark theme matching the voidwest.dev style.
+The investigation did not retain a machine-readable metric artifact; several
+series below are narrative checkpoints or synthetic demonstrations. These
+figures are not current validation data.
 Output: docs/plots/gemma_*.png
 """
 
 import argparse
+import os
+import tempfile
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -15,16 +19,25 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from pathlib import Path
 
-from voidwest_theme import (
-    DARK,
-    DARK_CYCLE,
-    LIGHT,
-    LIGHT_CYCLE,
-    apply_matplotlib_theme,
-)
+try:
+    from voidwest_theme import (
+        DARK,
+        DARK_CYCLE,
+        LIGHT,
+        LIGHT_CYCLE,
+        apply_matplotlib_theme,
+    )
+except ModuleNotFoundError:  # imported as scripts.gen_gemma_parity_charts
+    from scripts.voidwest_theme import (
+        DARK,
+        DARK_CYCLE,
+        LIGHT,
+        LIGHT_CYCLE,
+        apply_matplotlib_theme,
+    )
 
-OUT = Path("docs/plots")
-OUT.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / "docs" / "plots"
 
 # ── voidwest dark theme ──────────────────────────────────────────────
 BG = SURFACE = BORDER = TEXT = TEXT_DIM = ACCENT = ACCENT2 = ""
@@ -52,9 +65,30 @@ def configure_theme(*, dark: bool) -> None:
 def save(fig, name):
     source = Path(name)
     path = OUT / f"{source.stem}{OUTPUT_SUFFIX}{source.suffix}"
-    fig.savefig(str(path))
-    plt.close(fig)
-    print(f"  {name}")
+    OUT.mkdir(parents=True, exist_ok=True)
+    fig.text(
+        0.995,
+        0.005,
+        "historical reconstruction / illustrative — not current validation data",
+        ha="right",
+        va="bottom",
+        fontsize=6.5,
+        color=TEXT_DIM,
+    )
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        fig.savefig(temporary, format=path.suffix.lstrip("."))
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    finally:
+        plt.close(fig)
+    print(f"  {path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -62,7 +96,7 @@ def save(fig, name):
 # ═══════════════════════════════════════════════════════════════════════
 
 def chart_cosine_vs_topk():
-    # Representative points from the debugging timeline
+    # Narrative checkpoints reconstructed from the debugging writeup.
     stages = [
         "flat logits\n(initial)",
         "ple moved\nstart of block",
@@ -73,7 +107,6 @@ def chart_cosine_vs_topk():
     ]
     cosine = [0.18, 0.72, 0.84, 0.92, 0.87, 0.87]
     top5_overlap = [0, 0, 0, 0, 0, 1]  # out of 5
-    top1_match = [0, 0, 0, 0, 0, 0]  # binary
 
     fig, ax1 = plt.subplots(figsize=(9, 4.5))
 
@@ -133,42 +166,39 @@ def chart_cosine_vs_topk():
 # ═══════════════════════════════════════════════════════════════════════
 
 def chart_layerwise_cosine():
-    layers = list(range(35))
-    # Real data from the investigation (interpolated where only key points known)
+    # Historical checkpoints quoted in the writeup. No complete layer artifact
+    # was retained, so unmeasured layers must not be interpolated as evidence.
     known = {
         0: 1.000, 1: 0.998, 2: 0.994, 3: 0.990,
         5: 0.82, 10: 0.62, 15: 0.096, 23: 0.031,
         34: 0.51,
     }
-    # Interpolate smoothly (cubic-ish falloff)
-    cosine = np.zeros(35)
-    for i in range(35):
-        if i in known:
-            cosine[i] = known[i]
-        else:
-            # weighted average of nearest known points
-            keys = sorted(known.keys())
-            for j in range(len(keys) - 1):
-                if keys[j] <= i <= keys[j + 1]:
-                    t = (i - keys[j]) / (keys[j + 1] - keys[j])
-                    cosine[i] = known[keys[j]] * (1 - t) + known[keys[j + 1]] * t
-                    break
+    layers = sorted(known)
+    cosine = [known[layer] for layer in layers]
 
     final_logit_cosine = 0.87
 
     fig, ax = plt.subplots(figsize=(9, 4.5))
 
-    # Bar for per-layer hidden states
     colors = []
-    for i in range(35):
-        if i % 5 == 0 and i > 0:
+    for layer in layers:
+        if layer % 5 == 0 and layer > 0:
             colors.append(ACCENT)  # global attention layers
-        elif i == 0:
+        elif layer == 0:
             colors.append(GREEN)
         else:
             colors.append(BLUE)
 
-    bars = ax.bar(layers, cosine, color=colors, alpha=0.85, width=0.7, edgecolor=BG, linewidth=0.3)
+    ax.plot(layers, cosine, color=TEXT_DIM, linestyle=":", linewidth=1)
+    ax.scatter(
+        layers,
+        cosine,
+        color=colors,
+        s=52,
+        edgecolor=BG,
+        linewidth=0.5,
+        zorder=3,
+    )
 
     # Horizontal line for final logits
     ax.axhline(y=final_logit_cosine, color=ACCENT2, linestyle="--", linewidth=1.5, alpha=0.8)
@@ -190,13 +220,13 @@ def chart_layerwise_cosine():
     ax.set_xticks([0, 5, 10, 15, 20, 25, 30, 34])
     ax.grid(axis="y", alpha=0.3, linewidth=0.5)
 
-    ax.set_title("layerwise cosine: ember vs llama.cpp hidden states")
+    ax.set_title("reported layer checkpoints: ember vs llama.cpp (historical)")
 
     # Legend
     legend_elements = [
-        Patch(facecolor=GREEN, alpha=0.85, label="l0: bit-identical"),
-        Patch(facecolor=BLUE, alpha=0.85, label="local attention"),
-        Patch(facecolor=ACCENT, alpha=0.85, label="global attention"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=GREEN, label="reported l0"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=BLUE, label="reported local layer"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor=ACCENT, label="reported global layer"),
         Line2D([0], [0], color=ACCENT2, linestyle="--", linewidth=1.5, label=f"final logit cosine: {final_logit_cosine}"),
     ]
     ax.legend(handles=legend_elements, loc="upper right", fontsize=7.5, framealpha=0.9)
@@ -351,22 +381,24 @@ def chart_rmsnorm_autopsy():
     pert_scale = 0.25
     spike_val = 250
     eps = 1e-6
-    np.random.seed(166)
+    rng = np.random.default_rng(166)
 
-    llama_input = np.random.randn(dim).astype(np.float32) * 0.5
-    spike_dims = np.random.choice(dim, n_spike, replace=False)
-    llama_input[spike_dims] = np.random.randn(n_spike).astype(np.float32) * 0.003
+    llama_input = rng.standard_normal(dim).astype(np.float32) * 0.5
+    spike_dims = rng.choice(dim, n_spike, replace=False)
+    llama_input[spike_dims] = rng.standard_normal(n_spike).astype(np.float32) * 0.003
 
     noise = np.zeros(dim, dtype=np.float32)
-    noise[spike_dims] = np.random.randn(n_spike).astype(np.float32) * pert_scale
+    noise[spike_dims] = rng.standard_normal(n_spike).astype(np.float32) * pert_scale
     ember_input = llama_input + noise
 
     input_cosine = np.dot(llama_input, ember_input) / (
         np.linalg.norm(llama_input) * np.linalg.norm(ember_input))
 
     # RMSNorm weights: low baseline, huge in spike dims
-    rms_weights = np.abs(np.random.randn(dim).astype(np.float32)) * 5 + 8
-    rms_weights[spike_dims] = np.abs(np.random.randn(n_spike).astype(np.float32)) * 30 + spike_val
+    rms_weights = np.abs(rng.standard_normal(dim).astype(np.float32)) * 5 + 8
+    rms_weights[spike_dims] = (
+        np.abs(rng.standard_normal(n_spike).astype(np.float32)) * 30 + spike_val
+    )
 
     def rms_norm(x, w):
         rms = np.sqrt(np.mean(x ** 2) + eps)
@@ -421,10 +453,20 @@ def chart_rmsnorm_autopsy():
 # Run all
 # ═══════════════════════════════════════════════════════════════════════
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--theme", choices=("dark", "light", "both"), default="both")
+    parser.add_argument(
+        "--allow-illustrative",
+        action="store_true",
+        help="acknowledge that these charts are not current validation evidence",
+    )
     args = parser.parse_args()
+    if not args.allow_illustrative:
+        parser.error(
+            "this generator contains historical/synthetic values; pass "
+            "--allow-illustrative only for the explicitly labeled narrative figures"
+        )
 
     themes = (True, False) if args.theme == "both" else (args.theme == "dark",)
     for dark in themes:
@@ -436,7 +478,8 @@ def main() -> None:
         chart_layerwise_cosine()
         chart_rmsnorm_autopsy()
     print("done → docs/plots/gemma_*.png")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

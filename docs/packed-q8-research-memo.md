@@ -39,7 +39,7 @@ Positive:
   run, post-prefill re-eviction reduced file PSS from about 1,265 to 279 MiB.
   File PSS remained 279 MiB after 127 packed decode evaluations.
 - Durable all-projection packing improved median decode from 21.968 to
-  30.888 tok/s while ending near 2,114 MiB RSS rather than the duplicate
+  30.888 decode evaluations/s while ending near 2,114 MiB RSS rather than the duplicate
   baseline's approximately 3,100 MiB.
 - Excluding down packed 714 rather than 986 MiB, retained 92.9% of the
   all-projection decode gain, reduced median packing from 453 to 350 ms, and

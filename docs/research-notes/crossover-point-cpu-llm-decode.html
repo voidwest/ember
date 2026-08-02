@@ -4,14 +4,14 @@
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta property="og:title" content="When Does Multithreading Help LLM Decode? Finding the CPU Crossover Point in Ember" />
-        <meta property="og:description" content="A thread-scaling experiment across three model sizes and a synthetic matmul sweep. The crossover lives around 25 million FLOPs per operation." />
+        <meta property="og:description" content="Three model sizes plus a synthetic matmul sweep showing thread-count-specific crossover bounds for one CPU." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://voidwest.dev/research-notes/crossover-point-cpu-llm-decode.html" />
         <meta property="og:site_name" content="voidwest" />
         <meta name="twitter:card" content="summary_large_image" />
         <title>crossover point for CPU LLM decode · research notes</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=20260725" />
+        <link rel="stylesheet" href="/style.css?v=f0b168ef29a5" />
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
         <meta property="og:image:width" content="1200" />
@@ -21,6 +21,7 @@
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
         <script defer>
             document.addEventListener('DOMContentLoaded', function() {
                 document.querySelectorAll('pre code').forEach(function(el) {
@@ -32,11 +33,6 @@
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
-        <style>
-            .theme-chart-light { display: none; }
-            :root[data-theme="light"] .theme-chart-dark { display: none; }
-            :root[data-theme="light"] .theme-chart-light { display: block; }
-        </style>
     </head>
     <body>
         <!-- docs:nav start -->
@@ -59,6 +55,11 @@
             <a href="/">← voidwest</a>
             &nbsp;&nbsp;
             <a href="/research-notes/">research notes</a>
+        </div>
+
+        <div class="callout observation">
+            <div class="label">implementation status · 2026-08 audit</div>
+            <p>the measurements below remain a historical kernel sweep, but the statement that Ember's current gate activates near 32 MFLOPs is stale. the present Q8×Q8 decode path uses a 1,048,576-MAC gate (about 2.1 MFLOPs). the measured “crossover” is also thread-count-specific: two and eight threads first exceed 1× between the 14.2 and 25.2 MFLOP test points, while four threads are only marginally above 1× at the first point. these are observed medians, not a universal hardware threshold.</p>
         </div>
 
         <h1>When Does Multithreading Help LLM Decode? Finding the CPU Crossover Point in Ember</h1>
@@ -198,7 +199,7 @@
         <h2>synthetic sweep</h2>
 
         <p>
-            to pinpoint the threshold, a kernel-only sweep was run on
+            to sample the transition region, a kernel-only sweep was run on
             synthetic Q8_0 weights at six MFLOPs levels. the column
             <code>ms/op</code> is median single-kernel latency — this is not
             full-model throughput.
@@ -211,13 +212,13 @@
                     <th>1-thr ms/op</th>
                     <th>2-thr ms/op</th>
                     <th>spdup</th>
-                    <th>±CV%</th>
+                    <th>σ/median %</th>
                     <th>4-thr ms/op</th>
                     <th>spdup</th>
-                    <th>±CV%</th>
+                    <th>σ/median %</th>
                     <th>8-thr ms/op</th>
                     <th>spdup</th>
-                    <th>±CV%</th>
+                    <th>σ/median %</th>
                 </tr>
             </thead>
             <tbody>
@@ -240,10 +241,10 @@
 
         <figure class="chart-wrap">
         <img class="chart theme-chart-dark" src="/plots/crossover_plot.png"
-             alt="Speedup vs MFLOPs per matmul — 2, 4, and 8 thread curves with crossover threshold annotated"
+             alt="Measured median speedup vs MFLOPs per matmul for 2, 4, and 8 threads"
              loading="lazy" />
         <img class="chart theme-chart-light" src="/plots/crossover_plot_light.png"
-             alt="Speedup vs MFLOPs per matmul — 2, 4, and 8 thread curves with crossover threshold annotated"
+             alt="Measured median speedup vs MFLOPs per matmul for 2, 4, and 8 threads"
              loading="lazy" />
         </figure>
 
@@ -251,7 +252,7 @@
             the 2-thread line crosses 1.0× between 14 and 25 MFLOPs. four
             and eight threads both outperform two threads across most sizes
             above 25 MFLOPs. eight-thread results are less stable, with higher
-            variance (CV up to 15% vs 6–14% for 4-thread), so four physical
+            relative dispersion (stdev/median up to 15% vs 6–14% for 4-thread), so four physical
             cores provide the safer default on this CPU.
         </p>
 
@@ -277,18 +278,19 @@
         <p>
             at 14.2 MFLOPs, matmul latency is ~1.7 ms — scheduling overhead
             (~4 µs for 2 threads) is small in absolute terms. the real issue
-            is the gate: <code>should_parallel_q8_decode</code> returns false
-            below ~32 MFLOPs, so the parallel kernel is never invoked in a
-            real model run.
+            was the gate used at the time: it kept these small real-model calls
+            serial. the current Q8×Q8 implementation has since lowered that
+            gate substantially; this paragraph describes the historical run.
         </p>
 
         <h2>the engineering rule</h2>
 
         <p>
-            on this CPU and isolated Q8_0 kernel, parallel execution becomes
-            beneficial around 25 MFLOPs per matmul. Ember's current real-model
-            gate activates at roughly 32 MFLOPs, so smaller projections remain
-            on the serial SIMD path.
+            on this CPU and isolated Q8_0 kernel, the first observed median
+            speedup depends on thread count. two and eight threads cross between
+            the 14.2 and 25.2 MFLOP samples; four threads are marginally positive
+            at 14.2 MFLOPs. this sweep does not by itself justify a universal
+            threshold, and Ember's current Q8×Q8 gate is calibrated separately.
         </p>
 
         <p>
@@ -353,7 +355,6 @@ else:
             all raw data and the tracer source are in the
             <a href="https://github.com/voidwest/ember">Ember repository</a>.
         </p>
-
         <!-- docs:footer start -->
         <footer class="site-footer">
             <span>© 2026 voidwest</span>

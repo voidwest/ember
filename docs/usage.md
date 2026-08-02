@@ -87,14 +87,14 @@ the patched extractor contract is implemented.
 | `--trace-values` | `none` | optionally record output norms and fingerprints (`summary`) |
 | `--trace-run-metadata` | (none) | attach CPU, thread, governor, and commit metadata to traces |
 | `--dump-logits` | (none) | write last-prompt logits for `--prompt` to `.npy` and exit |
-| `--dump-layers` | (none) | write Gemma 4 last-token layer states as flat native-endian f32 |
+| `--dump-layers` | (none) | write Gemma 4 last-token layer states as flat little-endian f32 |
 | `--write-run-manifest` | (none) | write a reproducibility manifest with model/tokenizer hashes, git commit, compiler, Rayon, and CPU feature data |
 | `--record-model-sha256` | (none) | compute and record model file sha256 in probe metadata |
 | `--dump-gguf-metadata` | (none) | write parsed GGUF metadata to JSON |
 | `--probe` | (none) | run probe mode: extract hidden states from each block |
-| `--probe-stimuli` | `stimuli/nonce_root_pattern.json` | path to stimuli json for probe mode |
+| `--probe-stimuli` | `stimuli/nonce_root_pattern_surface.json` | path to stimuli json for probe mode |
 | `--probe-output` | `data/activations.npy` | output path for probe activations (.npy) |
-| `--probe-template` | `en_zero` | stimulus prompt key to probe (`en_zero`, `en_one`, `ar_zero`, `ar_one`, or generated controls) |
+| `--probe-template` | `en_surface_probe` | stimulus prompt key to probe; surface-only prompts are the representation-probing default |
 | `--probe-templates` | (none) | comma-separated prompt template keys for batch probe extraction |
 | `--probe-position` | `last` | hidden-state position to pool: `last`, `root`, `pattern`, or `prompt_mean` |
 | `--probe-positions` | (none) | comma-separated hidden-state positions for batch probe extraction |
@@ -102,6 +102,12 @@ the patched extractor contract is implemented.
 | `--probe-output-prefix` | `probe` | output filename prefix for batch probe extraction |
 | `--probe-generate-tokens` | `16` | continuation length for probe behavioral scoring |
 | `--probe-limit` | (none) | cap probe extraction to the first N stimuli for smoke tests |
+
+The historical `en_zero`, `en_one`, `ar_zero`, and `ar_one` templates print
+the target root and pattern in the prompt. They are suitable for composition
+behavior checks or explicitly named positive controls, not for evidence that a
+representation independently encodes those labels. Use `en_surface_probe` or
+`ar_surface_probe` for label-free representation probes.
 
 ### research experiments
 
@@ -448,10 +454,10 @@ cargo run --release -- \
   --arch llama \
   --model Llama-3.2-1B-Instruct-Q8_0.gguf \
   --probe \
-  --probe-stimuli stimuli/nonce_root_pattern.json \
+  --probe-stimuli stimuli/nonce_root_pattern_surface.json \
   --probe-output-dir data/matrix \
   --probe-output-prefix llama1b \
-  --probe-templates en_zero,en_one,ar_zero,ar_one \
+  --probe-templates en_surface_probe,ar_surface_probe \
   --probe-positions last,root,pattern,prompt_mean \
   --probe-generate-tokens 1
 ```
@@ -471,7 +477,7 @@ divergence for each emitted activation file:
 ```bash
 python probes/run_probe_matrix.py \
   --model 1b:Llama-3.2-1B-Instruct-Q8_0.gguf \
-  --templates en_zero en_one \
+  --templates en_surface_probe ar_surface_probe \
   --positions last root \
   --jobs 2 \
   --generate-tokens 1 \
@@ -504,7 +510,7 @@ cargo run --release -- \
   --model models/gemma-4-E2B-it.Q8_0.gguf \
   --tokenizer tokenizer-gemma4.json \
   --probe \
-  --probe-stimuli stimuli/nonce_root_pattern.json \
+  --probe-stimuli stimuli/nonce_root_pattern_surface.json \
   --probe-output data/gemma4_activations.npy \
   --probe-generate-tokens 1
 ```
@@ -577,7 +583,7 @@ training a misleading probe.
 ```bash
 python probes/train_linear_probe.py \
   --activations data/activations.npy \
-  --stimuli stimuli/nonce_root_pattern.json \
+  --stimuli stimuli/nonce_root_pattern_surface.json \
   --tasks root pattern \
   --root-split pattern-heldout \
   --pattern-split root-heldout \
@@ -776,7 +782,7 @@ regression iteration limit to avoid premature convergence failures:
 ```bash
 python3 probes/train_linear_probe.py \
   --activations data/activations.npy \
-  --stimuli stimuli/nonce_root_pattern.json \
+  --stimuli stimuli/nonce_root_pattern_surface.json \
   --max-iter 2000 \
   --scale
 ```
