@@ -85,6 +85,10 @@ impl Gemma4Config {
             &["gemma4.attention.head_count", "gemma3.attention.head_count"],
             32,
         )? as usize;
+        anyhow::ensure!(
+            n_heads > 0,
+            "Gemma attention head_count must be greater than zero"
+        );
         let embed_dim = get_u32_any(
             loader,
             &["gemma4.embedding_length", "gemma3.embedding_length"],
@@ -197,7 +201,7 @@ impl Gemma4Config {
             ],
             1024,
         )? as usize;
-        let layer_types = parse_layer_types(loader, n_layers);
+        let layer_types = parse_layer_types(loader, n_layers)?;
         let final_logit_softcap = get_optional_f32(
             loader,
             &[
@@ -233,7 +237,7 @@ impl Gemma4Config {
             0,
         )? as usize;
 
-        Ok(Self {
+        let config = Self {
             n_layers,
             n_heads,
             n_local_kv_heads,
@@ -255,7 +259,83 @@ impl Gemma4Config {
             vocab_size_per_layer_input,
             hidden_size_per_layer_input,
             num_kv_shared_layers,
-        })
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.n_layers > 0,
+            "Gemma model must contain at least one layer"
+        );
+        anyhow::ensure!(
+            self.embed_dim > 0,
+            "Gemma embedding_length must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.intermediate_dim > 0,
+            "Gemma feed_forward_length must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.vocab_size > 0,
+            "Gemma vocab_size must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.max_seq_len > 0,
+            "Gemma context_length must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.n_local_kv_heads > 0 && self.n_local_kv_heads <= self.n_heads,
+            "Gemma local KV head count must be in 1..={}",
+            self.n_heads
+        );
+        anyhow::ensure!(
+            self.n_global_kv_heads > 0 && self.n_global_kv_heads <= self.n_heads,
+            "Gemma global KV head count must be in 1..={}",
+            self.n_heads
+        );
+        anyhow::ensure!(
+            self.n_heads.is_multiple_of(self.n_local_kv_heads)
+                && self.n_heads.is_multiple_of(self.n_global_kv_heads),
+            "Gemma query head count must be divisible by both KV head counts"
+        );
+        anyhow::ensure!(
+            self.local_head_dim > 0 && self.global_head_dim > 0,
+            "Gemma attention head dimensions must be greater than zero"
+        );
+        anyhow::ensure!(
+            self.sliding_window > 0,
+            "Gemma sliding_window must be greater than zero"
+        );
+        for (name, value) in [
+            ("rope.freq_base", self.rope_theta),
+            ("local rope.freq_base", self.local_rope_theta),
+            ("global rope.freq_base", self.global_rope_theta),
+            ("attention scale", self.attention_scale),
+        ] {
+            anyhow::ensure!(
+                value.is_finite() && value > 0.0,
+                "Gemma {name} must be finite and positive"
+            );
+        }
+        anyhow::ensure!(
+            self.norm_eps.is_finite() && self.norm_eps >= 0.0,
+            "Gemma RMS epsilon must be finite and non-negative"
+        );
+        if let Some(cap) = self.final_logit_softcap {
+            anyhow::ensure!(
+                cap.is_finite() && cap > 0.0,
+                "Gemma logit softcap must be finite and positive"
+            );
+        }
+        anyhow::ensure!(
+            self.layer_types.len() == self.n_layers,
+            "Gemma layer type count {} does not match block_count {}",
+            self.layer_types.len(),
+            self.n_layers
+        );
+        Ok(())
     }
 
     fn layer_type(&self, layer: usize) -> Gemma4AttentionType {
@@ -493,11 +573,12 @@ impl<B: Backend> Gemma4Attention<B> {
             let cursor = cache.cursor();
             for pos in 0..seq_len {
                 let offset = pos * kv_dim;
-                cache.append_with_head_dim(
+                cache.append_with_layout(
                     layer,
                     cursor + pos,
                     &k_data[offset..offset + kv_dim],
                     &v_data[offset..offset + kv_dim],
+                    self.n_kv_heads,
                     self.head_dim,
                 );
             }
@@ -928,6 +1009,10 @@ impl<B: Backend> ForwardModel<B> for Gemma4<B> {
         self.config.embed_dim
     }
 
+    fn vocab_size(&self, _backend: &B) -> usize {
+        self.config.vocab_size
+    }
+
     fn forward_with_activations(
         &self,
         backend: &B,
@@ -973,6 +1058,15 @@ impl ExperimentalForwardModel for Gemma4<CpuBackend> {
 
 impl Gemma4<CpuBackend> {
     pub fn from_loader(mut loader: GgufLoader) -> anyhow::Result<Self> {
+        if let Some(architecture) = loader.metadata.get("general.architecture") {
+            match architecture {
+                GgufValue::Str(architecture) => anyhow::ensure!(
+                    matches!(architecture.as_str(), "gemma3" | "gemma4"),
+                    "unsupported Gemma-family GGUF architecture '{architecture}'"
+                ),
+                _ => anyhow::bail!("GGUF general.architecture must be a string"),
+            }
+        }
         let config = Gemma4Config::from_gguf_metadata(&loader)?;
         log::debug!("gemma4 config: {:?}", config);
 
@@ -983,7 +1077,7 @@ impl Gemma4<CpuBackend> {
                 // assign_row_from_table / tied_embedding_logits see the
                 // orientation they expect.
                 let shape = tensor.shape();
-                debug_assert_eq!(shape.len(), 2);
+                anyhow::ensure!(shape.len() == 2, "token_embd.weight must be 2D");
                 Gemma4Embedding::F32(Arc::new(crate::tensor::CpuTensor::from_data(
                     vec![shape[1], shape[0]],
                     tensor.data().to_vec(),
@@ -1251,7 +1345,7 @@ impl Gemma4<CpuBackend> {
                 (None, None)
             };
 
-        Ok(Self {
+        let model = Self {
             embed_tokens,
             blocks,
             norm: loader.take_f32("output_norm.weight")?,
@@ -1260,7 +1354,123 @@ impl Gemma4<CpuBackend> {
             per_layer_model_proj,
             per_layer_proj_norm,
             config,
-        })
+        };
+        model.validate_loaded_shapes()?;
+        Ok(model)
+    }
+
+    fn validate_loaded_shapes(&self) -> anyhow::Result<()> {
+        let backend = CpuBackend;
+        let (vocab_size, embed_dim) = match &self.embed_tokens {
+            Gemma4Embedding::F32(table) => {
+                anyhow::ensure!(table.shape().len() == 2, "token embedding must be 2D");
+                (table.shape()[0], table.shape()[1])
+            }
+            Gemma4Embedding::Q8_0(table) => (table.out_features(), table.in_features()),
+        };
+        anyhow::ensure!(
+            (vocab_size, embed_dim) == (self.config.vocab_size, self.config.embed_dim),
+            "token embedding must have shape [{}, {}], got [{vocab_size}, {embed_dim}]",
+            self.config.vocab_size,
+            self.config.embed_dim
+        );
+        anyhow::ensure!(
+            self.norm.shape() == [self.config.embed_dim],
+            "output_norm.weight must have shape [{}], got {:?}",
+            self.config.embed_dim,
+            self.norm.shape()
+        );
+        let head_shape = match &self.head {
+            Gemma4Head::Linear(head) => (head.in_features(&backend), head.out_features(&backend)),
+            Gemma4Head::TiedEmbedding(Gemma4Embedding::F32(table)) => {
+                (table.shape()[1], table.shape()[0])
+            }
+            Gemma4Head::TiedEmbedding(Gemma4Embedding::Q8_0(table)) => {
+                (table.in_features(), table.out_features())
+            }
+        };
+        anyhow::ensure!(
+            head_shape == (self.config.embed_dim, self.config.vocab_size),
+            "output head must be {} -> {}, got {} -> {}",
+            self.config.embed_dim,
+            self.config.vocab_size,
+            head_shape.0,
+            head_shape.1
+        );
+
+        for (index, block) in self.blocks.iter().enumerate() {
+            for (name, norm) in [
+                ("attention", &block.input_norm),
+                ("post-attention", &block.post_attn_norm),
+                ("FFN", &block.pre_ffn_norm),
+                ("post-FFN", &block.post_ffn_norm),
+            ] {
+                anyhow::ensure!(
+                    norm.shape() == [self.config.embed_dim],
+                    "block {index} {name} norm must have shape [{}], got {:?}",
+                    self.config.embed_dim,
+                    norm.shape()
+                );
+            }
+            let attention = &block.attn;
+            let query_width = attention
+                .n_heads
+                .checked_mul(attention.head_dim)
+                .ok_or_else(|| anyhow::anyhow!("block {index} query width overflow"))?;
+            let kv_width = attention
+                .n_kv_heads
+                .checked_mul(attention.head_dim)
+                .ok_or_else(|| anyhow::anyhow!("block {index} KV width overflow"))?;
+            anyhow::ensure!(
+                attention.q_proj.in_features(&backend) == self.config.embed_dim
+                    && attention.q_proj.out_features(&backend) == query_width,
+                "block {index} query projection must be {} -> {query_width}",
+                self.config.embed_dim
+            );
+            for (name, projection) in [
+                ("key", attention.k_proj.as_ref()),
+                ("value", attention.v_proj.as_ref()),
+            ] {
+                if let Some(projection) = projection {
+                    anyhow::ensure!(
+                        projection.in_features(&backend) == self.config.embed_dim
+                            && projection.out_features(&backend) == kv_width,
+                        "block {index} {name} projection must be {} -> {kv_width}",
+                        self.config.embed_dim
+                    );
+                }
+            }
+            anyhow::ensure!(
+                attention.o_proj.in_features(&backend) == query_width
+                    && attention.o_proj.out_features(&backend) == self.config.embed_dim,
+                "block {index} attention output projection must be {query_width} -> {}",
+                self.config.embed_dim
+            );
+            anyhow::ensure!(
+                attention.q_norm.shape() == [attention.head_dim]
+                    && attention.k_norm.shape() == [attention.head_dim],
+                "block {index} Q/K norms must have shape [{}]",
+                attention.head_dim
+            );
+            let intermediate = block.mlp.gate_proj.out_features(&backend);
+            anyhow::ensure!(
+                intermediate > 0
+                    && block.mlp.gate_proj.in_features(&backend) == self.config.embed_dim
+                    && block.mlp.up_proj.in_features(&backend) == self.config.embed_dim
+                    && block.mlp.up_proj.out_features(&backend) == intermediate
+                    && block.mlp.down_proj.in_features(&backend) == intermediate
+                    && block.mlp.down_proj.out_features(&backend) == self.config.embed_dim,
+                "block {index} MLP projection shapes are inconsistent"
+            );
+            if let Some(norm) = &block.post_ple_norm {
+                anyhow::ensure!(
+                    norm.shape() == [self.config.embed_dim],
+                    "block {index} post-PLE norm must have shape [{}]",
+                    self.config.embed_dim
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1272,6 +1482,11 @@ impl<B: Backend> Gemma4<B> {
         cache: &mut KVCache,
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error> {
+        cache.validate_start_pos(start_pos);
+        assert!(
+            !token_ids.is_empty(),
+            "Gemma 4 forward requires at least one token"
+        );
         let mut x = embed_tokens(
             backend,
             &self.embed_tokens,
@@ -1315,6 +1530,11 @@ impl<B: Backend> Gemma4<B> {
     {
         use crate::trace::{self, OpKind};
 
+        cache.validate_start_pos(start_pos);
+        assert!(
+            !token_ids.is_empty(),
+            "Gemma 4 forward requires at least one token"
+        );
         let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
         let embedding_span = gemma_trace_span!(
@@ -1923,10 +2143,34 @@ fn dot_f16(a: &[f32], b: &[f16]) -> f32 {
 }
 
 fn softmax_range(row: &mut [f32], start: usize, end: usize) {
+    assert!(
+        start < end && end <= row.len(),
+        "softmax range is out of bounds"
+    );
+    let positive_infinities = row[start..end]
+        .iter()
+        .filter(|value| **value == f32::INFINITY)
+        .count();
+    if positive_infinities > 0 {
+        let probability = 1.0 / positive_infinities as f32;
+        for value in &mut row[start..end] {
+            *value = if *value == f32::INFINITY {
+                probability
+            } else {
+                0.0
+            };
+        }
+        return;
+    }
     let max = row[start..end]
         .iter()
         .copied()
         .fold(f32::NEG_INFINITY, f32::max);
+    if max == f32::NEG_INFINITY {
+        let probability = 1.0 / (end - start) as f32;
+        row[start..end].fill(probability);
+        return;
+    }
     let mut sum = 0.0;
     for v in &mut row[start..end] {
         *v = (*v - max).exp();
@@ -1937,7 +2181,10 @@ fn softmax_range(row: &mut [f32], start: usize, end: usize) {
     }
 }
 
-fn parse_layer_types(loader: &GgufLoader, n_layers: usize) -> Vec<Gemma4AttentionType> {
+fn parse_layer_types(
+    loader: &GgufLoader,
+    n_layers: usize,
+) -> anyhow::Result<Vec<Gemma4AttentionType>> {
     if let Some(GgufValue::Array(values)) = loader
         .metadata
         .get("gemma4.attention.sliding_window_pattern")
@@ -1951,8 +2198,12 @@ fn parse_layer_types(loader: &GgufLoader, n_layers: usize) -> Vec<Gemma4Attentio
             })
             .collect();
         if parsed.len() == n_layers {
-            return parsed;
+            return Ok(parsed);
         }
+        anyhow::bail!(
+            "gemma4.attention.sliding_window_pattern has {} valid entries; expected {n_layers}",
+            parsed.len()
+        );
     }
 
     for key in [
@@ -1974,11 +2225,18 @@ fn parse_layer_types(loader: &GgufLoader, n_layers: usize) -> Vec<Gemma4Attentio
                 })
                 .collect();
             if parsed.len() == n_layers {
-                return parsed;
+                return Ok(parsed);
             }
+            anyhow::bail!(
+                "Gemma layer type metadata '{key}' has {} valid entries; expected {n_layers}",
+                parsed.len()
+            );
         }
     }
-    (0..n_layers)
+    log::warn!(
+        "Gemma GGUF has no explicit layer-type metadata; using the architecture's every-sixth-global default"
+    );
+    Ok((0..n_layers)
         .map(|i| {
             if (i + 1) % 6 == 0 {
                 Gemma4AttentionType::Global
@@ -1986,7 +2244,7 @@ fn parse_layer_types(loader: &GgufLoader, n_layers: usize) -> Vec<Gemma4Attentio
                 Gemma4AttentionType::Local
             }
         })
-        .collect()
+        .collect())
 }
 
 fn get_bool(loader: &GgufLoader, key: &str, default: bool) -> bool {

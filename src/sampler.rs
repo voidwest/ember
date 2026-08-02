@@ -22,6 +22,21 @@ pub fn sample_token(
     top_p: Option<f32>,
     rng: &mut impl Rng,
 ) -> usize {
+    assert!(!logits.is_empty(), "cannot sample from empty logits");
+    assert!(
+        logits.iter().all(|value| !value.is_nan()),
+        "cannot sample from logits containing NaN"
+    );
+    assert!(
+        temperature.is_finite() && temperature >= 0.0,
+        "temperature must be finite and non-negative"
+    );
+    if let Some(p) = top_p {
+        assert!(
+            p.is_finite() && (0.0..=1.0).contains(&p),
+            "top_p must be in [0, 1]"
+        );
+    }
     if temperature == 0.0 {
         return argmax_token(logits);
     }
@@ -48,6 +63,11 @@ pub fn sample_token(
 }
 
 pub fn argmax_token(logits: &[f32]) -> usize {
+    assert!(!logits.is_empty(), "cannot take argmax of empty logits");
+    assert!(
+        logits.iter().all(|value| !value.is_nan()),
+        "cannot take argmax of logits containing NaN"
+    );
     logits
         .iter()
         .enumerate()
@@ -107,6 +127,28 @@ fn top_p_filter(logits: &mut [f32], p: f32) {
 /// distribution - this matches the behavior of `CpuTensor::softmax` and prevents
 /// NaN propagation from `(-inf - -inf).exp()` per ieee 754.
 pub fn softmax_1d(logits: &[f32]) -> Vec<f32> {
+    assert!(!logits.is_empty(), "cannot take softmax of empty logits");
+    assert!(
+        logits.iter().all(|value| !value.is_nan()),
+        "cannot take softmax of logits containing NaN"
+    );
+    let positive_infinities = logits
+        .iter()
+        .filter(|value| **value == f32::INFINITY)
+        .count();
+    if positive_infinities > 0 {
+        let probability = 1.0 / positive_infinities as f32;
+        return logits
+            .iter()
+            .map(|value| {
+                if *value == f32::INFINITY {
+                    probability
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+    }
     let max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
     if max == f32::NEG_INFINITY {
         let uniform = 1.0 / logits.len() as f32;
@@ -157,7 +199,26 @@ fn categorical_sample(dist: &[f32], rng: &mut impl Rng) -> usize {
     // fallback: return the index of the largest probability
     dist.iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
         .map(|(i, _)| i)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn softmax_shares_probability_across_positive_infinities() {
+        assert_eq!(
+            softmax_1d(&[f32::INFINITY, 1.0, f32::INFINITY]),
+            vec![0.5, 0.0, 0.5]
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "containing NaN")]
+    fn argmax_rejects_nan() {
+        let _ = argmax_token(&[0.0, f32::NAN]);
+    }
 }

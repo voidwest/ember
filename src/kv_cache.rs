@@ -31,6 +31,13 @@ pub struct KVCache {
 
 impl KVCache {
     pub fn new(n_layers: usize, n_kv_heads: usize, head_dim: usize, max_seq_len: usize) -> Self {
+        assert!(n_layers > 0, "kv cache requires at least one layer");
+        assert!(n_kv_heads > 0, "kv cache requires at least one KV head");
+        assert!(head_dim > 0, "kv cache requires a non-zero head dimension");
+        assert!(
+            max_seq_len > 0,
+            "kv cache requires a positive sequence length"
+        );
         let len = [n_layers, n_kv_heads, max_seq_len, head_dim]
             .into_iter()
             .try_fold(1usize, |count, dim| count.checked_mul(dim))
@@ -59,10 +66,32 @@ impl KVCache {
         v_new: &[f32],
         active_head_dim: usize,
     ) {
+        self.append_with_layout(layer, pos, k_new, v_new, self.n_kv_heads, active_head_dim);
+    }
+
+    /// Append K/V values when a layer uses fewer heads and/or a narrower head
+    /// dimension than the cache's maximum allocation.
+    pub fn append_with_layout(
+        &mut self,
+        layer: usize,
+        pos: usize,
+        k_new: &[f32],
+        v_new: &[f32],
+        active_kv_heads: usize,
+        active_head_dim: usize,
+    ) {
         assert!(layer < self.n_layers, "kv cache layer out of bounds");
+        assert!(
+            active_kv_heads > 0,
+            "kv cache requires at least one active head"
+        );
+        assert!(active_kv_heads <= self.n_kv_heads);
+        assert!(
+            active_head_dim > 0,
+            "kv cache requires a non-zero head dimension"
+        );
         assert!(active_head_dim <= self.head_dim);
-        let source_len = self
-            .n_kv_heads
+        let source_len = active_kv_heads
             .checked_mul(active_head_dim)
             .expect("kv cache append shape product overflow");
         assert_eq!(k_new.len(), source_len);
@@ -79,7 +108,7 @@ impl KVCache {
             .checked_mul(self.head_dim)
             .expect("kv cache sequence offset overflow");
 
-        for h in 0..self.n_kv_heads {
+        for h in 0..active_kv_heads {
             let head_offset = h
                 .checked_mul(self.max_seq_len)
                 .and_then(|offset| offset.checked_mul(self.head_dim))
@@ -118,6 +147,17 @@ impl KVCache {
 
     pub fn cursor(&self) -> usize {
         self.cursor
+    }
+
+    /// Assert that a caller's absolute position agrees with cache state.
+    /// Keeping two independent cursors without this check can silently
+    /// overwrite or skip K/V positions.
+    pub fn validate_start_pos(&self, start_pos: usize) {
+        assert_eq!(
+            start_pos, self.cursor,
+            "kv cache start_pos {start_pos} does not match cursor {}",
+            self.cursor
+        );
     }
 
     /// return a mutable reference to the pre-allocated `qk_scratch` buffer.
@@ -200,5 +240,25 @@ mod tests {
         );
         assert_eq!(k_out[0].to_f32(), 1.0);
         assert_eq!(v_out[0].to_f32(), 2.0);
+    }
+
+    #[test]
+    fn append_with_layout_supports_layers_with_fewer_heads() {
+        let mut cache = KVCache::new(1, 4, 8, 2);
+        cache.append_with_layout(0, 0, &[1.0; 8], &[2.0; 8], 2, 4);
+        let (k, v) = cache.get(0);
+        assert_eq!(k[0].to_f32(), 1.0);
+        assert_eq!(k[4].to_f32(), 0.0);
+        let second_head = 2 * 8;
+        assert_eq!(k[second_head].to_f32(), 1.0);
+        assert_eq!(v[second_head].to_f32(), 2.0);
+        let inactive_head = 2 * 2 * 8;
+        assert_eq!(k[inactive_head].to_f32(), 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "does not match cursor")]
+    fn start_position_must_match_cursor() {
+        KVCache::new(1, 1, 1, 2).validate_start_pos(1);
     }
 }
