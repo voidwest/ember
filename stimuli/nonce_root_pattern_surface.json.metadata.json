@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "output_path": "stimuli/nonce_root_pattern_surface.json",
+  "output_sha256": "9845748c23b6487991a7121e094d937c00bc5b3a53ffab2dcfec2f7614073493",
+  "source_path": null,
+  "source_sha256": null,
+  "augmented_input_path": "stimuli/nonce_root_pattern.json",
+  "augmented_input_sha256": "eb03a2a2ea255bc6e6d1e145ecbab3a8ad54f76ca1e5195a94013e0120c2c946",
+  "lexicon_path": null,
+  "lexicon_sha256": null,
+  "collision_audit_status": "not_checked_no_lexicon",
+  "collision_policy": "error",
+  "collision_count": null,
+  "record_count": 200,
+  "include_ablations": false,
+  "contains_label_free_surface_prompts": true,
+  "contains_label_revealed_behavioral_prompts": true
+}

@@ -2,9 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import random
+import tempfile
 from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 ROOTS = [
@@ -45,14 +51,24 @@ ROOT_COUNTS = [42, 34, 29, 24, 21, 18, 16, 14, 13, 12, 11, 10, 9, 9, 8, 8, 7, 7,
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output", default="data/arabic_morph_sample/camelmorph_imbalanced_sample.jsonl")
+    parser.add_argument(
+        "--output",
+        default=str(
+            REPO_ROOT
+            / "data/arabic_morph_sample/camelmorph_imbalanced_sample.jsonl"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=17)
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
+    if any(root != "".join(letters) for root, letters in ROOTS):
+        raise AssertionError("fixture root labels and radical tuples disagree")
     records = []
     idx = 1
-    for root_index, ((root, letters), count) in enumerate(zip(ROOTS, ROOT_COUNTS)):
+    for root_index, ((root, letters), count) in enumerate(
+        zip(ROOTS, ROOT_COUNTS, strict=True)
+    ):
         for i in range(count):
             template = TEMPLATES[(i + root_index) % len(TEMPLATES)]
             record = template(root, letters, i)
@@ -97,10 +113,62 @@ def main() -> int:
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as f:
-        for record in records:
-            f.write(json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
-            f.write("\n")
+    if out.exists() and not out.is_file():
+        raise ValueError(f"output path is not a regular file: {out}")
+    ids = [record["analysis_id"] for record in records]
+    if len(ids) != len(set(ids)):
+        raise AssertionError("fixture generator produced duplicate analysis IDs")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{out.name}.", suffix=".tmp", dir=out.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as f:
+            for record in records:
+                f.write(
+                    json.dumps(
+                        record,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        allow_nan=False,
+                    )
+                )
+                f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary, out)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    digest = hashlib.sha256(out.read_bytes()).hexdigest()
+    metadata = out.with_suffix(out.suffix + ".metadata.json")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{metadata.name}.", suffix=".tmp", dir=metadata.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(
+                {
+                    "schema_version": 1,
+                    "artifact_kind": "synthetic_morphology_fixture",
+                    "seed": args.seed,
+                    "record_count": len(records),
+                    "output_path": str(out.resolve()),
+                    "output_sha256": digest,
+                },
+                handle,
+                indent=2,
+                allow_nan=False,
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, metadata)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
     print(f"Wrote {len(records)} records to {out}")
     return 0
 
