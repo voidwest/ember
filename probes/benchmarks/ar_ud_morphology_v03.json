@@ -11,7 +11,7 @@
   ],
   "probe_kind": "linear",
   "control": true,
-  "reuse_activations": true,
+  "reuse_activations": false,
   "split_policy": {
     "group_field": "sentence_id"
   },

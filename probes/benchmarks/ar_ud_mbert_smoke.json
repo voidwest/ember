@@ -10,7 +10,7 @@
   ],
   "probe_kind": "sgd",
   "control": true,
-  "reuse_activations": true,
+  "reuse_activations": false,
   "max_rows": 1000,
   "folds": 3,
   "control_repeats": 1,

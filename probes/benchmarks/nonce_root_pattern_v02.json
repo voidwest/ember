@@ -1,9 +1,11 @@
 {
   "name": "nonce-root-pattern-v02",
-  "stimuli": "stimuli/nonce_root_pattern.json",
+  "stimuli": "stimuli/nonce_root_pattern_surface.json",
   "out_dir": "data/benchmarks",
   "tasks": ["root", "pattern"],
   "probe_kind": "sgd",
+  "probe_template": "en_surface_probe",
+  "probe_position": "last",
   "control": true,
   "reuse_activations": true,
   "folds": 5,
