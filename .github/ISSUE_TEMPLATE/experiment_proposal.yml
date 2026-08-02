@@ -7,7 +7,9 @@ body:
   - type: markdown
     attributes:
       value: |
-        Ember v0.1 intentionally ships only activation-stats and zero-layer-output. Dynamic plugins, registries, multiple concurrent experiments, and broad event systems are out of scope.
+        Ember v0.2 exposes a narrow static experiment interface, activation
+        capture, and activation patching. Dynamic plugins, registries, multiple
+        concurrent experiments, and broad event systems remain out of scope.
   - type: textarea
     id: question
     attributes:

@@ -21,6 +21,7 @@ rayon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
+sha2 = "0.10"
 
 [[bench]]
 name = "q8_matmul"
