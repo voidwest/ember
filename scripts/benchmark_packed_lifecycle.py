@@ -16,9 +16,12 @@ import math
 import os
 import pathlib
 import random
+import re
+import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 
@@ -89,22 +92,236 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="run F-J even if an A-E stop condition fires",
     )
+    parser.add_argument("--trial-timeout-seconds", type=float, default=1800.0)
     args = parser.parse_args()
-    if args.tokens < 1:
-        parser.error("--tokens must be positive")
+    if args.tokens < 2:
+        parser.error("--tokens must be at least 2 to measure decode evaluations")
     if args.threads < 1:
         parser.error("--threads must be positive")
     if args.repetitions < 1:
         parser.error("--repetitions must be positive")
+    if not args.prompt:
+        parser.error("--prompt must not be empty")
+    if args.max_seq_len is not None and args.max_seq_len < 1:
+        parser.error("--max-seq-len must be positive")
+    for name in (
+        "cooldown_timeout_seconds",
+        "unacceptable_peak_overhead_percent",
+        "measurement_overhead_percent",
+        "trial_timeout_seconds",
+    ):
+        value = getattr(args, name)
+        if not math.isfinite(value) or value < 0.0:
+            parser.error(f"--{name.replace('_', '-')} must be finite and non-negative")
+    if args.trial_timeout_seconds <= 0.0:
+        parser.error("--trial-timeout-seconds must be positive")
+    if args.max_start_temperature_c is not None and not math.isfinite(
+        args.max_start_temperature_c
+    ):
+        parser.error("--max-start-temperature-c must be finite")
+    if (
+        args.max_start_temperature_c is not None
+        and args.max_start_temperature_c < -273.15
+    ):
+        parser.error("--max-start-temperature-c cannot be below absolute zero")
+    if args.cpus:
+        if not re.fullmatch(r"\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*", args.cpus):
+            parser.error("--cpus must be a comma-separated CPU/range list such as 0-3,8")
+        if shutil.which("taskset") is None:
+            parser.error("--cpus requires the taskset executable")
+    for name in ("binary", "model", "tokenizer"):
+        if not pathlib.Path(getattr(args, name)).is_file():
+            parser.error(f"--{name} file does not exist: {getattr(args, name)}")
+    if not os.access(args.binary, os.X_OK):
+        parser.error(f"--binary is not executable: {args.binary}")
     return args
 
 
 def sha256_file(path: pathlib.Path) -> str:
+    before = file_identity(path)
     digest = hashlib.sha256()
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(8 * 1024 * 1024), b""):
             digest.update(chunk)
+    if file_identity(path) != before:
+        raise RuntimeError(f"file changed while hashing it: {path}")
     return digest.hexdigest()
+
+
+def file_identity(path: pathlib.Path) -> tuple[int, int, int, int]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def atomic_write(path: pathlib.Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.tmp-"
+    )
+    temporary = pathlib.Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def validate_trial_result(
+    result: Any,
+    lifecycle: str,
+    selection: str,
+    *,
+    expected_tokens: int | None = None,
+    expected_threads: int | None = None,
+    expected_model: str | None = None,
+    expected_tokenizer: str | None = None,
+    expected_prompt: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        raise ValueError("lifecycle benchmark output must be a JSON object")
+    if result.get("schema_version") != 2 or result.get("benchmark") != "packed_lifecycle":
+        raise ValueError("unsupported lifecycle benchmark schema")
+    expected_lifecycle = lifecycle.replace("-", "_")
+    expected_selection = selection.replace("-", "_")
+    if (
+        result.get("lifecycle") != expected_lifecycle
+        or result.get("selection") != expected_selection
+    ):
+        raise ValueError("lifecycle benchmark echoed the wrong mode configuration")
+    required_paths = [
+        ("timings_ns", "packing"),
+        ("timings_ns", "prefill"),
+        ("timings_ns", "decode"),
+        ("timings_ns", "time_to_first_token_work"),
+        ("timings_ns", "predecode_work"),
+        ("timings_ns", "whole_process_until_exit_snapshot"),
+        ("decode_evaluations_per_second",),
+        ("decode_evaluations",),
+        ("peak_rss_kib",),
+        ("faults", "minor_total"),
+        ("faults", "major_total"),
+        ("measurement_overhead_fraction",),
+        ("packed_bytes",),
+        ("output_hash",),
+    ]
+    integer_paths = {
+        path
+        for path in required_paths
+        if path[0] == "timings_ns"
+        or path
+        in {
+            ("decode_evaluations",),
+            ("peak_rss_kib",),
+            ("faults", "minor_total"),
+            ("faults", "major_total"),
+            ("packed_bytes",),
+        }
+    }
+    for path in required_paths:
+        try:
+            value = nested(result, *path)
+        except (KeyError, TypeError) as error:
+            raise ValueError(f"lifecycle result is missing {'.'.join(path)}") from error
+        if path == ("output_hash",):
+            if not isinstance(value, str) or not re.fullmatch(r"fnv1a64:[0-9a-f]{16}", value):
+                raise ValueError("lifecycle output_hash must be a canonical FNV-1a digest")
+        elif path in integer_paths and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+        ):
+            raise ValueError(f"lifecycle integer metric {'.'.join(path)} is invalid: {value!r}")
+        elif (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            raise ValueError(f"lifecycle metric {'.'.join(path)} is invalid: {value!r}")
+    if result["decode_evaluations_per_second"] <= 0.0:
+        raise ValueError("decode_evaluations_per_second must be positive")
+    if result["measurement_overhead_fraction"] > 1.0:
+        raise ValueError("measurement_overhead_fraction cannot exceed 1")
+    if expected_tokens is not None:
+        if result.get("requested_generated_tokens") != expected_tokens:
+            raise ValueError("lifecycle benchmark echoed the wrong generated-token count")
+        if result.get("decode_evaluations") != expected_tokens - 1:
+            raise ValueError("lifecycle decode-evaluation count is inconsistent")
+        generated = result.get("generated_tokens")
+        if not isinstance(generated, list) or len(generated) != expected_tokens:
+            raise ValueError("lifecycle generated-token payload has the wrong length")
+        if any(isinstance(token, bool) or not isinstance(token, int) or token < 0 for token in generated):
+            raise ValueError("lifecycle generated-token payload is invalid")
+    if expected_threads is not None and result.get("threads") != expected_threads:
+        raise ValueError("lifecycle benchmark used the wrong Rayon thread count")
+    for name, expected in (
+        ("model", expected_model),
+        ("tokenizer", expected_tokenizer),
+        ("prompt", expected_prompt),
+    ):
+        if expected is not None and result.get(name) != expected:
+            raise ValueError(f"lifecycle benchmark echoed the wrong {name}")
+    prompt_tokens = result.get("prompt_tokens")
+    if (
+        not isinstance(prompt_tokens, list)
+        or len(prompt_tokens) < 2
+        or any(
+            isinstance(token, bool) or not isinstance(token, int) or token < 0
+            for token in prompt_tokens
+        )
+    ):
+        raise ValueError("lifecycle prompt-token audit is invalid")
+    if result.get("residency_measurement_enabled") is not True:
+        raise ValueError("lifecycle benchmark did not enable residency measurement")
+
+    decode_ns = nested(result, "timings_ns", "decode")
+    if decode_ns <= 0:
+        raise ValueError("decode timing must be positive")
+    expected_rate = result["decode_evaluations"] * 1_000_000_000.0 / decode_ns
+    if not math.isclose(
+        result["decode_evaluations_per_second"],
+        expected_rate,
+        rel_tol=1e-12,
+        abs_tol=0.0,
+    ):
+        raise ValueError("decode evaluation rate is inconsistent with its timing")
+
+    snapshots = result.get("residency_snapshots")
+    if not isinstance(snapshots, list) or not snapshots:
+        raise ValueError("residency_snapshots must be a non-empty array")
+    phases = set()
+    prior_elapsed_ns = -1
+    for index, item in enumerate(snapshots):
+        if not isinstance(item, dict) or not isinstance(item.get("phase"), str):
+            raise ValueError(f"invalid residency snapshot {index}")
+        if item["phase"] in phases:
+            raise ValueError(f"duplicate residency snapshot phase {item['phase']!r}")
+        phases.add(item["phase"])
+        elapsed_ns = item.get("elapsed_ns")
+        if isinstance(elapsed_ns, bool) or not isinstance(elapsed_ns, int) or elapsed_ns < prior_elapsed_ns:
+            raise ValueError(f"snapshot {item['phase']!r} has invalid/non-monotonic elapsed_ns")
+        prior_elapsed_ns = elapsed_ns
+        for field in ("rss_kib", "anonymous_pss_kib", "file_pss_kib"):
+            value = item.get(field)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"snapshot {item['phase']!r} has invalid {field}")
+    for phase in (
+        "prefill_complete",
+        "post_pack_eviction_complete",
+        "post_prefill_reeviction_complete",
+        "decode_complete",
+    ):
+        if phase not in phases:
+            raise ValueError(f"lifecycle result is missing snapshot {phase!r}")
+    post_prefill = result.get("post_prefill")
+    expected_post_prefill = snapshot(result, "prefill_complete")
+    if not isinstance(post_prefill, dict) or any(
+        post_prefill.get(field) != expected_post_prefill.get(field)
+        for field in ("rss_kib", "anonymous_pss_kib", "file_pss_kib")
+    ):
+        raise ValueError("post_prefill summary does not match its residency snapshot")
+    return result
 
 
 def coretemp_package_c() -> float | None:
@@ -177,6 +394,7 @@ def run_trial(
 
     environment = os.environ.copy()
     environment["RAYON_NUM_THREADS"] = str(args.threads)
+    environment["LC_ALL"] = "C"
     # The lifecycle constructor ignores automatic packing, but pinning the
     # rollback variable documents that no ambient setting controls a trial.
     environment["EMBER_LLAMA_PACKED_Q8"] = "0"
@@ -185,10 +403,11 @@ def run_trial(
     if args.max_start_temperature_c is not None:
         while True:
             current_temperature = coretemp_package_c()
-            if (
-                current_temperature is None
-                or current_temperature <= args.max_start_temperature_c
-            ):
+            if current_temperature is None:
+                raise RuntimeError(
+                    "--max-start-temperature-c was requested but coretemp package data is unavailable"
+                )
+            if current_temperature <= args.max_start_temperature_c:
                 break
             if time.perf_counter() - cooldown_started > args.cooldown_timeout_seconds:
                 raise RuntimeError(
@@ -205,6 +424,7 @@ def run_trial(
         capture_output=True,
         text=True,
         env=environment,
+        timeout=args.trial_timeout_seconds,
     )
     external_wall_ns = time.perf_counter_ns() - started_ns
     if completed.returncode != 0:
@@ -213,11 +433,33 @@ def run_trial(
             f"mode {label} repetition {repetition} exited {completed.returncode}"
         )
     try:
-        result = json.loads(completed.stdout)
-    except json.JSONDecodeError:
+        result = json.loads(
+            completed.stdout,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-standard JSON constant {value!r} in benchmark output")
+            ),
+        )
+    except (json.JSONDecodeError, ValueError):
         sys.stderr.write(completed.stdout)
         sys.stderr.write(completed.stderr)
         raise
+    result = validate_trial_result(
+        result,
+        lifecycle,
+        selection,
+        expected_tokens=args.tokens,
+        expected_threads=args.threads,
+        expected_model=str(pathlib.Path(args.model).resolve()),
+        expected_tokenizer=str(pathlib.Path(args.tokenizer).resolve()),
+        expected_prompt=args.prompt,
+    )
+    internal_wall_ns = nested(
+        result, "timings_ns", "whole_process_until_exit_snapshot"
+    )
+    if external_wall_ns < internal_wall_ns:
+        raise ValueError(
+            "external process wall time is shorter than the internal measurement"
+        )
     result["ablation_label"] = label
     result["repetition"] = repetition
     result["external_whole_process_ns"] = external_wall_ns
@@ -227,7 +469,7 @@ def run_trial(
     result["reproduction_command"] = command
     result["stderr"] = completed.stderr
     raw_path = output_dir / f"{label.lower()}-r{repetition}.json"
-    raw_path.write_text(json.dumps(result, indent=2) + "\n")
+    atomic_write(raw_path, json.dumps(result, indent=2, allow_nan=False) + "\n")
     return result
 
 
@@ -242,6 +484,24 @@ def run_mode_group(
         ordered_modes = list(modes)
         random.Random(args.random_seed + repetition).shuffle(ordered_modes)
         orders.append([label for label, _, _ in ordered_modes])
+        atomic_write(
+            output_dir / "progress.json",
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "status": "running",
+                    "mode_group": [label for label, _, _ in modes],
+                    "trial_orders": orders,
+                    "completed": {
+                        trial_label: len(label_trials)
+                        for trial_label, label_trials in trials.items()
+                    },
+                },
+                indent=2,
+                allow_nan=False,
+            )
+            + "\n",
+        )
         for label, lifecycle, selection in ordered_modes:
             trials[label].append(
                 run_trial(
@@ -253,6 +513,24 @@ def run_mode_group(
                     output_dir,
                 )
             )
+            atomic_write(
+                output_dir / "progress.json",
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "status": "running",
+                        "mode_group": [item[0] for item in modes],
+                        "trial_orders": orders,
+                        "completed": {
+                            trial_label: len(label_trials)
+                            for trial_label, label_trials in trials.items()
+                        },
+                    },
+                    indent=2,
+                    allow_nan=False,
+                )
+                + "\n",
+            )
     return trials, orders
 
 
@@ -260,7 +538,7 @@ def summarize_group(label: str, trials: list[dict[str, Any]]) -> dict[str, Any]:
     paths = {
         "packing_ns": ("timings_ns", "packing"),
         "prefill_ns": ("timings_ns", "prefill"),
-        "decode_tokens_per_second": ("decode_tokens_per_second",),
+        "decode_evaluations_per_second": ("decode_evaluations_per_second",),
         "time_to_first_token_ns": ("timings_ns", "time_to_first_token_work"),
         "predecode_work_ns": ("timings_ns", "predecode_work"),
         "external_whole_process_ns": ("external_whole_process_ns",),
@@ -308,13 +586,15 @@ def add_break_even(
     control_label: str = "A",
 ) -> None:
     control = summaries[control_label]
-    control_decode_ns = 1_000_000_000.0 / control["decode_tokens_per_second"]
+    control_decode_ns = 1_000_000_000.0 / control[
+        "decode_evaluations_per_second"
+    ]
     for label, item in summaries.items():
         if label == control_label:
             item["break_even_decode_evaluations"] = 0
             item["break_even_generated_tokens"] = 1
             continue
-        variant_tps = item["decode_tokens_per_second"]
+        variant_tps = item["decode_evaluations_per_second"]
         if not variant_tps:
             item["break_even_decode_evaluations"] = None
             item["break_even_generated_tokens"] = None
@@ -336,15 +616,11 @@ def add_break_even(
 
 def evaluate_lifecycle_stops(
     args: argparse.Namespace,
-    trials: dict[str, list[dict[str, Any]]],
     summaries: dict[str, dict[str, Any]],
 ) -> list[str]:
     stops: list[str] = []
-    d_trial = trials["D"][0]
-    d_prefill_file = snapshot(d_trial, "prefill_complete")["file_pss_kib"]
-    d_reevict_file = snapshot(
-        d_trial, "post_prefill_reeviction_complete"
-    )["file_pss_kib"]
+    d_prefill_file = summaries["D"]["post_prefill_file_pss_kib"]
+    d_reevict_file = summaries["D"]["post_reeviction_file_pss_kib"]
     if d_reevict_file >= d_prefill_file:
         stops.append(
             "post-prefill re-eviction did not reduce file-backed PSS "
@@ -363,8 +639,10 @@ def evaluate_lifecycle_stops(
         )
 
     d_after_reevict_file = d_reevict_file
-    d_decode_file = snapshot(d_trial, "decode_complete")["file_pss_kib"]
-    permitted_refault_kib = max(4096, int(d_trial["packed_bytes"] * 0.01 / 1024))
+    d_decode_file = summaries["D"]["post_decode_file_pss_kib"]
+    permitted_refault_kib = max(
+        4096, int(summaries["D"]["packed_bytes"] * 0.01 / 1024)
+    )
     if d_decode_file - d_after_reevict_file > permitted_refault_kib:
         stops.append(
             "packed decode substantially re-faulted original file-backed pages "
@@ -385,13 +663,13 @@ def evaluate_selective_stops(
     summaries: dict[str, dict[str, Any]],
 ) -> list[str]:
     stops: list[str] = []
-    control_tps = summaries["A"]["decode_tokens_per_second"]
-    full_gain = summaries["J"]["decode_tokens_per_second"] - control_tps
+    control_tps = summaries["A"]["decode_evaluations_per_second"]
+    full_gain = summaries["J"]["decode_evaluations_per_second"] - control_tps
     if full_gain <= 0:
         return ["all-projection packed decode did not improve whole-model throughput"]
     for label in ("F", "G", "H", "I"):
         retained = (
-            summaries[label]["decode_tokens_per_second"] - control_tps
+            summaries[label]["decode_evaluations_per_second"] - control_tps
         ) / full_gain
         summaries[label]["fraction_of_full_decode_gain"] = retained
         if retained < 0.5:
@@ -409,7 +687,7 @@ def markdown_report(
     lines = [
         "# Packed lifecycle benchmark",
         "",
-        "| Mode | Lifecycle | Selection | Pack ms | Prefill ms | Decode tok/s | "
+        "| Mode | Lifecycle | Selection | Pack ms | Prefill ms | Decode eval/s | "
         "TTFT ms | Process ms | Peak MiB | Post-decode MiB | Anon PSS MiB | "
         "File PSS MiB | Start °C | minflt | majflt | Break-even generated | Parity |",
         "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|",
@@ -421,7 +699,7 @@ def markdown_report(
             f"| {label} | {item['lifecycle']} | {item['selection']} | "
             f"{item['packing_ns'] / 1e6:.1f} | "
             f"{item['prefill_ns'] / 1e6:.1f} | "
-            f"{item['decode_tokens_per_second']:.3f} | "
+            f"{item['decode_evaluations_per_second']:.3f} | "
             f"{item['time_to_first_token_ns'] / 1e6:.1f} | "
             f"{item['external_whole_process_ns'] / 1e6:.1f} | "
             f"{item['peak_rss_kib'] / 1024:.1f} | "
@@ -448,9 +726,21 @@ def main() -> int:
     output_dir = pathlib.Path(
         args.output_dir or f"data/benchmarks/packed-lifecycle-{timestamp}"
     )
+    input_paths = [
+        pathlib.Path(args.binary).resolve(),
+        pathlib.Path(args.model).resolve(),
+        pathlib.Path(args.tokenizer).resolve(),
+    ]
+    if output_dir.resolve() in set(input_paths):
+        raise ValueError("output directory must not replace an input file")
+    initial_identities = {
+        str(path): file_identity(path)
+        for path in input_paths
+    }
     output_dir.mkdir(parents=True, exist_ok=False)
 
     metadata: dict[str, Any] = {
+        "schema_version": 2,
         "created_utc": timestamp,
         "command": vars(args),
         "rustc": subprocess.run(
@@ -460,7 +750,10 @@ def main() -> int:
             ["lscpu"], check=True, capture_output=True, text=True
         ).stdout,
     }
-    (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    atomic_write(
+        output_dir / "metadata.json",
+        json.dumps(metadata, indent=2, allow_nan=False) + "\n",
+    )
 
     if args.force_selective:
         trials, orders = run_mode_group(
@@ -470,7 +763,7 @@ def main() -> int:
             label: summarize_group(label, label_trials)
             for label, label_trials in trials.items()
         }
-        lifecycle_stops = evaluate_lifecycle_stops(args, trials, summaries)
+        lifecycle_stops = evaluate_lifecycle_stops(args, summaries)
         stops = [*lifecycle_stops, *evaluate_selective_stops(summaries)]
     else:
         trials, lifecycle_orders = run_mode_group(
@@ -481,7 +774,7 @@ def main() -> int:
             label: summarize_group(label, label_trials)
             for label, label_trials in trials.items()
         }
-        lifecycle_stops = evaluate_lifecycle_stops(args, trials, summaries)
+        lifecycle_stops = evaluate_lifecycle_stops(args, summaries)
         stops = list(lifecycle_stops)
         if not lifecycle_stops:
             selective_trials, selective_orders = run_mode_group(
@@ -509,21 +802,46 @@ def main() -> int:
 
     # Checksums run after all measured processes so reading the complete files
     # cannot warm the page cache before a lifecycle trial.
+    for path in input_paths:
+        if file_identity(path) != initial_identities[str(path)]:
+            raise RuntimeError(f"benchmark input changed while trials were running: {path}")
+    metadata["binary_sha256"] = sha256_file(pathlib.Path(args.binary))
     metadata["model_sha256"] = sha256_file(pathlib.Path(args.model))
     metadata["tokenizer_sha256"] = sha256_file(pathlib.Path(args.tokenizer))
     metadata["trial_orders"] = orders
-    (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+    atomic_write(
+        output_dir / "metadata.json",
+        json.dumps(metadata, indent=2, allow_nan=False) + "\n",
+    )
     summary_document = {
+        "schema_version": 2,
         "metadata": metadata,
         "summaries": summaries,
         "deterministic_parity": parity,
         "stop_conditions": stops,
     }
-    (output_dir / "summary.json").write_text(
-        json.dumps(summary_document, indent=2) + "\n"
+    atomic_write(
+        output_dir / "summary.json",
+        json.dumps(summary_document, indent=2, allow_nan=False) + "\n",
     )
     report = markdown_report(summaries, parity, stops)
-    (output_dir / "report.md").write_text(report)
+    atomic_write(output_dir / "report.md", report)
+    atomic_write(
+        output_dir / "progress.json",
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "complete",
+                "trial_orders": orders,
+                "completed": {
+                    label: len(label_trials) for label, label_trials in trials.items()
+                },
+            },
+            indent=2,
+            allow_nan=False,
+        )
+        + "\n",
+    )
     print(report)
     print(f"Artifacts: {output_dir}")
     return 2 if stops else 0

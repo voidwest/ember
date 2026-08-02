@@ -6,14 +6,24 @@ degenerate-output warning. Raw generation text is not a quality benchmark.
 """
 
 import argparse
+import hashlib
 import json
+import math
+import os
 import re
 import shlex
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    from benchmark_threads import parse_benchmark
+except ModuleNotFoundError:  # imported as scripts.run_smoke in tests/tools
+    from scripts.benchmark_threads import parse_benchmark
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,14 +59,41 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true", help="print and summarize commands without running")
     parser.add_argument("--continue-on-fail", action="store_true", help="continue --all after failures")
     parser.add_argument("--config", default=str(CONFIG_PATH), help="model config JSON path")
+    parser.add_argument("--timeout", type=float, default=900.0)
     return parser.parse_args()
 
 
 def load_config(path):
-    with open(path, encoding="utf-8") as f:
-        config = json.load(f)
+    source = Path(path)
+    if not source.is_file():
+        raise FileNotFoundError(source)
+
+    def reject_constant(value):
+        raise ValueError(f"non-standard JSON constant {value!r} in {source}")
+
+    with source.open(encoding="utf-8") as f:
+        config = json.load(f, parse_constant=reject_constant)
     if not isinstance(config, dict):
         raise ValueError("smoke config must be a JSON object keyed by label")
+    for label, entry in config.items():
+        if not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", label):
+            raise ValueError(f"invalid smoke model label: {label!r}")
+        if not isinstance(entry, dict):
+            raise ValueError(f"smoke config entry {label!r} must be an object")
+        for field in ("arch", "model", "tokenizer"):
+            if not isinstance(entry.get(field), str) or not entry[field]:
+                raise ValueError(f"smoke config entry {label!r} requires {field}")
+        if entry["arch"] not in {"gpt2", "llama", "qwen3", "gemma4"}:
+            raise ValueError(f"unsupported architecture for {label!r}: {entry['arch']}")
+        if "experimental" in entry and not isinstance(entry["experimental"], bool):
+            raise ValueError(f"experimental flag for {label!r} must be boolean")
+        if "note" in entry and not isinstance(entry["note"], str):
+            raise ValueError(f"note for {label!r} must be a string")
+        if "notes" in entry and (
+            not isinstance(entry["notes"], list)
+            or any(not isinstance(note, str) for note in entry["notes"])
+        ):
+            raise ValueError(f"notes for {label!r} must be a string array")
     return config
 
 
@@ -93,6 +130,7 @@ def machine_info():
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         check=False,
+        env={**os.environ, "LC_ALL": "C"},
     )
     if result.returncode != 0:
         return info
@@ -127,9 +165,7 @@ def machine_info():
 
 def ember_base_command():
     binary = REPO_ROOT / "target" / "release" / "ember"
-    if binary.exists():
-        return [str(binary)]
-    return ["cargo", "run", "--release", "--"]
+    return [str(binary)]
 
 
 def resolve_prompt(args):
@@ -138,23 +174,31 @@ def resolve_prompt(args):
     return args.prompt
 
 
-def run_command(command):
+def run_command(command, timeout):
     timed = ["/usr/bin/time", "-v", *command]
-    return subprocess.run(
+    process = subprocess.Popen(
         timed,
         cwd=REPO_ROOT,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+        start_new_session=True,
     )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(timed, process.returncode, stdout, stderr), False
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        stdout, stderr = process.communicate()
+        return subprocess.CompletedProcess(timed, 124, stdout, stderr), True
 
 
 def parse_time_output(stderr):
     max_rss = None
     elapsed = None
     prompt_tokens = None
-    decode_tokens = None
+    decode_evaluations = None
     prefill_tps = None
     decode_tps = None
 
@@ -162,21 +206,45 @@ def parse_time_output(stderr):
     if rss_match:
         max_rss = int(rss_match.group(1))
 
-    elapsed_match = re.search(r"Elapsed \(wall clock\) time.*:\s*(.+)", stderr)
+    elapsed_seconds = None
+    elapsed_match = re.search(
+        r"Elapsed \(wall clock\) time[^\n]*\):\s*"
+        r"(\d+(?::\d+){1,2}(?:\.\d+)?)\s*$",
+        stderr,
+        re.MULTILINE,
+    )
     if elapsed_match:
         elapsed = elapsed_match.group(1).strip()
+        parts = elapsed.split(":")
+        try:
+            if len(parts) == 2:
+                elapsed_seconds = int(parts[0]) * 60 + float(parts[1])
+            elif len(parts) == 3:
+                elapsed_seconds = (
+                    int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                )
+        except ValueError:
+            elapsed_seconds = None
 
-    prefill_match = re.search(r"prefill:\s+(\d+) tokens in [\d.]+ms ->\s+([\d.]+) tok/s", stderr)
-    if prefill_match:
-        prompt_tokens = int(prefill_match.group(1))
-        prefill_tps = float(prefill_match.group(2))
+    try:
+        benchmark = parse_benchmark(stderr)
+    except ValueError:
+        benchmark = None
+    if benchmark is not None:
+        prompt_tokens = benchmark["prefill"]["count"]
+        prefill_tps = benchmark["prefill"]["rate_per_second"]
+        decode_evaluations = benchmark["decode"]["count"]
+        decode_tps = benchmark["decode"]["rate_per_second"]
 
-    decode_match = re.search(r"decode:\s+(\d+) tokens in [\d.]+ms ->\s+([\d.]+) tok/s", stderr)
-    if decode_match:
-        decode_tokens = int(decode_match.group(1))
-        decode_tps = float(decode_match.group(2))
-
-    return max_rss, elapsed, prompt_tokens, decode_tokens, prefill_tps, decode_tps
+    return (
+        max_rss,
+        elapsed,
+        elapsed_seconds,
+        prompt_tokens,
+        decode_evaluations,
+        prefill_tps,
+        decode_tps,
+    )
 
 
 def generation_warning(text):
@@ -210,6 +278,38 @@ def config_notes(entry):
     return notes
 
 
+def sha256_file(path: Path) -> str:
+    before = file_identity(path)
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if file_identity(path) != before:
+        raise RuntimeError(f"file changed while hashing it: {path}")
+    return digest.hexdigest()
+
+
+def file_identity(path: Path) -> tuple[int, int, int, int]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def atomic_write(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.tmp-"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def write_log(path, metadata, stdout, stderr):
     lines = [
         "# ember smoke run",
@@ -223,14 +323,15 @@ def write_log(path, metadata, stdout, stderr):
         "## stderr and /usr/bin/time -v",
         stderr,
     ]
-    path.write_text("\n".join(lines), encoding="utf-8")
+    atomic_write(path, "\n".join(lines))
 
 
-def summarize_skip(label, entry, args, reason, machine):
+def summarize_skip(label, entry, args, reason, machine, commit):
     now = datetime.now(timezone.utc).isoformat()
     notes = config_notes(entry)
     notes.append(reason)
     return {
+        "schema_version": 2,
         "label": label,
         "arch": entry.get("arch"),
         "model": entry.get("model"),
@@ -241,14 +342,14 @@ def summarize_skip(label, entry, args, reason, machine):
         "pass_fail": "skip",
         "generated_text": None,
         "prompt_token_count": None,
-        "decode_token_count": None,
+        "decode_evaluation_count": None,
         "prefill_tps": None,
-        "decode_tps": None,
+        "decode_evaluations_per_second": None,
         "max_rss_kb": None,
         "elapsed_time": None,
         "notes": notes,
-        "generated_token_count": args.tokens,
-        "commit_hash": git_commit(),
+        "requested_max_generated_tokens": args.tokens,
+        "commit_hash": commit,
         "host": machine["host"],
         "machine": machine,
         "date": now,
@@ -257,17 +358,19 @@ def summarize_skip(label, entry, args, reason, machine):
 
 def run_one(label, entry, args, out_dir, commit, machine):
     prompt = resolve_prompt(args)
-    model_path = REPO_ROOT / entry["model"]
-    tokenizer_path = REPO_ROOT / entry["tokenizer"]
+    model_path = (REPO_ROOT / entry["model"]).resolve()
+    tokenizer_path = (REPO_ROOT / entry["tokenizer"]).resolve()
     notes = config_notes(entry)
 
     missing = []
-    if not model_path.exists():
+    if not model_path.is_file():
         missing.append(f"missing model file: {entry['model']}")
-    if not tokenizer_path.exists():
+    if not tokenizer_path.is_file():
         missing.append(f"missing tokenizer file: {entry['tokenizer']}")
     if missing:
-        summary = summarize_skip(label, entry, args, "; ".join(missing), machine)
+        summary = summarize_skip(
+            label, entry, args, "; ".join(missing), machine, commit
+        )
         if args.model:
             summary["status"] = "smoke_fail"
             summary["pass_fail"] = "fail"
@@ -278,9 +381,9 @@ def run_one(label, entry, args, out_dir, commit, machine):
         "--arch",
         entry["arch"],
         "--model",
-        entry["model"],
+        str(model_path),
         "--tokenizer",
-        entry["tokenizer"],
+        str(tokenizer_path),
         "--prompt",
         prompt,
         "--max-tokens",
@@ -292,18 +395,22 @@ def run_one(label, entry, args, out_dir, commit, machine):
     ember_command_string = " ".join(shlex.quote(part) for part in command)
     command_string = " ".join(shlex.quote(part) for part in ["/usr/bin/time", "-v", *command])
     now = datetime.now(timezone.utc)
-    stamp = now.strftime("%Y%m%dT%H%M%SZ")
+    stamp = now.strftime("%Y%m%dT%H%M%S.%fZ")
     log_path = out_dir / f"{stamp}_{label}.log"
     summary_path = out_dir / f"{stamp}_{label}_summary.json"
 
     metadata = {
+        "schema_version": 2,
         "label": label,
         "arch": entry["arch"],
         "model": entry["model"],
+        "resolved_model": str(model_path),
         "tokenizer": entry["tokenizer"],
+        "resolved_tokenizer": str(tokenizer_path),
         "command": command_string,
+        "command_argv": ["/usr/bin/time", "-v", *command],
         "ember_command": ember_command_string,
-        "generated_token_count": args.tokens,
+        "requested_max_generated_tokens": args.tokens,
         "commit_hash": commit,
         "host": machine["host"],
         "machine": machine,
@@ -313,6 +420,8 @@ def run_one(label, entry, args, out_dir, commit, machine):
     }
 
     if args.dry_run:
+        metadata["model_sha256"] = sha256_file(model_path)
+        metadata["tokenizer_sha256"] = sha256_file(tokenizer_path)
         print(command_string)
         summary = {
             **metadata,
@@ -321,65 +430,136 @@ def run_one(label, entry, args, out_dir, commit, machine):
             "pass_fail": "skip",
             "generated_text": None,
             "prompt_token_count": None,
-            "decode_token_count": None,
+            "decode_evaluation_count": None,
             "prefill_tps": None,
-            "decode_tps": None,
+            "decode_evaluations_per_second": None,
             "max_rss_kb": None,
             "elapsed_time": None,
             "notes": notes,
             "log_path": str(log_path),
         }
-        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+        atomic_write(
+            summary_path,
+            json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        )
         return summary
 
-    result = run_command(command)
-    max_rss, elapsed, prompt_tokens, decode_tokens, prefill_tps, decode_tps = parse_time_output(
-        result.stderr
+    binary_path = Path(command[0])
+    input_paths = [binary_path, model_path, tokenizer_path]
+    initial_identities = {str(path): file_identity(path) for path in input_paths}
+    result, timed_out = run_command(command, args.timeout)
+    (
+        max_rss,
+        elapsed,
+        elapsed_seconds,
+        prompt_tokens,
+        decode_evaluations,
+        prefill_tps,
+        decode_eval_s,
+    ) = parse_time_output(
+        result.stderr or ""
     )
-    warning = entry.get("generation_warning") or generation_warning(result.stdout)
+    for path in input_paths:
+        if file_identity(path) != initial_identities[str(path)]:
+            raise RuntimeError(f"smoke input changed while the command was running: {path}")
+    metadata["binary_sha256"] = sha256_file(binary_path)
+    metadata["model_sha256"] = sha256_file(model_path)
+    metadata["tokenizer_sha256"] = sha256_file(tokenizer_path)
+    metadata["generated_stdout_sha256"] = hashlib.sha256(
+        (result.stdout or "").encode("utf-8")
+    ).hexdigest()
+    warning = entry.get("generation_warning") or generation_warning(result.stdout or "")
     if warning and warning not in notes:
         notes.append(warning)
-    output_exists = bool(result.stdout.strip())
+    output_exists = bool((result.stdout or "").strip())
 
-    if result.returncode == 0 and output_exists and warning:
+    timings_complete = all(
+        value is not None
+        for value in (
+            prompt_tokens,
+            decode_evaluations,
+            prefill_tps,
+            decode_eval_s,
+            max_rss,
+            elapsed_seconds,
+        )
+    )
+    if result.returncode == 0 and output_exists and timings_complete and warning:
         status = "smoke_pass_generation_warning"
         pass_fail = "pass"
-    elif result.returncode == 0 and output_exists:
+    elif result.returncode == 0 and output_exists and timings_complete:
         status = "smoke_pass"
         pass_fail = "pass"
     else:
         status = "smoke_fail"
         pass_fail = "fail"
+        if timed_out:
+            notes.append(f"timed out after {args.timeout} seconds")
+        elif result.returncode != 0:
+            notes.append(f"command exited with status {result.returncode}")
         if result.returncode == 0 and not output_exists:
             notes.append("missing generated output")
+        if result.returncode == 0 and not timings_complete:
+            notes.append("missing required benchmark or RSS metrics")
 
     summary = {
         **metadata,
         "exit_status": result.returncode,
         "status": status,
         "pass_fail": pass_fail,
-        "generated_text": result.stdout.strip(),
+        "generated_text": (result.stdout or "").strip(),
         "prompt_token_count": prompt_tokens,
-        "decode_token_count": decode_tokens,
+        "decode_evaluation_count": decode_evaluations,
         "prefill_tps": prefill_tps,
-        "decode_tps": decode_tps,
+        "decode_evaluations_per_second": decode_eval_s,
         "max_rss_kb": max_rss,
         "elapsed_time": elapsed,
+        "elapsed_seconds": elapsed_seconds,
+        "timed_out": timed_out,
         "notes": notes,
         "log_path": str(log_path),
     }
-    write_log(log_path, metadata, result.stdout, result.stderr)
-    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    write_log(log_path, metadata, result.stdout or "", result.stderr or "")
+    atomic_write(
+        summary_path,
+        json.dumps(summary, indent=2, sort_keys=True, allow_nan=False) + "\n",
+    )
     return summary
 
 
 def main():
     args = parse_args()
-    if args.tokens < 0:
-        raise SystemExit("--tokens must be >= 0")
+    if args.tokens < 2:
+        raise SystemExit("--tokens must be >= 2 to exercise decode")
+    if not math.isfinite(args.temperature) or args.temperature < 0.0:
+        raise SystemExit("--temperature must be finite and non-negative")
+    if not math.isfinite(args.timeout) or args.timeout <= 0.0:
+        raise SystemExit("--timeout must be finite and positive")
+    if not resolve_prompt(args):
+        raise SystemExit("the selected prompt must not be empty")
+    if not Path("/usr/bin/time").is_file():
+        raise SystemExit("/usr/bin/time is required for smoke resource metrics")
     config = load_config(args.config)
     if args.model and args.model not in config:
         raise SystemExit(f"unknown model label: {args.model}")
+
+    binary = Path(ember_base_command()[0])
+    if not args.dry_run and not binary.is_file():
+        subprocess.run(
+            [
+                "cargo",
+                "build",
+                "--release",
+                "--manifest-path",
+                str(REPO_ROOT / "Cargo.toml"),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+        )
+    if not args.dry_run and (
+        not binary.is_file() or not os.access(binary, os.X_OK)
+    ):
+        raise SystemExit(f"release Ember executable is unavailable: {binary}")
 
     labels = list(config) if args.all else [args.model]
     out_dir = REPO_ROOT / args.out_dir
@@ -398,12 +578,27 @@ def main():
             if not args.continue_on_fail:
                 break
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
     aggregate = out_dir / f"{stamp}_smoke_summary.json"
-    aggregate.write_text(json.dumps(summaries, indent=2, sort_keys=True), encoding="utf-8")
+    atomic_write(
+        aggregate,
+        json.dumps(
+            {
+                "schema_version": 2,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "config_path": str(Path(args.config).resolve()),
+                "config_sha256": sha256_file(Path(args.config)),
+                "summaries": summaries,
+            },
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n",
+    )
     print(f"summary: {aggregate}")
 
-    if failed:
+    if failed or (args.all and not args.dry_run and all(item["pass_fail"] == "skip" for item in summaries)):
         return 1
     return 0
 

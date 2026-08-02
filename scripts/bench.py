@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Thread-scaling benchmark harness for Ember's CPU inference path.
 
-Runs a grid search over threads × prompt lengths × phases, collecting:
-  - Wall-clock latency (from trace JSON)
+Runs a grid search over threads × calibrated prompt cases, collecting:
+  - Fresh-process wall-clock latency
   - Per-operation breakdown (from trace JSON)
   - Hardware counters (from perf stat)
   - Scaling efficiency
@@ -11,7 +11,6 @@ Usage:
     python3 scripts/bench.py \
         --model Qwen3-0.6B-Q8_0.gguf \
         --arch qwen3 \
-        --prompt "The capital of Saudi Arabia is" \
         --threads 1,2,4,8 \
         --prompt-lengths 1,8,32 \
         --decode-tokens 16 \
@@ -20,14 +19,19 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
+import math
 import os
+import platform
 import re
+import shutil
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ── perf stat parsing ────────────────────────────────────────────────────────
@@ -74,7 +78,8 @@ def parse_perf_stat(output: str) -> dict[str, float]:
     if result.get("instructions") and result.get("cycles"):
         result["IPC"] = result["instructions"] / max(result["cycles"], 1)
     if result.get("instructions") and result.get("cpu-clock"):
-        result["IPC_clock"] = result["instructions"] / max(
+        # perf reports cpu-clock in milliseconds under the forced C locale.
+        result["instructions_per_cpu_ms"] = result["instructions"] / max(
             result["cpu-clock"], 1
         )
     if result.get("cache-misses") and result.get("cache-references"):
@@ -86,38 +91,120 @@ def parse_perf_stat(output: str) -> dict[str, float]:
     return result
 
 
+def sha256_path(path: str | Path) -> str:
+    source = Path(path)
+    before = file_identity(source)
+    digest = hashlib.sha256()
+    with source.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if file_identity(source) != before:
+        raise RuntimeError(f"file changed while hashing it: {source}")
+    return digest.hexdigest()
+
+
+def file_identity(path: Path) -> tuple[int, int, int, int]:
+    stat = path.stat()
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
+
+
+def atomic_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.tmp-"
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(payload, handle, indent=2, allow_nan=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 # ── trace JSON parsing ───────────────────────────────────────────────────────
 
 
 def parse_trace_json(path: str) -> dict:
     """Load trace JSON artifact."""
-    with open(path) as f:
-        events = json.load(f)
-    return events
+    source = Path(path)
+
+    def reject_constant(value):
+        raise ValueError(f"non-standard JSON constant {value!r} in {source}")
+
+    with source.open(encoding="utf-8") as f:
+        report = json.load(f, parse_constant=reject_constant)
+    if not isinstance(report, dict) or report.get("schema_version") != 1:
+        raise ValueError(f"unsupported trace envelope in {source}")
+    return report
 
 
-def trace_summary(events: list[dict], decode_tokens: int = 0) -> dict:
-    """Compute aggregate metrics from trace events."""
-    if not events:
-        return {"total_ms": 0, "tok_s": 0, "by_kind": {}, "by_name": {}}
-
-    total_ns = sum(e["duration_ns"] for e in events)
+def trace_summary(
+    envelope: dict, decode_tokens: int = 0, expected_threads: int | None = None
+) -> dict:
+    """Compute metrics from the versioned trace envelope's decode report."""
+    decode = envelope.get("decode")
+    if not isinstance(decode, dict) or decode.get("phase") != "decode":
+        raise ValueError("trace envelope has no decode report")
+    events = decode.get("events")
+    total_ns = decode.get("total_duration_ns")
+    if (
+        not isinstance(events, list)
+        or not events
+        or isinstance(total_ns, bool)
+        or not isinstance(total_ns, int)
+        or total_ns <= 0
+    ):
+        raise ValueError("decode trace must contain events and a positive total_duration_ns")
     total_ms = total_ns / 1_000_000
+    run_metadata = decode.get("run_metadata")
+    if not isinstance(run_metadata, dict):
+        raise ValueError("decode trace is missing requested run metadata")
+    if expected_threads is not None and run_metadata.get("thread_count") != expected_threads:
+        raise ValueError(
+            "decode trace reports the wrong thread count: "
+            f"{run_metadata.get('thread_count')!r} != {expected_threads}"
+        )
 
     # Count unique token indices for decode phase
     token_indices: set[int] = set()
-    for e in events:
-        ti = e.get("token_index", 0)
-        if ti > 0 or e.get("phase") == "decode":
-            token_indices.add(ti)
-    n_tokens = len(token_indices) if token_indices else (decode_tokens or 1)
-    tok_s = n_tokens / (total_ns / 1_000_000_000) if total_ns > 0 else 0
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            raise ValueError(f"decode trace event {index} is not an object")
+        duration = event.get("duration_ns")
+        token_index = event.get("token_index")
+        if (
+            isinstance(duration, bool)
+            or not isinstance(duration, int)
+            or duration < 0
+            or isinstance(token_index, bool)
+            or not isinstance(token_index, int)
+            or token_index < 0
+        ):
+            raise ValueError(f"decode trace event {index} has invalid timing/index fields")
+        if event.get("phase") != "decode":
+            raise ValueError(f"decode trace event {index} has the wrong phase")
+        token_indices.add(token_index)
+    n_tokens = len(token_indices)
+    if n_tokens < 1:
+        raise ValueError("decode trace contains no token indices")
+    ordered_indices = sorted(token_indices)
+    if ordered_indices != list(range(n_tokens)):
+        raise ValueError(
+            f"decode trace token indices are not contiguous from zero: {ordered_indices}"
+        )
+    eval_s = n_tokens / (total_ns / 1_000_000_000)
 
     by_kind: dict[str, float] = {}
     by_name: dict[str, float] = {}
     for e in events:
-        kind = e["op_kind"]
-        name = e["name"]
+        kind = e.get("op_kind")
+        name = e.get("name")
+        if not isinstance(kind, str) or not kind or not isinstance(name, str) or not name:
+            raise ValueError("trace events require non-empty op_kind and name")
         by_kind[kind] = by_kind.get(kind, 0) + e["duration_ns"]
         by_name[name] = by_name.get(name, 0) + e["duration_ns"]
 
@@ -128,16 +215,37 @@ def trace_summary(events: list[dict], decode_tokens: int = 0) -> dict:
 
     return {
         "total_ms": total_ms,
-        "tok_s": tok_s,
+        "decode_eval_s": eval_s,
+        "decode_evaluations": n_tokens,
+        "requested_max_generated_tokens": decode_tokens,
+        "prefill_ms": validate_prefill_trace(
+            envelope.get("prefill"), expected_threads=expected_threads
+        ),
+        "run_metadata": run_metadata,
         "by_kind": by_kind,
         "by_name": by_name,
     }
 
 
+def validate_prefill_trace(report: object, expected_threads: int | None) -> float:
+    if not isinstance(report, dict) or report.get("phase") != "prefill":
+        raise ValueError("trace envelope has no prefill report")
+    duration = report.get("total_duration_ns")
+    if isinstance(duration, bool) or not isinstance(duration, int) or duration <= 0:
+        raise ValueError("prefill trace duration must be a positive integer")
+    metadata = report.get("run_metadata")
+    if not isinstance(metadata, dict):
+        raise ValueError("prefill trace is missing requested run metadata")
+    if expected_threads is not None and metadata.get("thread_count") != expected_threads:
+        raise ValueError("prefill trace reports the wrong thread count")
+    return duration / 1_000_000
+
+
 # ── run helpers ──────────────────────────────────────────────────────────────
 
 
-def build_cargo_cmd(
+def build_ember_cmd(
+    binary: str,
     model: str,
     arch: str,
     prompt: str,
@@ -145,13 +253,11 @@ def build_cargo_cmd(
     temperature: float,
     trace_values: str,
     trace_run_metadata: bool,
+    tokenizer: str | None = None,
 ) -> list[str]:
     """Build the `ember` command-line arguments."""
     cmd = [
-        "cargo",
-        "run",
-        "--release",
-        "--",
+        binary,
         "--model",
         model,
         "--arch",
@@ -167,6 +273,8 @@ def build_cargo_cmd(
         "--trace-values",
         trace_values,
     ]
+    if tokenizer:
+        cmd.extend(["--tokenizer", tokenizer])
     if trace_run_metadata:
         cmd.append("--trace-run-metadata")
     return cmd
@@ -177,10 +285,12 @@ def run_one(
     threads: int,
     trace_out: str,
     use_perf: bool = False,
-) -> tuple[float, dict | None, dict | None]:
-    """Run a single ember invocation. Returns (wall_seconds, trace, perf)."""
+    timeout: float = 300.0,
+) -> tuple[float, dict | None, dict | None, str]:
+    """Run one invocation and return wall time, artifacts, and output digest."""
     env = os.environ.copy()
     env["RAYON_NUM_THREADS"] = str(threads)
+    env["LC_ALL"] = "C"
 
     full_cmd: list[str] = []
     if use_perf:
@@ -193,36 +303,45 @@ def run_one(
     else:
         full_cmd = cmd + ["--trace-out", trace_out]
 
+    trace_path = Path(trace_out)
+    if not use_perf:
+        trace_path.unlink(missing_ok=True)
     t0 = time.perf_counter()
     result = subprocess.run(
         full_cmd,
         capture_output=True,
         text=True,
         env=env,
-        timeout=300,
+        timeout=timeout,
     )
     wall = time.perf_counter() - t0
 
     trace_data = None
     perf_data = None
 
-    if not use_perf and os.path.exists(trace_out):
-        try:
-            trace_data = parse_trace_json(trace_out)
-        except (json.JSONDecodeError, OSError):
-            pass
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"benchmark command failed with exit code {result.returncode}: "
+            f"{result.stderr[-4000:]}"
+        )
+
+    if not use_perf:
+        if not trace_path.is_file():
+            raise RuntimeError(f"benchmark command did not produce trace: {trace_path}")
+        trace_data = parse_trace_json(trace_out)
 
     if use_perf:
         perf_data = parse_perf_stat(result.stderr)
+        required = {"cycles", "instructions", "seconds_elapsed"}
+        missing = sorted(required - perf_data.keys())
+        if missing:
+            raise RuntimeError(
+                "perf did not report required counters "
+                f"{missing}; check perf permissions and hardware support"
+            )
 
-    # Fallback: try to parse trace from the JSON file even with perf
-    if trace_data is None and os.path.exists(trace_out):
-        try:
-            trace_data = parse_trace_json(trace_out)
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    return wall, trace_data, perf_data
+    output_sha256 = hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+    return wall, trace_data, perf_data, output_sha256
 
 
 def run_batch(
@@ -233,6 +352,7 @@ def run_batch(
     trace_dir: str,
     decode_tokens: int = 0,
     use_perf: bool = False,
+    timeout: float = 300.0,
 ) -> dict:
     """Run warmup + measured iterations, return aggregated stats."""
     os.makedirs(trace_dir, exist_ok=True)
@@ -240,32 +360,40 @@ def run_batch(
     # Warmup
     for i in range(warmup):
         trace_path = os.path.join(trace_dir, f"warmup_{i}.json")
-        run_one(cmd, threads, trace_path, use_perf=False)
+        run_one(cmd, threads, trace_path, use_perf=False, timeout=timeout)
 
     # Measured runs
     latencies: list[float] = []
-    tok_s_list: list[float] = []
+    eval_s_list: list[float] = []
     perf_list: list[dict] = []
     by_kind_agg: dict[str, list[float]] = {}
+    output_hashes: list[str] = []
 
     for i in range(runs):
         trace_path = os.path.join(trace_dir, f"run_{i}.json")
-        wall, trace_data, perf = run_one(cmd, threads, trace_path, use_perf=False)
+        wall, trace_data, _, output_sha256 = run_one(
+            cmd, threads, trace_path, use_perf=False, timeout=timeout
+        )
         latencies.append(wall)
+        output_hashes.append(output_sha256)
 
         if trace_data:
-            # Decode phase: events are in the report which is a list of OpTrace
             summary = trace_summary(
-                trace_data if isinstance(trace_data, list) else [],
+                trace_data,
                 decode_tokens=decode_tokens,
+                expected_threads=threads,
             )
-            tok_s_list.append(summary["tok_s"])
+            eval_s_list.append(summary["decode_eval_s"])
             for kind, pct in summary.get("by_kind", {}).items():
                 by_kind_agg.setdefault(kind, []).append(pct)
 
         # Perf run (separate, no trace JSON)
         if use_perf:
-            _, _, perf = run_one(cmd, threads, trace_path, use_perf=True)
+            _, _, perf, perf_output_sha256 = run_one(
+                cmd, threads, trace_path, use_perf=True, timeout=timeout
+            )
+            if perf_output_sha256 != output_sha256:
+                raise RuntimeError("perf and trace passes generated different output")
             if perf:
                 perf_list.append(perf)
 
@@ -278,8 +406,8 @@ def run_batch(
             "median": statistics.median(s),
             "mean": statistics.mean(s),
             "stdev": statistics.stdev(s) if n > 1 else 0,
-            "p50": s[n // 2],
-            "p95": s[int(n * 0.95)] if n > 1 else s[0],
+            "p50": statistics.median(s),
+            "p95_nearest_rank": s[max(0, math.ceil(n * 0.95) - 1)],
             "min": min(s),
             "max": max(s),
         }
@@ -288,15 +416,25 @@ def run_batch(
         "threads": threads,
         "warmup_runs": warmup,
         "measured_runs": runs,
-        "latency": stats(latencies),
-        "throughput_tok_s": stats(tok_s_list),
+        "process_wall_seconds": stats(latencies),
+        "throughput_decode_eval_s": stats(eval_s_list),
         "by_kind": {k: stats(v) for k, v in by_kind_agg.items()},
+        "generated_output_sha256s": sorted(set(output_hashes)),
+        "deterministic_output": len(set(output_hashes)) == 1,
     }
+    if not result["deterministic_output"]:
+        raise RuntimeError("greedy measured runs generated different output")
 
     if perf_list:
         # Average perf counters across runs
         avg_perf: dict[str, float] = {}
-        for key in PERF_METRICS + ["IPC", "IPC_clock", "cache_miss_pct", "LLC_miss_pct"]:
+        for key in PERF_METRICS + [
+            "seconds_elapsed",
+            "IPC",
+            "instructions_per_cpu_ms",
+            "cache_miss_pct",
+            "LLC_miss_pct",
+        ]:
             vals = [p[key] for p in perf_list if key in p]
             if vals:
                 avg_perf[key] = statistics.mean(vals)
@@ -316,9 +454,22 @@ def main():
     parser.add_argument("--arch", default="qwen3", help="Model architecture")
     parser.add_argument(
         "--prompt",
-        default="The capital of Saudi Arabia is",
-        help="Prompt text",
+        default=None,
+        help="replace the calibrated prompt (requires one --prompt-lengths case)",
     )
+    parser.add_argument("--tokenizer", help="optional external tokenizer.json")
+    parser.add_argument(
+        "--binary",
+        type=Path,
+        default=Path(__file__).resolve().parents[1] / "target/release/ember",
+        help="release Ember executable",
+    )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="do not build the default release executable before benchmarking",
+    )
+    parser.add_argument("--timeout", type=float, default=300.0, help="per-process timeout in seconds")
     parser.add_argument(
         "--threads",
         default="1,2,4,8",
@@ -327,7 +478,7 @@ def main():
     parser.add_argument(
         "--prompt-lengths",
         default="1,8,32",
-        help="Comma-separated prompt lengths (token count)",
+        help="comma-separated calibrated prompt case names: 1,8,32",
     )
     parser.add_argument(
         "--decode-tokens",
@@ -371,11 +522,56 @@ def main():
     )
     args = parser.parse_args()
 
-    threads = [int(t.strip()) for t in args.threads.split(",")]
-    prompt_lengths = [int(p.strip()) for p in args.prompt_lengths.split(",")]
+    try:
+        threads = [int(t.strip()) for t in args.threads.split(",")]
+        prompt_lengths = [int(p.strip()) for p in args.prompt_lengths.split(",")]
+    except ValueError as error:
+        parser.error(f"thread and prompt-length lists must contain integers: {error}")
+    if not threads or len(threads) != len(set(threads)) or any(value < 1 for value in threads):
+        parser.error("--threads must contain unique positive integers")
+    if not prompt_lengths or len(prompt_lengths) != len(set(prompt_lengths)):
+        parser.error("--prompt-lengths must contain unique configured prompt cases")
+    if any(value not in {1, 8, 32} for value in prompt_lengths):
+        parser.error("--prompt-lengths currently supports only calibrated cases 1,8,32")
+    if args.decode_tokens < 2 or args.warmup < 0 or args.runs < 1:
+        parser.error(
+            "decode tokens must be >= 2, runs positive, and warmup non-negative"
+        )
+    if not math.isfinite(args.temperature) or args.temperature != 0.0:
+        parser.error("thread-scaling comparisons require deterministic --temperature 0")
+    if not math.isfinite(args.timeout) or args.timeout <= 0.0:
+        parser.error("--timeout must be finite and positive")
+    if args.arch not in {"gpt2", "llama", "qwen3", "gemma4"}:
+        parser.error("unsupported --arch")
+    if not Path(args.model).is_file():
+        parser.error(f"model file does not exist: {args.model}")
+    if args.tokenizer and not Path(args.tokenizer).is_file():
+        parser.error(f"tokenizer file does not exist: {args.tokenizer}")
+    if args.prompt is not None and len(prompt_lengths) != 1:
+        parser.error("--prompt requires exactly one --prompt-lengths case")
+    if args.prompt == "":
+        parser.error("--prompt must not be empty")
+    if args.perf and shutil.which("perf") is None:
+        parser.error("--perf requested but the perf executable is unavailable")
+    repo_root = Path(__file__).resolve().parents[1]
+    if not args.skip_build:
+        subprocess.run(
+            ["cargo", "build", "--release", "--manifest-path", str(repo_root / "Cargo.toml")],
+            check=True,
+        )
+    if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
+        parser.error(f"Ember executable does not exist or is not executable: {args.binary}")
+    binary = str(args.binary.resolve())
+    input_paths = [Path(args.model).resolve(), Path(binary)]
+    if args.tokenizer:
+        input_paths.append(Path(args.tokenizer).resolve())
+    output = Path(args.output_dir) / "results.json"
+    if output.resolve() in set(input_paths):
+        parser.error("--output-dir/results.json must not overwrite an input")
+    initial_identities = {str(path): file_identity(path) for path in input_paths}
 
     # Prompts by approximate token count (space-separated words)
-    # These are calibrated for the default GPT-2/Llama tokenizer
+    # These names are historical workload labels, not verified token counts.
     PROMPTS = {
         1: "Riyadh",
         8: "The capital of Saudi Arabia is Riyadh",
@@ -386,8 +582,8 @@ def main():
 
     for n_threads in threads:
         for plen in prompt_lengths:
-            prompt = PROMPTS.get(plen, args.prompt)
-            phase_label = "prefill" if plen > 1 else "decode"
+            prompt = args.prompt if args.prompt is not None else PROMPTS[plen]
+            case_label = f"prompt_case_{plen}"
 
             run_dir = os.path.join(
                 args.output_dir,
@@ -395,10 +591,11 @@ def main():
             )
 
             print(f"\n{'='*60}")
-            print(f"Threads={n_threads}  prompt_len={plen}  phase={phase_label}")
+            print(f"Threads={n_threads}  prompt_case={plen}")
             print(f"{'='*60}")
 
-            cmd = build_cargo_cmd(
+            cmd = build_ember_cmd(
+                binary=binary,
                 model=args.model,
                 arch=args.arch,
                 prompt=prompt,
@@ -406,6 +603,7 @@ def main():
                 temperature=args.temperature,
                 trace_values=args.trace_values,
                 trace_run_metadata=True,
+                tokenizer=args.tokenizer,
             )
 
             batch = run_batch(
@@ -416,20 +614,34 @@ def main():
                 trace_dir=run_dir,
                 decode_tokens=args.decode_tokens,
                 use_perf=args.perf,
+                timeout=args.timeout,
             )
             batch["prompt_len"] = plen
-            batch["phase"] = phase_label
+            batch["prompt_case"] = case_label
+            batch["prompt_text"] = prompt
             results.append(batch)
 
+            # Make long matrices recoverable without hashing model inputs and
+            # perturbing the remaining page-cache state.
+            atomic_json(
+                output,
+                {
+                    "schema_version": 3,
+                    "status": "running",
+                    "architecture": args.arch,
+                    "results": results,
+                },
+            )
+
             # Print per-batch summary
-            lat = batch["latency"]
-            tp = batch["throughput_tok_s"]
+            lat = batch["process_wall_seconds"]
+            tp = batch["throughput_decode_eval_s"]
             print(
                 f"  latency: {lat['median']:.1f}s median, "
-                f"{lat['p95']:.1f}s p95 (±{lat.get('stdev', 0):.1f}s)"
+                f"{lat['p95_nearest_rank']:.1f}s p95 (±{lat.get('stdev', 0):.1f}s)"
             )
             print(
-                f"  throughput: {tp['median']:.2f} tok/s median"
+                f"  throughput: {tp['median']:.2f} decode eval/s median"
             )
             if "perf" in batch:
                 p = batch["perf"]
@@ -440,13 +652,27 @@ def main():
                 )
 
     # ── Scaling efficiency table ──────────────────────────────────────────────
+    for path in input_paths:
+        if file_identity(path) != initial_identities[str(path)]:
+            raise RuntimeError(f"benchmark input changed while trials were running: {path}")
+    for prompt_case in prompt_lengths:
+        hashes = {
+            digest
+            for result in results
+            if result["prompt_len"] == prompt_case
+            for digest in result["generated_output_sha256s"]
+        }
+        if len(hashes) != 1:
+            raise RuntimeError(
+                f"thread counts generated different greedy output for prompt case {prompt_case}"
+            )
+
     print("\n" + "=" * 80)
     print("SCALING EFFICIENCY")
     print("=" * 80)
 
     # Group by prompt length, compute relative to 1-thread baseline
     for plen in prompt_lengths:
-        phase = "prefill" if plen > 1 else "decode"
         baseline = None
         for r in results:
             if r["prompt_len"] == plen and r["threads"] == 1:
@@ -454,15 +680,14 @@ def main():
                 break
 
         if not baseline:
-            print(f"\n  prompt_len={plen} ({phase}): no 1-thread baseline")
+            print(f"\n  prompt_case={plen}: no 1-thread baseline")
             continue
 
-        t1_lat = baseline["latency"]["median"]
-        t1_tps = baseline["throughput_tok_s"]["median"]
+        t1_tps = baseline["throughput_decode_eval_s"]["median"]
 
-        print(f"\n  prompt_len={plen} ({phase})")
+        print(f"\n  prompt_case={plen}")
         print(
-            f"  {'Threads':>8} {'Tok/s':>10} {'Speedup':>8} {'Efficiency':>11} "
+            f"  {'Threads':>8} {'Eval/s':>10} {'Speedup':>8} {'Efficiency':>11} "
             f"{'IPC':>6} {'LLCmiss%':>9} {'MatMul%':>8}"
         )
 
@@ -470,11 +695,10 @@ def main():
             if r["prompt_len"] != plen:
                 continue
             n = r["threads"]
-            tps = r["throughput_tok_s"]["median"]
+            tps = r["throughput_decode_eval_s"]["median"]
             speedup = tps / t1_tps if t1_tps > 0 else 1
             efficiency = speedup / n * 100
 
-            perf_str = ""
             ipc_str = ""
             llc_str = ""
             mm_str = ""
@@ -493,8 +717,27 @@ def main():
     # ── Save aggregate results ────────────────────────────────────────────────
     agg_path = os.path.join(args.output_dir, "results.json")
     os.makedirs(args.output_dir, exist_ok=True)
-    with open(agg_path, "w") as f:
-        json.dump(results, f, indent=2, default=str)
+    payload = {
+        "schema_version": 3,
+        "status": "complete",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "model": args.model,
+        "model_sha256": sha256_path(args.model),
+        "binary": binary,
+        "binary_sha256": sha256_path(binary),
+        "architecture": args.arch,
+        "tokenizer": args.tokenizer,
+        "tokenizer_sha256": sha256_path(args.tokenizer) if args.tokenizer else None,
+        "temperature": args.temperature,
+        "trace_values": args.trace_values,
+        "host": platform.platform(),
+        "python": sys.version,
+        "cache_state": "uncontrolled; fresh processes run sequentially",
+        "metric_note": "decode throughput counts model decode evaluations, not emitted tokens",
+        "prompt_case_note": "prompt-length values are named cases, not tokenizer-verified token counts",
+        "results": results,
+    }
+    atomic_json(Path(agg_path), payload)
     print(f"\nResults saved to {agg_path}")
 
 
