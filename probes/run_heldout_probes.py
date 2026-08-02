@@ -2,9 +2,9 @@
 
 Evaluates probes under 4 split strategies:
   random           StratifiedKFold (baseline, expected to be optimistic)
-  surface-heldout  GroupKFold by surface_dediac
-  lemma-heldout    GroupKFold by lemma
-  root-heldout     GroupKFold by root
+  surface-heldout  closed-set grouped CV by surface_dediac
+  lemma-heldout    closed-set grouped CV by lemma
+  root-heldout     closed-set grouped CV by root
 
 For each task × strategy, reports:
   probe accuracy (per layer + best), char n-gram baseline, majority baseline,
@@ -13,26 +13,53 @@ For each task × strategy, reports:
 
 import argparse
 import json
-import math
 import sys
-from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run_baseline_probes import (
-    load_activations,
-    load_stimuli,
-    extract_labels,
-    get_field,
-    safe_key,
-    DEFAULT_TASKS,
-    TASK_DISPLAY,
-)
+try:
+    from .run_baseline_probes import (
+        DEFAULT_TASKS,
+        TASK_DISPLAY,
+        extract_labels,
+        get_field,
+        load_activations,
+        load_stimuli,
+        safe_key,
+    )
+    from .train_linear_probe import (
+        atomic_write_text,
+        enforce_prompt_contract,
+        load_activation_metadata,
+        make_splits,
+        sha256_file,
+        validate_activation_provenance,
+        validate_activation_tensor,
+    )
+except ImportError:  # direct script execution
+    from run_baseline_probes import (
+        DEFAULT_TASKS,
+        TASK_DISPLAY,
+        extract_labels,
+        get_field,
+        load_activations,
+        load_stimuli,
+        safe_key,
+    )
+    from train_linear_probe import (
+        atomic_write_text,
+        enforce_prompt_contract,
+        load_activation_metadata,
+        make_splits,
+        sha256_file,
+        validate_activation_provenance,
+        validate_activation_tensor,
+    )
 
-from sklearn.linear_model import RidgeClassifier, LogisticRegression
-from sklearn.model_selection import StratifiedKFold, GroupKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import CountVectorizer
@@ -43,57 +70,50 @@ from sklearn.feature_extraction.text import CountVectorizer
 def get_group_values(rows, group_field):
     """Extract group values from stimuli rows."""
     vals = []
-    for r in rows:
+    missing = []
+    for index, r in enumerate(rows):
         if group_field == "surface_dediac":
-            v = r.get("surface") or r.get("expected_surface") or ""
+            v = r.get("surface_dediac") or r.get("surface") or r.get("expected_surface")
         else:
-            v = r.get(group_field, "")
-        vals.append(v if v else f"__empty__{len(vals)}")
+            v = get_field(r, group_field)
+        if not isinstance(v, (str, int, float)) or isinstance(v, bool) or not str(v).strip():
+            missing.append(index)
+        else:
+            vals.append(str(v))
+    if missing:
+        raise ValueError(
+            f"group field {group_field!r} is missing or non-scalar for "
+            f"{len(missing)} row(s); first index {missing[0]}"
+        )
     return vals
 
 
 def closed_set_splits(y, groups, n_folds=5, seed=42):
-    """Generate GroupKFold splits where every test label appears in training.
+    """Generate grouped splits where every test label appears in training.
 
     Returns (splits, stats) where stats includes unseen label info.
     """
     y = np.asarray(y)
     groups = np.asarray(groups)
-    unique_groups = np.unique(groups)
-
-    if len(unique_groups) < n_folds:
-        n_folds = len(unique_groups)
-    if n_folds < 2:
-        return None, {"error": "too few groups for CV"}
-
     try:
-        gkf = GroupKFold(n_splits=n_folds)
-        splits = list(gkf.split(np.zeros(len(y)), y, groups=groups))
-    except Exception:
-        return None, {"error": "GroupKFold failed"}
-
-    valid_splits = []
-    unseen_stats = []
-    for train_idx, test_idx in splits:
-        train_labels = set(y[train_idx])
-        test_labels = set(y[test_idx])
-        unseen = test_labels - train_labels
-        if unseen:
-            unseen_stats.append({
-                "n_unseen": len(unseen),
-                "n_test": len(test_idx),
-                "unseen_fraction": round(len(unseen) / len(test_labels), 3) if test_labels else 0,
-            })
-            # Still keep the split but flag it
-        else:
-            unseen_stats.append({"n_unseen": 0, "n_test": len(test_idx)})
-        valid_splits.append((train_idx, test_idx))
-
-    return valid_splits, {"unseen_stats": unseen_stats, "n_folds": len(valid_splits)}
+        splits = make_splits(
+            y,
+            n_folds=n_folds,
+            groups=groups,
+            split_name="heldout",
+            random_state=seed,
+        )
+    except ValueError as error:
+        return None, {"error": str(error)}
+    unseen_stats = [
+        {"n_unseen": 0, "n_test": int(len(test_idx)), "unseen_fraction": 0.0}
+        for _, test_idx in splits
+    ]
+    return splits, {"unseen_stats": unseen_stats, "n_folds": len(splits)}
 
 
-def train_heldout_probes(activations, labels, splits, best_layer_only=True):
-    """Train Ridge probes per layer using the given splits.
+def train_heldout_probes(activations, labels, splits):
+    """Train logistic probes per layer using the given splits.
 
     Returns (layerwise_acc, best_layer, best_acc).
     """
@@ -101,21 +121,22 @@ def train_heldout_probes(activations, labels, splits, best_layer_only=True):
     y = le.fit_transform(labels)
 
     n_layers = activations.shape[1]
-    if best_layer_only:
-        probe_layers = [int(np.argmax(np.zeros(n_layers)))]  # placeholder, we probe all anyway
-        probe_layers = list(range(n_layers))  # probe all layers for now
-
     layer_accs = []
     for layer in range(n_layers):
         X = activations[:, layer, :]
-        fold_accs = []
+        pred = np.full_like(y, -1)
         for train_idx, test_idx in splits:
-            if len(test_idx) == 0:
-                continue
-            probe = Pipeline([("scaler", StandardScaler()), ("ridge", RidgeClassifier(alpha=1.0))])
+            probe = Pipeline(
+                [
+                    ("scaler", StandardScaler()),
+                    ("classifier", LogisticRegression(max_iter=2000)),
+                ]
+            )
             probe.fit(X[train_idx], y[train_idx])
-            fold_accs.append(float(probe.score(X[test_idx], y[test_idx])))
-        layer_accs.append(float(np.mean(fold_accs)) if fold_accs else 0.0)
+            pred[test_idx] = probe.predict(X[test_idx])
+        if np.any(pred < 0):
+            raise RuntimeError("heldout folds did not predict every sample exactly once")
+        layer_accs.append(float(np.mean(pred == y)))
 
     best_layer = int(np.argmax(layer_accs))
     return layer_accs, best_layer, layer_accs[best_layer]
@@ -138,22 +159,34 @@ def char_ngram_heldout(rows, task, min_examples=3, splits=None):
     le = LabelEncoder()
     y = le.fit_transform(labels)
 
-    vec = CountVectorizer(analyzer="char", ngram_range=(1, 4), binary=True)
-    X = vec.fit_transform(surfaces)
-
     if splits is None:
-        probe = LogisticRegression(max_iter=2000)
-        probe.fit(X, y)
-        return float(probe.score(X, y)), info
+        raise ValueError("character baseline requires held-out splits")
 
-    fold_accs = []
+    pred = np.full_like(y, -1)
     for train_idx, test_idx in splits:
-        if len(test_idx) == 0:
-            continue
-        probe = LogisticRegression(max_iter=2000)
-        probe.fit(X[train_idx], y[train_idx])
-        fold_accs.append(float(probe.score(X[test_idx], y[test_idx])))
-    return float(np.mean(fold_accs)) if fold_accs else 0.0, info
+        pipeline = Pipeline(
+            [
+                ("vectorizer", CountVectorizer(analyzer="char", ngram_range=(1, 4), binary=True)),
+                ("probe", LogisticRegression(max_iter=2000)),
+            ]
+        )
+        train_surfaces = [surfaces[index] for index in train_idx]
+        test_surfaces = [surfaces[index] for index in test_idx]
+        pipeline.fit(train_surfaces, y[train_idx])
+        pred[test_idx] = pipeline.predict(test_surfaces)
+    if np.any(pred < 0):
+        raise RuntimeError("character baseline did not predict every sample exactly once")
+    return float(np.mean(pred == y)), info
+
+
+def majority_baseline_for_splits(y, splits):
+    predictions = np.full_like(y, -1)
+    for train_idx, test_idx in splits:
+        counts = np.bincount(y[train_idx])
+        predictions[test_idx] = int(np.argmax(counts))
+    if np.any(predictions < 0):
+        raise RuntimeError("majority baseline did not predict every sample exactly once")
+    return float(np.mean(predictions == y))
 
 
 def class_overlap_report(y, splits):
@@ -185,14 +218,46 @@ def main():
     parser.add_argument("--min-examples-per-label", type=int, default=3)
     parser.add_argument("--folds", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--require-activation-provenance", action="store_true")
+    parser.add_argument("--allow-label-revealed-prompts", action="store_true")
+    parser.add_argument("--allow-unverifiable-prompt-contract", action="store_true")
     args = parser.parse_args()
+
+    if args.min_examples_per_label < 2:
+        parser.error("--min-examples-per-label must be at least 2")
+    if args.folds < 2:
+        parser.error("--folds must be at least 2")
+    if len(args.tasks) != len(set(args.tasks)):
+        parser.error("--tasks must not contain duplicates")
 
     np.random.seed(args.seed)
     out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading...")
     activations = load_activations(args.activations)
     rows = load_stimuli(args.stimuli)
+    activation_metadata = load_activation_metadata(args.activations)
+    validate_activation_provenance(
+        args.activations,
+        tuple(activations.shape),
+        args.stimuli,
+        activation_metadata,
+        require=args.require_activation_provenance,
+    )
+    activations = validate_activation_tensor(
+        activations,
+        args.activations,
+        expected_rows=len(rows),
+    )
+    leakage_report = enforce_prompt_contract(
+        rows,
+        args.tasks,
+        activation_metadata,
+        allow_label_revealed=args.allow_label_revealed_prompts,
+        allow_unverifiable=args.allow_unverifiable_prompt_contract,
+        context="heldout probe",
+    )
     print(f"  activations: {activations.shape}")
     print(f"  stimuli: {len(rows)} rows")
 
@@ -239,9 +304,8 @@ def main():
                 min_pc = int(np.bincount(y).min())
                 ef = min(args.folds, min_pc)
                 if ef < 2:
-                    # Fall back to train accuracy
-                    splits = [(np.arange(len(y)), np.arange(len(y)))]
-                    split_meta = {"effective_folds": 1, "note": "train accuracy fallback"}
+                    print("    skipped: fewer than 2 examples in the smallest class")
+                    continue
                 else:
                     skf = StratifiedKFold(n_splits=ef, shuffle=True, random_state=args.seed)
                     splits = list(skf.split(np.zeros(len(y)), y))
@@ -254,7 +318,7 @@ def main():
                     print(f"    skipped: {split_result[1]}")
                     continue
                 splits, split_meta = split_result
-                split_meta["method"] = "GroupKFold"
+                split_meta["method"] = "closed-set grouped cross-validation"
                 split_meta["group_field"] = group_field
 
             # Class overlap diagnostics
@@ -267,25 +331,18 @@ def main():
             print(f"    folds: {n_folds}  closed-set folds: {n_valid}/{n_folds}  "
                   f"mean unseen: {mean_unseen:.3f}  max unseen: {max_unseen:.3f}")
 
-            if n_valid == 0:
-                print(f"    ⚠️  ALL folds have unseen test labels — probe results are meaningless")
-                task_results["strategies"][strategy_name] = {
-                    "status": "all_folds_unseen_labels",
-                    "n_folds": n_folds,
-                    "n_valid_folds": 0,
-                    "mean_unseen_fraction": mean_unseen,
-                    "overlap": overlap,
-                }
-                continue
+            if n_valid != n_folds:
+                raise RuntimeError("closed-set split construction returned unseen test labels")
 
             # --- Probe accuracy ---
             layer_accs, best_layer, best_acc = train_heldout_probes(
-                task_acts, labels, splits, best_layer_only=False
+                task_acts, labels, splits
             )
             print(f"    probe:  best L{best_layer} = {best_acc:.4f}")
 
             # --- Char n-gram baseline ---
             char_acc, _ = char_ngram_heldout(task_rows, task, args.min_examples_per_label, splits)
+            majority_acc = majority_baseline_for_splits(y, splits)
             print(f"    char:   {char_acc:.4f}")
 
             # --- Summary ---
@@ -296,22 +353,58 @@ def main():
                 "max_unseen_fraction": round(max_unseen, 4),
                 "overlap": overlap,
                 "split_meta": split_meta,
-                "probe_layerwise": [round(float(a), 4) for a in layer_accs],
+                "probe_layerwise": [float(a) for a in layer_accs],
                 "probe_best_layer": best_layer,
-                "probe_best_accuracy": round(float(best_acc), 4),
-                "char_ngram_accuracy": round(float(char_acc), 4),
-                "majority_baseline": info["majority_baseline_accuracy"],
-                "probe_minus_char": round(float(best_acc) - float(char_acc), 4),
-                "probe_minus_majority": round(float(best_acc) - info["majority_baseline_accuracy"], 4),
+                "probe_best_accuracy": float(best_acc),
+                "char_ngram_accuracy": float(char_acc),
+                "majority_baseline": majority_acc,
+                "probe_minus_char": float(best_acc) - float(char_acc),
+                "probe_minus_majority": float(best_acc) - majority_acc,
+                "best_layer_selection": "descriptive_same_cv",
             }
 
         results[task] = task_results
 
     # ── Save ──
     out_path = out_dir / "heldout_probe_results.json"
-    out_path.write_text(json.dumps(results, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if not results:
+        raise ValueError("no heldout probe task could be evaluated")
+    atomic_write_text(
+        out_path,
+        json.dumps(results, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+    )
+    provenance_path = out_path.with_name(f"{out_path.stem}_provenance.json")
+    atomic_write_text(
+        provenance_path,
+        json.dumps(
+            {
+                "schema_version": 2,
+                "results": out_path.name,
+                "results_sha256": sha256_file(out_path),
+                "activations_sha256": sha256_file(args.activations),
+                "stimuli_sha256": sha256_file(args.stimuli),
+                "activation_shape": list(activations.shape),
+                "seed": args.seed,
+                "folds": args.folds,
+                "min_examples_per_label": args.min_examples_per_label,
+                "prompt_leakage_audit": leakage_report,
+                "label_revealed_prompt_allowed": args.allow_label_revealed_prompts,
+                "unverifiable_prompt_contract_allowed": (
+                    args.allow_unverifiable_prompt_contract
+                ),
+                "implementation_sha256": sha256_file(__file__),
+                "probe_classifier": "standardized_logistic_regression",
+                "character_classifier": "binary_count_char_1_4gram_logistic_regression",
+            },
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        )
+        + "\n",
+    )
     print(f"\n{'='*70}")
     print(f"Saved to {out_path}")
+    print(f"Provenance: {provenance_path}")
 
     # ── Terminal summary table ──
     print_summary_table(results)
@@ -328,7 +421,7 @@ def print_summary_table(results):
     print("Probe Accuracy (probe / char / probe−char)")
     print(sep)
 
-    for task in DEFAULT_TASKS:
+    for task in results:
         if task not in results:
             continue
         display = TASK_DISPLAY.get(task, task)
@@ -350,7 +443,7 @@ def print_summary_table(results):
     print(f"\n{sep}")
     print("Unseen Label Rate (mean / max)")
     print(sep)
-    for task in DEFAULT_TASKS:
+    for task in results:
         if task not in results:
             continue
         display = TASK_DISPLAY.get(task, task)

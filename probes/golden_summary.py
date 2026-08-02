@@ -7,9 +7,18 @@ from source reports and never infers pass/fail from metrics.
 
 import argparse
 import glob
+import hashlib
 import json
+import math
+import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from .train_linear_probe import atomic_write_text
+except ImportError:  # direct script execution
+    from train_linear_probe import atomic_write_text
 
 
 DEFAULT_GLOB = "data/golden/*golden_report.json"
@@ -53,6 +62,11 @@ FIELD_CANDIDATES = {
         "metadata.model_sha256",
         "metadata.model_hash",
     ],
+    "tokenizer_sha256": [
+        "tokenizer_sha256",
+        "metadata.tokenizer_sha256",
+        "provenance_gate.ember_tokenizer_sha256",
+    ],
     "reference": ["reference_path", "reference_logits", "reference.path", "reference"],
     "reference_source": [
         "reference_source",
@@ -95,9 +109,10 @@ def _float_or_none(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return None
+    return result if math.isfinite(result) else None
 
 
 def _bool_or_none(value: Any) -> bool | None:
@@ -119,6 +134,8 @@ def normalize_report(path: Path, report: dict[str, Any]) -> dict[str, Any]:
 
     row = {
         "report_path": str(path),
+        "report_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "schema_version": report.get("schema_version"),
         "label": _string_or_none(_first_present(report, FIELD_CANDIDATES["label"])),
         "model": _string_or_none(_first_present(report, FIELD_CANDIDATES["model"])),
         "classification": _string_or_none(
@@ -135,6 +152,11 @@ def normalize_report(path: Path, report: dict[str, Any]) -> dict[str, Any]:
         "model_sha256": _string_or_none(
             _first_present(report, FIELD_CANDIDATES["model_sha256"])
         ),
+        "tokenizer_sha256": _string_or_none(
+            _first_present(report, FIELD_CANDIDATES["tokenizer_sha256"])
+        ),
+        "numerical_gate_configured": report.get("numerical_gate_configured"),
+        "provenance_gate_passed": _nested_get(report, "provenance_gate.passed"),
         "reference": _string_or_none(_first_present(report, FIELD_CANDIDATES["reference"])),
         "reference_source": _string_or_none(
             _first_present(report, FIELD_CANDIDATES["reference_source"])
@@ -144,28 +166,51 @@ def normalize_report(path: Path, report: dict[str, Any]) -> dict[str, Any]:
     row["missing_fields"] = [
         key
         for key, value in row.items()
-        if key not in {"report_path", "missing_fields"} and value is None
+        if key not in {"report_path", "report_sha256", "missing_fields"} and value is None
     ]
+    for field in ("model_sha256", "tokenizer_sha256"):
+        value = row[field]
+        if value is not None and (
+            len(value) != 64 or any(char not in "0123456789abcdefABCDEF" for char in value)
+        ):
+            row.setdefault("schema_warnings", []).append(f"invalid {field}")
+    for field in ("max_abs_diff", "mean_abs_diff", "top_k_overlap"):
+        raw = _first_present(report, FIELD_CANDIDATES[field])
+        if raw is not None and row[field] is None:
+            row.setdefault("schema_warnings", []).append(f"non-finite or invalid {field}")
     return row
 
 
-def load_reports(pattern: str) -> list[dict[str, Any]]:
+def load_reports(pattern: str, exclude: set[Path] | None = None) -> list[dict[str, Any]]:
     rows = []
+    excluded = {path.resolve() for path in (exclude or set())}
     for path_text in sorted(glob.glob(pattern)):
         path = Path(path_text)
-        report = json.loads(path.read_text(encoding="utf-8"))
+        if path.resolve() in excluded or not path.is_file():
+            continue
+
+        def reject_constant(value):
+            raise ValueError(f"non-standard JSON constant {value!r} in {path}")
+
+        report = json.loads(
+            path.read_text(encoding="utf-8"), parse_constant=reject_constant
+        )
         if isinstance(report, dict):
             rows.append(normalize_report(path, report))
             continue
         row = normalize_report(path, {})
-        row["schema_warning"] = f"expected JSON object, got {type(report).__name__}"
+        row["schema_warnings"] = [
+            f"expected JSON object, got {type(report).__name__}"
+        ]
         rows.append(row)
     return rows
 
 
 def write_json(path: Path, summary: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_write_text(
+        path,
+        json.dumps(summary, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+    )
 
 
 def _md_escape(value: Any) -> str:
@@ -240,8 +285,7 @@ def markdown_summary(summary: dict[str, Any]) -> str:
 
 
 def write_markdown(path: Path, summary: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(markdown_summary(summary), encoding="utf-8")
+    atomic_write_text(path, markdown_summary(summary))
 
 
 def main() -> None:
@@ -249,17 +293,23 @@ def main() -> None:
     parser.add_argument("--glob", default=DEFAULT_GLOB, help="input report glob")
     parser.add_argument("--output-json", default=DEFAULT_OUTPUT_JSON)
     parser.add_argument("--output-md", default=DEFAULT_OUTPUT_MD)
+    parser.add_argument("--allow-empty", action="store_true")
     args = parser.parse_args()
 
-    reports = load_reports(args.glob)
+    output_json = Path(args.output_json)
+    output_md = Path(args.output_md)
+    reports = load_reports(args.glob, exclude={output_json, output_md})
+    if not reports and not args.allow_empty:
+        raise ValueError("no golden-logit reports matched; use --allow-empty if intentional")
     summary = {
+        "schema_version": 1,
         "generated_by": "probes/golden_summary.py",
         "glob": args.glob,
         "report_count": len(reports),
         "reports": reports,
     }
-    write_json(Path(args.output_json), summary)
-    write_markdown(Path(args.output_md), summary)
+    write_json(output_json, summary)
+    write_markdown(output_md, summary)
     print(f"wrote {len(reports)} golden report rows to {args.output_json} and {args.output_md}")
 
 

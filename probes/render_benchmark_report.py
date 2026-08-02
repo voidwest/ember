@@ -4,8 +4,15 @@
 import argparse
 import json
 import shlex
+import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from .train_linear_probe import atomic_write_text
+except ImportError:  # direct script execution
+    from train_linear_probe import atomic_write_text
 
 
 ARTIFACT_KEYS = ["probe", "mdl", "cca", "rsa", "divergence"]
@@ -33,7 +40,7 @@ def md_escape(value: Any) -> str:
 
 def boolish(value: Any) -> str:
     if isinstance(value, bool):
-        return "yes" if value else "missing"
+        return "yes" if value else "no"
     if value is None:
         return "missing"
     return fmt(value)
@@ -235,14 +242,34 @@ def missing_artifact_rows(summary: dict[str, Any]) -> list[list[Any]]:
             artifact = model.get(key)
             if not isinstance(artifact, dict):
                 rows.append([model.get("label"), key, "missing", "artifact entry missing"])
-            elif artifact.get("exists") is not True:
-                rows.append([model.get("label"), key, artifact.get("path"), "exists false"])
+            elif artifact.get("exists") is not True and artifact.get("status") not in {
+                "disabled",
+                "planned_dry_run",
+            }:
+                rows.append(
+                    [
+                        model.get("label"),
+                        key,
+                        artifact.get("path"),
+                        artifact.get("status") or "exists false",
+                    ]
+                )
 
     fertility = summary.get("fertility")
     if not isinstance(fertility, dict):
         rows.append(["benchmark", "fertility", "missing", "artifact entry missing"])
-    elif fertility.get("exists") is not True:
-        rows.append(["benchmark", "fertility", fertility.get("path"), "exists false"])
+    elif fertility.get("exists") is not True and fertility.get("status") not in {
+        "disabled",
+        "planned_dry_run",
+    }:
+        rows.append(
+            [
+                "benchmark",
+                "fertility",
+                fertility.get("path"),
+                fertility.get("status") or "exists false",
+            ]
+        )
 
     for plot in summary.get("plots") or []:
         if isinstance(plot, dict) and plot.get("exists") is not True:
@@ -265,19 +292,42 @@ def command_lines(summary: dict[str, Any]) -> list[str]:
                 meta.append(f"skipped={fmt(entry.get('skipped'))}")
             if entry.get("reason"):
                 meta.append(f"reason={fmt(entry.get('reason'))}")
+            if entry.get("status"):
+                meta.append(f"status={fmt(entry.get('status'))}")
             suffix = f" ({', '.join(meta)})" if meta else ""
             cmd = command_text(entry.get("cmd"))
         else:
             suffix = ""
             cmd = command_text(entry)
-        lines.extend([f"Command {index}{suffix}:", "", "```bash", cmd, "```", ""])
+        indented = [f"    {line}" for line in cmd.splitlines()] or ["    "]
+        lines.extend([f"Command {index}{suffix}:", "", *indented, ""])
     return lines
 
 
-def render_report(summary: dict[str, Any]) -> str:
+def prompt_contract_statuses(summary: dict[str, Any]) -> list[str]:
+    statuses = []
+    for model in summary.get("models") or []:
+        if not isinstance(model, dict):
+            raise ValueError("summary models must be objects")
+        probe = model.get("probe")
+        if not isinstance(probe, dict) or not probe.get("exists"):
+            continue
+        audit = probe.get("prompt_leakage_audit")
+        if not isinstance(audit, dict) or not isinstance(audit.get("status"), str):
+            statuses.append("unverifiable")
+        else:
+            statuses.append(audit["status"])
+    return statuses
+
+
+def render_report(summary: dict[str, Any], *, warning: str | None = None) -> str:
     lines = [
         f"# Benchmark Report: {fmt(summary.get('name'))}",
         "",
+    ]
+    if warning:
+        lines.extend([f"> **{warning}**", ""])
+    lines.extend([
         "This report summarizes benchmark artifacts and probe decodability metrics only. It does not infer scientific conclusions.",
         "",
         "## Benchmark name",
@@ -292,9 +342,17 @@ def render_report(summary: dict[str, Any]) -> str:
         "",
         fmt(summary.get("stimuli")),
         "",
+        "## Stimuli SHA-256",
+        "",
+        fmt(summary.get("stimuli_sha256")),
+        "",
+        "## Analysis configuration",
+        "",
+        fmt(summary.get("analysis_configuration")),
+        "",
         "## Tasks",
         "",
-    ]
+    ])
     tasks = summary.get("tasks")
     if isinstance(tasks, list) and tasks:
         lines.extend(f"- {fmt(task)}" for task in tasks)
@@ -432,16 +490,47 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="render benchmark_summary.json to Markdown")
     parser.add_argument("--summary", required=True, help="path to benchmark_summary.json")
     parser.add_argument("--output", required=True, help="Markdown report output path")
+    parser.add_argument("--allow-label-revealed-inputs", action="store_true")
+    parser.add_argument("--allow-unverifiable-prompt-contract", action="store_true")
     args = parser.parse_args()
 
     summary_path = Path(args.summary)
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    if not summary_path.is_file():
+        raise FileNotFoundError(summary_path)
+
+    def reject_constant(value):
+        raise ValueError(f"non-standard JSON constant {value!r} in {summary_path}")
+
+    summary = json.loads(
+        summary_path.read_text(encoding="utf-8"), parse_constant=reject_constant
+    )
     if not isinstance(summary, dict):
         raise ValueError(f"expected JSON object in {summary_path}")
+    if summary.get("schema_version") != 2:
+        raise ValueError("benchmark summary schema_version 2 is required")
+    statuses = prompt_contract_statuses(summary)
+    if "label_revealed" in statuses and not args.allow_label_revealed_inputs:
+        raise ValueError(
+            "summary contains label-revealed probe results; render only with the explicit "
+            "positive-control override"
+        )
+    unverifiable = {
+        "unverifiable",
+        "not_checked_missing_probe_template_metadata",
+        "unverifiable_missing_probe_leakage_audit",
+    }
+    if any(status in unverifiable for status in statuses) and not args.allow_unverifiable_prompt_contract:
+        raise ValueError("summary contains probe results with an unverifiable prompt contract")
+    warning = (
+        "POSITIVE CONTROL — LABEL-REVEALED PROMPTS"
+        if "label_revealed" in statuses
+        else "UNVERIFIED PROMPT CONTRACT"
+        if any(status in unverifiable for status in statuses)
+        else None
+    )
 
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(render_report(summary), encoding="utf-8")
+    atomic_write_text(output, render_report(summary, warning=warning))
     print(f"wrote {output}")
 
 
