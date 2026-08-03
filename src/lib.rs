@@ -8,6 +8,7 @@ pub mod experiments;
 pub mod extraction;
 pub mod gemma4;
 pub mod k_matmul;
+pub mod k_matmul_x86;
 pub mod kv_cache;
 pub mod llama;
 pub mod loader;

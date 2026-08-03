@@ -1038,8 +1038,7 @@ impl Backend for CpuBackend {
     ) -> Result<CpuTensor, CpuError> {
         let (seq_len, output_len) = k_matmul_output_len(x, w)?;
         let mut out = vec![0.0f32; output_len];
-        crate::k_matmul::matmul_k_scalar_into(x.data(), seq_len, w, &mut out)
-            .map_err(CpuError::Kernel)?;
+        crate::k_matmul::matmul_k_into(x.data(), seq_len, w, &mut out).map_err(CpuError::Kernel)?;
         Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
     }
 

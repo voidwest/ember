@@ -479,6 +479,23 @@ impl ExecutionInventory {
                     ),
                     None => ("f32", "eager-f32", "eager-f32-dequant", "none", 0),
                 },
+                KExecution::CompressedX86 => match KQuantDtype::from_gguf(decision.gguf_dtype) {
+                    Some(KQuantDtype::Q4K) => (
+                        "compressed",
+                        "compressed-x86",
+                        "avx2-q4k",
+                        "avx2+fma",
+                        KERNEL_SCRATCH_BYTES,
+                    ),
+                    Some(KQuantDtype::Q6K) => (
+                        "compressed",
+                        "compressed-x86",
+                        "avx2-q6k",
+                        "avx2+fma",
+                        KERNEL_SCRATCH_BYTES,
+                    ),
+                    None => ("f32", "eager-f32", "eager-f32-dequant", "none", 0),
+                },
             };
 
             if decision.fallback_reason.is_some() {
@@ -500,7 +517,7 @@ impl ExecutionInventory {
                     entry.tensor_count += 1;
                     entry.expanded_bytes += expanded;
                 }
-                KExecution::CompressedScalar => {
+                KExecution::CompressedScalar | KExecution::CompressedX86 => {
                     compressed_bytes += compressed;
                     let entry = per_dtype.entry(dtype_name.clone()).or_insert_with(|| {
                         DtypeExecutionSummary {

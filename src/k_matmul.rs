@@ -12,7 +12,8 @@
 //! convention.
 
 use crate::quant_k::{
-    dequant_q4_k, dequant_q6_k, KQuantDtype, KQuantWeight, Q4_K_BLOCK_BYTES, Q6_K_BLOCK_BYTES, QK_K,
+    dequant_q4_k, dequant_q6_k, KExecution, KQuantDtype, KQuantWeight, Q4_K_BLOCK_BYTES,
+    Q6_K_BLOCK_BYTES, QK_K,
 };
 
 // One dequantized super-block per thread (256 f32 = 1 KiB).
@@ -60,6 +61,58 @@ pub fn matmul_k_scalar_into(
     match w.dtype() {
         KQuantDtype::Q6K => matmul_k_scalar_with(dequant_q6_k, Q6_K_BLOCK_BYTES, src, rows, w, dst),
         KQuantDtype::Q4K => matmul_k_scalar_with(dequant_q4_k, Q4_K_BLOCK_BYTES, src, rows, w, dst),
+    }
+}
+
+/// Dispatch entry: executes the per-tensor execution decision recorded at
+/// load (scalar or AVX2), never silently downgrading. `dst` must be
+/// zero-initialized (accumulation semantics, same as the scalar entry).
+///
+/// A `CompressedX86` decision without AVX2 at runtime is a hard error —
+/// the loader only records that decision after checking the feature set,
+/// so a mismatch is a bug, not a fallback.
+pub fn matmul_k_into(
+    src: &[f32],
+    rows: usize,
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) -> Result<(), String> {
+    let in_features = w.in_features();
+    let out_features = w.out_features();
+    let expected_src = rows
+        .checked_mul(in_features)
+        .ok_or_else(|| "matmul_k: input shape product overflow".to_string())?;
+    if src.len() != expected_src {
+        return Err(format!(
+            "matmul_k: src len {} != rows {rows} * in_features {in_features}",
+            src.len()
+        ));
+    }
+    let expected_dst = rows
+        .checked_mul(out_features)
+        .ok_or_else(|| "matmul_k: output shape product overflow".to_string())?;
+    if dst.len() != expected_dst {
+        return Err(format!(
+            "matmul_k: dst len {} != rows {rows} * out_features {out_features}",
+            dst.len()
+        ));
+    }
+    match w.execution() {
+        KExecution::CompressedScalar => matmul_k_scalar_into(src, rows, w, dst),
+        KExecution::CompressedX86 => {
+            if !crate::k_matmul_x86::avx2_supported() {
+                return Err(
+                    "matmul_k: compressed-x86 recorded at load but AVX2 is unavailable at runtime"
+                        .to_string(),
+                );
+            }
+            // Safety: layout validated above; AVX2 feature set verified
+            // above; the weight layout invariants hold by construction.
+            unsafe { crate::k_matmul_x86::matmul_k_avx2_into(src, rows, w, dst) }
+        }
+        KExecution::EagerF32 => {
+            Err("matmul_k: eager-f32 tensors are f32 CpuTensors, not KQuantWeight".to_string())
+        }
     }
 }
 

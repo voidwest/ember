@@ -448,7 +448,8 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                             .map_err(|e| anyhow::anyhow!("tensor '{}': {e}", info.name))?;
                         LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
                     }
-                    crate::quant_k::KExecution::CompressedScalar => {
+                    crate::quant_k::KExecution::CompressedScalar
+                    | crate::quant_k::KExecution::CompressedX86 => {
                         let native = native.expect("compressed execution requires a native dtype");
                         let mut dims = info.dims.clone();
                         dims.reverse();
@@ -481,6 +482,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                                 start..end,
                                 shape,
                                 native,
+                                execution,
                             )?
                         } else {
                             let mut raw = vec![0u8; byte_len];

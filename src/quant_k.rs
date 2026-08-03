@@ -420,6 +420,8 @@ pub enum KExecution {
     EagerF32,
     /// Packed bytes resident, scalar kernels.
     CompressedScalar,
+    /// Packed bytes resident, AVX2 kernels (x86 feature set required).
+    CompressedX86,
 }
 
 /// One loader decision for a K-family tensor (recorded, never silent).
@@ -449,6 +451,9 @@ pub struct KQuantWeight {
     data: QuantizedData,
     shape: [usize; 2],
     dtype: KQuantDtype,
+    /// Per-tensor execution decision recorded at load; the matmul
+    /// dispatch executes this decision and never silently downgrades.
+    execution: KExecution,
 }
 
 impl KQuantWeight {
@@ -460,7 +465,12 @@ impl KQuantWeight {
 
     /// Fallible constructor for weights loaded from model files.
     pub fn try_new(data: Vec<u8>, shape: [usize; 2], dtype: KQuantDtype) -> Result<Self> {
-        Self::try_new_storage(QuantizedData::Owned(data.into()), shape, dtype)
+        Self::try_new_storage(
+            QuantizedData::Owned(data.into()),
+            shape,
+            dtype,
+            KExecution::CompressedScalar,
+        )
     }
 
     /// Construct from a shared read-only file mapping (loader path).
@@ -470,6 +480,7 @@ impl KQuantWeight {
         range: Range<usize>,
         shape: [usize; 2],
         dtype: KQuantDtype,
+        execution: KExecution,
     ) -> Result<Self> {
         if range.start > range.end || range.end > mmap.len() {
             bail!(
@@ -478,10 +489,20 @@ impl KQuantWeight {
                 mmap.len()
             );
         }
-        Self::try_new_storage(QuantizedData::Mapped { mmap, range }, shape, dtype)
+        Self::try_new_storage(
+            QuantizedData::Mapped { mmap, range },
+            shape,
+            dtype,
+            execution,
+        )
     }
 
-    fn try_new_storage(data: QuantizedData, shape: [usize; 2], dtype: KQuantDtype) -> Result<Self> {
+    fn try_new_storage(
+        data: QuantizedData,
+        shape: [usize; 2],
+        dtype: KQuantDtype,
+        execution: KExecution,
+    ) -> Result<Self> {
         if shape[0] == 0 || shape[1] == 0 {
             bail!("KQuantWeight: dimensions must be non-zero, got {:?}", shape);
         }
@@ -507,7 +528,12 @@ impl KQuantWeight {
                 dtype.name()
             );
         }
-        Ok(Self { data, shape, dtype })
+        Ok(Self {
+            data,
+            shape,
+            dtype,
+            execution,
+        })
     }
 
     /// Raw packed storage.
@@ -532,6 +558,19 @@ impl KQuantWeight {
     #[inline]
     pub fn dtype(&self) -> KQuantDtype {
         self.dtype
+    }
+
+    /// Per-tensor execution decision recorded at load.
+    #[inline]
+    pub fn execution(&self) -> KExecution {
+        self.execution
+    }
+
+    /// Override the recorded execution decision (used by the loader when
+    /// it resolves the requested strategy against CPU features).
+    pub fn with_execution(mut self, execution: KExecution) -> Self {
+        self.execution = execution;
+        self
     }
 
     #[inline]
@@ -1143,6 +1182,7 @@ mod resident_tests {
             0..bytes.len(),
             [2, 256],
             KQuantDtype::Q4K,
+            KExecution::CompressedScalar,
         )
         .unwrap();
         assert!(weight.is_mapped());
@@ -1154,6 +1194,7 @@ mod resident_tests {
             bytes.len()..bytes.len() + 10,
             [2, 256],
             KQuantDtype::Q4K,
+            KExecution::CompressedScalar,
         )
         .is_err());
         // reversed range
@@ -1163,6 +1204,7 @@ mod resident_tests {
             reverse_start..reverse_end,
             [2, 256],
             KQuantDtype::Q4K,
+            KExecution::CompressedScalar,
         )
         .is_err());
         // range shorter than the shape requires
@@ -1171,6 +1213,7 @@ mod resident_tests {
             0..bytes.len() - 1,
             [2, 256],
             KQuantDtype::Q4K,
+            KExecution::CompressedScalar,
         )
         .is_err());
 
