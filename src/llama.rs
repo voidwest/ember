@@ -4240,22 +4240,15 @@ fn arena_err(message: String) -> CpuError {
 
 /// Split a region-request result into two disjoint slices (request order is
 /// preserved by [`DecodeArena::regions_f32`]).
-fn two_regions(slices: Vec<&mut [f32]>) -> (&mut [f32], &mut [f32]) {
-    let mut iter = slices.into_iter();
-    (
-        iter.next().expect("two requested regions"),
-        iter.next().expect("two requested regions"),
-    )
+fn two_regions(slices: [&mut [f32]; 2]) -> (&mut [f32], &mut [f32]) {
+    let [a, b] = slices;
+    (a, b)
 }
 
 /// Split a region-request result into three disjoint slices.
-fn three_regions(slices: Vec<&mut [f32]>) -> (&mut [f32], &mut [f32], &mut [f32]) {
-    let mut iter = slices.into_iter();
-    (
-        iter.next().expect("three requested regions"),
-        iter.next().expect("three requested regions"),
-        iter.next().expect("three requested regions"),
-    )
+fn three_regions(slices: [&mut [f32]; 3]) -> (&mut [f32], &mut [f32], &mut [f32]) {
+    let [a, b, c] = slices;
+    (a, b, c)
 }
 
 /// Plan-driven single-token decode: walks the resolved ops against the
@@ -4314,7 +4307,7 @@ fn forward_last_logits_planned(
             match op {
                 ResolvedOp::RmsNorm { role, input, out } => {
                     let (x, dst) =
-                        two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                        two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                     let weight = match role {
                         NormRole::AttnIn => block.input_layernorm.data(),
                         NormRole::MlpIn => block.post_attention_layernorm.data(),
@@ -4356,7 +4349,7 @@ fn forward_last_logits_planned(
                         "planned dispatch diverged from dynamic dispatch"
                     );
                     let (src, dst) =
-                        two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                        two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                     // The quantized kernels accumulate into dst (must be
                     // zero-initialized). The reference allocates a fresh
                     // zeroed Vec per projection; the arena reuses regions
@@ -4371,8 +4364,8 @@ fn forward_last_logits_planned(
                 }
                 ResolvedOp::Rope { role, target } => {
                     let (data,) = {
-                        let mut slices = arena.regions_f32(&[*target]).map_err(arena_err)?;
-                        (slices.pop().expect("one requested region"),)
+                        let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
+                        (data,)
                     };
                     let (n_heads, qk_norm) = match role {
                         RopeRole::Q => (model.config.n_heads, block.self_attn.q_norm.as_ref()),
@@ -4384,7 +4377,7 @@ fn forward_last_logits_planned(
                 }
                 ResolvedOp::KvStore { k, v } => {
                     let (k_data, v_data) =
-                        two_regions(arena.regions_f32(&[*k, *v]).map_err(arena_err)?);
+                        two_regions(arena.regions_f32([*k, *v]).map_err(arena_err)?);
                     cache.append_with_layout(
                         layer,
                         start_pos,
@@ -4396,7 +4389,7 @@ fn forward_last_logits_planned(
                 }
                 ResolvedOp::Attention { q, out, scores } => {
                     let (q_data, out_data, scores_data) =
-                        three_regions(arena.regions_f32(&[*q, *out, *scores]).map_err(arena_err)?);
+                        three_regions(arena.regions_f32([*q, *out, *scores]).map_err(arena_err)?);
                     let (cached_k, cached_v) = cache.get(layer);
                     planned_causal_attention(
                         q_data,
@@ -4413,8 +4406,8 @@ fn forward_last_logits_planned(
                 }
                 ResolvedOp::Silu { target } => {
                     let (data,) = {
-                        let mut slices = arena.regions_f32(&[*target]).map_err(arena_err)?;
-                        (slices.pop().expect("one requested region"),)
+                        let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
+                        (data,)
                     };
                     // in-place silu: x / (1 + exp(-x)), matching the
                     // reference `CpuTensor::silu` formula
@@ -4424,12 +4417,12 @@ fn forward_last_logits_planned(
                 }
                 ResolvedOp::Elemul { a, b, out } => {
                     let (a_data, b_data, out_data) =
-                        three_regions(arena.regions_f32(&[*a, *b, *out]).map_err(arena_err)?);
+                        three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
                     crate::simd::elemul(a_data, b_data, out_data);
                 }
                 ResolvedOp::ResidualAdd { a, b, out } => {
                     let (a_data, b_data, out_data) =
-                        three_regions(arena.regions_f32(&[*a, *b, *out]).map_err(arena_err)?);
+                        three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
                     add_into(a_data, b_data, out_data);
                 }
                 ResolvedOp::Logits { .. } => {
@@ -4456,13 +4449,12 @@ fn forward_last_logits_planned(
                 input,
                 out,
             } => {
-                let (x, dst) = two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                let (x, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                 rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
             }
             ResolvedOp::Logits { input, out, tied } => {
                 debug_assert_eq!(*tied, model.head_tied, "plan head tie flag diverged");
-                let (src, dst) =
-                    two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                 dst.fill(0.0);
                 planned_linear_into(&model.head, src, dst)?;
                 logits = Some(CpuTensor::from_data(
@@ -4490,67 +4482,7 @@ mod tests {
     };
     use crate::loader::{GgufLoader, GgufValue};
     use crate::quant::{QuantizedWeight, Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
-    use std::alloc::{GlobalAlloc, Layout, System};
-    use std::cell::Cell;
     use std::collections::HashMap;
-
-    struct ThreadCountingAllocator;
-
-    thread_local! {
-        static TRACK_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
-        static ALLOCATION_COUNT: Cell<usize> = const { Cell::new(0) };
-    }
-
-    unsafe impl GlobalAlloc for ThreadCountingAllocator {
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            TRACK_ALLOCATIONS
-                .try_with(|tracking| {
-                    if tracking.get() {
-                        ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
-                    }
-                })
-                .ok();
-            unsafe { System.alloc(layout) }
-        }
-
-        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            unsafe { System.dealloc(pointer, layout) }
-        }
-
-        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-            TRACK_ALLOCATIONS
-                .try_with(|tracking| {
-                    if tracking.get() {
-                        ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
-                    }
-                })
-                .ok();
-            unsafe { System.alloc_zeroed(layout) }
-        }
-
-        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-            TRACK_ALLOCATIONS
-                .try_with(|tracking| {
-                    if tracking.get() {
-                        ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
-                    }
-                })
-                .ok();
-            unsafe { System.realloc(pointer, layout, new_size) }
-        }
-    }
-
-    #[global_allocator]
-    static TEST_ALLOCATOR: ThreadCountingAllocator = ThreadCountingAllocator;
-
-    fn count_current_thread_allocations<T>(run: impl FnOnce() -> T) -> (T, usize) {
-        ALLOCATION_COUNT.with(|count| count.set(0));
-        TRACK_ALLOCATIONS.with(|tracking| tracking.set(true));
-        let result = run();
-        TRACK_ALLOCATIONS.with(|tracking| tracking.set(false));
-        let allocations = ALLOCATION_COUNT.with(Cell::get);
-        (result, allocations)
-    }
 
     #[test]
     fn llama_config_honors_full_context_length_metadata() {
@@ -4751,7 +4683,7 @@ mod tests {
         let mut cache = model.create_cache(&backend, model.config.max_seq_len);
         ForwardModel::forward_last_logits_with_cache(&model, &backend, &[3], &mut cache, 0)
             .unwrap();
-        let (result, allocations) = count_current_thread_allocations(|| {
+        let (result, allocations) = crate::alloc_counter::count_allocations(|| {
             ForwardModel::forward_last_logits_with_cache(&model, &backend, &[5], &mut cache, 1)
         });
         result.unwrap();
@@ -5330,6 +5262,34 @@ mod tests {
         assert!(
             model.decode_state.borrow().is_none(),
             "multi-token calls must not build a decode session"
+        );
+    }
+
+    /// Gate E (contract section 13): after warmup, the planned decode loop
+    /// with hooks disabled performs zero heap allocations per token other
+    /// than the documented logits tensor materialization — `CpuTensor` for
+    /// the `[1, vocab]` output allocates shape, strides, and data (3).
+    #[test]
+    fn planned_decode_is_zero_steady_state_allocation() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        model.set_execution_mode(ExecutionMode::Planned);
+        let backend = CpuBackend;
+        let mut cache = model.create_cache(&backend, 64);
+        let prompt = [3u32, 1, 7];
+        model
+            .forward_with_cache(&backend, &prompt, &mut cache, 0)
+            .unwrap();
+        // warmup: build the plan + decode session + run one token
+        ForwardModel::forward_last_logits_with_cache(&model, &backend, &[3], &mut cache, 3)
+            .unwrap();
+        let (_, allocations) = crate::alloc_counter::count_allocations(|| {
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &[5], &mut cache, 4)
+                .unwrap();
+        });
+        assert!(
+            allocations <= 3,
+            "planned decode allocated {allocations} times per token; expected at most 3 (the logits CpuTensor shape + strides + data)"
         );
     }
 }

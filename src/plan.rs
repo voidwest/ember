@@ -244,6 +244,39 @@ pub struct ScratchPlan {
     pub tensor_regions: BTreeMap<usize, String>,
 }
 
+/// Deterministic arena diagnostics (contract section 11: total bytes,
+/// region names, offsets, alignments, maximum live interval).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArenaReport {
+    pub total_bytes: usize,
+    pub alignment: usize,
+    pub seq_capacity: usize,
+    pub region_count: usize,
+    /// Largest `last_op - first_op` over all regions.
+    pub max_live_interval: usize,
+    pub regions: Vec<ScratchRegion>,
+}
+
+impl ScratchPlan {
+    /// Build the deterministic arena report.
+    pub fn arena_report(&self) -> ArenaReport {
+        let max_live_interval = self
+            .regions
+            .iter()
+            .map(|region| region.last_op.saturating_sub(region.first_op))
+            .max()
+            .unwrap_or(0);
+        ArenaReport {
+            total_bytes: self.total_bytes,
+            alignment: self.alignment,
+            seq_capacity: self.seq_capacity,
+            region_count: self.regions.len(),
+            max_live_interval,
+            regions: self.regions.clone(),
+        }
+    }
+}
+
 /// Reusable aligned decode scratch arena (contract section 11): allocated
 /// once before decode begins, then sliced by region name with pure offset
 /// arithmetic. No heap allocation happens in the steady-state token loop.
@@ -307,20 +340,24 @@ impl DecodeArena {
         Ok(unsafe { std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut f32, size / 4) })
     }
 
-    /// Disjoint mutable f32 views of several regions, in request order.
+    /// Disjoint mutable f32 views of several regions, in request order, as a
+    /// fixed-size array (no allocation in the decode loop).
     ///
     /// Regions with identical offsets would alias; that is an illegal
     /// aliasing error (the planner must prove disjoint lifetimes before
     /// sharing storage, and shared regions must never be requested
     /// simultaneously).
-    pub fn regions_f32(&mut self, regions: &[usize]) -> Result<Vec<&mut [f32]>, String> {
-        let mut entries: Vec<(usize, usize, usize)> = Vec::with_capacity(regions.len()); // (offset, size, request index)
+    pub fn regions_f32<const N: usize>(
+        &mut self,
+        regions: [usize; N],
+    ) -> Result<[&mut [f32]; N], String> {
+        let mut entries: [(usize, usize, usize); N] = [(0, 0, 0); N]; // (offset, size, request index)
         for (request, &index) in regions.iter().enumerate() {
             let (offset, size, _) = self.region(index)?;
             if size % 4 != 0 {
                 return Err(format!("region {index} size {size} is not f32-aligned"));
             }
-            entries.push((offset, size, request));
+            entries[request] = (offset, size, request);
         }
         entries.sort_unstable_by_key(|entry| entry.0);
         for window in entries.windows(2) {
@@ -334,7 +371,7 @@ impl DecodeArena {
 
         let base = self.pad;
         let mut remaining = &mut self.storage[base..base + self.total_bytes];
-        let mut placed: Vec<Option<&mut [f32]>> = (0..regions.len()).map(|_| None).collect();
+        let mut placed: [Option<&mut [f32]>; N] = core::array::from_fn(|_| None);
         let mut cursor = 0usize;
         for (offset, size, request) in entries {
             let gap = offset - cursor;
@@ -349,10 +386,7 @@ impl DecodeArena {
             placed[request] = Some(slice);
             cursor = offset + size;
         }
-        Ok(placed
-            .into_iter()
-            .map(|slice| slice.expect("every requested region placed"))
-            .collect())
+        Ok(placed.map(|slice| slice.expect("every requested region placed")))
     }
 }
 
@@ -1166,5 +1200,23 @@ mod tests {
         assert!(text.contains("operations: 5 total (1 preamble, 1 final)"));
         assert!(text.contains("scratch: 4096 bytes"));
         assert!(text.contains("fallbacks: none"));
+    }
+
+    #[test]
+    fn arena_report_is_deterministic_and_complete() {
+        let plan = sample_plan(ExecutionMode::Planned, HookMode::Disabled).finalize();
+        let report = plan.scratch.arena_report();
+        assert_eq!(report.total_bytes, 4096);
+        assert_eq!(report.region_count, plan.scratch.regions.len());
+        assert_eq!(report.alignment, 64);
+        assert!(report.max_live_interval > 0);
+        // every region has a deterministic offset and a recorded lifetime
+        for region in &report.regions {
+            assert!(region.offset < report.total_bytes);
+            assert!(region.last_op >= region.first_op);
+        }
+        let json_a = serde_json::to_string(&report).unwrap();
+        let json_b = serde_json::to_string(&plan.scratch.arena_report()).unwrap();
+        assert_eq!(json_a, json_b, "arena report must be deterministic");
     }
 }

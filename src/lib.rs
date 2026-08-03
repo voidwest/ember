@@ -1,4 +1,10 @@
 extern crate alloc;
+
+/// v0.4 process-wide allocation counter (Gate E measurement).
+#[global_allocator]
+static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
+
+pub mod alloc_counter;
 pub mod artifact;
 pub mod atomic_file;
 pub mod backend;
