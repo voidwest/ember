@@ -21,14 +21,34 @@ out of scope.
 
 ## Local validation
 
-Use Rust 1.92 or newer:
+CI pins Rust 1.92.0 (`rustup override set 1.92.0` locally makes your
+toolchain match CI — newer toolchains emit different clippy lints). The
+exact CI gates are:
 
 ```bash
 cargo fmt --all -- --check
-cargo check --all-targets
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets
+cargo check --locked --all-targets
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets
+.venv/bin/python -m pytest tests probes/test_probe_workflows.py -q
+.venv/bin/python scripts/check_docs.py --check
+bash -n bench_compare.sh probes/run_all_5k.sh scripts/research_example_capture_patch.sh tools/crossover_sweep.sh
 ```
+
+## Repository layout and boundaries
+
+- `main` is the public branch: code, docs, tests, CI, and tracked data
+  exports. It is pushed to origin.
+- `paper/` and the `paper-private` branch hold the TACL submission sources
+  and are **never pushed**. The submitted paper's pipeline lives in a
+  separate repository (`~/research-stack`, pinned by its own code manifest);
+  it will be released as a tagged artifact on acceptance.
+- `pilot-001` is a local-only branch with Arabic-quantization pilot data.
+  Nothing under `research/pilots/` belongs on `main`.
+- Model files (`*.gguf`) are gitignored — fetch them with
+  `scripts/download_models.sh`.
+- The root `.gitignore` whitelist keeps most `*.md` files local (design
+  notes and logs). If a doc needs to ship, add it to the whitelist.
 
 Changes to model execution also need focused synthetic tests and real-model
 checks where fixtures are available:

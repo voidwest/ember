@@ -7,6 +7,68 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [Unreleased]
+
+### Added
+
+- Repo-wide hardening and provenance pass (recovered from the interrupted
+  audit branch; split into 16 reviewable commits):
+  - Extraction artifact contracts: `checksums.json` verification, prompt-hash
+    recomputation, duplicate-ID/order/offset checks, tokenizer SHA-256
+    provenance, and staging-dir runs that never overwrite an existing
+    artifact.
+  - Prompt-leakage audit and enforcement: label-revealed prompts are rejected
+    by default; surface-only probe prompts (`en_surface_probe`) are the new
+    default, with label-revealed variants as explicitly named positive
+    controls (`--allow-label-revealed-prompts`).
+  - Atomic file publication for npy/json/jsonl/plot outputs.
+  - `--arch auto` GGUF architecture detection (replaces the silent gpt2
+    default fallback; conflicts with an explicit `--arch` are hard errors).
+  - New stimulus fixture `stimuli/nonce_root_pattern_surface.json` with
+    audited prompt contracts and a provenance sidecar.
+  - `scripts/download_models.sh` for fetching the gitignored GGUF models used
+    by docs and benchmark fixtures.
+
+### Changed
+
+- Fail-closed validation across the CLI, loader, extraction, probes, and
+  dataset pipeline: strict JSON (`parse_constant` rejection), non-finite
+  rejection, `allow_pickle=False`, tokenizer/model vocabulary checks, and
+  run-directory no-overwrite semantics.
+- Probe analysis methodology corrections: held-out CCA, 5-fold MDL-style
+  data-efficiency curves, matched logistic shuffled controls, per-fold
+  character-ngram baselines with fold-local vectorizer fitting, and a
+  per-fold majority baseline. Reruns are not numerically comparable to
+  pre-2026-08 artifacts.
+- llama.cpp extraction adapters now require `prompt_final` and refuse
+  unverifiable word-position extraction.
+- CI pins Rust 1.92.0 with `--locked`; Python gates cover probes workflow
+  tests and docs determinism (`scripts/check_docs.py --check`).
+- Dependencies: `sha2` (Rust), `scipy` (Python, previously imported without
+  being declared).
+- Benchmark fixtures migrate to the surface-only probe template; Arabic-UD
+  fixtures disable activation reuse.
+
+### Fixed
+
+- `stimuli/generate_stimuli.py apply_pattern`: chained `str.replace` could
+  corrupt inserted radicals containing `f`/`l`/`3`. Latent — no tracked
+  stimulus was affected (verified against all 200 tracked surfaces).
+- `tools/dump_llamacpp_layers.cpp`: removed the silent final-hidden-state
+  fallback for unpatched llama.cpp builds; an unpatched build is now a hard
+  failure.
+- Word-position token selection fails on ambiguous spans and converts byte
+  to character offsets (multi-byte alignment fix).
+- KV-cache layout for layers with fewer KV heads (Gemma 4).
+- Documentation: stale crossover gate claim corrected, label-revealed
+  caveats stamped on research-note pages, Gemma-4 parity reports marked
+  pre-orientation-fix/untrusted.
+
+### Removed
+
+- Final-hidden-state fallback path in the layer-dump tool (replaced by the
+  hard-failure contract above).
+
 ## [0.2.0] - 2026-08-01
 
 ### Added
