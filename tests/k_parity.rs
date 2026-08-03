@@ -117,9 +117,12 @@ fn run_frozen_prompt(
     let mut position = 0usize;
     let mut current = ids.clone();
     for step in 0..decode_tokens {
-        let logits = model
-            .forward_last_logits_with_cache(&backend, &current, &mut cache, position)
-            .expect("decode forward");
+        // Trait path (ForwardModel) so v0.4 execution-mode dispatch runs;
+        // the inherent Llama method would shadow it.
+        let logits = ForwardModel::forward_last_logits_with_cache(
+            model, &backend, &current, &mut cache, position,
+        )
+        .expect("decode forward");
         let data = logits.data();
         let token = ember::sampler::argmax_token(data);
         decode_logits.push(data.to_vec());
@@ -320,5 +323,44 @@ fn inactive_hooks_do_not_alter_compressed_outputs() {
             expected, actual,
             "hooked (noop) run diverged logits at decode step {step}"
         );
+    }
+}
+
+/// Gate B for v0.4 planned execution: the plan-driven interpreter must
+/// reproduce the reference greedy tokens and stay within the frozen logit
+/// envelope on the real model (docs/v04-execution-contract.md section 13).
+#[test]
+fn v04_planned_matches_reference_real_model() {
+    let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
+        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
+        return;
+    };
+    let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    use ember::plan::ExecutionMode;
+
+    for &prompt in FROZEN_PROMPTS {
+        model.set_execution_mode(ExecutionMode::Reference);
+        let reference = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
+        model.set_execution_mode(ExecutionMode::Planned);
+        let planned = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
+        assert_eq!(
+            reference.tokens, planned.tokens,
+            "{model_path} | {prompt}: greedy tokens diverged under planned execution"
+        );
+        for (step, (expected, actual)) in reference
+            .decode_logits
+            .iter()
+            .zip(&planned.decode_logits)
+            .enumerate()
+        {
+            let mut max_abs = 0.0f32;
+            for (&x, &y) in expected.iter().zip(actual) {
+                max_abs = max_abs.max((x - y).abs());
+            }
+            assert!(
+                max_abs <= 1e-3,
+                "{model_path} | {prompt}: planned decode step {step} logits max_abs {max_abs} > 1e-3"
+            );
+        }
     }
 }

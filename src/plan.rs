@@ -244,6 +244,118 @@ pub struct ScratchPlan {
     pub tensor_regions: BTreeMap<usize, String>,
 }
 
+/// Reusable aligned decode scratch arena (contract section 11): allocated
+/// once before decode begins, then sliced by region name with pure offset
+/// arithmetic. No heap allocation happens in the steady-state token loop.
+pub struct DecodeArena {
+    storage: Vec<u8>,
+    /// Front padding so `storage[pad..]` starts on the alignment boundary.
+    pad: usize,
+    /// (offset, size, alignment) per region, in plan order.
+    regions: Vec<(usize, usize, usize)>,
+    total_bytes: usize,
+}
+
+impl DecodeArena {
+    /// Allocate the arena from a scratch plan. Offsets are already
+    /// deterministic and aligned; this adds base-pointer alignment.
+    pub fn new(scratch: &ScratchPlan) -> Self {
+        let alignment = scratch.alignment.max(4);
+        let capacity = scratch.total_bytes + alignment;
+        let storage = vec![0u8; capacity];
+        let base = storage.as_ptr() as usize;
+        let aligned = base.div_ceil(alignment) * alignment;
+        let pad = aligned - base;
+        let regions = scratch
+            .regions
+            .iter()
+            .map(|r| (r.offset, r.size, r.alignment))
+            .collect();
+        Self {
+            storage,
+            pad,
+            regions,
+            total_bytes: scratch.total_bytes,
+        }
+    }
+
+    /// Total usable arena bytes.
+    pub fn total_bytes(&self) -> usize {
+        self.total_bytes
+    }
+
+    fn region(&self, index: usize) -> Result<(usize, usize, usize), String> {
+        self.regions
+            .get(index)
+            .copied()
+            .ok_or_else(|| format!("decode arena region index {index} out of range"))
+    }
+
+    /// Mutable f32 view of one region.
+    pub fn region_f32(&mut self, region: usize) -> Result<&mut [f32], String> {
+        let (offset, size, _) = self.region(region)?;
+        if size % 4 != 0 {
+            return Err(format!("region {region} size {size} is not f32-aligned"));
+        }
+        let start = self.pad + offset;
+        let bytes = &mut self.storage[start..start + size];
+        // SAFETY: the arena base (storage[pad..]) is aligned to
+        // scratch.alignment (>= 4), region offsets are aligned the same way
+        // by the planner, and region sizes are multiples of 4 (they are
+        // sized in f32 elements). The slice is therefore a valid aligned
+        // f32 slice with no dangling or aliased storage.
+        Ok(unsafe { std::slice::from_raw_parts_mut(bytes.as_mut_ptr() as *mut f32, size / 4) })
+    }
+
+    /// Disjoint mutable f32 views of several regions, in request order.
+    ///
+    /// Regions with identical offsets would alias; that is an illegal
+    /// aliasing error (the planner must prove disjoint lifetimes before
+    /// sharing storage, and shared regions must never be requested
+    /// simultaneously).
+    pub fn regions_f32(&mut self, regions: &[usize]) -> Result<Vec<&mut [f32]>, String> {
+        let mut entries: Vec<(usize, usize, usize)> = Vec::with_capacity(regions.len()); // (offset, size, request index)
+        for (request, &index) in regions.iter().enumerate() {
+            let (offset, size, _) = self.region(index)?;
+            if size % 4 != 0 {
+                return Err(format!("region {index} size {size} is not f32-aligned"));
+            }
+            entries.push((offset, size, request));
+        }
+        entries.sort_unstable_by_key(|entry| entry.0);
+        for window in entries.windows(2) {
+            if window[0].0 == window[1].0 {
+                return Err(format!(
+                    "illegal aliasing: regions requested at offset {} twice",
+                    window[0].0
+                ));
+            }
+        }
+
+        let base = self.pad;
+        let mut remaining = &mut self.storage[base..base + self.total_bytes];
+        let mut placed: Vec<Option<&mut [f32]>> = (0..regions.len()).map(|_| None).collect();
+        let mut cursor = 0usize;
+        for (offset, size, request) in entries {
+            let gap = offset - cursor;
+            let (_, tail) = remaining.split_at_mut(gap);
+            let (region_bytes, rest) = tail.split_at_mut(size);
+            remaining = rest;
+            // SAFETY: same alignment argument as [`DecodeArena::region_f32`];
+            // `region_bytes` is a disjoint slice of the storage.
+            let slice = unsafe {
+                std::slice::from_raw_parts_mut(region_bytes.as_mut_ptr() as *mut f32, size / 4)
+            };
+            placed[request] = Some(slice);
+            cursor = offset + size;
+        }
+        Ok(placed
+            .into_iter()
+            .map(|slice| slice.expect("every requested region placed"))
+            .collect())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // hooks
 // ---------------------------------------------------------------------------

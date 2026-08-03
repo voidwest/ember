@@ -4,9 +4,9 @@ use crate::experiments::{
     ActiveHooks, DisabledHooks, ExecutionContext, ExperimentRunner, ExperimentalForwardModel,
     LayerHooks, SliceActivation,
 };
-use crate::model::{pool_layer_activation, ForwardModel, Linear};
+use crate::model::{pool_layer_activation, ForwardModel, Linear, WeightKindView};
 use crate::plan::{
-    resolve_kernel, DispatchPlan, ExecutionMode, ExecutionPlan, FusionState, HookMode,
+    resolve_kernel, DecodeArena, DispatchPlan, ExecutionMode, ExecutionPlan, FusionState, HookMode,
     HookSitePlan, HookSiteRecord, KernelEntry, KernelId, KvLayout, LayerPlan, PlanProvenance,
     PlannedOp, RopeSummary, ScratchPlan, ScratchRegion, TensorRecord, TensorRef,
 };
@@ -1227,6 +1227,11 @@ pub struct Llama<B: Backend> {
     plan_cache: PlanCache,
     /// Whether the LM head is tied to the embedding tensor (no output.weight).
     head_tied: bool,
+    /// Active v0.4 execution mode for decode (set by the CLI per run).
+    execution_mode: RefCell<ExecutionMode>,
+    /// v0.4 planned decode session (arena + resolved ops), keyed by plan
+    /// hash; rebuilt when the plan changes.
+    decode_state: RefCell<Option<PlannedDecodeState>>,
     /// Lazily computed suffix-norm table for the fused greedy lm_head
     /// (only present when the head is Q8_0).
     head_topk_norms: std::sync::OnceLock<Option<std::sync::Arc<crate::quant::Q8TopkNorms>>>,
@@ -1311,10 +1316,7 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
     ) -> Result<CpuTensor, CpuError> {
-        if let Some(result) = self.forward_decode_fast(backend, token_ids, cache, start_pos) {
-            return result;
-        }
-        Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
+        self.forward_last_logits_with_cache_cpu(backend, token_ids, cache, start_pos)
     }
     fn greedy_next_token_with_cache(
         &self,
@@ -1426,6 +1428,22 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
             {
                 return result;
             }
+        }
+        // v0.4 planned path (single token, mode=planned, no tracing). Hook
+        // integration lands with the hook-mode phase; until then an active
+        // experiment is a clear error, never a silent fallback.
+        if *self.execution_mode.borrow() == ExecutionMode::Planned
+            && token_ids.len() == 1
+            && !crate::trace::is_tracing()
+        {
+            if runner.has_experiment() || runner.has_capture() {
+                return Err(CpuError::ShapeMismatch(
+                    "planned execution with active hooks is not supported yet; use --execution reference"
+                        .into(),
+                ));
+            }
+            runner.note_dispatch(execution.phase, DispatchPath::Planned);
+            return forward_last_logits_planned(self, token_ids, cache, start_pos);
         }
         self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
     }
@@ -2193,6 +2211,8 @@ impl Llama<CpuBackend> {
             fast_decode_inter_dim: None,
             plan_cache: OnceLock::new(),
             head_tied: !has_output_weight,
+            execution_mode: RefCell::new(ExecutionMode::Reference),
+            decode_state: RefCell::new(None),
             head_topk_norms: std::sync::OnceLock::new(),
         };
         model.validate_loaded_shapes()?;
@@ -3118,6 +3138,47 @@ fn k_execution_name(execution: crate::quant_k::KExecution) -> &'static str {
 }
 
 impl Llama<CpuBackend> {
+    /// Set the active v0.4 execution mode for decode (per run; default
+    /// `Reference`).
+    pub fn set_execution_mode(&self, mode: ExecutionMode) {
+        *self.execution_mode.borrow_mut() = mode;
+        log::info!("execution mode: {}", mode.name());
+    }
+
+    /// The active v0.4 execution mode.
+    pub fn execution_mode(&self) -> ExecutionMode {
+        *self.execution_mode.borrow()
+    }
+
+    /// Whether the plan-driven single-token decode path applies: mode is
+    /// `Planned`, exactly one token, and tracing is off.
+    fn planned_decode_eligible(&self, token_ids: &[u32]) -> bool {
+        *self.execution_mode.borrow() == ExecutionMode::Planned
+            && token_ids.len() == 1
+            && !crate::trace::is_tracing()
+    }
+
+    /// Single-token logits with v0.4 dispatch: the Q8_0 native fast path
+    /// keeps precedence (contract: Q8_0 is never rerouted), then the planned
+    /// interpreter, then the generic reference path.
+    pub(crate) fn forward_last_logits_with_cache_cpu(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<CpuTensor, CpuError> {
+        if let Some(result) = self.forward_decode_fast(backend, token_ids, cache, start_pos) {
+            return result;
+        }
+        if self.planned_decode_eligible(token_ids) {
+            return forward_last_logits_planned(self, token_ids, cache, start_pos);
+        }
+        Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
+    }
+}
+
+impl Llama<CpuBackend> {
     /// Build (or return the cached) execution plan for this model under the
     /// given execution/hook configuration (contract D5). `max_seq_len` is
     /// the runtime KV capacity the scratch score region is sized for.
@@ -3692,6 +3753,733 @@ fn plan_linear(
     (weight, bias)
 }
 
+// ---------------------------------------------------------------------------
+// v0.4 planned decode interpreter
+// (contract: docs/v04-execution-contract.md, sections 9-11)
+// ---------------------------------------------------------------------------
+
+/// Which norm a resolved RmsNorm op reads (resolved once at session build,
+/// never per token).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NormRole {
+    AttnIn,
+    MlpIn,
+    Output,
+}
+
+/// Which projection a resolved Matvec op reads (resolved once at session
+/// build, never per token).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjRole {
+    Q,
+    K,
+    V,
+    O,
+    Gate,
+    Up,
+    Down,
+    Head,
+}
+
+/// Which RoPE application a resolved Rope op performs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RopeRole {
+    Q,
+    K,
+}
+
+/// A plan op with every per-token lookup resolved to a region index and a
+/// role discriminant. The decode loop walks these; it performs no string
+/// lookup, no registry inspection, and no per-token shape rediscovery.
+#[derive(Debug, Clone, Copy)]
+enum ResolvedOp {
+    Embed {
+        out: usize,
+    },
+    RmsNorm {
+        role: NormRole,
+        input: usize,
+        out: usize,
+    },
+    Matvec {
+        role: ProjRole,
+        kernel: KernelId,
+        input: usize,
+        out: usize,
+        has_bias: bool,
+    },
+    Rope {
+        role: RopeRole,
+        target: usize,
+    },
+    KvStore {
+        k: usize,
+        v: usize,
+    },
+    Attention {
+        q: usize,
+        out: usize,
+        scores: usize,
+    },
+    Silu {
+        target: usize,
+    },
+    Elemul {
+        a: usize,
+        b: usize,
+        out: usize,
+    },
+    ResidualAdd {
+        a: usize,
+        b: usize,
+        out: usize,
+    },
+    Logits {
+        input: usize,
+        out: usize,
+        tied: bool,
+    },
+}
+
+/// Resolved op sequences (preamble / per-layer / final).
+#[derive(Debug, Clone)]
+struct ResolvedOps {
+    preamble: Vec<ResolvedOp>,
+    layers: Vec<Vec<ResolvedOp>>,
+    final_ops: Vec<ResolvedOp>,
+}
+
+/// The mutable half of a planned decode session: the arena plus the
+/// resolved op table. Rebuilt only when the plan hash changes (arena size
+/// or structure depends on the plan).
+struct PlannedDecodeState {
+    plan_hash: String,
+    arena: DecodeArena,
+    ops: ResolvedOps,
+}
+
+/// Resolve a plan into region indices and role discriminants. Runs once per
+/// session; the decode loop then walks [`ResolvedOps`] with no lookups.
+fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuError> {
+    let arena = DecodeArena::new(&plan.scratch);
+    let region_of = |tensor: TensorRef| -> Result<usize, CpuError> {
+        let name = plan.scratch.tensor_regions.get(&tensor.id).ok_or_else(|| {
+            CpuError::ShapeMismatch(format!("plan tensor {} has no scratch region", tensor.id))
+        })?;
+        plan.scratch
+            .regions
+            .iter()
+            .position(|r| &r.name == name)
+            .ok_or_else(|| CpuError::ShapeMismatch(format!("plan region '{name}' not found")))
+    };
+    let region_by_name = |name: &str| -> Result<usize, CpuError> {
+        plan.scratch
+            .regions
+            .iter()
+            .position(|r| r.name == name)
+            .ok_or_else(|| CpuError::ShapeMismatch(format!("plan region '{name}' not found")))
+    };
+    let weight_name = |tensor: TensorRef| -> Result<&str, CpuError> {
+        plan.tensor_table
+            .iter()
+            .find(|record| record.id == tensor.id)
+            .map(|record| record.name.as_str())
+            .ok_or_else(|| {
+                CpuError::ShapeMismatch(format!(
+                    "plan weight tensor {} not in tensor table",
+                    tensor.id
+                ))
+            })
+    };
+
+    let resolve = |op: &PlannedOp, position: usize| -> Result<ResolvedOp, CpuError> {
+        match op {
+            PlannedOp::Embedding { out, .. } => Ok(ResolvedOp::Embed {
+                out: region_of(*out)?,
+            }),
+            PlannedOp::RmsNorm { weight, input, out } => {
+                let name = weight_name(*weight)?;
+                let role = if name.ends_with("attn_norm.weight") {
+                    NormRole::AttnIn
+                } else if name.ends_with("ffn_norm.weight") {
+                    NormRole::MlpIn
+                } else if name.ends_with("output_norm.weight") {
+                    NormRole::Output
+                } else {
+                    return Err(CpuError::ShapeMismatch(format!(
+                        "unrecognized rms-norm weight '{name}'"
+                    )));
+                };
+                Ok(ResolvedOp::RmsNorm {
+                    role,
+                    input: region_of(*input)?,
+                    out: region_of(*out)?,
+                })
+            }
+            PlannedOp::Matvec {
+                weight,
+                input,
+                out,
+                kernel,
+                bias,
+                ..
+            } => {
+                let name = weight_name(*weight)?;
+                let role = if name.ends_with("attn_q.weight") {
+                    ProjRole::Q
+                } else if name.ends_with("attn_k.weight") {
+                    ProjRole::K
+                } else if name.ends_with("attn_v.weight") {
+                    ProjRole::V
+                } else if name.ends_with("attn_output.weight") {
+                    ProjRole::O
+                } else if name.ends_with("ffn_gate.weight") {
+                    ProjRole::Gate
+                } else if name.ends_with("ffn_up.weight") {
+                    ProjRole::Up
+                } else if name.ends_with("ffn_down.weight") {
+                    ProjRole::Down
+                } else if name.starts_with("output.weight") {
+                    ProjRole::Head
+                } else {
+                    return Err(CpuError::ShapeMismatch(format!(
+                        "unrecognized projection weight '{name}'"
+                    )));
+                };
+                Ok(ResolvedOp::Matvec {
+                    role,
+                    kernel: *kernel,
+                    input: region_of(*input)?,
+                    out: region_of(*out)?,
+                    has_bias: bias.is_some(),
+                })
+            }
+            PlannedOp::Rope { target, .. } => {
+                let role = match position {
+                    4 => RopeRole::Q,
+                    5 => RopeRole::K,
+                    other => {
+                        return Err(CpuError::ShapeMismatch(format!(
+                            "rope op at unexpected layer position {other}"
+                        )));
+                    }
+                };
+                Ok(ResolvedOp::Rope {
+                    role,
+                    target: region_of(*target)?,
+                })
+            }
+            PlannedOp::KvStore { k, v } => Ok(ResolvedOp::KvStore {
+                k: region_of(*k)?,
+                v: region_of(*v)?,
+            }),
+            PlannedOp::Attention {
+                q,
+                out,
+                score_scratch,
+            } => Ok(ResolvedOp::Attention {
+                q: region_of(*q)?,
+                out: region_of(*out)?,
+                scores: region_by_name(score_scratch)?,
+            }),
+            PlannedOp::Silu { target } => Ok(ResolvedOp::Silu {
+                target: region_of(*target)?,
+            }),
+            PlannedOp::Elemul { a, b, out } => Ok(ResolvedOp::Elemul {
+                a: region_of(*a)?,
+                b: region_of(*b)?,
+                out: region_of(*out)?,
+            }),
+            PlannedOp::ResidualAdd { a, b, out } => Ok(ResolvedOp::ResidualAdd {
+                a: region_of(*a)?,
+                b: region_of(*b)?,
+                out: region_of(*out)?,
+            }),
+            PlannedOp::OutputNorm { weight, input, out } => {
+                let name = weight_name(*weight)?;
+                if !name.ends_with("output_norm.weight") {
+                    return Err(CpuError::ShapeMismatch(format!(
+                        "final norm op references '{name}'"
+                    )));
+                }
+                Ok(ResolvedOp::RmsNorm {
+                    role: NormRole::Output,
+                    input: region_of(*input)?,
+                    out: region_of(*out)?,
+                })
+            }
+            PlannedOp::Logits {
+                input, out, tied, ..
+            } => Ok(ResolvedOp::Logits {
+                input: region_of(*input)?,
+                out: region_of(*out)?,
+                tied: *tied,
+            }),
+            PlannedOp::Fused { .. } => Err(CpuError::ShapeMismatch(
+                "fused ops are not supported by the v0.4 phase-4 interpreter".into(),
+            )),
+        }
+    };
+
+    let preamble = plan
+        .preamble
+        .iter()
+        .enumerate()
+        .map(|(position, op)| resolve(op, position))
+        .collect::<Result<Vec<_>, _>>()?;
+    let layers = plan
+        .layers
+        .iter()
+        .map(|layer| {
+            layer
+                .ops
+                .iter()
+                .enumerate()
+                .map(|(position, op)| resolve(op, position))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let final_ops = plan
+        .final_ops
+        .iter()
+        .enumerate()
+        .map(|(position, op)| resolve(op, position))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(PlannedDecodeState {
+        plan_hash: plan.plan_hash.clone(),
+        arena,
+        ops: ResolvedOps {
+            preamble,
+            layers,
+            final_ops,
+        },
+    })
+}
+
+/// RMSNorm on flat slices: `x * weight / sqrt(mean(x^2) + eps)` per row.
+/// Matches `CpuTensor::rms_norm` exactly (same simd primitives).
+fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
+    debug_assert_eq!(x.len(), weight.len());
+    debug_assert_eq!(x.len(), dst.len());
+    let mean_sq = crate::simd::sum_squares(x) / x.len() as f32;
+    let rstd = (mean_sq + eps).sqrt().recip();
+    crate::simd::scale_weight_mul(x, rstd, weight, dst);
+}
+
+/// Dense f32 matvec for a `[in, out]` row-major weight (reference F32 path).
+fn dense_matvec_into(src: &[f32], weight: &[f32], in_dim: usize, out_dim: usize, dst: &mut [f32]) {
+    debug_assert_eq!(src.len(), in_dim);
+    debug_assert_eq!(weight.len(), in_dim * out_dim);
+    debug_assert_eq!(dst.len(), out_dim);
+    for j in 0..out_dim {
+        let mut acc = 0.0f32;
+        for (i, &x) in src.iter().enumerate() {
+            acc += x * weight[i * out_dim + j];
+        }
+        dst[j] = acc;
+    }
+}
+
+/// Single-row projection through a Linear weight into `dst`. Kernel dispatch
+/// follows the plan's resolved kernel; the underlying implementations are
+/// the same scalar/AVX2 kernels as the v0.3 reference path.
+fn planned_linear_into(
+    linear: &Linear<CpuBackend>,
+    src: &[f32],
+    dst: &mut [f32],
+) -> Result<(), CpuError> {
+    match linear.weight_kind() {
+        WeightKindView::F32(t) => {
+            let in_dim = t.shape()[0];
+            let out_dim = t.shape()[1];
+            debug_assert_eq!(src.len(), in_dim);
+            debug_assert_eq!(dst.len(), out_dim);
+            dense_matvec_into(src, t.data(), in_dim, out_dim, dst);
+            Ok(())
+        }
+        WeightKindView::Q8_0(w) => {
+            CpuBackend.matmul_q8_0_into(src, 1, w, dst);
+            Ok(())
+        }
+        WeightKindView::KQuant(w) => crate::k_matmul::matmul_k_into(src, 1, w, dst)
+            .map_err(|message| CpuError::ShapeMismatch(format!("planned matvec: {message}"))),
+    }
+}
+
+/// The kernel the reference dynamic dispatch would choose for a weight —
+/// the Gate A equivalence check against the plan's resolved kernel.
+fn planned_kernel_for(linear: &Linear<CpuBackend>) -> KernelId {
+    match linear.weight_kind() {
+        WeightKindView::F32(_) => KernelId::EagerF32,
+        WeightKindView::Q8_0(_) => KernelId::Q8Packed,
+        WeightKindView::KQuant(w) => {
+            let dtype = w.dtype().name();
+            resolve_kernel(dtype, k_execution_name(w.execution()))
+        }
+    }
+}
+
+/// Elementwise `dst = a + b`.
+fn add_into(a: &[f32], b: &[f32], dst: &mut [f32]) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), dst.len());
+    for i in 0..a.len() {
+        dst[i] = a[i] + b[i];
+    }
+}
+
+/// In-place bias add.
+fn add_bias_into(dst: &mut [f32], bias: &[f32]) {
+    debug_assert_eq!(dst.len(), bias.len());
+    for i in 0..dst.len() {
+        dst[i] += bias[i];
+    }
+}
+
+/// Embedding row lookup into `dst` (bit-identical to the reference path's
+/// `assign_row_from_*` helpers).
+fn embed_row_into(
+    embed: &LlamaEmbedding<CpuBackend>,
+    token: u32,
+    dst: &mut [f32],
+) -> Result<(), CpuError> {
+    match embed {
+        LlamaEmbedding::F32(table) => {
+            let row = token as usize;
+            let cols = dst.len();
+            if row >= table.shape()[0] {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "embedding row {row} out of bounds for {} rows",
+                    table.shape()[0]
+                )));
+            }
+            dst.copy_from_slice(&table.data()[row * cols..(row + 1) * cols]);
+            Ok(())
+        }
+        LlamaEmbedding::Q8_0(table) => {
+            let row = token as usize;
+            if row >= table.out_features() {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "embedding row {row} out of bounds for {} rows",
+                    table.out_features()
+                )));
+            }
+            table.dequantize_row(row, dst);
+            Ok(())
+        }
+        LlamaEmbedding::KQuant(table) => {
+            let row = token as usize;
+            if row >= table.out_features() {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "embedding row {row} out of bounds for {} rows",
+                    table.out_features()
+                )));
+            }
+            table.dequantize_row(row, dst);
+            Ok(())
+        }
+    }
+}
+
+/// Single-token causal attention over the f16 cache, mirroring the
+/// reference `cached_causal_attention_with_scratch` single-token branch
+/// (same score math, same softmax, same weighted V sum).
+#[allow(clippy::too_many_arguments)]
+fn planned_causal_attention(
+    q: &[f32],
+    cached_k: &[half::f16],
+    cached_v: &[half::f16],
+    n_heads: usize,
+    n_kv_heads: usize,
+    head_dim: usize,
+    max_seq_len: usize,
+    total_seq_len: usize,
+    scores: &mut [f32],
+    out: &mut [f32],
+) -> Result<(), CpuError> {
+    let n_repeat = crate::backend::validate_gqa(n_heads, n_kv_heads)?;
+    let scale = (head_dim as f32).sqrt().recip();
+    let cache_head_stride = max_seq_len * head_dim;
+    debug_assert_eq!(q.len(), n_heads * head_dim);
+    debug_assert_eq!(out.len(), n_heads * head_dim);
+    debug_assert!(scores.len() >= n_heads * total_seq_len);
+    out.fill(0.0);
+    for h in 0..n_heads {
+        let kv_h = h / n_repeat;
+        let q_offset = h * head_dim;
+        let score_row = &mut scores[h * total_seq_len..(h + 1) * total_seq_len];
+        for (j, slot) in score_row.iter_mut().enumerate() {
+            let k_offset = kv_h * cache_head_stride + j * head_dim;
+            *slot = crate::simd::dot_product_f16(
+                &q[q_offset..q_offset + head_dim],
+                &cached_k[k_offset..k_offset + head_dim],
+            ) * scale;
+        }
+        crate::backend::softmax_prefix(score_row, total_seq_len);
+        let head_out = &mut out[q_offset..q_offset + head_dim];
+        for (j, &weight) in score_row.iter().enumerate() {
+            if weight == 0.0 {
+                continue;
+            }
+            let v_offset = kv_h * cache_head_stride + j * head_dim;
+            crate::simd::weighted_add_f16(
+                head_out,
+                &cached_v[v_offset..v_offset + head_dim],
+                weight,
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Arena errors as `CpuError` (the arena reports `String` diagnostics).
+fn arena_err(message: String) -> CpuError {
+    CpuError::ShapeMismatch(format!("decode arena: {message}"))
+}
+
+/// Split a region-request result into two disjoint slices (request order is
+/// preserved by [`DecodeArena::regions_f32`]).
+fn two_regions(slices: Vec<&mut [f32]>) -> (&mut [f32], &mut [f32]) {
+    let mut iter = slices.into_iter();
+    (
+        iter.next().expect("two requested regions"),
+        iter.next().expect("two requested regions"),
+    )
+}
+
+/// Split a region-request result into three disjoint slices.
+fn three_regions(slices: Vec<&mut [f32]>) -> (&mut [f32], &mut [f32], &mut [f32]) {
+    let mut iter = slices.into_iter();
+    (
+        iter.next().expect("three requested regions"),
+        iter.next().expect("three requested regions"),
+        iter.next().expect("three requested regions"),
+    )
+}
+
+/// Plan-driven single-token decode: walks the resolved ops against the
+/// scratch arena. Zero heap allocation in the steady state.
+fn forward_last_logits_planned(
+    model: &Llama<CpuBackend>,
+    token_ids: &[u32],
+    cache: &mut crate::kv_cache::KVCache,
+    start_pos: usize,
+) -> Result<CpuTensor, CpuError> {
+    if token_ids.len() != 1 {
+        return Err(CpuError::ShapeMismatch(
+            "planned decode requires exactly one token".into(),
+        ));
+    }
+    cache.validate_start_pos(start_pos);
+    let max_seq_len = cache.max_seq_len();
+    let plan = model
+        .execution_plan(
+            ExecutionMode::Planned,
+            HookMode::Disabled,
+            &[],
+            max_seq_len,
+            None,
+            None,
+        )
+        .map_err(|error| {
+            CpuError::ShapeMismatch(format!("execution plan build failed: {error}"))
+        })?;
+
+    let mut state = model.decode_state.borrow_mut();
+    if state.as_ref().is_none_or(|s| s.plan_hash != plan.plan_hash) {
+        *state = Some(build_planned_state(&plan)?);
+    }
+    let state = state.as_mut().expect("decode state initialized");
+    let PlannedDecodeState { arena, ops, .. } = state;
+
+    // preamble: embedding lookup
+    for op in &ops.preamble {
+        match op {
+            ResolvedOp::Embed { out } => {
+                let dst = arena.region_f32(*out).map_err(arena_err)?;
+                embed_row_into(&model.embed_tokens, token_ids[0], dst)?;
+            }
+            other => {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "unexpected preamble op {other:?}"
+                )));
+            }
+        }
+    }
+
+    // transformer blocks
+    for (layer, block) in model.blocks.iter().enumerate() {
+        for op in &ops.layers[layer] {
+            match op {
+                ResolvedOp::RmsNorm { role, input, out } => {
+                    let (x, dst) =
+                        two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                    let weight = match role {
+                        NormRole::AttnIn => block.input_layernorm.data(),
+                        NormRole::MlpIn => block.post_attention_layernorm.data(),
+                        NormRole::Output => {
+                            return Err(CpuError::ShapeMismatch(
+                                "output norm resolved inside a layer".into(),
+                            ));
+                        }
+                    };
+                    rms_norm_into(x, weight, model.config.norm_eps, dst);
+                }
+                ResolvedOp::Matvec {
+                    role,
+                    input,
+                    out,
+                    has_bias,
+                    kernel,
+                } => {
+                    let linear = match role {
+                        ProjRole::Q => &block.self_attn.q_proj,
+                        ProjRole::K => &block.self_attn.k_proj,
+                        ProjRole::V => &block.self_attn.v_proj,
+                        ProjRole::O => &block.self_attn.o_proj,
+                        ProjRole::Gate => &block.mlp.gate_proj,
+                        ProjRole::Up => &block.mlp.up_proj,
+                        ProjRole::Down => &block.mlp.down_proj,
+                        ProjRole::Head => {
+                            return Err(CpuError::ShapeMismatch(
+                                "head projection resolved inside a layer".into(),
+                            ));
+                        }
+                    };
+                    // Gate A assertion: the plan's resolved kernel must equal
+                    // the kernel the reference dynamic dispatch would choose
+                    // for this weight.
+                    debug_assert_eq!(
+                        *kernel,
+                        planned_kernel_for(linear),
+                        "planned dispatch diverged from dynamic dispatch"
+                    );
+                    let (src, dst) =
+                        two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                    // The quantized kernels accumulate into dst (must be
+                    // zero-initialized). The reference allocates a fresh
+                    // zeroed Vec per projection; the arena reuses regions
+                    // across tokens, so the destination must be cleared here.
+                    dst.fill(0.0);
+                    planned_linear_into(linear, src, dst)?;
+                    if *has_bias {
+                        if let Some(bias) = linear.bias() {
+                            add_bias_into(dst, bias.data());
+                        }
+                    }
+                }
+                ResolvedOp::Rope { role, target } => {
+                    let (data,) = {
+                        let mut slices = arena.regions_f32(&[*target]).map_err(arena_err)?;
+                        (slices.pop().expect("one requested region"),)
+                    };
+                    let (n_heads, qk_norm) = match role {
+                        RopeRole::Q => (model.config.n_heads, block.self_attn.q_norm.as_ref()),
+                        RopeRole::K => (model.config.n_kv_heads, block.self_attn.k_norm.as_ref()),
+                    };
+                    block
+                        .self_attn
+                        .apply_decode_rope_and_qk_norm(data, n_heads, start_pos, qk_norm);
+                }
+                ResolvedOp::KvStore { k, v } => {
+                    let (k_data, v_data) =
+                        two_regions(arena.regions_f32(&[*k, *v]).map_err(arena_err)?);
+                    cache.append_with_layout(
+                        layer,
+                        start_pos,
+                        k_data,
+                        v_data,
+                        model.config.n_kv_heads,
+                        model.config.head_dim,
+                    );
+                }
+                ResolvedOp::Attention { q, out, scores } => {
+                    let (q_data, out_data, scores_data) =
+                        three_regions(arena.regions_f32(&[*q, *out, *scores]).map_err(arena_err)?);
+                    let (cached_k, cached_v) = cache.get(layer);
+                    planned_causal_attention(
+                        q_data,
+                        cached_k,
+                        cached_v,
+                        model.config.n_heads,
+                        model.config.n_kv_heads,
+                        model.config.head_dim,
+                        cache.max_seq_len(),
+                        cache.cursor() + 1,
+                        scores_data,
+                        out_data,
+                    )?;
+                }
+                ResolvedOp::Silu { target } => {
+                    let (data,) = {
+                        let mut slices = arena.regions_f32(&[*target]).map_err(arena_err)?;
+                        (slices.pop().expect("one requested region"),)
+                    };
+                    // in-place silu: x / (1 + exp(-x)), matching the
+                    // reference `CpuTensor::silu` formula
+                    for x in data.iter_mut() {
+                        *x = *x / (1.0 + (-*x).exp());
+                    }
+                }
+                ResolvedOp::Elemul { a, b, out } => {
+                    let (a_data, b_data, out_data) =
+                        three_regions(arena.regions_f32(&[*a, *b, *out]).map_err(arena_err)?);
+                    crate::simd::elemul(a_data, b_data, out_data);
+                }
+                ResolvedOp::ResidualAdd { a, b, out } => {
+                    let (a_data, b_data, out_data) =
+                        three_regions(arena.regions_f32(&[*a, *b, *out]).map_err(arena_err)?);
+                    add_into(a_data, b_data, out_data);
+                }
+                ResolvedOp::Logits { .. } => {
+                    return Err(CpuError::ShapeMismatch(
+                        "logits op resolved inside a layer".into(),
+                    ));
+                }
+                ResolvedOp::Embed { .. } => {
+                    return Err(CpuError::ShapeMismatch(
+                        "embedding op resolved inside a layer".into(),
+                    ));
+                }
+            }
+        }
+    }
+    cache.advance_cursor();
+
+    // final ops: output norm + LM head
+    let mut logits: Option<CpuTensor> = None;
+    for op in &ops.final_ops {
+        match op {
+            ResolvedOp::RmsNorm {
+                role: NormRole::Output,
+                input,
+                out,
+            } => {
+                let (x, dst) = two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
+            }
+            ResolvedOp::Logits { input, out, tied } => {
+                debug_assert_eq!(*tied, model.head_tied, "plan head tie flag diverged");
+                let (src, dst) =
+                    two_regions(arena.regions_f32(&[*input, *out]).map_err(arena_err)?);
+                dst.fill(0.0);
+                planned_linear_into(&model.head, src, dst)?;
+                logits = Some(CpuTensor::from_data(
+                    vec![1, model.config.vocab_size],
+                    dst.to_vec(),
+                ));
+            }
+            other => {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "unexpected final op {other:?}"
+                )));
+            }
+        }
+    }
+    logits.ok_or_else(|| CpuError::ShapeMismatch("planned final ops produced no logits".into()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3906,6 +4694,8 @@ mod tests {
             fast_decode_inter_dim: Some(inter_dim),
             plan_cache: OnceLock::new(),
             head_tied: false,
+            execution_mode: RefCell::new(ExecutionMode::Reference),
+            decode_state: RefCell::new(None),
             head_topk_norms: std::sync::OnceLock::new(),
         }
     }
@@ -4442,5 +5232,104 @@ mod tests {
         assert!(json.contains("\"architecture\": \"llama\""));
         assert!(json.contains("\"op\": \"matvec\""));
         assert!(json.contains("\"plan_hash\": \""));
+    }
+
+    #[test]
+    fn planned_decode_matches_reference_greedy() {
+        let mut model = test_llama_model_with_layers(2);
+        // Disable the Q8 workspace fast path so the comparison exercises the
+        // generic (reference) path and the planned interpreter directly.
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+
+        let run_greedy = |mode: ExecutionMode| -> (Vec<u32>, CpuTensor) {
+            model.set_execution_mode(mode);
+            let mut cache = model.create_cache(&backend, 64);
+            let prompt = [3u32, 1, 7];
+            model
+                .forward_with_cache(&backend, &prompt, &mut cache, 0)
+                .unwrap();
+            let mut tokens = prompt.to_vec();
+            let mut last_logits = None;
+            for start_pos in prompt.len()..prompt.len() + 4 {
+                let last = *tokens.last().unwrap();
+                // trait path (ForwardModel) so the v0.4 cpu dispatch runs
+                let logits = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[last],
+                    &mut cache,
+                    start_pos,
+                )
+                .unwrap();
+                let best = crate::sampler::argmax_token(logits.data());
+                tokens.push(best as u32);
+                last_logits = Some(logits);
+            }
+            (tokens, last_logits.expect("decode produced logits"))
+        };
+
+        let (reference_tokens, reference_logits) = run_greedy(ExecutionMode::Reference);
+        let (planned_tokens, planned_logits) = run_greedy(ExecutionMode::Planned);
+
+        assert_eq!(
+            reference_tokens, planned_tokens,
+            "greedy token sequences must be identical"
+        );
+        let max_abs = reference_logits
+            .data()
+            .iter()
+            .zip(planned_logits.data().iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs <= 1e-4,
+            "planned logits diverge from reference: max_abs {max_abs}"
+        );
+        // prove the planned interpreter actually ran (not a silent fallback)
+        assert!(
+            model.decode_state.borrow().is_some(),
+            "planned decode must populate the decode session"
+        );
+    }
+
+    #[test]
+    fn planned_decode_multi_token_uses_generic_path() {
+        // Multi-token (prefill) calls are outside the single-token planned
+        // scope; they must produce the generic reference output.
+        let mut model = test_llama_model();
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+        let mut cache = model.create_cache(&backend, 64);
+        let prompt = [3u32, 1, 7];
+        model
+            .forward_with_cache(&backend, &prompt, &mut cache, 0)
+            .unwrap();
+        model.set_execution_mode(ExecutionMode::Planned);
+        let planned =
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &[2, 5], &mut cache, 3)
+                .unwrap();
+        model.set_execution_mode(ExecutionMode::Reference);
+        let mut reference_cache = model.create_cache(&backend, 64);
+        model
+            .forward_with_cache(&backend, &prompt, &mut reference_cache, 0)
+            .unwrap();
+        let reference = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[2, 5],
+            &mut reference_cache,
+            3,
+        )
+        .unwrap();
+        assert_eq!(
+            planned.data(),
+            reference.data(),
+            "multi-token planned must take the generic path"
+        );
+        assert!(
+            model.decode_state.borrow().is_none(),
+            "multi-token calls must not build a decode session"
+        );
     }
 }

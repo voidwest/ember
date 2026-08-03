@@ -265,6 +265,12 @@ pub(crate) struct Args {
     /// strategy has no native path; the fallback is recorded, never silent
     #[arg(long)]
     k_allow_fallback: bool,
+
+    /// v0.4 execution concept: reference (v0.3 generic path), planned
+    /// (execution-plan interpreter), or planned-fused (fused plan; lands
+    /// with the fusion phase)
+    #[arg(long, default_value = "reference")]
+    execution: String,
 }
 
 #[derive(Subcommand)]
@@ -656,6 +662,8 @@ fn main() -> anyhow::Result<()> {
     // are generic over `ForwardModel`; interactive mode is still GPT-2-specific.
     let k_strategy =
         ember::quant_k::KStrategy::from_cli(&args.k_strategy).map_err(anyhow::Error::msg)?;
+    let execution =
+        ember::plan::ExecutionMode::from_cli(&args.execution).map_err(anyhow::Error::msg)?;
     let loader = load_gguf_with_k_strategy(&args.model, k_strategy, args.k_allow_fallback)?;
     let execution_inventory = ember::artifact::ExecutionInventory::from_loader(&loader);
     args.arch = resolve_generation_architecture(&args.arch, &loader)?;
@@ -774,6 +782,7 @@ fn main() -> anyhow::Result<()> {
         "llama" | "qwen3" => {
             use ember::llama::Llama;
             let model = Llama::from_loader_with_max_seq_len(loader, args.max_seq_len)?;
+            model.set_execution_mode(execution);
             validate_tokenizer_model_contract(&backend, &model, &tokenizer)?;
             log::info!("loading model from {}", args.model);
             log::info!("loaded {} tensors", n_tensors);

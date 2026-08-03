@@ -1800,7 +1800,7 @@ fn validate_attention_inputs(
     Ok(seq_len)
 }
 
-fn validate_gqa(n_heads: usize, n_kv_heads: usize) -> Result<usize, CpuError> {
+pub(crate) fn validate_gqa(n_heads: usize, n_kv_heads: usize) -> Result<usize, CpuError> {
     if n_heads == 0 || n_kv_heads == 0 || !n_heads.is_multiple_of(n_kv_heads) {
         return Err(CpuError::ShapeMismatch(format!(
             "attention heads must satisfy n_heads % n_kv_heads == 0, got {} and {}",
@@ -1810,7 +1810,7 @@ fn validate_gqa(n_heads: usize, n_kv_heads: usize) -> Result<usize, CpuError> {
     Ok(n_heads / n_kv_heads)
 }
 
-fn softmax_prefix(row: &mut [f32], len: usize) {
+pub(crate) fn softmax_prefix(row: &mut [f32], len: usize) {
     assert!(
         len > 0 && len <= row.len(),
         "softmax prefix is out of bounds"

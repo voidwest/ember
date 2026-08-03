@@ -131,6 +131,8 @@ impl FromStr for CapturePhase {
 pub enum DispatchPath {
     /// Allocation-free/workspace-backed single-token decode.
     Fast,
+    /// Plan-driven single-token decode (v0.4 execution plan interpreter).
+    Planned,
     /// Generic tensor path (prefill and ineligible decode).
     Generic,
     /// Unknown or not recorded.
@@ -141,6 +143,7 @@ impl fmt::Display for DispatchPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Fast => f.write_str("fast"),
+            Self::Planned => f.write_str("planned"),
             Self::Generic => f.write_str("generic"),
             Self::Unknown => f.write_str("unknown"),
         }
