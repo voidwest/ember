@@ -312,61 +312,6 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-
-    fn loader_with_arch(architecture: &str) -> GgufLoader {
-        GgufLoader {
-            metadata: HashMap::from([(
-                "general.architecture".to_string(),
-                GgufValue::Str(architecture.to_string()),
-            )]),
-            tensors: HashMap::new(),
-        }
-    }
-
-    #[test]
-    fn generation_architecture_is_detected_and_aliases_match_engine_families() {
-        assert_eq!(
-            resolve_generation_architecture("auto", &loader_with_arch("qwen2")).unwrap(),
-            "qwen3"
-        );
-        assert_eq!(
-            resolve_generation_architecture("auto", &loader_with_arch("gemma3")).unwrap(),
-            "gemma4"
-        );
-        assert!(resolve_generation_architecture("gpt2", &loader_with_arch("llama")).is_err());
-    }
-
-    #[test]
-    fn sidecar_paths_replace_only_the_final_extension() {
-        assert_eq!(
-            sidecar_path("runs.npy/logits.npy", "_metadata.json").unwrap(),
-            "runs.npy/logits_metadata.json"
-        );
-        assert_eq!(
-            sidecar_path("logits", "_metadata.json").unwrap(),
-            "logits_metadata.json"
-        );
-    }
-
-    #[test]
-    fn token_ids_are_checked_against_model_rows() {
-        validate_token_ids_for_model(&[0, 2], 3, "prompt").unwrap();
-        assert!(validate_token_ids_for_model(&[3], 3, "prompt").is_err());
-    }
-
-    #[test]
-    fn embedded_tokenizer_is_loaded_and_hashed_without_a_temporary_file() {
-        let resolved = ResolvedTokenizer::EmbeddedLlama;
-        assert_eq!(resolved.identity(), "embedded:tokenizer.json");
-        assert_eq!(resolved.sha256().unwrap().len(), 64);
-        assert!(resolved.load().unwrap().vocab_size() > 0);
-    }
-}
-
 fn cpu_features_detected() -> Vec<&'static str> {
     let mut features = Vec::new();
 
@@ -437,4 +382,59 @@ pub(crate) fn token_audit_json(
         "offset_unit": "unicode_character_index",
         "encode_with_offsets_matches_encode": true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn loader_with_arch(architecture: &str) -> GgufLoader {
+        GgufLoader {
+            metadata: HashMap::from([(
+                "general.architecture".to_string(),
+                GgufValue::Str(architecture.to_string()),
+            )]),
+            tensors: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn generation_architecture_is_detected_and_aliases_match_engine_families() {
+        assert_eq!(
+            resolve_generation_architecture("auto", &loader_with_arch("qwen2")).unwrap(),
+            "qwen3"
+        );
+        assert_eq!(
+            resolve_generation_architecture("auto", &loader_with_arch("gemma3")).unwrap(),
+            "gemma4"
+        );
+        assert!(resolve_generation_architecture("gpt2", &loader_with_arch("llama")).is_err());
+    }
+
+    #[test]
+    fn sidecar_paths_replace_only_the_final_extension() {
+        assert_eq!(
+            sidecar_path("runs.npy/logits.npy", "_metadata.json").unwrap(),
+            "runs.npy/logits_metadata.json"
+        );
+        assert_eq!(
+            sidecar_path("logits", "_metadata.json").unwrap(),
+            "logits_metadata.json"
+        );
+    }
+
+    #[test]
+    fn token_ids_are_checked_against_model_rows() {
+        validate_token_ids_for_model(&[0, 2], 3, "prompt").unwrap();
+        assert!(validate_token_ids_for_model(&[3], 3, "prompt").is_err());
+    }
+
+    #[test]
+    fn embedded_tokenizer_is_loaded_and_hashed_without_a_temporary_file() {
+        let resolved = ResolvedTokenizer::EmbeddedLlama;
+        assert_eq!(resolved.identity(), "embedded:tokenizer.json");
+        assert_eq!(resolved.sha256().unwrap().len(), 64);
+        assert!(resolved.load().unwrap().vocab_size() > 0);
+    }
 }

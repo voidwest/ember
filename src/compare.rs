@@ -401,10 +401,8 @@ fn collect_json_differences(
                 }
             }
         }
-        (serde_json::Value::Array(left), serde_json::Value::Array(right)) => {
-            if left != right {
-                differences.push(path.to_string());
-            }
+        (serde_json::Value::Array(left), serde_json::Value::Array(right)) if left != right => {
+            differences.push(path.to_string());
         }
         _ if left != right => differences.push(path.to_string()),
         _ => {}

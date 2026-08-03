@@ -912,10 +912,8 @@ where
         let next_step_uses_fused = fused_greedy && temperature == 0.0 && !trace_ops && step == 0;
         if !greedy_fused && !next_step_uses_fused {
             // decode step: forward with just the new token, using cached K/V
-            if trace_ops {
-                if !trace::enable_tracing("decode", step) {
-                    anyhow::bail!("cannot start decode trace because a trace is already active");
-                }
+            if trace_ops && !trace::enable_tracing("decode", step) {
+                anyhow::bail!("cannot start decode trace because a trace is already active");
             }
             logits = execution.forward_last_logits(
                 backend,
