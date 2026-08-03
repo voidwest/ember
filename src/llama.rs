@@ -1195,6 +1195,7 @@ impl<B: Backend> Module<B> for LlamaBlock<B> {
 pub enum LlamaEmbedding<B: Backend> {
     F32(B::Tensor),
     Q8_0(crate::quant::QuantizedWeight),
+    KQuant(crate::quant_k::KQuantWeight),
 }
 
 pub struct Llama<B: Backend> {
@@ -1678,6 +1679,14 @@ impl Llama<CpuBackend> {
                 }
                 table.dequantize_row(token_id as usize, x);
             }
+            // Fast decode is ineligible for K-quant models (checked at
+            // construction); this arm exists for match exhaustiveness and
+            // must never fire.
+            LlamaEmbedding::KQuant(_) => {
+                return Err(CpuError::ShapeMismatch(
+                    "fast decode path is ineligible for K-quant embeddings".into(),
+                ));
+            }
         }
 
         let norm = &mut norm_out[..embed_dim];
@@ -2034,6 +2043,7 @@ impl Llama<CpuBackend> {
                     ))
                 }
                 LoadedTensor::Q8_0(weight) => LlamaEmbedding::Q8_0(weight),
+                LoadedTensor::KQuant(weight) => LlamaEmbedding::KQuant(weight),
             };
 
         let mut blocks = Vec::with_capacity(n_layers);
@@ -2112,6 +2122,7 @@ impl Llama<CpuBackend> {
                 Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
             }
             Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight, None),
+            Some(LoadedTensor::KQuant(weight)) => Linear::new_k(weight, None),
             None => match &embed_tokens {
                 // Tied embeddings are already laid out as [vocab, embed] in
                 // QuantizedWeight, exactly the [out, in] layout the Q8 matmul
@@ -2120,6 +2131,7 @@ impl Llama<CpuBackend> {
                 LlamaEmbedding::Q8_0(weight) => {
                     Linear::<CpuBackend>::new_q8_0(weight.clone(), None)
                 }
+                LlamaEmbedding::KQuant(weight) => Linear::<CpuBackend>::new_k(weight.clone(), None),
                 LlamaEmbedding::F32(tensor) => {
                     // The embedding is already reinterpreted as [vocab, embed]
                     // row-major; the linear needs [embed, vocab], so a real
@@ -2161,6 +2173,7 @@ impl Llama<CpuBackend> {
                 (tensor.shape()[0], tensor.shape()[1])
             }
             LlamaEmbedding::Q8_0(weight) => (weight.out_features(), weight.in_features()),
+            LlamaEmbedding::KQuant(weight) => (weight.out_features(), weight.in_features()),
         };
         anyhow::ensure!(
             (vocab_size, embed_dim) == (self.config.vocab_size, self.config.embed_dim),
@@ -2377,6 +2390,7 @@ fn take_llama_linear(
             Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
         }
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
+        LoadedTensor::KQuant(weight) => Linear::new_k(weight, None),
     };
     if prepare_packed {
         linear.prepare_packed_decode();
@@ -2403,6 +2417,7 @@ fn take_llama_linear_with_bias(
             Linear::new(crate::loader::gguf_to_row_major_f32(tensor), bias)
         }
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, bias),
+        LoadedTensor::KQuant(weight) => Linear::new_k(weight, bias),
     };
     if prepare_packed {
         linear.prepare_packed_decode();
@@ -2521,6 +2536,9 @@ fn llama_embed_tokens<B: Backend>(
             }
             LlamaEmbedding::Q8_0(table) => {
                 backend.assign_row_from_q8_0(&mut output, row, table, token as usize)?;
+            }
+            LlamaEmbedding::KQuant(table) => {
+                backend.assign_row_from_k(&mut output, row, table, token as usize)?;
             }
         }
     }
@@ -2898,6 +2916,8 @@ mod tests {
         let loader = GgufLoader {
             metadata,
             tensors: HashMap::new(),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         };
 

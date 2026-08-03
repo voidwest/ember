@@ -424,6 +424,8 @@ mod tests {
                 GgufValue::Str(architecture.to_string()),
             )]),
             tensors: HashMap::new(),
+            k_strategy: ember::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         }
     }

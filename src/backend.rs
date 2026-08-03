@@ -72,6 +72,19 @@ pub trait Backend {
         w: &QuantizedWeight,
     ) -> Result<Self::Tensor, Self::Error>;
 
+    /// matrix multiply with an on-the-fly dequantized q4_k/q6_k weight.
+    ///
+    /// `x` is a standard f32 tensor `[seq_len, in_features]`; `w` is a
+    /// raw super-block-compressed weight with logical shape
+    /// `[out_features, in_features]` (GGUF dims reversed, blocks
+    /// contiguous per output feature). The weight is never stored as f32;
+    /// dequantization happens at block granularity inside the kernel.
+    fn matmul_k(
+        &self,
+        x: &Self::Tensor,
+        w: &crate::quant_k::KQuantWeight,
+    ) -> Result<Self::Tensor, Self::Error>;
+
     /// Apply two Q8_0 projections to the same activations.
     ///
     /// Backends may override this to share activation packing and scheduling.
@@ -148,6 +161,14 @@ pub trait Backend {
         dst: &mut Self::Tensor,
         dst_index: usize,
         table: &QuantizedWeight,
+        table_index: usize,
+    ) -> Result<(), Self::Error>;
+    /// Dequantize one row from a K-quant table directly into `dst`.
+    fn assign_row_from_k(
+        &self,
+        dst: &mut Self::Tensor,
+        dst_index: usize,
+        table: &crate::quant_k::KQuantWeight,
         table_index: usize,
     ) -> Result<(), Self::Error>;
     fn assign_row_sum_from_tables(
@@ -260,6 +281,8 @@ pub enum CpuError {
     Tensor(#[from] TensorError),
     #[error("shape mismatch: {0}")]
     ShapeMismatch(String),
+    #[error("kernel error: {0}")]
+    Kernel(String),
     #[error(transparent)]
     Experiment(#[from] crate::experiments::ExperimentFailure),
 }
@@ -283,6 +306,30 @@ fn q8_matmul_output_len(x: &CpuTensor, w: &QuantizedWeight) -> Result<(usize, us
     let output_len = seq_len.checked_mul(w.out_features()).ok_or_else(|| {
         CpuError::ShapeMismatch("matmul_q8_0: output shape product overflow".into())
     })?;
+    Ok((seq_len, output_len))
+}
+
+fn k_matmul_output_len(
+    x: &CpuTensor,
+    w: &crate::quant_k::KQuantWeight,
+) -> Result<(usize, usize), CpuError> {
+    if x.ndim() != 2 {
+        return Err(CpuError::ShapeMismatch(format!(
+            "matmul_k: input must be 2D, got shape {:?}",
+            x.shape()
+        )));
+    }
+    let (seq_len, in_features) = (x.shape[0], x.shape[1]);
+    if in_features != w.in_features() {
+        return Err(CpuError::ShapeMismatch(format!(
+            "matmul_k: inner dims must match (got {} vs {})",
+            in_features,
+            w.in_features()
+        )));
+    }
+    let output_len = seq_len
+        .checked_mul(w.out_features())
+        .ok_or_else(|| CpuError::ShapeMismatch("matmul_k: output shape product overflow".into()))?;
     Ok((seq_len, output_len))
 }
 
@@ -984,6 +1031,18 @@ impl Backend for CpuBackend {
         Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
     }
 
+    fn matmul_k(
+        &self,
+        x: &CpuTensor,
+        w: &crate::quant_k::KQuantWeight,
+    ) -> Result<CpuTensor, CpuError> {
+        let (seq_len, output_len) = k_matmul_output_len(x, w)?;
+        let mut out = vec![0.0f32; output_len];
+        crate::k_matmul::matmul_k_scalar_into(x.data(), seq_len, w, &mut out)
+            .map_err(CpuError::Kernel)?;
+        Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
+    }
+
     fn matmul_q8_0_pair(
         &self,
         x: &CpuTensor,
@@ -1164,6 +1223,32 @@ impl Backend for CpuBackend {
         {
             return Err(CpuError::ShapeMismatch(format!(
                 "assign_row_from_q8_0: dst={:?}, dst_index={}, table=[{}, {}], table_index={}",
+                dst.shape(),
+                dst_index,
+                table.out_features(),
+                table.in_features(),
+                table_index
+            )));
+        }
+        let cols = table.in_features();
+        let start = dst_index * cols;
+        table.dequantize_row(table_index, &mut dst.data_mut()[start..start + cols]);
+        Ok(())
+    }
+    fn assign_row_from_k(
+        &self,
+        dst: &mut CpuTensor,
+        dst_index: usize,
+        table: &crate::quant_k::KQuantWeight,
+        table_index: usize,
+    ) -> Result<(), Self::Error> {
+        if dst.ndim() != 2
+            || dst_index >= dst.shape()[0]
+            || table_index >= table.out_features()
+            || dst.shape()[1] != table.in_features()
+        {
+            return Err(CpuError::ShapeMismatch(format!(
+                "assign_row_from_k: dst={:?}, dst_index={}, table=[{}, {}], table_index={}",
                 dst.shape(),
                 dst_index,
                 table.out_features(),

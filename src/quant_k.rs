@@ -368,6 +368,71 @@ impl KQuantDtype {
     }
 }
 
+/// Load-time execution policy for K-family tensors (Q2_K..Q6_K, Q8_K).
+///
+/// The policy is applied per tensor: Q4_K_M files mix Q4_K and Q6_K, and
+/// dtypes without a native kernel in v0.3 (Q2_K/Q3_K/Q5_K/Q8_K) stay on
+/// the eager-f32 reference path. `--k-strategy` never governs non-K
+/// dtypes (Q8_0 keeps its own compressed path unconditionally).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KStrategy {
+    /// Dequantize every K-family tensor to f32 at load (v0.1/v0.2
+    /// reference path).
+    EagerF32,
+    /// Compressed resident, scalar kernels.
+    Scalar,
+    /// Compressed resident, AVX2 kernels (x86 feature set required).
+    X86,
+    /// Best available per tensor: compressed when a native kernel exists,
+    /// eager-f32 otherwise, with every choice recorded.
+    Auto,
+}
+
+impl KStrategy {
+    /// CLI-facing name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::EagerF32 => "eager-f32",
+            Self::Scalar => "compressed-scalar",
+            Self::X86 => "compressed-x86",
+            Self::Auto => "auto",
+        }
+    }
+
+    /// Parse the `--k-strategy` CLI value.
+    pub fn from_cli(value: &str) -> Result<Self, String> {
+        match value {
+            "eager-f32" => Ok(Self::EagerF32),
+            "scalar" => Ok(Self::Scalar),
+            "x86" => Ok(Self::X86),
+            "auto" => Ok(Self::Auto),
+            other => Err(format!(
+                "unknown K strategy '{other}'; expected one of: eager-f32, scalar, x86, auto"
+            )),
+        }
+    }
+}
+
+/// The per-tensor execution decision made by the loader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KExecution {
+    /// Dequantized to f32 at load; the eager-f32 reference path.
+    EagerF32,
+    /// Packed bytes resident, scalar kernels.
+    CompressedScalar,
+}
+
+/// One loader decision for a K-family tensor (recorded, never silent).
+#[derive(Debug, Clone)]
+pub struct KTensorDecision {
+    /// Original GGUF dtype code.
+    pub gguf_dtype: u32,
+    /// Chosen execution path.
+    pub execution: KExecution,
+    /// Why the requested strategy was not honored, if it was not.
+    pub fallback_reason: Option<String>,
+}
+
 /// A Q4_K or Q6_K weight matrix kept in raw block-compressed form.
 ///
 /// Mirrors `QuantizedWeight` (Q8_0): the loader stores the packed GGUF
@@ -483,6 +548,39 @@ impl KQuantWeight {
     #[inline]
     pub fn blocks_per_row(&self) -> usize {
         self.shape[1] / QK_K
+    }
+
+    /// Dequantize one output-feature row (or one embedding row) into
+    /// `dst`, which must have length `in_features`.
+    ///
+    /// Rows are contiguous: output feature `j` occupies
+    /// `blocks_per_row` super-blocks at byte offset
+    /// `j * blocks_per_row * block_bytes`.
+    pub fn dequantize_row(&self, row: usize, dst: &mut [f32]) {
+        assert!(
+            row < self.out_features(),
+            "KQuantWeight row {} out of bounds for {} rows",
+            row,
+            self.out_features()
+        );
+        assert_eq!(
+            dst.len(),
+            self.in_features(),
+            "KQuantWeight dequantize_row destination len ({}) != in_features ({})",
+            dst.len(),
+            self.in_features()
+        );
+        let block_bytes = self.dtype.block_bytes();
+        let row_bytes = row * self.blocks_per_row() * block_bytes;
+        let data = self.data();
+        for b in 0..self.blocks_per_row() {
+            let block = &data[row_bytes + b * block_bytes..row_bytes + (b + 1) * block_bytes];
+            let out_block = &mut dst[b * QK_K..(b + 1) * QK_K];
+            match self.dtype {
+                KQuantDtype::Q4K => dequant_q4_k(block, out_block),
+                KQuantDtype::Q6K => dequant_q6_k(block, out_block),
+            }
+        }
     }
 
     /// Fully dequantize to an f32 `CpuTensor` with shape

@@ -24,7 +24,7 @@ use ember::extraction::{
     CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME,
     SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
-use ember::loader::load_gguf;
+use ember::loader::load_gguf_with_k_strategy;
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use ember::model_backend::compare_backend_artifacts;
@@ -145,12 +145,18 @@ pub(crate) fn validate_experiment_options(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(crate) fn run_extract_command(command: &ExtractCommand) -> anyhow::Result<()> {
+pub(crate) fn run_extract_command(
+    command: &ExtractCommand,
+    k_strategy: ember::quant_k::KStrategy,
+    k_allow_fallback: bool,
+) -> anyhow::Result<()> {
     let config = build_extraction_config(command)?;
     config.validate()?;
 
     match config.backend {
-        ExecutionBackendName::Native => run_native_extract_command(&config),
+        ExecutionBackendName::Native => {
+            run_native_extract_command(&config, k_strategy, k_allow_fallback)
+        }
         ExecutionBackendName::LlamaCpp => {
             anyhow::bail!(
                 "llama-cpp backend not implemented for hidden-state extraction yet; \
@@ -194,6 +200,8 @@ pub(crate) fn run_compare_artifacts_command(
 
 pub(crate) fn run_native_logits_reference_command(
     command: &NativeLogitsReferenceCommand,
+    k_strategy: ember::quant_k::KStrategy,
+    k_allow_fallback: bool,
 ) -> anyhow::Result<()> {
     let config = ExtractionConfig::from_path(&command.config)?;
     config.validate()?;
@@ -207,7 +215,7 @@ pub(crate) fn run_native_logits_reference_command(
         anyhow::bail!("native-logits-reference requires write_logits = true");
     }
 
-    let loader = load_gguf(&config.model_path)?;
+    let loader = load_gguf_with_k_strategy(&config.model_path, k_strategy, k_allow_fallback)?;
     let gguf_metadata = gguf_metadata_json(&loader);
     let arch = infer_extraction_architecture(&config, &gguf_metadata)?;
     let tokenizer_path = config
@@ -829,8 +837,12 @@ pub(crate) fn build_extraction_config(
     Ok(config)
 }
 
-pub(crate) fn run_native_extract_command(config: &ExtractionConfig) -> anyhow::Result<()> {
-    let loader = load_gguf(&config.model_path)?;
+pub(crate) fn run_native_extract_command(
+    config: &ExtractionConfig,
+    k_strategy: ember::quant_k::KStrategy,
+    k_allow_fallback: bool,
+) -> anyhow::Result<()> {
+    let loader = load_gguf_with_k_strategy(&config.model_path, k_strategy, k_allow_fallback)?;
     let gguf_metadata = gguf_metadata_json(&loader);
     let arch = infer_extraction_architecture(config, &gguf_metadata)?;
     let tokenizer_path = config
@@ -1015,7 +1027,11 @@ fn validate_logits_tensor<B: Backend>(
     Ok(())
 }
 
-pub(crate) fn run_bench_decode_command(command: &BenchDecodeCommand) -> anyhow::Result<()> {
+pub(crate) fn run_bench_decode_command(
+    command: &BenchDecodeCommand,
+    k_strategy: ember::quant_k::KStrategy,
+    k_allow_fallback: bool,
+) -> anyhow::Result<()> {
     if command.tokens == 0 {
         anyhow::bail!("--tokens must be greater than 0");
     }
@@ -1023,7 +1039,7 @@ pub(crate) fn run_bench_decode_command(command: &BenchDecodeCommand) -> anyhow::
         anyhow::bail!("--repetitions must be greater than 0");
     }
 
-    let loader = load_gguf(&command.model)?;
+    let loader = load_gguf_with_k_strategy(&command.model, k_strategy, k_allow_fallback)?;
     let architecture = resolve_generation_architecture(&command.arch, &loader)?;
     if command.profile_operators && !matches!(architecture.as_str(), "llama" | "qwen3") {
         anyhow::bail!(
@@ -1049,7 +1065,11 @@ pub(crate) fn run_bench_decode_command(command: &BenchDecodeCommand) -> anyhow::
     }
 }
 
-pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> anyhow::Result<()> {
+pub(crate) fn run_bench_lifecycle_command(
+    command: &BenchLifecycleCommand,
+    k_strategy: ember::quant_k::KStrategy,
+    k_allow_fallback: bool,
+) -> anyhow::Result<()> {
     use ember::llama::{LlamaEvictionStats, LlamaPackedSelection, LlamaPackingStats};
     use ember::residency::ResidencyRecorder;
 
@@ -1092,7 +1112,7 @@ pub(crate) fn run_bench_lifecycle_command(command: &BenchLifecycleCommand) -> an
     recorder.capture("process_start")?;
 
     let model_init_start = Instant::now();
-    let loader = load_gguf(&command.model)?;
+    let loader = load_gguf_with_k_strategy(&command.model, k_strategy, k_allow_fallback)?;
     let mut model =
         ember::model::Llama::from_loader_without_packed_decode(loader, command.max_seq_len)?;
     let model_init_ns = model_init_start.elapsed().as_nanos() as u64;

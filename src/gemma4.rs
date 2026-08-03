@@ -1084,6 +1084,9 @@ impl Gemma4<CpuBackend> {
                 )))
             }
             LoadedTensor::Q8_0(weight) => Gemma4Embedding::Q8_0(Arc::new(weight)),
+            LoadedTensor::KQuant(_) => {
+                anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+            }
         };
 
         // Load rope_freqs for partial RoPE application (global layers)
@@ -1328,6 +1331,9 @@ impl Gemma4<CpuBackend> {
                 None,
             )),
             Some(LoadedTensor::Q8_0(weight)) => Gemma4Head::Linear(Linear::new_q8_0(weight, None)),
+            Some(LoadedTensor::KQuant(_)) => {
+                anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+            }
             None => Gemma4Head::TiedEmbedding(embed_tokens.clone()),
         };
 
@@ -1338,6 +1344,9 @@ impl Gemma4<CpuBackend> {
                 let proj = match t {
                     LoadedTensor::F32(tensor) => Linear::new(tensor, None),
                     LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
+                    LoadedTensor::KQuant(_) => {
+                        anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+                    }
                 };
                 let norm = loader.take_f32("per_layer_proj_norm.weight")?;
                 (Some(proj), Some(norm))
@@ -2330,6 +2339,9 @@ fn take_gemma4_linear(loader: &mut GgufLoader, name: &str) -> anyhow::Result<Lin
             None,
         )),
         LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, None)),
+        LoadedTensor::KQuant(_) => {
+            anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+        }
     }
 }
 
@@ -2343,6 +2355,7 @@ fn take_optional_f32_only(loader: &mut GgufLoader, names: &[String]) -> Option<C
     match loader.tensors.remove(name.as_str())? {
         LoadedTensor::F32(tensor) => Some(tensor),
         LoadedTensor::Q8_0(_) => unreachable!("tensor kind checked before removal"),
+        LoadedTensor::KQuant(_) => unreachable!("tensor kind checked before removal"),
     }
 }
 
@@ -2359,6 +2372,7 @@ fn take_optional_q8(
     match loader.tensors.remove(name.as_str())? {
         LoadedTensor::Q8_0(weight) => Some(weight),
         LoadedTensor::F32(_) => unreachable!("tensor kind checked before removal"),
+        LoadedTensor::KQuant(_) => unreachable!("tensor kind checked before removal"),
     }
 }
 
@@ -2376,6 +2390,8 @@ mod tests {
         GgufLoader {
             metadata,
             tensors: HashMap::new(),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         }
     }
@@ -2473,6 +2489,8 @@ mod tests {
         Gemma4::from_loader(GgufLoader {
             metadata,
             tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         })
         .unwrap()
@@ -2765,6 +2783,8 @@ mod tests {
         let loader = GgufLoader {
             metadata,
             tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         };
         let model = Gemma4::from_loader(loader).unwrap();

@@ -22,6 +22,9 @@ pub enum LoadedTensor {
     F32(CpuTensor),
     /// raw q8_0 block-compressed weight (dequantized on the fly during matmul)
     Q8_0(QuantizedWeight),
+    /// raw q4_k/q6_k super-block-compressed weight, kept resident under a
+    /// compressed K strategy (dequantized at block granularity during matmul)
+    KQuant(crate::quant_k::KQuantWeight),
 }
 
 /// holds the parsed contents of a GGUF v3 file:
@@ -47,6 +50,12 @@ pub struct GgufLoader {
     /// named tensors.  linear weights are stored as `LoadedTensor::Q8_0`
     /// when the gguf dtype is q8_0; everything else is `LoadedTensor::F32`.
     pub tensors: HashMap<String, LoadedTensor>,
+    /// the K-family strategy requested at load time.
+    pub k_strategy: crate::quant_k::KStrategy,
+    /// per-tensor K-family execution decisions (original dtype, chosen
+    /// path, fallback reason). Every decision is recorded; nothing is
+    /// silent.
+    pub k_decisions: HashMap<String, crate::quant_k::KTensorDecision>,
     /// original per-tensor GGUF records (native dims, dtype code, file
     /// offset), captured before any dtype conversion. `LoadedTensor` only
     /// reflects the post-conversion representation, so this map is the
@@ -76,6 +85,7 @@ impl GgufLoader {
         match self.take_tensor(name)? {
             LoadedTensor::F32(tensor) => Ok(tensor),
             LoadedTensor::Q8_0(weight) => Ok(weight.dequantize_all()),
+            LoadedTensor::KQuant(weight) => Ok(weight.dequantize_all()),
         }
     }
 
@@ -86,6 +96,7 @@ impl GgufLoader {
         match self.tensors.remove(name.as_str())? {
             LoadedTensor::F32(tensor) => Some(tensor),
             LoadedTensor::Q8_0(weight) => Some(weight.dequantize_all()),
+            LoadedTensor::KQuant(weight) => Some(weight.dequantize_all()),
         }
     }
 }
@@ -114,25 +125,60 @@ pub enum GgufValue {
 /// Q8_0 weights retain shared ranges into the read-only mapping, avoiding a
 /// second anonymous-memory copy and allowing the OS to page weights lazily.
 /// Dtypes that require conversion (F16/BF16) are materialized as F32.
+///
+/// Uses the eager-f32 K strategy — the v0.1/v0.2 reference behavior. Use
+/// [`load_gguf_with_k_strategy`] for the compressed-resident paths.
 pub fn load_gguf<P: AsRef<Path>>(path: P) -> Result<GgufLoader> {
+    load_gguf_with_k_strategy(path, crate::quant_k::KStrategy::EagerF32, true)
+}
+
+/// Load a GGUF file with an explicit K-family execution policy.
+///
+/// `allow_fallback` permits per-tensor downgrades (eager-f32 or scalar)
+/// when the requested strategy has no native path for a tensor's dtype;
+/// without it, such tensors are a hard error naming the tensor and its
+/// GGUF dtype. Every decision is recorded in `GgufLoader.k_decisions`;
+/// a downgrade is never silent.
+pub fn load_gguf_with_k_strategy<P: AsRef<Path>>(
+    path: P,
+    strategy: crate::quant_k::KStrategy,
+    allow_fallback: bool,
+) -> Result<GgufLoader> {
     let f = File::open(&path).with_context(|| format!("failed to open {:?}", path.as_ref()))?;
     // Safety: the read-only mapping remains alive through every QuantizedWeight
     // that references it. As with all file mappings, callers must not truncate
     // or concurrently mutate the GGUF while it is loaded.
     let mmap = Arc::new(unsafe { memmap2::Mmap::map(&f)? });
     let mut cursor = std::io::Cursor::new(&mmap[..]);
-    load_gguf_from_reader_impl(&mut cursor, Some(Arc::clone(&mmap)))
+    load_gguf_from_reader_impl(
+        &mut cursor,
+        Some(Arc::clone(&mmap)),
+        strategy,
+        allow_fallback,
+    )
 }
 
 /// load a GGUF file from any readable + seekable source.
 /// useful for testing with in-memory buffers (std::io::Cursor<Vec<u8>>).
+/// Uses the eager-f32 K strategy (reference behavior).
 pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoader> {
-    load_gguf_from_reader_impl(reader, None)
+    load_gguf_from_reader_impl(reader, None, crate::quant_k::KStrategy::EagerF32, true)
+}
+
+/// reader variant of [`load_gguf_with_k_strategy`]; see its docs.
+pub fn load_gguf_from_reader_with_k_strategy<R: Read + Seek>(
+    reader: &mut R,
+    strategy: crate::quant_k::KStrategy,
+    allow_fallback: bool,
+) -> Result<GgufLoader> {
+    load_gguf_from_reader_impl(reader, None, strategy, allow_fallback)
 }
 
 fn load_gguf_from_reader_impl<R: Read + Seek>(
     reader: &mut R,
     mmap: Option<Arc<memmap2::Mmap>>,
+    k_strategy: crate::quant_k::KStrategy,
+    allow_fallback: bool,
 ) -> Result<GgufLoader> {
     let initial_position = reader.stream_position()?;
     let file_len = reader.seek(SeekFrom::End(0))?;
@@ -197,6 +243,10 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             },
         );
     }
+    let mut k_decisions = HashMap::new();
+    k_decisions
+        .try_reserve(tensor_info.len())
+        .context("failed to reserve GGUF K-decision table")?;
 
     let current_pos = reader.stream_position()?;
     let alignment = match metadata.get("general.alignment") {
@@ -267,139 +317,207 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             info.dtype,
             info.dims
         );
-        let loaded =
-            match info.dtype {
-                0 => {
-                    // f32: read directly, no dim reversal
-                    let mut data = vec![0.0f32; element_count];
-                    let byte_len = element_count.checked_mul(4).with_context(|| {
-                        format!("tensor '{}' f32 byte size overflow", info.name)
-                    })?;
-                    let mut buf = vec![0u8; byte_len];
-                    reader.read_exact(&mut buf)?;
-                    for (i, dst) in data.iter_mut().enumerate().take(element_count) {
-                        let start = i * 4;
-                        let bytes: [u8; 4] = buf[start..start + 4]
+        let loaded = match info.dtype {
+            0 => {
+                // f32: read directly, no dim reversal
+                let mut data = vec![0.0f32; element_count];
+                let byte_len = element_count
+                    .checked_mul(4)
+                    .with_context(|| format!("tensor '{}' f32 byte size overflow", info.name))?;
+                let mut buf = vec![0u8; byte_len];
+                reader.read_exact(&mut buf)?;
+                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
+                    let start = i * 4;
+                    let bytes: [u8; 4] = buf[start..start + 4]
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("failed to read f32 at index {}", i))?;
+                    *dst = f32::from_le_bytes(bytes);
+                }
+                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+            }
+            1 => {
+                // f16: read and convert to f32. Keep the logical GGUF shape
+                // unchanged; model builders handle any linear-weight transpose
+                // the same way they do for native f32 tensors.
+                use half::f16;
+                let byte_len = element_count
+                    .checked_mul(2)
+                    .with_context(|| format!("tensor '{}' f16 byte size overflow", info.name))?;
+                let mut buf = vec![0u8; byte_len];
+                reader.read_exact(&mut buf)?;
+                let mut data = vec![0.0f32; element_count];
+                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
+                    let start = i * 2;
+                    let bits = u16::from_le_bytes(
+                        buf[start..start + 2]
                             .try_into()
-                            .map_err(|_| anyhow::anyhow!("failed to read f32 at index {}", i))?;
-                        *dst = f32::from_le_bytes(bytes);
-                    }
-                    LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+                            .map_err(|_| anyhow::anyhow!("failed to read f16 at index {}", i))?,
+                    );
+                    *dst = f16::from_bits(bits).to_f32();
                 }
-                1 => {
-                    // f16: read and convert to f32. Keep the logical GGUF shape
-                    // unchanged; model builders handle any linear-weight transpose
-                    // the same way they do for native f32 tensors.
-                    use half::f16;
-                    let byte_len = element_count.checked_mul(2).with_context(|| {
-                        format!("tensor '{}' f16 byte size overflow", info.name)
-                    })?;
-                    let mut buf = vec![0u8; byte_len];
-                    reader.read_exact(&mut buf)?;
-                    let mut data = vec![0.0f32; element_count];
-                    for (i, dst) in data.iter_mut().enumerate().take(element_count) {
-                        let start = i * 2;
-                        let bits =
-                            u16::from_le_bytes(buf[start..start + 2].try_into().map_err(|_| {
-                                anyhow::anyhow!("failed to read f16 at index {}", i)
-                            })?);
-                        *dst = f16::from_bits(bits).to_f32();
-                    }
-                    LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
-                }
-                8 => {
-                    // q8_0: store raw, dequantize on the fly during matmul.
-                    // reverse dims to match the column-major storage convention
-                    // (same as the old path did for f16/q8_0 tensors).
-                    if !element_count.is_multiple_of(32) {
-                        bail!(
-                            "tensor '{}' Q8_0 element count {} is not block-aligned",
-                            info.name,
-                            element_count
-                        );
-                    }
-                    let n_blocks = element_count / 32;
-                    let byte_len = n_blocks.checked_mul(Q8_0_TYPE_SIZE).with_context(|| {
-                        format!("tensor '{}' Q8_0 byte size overflow", info.name)
-                    })?;
-                    let mut dims = info.dims;
-                    dims.reverse();
-                    let weight = if let Some(mmap) = mmap.as_ref() {
-                        let start = usize::try_from(tensor_offset).with_context(|| {
-                            format!("tensor '{}' offset exceeds address space", info.name)
-                        })?;
-                        let end = start.checked_add(byte_len).with_context(|| {
-                            format!("tensor '{}' mapped range overflow", info.name)
-                        })?;
-                        if end > mmap.len() {
-                            bail!(
-                                "tensor '{}' data range {}..{} exceeds file length {}",
-                                info.name,
-                                start,
-                                end,
-                                mmap.len()
-                            );
-                        }
-                        QuantizedWeight::try_from_mmap(Arc::clone(mmap), start..end, dims)?
-                    } else {
-                        let mut raw = vec![0u8; byte_len];
-                        reader.read_exact(&mut raw)?;
-                        QuantizedWeight::try_new(raw, dims)?
-                    };
-                    LoadedTensor::Q8_0(weight)
-                }
-                10..=14 => {
-                    // K-family super-blocks (Q2_K/Q3_K/Q4_K/Q5_K/Q6_K):
-                    // dequantize to f32 at load time. Keep the logical GGUF
-                    // shape; linear-weight transpose handling is identical to
-                    // the f32/f16 arms.
-                    if !element_count.is_multiple_of(crate::quant_k::QK_K) {
-                        bail!(
-                            "tensor '{}' dtype {} element count {} is not 256-block-aligned",
-                            info.name,
-                            info.dtype,
-                            element_count
-                        );
-                    }
-                    let n_blocks = element_count / crate::quant_k::QK_K;
-                    let block_bytes = crate::quant_k::k_block_bytes(info.dtype)
-                        .with_context(|| format!("tensor '{}'", info.name))?;
-                    let byte_len = n_blocks.checked_mul(block_bytes).with_context(|| {
-                        format!("tensor '{}' K-quant byte size overflow", info.name)
-                    })?;
-                    let mut raw = vec![0u8; byte_len];
-                    reader.read_exact(&mut raw)?;
-                    let mut data = vec![0.0f32; element_count];
-                    crate::quant_k::dequant_tensor(info.dtype, &raw, &mut data)
-                        .map_err(|e| anyhow::anyhow!("tensor '{}': {e}", info.name))?;
-                    LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
-                }
-                30 => {
-                    // bf16: brain floating point — upper 16 bits of f32.
-                    let byte_len = element_count.checked_mul(2).with_context(|| {
-                        format!("tensor '{}' bf16 byte size overflow", info.name)
-                    })?;
-                    let mut buf = vec![0u8; byte_len];
-                    reader.read_exact(&mut buf)?;
-                    let mut data = vec![0.0f32; element_count];
-                    for (i, dst) in data.iter_mut().enumerate().take(element_count) {
-                        let start = i * 2;
-                        let bits =
-                            u16::from_le_bytes(buf[start..start + 2].try_into().map_err(|_| {
-                                anyhow::anyhow!("failed to read bf16 at index {}", i)
-                            })?);
-                        *dst = f32::from_bits((bits as u32) << 16);
-                    }
-                    LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
-                }
-                _ => {
+                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+            }
+            8 => {
+                // q8_0: store raw, dequantize on the fly during matmul.
+                // reverse dims to match the column-major storage convention
+                // (same as the old path did for f16/q8_0 tensors).
+                if !element_count.is_multiple_of(32) {
                     bail!(
-                        "tensor '{}' uses unsupported GGML dtype {}",
+                        "tensor '{}' Q8_0 element count {} is not block-aligned",
                         info.name,
-                        info.dtype
+                        element_count
                     );
                 }
-            };
+                let n_blocks = element_count / 32;
+                let byte_len = n_blocks
+                    .checked_mul(Q8_0_TYPE_SIZE)
+                    .with_context(|| format!("tensor '{}' Q8_0 byte size overflow", info.name))?;
+                let mut dims = info.dims;
+                dims.reverse();
+                let weight = if let Some(mmap) = mmap.as_ref() {
+                    let start = usize::try_from(tensor_offset).with_context(|| {
+                        format!("tensor '{}' offset exceeds address space", info.name)
+                    })?;
+                    let end = start
+                        .checked_add(byte_len)
+                        .with_context(|| format!("tensor '{}' mapped range overflow", info.name))?;
+                    if end > mmap.len() {
+                        bail!(
+                            "tensor '{}' data range {}..{} exceeds file length {}",
+                            info.name,
+                            start,
+                            end,
+                            mmap.len()
+                        );
+                    }
+                    QuantizedWeight::try_from_mmap(Arc::clone(mmap), start..end, dims)?
+                } else {
+                    let mut raw = vec![0u8; byte_len];
+                    reader.read_exact(&mut raw)?;
+                    QuantizedWeight::try_new(raw, dims)?
+                };
+                LoadedTensor::Q8_0(weight)
+            }
+            10..=14 => {
+                // K-family super-blocks (Q2_K/Q3_K/Q4_K/Q5_K/Q6_K).
+                // Under a compressed strategy the supported dtypes
+                // (Q4_K/Q6_K) stay packed and resident; everything
+                // else dequantizes to f32 at load (the eager-f32
+                // reference), with every decision recorded.
+                if !element_count.is_multiple_of(crate::quant_k::QK_K) {
+                    bail!(
+                        "tensor '{}' dtype {} element count {} is not 256-block-aligned",
+                        info.name,
+                        info.dtype,
+                        element_count
+                    );
+                }
+                let n_blocks = element_count / crate::quant_k::QK_K;
+                let block_bytes = crate::quant_k::k_block_bytes(info.dtype)
+                    .with_context(|| format!("tensor '{}'", info.name))?;
+                let byte_len = n_blocks.checked_mul(block_bytes).with_context(|| {
+                    format!("tensor '{}' K-quant byte size overflow", info.name)
+                })?;
+                let native = crate::quant_k::KQuantDtype::from_gguf(info.dtype);
+                let execution = resolve_k_execution(&info, k_strategy, native, allow_fallback)?;
+                let fallback_reason = match (k_strategy, native) {
+                    (crate::quant_k::KStrategy::Auto, None) => Some(format!(
+                        "dtype {} has no native kernel in v0.3",
+                        ggml_dtype_name(info.dtype).unwrap_or("unknown")
+                    )),
+                    (crate::quant_k::KStrategy::Scalar, None) if allow_fallback => Some(format!(
+                        "dtype {} has no native kernel in v0.3",
+                        ggml_dtype_name(info.dtype).unwrap_or("unknown")
+                    )),
+                    _ => None,
+                };
+                k_decisions.insert(
+                    info.name.clone(),
+                    crate::quant_k::KTensorDecision {
+                        gguf_dtype: info.dtype,
+                        execution,
+                        fallback_reason,
+                    },
+                );
+                match execution {
+                    crate::quant_k::KExecution::EagerF32 => {
+                        let mut raw = vec![0u8; byte_len];
+                        reader.read_exact(&mut raw)?;
+                        let mut data = vec![0.0f32; element_count];
+                        crate::quant_k::dequant_tensor(info.dtype, &raw, &mut data)
+                            .map_err(|e| anyhow::anyhow!("tensor '{}': {e}", info.name))?;
+                        LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+                    }
+                    crate::quant_k::KExecution::CompressedScalar => {
+                        let native = native.expect("compressed execution requires a native dtype");
+                        let mut dims = info.dims.clone();
+                        dims.reverse();
+                        if dims.len() != 2 {
+                            bail!(
+                                "tensor '{}' K-quant must be 2D for compressed residency, got {:?}",
+                                info.name,
+                                info.dims
+                            );
+                        }
+                        let shape = [dims[0], dims[1]];
+                        let weight = if let Some(mmap) = mmap.as_ref() {
+                            let start = usize::try_from(tensor_offset).with_context(|| {
+                                format!("tensor '{}' offset exceeds address space", info.name)
+                            })?;
+                            let end = start.checked_add(byte_len).with_context(|| {
+                                format!("tensor '{}' mapped range overflow", info.name)
+                            })?;
+                            if end > mmap.len() {
+                                bail!(
+                                    "tensor '{}' data range {}..{} exceeds file length {}",
+                                    info.name,
+                                    start,
+                                    end,
+                                    mmap.len()
+                                );
+                            }
+                            crate::quant_k::KQuantWeight::try_from_mmap(
+                                Arc::clone(mmap),
+                                start..end,
+                                shape,
+                                native,
+                            )?
+                        } else {
+                            let mut raw = vec![0u8; byte_len];
+                            reader.read_exact(&mut raw)?;
+                            crate::quant_k::KQuantWeight::try_new(raw, shape, native)?
+                        };
+                        LoadedTensor::KQuant(weight)
+                    }
+                }
+            }
+            30 => {
+                // bf16: brain floating point — upper 16 bits of f32.
+                let byte_len = element_count
+                    .checked_mul(2)
+                    .with_context(|| format!("tensor '{}' bf16 byte size overflow", info.name))?;
+                let mut buf = vec![0u8; byte_len];
+                reader.read_exact(&mut buf)?;
+                let mut data = vec![0.0f32; element_count];
+                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
+                    let start = i * 2;
+                    let bits = u16::from_le_bytes(
+                        buf[start..start + 2]
+                            .try_into()
+                            .map_err(|_| anyhow::anyhow!("failed to read bf16 at index {}", i))?,
+                    );
+                    *dst = f32::from_bits((bits as u32) << 16);
+                }
+                LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
+            }
+            _ => {
+                bail!(
+                    "tensor '{}' uses unsupported GGML dtype {}",
+                    info.name,
+                    info.dtype
+                );
+            }
+        };
         if tensors.insert(info.name.clone(), loaded).is_some() {
             bail!("duplicate GGUF tensor name '{}'", info.name);
         }
@@ -407,8 +525,47 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     Ok(GgufLoader {
         metadata,
         tensors,
+        k_strategy,
+        k_decisions,
         tensor_meta,
     })
+}
+
+/// Decide the per-tensor K-family execution path under the requested
+/// strategy. Hard errors name the tensor and its GGUF dtype; downgrades
+/// only happen when `allow_fallback` permits them and are recorded by
+/// the caller in `k_decisions`.
+fn resolve_k_execution(
+    info: &TensorInfo,
+    strategy: crate::quant_k::KStrategy,
+    native: Option<crate::quant_k::KQuantDtype>,
+    allow_fallback: bool,
+) -> Result<crate::quant_k::KExecution> {
+    use crate::quant_k::{KExecution, KStrategy};
+    match strategy {
+        KStrategy::EagerF32 => Ok(KExecution::EagerF32),
+        KStrategy::Auto => Ok(match native {
+            Some(_) => KExecution::CompressedScalar,
+            None => KExecution::EagerF32,
+        }),
+        KStrategy::Scalar => match native {
+            Some(_) => Ok(KExecution::CompressedScalar),
+            None if allow_fallback => Ok(KExecution::EagerF32),
+            None => bail!(
+                "tensor '{}' uses GGUF dtype {} which has no native kernel in v0.3; \
+                 pass --k-allow-fallback to run it through the eager-f32 path",
+                info.name,
+                ggml_dtype_name(info.dtype).unwrap_or("unknown")
+            ),
+        },
+        KStrategy::X86 => {
+            // the AVX2 kernels are wired later in the v0.3 sequence
+            bail!(
+                "--k-strategy x86: AVX2 K-quant kernels are not yet implemented \
+                 (wired in a later v0.3 commit)"
+            )
+        }
+    }
 }
 
 struct TensorInfo {
@@ -688,6 +845,8 @@ mod tests {
         let mut loader = GgufLoader {
             metadata: HashMap::new(),
             tensors: HashMap::from([("weight".to_string(), LoadedTensor::F32(tensor))]),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         };
 
@@ -696,10 +855,10 @@ mod tests {
         assert!(!loader.tensors.contains_key("weight"));
     }
 
-    /// Build a minimal GGUF v3 file with one Q4_K tensor
-    /// (`blk.0.attn_q.weight`, dims [256, 128], 128 zero blocks) and no
-    /// metadata. The payload is all zeros, which dequantizes to zeros.
-    fn write_minimal_gguf_with_q4k_tensor() -> Vec<u8> {
+    /// Build a minimal GGUF v3 file with one K-family tensor
+    /// (`blk.0.attn_q.weight`, dims [256, blocks], zero payload) and no
+    /// metadata. Zero blocks dequantize to zeros.
+    fn write_minimal_gguf_with_k_tensor(dtype: u32, blocks: usize) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(b"GGUF");
         out.extend_from_slice(&3u32.to_le_bytes());
@@ -710,19 +869,22 @@ mod tests {
         out.extend_from_slice(name);
         out.extend_from_slice(&2u32.to_le_bytes()); // n_dims
         out.extend_from_slice(&256u64.to_le_bytes());
-        out.extend_from_slice(&128u64.to_le_bytes());
-        out.extend_from_slice(&12u32.to_le_bytes()); // q4_k
+        out.extend_from_slice(&(blocks as u64).to_le_bytes());
+        out.extend_from_slice(&(dtype).to_le_bytes());
         out.extend_from_slice(&0u64.to_le_bytes()); // offset
         while out.len() % 32 != 0 {
             out.push(0);
         }
-        out.resize(out.len() + 128 * crate::quant_k::Q4_K_BLOCK_BYTES, 0);
+        out.resize(
+            out.len() + blocks * crate::quant_k::k_block_bytes(dtype).unwrap(),
+            0,
+        );
         out
     }
 
     #[test]
     fn tensor_meta_records_original_gguf_dtype() {
-        let bytes = write_minimal_gguf_with_q4k_tensor();
+        let bytes = write_minimal_gguf_with_k_tensor(12, 128);
         let mut cursor = std::io::Cursor::new(bytes);
         let loader = load_gguf_from_reader(&mut cursor).unwrap();
 
@@ -744,5 +906,104 @@ mod tests {
             Some(LoadedTensor::F32(tensor)) => assert_eq!(tensor.shape(), &[256, 128]),
             _ => panic!("expected eager f32 tensor from the current loader"),
         }
+    }
+
+    #[test]
+    fn scalar_strategy_keeps_q4_k_compressed_resident() {
+        let bytes = write_minimal_gguf_with_k_tensor(12, 128);
+        let mut cursor = std::io::Cursor::new(bytes);
+        let loader = load_gguf_from_reader_with_k_strategy(
+            &mut cursor,
+            crate::quant_k::KStrategy::Scalar,
+            false,
+        )
+        .unwrap();
+
+        let decision = loader
+            .k_decisions
+            .get("blk.0.attn_q.weight")
+            .expect("per-tensor decision recorded");
+        assert_eq!(decision.gguf_dtype, 12);
+        assert_eq!(
+            decision.execution,
+            crate::quant_k::KExecution::CompressedScalar
+        );
+        assert!(decision.fallback_reason.is_none());
+
+        match loader.tensors.get("blk.0.attn_q.weight") {
+            Some(LoadedTensor::KQuant(weight)) => {
+                assert_eq!((weight.out_features(), weight.in_features()), (128, 256));
+                assert_eq!(weight.dtype(), crate::quant_k::KQuantDtype::Q4K);
+                assert_eq!(weight.byte_len(), 128 * crate::quant_k::Q4_K_BLOCK_BYTES);
+                assert!(!weight.is_mapped(), "reader loads are owned");
+            }
+            other => panic!(
+                "expected compressed KQuant tensor, got {}",
+                match other {
+                    Some(LoadedTensor::F32(_)) => "F32",
+                    Some(LoadedTensor::Q8_0(_)) => "Q8_0",
+                    Some(LoadedTensor::KQuant(_)) => "KQuant",
+                    None => "none",
+                }
+            ),
+        }
+    }
+
+    #[test]
+    fn auto_strategy_falls_back_to_eager_for_q2_k_with_recorded_reason() {
+        let bytes = write_minimal_gguf_with_k_tensor(10, 8); // q2_k, no native kernel
+        let mut cursor = std::io::Cursor::new(bytes);
+        let loader = load_gguf_from_reader_with_k_strategy(
+            &mut cursor,
+            crate::quant_k::KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+
+        let decision = loader
+            .k_decisions
+            .get("blk.0.attn_q.weight")
+            .expect("per-tensor decision recorded");
+        assert_eq!(decision.execution, crate::quant_k::KExecution::EagerF32);
+        let reason = decision
+            .fallback_reason
+            .as_deref()
+            .expect("auto fallback reason recorded");
+        assert!(reason.contains("q2_k"), "reason: {reason}");
+        assert!(matches!(
+            loader.tensors.get("blk.0.attn_q.weight"),
+            Some(LoadedTensor::F32(_))
+        ));
+    }
+
+    #[test]
+    fn scalar_strategy_hard_fails_q2_k_without_allow_fallback() {
+        let bytes = write_minimal_gguf_with_k_tensor(10, 8);
+        let mut cursor = std::io::Cursor::new(bytes);
+        let err = load_gguf_from_reader_with_k_strategy(
+            &mut cursor,
+            crate::quant_k::KStrategy::Scalar,
+            false,
+        )
+        .err()
+        .expect("scalar strategy must hard-fail q2_k without allow-fallback");
+        let message = err.to_string();
+        assert!(
+            message.contains("blk.0.attn_q.weight"),
+            "message: {message}"
+        );
+        assert!(message.contains("q2_k"), "message: {message}");
+
+        // with --k-allow-fallback the same file loads eager and records why
+        let mut cursor = std::io::Cursor::new(write_minimal_gguf_with_k_tensor(10, 8));
+        let loader = load_gguf_from_reader_with_k_strategy(
+            &mut cursor,
+            crate::quant_k::KStrategy::Scalar,
+            true,
+        )
+        .unwrap();
+        let decision = &loader.k_decisions["blk.0.attn_q.weight"];
+        assert_eq!(decision.execution, crate::quant_k::KExecution::EagerF32);
+        assert!(decision.fallback_reason.is_some());
     }
 }

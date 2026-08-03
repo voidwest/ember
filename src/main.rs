@@ -29,7 +29,7 @@ use ember::experiments::{
     PatchTarget, ZeroLayerOutput, ZeroLayerOutputSpec,
 };
 use ember::extraction::{sha256_file_result, ExecutionBackendName};
-use ember::loader::load_gguf;
+use ember::loader::load_gguf_with_k_strategy;
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use std::fs;
@@ -253,6 +253,17 @@ pub(crate) struct Args {
     /// write a reproducibility manifest that pins model, tokenizer, runtime, and environment
     #[arg(long)]
     write_run_manifest: Option<String>,
+
+    /// K-family (Q4_K/Q6_K) execution strategy; `auto` selects
+    /// compressed-resident execution for supported dtypes and eager-f32
+    /// for dtypes without a native kernel (recorded per tensor)
+    #[arg(long, default_value = "auto", value_parser = ["eager-f32", "scalar", "x86", "auto"])]
+    k_strategy: String,
+
+    /// allow per-tensor fallback (eager-f32/scalar) when the requested K
+    /// strategy has no native path; the fallback is recorded, never silent
+    #[arg(long)]
+    k_allow_fallback: bool,
 }
 
 #[derive(Subcommand)]
@@ -573,16 +584,24 @@ fn main() -> anyhow::Result<()> {
     validate_experiment_options(&args)?;
 
     if let Some(command) = &args.command {
+        let k_strategy =
+            ember::quant_k::KStrategy::from_cli(&args.k_strategy).map_err(anyhow::Error::msg)?;
         return match command {
-            Commands::Extract(command) => run_extract_command(command),
+            Commands::Extract(command) => {
+                run_extract_command(command, k_strategy, args.k_allow_fallback)
+            }
             Commands::NativeLogitsReference(command) => {
-                run_native_logits_reference_command(command)
+                run_native_logits_reference_command(command, k_strategy, args.k_allow_fallback)
             }
             Commands::ValidateRun(command) => run_validate_run_command(command),
             Commands::ValidateBackends(command) => run_validate_backends_command(command),
             Commands::CompareArtifacts(command) => run_compare_artifacts_command(command),
-            Commands::BenchDecode(command) => run_bench_decode_command(command),
-            Commands::BenchLifecycle(command) => run_bench_lifecycle_command(command),
+            Commands::BenchDecode(command) => {
+                run_bench_decode_command(command, k_strategy, args.k_allow_fallback)
+            }
+            Commands::BenchLifecycle(command) => {
+                run_bench_lifecycle_command(command, k_strategy, args.k_allow_fallback)
+            }
         };
     }
 
@@ -593,7 +612,9 @@ fn main() -> anyhow::Result<()> {
 
     // Dispatch to the selected architecture. Generation, demo, and probe paths
     // are generic over `ForwardModel`; interactive mode is still GPT-2-specific.
-    let loader = load_gguf(&args.model)?;
+    let k_strategy =
+        ember::quant_k::KStrategy::from_cli(&args.k_strategy).map_err(anyhow::Error::msg)?;
+    let loader = load_gguf_with_k_strategy(&args.model, k_strategy, args.k_allow_fallback)?;
     args.arch = resolve_generation_architecture(&args.arch, &loader)?;
     validate_experiment_options(&args)?;
     let n_tensors = loader.tensors.len();

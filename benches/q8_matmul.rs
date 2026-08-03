@@ -105,6 +105,9 @@ fn take_q8(loader: &mut ember::loader::GgufLoader, name: &str) -> anyhow::Result
     {
         LoadedTensor::Q8_0(weight) => Ok(weight),
         LoadedTensor::F32(_) => bail!("tensor '{name}' is not Q8_0"),
+        LoadedTensor::KQuant(_) => {
+            bail!("tensor '{name}' is not Q8_0 (K-quant benches land in v0.3 commit 11)")
+        }
     }
 }
 
