@@ -1910,13 +1910,11 @@ impl Llama<CpuBackend> {
             } else {
                 backend.matmul_q8_0_interleaved_into(norm, interleaved, &mut logits);
             }
+        } else if profile_operators {
+            let elapsed = backend.matmul_q8_0_into_timed(norm, head_weight, &mut logits);
+            record_profiled_q8(usize::MAX, "lm_head", head_weight, elapsed);
         } else {
-            if profile_operators {
-                let elapsed = backend.matmul_q8_0_into_timed(norm, head_weight, &mut logits);
-                record_profiled_q8(usize::MAX, "lm_head", head_weight, elapsed);
-            } else {
-                backend.matmul_q8_0_into(norm, 1, head_weight, &mut logits);
-            }
+            backend.matmul_q8_0_into(norm, 1, head_weight, &mut logits);
         }
         {
             let mut output = SliceActivation::new(1, head_weight.out_features(), &mut logits);
