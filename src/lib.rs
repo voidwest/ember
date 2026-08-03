@@ -7,6 +7,7 @@ pub mod decode_profile;
 pub mod experiments;
 pub mod extraction;
 pub mod gemma4;
+pub mod k_matmul;
 pub mod kv_cache;
 pub mod llama;
 pub mod loader;

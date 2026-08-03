@@ -1,0 +1,256 @@
+//! Scalar compressed-resident K-quant matmul kernels.
+//!
+//! The v0.3 reference execution path for Q4_K/Q6_K: weights stay packed,
+//! each 256-value super-block is dequantized into a thread-local scratch
+//! and dotted with the activation slice. There is no persistent f32
+//! expansion and no allocation in the hot path. These kernels are the
+//! oracle that the optimized x86 paths (v0.3 commits 7/8) are validated
+//! against, and the eager-f32 dequant-then-gemm path is *their* oracle.
+//!
+//! Layout: `KQuantWeight` stores super-blocks contiguous per output
+//! feature (`[out, in]`, GGUF dims reversed), matching the Q8_0
+//! convention.
+
+use crate::quant_k::{dequant_q6_k, KQuantDtype, KQuantWeight, Q6_K_BLOCK_BYTES, QK_K};
+
+// One dequantized super-block per thread (256 f32 = 1 KiB).
+thread_local! {
+    static BLOCK_SCRATCH: std::cell::RefCell<[f32; QK_K]> =
+        const { std::cell::RefCell::new([0.0f32; QK_K]) };
+}
+
+/// Scalar compressed-resident matmul: `dst = src × w`.
+///
+/// `src` is `[rows, in_features]` row-major f32; `dst` is
+/// `[rows, out_features]` row-major f32 and must be **zero-initialized**
+/// by the caller (the kernel accumulates, matching the Q8_0 `_into`
+/// convention).
+///
+/// Returns an explicit error for source/destination length mismatches.
+/// Unsupported dtypes are a hard error — never a silent conversion to a
+/// persistent f32 representation.
+pub fn matmul_k_scalar_into(
+    src: &[f32],
+    rows: usize,
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) -> Result<(), String> {
+    let in_features = w.in_features();
+    let out_features = w.out_features();
+    let expected_src = rows
+        .checked_mul(in_features)
+        .ok_or_else(|| "matmul_k_scalar: input shape product overflow".to_string())?;
+    if src.len() != expected_src {
+        return Err(format!(
+            "matmul_k_scalar: src len {} != rows {rows} * in_features {in_features}",
+            src.len()
+        ));
+    }
+    let expected_dst = rows
+        .checked_mul(out_features)
+        .ok_or_else(|| "matmul_k_scalar: output shape product overflow".to_string())?;
+    if dst.len() != expected_dst {
+        return Err(format!(
+            "matmul_k_scalar: dst len {} != rows {rows} * out_features {out_features}",
+            dst.len()
+        ));
+    }
+    match w.dtype() {
+        KQuantDtype::Q6K => matmul_k_scalar_with(dequant_q6_k, Q6_K_BLOCK_BYTES, src, rows, w, dst),
+        KQuantDtype::Q4K => {
+            Err("matmul_k_scalar: q4_k scalar kernel not yet wired (v0.3 commit 4)".to_string())
+        }
+    }
+}
+
+/// Shared scalar kernel body. `dequant` must dequantize one
+/// `block_bytes`-sized super-block into `[f32; QK_K]`.
+///
+/// Indexing is in bounds by construction: `KQuantWeight` validation
+/// guarantees `data.len() == out_features * blocks_per_row * block_bytes`
+/// and every slice below is derived from those checked quantities.
+fn matmul_k_scalar_with(
+    dequant: fn(&[u8], &mut [f32]),
+    block_bytes: usize,
+    src: &[f32],
+    rows: usize,
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) -> Result<(), String> {
+    let in_features = w.in_features();
+    let out_features = w.out_features();
+    let blocks_per_row = w.blocks_per_row();
+    let data = w.data();
+    for j in 0..out_features {
+        let row_bytes = j * blocks_per_row * block_bytes;
+        for b in 0..blocks_per_row {
+            let block = &data[row_bytes + b * block_bytes..row_bytes + (b + 1) * block_bytes];
+            BLOCK_SCRATCH.with(|scratch| {
+                let mut scratch = scratch.borrow_mut();
+                dequant(block, &mut scratch[..QK_K]);
+                let x_base = b * QK_K;
+                for r in 0..rows {
+                    let x_row = r * in_features;
+                    let mut acc = 0.0f32;
+                    for k in 0..QK_K {
+                        acc += src[x_row + x_base + k] * scratch[k];
+                    }
+                    dst[r * out_features + j] += acc;
+                }
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tensor::CpuTensor;
+
+    /// Deterministic pseudo-random Q6_K block payload with sanitized f16
+    /// scale (offset 208): random bytes must not produce NaN/Inf scales.
+    fn seeded_q6_blocks(blocks: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        let mut bytes = vec![0u8; blocks * Q6_K_BLOCK_BYTES];
+        for byte in &mut bytes {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            *byte = (state >> 33) as u8;
+        }
+        for block in bytes.chunks_exact_mut(Q6_K_BLOCK_BYTES) {
+            let bits = u16::from_le_bytes([block[208], block[209]]);
+            let bits = bits & 0x7FFF;
+            let bits = if bits >= 0x7C00 { 0x3C00 } else { bits };
+            block[208..210].copy_from_slice(&bits.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Deterministic activations in [-4, 4).
+    fn seeded_activations(count: usize, seed: u64) -> Vec<f32> {
+        let mut state = seed;
+        let mut values = Vec::with_capacity(count);
+        for _ in 0..count {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let v = (state >> 33) as u32 as i32;
+            values.push(v as f32 * (4.0 / 2147483648.0));
+        }
+        values
+    }
+
+    /// The eager-f32 oracle: `dequantize_all` ([out, in], contiguous per
+    /// output row) transposed to the model's `[in, out]` layout, then a
+    /// dense `CpuTensor::matmul` — exactly the reference path the scalar
+    /// compressed kernels are validated against.
+    fn eager_reference(w: &KQuantWeight, src: &[f32], rows: usize) -> Vec<f32> {
+        let w_full = w.dequantize_all().transpose();
+        let x = CpuTensor::from_data(vec![rows, w.in_features()], src.to_vec());
+        x.matmul(&w_full).data().to_vec()
+    }
+
+    /// Gate A (contract doc section 9):
+    /// `max_abs <= 1e-4 * max(1, max_abs_ref)`.
+    fn assert_gate_a(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len());
+        let scale = expected.iter().fold(0.0f32, |m, v| m.max(v.abs())).max(1.0);
+        let mut max_abs = 0.0f32;
+        for (a, e) in actual.iter().zip(expected) {
+            max_abs = max_abs.max((a - e).abs());
+        }
+        let gate = 1e-4 * scale;
+        assert!(
+            max_abs <= gate,
+            "Gate A exceeded: max_abs {max_abs} > {gate} (scale {scale})"
+        );
+    }
+
+    #[test]
+    fn q6_k_scalar_matches_eager_oracle_across_shapes() {
+        for (rows, in_features, out_features) in [
+            (1, 256, 128),
+            (2, 512, 512),
+            (8, 2048, 1536),
+            (32, 256, 512),
+            (1, 3584, 256),
+            (4, 2048, 2048),
+        ] {
+            let blocks = in_features / 256 * out_features;
+            let weight = KQuantWeight::new(
+                seeded_q6_blocks(blocks, 0x51_00 + rows as u64 * 101 + in_features as u64),
+                [out_features, in_features],
+                KQuantDtype::Q6K,
+            );
+            let src = seeded_activations(rows * in_features, 0xAC_00 + out_features as u64);
+            let expected = eager_reference(&weight, &src, rows);
+            let mut actual = vec![0.0f32; rows * out_features];
+            matmul_k_scalar_into(&src, rows, &weight, &mut actual).unwrap();
+            assert_gate_a(&actual, &expected);
+        }
+    }
+
+    #[test]
+    fn q6_k_zero_scale_blocks_contribute_exactly_zero() {
+        // d = 0 (f16 zero at offset 208) dequantizes every value to 0.0,
+        // so the row must stay exactly zero — not merely small.
+        let mut bytes = seeded_q6_blocks(2, 0x0D);
+        bytes[208..210].copy_from_slice(&0u16.to_le_bytes());
+        bytes[208 + Q6_K_BLOCK_BYTES..210 + Q6_K_BLOCK_BYTES].copy_from_slice(&0u16.to_le_bytes());
+        let weight = KQuantWeight::new(bytes, [1, 512], KQuantDtype::Q6K);
+        let src = seeded_activations(2 * 512, 0x0E);
+        let mut actual = vec![1.0f32; 2]; // nonzero sentinel: accumulation must not disturb
+        matmul_k_scalar_into(&src, 2, &weight, &mut actual).unwrap();
+        assert_eq!(actual, vec![1.0; 2]);
+    }
+
+    #[test]
+    fn q6_k_negative_scales_and_extreme_quants_pass_gate() {
+        // scales pinned to int8 extremes and ql/qh saturated; exercises
+        // sign extension and the 6-bit nibble reconstruction.
+        let mut bytes = seeded_q6_blocks(4, 0x1F);
+        for block in bytes.chunks_exact_mut(Q6_K_BLOCK_BYTES) {
+            block[208..210].copy_from_slice(&half::f16::from_f32(1.0).to_bits().to_le_bytes());
+            block[192..208].fill(0x80); // all scales = -128
+            block[0..128].fill(0xFF); // ql all set
+            block[128..192].fill(0xFF); // qh all set
+        }
+        let weight = KQuantWeight::new(bytes, [1, 1024], KQuantDtype::Q6K);
+        let src = seeded_activations(2 * 1024, 0x20);
+        let expected = eager_reference(&weight, &src, 2);
+        let mut actual = vec![0.0f32; 2];
+        matmul_k_scalar_into(&src, 2, &weight, &mut actual).unwrap();
+        assert_gate_a(&actual, &expected);
+        assert!(actual.iter().all(|v| v.is_finite()));
+        // with d = 1 and scale -128 the values are large and negative
+        assert!(
+            actual[0] < -1e6,
+            "expected large negative accumulation, got {}",
+            actual[0]
+        );
+    }
+
+    #[test]
+    fn matmul_rejects_length_mismatches() {
+        let weight = KQuantWeight::new(seeded_q6_blocks(1, 0x21), [1, 256], KQuantDtype::Q6K);
+        let src = seeded_activations(256, 0x22);
+        let mut dst = vec![0.0f32; 1];
+        // src too short
+        assert!(matmul_k_scalar_into(&src[..255], 1, &weight, &mut dst).is_err());
+        // dst too short
+        assert!(matmul_k_scalar_into(&src, 1, &weight, &mut dst[..0]).is_err());
+        // rows inconsistent with src length
+        let mut short_dst = vec![0.0f32; 2];
+        assert!(matmul_k_scalar_into(&src, 2, &weight, &mut short_dst).is_err());
+    }
+
+    #[test]
+    fn q4_k_arm_is_hard_error_until_wired() {
+        let weight = KQuantWeight::new(vec![0u8; 2 * 144], [2, 256], KQuantDtype::Q4K);
+        let mut dst = vec![0.0f32; 4];
+        let err = matmul_k_scalar_into(&[0.0f32; 512], 2, &weight, &mut dst).unwrap_err();
+        assert!(err.contains("q4_k"), "unexpected error: {err}");
+    }
+}
