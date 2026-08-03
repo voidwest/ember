@@ -308,7 +308,7 @@ impl CaptureSink {
             ActivationStage::BeforeLogits,
             0,
             execution.start_position,
-            execution.input_token_count,
+            tensor.shape()[0],
             tensor,
             dispatch,
         )
@@ -325,7 +325,7 @@ impl CaptureSink {
             ActivationStage::AfterLogits,
             0,
             execution.start_position,
-            execution.input_token_count,
+            tensor.shape()[0],
             tensor,
             dispatch,
         )

@@ -17,6 +17,7 @@
 //! - greedy tokens identical.
 
 use ember::backend::CpuBackend;
+use ember::experiments::ExperimentalForwardModel;
 use ember::loader::{load_gguf_with_k_strategy, GgufLoader};
 use ember::model::ForwardModel;
 use ember::quant_k::KStrategy;
@@ -221,5 +222,88 @@ fn compressed_and_x86_match_eager_across_frozen_prompts() {
         } else {
             eprintln!("skipped x86 comparison for {label}: AVX2 unavailable");
         }
+    }
+}
+
+/// A no-op experiment: every hook is observational, so active-hook
+/// plumbing must leave outputs bit-identical to the uninstrumented path.
+struct NoopExperiment;
+
+impl ember::experiments::Experiment for NoopExperiment {
+    fn name(&self) -> &'static str {
+        "noop"
+    }
+}
+
+/// Inactive-hook equivalence on the compressed path (contract section 8):
+/// firing the full ActiveHooks machinery with a no-op experiment must not
+/// alter logits or tokens.
+#[test]
+fn inactive_hooks_do_not_alter_compressed_outputs() {
+    let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
+        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
+        return;
+    };
+    let (model, tokenizer) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    let backend = CpuBackend;
+    let prompt = FROZEN_PROMPTS[0];
+    let ids = tokenizer.encode(prompt).expect("encode");
+
+    // plain run (DisabledHooks)
+    let plain = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
+
+    // hooked run (ActiveHooks -> noop experiment)
+    let model_context = ember::experiments::ModelContext::new(
+        ember::experiments::ModelFamily::Llama,
+        None,
+        "llama",
+        model.n_layers(),
+        model.embed_dim(),
+    );
+    let mut cache = model.create_cache(&backend, 2048);
+    let mut tokens = Vec::new();
+    let mut hooked_logits = Vec::new();
+    let mut position = 0usize;
+    let mut current = ids.clone();
+    for _ in 0..decode_tokens {
+        let token_count = current.len();
+        let execution = ember::experiments::ExecutionContext::new(
+            model_context,
+            if position == 0 {
+                ember::experiments::ExecutionPhase::Prefill
+            } else {
+                ember::experiments::ExecutionPhase::Decode
+            },
+            position,
+            token_count,
+            ember::experiments::TracingState::Disabled,
+        );
+        let mut runner = ember::experiments::ExperimentRunner::new(NoopExperiment);
+        let logits = model
+            .forward_last_logits_with_experiment(
+                &backend,
+                &current,
+                &mut cache,
+                position,
+                execution,
+                &mut runner,
+            )
+            .expect("hooked forward");
+        let data = logits.data();
+        hooked_logits.push(data.to_vec());
+        tokens.push(ember::sampler::argmax_token(data) as u32);
+        position += current.len();
+        current = vec![*tokens.last().expect("token pushed")];
+    }
+
+    assert_eq!(
+        plain.tokens, tokens,
+        "hooked (noop) run diverged tokens from the plain run"
+    );
+    for (step, (expected, actual)) in plain.decode_logits.iter().zip(&hooked_logits).enumerate() {
+        assert_eq!(
+            expected, actual,
+            "hooked (noop) run diverged logits at decode step {step}"
+        );
     }
 }
