@@ -1,0 +1,16 @@
+{
+  "model_path": "/home/west/ember/models/v03-ladder/llama-3.2-1b-q6_k.gguf",
+  "architecture": "llama",
+  "tokenizer_path": "tokenizer.json",
+  "backend": "native",
+  "prompt_template": "{prompt}",
+  "input_jsonl_path": "/home/west/ember/artifacts/golden-v03/llama-3.2-1b-q6_k/input.jsonl",
+  "output_dir": "/home/west/ember/artifacts/golden-v03/llama-3.2-1b-q6_k/out",
+  "layers": [],
+  "token_position": "prompt_final",
+  "word_field": "prompt",
+  "sample_id_field": "id",
+  "write_logits": true,
+  "record_model_sha256": true,
+  "max_seq_len": 128
+}

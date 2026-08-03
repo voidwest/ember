@@ -2003,6 +2003,30 @@ impl Llama<CpuBackend> {
         }
 
         let mut config = LlamaConfig::from_gguf_metadata(&loader);
+        // Some Qwen2.5 GGUFs omit the family vocab_size key (a converter
+        // quirk seen in the v0.3 validation artifacts). When the key is
+        // absent, the token embedding tensor's row count is authoritative
+        // for the vocabulary. This only fires for a missing key; a
+        // present-but-wrong key stays a hard error downstream.
+        let vocab_key_missing = matches!(
+            loader.metadata.get("general.architecture"),
+            Some(crate::loader::GgufValue::Str(arch))
+                if matches!(arch.as_str(), "qwen2" | "qwen3")
+        ) && !loader.metadata.contains_key("qwen2.vocab_size");
+        if vocab_key_missing {
+            // GGUF token_embd dims are [n_embd, n_vocab] (first dim
+            // contiguous); the vocab dimension is the second.
+            if let Some(meta) = loader.tensor_meta.get("token_embd.weight") {
+                if let Some(&rows) = meta.dims.get(1) {
+                    if config.vocab_size != rows {
+                        log::warn!(
+                            "qwen2.vocab_size metadata missing; using token_embd rows ({rows}) for vocab_size"
+                        );
+                        config.vocab_size = rows;
+                    }
+                }
+            }
+        }
         config.validate()?;
         if let Some(max_seq_len) = max_seq_len {
             anyhow::ensure!(

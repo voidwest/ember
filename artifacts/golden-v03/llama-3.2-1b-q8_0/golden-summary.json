@@ -1,0 +1,30 @@
+{
+  "label": "llama-3.2-1b-q8_0",
+  "samples": 2,
+  "top1_matches": 2,
+  "overall_max_abs_diff": 0.5898115634918213,
+  "overall_mean_abs_diff": 0.08690149337053299,
+  "overall_min_cosine": 0.9995112368565225,
+  "gates": {
+    "max_abs": 1.0,
+    "mean_abs": 0.2,
+    "min_cosine": 0.998
+  },
+  "passed": true,
+  "per_sample": [
+    {
+      "sample": 0,
+      "max_abs": 0.27119874954223633,
+      "mean_abs": 0.05106930434703827,
+      "cosine": 0.9996860409935561,
+      "top1": true
+    },
+    {
+      "sample": 1,
+      "max_abs": 0.5898115634918213,
+      "mean_abs": 0.08690149337053299,
+      "cosine": 0.9995112368565225,
+      "top1": true
+    }
+  ]
+}

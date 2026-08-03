@@ -86,3 +86,10 @@ data/**/*.npz
 data/**/activations.npy
 data/**/*_activations_correctness.json
 data/**/*_activations_metadata.json
+
+# v0.3 ladder: the quantizer manifest is research data; the GGUFs stay ignored
+!models/v03-ladder/ladder-manifest.json
+# v0.3 golden raw logits: reports/summaries are tracked, npys are regenerable
+artifacts/golden-v03/*.npy
+# v0.3 golden ember-side extraction dirs: regenerable, summaries are the evidence
+artifacts/golden-v03/*/out/

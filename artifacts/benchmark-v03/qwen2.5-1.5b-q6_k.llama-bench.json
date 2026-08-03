@@ -1,0 +1,115 @@
+[
+  {
+    "build_commit": "47c786924",
+    "build_number": 9999,
+    "cpu_info": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "gpu_info": "",
+    "backends": "CPU",
+    "model_filename": "/home/west/ember/models/v03-ladder/qwen2.5-1.5b-q6_k.gguf",
+    "model_type": "qwen2 1.5B Q6_K",
+    "model_size": 1458228224,
+    "model_n_params": 1777088000,
+    "n_batch": 2048,
+    "n_ubatch": 512,
+    "n_threads": 8,
+    "cpu_mask": "0x0",
+    "cpu_strict": false,
+    "poll": 50,
+    "type_k": "f16",
+    "type_v": "f16",
+    "n_gpu_layers": -1,
+    "n_cpu_moe": 0,
+    "split_mode": "layer",
+    "main_gpu": 0,
+    "no_kv_offload": false,
+    "flash_attn": -1,
+    "devices": "auto",
+    "tensor_split": "0.00",
+    "tensor_buft_overrides": "none",
+    "use_mmap": true,
+    "use_direct_io": false,
+    "embeddings": false,
+    "no_op_offload": 0,
+    "no_host": false,
+    "fit_target": 0,
+    "fit_min_ctx": 0,
+    "n_prompt": 8,
+    "n_gen": 0,
+    "n_depth": 0,
+    "test_time": "2026-08-03T06:38:12Z",
+    "avg_ns": 205010997,
+    "stddev_ns": 7152573,
+    "avg_ts": 39.053437,
+    "stddev_ts": 1.338908,
+    "samples_ns": [ 199773941, 202098790, 213160261 ],
+    "samples_ts": [ 40.0453, 39.5846, 37.5304 ]
+  },
+  {
+    "build_commit": "47c786924",
+    "build_number": 9999,
+    "cpu_info": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "gpu_info": "",
+    "backends": "CPU",
+    "model_filename": "/home/west/ember/models/v03-ladder/qwen2.5-1.5b-q6_k.gguf",
+    "model_type": "qwen2 1.5B Q6_K",
+    "model_size": 1458228224,
+    "model_n_params": 1777088000,
+    "n_batch": 2048,
+    "n_ubatch": 512,
+    "n_threads": 8,
+    "cpu_mask": "0x0",
+    "cpu_strict": false,
+    "poll": 50,
+    "type_k": "f16",
+    "type_v": "f16",
+    "n_gpu_layers": -1,
+    "n_cpu_moe": 0,
+    "split_mode": "layer",
+    "main_gpu": 0,
+    "no_kv_offload": false,
+    "flash_attn": -1,
+    "devices": "auto",
+    "tensor_split": "0.00",
+    "tensor_buft_overrides": "none",
+    "use_mmap": true,
+    "use_direct_io": false,
+    "embeddings": false,
+    "no_op_offload": 0,
+    "no_host": false,
+    "fit_target": 0,
+    "fit_min_ctx": 0,
+    "n_prompt": 0,
+    "n_gen": 16,
+    "n_depth": 0,
+    "test_time": "2026-08-03T06:38:13Z",
+    "avg_ns": 683308807,
+    "stddev_ns": 86898153,
+    "avg_ts": 23.653102,
+    "stddev_ts": 2.802853,
+    "samples_ns": [ 635164351, 783623224, 631138848 ],
+    "samples_ts": [ 25.1903, 20.418, 25.351 ]
+  }
+]
+	Command being timed: "/home/west/.cache/ember/llama.cpp/build/bin/llama-bench -m /home/west/ember/models/v03-ladder/qwen2.5-1.5b-q6_k.gguf -p 8 -n 16 -t 8 -r 3 -o json"
+	User time (seconds): 22.08
+	System time (seconds): 0.12
+	Percent of CPU this job got: 652%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.40
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1496448
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 116
+	Minor (reclaiming a frame) page faults: 18818
+	Voluntary context switches: 930
+	Involuntary context switches: 7207
+	Swaps: 0
+	File system inputs: 383584
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

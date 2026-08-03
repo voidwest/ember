@@ -1,0 +1,48 @@
+{
+  "architecture": "llama",
+  "benchmark": "decode",
+  "git_commit": "5eb35966850651e542c006be718472dc3e980f37",
+  "k_compressed_bytes": 0,
+  "k_expanded_bytes": 4942987264,
+  "k_fallback_count": 0,
+  "k_strategy": "eager-f32",
+  "k_tensor_count": 113,
+  "median_ns": 76742215658,
+  "median_tokens_per_second": 0.8339608056824238,
+  "model": "/home/west/ember/models/v03-ladder/llama-3.2-1b-q6_k.gguf",
+  "model_file_size_bytes": 1021800288,
+  "operator_profile": null,
+  "repetitions": 3,
+  "run_metadata": {
+    "build_mode": "release",
+    "commit_hash": "unknown",
+    "cpu_cores_logical": 8,
+    "cpu_cores_physical": 4,
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "frequency_governor": "powersave",
+    "kernel_version": "Linux version 7.1.4-arch1-1 (linux@archlinux) (gcc (GCC) 16.1.1 20260625, GNU ld (GNU Binutils) 2.46.1) #1 SMP PREEMPT_DYNAMIC Sat, 18 Jul 2026 17:30:57 +0000",
+    "rust_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "thread_count": 8
+  },
+  "samples_ns": [
+    76197453852,
+    76742215658,
+    81646866954
+  ],
+  "samples_tokens_per_second": [
+    0.839923078326326,
+    0.8339608056824238,
+    0.7838635135388321
+  ],
+  "schema_version": 1,
+  "threads": 8,
+  "timing_excludes": [
+    "model_load",
+    "prefill",
+    "tokenization",
+    "sampling"
+  ],
+  "token_id": 1,
+  "tokens": 64,
+  "warmups": 1
+}

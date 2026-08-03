@@ -1040,6 +1040,7 @@ pub(crate) fn run_bench_decode_command(
     }
 
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, k_allow_fallback)?;
+    let execution_inventory = ember::artifact::ExecutionInventory::from_loader(&loader);
     let architecture = resolve_generation_architecture(&command.arch, &loader)?;
     if command.profile_operators && !matches!(architecture.as_str(), "llama" | "qwen3") {
         anyhow::bail!(
@@ -1050,16 +1051,16 @@ pub(crate) fn run_bench_decode_command(
     match architecture.as_str() {
         "gpt2" => {
             let model = Gpt2::from_loader(loader)?;
-            bench_decode_model(&backend, &model, command)
+            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
         }
         "llama" | "qwen3" => {
             let model =
                 ember::llama::Llama::from_loader_with_max_seq_len(loader, command.max_seq_len)?;
-            bench_decode_model(&backend, &model, command)
+            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
         }
         "gemma4" => {
             let model = ember::gemma4::Gemma4::from_loader(loader)?;
-            bench_decode_model(&backend, &model, command)
+            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
         }
         architecture => anyhow::bail!("unsupported architecture: {architecture}"),
     }
@@ -1380,6 +1381,8 @@ pub(crate) fn bench_decode_model<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
     command: &BenchDecodeCommand,
+    k_strategy: ember::quant_k::KStrategy,
+    execution_inventory: &ember::artifact::ExecutionInventory,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -1474,6 +1477,11 @@ where
         "model_file_size_bytes": fs::metadata(&command.model).ok().map(|metadata| metadata.len()),
         "architecture": command.arch,
         "git_commit": git_commit(),
+        "k_strategy": k_strategy.name(),
+        "k_tensor_count": execution_inventory.summary.tensor_count,
+        "k_fallback_count": execution_inventory.summary.fallback_count,
+        "k_compressed_bytes": execution_inventory.summary.compressed_bytes,
+        "k_expanded_bytes": execution_inventory.summary.expanded_bytes,
         "tokens": command.tokens,
         "warmups": command.warmups,
         "repetitions": command.repetitions,

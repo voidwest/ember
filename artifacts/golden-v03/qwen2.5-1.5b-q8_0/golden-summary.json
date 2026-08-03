@@ -1,0 +1,30 @@
+{
+  "label": "qwen2.5-1.5b-q8_0",
+  "samples": 2,
+  "top1_matches": 2,
+  "overall_max_abs_diff": 0.8219180107116699,
+  "overall_mean_abs_diff": 0.14061497151851654,
+  "overall_min_cosine": 0.9991478054831919,
+  "gates": {
+    "max_abs": 2.0,
+    "mean_abs": 0.3,
+    "min_cosine": 0.995
+  },
+  "passed": true,
+  "per_sample": [
+    {
+      "sample": 0,
+      "max_abs": 0.2693042755126953,
+      "mean_abs": 0.04855285584926605,
+      "cosine": 0.9998182223061792,
+      "top1": true
+    },
+    {
+      "sample": 1,
+      "max_abs": 0.8219180107116699,
+      "mean_abs": 0.14061497151851654,
+      "cosine": 0.9991478054831919,
+      "top1": true
+    }
+  ]
+}

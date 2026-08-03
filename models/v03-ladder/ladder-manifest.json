@@ -1,0 +1,50 @@
+[
+  {
+    "family": "llama-3.2-1b",
+    "rung": "q8_0",
+    "quantizer_commit": "47c786924ad1ab7e91da2cdc72fcdb563780c2bd",
+    "command": "llama quantize /tmp/llama-3.2-1b-f16.gguf /home/west/ember/models/v03-ladder/llama-3.2-1b-q8_0.gguf q8_0",
+    "source": {
+      "path": "/tmp/llama-3.2-1b-f16.gguf",
+      "sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "bytes": 2479595360
+    },
+    "target": {
+      "path": "/home/west/ember/models/v03-ladder/llama-3.2-1b-q8_0.gguf",
+      "sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "bytes": 1321082720
+    }
+  },
+  {
+    "family": "llama-3.2-1b",
+    "rung": "q6_k",
+    "quantizer_commit": "47c786924ad1ab7e91da2cdc72fcdb563780c2bd",
+    "command": "llama quantize /tmp/llama-3.2-1b-f16.gguf /home/west/ember/models/v03-ladder/llama-3.2-1b-q6_k.gguf q6_k",
+    "source": {
+      "path": "/tmp/llama-3.2-1b-f16.gguf",
+      "sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "bytes": 2479595360
+    },
+    "target": {
+      "path": "/home/west/ember/models/v03-ladder/llama-3.2-1b-q6_k.gguf",
+      "sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "bytes": 1021800288
+    }
+  },
+  {
+    "family": "llama-3.2-1b",
+    "rung": "q4_k_m",
+    "quantizer_commit": "47c786924ad1ab7e91da2cdc72fcdb563780c2bd",
+    "command": "llama quantize /tmp/llama-3.2-1b-f16.gguf /home/west/ember/models/v03-ladder/llama-3.2-1b-q4_k_m.gguf q4_k_m",
+    "source": {
+      "path": "/tmp/llama-3.2-1b-f16.gguf",
+      "sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+      "bytes": 2479595360
+    },
+    "target": {
+      "path": "/home/west/ember/models/v03-ladder/llama-3.2-1b-q4_k_m.gguf",
+      "sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "bytes": 807694176
+    }
+  }
+]
