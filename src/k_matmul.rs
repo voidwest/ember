@@ -11,7 +11,9 @@
 //! feature (`[out, in]`, GGUF dims reversed), matching the Q8_0
 //! convention.
 
-use crate::quant_k::{dequant_q6_k, KQuantDtype, KQuantWeight, Q6_K_BLOCK_BYTES, QK_K};
+use crate::quant_k::{
+    dequant_q4_k, dequant_q6_k, KQuantDtype, KQuantWeight, Q4_K_BLOCK_BYTES, Q6_K_BLOCK_BYTES, QK_K,
+};
 
 // One dequantized super-block per thread (256 f32 = 1 KiB).
 thread_local! {
@@ -57,9 +59,7 @@ pub fn matmul_k_scalar_into(
     }
     match w.dtype() {
         KQuantDtype::Q6K => matmul_k_scalar_with(dequant_q6_k, Q6_K_BLOCK_BYTES, src, rows, w, dst),
-        KQuantDtype::Q4K => {
-            Err("matmul_k_scalar: q4_k scalar kernel not yet wired (v0.3 commit 4)".to_string())
-        }
+        KQuantDtype::Q4K => matmul_k_scalar_with(dequant_q4_k, Q4_K_BLOCK_BYTES, src, rows, w, dst),
     }
 }
 
@@ -140,6 +140,28 @@ mod tests {
             values.push(v as f32 * (4.0 / 2147483648.0));
         }
         values
+    }
+
+    /// Deterministic pseudo-random Q4_K block payload with sanitized f16
+    /// scale/min fields (offsets 0 and 2).
+    fn seeded_q4_blocks(blocks: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        let mut bytes = vec![0u8; blocks * Q4_K_BLOCK_BYTES];
+        for byte in &mut bytes {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            *byte = (state >> 33) as u8;
+        }
+        for block in bytes.chunks_exact_mut(Q4_K_BLOCK_BYTES) {
+            for offset in [0usize, 2] {
+                let bits = u16::from_le_bytes([block[offset], block[offset + 1]]);
+                let bits = bits & 0x7FFF;
+                let bits = if bits >= 0x7C00 { 0x3C00 } else { bits };
+                block[offset..offset + 2].copy_from_slice(&bits.to_le_bytes());
+            }
+        }
+        bytes
     }
 
     /// The eager-f32 oracle: `dequantize_all` ([out, in], contiguous per
@@ -247,10 +269,92 @@ mod tests {
     }
 
     #[test]
-    fn q4_k_arm_is_hard_error_until_wired() {
-        let weight = KQuantWeight::new(vec![0u8; 2 * 144], [2, 256], KQuantDtype::Q4K);
-        let mut dst = vec![0.0f32; 4];
-        let err = matmul_k_scalar_into(&[0.0f32; 512], 2, &weight, &mut dst).unwrap_err();
-        assert!(err.contains("q4_k"), "unexpected error: {err}");
+    fn q4_k_scalar_matches_eager_oracle_across_shapes() {
+        for (rows, in_features, out_features) in [
+            (1, 256, 128),
+            (2, 512, 512),
+            (8, 2048, 1536),
+            (32, 256, 512),
+            (1, 3584, 256),
+            (4, 2048, 2048),
+        ] {
+            let blocks = in_features / 256 * out_features;
+            let weight = KQuantWeight::new(
+                seeded_q4_blocks(blocks, 0x41_00 + rows as u64 * 101 + in_features as u64),
+                [out_features, in_features],
+                KQuantDtype::Q4K,
+            );
+            let src = seeded_activations(rows * in_features, 0x4C_00 + out_features as u64);
+            let expected = eager_reference(&weight, &src, rows);
+            let mut actual = vec![0.0f32; rows * out_features];
+            matmul_k_scalar_into(&src, rows, &weight, &mut actual).unwrap();
+            assert_gate_a(&actual, &expected);
+        }
+    }
+
+    #[test]
+    fn q4_k_zero_scale_and_min_contribute_exactly_zero() {
+        // d = 0 and min = 0 (f16 zeros at offsets 0 and 2) dequantize
+        // every value to 0.0, so the row must stay exactly zero.
+        let mut bytes = seeded_q4_blocks(2, 0x4D);
+        for block in bytes.chunks_exact_mut(Q4_K_BLOCK_BYTES) {
+            block[0..4].fill(0);
+        }
+        let weight = KQuantWeight::new(bytes, [1, 512], KQuantDtype::Q4K);
+        let src = seeded_activations(2 * 512, 0x4E);
+        let mut actual = vec![1.0f32; 2]; // nonzero sentinel: accumulation must not disturb
+        matmul_k_scalar_into(&src, 2, &weight, &mut actual).unwrap();
+        assert_eq!(actual, vec![1.0; 2]);
+    }
+
+    #[test]
+    fn q4_k_saturated_scale_fields_and_quants_pass_gate() {
+        // every 6-bit scale/min field pinned to 63 and every nibble set:
+        // exercises the 12-byte K4 scale bit-reshuffle (get_scale_min_k4)
+        // and the low/high nibble pairing.
+        let mut bytes = seeded_q4_blocks(4, 0x4F);
+        for block in bytes.chunks_exact_mut(Q4_K_BLOCK_BYTES) {
+            block[0..2].copy_from_slice(&half::f16::from_f32(1.0).to_bits().to_le_bytes());
+            block[2..4].copy_from_slice(&half::f16::from_f32(1.0).to_bits().to_le_bytes());
+            block[4..16].fill(0xFF); // all 6-bit scale/min fields = 63
+            block[16..144].fill(0xFF); // all quants = 15
+        }
+        let weight = KQuantWeight::new(bytes, [1, 1024], KQuantDtype::Q4K);
+        let src = seeded_activations(2 * 1024, 0x50);
+        let expected = eager_reference(&weight, &src, 2);
+        let mut actual = vec![0.0f32; 2];
+        matmul_k_scalar_into(&src, 2, &weight, &mut actual).unwrap();
+        assert_gate_a(&actual, &expected);
+        assert!(actual.iter().all(|v| v.is_finite()));
+    }
+
+    #[test]
+    fn q4_k_zero_scale_keeps_min_contribution() {
+        // d = 0 with min != 0: every value is -min*m (scale fields 63),
+        // so the row equals -(63 * min) * sum(x) — the min path must
+        // survive a zero scale.
+        let mut bytes = seeded_q4_blocks(1, 0x51);
+        bytes[0..2].fill(0); // d = 0
+        bytes[2..4].copy_from_slice(&half::f16::from_f32(2.0).to_bits().to_le_bytes()); // min = 2
+        bytes[4..16].fill(0xFF); // sc/m = 63
+        bytes[16..144].fill(0x00); // all quants = 0
+        let weight = KQuantWeight::new(bytes, [1, 256], KQuantDtype::Q4K);
+        let src = seeded_activations(256, 0x52);
+        let expected = eager_reference(&weight, &src, 1);
+        let mut actual = vec![0.0f32; 1];
+        matmul_k_scalar_into(&src, 1, &weight, &mut actual).unwrap();
+        assert_gate_a(&actual, &expected);
+        // value = d*sc*q - min*m = 0 - 2*63 = -126 per element
+        let sum: f32 = src.iter().sum();
+        assert!((actual[0] + 126.0 * sum).abs() <= 1e-3 * (126.0 * sum).abs().max(1.0));
+    }
+
+    #[test]
+    fn q4_k_length_mismatches_are_rejected() {
+        let weight = KQuantWeight::new(seeded_q4_blocks(1, 0x53), [1, 256], KQuantDtype::Q4K);
+        let src = seeded_activations(256, 0x54);
+        let mut dst = vec![0.0f32; 1];
+        assert!(matmul_k_scalar_into(&src[..255], 1, &weight, &mut dst).is_err());
+        assert!(matmul_k_scalar_into(&src, 1, &weight, &mut dst[..0]).is_err());
     }
 }
