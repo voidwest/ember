@@ -272,6 +272,8 @@ pub(crate) fn build_run_manifest(
         "probe_positions": args.probe_positions,
         "probe_generate_tokens": args.probe_generate_tokens,
         "probe_limit": args.probe_limit,
+        "k_strategy": args.k_strategy,
+        "k_allow_fallback": args.k_allow_fallback,
     });
     if let Some(spec) = args.zero_layer_output {
         execution

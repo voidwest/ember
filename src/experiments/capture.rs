@@ -57,6 +57,9 @@ pub struct CaptureSink {
     truncated: bool,
     finalized: bool,
     ember_version: &'static str,
+    /// v0.3 execution provenance (per-tensor K-family decisions), attached
+    /// to the artifact when the run loaded with an explicit strategy.
+    execution: Option<crate::artifact::ExecutionInventory>,
 }
 
 impl CaptureSink {
@@ -97,7 +100,15 @@ impl CaptureSink {
             truncated: false,
             finalized: false,
             ember_version: env!("CARGO_PKG_VERSION"),
+            execution: None,
         })
+    }
+
+    /// Attach v0.3 execution provenance (per-tensor K-family decisions
+    /// recorded at load time) to the artifact written by [`Self::finalize`].
+    pub fn with_execution(mut self, execution: crate::artifact::ExecutionInventory) -> Self {
+        self.execution = Some(execution);
+        self
     }
 
     /// Capture config accessor (for CLI banners and tests).
@@ -435,10 +446,15 @@ impl CaptureSink {
                 },
                 cpu: self.cpu_metadata.clone(),
                 dispatch_observations,
+                k_strategy: self
+                    .execution
+                    .as_ref()
+                    .map(|inventory| inventory.requested_strategy.clone()),
             },
             experiment,
             capture_selection: self.selection.clone(),
             records,
+            execution: self.execution.clone(),
             truncated: self.truncated,
             created_at_unix: unix_timestamp(),
         };
@@ -543,6 +559,7 @@ mod tests {
             truncated: false,
             finalized: false,
             ember_version: "test",
+            execution: None,
         }
     }
 
@@ -785,5 +802,110 @@ max_records = 8
 
         let dir = manifest.base_dir();
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn finalize_without_inventory_keeps_v03_fields_null() {
+        // the additive v0.3 fields serialize as null when no inventory is
+        // attached, and a manifest without them still parses (backward
+        // compatibility in both directions)
+        let mut sink = make_sink(make_selection(
+            vec![0],
+            vec!["after-mlp"],
+            CapturePhase::Prefill,
+        ));
+        sink.on_model_loaded(&model_context(4, 8)).unwrap();
+        let prefill = execution(ExecutionPhase::Prefill, 0, 3);
+        let mut prefill_values: Vec<f32> = (1..=24).map(|value| value as f32).collect();
+        let prefill_tensor = TensorAccess::new(3, 8, &mut prefill_values);
+        sink.after_mlp(&prefill, 0, &prefill_tensor, DispatchPath::Generic)
+            .unwrap();
+        let generation = GenerationContext::new(
+            model_context(4, 8),
+            3,
+            1,
+            1,
+            TracingState::Disabled,
+            &[1, 2, 3],
+            &[9],
+        );
+        let manifest_path = sink
+            .finalize(
+                &generation,
+                ManifestExperiment {
+                    name: "test".to_string(),
+                    arguments: serde_json::json!({}),
+                },
+                Vec::new(),
+            )
+            .unwrap();
+        let manifest: ActivationManifest =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        assert!(manifest.execution.is_none());
+        assert!(manifest.run.k_strategy.is_none());
+
+        // strip the null fields and re-parse: old-style manifests must load
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("execution");
+        value["run"].as_object_mut().unwrap().remove("k_strategy");
+        let old_style: ActivationManifest = serde_json::from_value(value).unwrap();
+        assert!(old_style.execution.is_none());
+        assert!(old_style.run.k_strategy.is_none());
+
+        std::fs::remove_dir_all(manifest.base_dir()).ok();
+    }
+
+    #[test]
+    fn finalize_attaches_execution_inventory() {
+        let inventory = crate::artifact::ExecutionInventory {
+            requested_strategy: "auto".to_string(),
+            tensors: vec![],
+            summary: crate::artifact::ExecutionSummary {
+                tensor_count: 0,
+                fallback_count: 0,
+                compressed_bytes: 0,
+                expanded_bytes: 0,
+                per_dtype: vec![],
+            },
+        };
+        let mut sink = make_sink(make_selection(
+            vec![0],
+            vec!["after-mlp"],
+            CapturePhase::Prefill,
+        ))
+        .with_execution(inventory);
+        sink.on_model_loaded(&model_context(4, 8)).unwrap();
+        let prefill = execution(ExecutionPhase::Prefill, 0, 3);
+        let mut prefill_values: Vec<f32> = (1..=24).map(|value| value as f32).collect();
+        let prefill_tensor = TensorAccess::new(3, 8, &mut prefill_values);
+        sink.after_mlp(&prefill, 0, &prefill_tensor, DispatchPath::Generic)
+            .unwrap();
+        let generation = GenerationContext::new(
+            model_context(4, 8),
+            3,
+            1,
+            1,
+            TracingState::Disabled,
+            &[1, 2, 3],
+            &[9],
+        );
+        let manifest_path = sink
+            .finalize(
+                &generation,
+                ManifestExperiment {
+                    name: "test".to_string(),
+                    arguments: serde_json::json!({}),
+                },
+                Vec::new(),
+            )
+            .unwrap();
+        let manifest: ActivationManifest =
+            serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+        let attached = manifest.execution.as_ref().expect("inventory attached");
+        assert_eq!(attached.requested_strategy, "auto");
+        assert_eq!(manifest.run.k_strategy.as_deref(), Some("auto"));
+
+        std::fs::remove_dir_all(manifest.base_dir()).ok();
     }
 }

@@ -356,6 +356,10 @@ pub struct ManifestRun {
     pub tracing: String,
     pub cpu: serde_json::Value,
     pub dispatch_observations: Vec<DispatchObservation>,
+    /// Requested K-family strategy name (additive v0.3 field; `null` in
+    /// artifacts captured before the field existed).
+    #[serde(default)]
+    pub k_strategy: Option<String>,
 }
 
 /// One (phase, dispatch path) observation; a run can mix paths.
@@ -363,6 +367,180 @@ pub struct ManifestRun {
 pub struct DispatchObservation {
     pub phase: String,
     pub dispatch: DispatchPath,
+}
+
+/// One per-tensor K-family execution record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TensorExecution {
+    pub name: String,
+    /// GGUF dtype name (`ggml_dtype_name`), e.g. "q4_k".
+    pub gguf_dtype: String,
+    pub gguf_dtype_code: u32,
+    /// Resident representation: "compressed" or "f32".
+    pub resident: String,
+    /// Execution strategy: "eager-f32", "compressed-scalar", or
+    /// "compressed-x86".
+    pub strategy: String,
+    /// Selected kernel: "eager-f32-dequant", "scalar-q4k", "scalar-q6k",
+    /// "avx2-q4k", "avx2-q6k".
+    pub kernel: String,
+    /// CPU feature requirement for this kernel ("none" for scalar/eager).
+    pub cpu_features: String,
+    /// Why the requested strategy was not honored, if it was not.
+    pub fallback_reason: Option<String>,
+    /// Bounded thread-local workspace bytes (kernel scratch).
+    pub workspace_bytes: usize,
+}
+
+/// Per-dtype residency totals.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DtypeExecutionSummary {
+    pub dtype: String,
+    pub tensor_count: usize,
+    /// Resident compressed bytes (packed path; zero for eager tensors).
+    pub compressed_bytes: u64,
+    /// Resident f32 bytes (eager path; zero for compressed tensors).
+    pub expanded_bytes: u64,
+}
+
+/// Model-level execution/residency summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionSummary {
+    pub tensor_count: usize,
+    pub fallback_count: usize,
+    /// Total resident compressed bytes across compressed-path tensors.
+    pub compressed_bytes: u64,
+    /// Total resident f32 bytes across eager-path tensors.
+    pub expanded_bytes: u64,
+    pub per_dtype: Vec<DtypeExecutionSummary>,
+}
+
+/// v0.3 execution provenance: the per-tensor K-family decisions made at
+/// load time plus model-level residency totals. Additive field on the
+/// manifest; older artifacts simply lack it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionInventory {
+    /// Requested `--k-strategy` name.
+    pub requested_strategy: String,
+    pub tensors: Vec<TensorExecution>,
+    pub summary: ExecutionSummary,
+}
+
+impl ExecutionInventory {
+    /// Build the inventory from the loader's recorded per-tensor K
+    /// decisions and original GGUF metadata.
+    pub fn from_loader(loader: &crate::loader::GgufLoader) -> Self {
+        use crate::quant_k::{KExecution, KQuantDtype};
+        use std::collections::BTreeMap;
+
+        /// Kernel block scratch: one 256-f32 super-block per thread.
+        const KERNEL_SCRATCH_BYTES: usize = crate::quant_k::QK_K * 4;
+
+        let mut tensors = Vec::new();
+        let mut per_dtype = BTreeMap::<String, DtypeExecutionSummary>::new();
+        let mut fallback_count = 0usize;
+        let mut compressed_bytes = 0u64;
+        let mut expanded_bytes = 0u64;
+
+        let mut names: Vec<&String> = loader.k_decisions.keys().collect();
+        names.sort();
+        for name in names {
+            let decision = &loader.k_decisions[name];
+            let dtype_name = crate::loader::ggml_dtype_name(decision.gguf_dtype)
+                .unwrap_or("unknown")
+                .to_string();
+            let element_count = loader.tensor_meta.get(name).and_then(|meta| {
+                meta.dims
+                    .iter()
+                    .try_fold(1usize, |count, dim| count.checked_mul(*dim))
+            });
+            let byte_len = element_count.and_then(|count| {
+                crate::loader::gguf_dtype_byte_len(decision.gguf_dtype, count).ok()
+            });
+
+            let (resident, strategy, kernel, cpu_features, workspace_bytes) = match decision
+                .execution
+            {
+                KExecution::EagerF32 => ("f32", "eager-f32", "eager-f32-dequant", "none", 0usize),
+                KExecution::CompressedScalar => match KQuantDtype::from_gguf(decision.gguf_dtype) {
+                    Some(KQuantDtype::Q4K) => (
+                        "compressed",
+                        "compressed-scalar",
+                        "scalar-q4k",
+                        "none",
+                        KERNEL_SCRATCH_BYTES,
+                    ),
+                    Some(KQuantDtype::Q6K) => (
+                        "compressed",
+                        "compressed-scalar",
+                        "scalar-q6k",
+                        "none",
+                        KERNEL_SCRATCH_BYTES,
+                    ),
+                    None => ("f32", "eager-f32", "eager-f32-dequant", "none", 0),
+                },
+            };
+
+            if decision.fallback_reason.is_some() {
+                fallback_count += 1;
+            }
+            let compressed = byte_len.unwrap_or(0) as u64;
+            let expanded = element_count.unwrap_or(0) as u64 * 4;
+            match decision.execution {
+                KExecution::EagerF32 => {
+                    expanded_bytes += expanded;
+                    let entry = per_dtype.entry(dtype_name.clone()).or_insert_with(|| {
+                        DtypeExecutionSummary {
+                            dtype: dtype_name.clone(),
+                            tensor_count: 0,
+                            compressed_bytes: 0,
+                            expanded_bytes: 0,
+                        }
+                    });
+                    entry.tensor_count += 1;
+                    entry.expanded_bytes += expanded;
+                }
+                KExecution::CompressedScalar => {
+                    compressed_bytes += compressed;
+                    let entry = per_dtype.entry(dtype_name.clone()).or_insert_with(|| {
+                        DtypeExecutionSummary {
+                            dtype: dtype_name.clone(),
+                            tensor_count: 0,
+                            compressed_bytes: 0,
+                            expanded_bytes: 0,
+                        }
+                    });
+                    entry.tensor_count += 1;
+                    entry.compressed_bytes += compressed;
+                }
+            }
+
+            tensors.push(TensorExecution {
+                name: name.clone(),
+                gguf_dtype: dtype_name,
+                gguf_dtype_code: decision.gguf_dtype,
+                resident: resident.to_string(),
+                strategy: strategy.to_string(),
+                kernel: kernel.to_string(),
+                cpu_features: cpu_features.to_string(),
+                fallback_reason: decision.fallback_reason.clone(),
+                workspace_bytes,
+            });
+        }
+
+        let tensor_count = tensors.len();
+        Self {
+            requested_strategy: loader.k_strategy.name().to_string(),
+            tensors,
+            summary: ExecutionSummary {
+                tensor_count,
+                fallback_count,
+                compressed_bytes,
+                expanded_bytes,
+                per_dtype: per_dtype.into_values().collect(),
+            },
+        }
+    }
 }
 
 /// Active experiment provenance.
@@ -387,6 +565,9 @@ pub struct ActivationManifest {
     pub experiment: ManifestExperiment,
     pub capture_selection: CaptureSelection,
     pub records: Vec<CaptureRecord>,
+    /// v0.3 execution provenance (additive; `null` in v0.2 artifacts).
+    #[serde(default)]
+    pub execution: Option<ExecutionInventory>,
     /// True when `max_records` stopped capture early.
     pub truncated: bool,
     /// Provenance only; explicitly ignored by deterministic comparison.

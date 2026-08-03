@@ -615,6 +615,7 @@ fn main() -> anyhow::Result<()> {
     let k_strategy =
         ember::quant_k::KStrategy::from_cli(&args.k_strategy).map_err(anyhow::Error::msg)?;
     let loader = load_gguf_with_k_strategy(&args.model, k_strategy, args.k_allow_fallback)?;
+    let execution_inventory = ember::artifact::ExecutionInventory::from_loader(&loader);
     args.arch = resolve_generation_architecture(&args.arch, &loader)?;
     validate_experiment_options(&args)?;
     let n_tensors = loader.tensors.len();
@@ -796,7 +797,12 @@ fn main() -> anyhow::Result<()> {
                     run_metadata.model_sha256.as_deref(),
                     run_metadata.tokenizer_sha256.as_deref(),
                 );
-                let mut runner = build_experiment_runner(&args, &run_metadata, &model_context)?;
+                let mut runner = build_experiment_runner(
+                    &args,
+                    &run_metadata,
+                    &model_context,
+                    &execution_inventory,
+                )?;
                 let runner = runner
                     .as_mut()
                     .expect("experiment or capture requested in the arm condition");
@@ -888,7 +894,12 @@ fn main() -> anyhow::Result<()> {
                     run_metadata.model_sha256.as_deref(),
                     run_metadata.tokenizer_sha256.as_deref(),
                 );
-                let mut runner = build_experiment_runner(&args, &run_metadata, &model_context)?;
+                let mut runner = build_experiment_runner(
+                    &args,
+                    &run_metadata,
+                    &model_context,
+                    &execution_inventory,
+                )?;
                 let runner = runner
                     .as_mut()
                     .expect("experiment or capture requested in the arm condition");
@@ -914,6 +925,7 @@ fn main() -> anyhow::Result<()> {
 fn build_capture_sink(
     args: &Args,
     run_metadata: &RunMetadata,
+    execution_inventory: &ember::artifact::ExecutionInventory,
 ) -> anyhow::Result<Option<CaptureSink>> {
     let Some(path) = &args.capture_activations else {
         return Ok(None);
@@ -927,7 +939,8 @@ fn build_capture_sink(
         run_metadata.tokenizer_sha256.clone(),
         run_metadata.gguf_metadata.clone(),
     )
-    .map_err(anyhow::Error::msg)?;
+    .map_err(anyhow::Error::msg)?
+    .with_execution(execution_inventory.clone());
     eprintln!(
         "research capture active: config={path} output_dir={}",
         sink.selection().output_dir.display()
@@ -941,6 +954,7 @@ fn build_experiment_runner(
     args: &Args,
     run_metadata: &RunMetadata,
     model_context: &ModelContext<'_>,
+    execution_inventory: &ember::artifact::ExecutionInventory,
 ) -> anyhow::Result<Option<ExperimentRunner>> {
     let mut runner = if let Some(spec) = args.zero_layer_output {
         eprintln!(
@@ -973,7 +987,7 @@ fn build_experiment_runner(
     } else {
         None
     };
-    if let Some(sink) = build_capture_sink(args, run_metadata)? {
+    if let Some(sink) = build_capture_sink(args, run_metadata, execution_inventory)? {
         runner = Some(match runner {
             Some(runner) => runner.with_capture(sink),
             None => ExperimentRunner::capture_only(sink),

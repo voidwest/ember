@@ -1006,4 +1006,65 @@ mod tests {
         assert_eq!(decision.execution, crate::quant_k::KExecution::EagerF32);
         assert!(decision.fallback_reason.is_some());
     }
+
+    #[test]
+    fn execution_inventory_records_compressed_residency() {
+        let bytes = write_minimal_gguf_with_k_tensor(12, 128);
+        let mut cursor = std::io::Cursor::new(bytes);
+        let loader = load_gguf_from_reader_with_k_strategy(
+            &mut cursor,
+            crate::quant_k::KStrategy::Scalar,
+            false,
+        )
+        .unwrap();
+        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+
+        assert_eq!(inventory.requested_strategy, "compressed-scalar");
+        assert_eq!(inventory.tensors.len(), 1);
+        let tensor = &inventory.tensors[0];
+        assert_eq!(tensor.name, "blk.0.attn_q.weight");
+        assert_eq!(tensor.gguf_dtype, "q4_k");
+        assert_eq!(tensor.gguf_dtype_code, 12);
+        assert_eq!(tensor.resident, "compressed");
+        assert_eq!(tensor.strategy, "compressed-scalar");
+        assert_eq!(tensor.kernel, "scalar-q4k");
+        assert_eq!(tensor.cpu_features, "none");
+        assert!(tensor.fallback_reason.is_none());
+        assert_eq!(tensor.workspace_bytes, crate::quant_k::QK_K * 4);
+
+        let summary = &inventory.summary;
+        assert_eq!(summary.tensor_count, 1);
+        assert_eq!(summary.fallback_count, 0);
+        assert_eq!(summary.compressed_bytes, (128 * 144) as u64);
+        assert_eq!(summary.expanded_bytes, 0);
+        assert_eq!(summary.per_dtype.len(), 1);
+        assert_eq!(summary.per_dtype[0].dtype, "q4_k");
+        assert_eq!(summary.per_dtype[0].tensor_count, 1);
+        assert_eq!(summary.per_dtype[0].compressed_bytes, (128 * 144) as u64);
+        assert_eq!(summary.per_dtype[0].expanded_bytes, 0);
+    }
+
+    #[test]
+    fn execution_inventory_records_eager_and_fallback() {
+        // auto on q2_k: eager-f32 with a recorded fallback reason
+        let bytes = write_minimal_gguf_with_k_tensor(10, 8);
+        let mut cursor = std::io::Cursor::new(bytes);
+        let loader = load_gguf_from_reader_with_k_strategy(
+            &mut cursor,
+            crate::quant_k::KStrategy::Auto,
+            false,
+        )
+        .unwrap();
+        let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+
+        assert_eq!(inventory.requested_strategy, "auto");
+        let tensor = &inventory.tensors[0];
+        assert_eq!(tensor.resident, "f32");
+        assert_eq!(tensor.strategy, "eager-f32");
+        assert_eq!(tensor.kernel, "eager-f32-dequant");
+        assert!(tensor.fallback_reason.is_some());
+        assert_eq!(inventory.summary.fallback_count, 1);
+        assert_eq!(inventory.summary.compressed_bytes, 0);
+        assert_eq!(inventory.summary.expanded_bytes, (8 * 256 * 4) as u64);
+    }
 }
