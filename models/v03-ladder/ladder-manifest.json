@@ -46,5 +46,53 @@
       "sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
       "bytes": 807694176
     }
+  },
+  {
+    "family": "qwen2.5-1.5b",
+    "rung": "q8_0",
+    "quantizer_commit": "47c786924ad1ab7e91da2cdc72fcdb563780c2bd",
+    "command": "llama quantize qwen2.5-1.5b-instruct-fp16.gguf /home/west/ember/models/v03-ladder/qwen2.5-1.5b-q8_0.gguf q8_0",
+    "source": {
+      "path": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "bytes": 3560416288
+    },
+    "target": {
+      "path": "/home/west/ember/models/v03-ladder/qwen2.5-1.5b-q8_0.gguf",
+      "sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "bytes": 1894532128
+    }
+  },
+  {
+    "family": "qwen2.5-1.5b",
+    "rung": "q6_k",
+    "quantizer_commit": "47c786924ad1ab7e91da2cdc72fcdb563780c2bd",
+    "command": "llama quantize qwen2.5-1.5b-instruct-fp16.gguf /home/west/ember/models/v03-ladder/qwen2.5-1.5b-q6_k.gguf q6_k",
+    "source": {
+      "path": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "bytes": 3560416288
+    },
+    "target": {
+      "path": "/home/west/ember/models/v03-ladder/qwen2.5-1.5b-q6_k.gguf",
+      "sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "bytes": 1464178720
+    }
+  },
+  {
+    "family": "qwen2.5-1.5b",
+    "rung": "q4_k_m",
+    "quantizer_commit": "47c786924ad1ab7e91da2cdc72fcdb563780c2bd",
+    "command": "llama quantize qwen2.5-1.5b-instruct-fp16.gguf /home/west/ember/models/v03-ladder/qwen2.5-1.5b-q4_k_m.gguf q4_k_m",
+    "source": {
+      "path": "qwen2.5-1.5b-instruct-fp16.gguf",
+      "sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+      "bytes": 3560416288
+    },
+    "target": {
+      "path": "/home/west/ember/models/v03-ladder/qwen2.5-1.5b-q4_k_m.gguf",
+      "sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "bytes": 1117320736
+    }
   }
 ]

@@ -50,7 +50,13 @@ done
 mkdir -p "$OUT"
 COMMIT="$(cat "$LLAMA_CPP_DIR/COMMIT" 2>/dev/null || echo unknown)"
 MANIFEST="$OUT/ladder-manifest.json"
-echo "[]" > "$MANIFEST"
+# merge: the ladder may be built in multiple invocations (per family);
+# never reset an existing manifest
+if [[ -f "$MANIFEST" ]]; then
+  echo "merging into existing manifest"
+else
+  echo "[]" > "$MANIFEST"
+fi
 
 quantize_rungs() {
   local family="$1" source="$2"
