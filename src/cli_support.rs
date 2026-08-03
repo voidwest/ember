@@ -152,6 +152,34 @@ pub(crate) fn gguf_metadata_json(loader: &GgufLoader) -> serde_json::Value {
     for (key, value) in &loader.metadata {
         entries.insert(key.clone(), gguf_value_json(value));
     }
+    // per-tensor inventory: the original GGUF records, captured before any
+    // dtype conversion. This is the auditable per-tensor type list (Q4_K_M
+    // files mix Q4_K and Q6_K; the model-level "quantization" label alone
+    // is not a tensor-level claim).
+    let mut inventory = Vec::new();
+    let mut names: Vec<&String> = loader.tensor_meta.keys().collect();
+    names.sort();
+    for name in names {
+        let meta = &loader.tensor_meta[name];
+        let element_count = meta
+            .dims
+            .iter()
+            .try_fold(1usize, |count, dim| count.checked_mul(*dim));
+        let byte_len = element_count
+            .and_then(|count| ember::loader::gguf_dtype_byte_len(meta.dtype, count).ok());
+        inventory.push(serde_json::json!({
+            "name": name,
+            "dims": meta.dims,
+            "dtype_code": meta.dtype,
+            "dtype": ember::loader::ggml_dtype_name(meta.dtype).unwrap_or("unknown"),
+            "offset": meta.offset,
+            "byte_len": byte_len,
+        }));
+    }
+    entries.insert(
+        "tensor_inventory".to_string(),
+        serde_json::Value::Array(inventory),
+    );
     serde_json::Value::Object(entries)
 }
 
@@ -396,6 +424,7 @@ mod tests {
                 GgufValue::Str(architecture.to_string()),
             )]),
             tensors: HashMap::new(),
+            tensor_meta: HashMap::new(),
         }
     }
 

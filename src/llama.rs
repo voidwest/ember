@@ -2898,6 +2898,7 @@ mod tests {
         let loader = GgufLoader {
             metadata,
             tensors: HashMap::new(),
+            tensor_meta: HashMap::new(),
         };
 
         let config = LlamaConfig::from_gguf_metadata(&loader);

@@ -10,6 +10,13 @@
 //! dequant-to-f32 path); memory cost is 4 bytes/value, which is acceptable
 //! for small-model research loads.
 
+use crate::quant::QuantizedData;
+use crate::tensor::CpuTensor;
+use anyhow::{bail, Result};
+use memmap2::Mmap;
+use std::ops::Range;
+use std::sync::Arc;
+
 /// Super-block size (values per block) for all K-family types.
 pub const QK_K: usize = 256;
 
@@ -312,6 +319,187 @@ pub fn dequant_tensor(dtype: u32, bytes: &[u8], out: &mut [f32]) -> Result<(), S
         }
     }
     Ok(())
+}
+
+/// K-family dtypes with a native compressed-resident path in v0.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KQuantDtype {
+    /// GGML_TYPE_Q4_K (code 12), 144 bytes per 256-value super-block.
+    Q4K,
+    /// GGML_TYPE_Q6_K (code 14), 210 bytes per 256-value super-block.
+    Q6K,
+}
+
+impl KQuantDtype {
+    /// Map a GGUF dtype code onto a native K-quant dtype.
+    ///
+    /// Only dtypes with a compressed-resident path in v0.3 map here;
+    /// Q2_K/Q3_K/Q5_K/Q8_K remain eager-f32-only and return `None`.
+    pub fn from_gguf(code: u32) -> Option<Self> {
+        match code {
+            DTYPE_Q4_K => Some(Self::Q4K),
+            DTYPE_Q6_K => Some(Self::Q6K),
+            _ => None,
+        }
+    }
+
+    /// The GGUF dtype code for this type.
+    pub fn gguf_code(self) -> u32 {
+        match self {
+            Self::Q4K => DTYPE_Q4_K,
+            Self::Q6K => DTYPE_Q6_K,
+        }
+    }
+
+    /// Bytes per 256-value super-block.
+    pub fn block_bytes(self) -> usize {
+        match self {
+            Self::Q4K => Q4_K_BLOCK_BYTES,
+            Self::Q6K => Q6_K_BLOCK_BYTES,
+        }
+    }
+
+    /// Lowercase GGUF type name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Q4K => "q4_k",
+            Self::Q6K => "q6_k",
+        }
+    }
+}
+
+/// A Q4_K or Q6_K weight matrix kept in raw block-compressed form.
+///
+/// Mirrors `QuantizedWeight` (Q8_0): the loader stores the packed GGUF
+/// bytes (owned or mmap-backed) and kernels dequantize at super-block
+/// granularity during matmul. There is no persistent f32 expansion on
+/// this path.
+///
+/// Layout: GGUF dims are reversed from `[in, out]` to `[out, in]` so
+/// super-blocks (256 values each) are contiguous per output feature.
+/// `shape[0]` is `out_features`, `shape[1]` is `in_features` (always a
+/// multiple of `QK_K`).
+#[derive(Clone, Debug)]
+pub struct KQuantWeight {
+    data: QuantizedData,
+    shape: [usize; 2],
+    dtype: KQuantDtype,
+}
+
+impl KQuantWeight {
+    /// Create a weight from raw packed bytes and logical shape
+    /// `[out_features, in_features]`.
+    pub fn new(data: Vec<u8>, shape: [usize; 2], dtype: KQuantDtype) -> Self {
+        Self::try_new(data, shape, dtype).expect("invalid K-quant weight")
+    }
+
+    /// Fallible constructor for weights loaded from model files.
+    pub fn try_new(data: Vec<u8>, shape: [usize; 2], dtype: KQuantDtype) -> Result<Self> {
+        Self::try_new_storage(QuantizedData::Owned(data.into()), shape, dtype)
+    }
+
+    /// Construct from a shared read-only file mapping (loader path).
+    #[allow(dead_code)] // wired into the loader in the compressed-dispatch commit
+    pub(crate) fn try_from_mmap(
+        mmap: Arc<Mmap>,
+        range: Range<usize>,
+        shape: [usize; 2],
+        dtype: KQuantDtype,
+    ) -> Result<Self> {
+        if range.start > range.end || range.end > mmap.len() {
+            bail!(
+                "KQuantWeight: mmap range {:?} exceeds mapping length {}",
+                range,
+                mmap.len()
+            );
+        }
+        Self::try_new_storage(QuantizedData::Mapped { mmap, range }, shape, dtype)
+    }
+
+    fn try_new_storage(data: QuantizedData, shape: [usize; 2], dtype: KQuantDtype) -> Result<Self> {
+        if shape[0] == 0 || shape[1] == 0 {
+            bail!("KQuantWeight: dimensions must be non-zero, got {:?}", shape);
+        }
+        if !shape[1].is_multiple_of(QK_K) {
+            bail!(
+                "KQuantWeight: in_features ({}) must be a multiple of {}",
+                shape[1],
+                QK_K
+            );
+        }
+        let expected_elements = shape[0]
+            .checked_mul(shape[1])
+            .ok_or_else(|| anyhow::anyhow!("KQuantWeight: shape product overflow"))?;
+        let expected_blocks = expected_elements / QK_K;
+        let expected_len = expected_blocks
+            .checked_mul(dtype.block_bytes())
+            .ok_or_else(|| anyhow::anyhow!("KQuantWeight: byte length overflow"))?;
+        if data.as_slice().len() != expected_len {
+            bail!(
+                "KQuantWeight: data len ({}) != expected ({}) for {}",
+                data.as_slice().len(),
+                expected_len,
+                dtype.name()
+            );
+        }
+        Ok(Self { data, shape, dtype })
+    }
+
+    /// Raw packed storage.
+    #[inline]
+    pub fn data(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
+    /// Compressed byte size of this weight.
+    #[inline]
+    pub fn byte_len(&self) -> usize {
+        self.data.as_slice().len()
+    }
+
+    /// Whether this weight directly references a read-only file mapping.
+    #[inline]
+    pub fn is_mapped(&self) -> bool {
+        matches!(&self.data, QuantizedData::Mapped { .. })
+    }
+
+    /// Per-tensor GGUF type.
+    #[inline]
+    pub fn dtype(&self) -> KQuantDtype {
+        self.dtype
+    }
+
+    #[inline]
+    pub fn out_features(&self) -> usize {
+        self.shape[0]
+    }
+
+    #[inline]
+    pub fn in_features(&self) -> usize {
+        self.shape[1]
+    }
+
+    /// Super-blocks per output feature (`in_features / QK_K`).
+    #[inline]
+    pub fn blocks_per_row(&self) -> usize {
+        self.shape[1] / QK_K
+    }
+
+    /// Fully dequantize to an f32 `CpuTensor` with shape
+    /// `[out_features, in_features]`, data contiguous per output feature.
+    ///
+    /// Explicit reference conversion (the eager-f32 path); never used by
+    /// the compressed-resident execution path.
+    pub fn dequantize_all(&self) -> CpuTensor {
+        let element_count = self
+            .out_features()
+            .checked_mul(self.in_features())
+            .expect("KQuantWeight shape product validated at construction");
+        let mut data = vec![0.0f32; element_count];
+        dequant_tensor(self.dtype.gguf_code(), self.data(), &mut data)
+            .expect("KQuantWeight payload validated at construction");
+        CpuTensor::from_data(self.shape.to_vec(), data)
+    }
 }
 
 #[cfg(test)]
@@ -743,5 +931,168 @@ mod tests {
         assert!(dequant_tensor(99, &[0u8; 144], &mut out).is_err());
         let mut out2 = vec![0.0f32; 2 * QK_K];
         assert!(dequant_tensor(DTYPE_Q4_K, &[0u8; 288], &mut out2).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod resident_tests {
+    use super::*;
+
+    /// Deterministic pseudo-random block payload.
+    fn seeded_block_bytes(dtype: KQuantDtype, blocks: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed;
+        let mut bytes = vec![0u8; blocks * dtype.block_bytes()];
+        for byte in &mut bytes {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            *byte = (state >> 33) as u8;
+        }
+        // sanitize the f16 scale fields so random bytes cannot produce
+        // NaN/Inf scales (mirrors the existing dequant reference tests)
+        let f16_offsets: &[usize] = match dtype {
+            KQuantDtype::Q4K => &[0, 2],
+            KQuantDtype::Q6K => &[208],
+        };
+        for block in bytes.chunks_exact_mut(dtype.block_bytes()) {
+            for &offset in f16_offsets {
+                let bits = u16::from_le_bytes([block[offset], block[offset + 1]]);
+                let bits = bits & 0x7FFF;
+                let bits = if bits >= 0x7C00 { 0x3C00 } else { bits };
+                block[offset..offset + 2].copy_from_slice(&bits.to_le_bytes());
+            }
+        }
+        bytes
+    }
+
+    #[test]
+    fn k_dtype_mapping_roundtrips() {
+        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
+            assert_eq!(KQuantDtype::from_gguf(dtype.gguf_code()), Some(dtype));
+        }
+        // no native kernel in v0.3: Q8_0, Q2_K, Q3_K, Q5_K, Q8_K
+        for code in [8, 10, 11, 13, 15] {
+            assert_eq!(KQuantDtype::from_gguf(code), None);
+        }
+        assert_eq!(KQuantDtype::Q4K.block_bytes(), Q4_K_BLOCK_BYTES);
+        assert_eq!(KQuantDtype::Q6K.block_bytes(), Q6_K_BLOCK_BYTES);
+        assert_eq!(KQuantDtype::Q4K.name(), "q4_k");
+        assert_eq!(KQuantDtype::Q6K.name(), "q6_k");
+    }
+
+    #[test]
+    fn k_quant_weight_accepts_valid_layouts() {
+        // [4, 256] q4_k: 4 super-blocks x 144 bytes
+        let q4 = KQuantWeight::try_new(
+            seeded_block_bytes(KQuantDtype::Q4K, 4, 1),
+            [4, 256],
+            KQuantDtype::Q4K,
+        )
+        .unwrap();
+        assert_eq!(q4.out_features(), 4);
+        assert_eq!(q4.in_features(), 256);
+        assert_eq!(q4.blocks_per_row(), 1);
+        assert_eq!(q4.byte_len(), 4 * Q4_K_BLOCK_BYTES);
+        assert_eq!(q4.dtype(), KQuantDtype::Q4K);
+        assert!(!q4.is_mapped());
+
+        // [2, 512] q6_k: 4 super-blocks x 210 bytes
+        let q6 = KQuantWeight::try_new(
+            seeded_block_bytes(KQuantDtype::Q6K, 4, 2),
+            [2, 512],
+            KQuantDtype::Q6K,
+        )
+        .unwrap();
+        assert_eq!(q6.blocks_per_row(), 2);
+        assert_eq!(q6.byte_len(), 4 * Q6_K_BLOCK_BYTES);
+
+        // clone shares storage (Arc-backed), so tied-head reuse is cheap
+        let clone = q4.clone();
+        assert_eq!(clone.data().as_ptr(), q4.data().as_ptr());
+    }
+
+    #[test]
+    fn k_quant_weight_rejects_malformed_layouts() {
+        let ok = seeded_block_bytes(KQuantDtype::Q4K, 4, 3);
+        // zero dimensions
+        assert!(KQuantWeight::try_new(ok.clone(), [0, 256], KQuantDtype::Q4K).is_err());
+        assert!(KQuantWeight::try_new(ok.clone(), [4, 0], KQuantDtype::Q4K).is_err());
+        // in_features not 256-aligned
+        assert!(KQuantWeight::try_new(ok.clone(), [4, 128], KQuantDtype::Q4K).is_err());
+        // wrong byte length for the declared dtype (q6 blocks where q4 expected)
+        assert!(KQuantWeight::try_new(ok.clone(), [4, 256], KQuantDtype::Q6K).is_err());
+        // truncated payload
+        assert!(
+            KQuantWeight::try_new(ok[..ok.len() - 1].to_vec(), [4, 256], KQuantDtype::Q4K).is_err()
+        );
+        // shape product overflow
+        assert!(KQuantWeight::try_new(ok, [usize::MAX, 256], KQuantDtype::Q4K).is_err());
+    }
+
+    #[test]
+    fn k_quant_weight_mmap_range_is_checked() {
+        let bytes = seeded_block_bytes(KQuantDtype::Q4K, 2, 4);
+        let mut path = std::env::temp_dir();
+        path.push("ember-kquant-mmap-test.bin");
+        std::fs::write(&path, &bytes).unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        // Safety: the mapping outlives every weight constructed from it below.
+        let mmap = std::sync::Arc::new(unsafe { memmap2::Mmap::map(&file).unwrap() });
+
+        // valid range
+        let weight = KQuantWeight::try_from_mmap(
+            std::sync::Arc::clone(&mmap),
+            0..bytes.len(),
+            [2, 256],
+            KQuantDtype::Q4K,
+        )
+        .unwrap();
+        assert!(weight.is_mapped());
+        assert_eq!(weight.data(), &bytes[..]);
+
+        // range past the mapping
+        assert!(KQuantWeight::try_from_mmap(
+            std::sync::Arc::clone(&mmap),
+            bytes.len()..bytes.len() + 10,
+            [2, 256],
+            KQuantDtype::Q4K,
+        )
+        .is_err());
+        // reversed range
+        let (reverse_start, reverse_end) = (10usize, 5usize);
+        assert!(KQuantWeight::try_from_mmap(
+            std::sync::Arc::clone(&mmap),
+            reverse_start..reverse_end,
+            [2, 256],
+            KQuantDtype::Q4K,
+        )
+        .is_err());
+        // range shorter than the shape requires
+        assert!(KQuantWeight::try_from_mmap(
+            std::sync::Arc::clone(&mmap),
+            0..bytes.len() - 1,
+            [2, 256],
+            KQuantDtype::Q4K,
+        )
+        .is_err());
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn dequantize_all_matches_dequant_tensor() {
+        for (dtype, blocks, shape) in [
+            (KQuantDtype::Q4K, 3, [3usize, 256]),
+            (KQuantDtype::Q6K, 6, [3usize, 512]),
+        ] {
+            let bytes = seeded_block_bytes(dtype, blocks, 7);
+            let weight = KQuantWeight::try_new(bytes.clone(), shape, dtype).unwrap();
+            let expanded = weight.dequantize_all();
+            assert_eq!(expanded.shape(), &shape[..]);
+
+            let mut direct = vec![0.0f32; shape[0] * shape[1]];
+            dequant_tensor(dtype.gguf_code(), &bytes, &mut direct).unwrap();
+            assert_eq!(expanded.data(), &direct[..]);
+        }
     }
 }

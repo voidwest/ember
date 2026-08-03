@@ -47,6 +47,22 @@ pub struct GgufLoader {
     /// named tensors.  linear weights are stored as `LoadedTensor::Q8_0`
     /// when the gguf dtype is q8_0; everything else is `LoadedTensor::F32`.
     pub tensors: HashMap<String, LoadedTensor>,
+    /// original per-tensor GGUF records (native dims, dtype code, file
+    /// offset), captured before any dtype conversion. `LoadedTensor` only
+    /// reflects the post-conversion representation, so this map is the
+    /// source of truth for tensor inventory and provenance.
+    pub tensor_meta: HashMap<String, TensorMeta>,
+}
+
+/// The original GGUF record for one tensor, before any dtype conversion.
+#[derive(Debug, Clone)]
+pub struct TensorMeta {
+    /// GGUF-native dimensions (first dim contiguous).
+    pub dims: Vec<usize>,
+    /// GGUF dtype code (see [`ggml_dtype_name`]).
+    pub dtype: u32,
+    /// Data offset relative to the aligned tensor-data start.
+    pub offset: u64,
 }
 
 impl GgufLoader {
@@ -167,6 +183,20 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     }
 
     let mut tensor_info = read_tensor_info(reader, tensor_count)?;
+    let mut tensor_meta = HashMap::new();
+    tensor_meta
+        .try_reserve(tensor_info.len())
+        .context("failed to reserve GGUF tensor-metadata table")?;
+    for info in &tensor_info {
+        tensor_meta.insert(
+            info.name.clone(),
+            TensorMeta {
+                dims: info.dims.clone(),
+                dtype: info.dtype,
+                offset: info.offset,
+            },
+        );
+    }
 
     let current_pos = reader.stream_position()?;
     let alignment = match metadata.get("general.alignment") {
@@ -374,7 +404,11 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             bail!("duplicate GGUF tensor name '{}'", info.name);
         }
     }
-    Ok(GgufLoader { metadata, tensors })
+    Ok(GgufLoader {
+        metadata,
+        tensors,
+        tensor_meta,
+    })
 }
 
 struct TensorInfo {
@@ -434,39 +468,62 @@ fn tensor_byte_len(info: &TensorInfo) -> Result<usize> {
             )
         })
     })?;
-    match info.dtype {
+    gguf_dtype_byte_len(info.dtype, element_count)
+        .with_context(|| format!("tensor '{}'", info.name))
+}
+
+/// Encoded byte length of `element_count` values of a GGUF dtype.
+///
+/// Shared by the loader's range validation and the tensor-inventory dump.
+pub fn gguf_dtype_byte_len(dtype: u32, element_count: usize) -> Result<usize> {
+    match dtype {
         0 => element_count
             .checked_mul(4)
-            .with_context(|| format!("tensor '{}' f32 byte size overflow", info.name)),
+            .with_context(|| "f32 byte size overflow".to_string()),
         1 | 30 => element_count
             .checked_mul(2)
-            .with_context(|| format!("tensor '{}' 16-bit byte size overflow", info.name)),
+            .with_context(|| "16-bit byte size overflow".to_string()),
         8 => {
             if !element_count.is_multiple_of(crate::quant::Q8_0_BLOCK_SIZE) {
-                bail!(
-                    "tensor '{}' Q8_0 element count is not block-aligned",
-                    info.name
-                );
+                bail!("Q8_0 element count is not block-aligned");
             }
             (element_count / crate::quant::Q8_0_BLOCK_SIZE)
                 .checked_mul(Q8_0_TYPE_SIZE)
-                .with_context(|| format!("tensor '{}' Q8_0 byte size overflow", info.name))
+                .with_context(|| "Q8_0 byte size overflow".to_string())
         }
         10..=14 => {
             if !element_count.is_multiple_of(crate::quant_k::QK_K) {
-                bail!(
-                    "tensor '{}' dtype {} element count is not K-block-aligned",
-                    info.name,
-                    info.dtype
-                );
+                bail!("dtype {dtype} element count is not K-block-aligned");
             }
-            let block_bytes = crate::quant_k::k_block_bytes(info.dtype)
-                .with_context(|| format!("tensor '{}'", info.name))?;
+            let block_bytes =
+                crate::quant_k::k_block_bytes(dtype).with_context(|| format!("dtype {dtype}"))?;
             (element_count / crate::quant_k::QK_K)
                 .checked_mul(block_bytes)
-                .with_context(|| format!("tensor '{}' K-quant byte size overflow", info.name))
+                .with_context(|| "K-quant byte size overflow".to_string())
         }
-        dtype => bail!("tensor '{}' uses unsupported GGML dtype {dtype}", info.name),
+        dtype => bail!("unsupported GGML dtype {dtype}"),
+    }
+}
+
+/// GGUF dtype code -> lowercase type name (current GGUF numbering).
+pub fn ggml_dtype_name(dtype: u32) -> Option<&'static str> {
+    match dtype {
+        0 => Some("f32"),
+        1 => Some("f16"),
+        2 => Some("q4_0"),
+        3 => Some("q4_1"),
+        6 => Some("q5_0"),
+        7 => Some("q5_1"),
+        8 => Some("q8_0"),
+        9 => Some("q8_1"),
+        10 => Some("q2_k"),
+        11 => Some("q3_k"),
+        12 => Some("q4_k"),
+        13 => Some("q5_k"),
+        14 => Some("q6_k"),
+        15 => Some("q8_k"),
+        30 => Some("bf16"),
+        _ => None,
     }
 }
 
@@ -631,10 +688,61 @@ mod tests {
         let mut loader = GgufLoader {
             metadata: HashMap::new(),
             tensors: HashMap::from([("weight".to_string(), LoadedTensor::F32(tensor))]),
+            tensor_meta: HashMap::new(),
         };
 
         let taken = loader.take_f32("weight").unwrap();
         assert_eq!(taken.data().as_ptr(), allocation);
         assert!(!loader.tensors.contains_key("weight"));
+    }
+
+    /// Build a minimal GGUF v3 file with one Q4_K tensor
+    /// (`blk.0.attn_q.weight`, dims [256, 128], 128 zero blocks) and no
+    /// metadata. The payload is all zeros, which dequantizes to zeros.
+    fn write_minimal_gguf_with_q4k_tensor() -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"GGUF");
+        out.extend_from_slice(&3u32.to_le_bytes());
+        out.extend_from_slice(&1u64.to_le_bytes()); // one tensor
+        out.extend_from_slice(&0u64.to_le_bytes()); // no metadata kv
+        let name = b"blk.0.attn_q.weight";
+        out.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(&2u32.to_le_bytes()); // n_dims
+        out.extend_from_slice(&256u64.to_le_bytes());
+        out.extend_from_slice(&128u64.to_le_bytes());
+        out.extend_from_slice(&12u32.to_le_bytes()); // q4_k
+        out.extend_from_slice(&0u64.to_le_bytes()); // offset
+        while out.len() % 32 != 0 {
+            out.push(0);
+        }
+        out.resize(out.len() + 128 * crate::quant_k::Q4_K_BLOCK_BYTES, 0);
+        out
+    }
+
+    #[test]
+    fn tensor_meta_records_original_gguf_dtype() {
+        let bytes = write_minimal_gguf_with_q4k_tensor();
+        let mut cursor = std::io::Cursor::new(bytes);
+        let loader = load_gguf_from_reader(&mut cursor).unwrap();
+
+        let meta = loader
+            .tensor_meta
+            .get("blk.0.attn_q.weight")
+            .expect("tensor metadata recorded before dtype conversion");
+        assert_eq!(meta.dims, vec![256, 128]);
+        assert_eq!(meta.dtype, 12);
+        assert_eq!(meta.offset, 0);
+        assert_eq!(ggml_dtype_name(meta.dtype), Some("q4_k"));
+        assert_eq!(
+            gguf_dtype_byte_len(meta.dtype, 256 * 128).unwrap(),
+            128 * crate::quant_k::Q4_K_BLOCK_BYTES
+        );
+
+        // the eager loader still materializes the tensor as f32
+        match loader.tensors.get("blk.0.attn_q.weight") {
+            Some(LoadedTensor::F32(tensor)) => assert_eq!(tensor.shape(), &[256, 128]),
+            _ => panic!("expected eager f32 tensor from the current loader"),
+        }
     }
 }

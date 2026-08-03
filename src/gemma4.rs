@@ -2376,6 +2376,7 @@ mod tests {
         GgufLoader {
             metadata,
             tensors: HashMap::new(),
+            tensor_meta: HashMap::new(),
         }
     }
 
@@ -2469,7 +2470,12 @@ mod tests {
 
         let mut tensors = HashMap::new();
         insert_tiny_gemma4_tensors(&mut tensors);
-        Gemma4::from_loader(GgufLoader { metadata, tensors }).unwrap()
+        Gemma4::from_loader(GgufLoader {
+            metadata,
+            tensors,
+            tensor_meta: HashMap::new(),
+        })
+        .unwrap()
     }
 
     #[test]
@@ -2756,7 +2762,11 @@ mod tests {
         let mut tensors = HashMap::new();
         insert_tiny_gemma4_tensors(&mut tensors);
         insert_tiny_gemma4_block_tensors(&mut tensors, 1, false);
-        let loader = GgufLoader { metadata, tensors };
+        let loader = GgufLoader {
+            metadata,
+            tensors,
+            tensor_meta: HashMap::new(),
+        };
         let model = Gemma4::from_loader(loader).unwrap();
 
         assert_eq!(model.blocks.len(), 2);

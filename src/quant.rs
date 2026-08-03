@@ -175,7 +175,7 @@ pub fn dequantize_q8_0(src: &[u8], dst: &mut [f32]) -> Result<()> {
 /// contiguous per output feature.  `shape[0]` is `out_features`,
 /// `shape[1]` is `in_features`.
 #[derive(Clone)]
-enum QuantizedData {
+pub(crate) enum QuantizedData {
     Owned(Arc<[u8]>),
     Mapped {
         mmap: Arc<Mmap>,
@@ -185,7 +185,7 @@ enum QuantizedData {
 
 impl QuantizedData {
     #[inline]
-    fn as_slice(&self) -> &[u8] {
+    pub(crate) fn as_slice(&self) -> &[u8] {
         match self {
             Self::Owned(data) => data,
             Self::Mapped { mmap, range } => &mmap[range.clone()],
