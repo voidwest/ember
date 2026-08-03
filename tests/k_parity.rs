@@ -364,3 +364,78 @@ fn v04_planned_matches_reference_real_model() {
         }
     }
 }
+
+/// Gate C on the real model for v0.4 planned execution (contract section
+/// 12): the planned path with the hook system initialized but a no-op
+/// experiment must stay bit-identical to the plain planned path.
+#[test]
+fn v04_planned_inactive_hooks_real_model() {
+    let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
+        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
+        return;
+    };
+    let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    use ember::plan::ExecutionMode;
+    let backend = CpuBackend;
+    let prompt = FROZEN_PROMPTS[0];
+    let ids = tokenizer.encode(prompt).expect("encode");
+    model.set_execution_mode(ExecutionMode::Planned);
+
+    // plain planned run
+    let plain = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
+
+    // planned run through the experiment machinery with a noop experiment
+    let model_context = ember::experiments::ModelContext::new(
+        ember::experiments::ModelFamily::Llama,
+        None,
+        "llama",
+        model.n_layers(),
+        model.embed_dim(),
+    );
+    let mut cache = model.create_cache(&backend, 2048);
+    let mut tokens = Vec::new();
+    let mut hooked_logits = Vec::new();
+    let mut position = 0usize;
+    let mut current = ids.clone();
+    for _ in 0..decode_tokens {
+        let token_count = current.len();
+        let execution = ember::experiments::ExecutionContext::new(
+            model_context,
+            if position == 0 {
+                ember::experiments::ExecutionPhase::Prefill
+            } else {
+                ember::experiments::ExecutionPhase::Decode
+            },
+            position,
+            token_count,
+            ember::experiments::TracingState::Disabled,
+        );
+        let mut runner = ember::experiments::ExperimentRunner::new(NoopExperiment);
+        let logits = model
+            .forward_last_logits_with_experiment(
+                &backend,
+                &current,
+                &mut cache,
+                position,
+                execution,
+                &mut runner,
+            )
+            .expect("hooked planned forward");
+        let data = logits.data();
+        hooked_logits.push(data.to_vec());
+        tokens.push(ember::sampler::argmax_token(data) as u32);
+        position += current.len();
+        current = vec![*tokens.last().expect("token pushed")];
+    }
+
+    assert_eq!(
+        plain.tokens, tokens,
+        "planned hooked (noop) run diverged tokens from the plain planned run"
+    );
+    for (step, (expected, actual)) in plain.decode_logits.iter().zip(&hooked_logits).enumerate() {
+        assert_eq!(
+            expected, actual,
+            "planned hooked (noop) run diverged logits at decode step {step}"
+        );
+    }
+}

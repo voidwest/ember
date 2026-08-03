@@ -270,6 +270,10 @@ impl Experiment for ActivationPatch {
         "activation-patch"
     }
 
+    fn intervenes(&self) -> bool {
+        true
+    }
+
     fn arguments(&self) -> serde_json::Value {
         serde_json::json!({
             "source_manifest": self.source_manifest,

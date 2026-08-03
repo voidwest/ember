@@ -136,6 +136,10 @@ impl Experiment for ZeroLayerOutput {
         "zero-layer-output"
     }
 
+    fn intervenes(&self) -> bool {
+        true
+    }
+
     fn arguments(&self) -> serde_json::Value {
         serde_json::json!({
             "layer": self.spec.layer(),

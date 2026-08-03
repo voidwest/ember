@@ -1421,6 +1421,26 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
         if !fast_eligible {
             runner.note_dispatch(execution.phase, DispatchPath::Generic);
         }
+        // v0.4 planned path (single token, mode=planned, no tracing). Hooks
+        // fire at the same six semantic sites as the reference path; the
+        // plan is built with the runner's hook mode. Runs before
+        // `ActiveHooks` borrows the runner.
+        if *self.execution_mode.borrow() == ExecutionMode::Planned
+            && token_ids.len() == 1
+            && !crate::trace::is_tracing()
+        {
+            let hook_mode = runner.hook_mode();
+            runner.note_dispatch(execution.phase, DispatchPath::Planned);
+            let mut planned_hooks = ActiveHooks::new(runner, execution);
+            let hooks = if hook_mode == HookMode::Disabled {
+                None
+            } else {
+                Some((&mut planned_hooks, &execution))
+            };
+            return forward_last_logits_planned(
+                self, token_ids, cache, start_pos, hooks, hook_mode,
+            );
+        }
         let mut hooks = ActiveHooks::new(runner, execution);
         if fast_eligible {
             if let Some(result) =
@@ -1428,22 +1448,6 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
             {
                 return result;
             }
-        }
-        // v0.4 planned path (single token, mode=planned, no tracing). Hook
-        // integration lands with the hook-mode phase; until then an active
-        // experiment is a clear error, never a silent fallback.
-        if *self.execution_mode.borrow() == ExecutionMode::Planned
-            && token_ids.len() == 1
-            && !crate::trace::is_tracing()
-        {
-            if runner.has_experiment() || runner.has_capture() {
-                return Err(CpuError::ShapeMismatch(
-                    "planned execution with active hooks is not supported yet; use --execution reference"
-                        .into(),
-                ));
-            }
-            runner.note_dispatch(execution.phase, DispatchPath::Planned);
-            return forward_last_logits_planned(self, token_ids, cache, start_pos);
         }
         self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
     }
@@ -3172,7 +3176,14 @@ impl Llama<CpuBackend> {
             return result;
         }
         if self.planned_decode_eligible(token_ids) {
-            return forward_last_logits_planned(self, token_ids, cache, start_pos);
+            return forward_last_logits_planned(
+                self,
+                token_ids,
+                cache,
+                start_pos,
+                None,
+                HookMode::Disabled,
+            );
         }
         Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
     }
@@ -3845,8 +3856,26 @@ enum ResolvedOp {
 #[derive(Debug, Clone)]
 struct ResolvedOps {
     preamble: Vec<ResolvedOp>,
-    layers: Vec<Vec<ResolvedOp>>,
+    layers: Vec<ResolvedLayerOps>,
     final_ops: Vec<ResolvedOp>,
+}
+
+/// One resolved layer: the op sequence plus the arena region index for each
+/// semantic hook site (contract section 4/12).
+#[derive(Debug, Clone)]
+struct ResolvedLayerOps {
+    ops: Vec<ResolvedOp>,
+    hooks: ResolvedHookSites,
+}
+
+/// Arena region indices for the six semantic hook sites. Resolved once at
+/// session build so the decode loop fires hooks with no lookup.
+#[derive(Debug, Clone, Copy)]
+struct ResolvedHookSites {
+    before_layer: usize,
+    after_attention: usize,
+    after_mlp: usize,
+    after_layer: usize,
 }
 
 /// The mutable half of a planned decode session: the arena plus the
@@ -4031,12 +4060,61 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
         .layers
         .iter()
         .map(|layer| {
-            layer
+            let ops = layer
                 .ops
                 .iter()
                 .enumerate()
                 .map(|(position, op)| resolve(op, position))
-                .collect::<Result<Vec<_>, _>>()
+                .collect::<Result<Vec<_>, _>>()?;
+            // semantic hook regions (contract section 4): block input, o
+            // projection output (pre-residual), down projection output
+            // (pre-residual), and the block output.
+            let before_layer = match ops.first() {
+                Some(ResolvedOp::RmsNorm { input, .. }) => *input,
+                _ => {
+                    return Err(CpuError::ShapeMismatch(
+                        "layer does not begin with the input rmsnorm".into(),
+                    ));
+                }
+            };
+            let mut after_attention = None;
+            let mut after_mlp = None;
+            for op in &ops {
+                match op {
+                    ResolvedOp::Matvec {
+                        role: ProjRole::O,
+                        out,
+                        ..
+                    } => after_attention = Some(*out),
+                    ResolvedOp::Matvec {
+                        role: ProjRole::Down,
+                        out,
+                        ..
+                    } => after_mlp = Some(*out),
+                    _ => {}
+                }
+            }
+            let after_layer = match ops.last() {
+                Some(ResolvedOp::ResidualAdd { out, .. }) => *out,
+                _ => {
+                    return Err(CpuError::ShapeMismatch(
+                        "layer does not end with the residual add".into(),
+                    ));
+                }
+            };
+            Ok(ResolvedLayerOps {
+                ops,
+                hooks: ResolvedHookSites {
+                    before_layer,
+                    after_attention: after_attention.ok_or_else(|| {
+                        CpuError::ShapeMismatch("layer has no attention output matvec".into())
+                    })?,
+                    after_mlp: after_mlp.ok_or_else(|| {
+                        CpuError::ShapeMismatch("layer has no mlp down matvec".into())
+                    })?,
+                    after_layer,
+                },
+            })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let final_ops = plan
@@ -4252,12 +4330,17 @@ fn three_regions(slices: [&mut [f32]; 3]) -> (&mut [f32], &mut [f32], &mut [f32]
 }
 
 /// Plan-driven single-token decode: walks the resolved ops against the
-/// scratch arena. Zero heap allocation in the steady state.
+/// scratch arena. Zero heap allocation in the steady state. When `hooks` is
+/// `Some`, the six semantic hook sites fire against the arena regions at the
+/// same call sites as the reference path (contract section 12); the plan is
+/// built with the matching hook mode and active stages.
 fn forward_last_logits_planned(
     model: &Llama<CpuBackend>,
     token_ids: &[u32],
     cache: &mut crate::kv_cache::KVCache,
     start_pos: usize,
+    mut hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
+    hook_mode: HookMode,
 ) -> Result<CpuTensor, CpuError> {
     if token_ids.len() != 1 {
         return Err(CpuError::ShapeMismatch(
@@ -4266,11 +4349,24 @@ fn forward_last_logits_planned(
     }
     cache.validate_start_pos(start_pos);
     let max_seq_len = cache.max_seq_len();
+    const ALL_STAGES: [&str; 6] = [
+        "before-layer",
+        "after-attention",
+        "after-mlp",
+        "after-layer",
+        "before-logits",
+        "after-logits",
+    ];
+    let stages: &[&str] = if hook_mode == HookMode::Disabled {
+        &[]
+    } else {
+        &ALL_STAGES
+    };
     let plan = model
         .execution_plan(
             ExecutionMode::Planned,
-            HookMode::Disabled,
-            &[],
+            hook_mode,
+            stages,
             max_seq_len,
             None,
             None,
@@ -4303,7 +4399,16 @@ fn forward_last_logits_planned(
 
     // transformer blocks
     for (layer, block) in model.blocks.iter().enumerate() {
-        for op in &ops.layers[layer] {
+        let layer_ops = &ops.layers[layer];
+        // before_layer fires on the block input (contract section 4/12).
+        if let Some((hooks, _)) = hooks.as_mut() {
+            let [data] = arena
+                .regions_f32([layer_ops.hooks.before_layer])
+                .map_err(arena_err)?;
+            let mut activation = SliceActivation::new(1, model.config.embed_dim, data);
+            hooks.before_layer(layer, &mut activation)?;
+        }
+        for op in &layer_ops.ops {
             match op {
                 ResolvedOp::RmsNorm { role, input, out } => {
                     let (x, dst) =
@@ -4359,6 +4464,31 @@ fn forward_last_logits_planned(
                     if *has_bias {
                         if let Some(bias) = linear.bias() {
                             add_bias_into(dst, bias.data());
+                        }
+                    }
+                    // after_attention / after_mlp fire on the pre-residual
+                    // projection outputs (contract section 4/12), through the
+                    // resolved hook regions so fused plans can point them at
+                    // the materialized tensor.
+                    if let Some((hooks, _)) = hooks.as_mut() {
+                        match role {
+                            ProjRole::O => {
+                                let [data] = arena
+                                    .regions_f32([layer_ops.hooks.after_attention])
+                                    .map_err(arena_err)?;
+                                let mut activation =
+                                    SliceActivation::new(1, model.config.embed_dim, data);
+                                hooks.after_attention(layer, &mut activation)?;
+                            }
+                            ProjRole::Down => {
+                                let [data] = arena
+                                    .regions_f32([layer_ops.hooks.after_mlp])
+                                    .map_err(arena_err)?;
+                                let mut activation =
+                                    SliceActivation::new(1, model.config.embed_dim, data);
+                                hooks.after_mlp(layer, &mut activation)?;
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -4437,6 +4567,14 @@ fn forward_last_logits_planned(
                 }
             }
         }
+        // after_layer fires on the block output (contract section 4/12).
+        if let Some((hooks, _)) = hooks.as_mut() {
+            let [data] = arena
+                .regions_f32([layer_ops.hooks.after_layer])
+                .map_err(arena_err)?;
+            let mut activation = SliceActivation::new(1, model.config.embed_dim, data);
+            hooks.after_layer(layer, &mut activation)?;
+        }
     }
     cache.advance_cursor();
 
@@ -4451,16 +4589,24 @@ fn forward_last_logits_planned(
             } => {
                 let (x, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                 rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
+                // before_logits fires on the final-norm output.
+                if let Some((hooks, _)) = hooks.as_mut() {
+                    let mut activation = SliceActivation::new(1, model.config.embed_dim, dst);
+                    hooks.before_logits(&mut activation)?;
+                }
             }
             ResolvedOp::Logits { input, out, tied } => {
                 debug_assert_eq!(*tied, model.head_tied, "plan head tie flag diverged");
                 let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                 dst.fill(0.0);
                 planned_linear_into(&model.head, src, dst)?;
-                logits = Some(CpuTensor::from_data(
-                    vec![1, model.config.vocab_size],
-                    dst.to_vec(),
-                ));
+                let mut logits_tensor =
+                    CpuTensor::from_data(vec![1, model.config.vocab_size], dst.to_vec());
+                // after_logits fires on the final logits tensor.
+                if let Some((hooks, _)) = hooks.as_mut() {
+                    hooks.after_logits(&mut logits_tensor)?;
+                }
+                logits = Some(logits_tensor);
             }
             other => {
                 return Err(CpuError::ShapeMismatch(format!(
@@ -4475,7 +4621,7 @@ fn forward_last_logits_planned(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experiments::test_support::RecordingExperiment;
+    use crate::experiments::test_support::{HookRecord, RecordingExperiment};
     use crate::experiments::{
         ExecutionPhase, ExperimentHook, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
         ZeroLayerOutputSpec, ZeroLayerOutputStage,
@@ -5291,5 +5437,214 @@ mod tests {
             allocations <= 3,
             "planned decode allocated {allocations} times per token; expected at most 3 (the logits CpuTensor shape + strides + data)"
         );
+    }
+
+    /// Gate C (contract section 12): the planned path with an initialized
+    /// hook system but a no-op experiment must be bit-identical to the
+    /// plain planned path (hooks disabled).
+    #[test]
+    fn planned_inactive_hooks_match_plain_planned() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+
+        // plain planned decode (hooks fully disabled)
+        model.set_execution_mode(ExecutionMode::Planned);
+        let mut plain_cache = model.create_cache(&backend, 64);
+        let prompt = [3u32, 1, 7];
+        ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &prompt,
+            &mut plain_cache,
+            0,
+        )
+        .unwrap();
+        let plain = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[5],
+            &mut plain_cache,
+            3,
+        )
+        .unwrap();
+
+        // planned decode through the experiment path with a no-op (recording)
+        // experiment: same kernels, same sites, nothing mutates values.
+        let mut hook_cache = model.create_cache(&backend, 64);
+        ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut hook_cache, 0)
+            .unwrap();
+        let (experiment, records) = RecordingExperiment::new();
+        let model_context =
+            ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
+        let execution = ExecutionContext::new(
+            model_context,
+            ExecutionPhase::Decode,
+            3,
+            1,
+            TracingState::Disabled,
+        );
+        let mut runner = ExperimentRunner::new(experiment);
+        let hooked = ExperimentalForwardModel::forward_last_logits_with_experiment(
+            &model,
+            &backend,
+            &[5],
+            &mut hook_cache,
+            3,
+            execution,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            plain.data(),
+            hooked.data(),
+            "planned decode with inactive hooks must be bit-identical to hooks disabled"
+        );
+        assert!(
+            !records.lock().unwrap().is_empty(),
+            "the hook system must actually have fired on the planned path"
+        );
+    }
+
+    /// Gate C: the planned path fires the six semantic hook sites with the
+    /// same stages, layers, and shapes as the reference path.
+    #[test]
+    fn planned_hook_sites_match_reference() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+
+        let run_hooked = |mode: ExecutionMode| -> (CpuTensor, Vec<HookRecord>) {
+            model.set_execution_mode(mode);
+            let mut cache = model.create_cache(&backend, 64);
+            let prompt = [3u32, 1, 7];
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
+                .unwrap();
+            let (experiment, records) = RecordingExperiment::new();
+            let model_context =
+                ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
+            let execution = ExecutionContext::new(
+                model_context,
+                ExecutionPhase::Decode,
+                3,
+                1,
+                TracingState::Disabled,
+            );
+            let mut runner = ExperimentRunner::new(experiment);
+            let logits = ExperimentalForwardModel::forward_last_logits_with_experiment(
+                &model,
+                &backend,
+                &[5],
+                &mut cache,
+                3,
+                execution,
+                &mut runner,
+            )
+            .unwrap();
+            let hook_records = records.lock().unwrap().clone();
+            (logits, hook_records)
+        };
+
+        let (reference, reference_records) = run_hooked(ExecutionMode::Reference);
+        let (planned, planned_records) = run_hooked(ExecutionMode::Planned);
+
+        assert_eq!(
+            reference_records.len(),
+            planned_records.len(),
+            "reference and planned must fire the same number of hooks"
+        );
+        for (expected, actual) in reference_records.iter().zip(&planned_records) {
+            assert_eq!(expected.hook, actual.hook, "hook stage mismatch");
+            assert_eq!(
+                expected.layer_index, actual.layer_index,
+                "hook layer mismatch"
+            );
+            assert_eq!(expected.shape, actual.shape, "hook shape mismatch");
+        }
+        let max_abs = reference
+            .data()
+            .iter()
+            .zip(planned.data().iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs <= 1e-4,
+            "hooked planned logits diverge from hooked reference: {max_abs}"
+        );
+    }
+
+    /// Gate C: an intervention (zero-layer-output patch) on the planned path
+    /// lands at the same tensor and produces the same patched output as the
+    /// reference path.
+    #[test]
+    fn planned_patch_intervention_matches_reference() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+
+        let run_patched = |mode: ExecutionMode| -> CpuTensor {
+            model.set_execution_mode(mode);
+            let mut cache = model.create_cache(&backend, 64);
+            let prompt = [3u32, 1, 7];
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
+                .unwrap();
+            let model_context =
+                ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
+            let execution = ExecutionContext::new(
+                model_context,
+                ExecutionPhase::Decode,
+                3,
+                1,
+                TracingState::Disabled,
+            );
+            let mut runner = ExperimentRunner::new(ZeroLayerOutput::new(ZeroLayerOutputSpec::new(
+                0,
+                ZeroLayerOutputStage::Attention,
+            )));
+            ExperimentalForwardModel::forward_last_logits_with_experiment(
+                &model,
+                &backend,
+                &[5],
+                &mut cache,
+                3,
+                execution,
+                &mut runner,
+            )
+            .unwrap()
+        };
+
+        let reference = run_patched(ExecutionMode::Reference);
+        let planned = run_patched(ExecutionMode::Planned);
+        let max_abs = reference
+            .data()
+            .iter()
+            .zip(planned.data().iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs <= 1e-4,
+            "patched planned logits diverge from patched reference: {max_abs}"
+        );
+        // the patch must actually have changed the planned output
+        let mut plain_cache = model.create_cache(&backend, 64);
+        let prompt = [3u32, 1, 7];
+        ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &prompt,
+            &mut plain_cache,
+            0,
+        )
+        .unwrap();
+        let plain = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[5],
+            &mut plain_cache,
+            3,
+        )
+        .unwrap();
+        assert_ne!(plain.data(), planned.data(), "the intervention must fire");
     }
 }

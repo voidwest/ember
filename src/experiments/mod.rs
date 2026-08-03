@@ -179,6 +179,13 @@ impl core::error::Error for ExperimentFailure {
 pub trait Experiment: Send {
     fn name(&self) -> &'static str;
 
+    /// Whether this experiment mutates hidden states through its hooks
+    /// (patch/intervention experiments) rather than only observing. Drives
+    /// the v0.4 HookMode recorded in execution-plan provenance.
+    fn intervenes(&self) -> bool {
+        false
+    }
+
     /// Structured arguments describing this experiment instance, recorded in
     /// capture artifacts for provenance.
     fn arguments(&self) -> serde_json::Value {
@@ -295,6 +302,28 @@ impl ExperimentRunner {
     #[must_use]
     pub fn has_capture(&self) -> bool {
         self.capture.is_some()
+    }
+
+    /// Whether the active experiment mutates hidden states.
+    #[must_use]
+    pub fn intervenes(&self) -> bool {
+        self.experiment
+            .as_ref()
+            .is_some_and(|experiment| experiment.intervenes())
+    }
+
+    /// The v0.4 hook mode for execution-plan provenance: `Intervene` when
+    /// the experiment patches hidden states, `Observe` when an experiment
+    /// or capture is present, `Disabled` otherwise.
+    #[must_use]
+    pub(crate) fn hook_mode(&self) -> crate::plan::HookMode {
+        if self.intervenes() {
+            crate::plan::HookMode::Intervene
+        } else if self.experiment.is_some() || self.capture.is_some() {
+            crate::plan::HookMode::Observe
+        } else {
+            crate::plan::HookMode::Disabled
+        }
     }
 
     /// Record the kernel/dispatch path used by the current evaluation.
