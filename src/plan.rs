@@ -27,7 +27,7 @@ pub const PLAN_SCHEMA_VERSION: u32 = 1;
 // ---------------------------------------------------------------------------
 
 /// The three separable execution concepts (contract section 9).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExecutionMode {
     /// The v0.3 generic hooked path with per-tensor dynamic dispatch — the
@@ -64,7 +64,7 @@ impl ExecutionMode {
 }
 
 /// Hook activation mode, resolved at plan build (contract section 12).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum HookMode {
     /// Fast normal path: no capture metadata, no clones, no string lookup,
@@ -187,8 +187,9 @@ pub struct TensorRecord {
     pub id: usize,
     /// GGUF tensor name, e.g. `blk.3.attn_q.weight`.
     pub name: String,
-    /// Logical `[out_features, in_features]` shape (K-quant convention).
-    pub shape: [usize; 2],
+    /// Logical shape. Linears use the `[out_features, in_features]` K-quant
+    /// convention; norm weights are 1-D `[dim]`.
+    pub shape: Vec<usize>,
     /// GGUF dtype name: `q4_k`, `q6_k`, `q8_0`, `f32`, `f16`.
     pub gguf_dtype: String,
     /// v0.3 per-tensor execution decision: `eager_f32` | `compressed_scalar`
@@ -235,6 +236,8 @@ pub struct ScratchPlan {
     pub total_bytes: usize,
     /// Arena base alignment (64 bytes; AVX2-safe).
     pub alignment: usize,
+    /// Sequence capacity the activation regions are sized for (1 = decode).
+    pub seq_capacity: usize,
     /// Region descriptors.
     pub regions: Vec<ScratchRegion>,
     /// tensor id -> region name, for interpreter lookups.
@@ -315,13 +318,15 @@ pub enum PlannedOp {
         out: TensorRef,
     },
     /// Quantized (or dense) linear projection. `fused_rms_norm` is set for
-    /// fusion F1 (the norm weight folded into the projection).
+    /// fusion F1 (the norm weight folded into the projection); `bias` is
+    /// set for projections carrying an F32 bias (qwen2.5 q/k/v).
     Matvec {
         weight: TensorRef,
         input: TensorRef,
         out: TensorRef,
         kernel: KernelId,
         fused_rms_norm: Option<TensorRef>,
+        bias: Option<TensorRef>,
     },
     /// RoPE (+ optional qk-norm per architecture). Applied in place on
     /// `target`.
@@ -464,7 +469,11 @@ pub struct ExecutionPlan {
     pub tokenizer_sha256: String,
     pub gguf: GgufSummary,
     pub rope: RopeSummary,
+    /// Ops executed before the first layer (embedding lookup).
+    pub preamble: Vec<PlannedOp>,
     pub layers: Vec<LayerPlan>,
+    /// Ops executed after the last layer (final norm, LM head).
+    pub final_ops: Vec<PlannedOp>,
     pub tensor_table: Vec<TensorRecord>,
     pub scratch: ScratchPlan,
     pub kv: KvLayout,
@@ -487,6 +496,157 @@ impl ExecutionPlan {
         self
     }
 
+    /// Validate internal consistency. Called at plan build; the interpreter
+    /// re-asserts the same invariants at decode time.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.schema_version == PLAN_SCHEMA_VERSION,
+            "unexpected plan schema version {}",
+            self.schema_version
+        );
+        anyhow::ensure!(
+            self.layers.len() == self.gguf.block_count,
+            "plan layer count {} does not match gguf block_count {}",
+            self.layers.len(),
+            self.gguf.block_count
+        );
+        for (index, record) in self.tensor_table.iter().enumerate() {
+            anyhow::ensure!(
+                self.tensor_table[..index]
+                    .iter()
+                    .all(|prior| prior.id != record.id),
+                "duplicate tensor table id {} at position {index}",
+                record.id
+            );
+        }
+        let check_ref = |r: TensorRef, what: &str| -> anyhow::Result<()> {
+            if self.tensor_table.iter().any(|t| t.id == r.id) {
+                return Ok(());
+            }
+            anyhow::ensure!(
+                self.scratch.tensor_regions.contains_key(&r.id),
+                "{what} tensor id {} resolves to neither a weight nor a scratch region",
+                r.id
+            );
+            Ok(())
+        };
+        let check_refs = |refs: &[TensorRef], what: &str| -> anyhow::Result<()> {
+            for r in refs {
+                check_ref(*r, what)?;
+            }
+            Ok(())
+        };
+        let check_op = |op: &PlannedOp| -> anyhow::Result<()> {
+            match op {
+                PlannedOp::Embedding { tensor, out } => {
+                    check_ref(*tensor, "embedding weight")?;
+                    check_ref(*out, "embedding output")
+                }
+                PlannedOp::RmsNorm { weight, input, out } => {
+                    check_ref(*weight, "rmsnorm weight")?;
+                    check_refs(&[*input, *out], "rmsnorm")
+                }
+                PlannedOp::Matvec {
+                    weight,
+                    input,
+                    out,
+                    fused_rms_norm,
+                    bias,
+                    ..
+                } => {
+                    check_ref(*weight, "matvec weight")?;
+                    check_refs(&[*input, *out], "matvec")?;
+                    if let Some(norm) = fused_rms_norm {
+                        check_ref(*norm, "fused rmsnorm weight")?;
+                    }
+                    if let Some(bias) = bias {
+                        check_ref(*bias, "matvec bias")?;
+                    }
+                    Ok(())
+                }
+                PlannedOp::Rope {
+                    target, qk_norm, ..
+                } => {
+                    check_ref(*target, "rope target")?;
+                    if let Some(norm) = qk_norm {
+                        check_ref(*norm, "rope qk-norm weight")?;
+                    }
+                    Ok(())
+                }
+                PlannedOp::KvStore { k, v } => check_refs(&[*k, *v], "kv store"),
+                PlannedOp::Attention {
+                    q,
+                    out,
+                    score_scratch,
+                } => {
+                    check_refs(&[*q, *out], "attention")?;
+                    anyhow::ensure!(
+                        self.scratch
+                            .regions
+                            .iter()
+                            .any(|r| r.name == *score_scratch),
+                        "attention score scratch region '{score_scratch}' not found"
+                    );
+                    Ok(())
+                }
+                PlannedOp::Silu { target } => check_ref(*target, "silu target"),
+                PlannedOp::Elemul { a, b, out } => check_refs(&[*a, *b, *out], "elemul"),
+                PlannedOp::ResidualAdd { a, b, out } => check_refs(&[*a, *b, *out], "residual add"),
+                PlannedOp::OutputNorm { weight, input, out } => {
+                    check_ref(*weight, "output norm weight")?;
+                    check_refs(&[*input, *out], "output norm")
+                }
+                PlannedOp::Logits {
+                    weight, input, out, ..
+                } => {
+                    check_ref(*weight, "logits weight")?;
+                    check_refs(&[*input, *out], "logits")
+                }
+                PlannedOp::Fused {
+                    components,
+                    eliminated,
+                    ..
+                } => {
+                    for component in components {
+                        anyhow::ensure!(
+                            *component < self.operation_count(),
+                            "fused op component index {component} out of range"
+                        );
+                    }
+                    for tensor in eliminated {
+                        check_ref(*tensor, "fused eliminated tensor")?;
+                    }
+                    Ok(())
+                }
+            }
+        };
+        for op in self.preamble.iter().chain(self.final_ops.iter()) {
+            check_op(op)?;
+        }
+        for layer in &self.layers {
+            for op in &layer.ops {
+                check_op(op)?;
+            }
+        }
+        for entry in &self.dispatch.kernel_per_tensor {
+            anyhow::ensure!(
+                self.tensor_table.iter().any(|t| t.id == entry.tensor),
+                "dispatch entry references unknown tensor {}",
+                entry.tensor
+            );
+        }
+        for site in &self.hook_sites.sites {
+            if let Some(tensor) = site.tensor {
+                anyhow::ensure!(
+                    self.tensor_table.iter().any(|t| t.id == tensor)
+                        || self.scratch.tensor_regions.contains_key(&tensor),
+                    "hook site references unknown tensor {tensor}"
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Deterministic hash input: the JSON value with timestamp and hash
     /// zeroed.
     fn hash_input_json(&self) -> serde_json::Value {
@@ -503,16 +663,23 @@ impl ExecutionPlan {
         value
     }
 
-    /// Total number of planned operations across all layers.
+    /// Total number of planned operations (preamble + layers + final).
     pub fn operation_count(&self) -> usize {
-        self.layers.iter().map(|layer| layer.ops.len()).sum()
+        self.preamble.len()
+            + self
+                .layers
+                .iter()
+                .map(|layer| layer.ops.len())
+                .sum::<usize>()
+            + self.final_ops.len()
     }
 
     /// Fused op count (for diagnostics).
     pub fn fused_op_count(&self) -> usize {
-        self.layers
+        self.preamble
             .iter()
-            .flat_map(|layer| layer.ops.iter())
+            .chain(self.final_ops.iter())
+            .chain(self.layers.iter().flat_map(|layer| layer.ops.iter()))
             .filter(|op| matches!(op, PlannedOp::Fused { .. }))
             .count()
     }
@@ -564,8 +731,10 @@ impl ExecutionPlan {
             self.rope.layout, self.rope.qk_norm_order, self.rope.has_q_norm, self.rope.has_k_norm
         ));
         out.push_str(&format!(
-            "operations: {} total, {} fused, {} defused layers\n",
+            "operations: {} total ({} preamble, {} final), {} fused, {} defused layers\n",
             self.operation_count(),
+            self.preamble.len(),
+            self.final_ops.len(),
             self.fused_op_count(),
             self.defused_layers().len()
         ));
@@ -688,6 +857,10 @@ mod tests {
                 has_q_norm: false,
                 has_k_norm: false,
             },
+            preamble: vec![PlannedOp::Embedding {
+                tensor: TensorRef::new(0),
+                out: TensorRef::new(10),
+            }],
             layers: vec![LayerPlan {
                 layer_index: 0,
                 ops: vec![
@@ -702,6 +875,7 @@ mod tests {
                         out: TensorRef::new(12),
                         kernel: KernelId::KQuantScalarQ6K,
                         fused_rms_norm: None,
+                        bias: None,
                     },
                     PlannedOp::ResidualAdd {
                         a: TensorRef::new(10),
@@ -712,10 +886,16 @@ mod tests {
                 fusion: FusionState::Unfused,
                 fusion_reason: None,
             }],
+            final_ops: vec![PlannedOp::OutputNorm {
+                weight: TensorRef::new(3),
+                input: TensorRef::new(13),
+                out: TensorRef::new(14),
+            }],
             tensor_table: vec![],
             scratch: ScratchPlan {
                 total_bytes: 4096,
                 alignment: 64,
+                seq_capacity: 1,
                 regions: vec![
                     ScratchRegion {
                         name: "t10".into(),
@@ -871,7 +1051,7 @@ mod tests {
         let plan = sample_plan(ExecutionMode::Planned, HookMode::Disabled).finalize();
         let text = plan.to_summary_text();
         assert!(text.contains("execution plan (schema v04-plan/1)"));
-        assert!(text.contains("operations: 3 total"));
+        assert!(text.contains("operations: 5 total (1 preamble, 1 final)"));
         assert!(text.contains("scratch: 4096 bytes"));
         assert!(text.contains("fallbacks: none"));
     }

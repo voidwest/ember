@@ -6,8 +6,9 @@ mod cli_probe;
 
 use cli_commands::{
     effective_context_limit, run_bench_decode_command, run_bench_lifecycle_command,
-    run_compare_artifacts_command, run_extract_command, run_native_logits_reference_command,
-    run_validate_backends_command, run_validate_run_command, validate_experiment_options,
+    run_compare_artifacts_command, run_extract_command, run_inspect_plan_command,
+    run_native_logits_reference_command, run_validate_backends_command, run_validate_run_command,
+    validate_experiment_options,
 };
 use cli_generation::{
     bail_dump_layers_unsupported, demo_mode, dump_last_logits, dump_layers_gemma4,
@@ -283,6 +284,8 @@ pub(crate) enum Commands {
     BenchDecode(BenchDecodeCommand),
     /// measure Llama packed-weight lifecycle timing and process residency
     BenchLifecycle(BenchLifecycleCommand),
+    /// print the v0.4 execution plan for a llama-family model
+    InspectPlan(InspectPlanCommand),
 }
 
 #[derive(ClapArgs)]
@@ -318,6 +321,42 @@ pub(crate) struct BenchDecodeCommand {
     /// collect fast-path per-operator timing in the benchmark JSON
     #[arg(long)]
     profile_operators: bool,
+}
+
+#[derive(ClapArgs)]
+pub(crate) struct InspectPlanCommand {
+    /// path to the GGUF model
+    #[arg(short, long)]
+    model: String,
+
+    /// model architecture
+    #[arg(long, value_parser = ["gpt2", "llama", "qwen3", "gemma4"])]
+    arch: String,
+
+    /// path to tokenizer.json (optional; recorded in provenance when present)
+    #[arg(long)]
+    tokenizer: Option<String>,
+
+    /// execution mode: reference | planned | planned-fused
+    #[arg(long, default_value = "planned")]
+    execution: String,
+
+    /// hook mode: disabled | observe | intervene
+    #[arg(long, default_value = "disabled")]
+    hook: String,
+
+    /// active hook stages (comma-separated): before-layer, after-attention,
+    /// after-mlp, after-layer, before-logits, after-logits
+    #[arg(long)]
+    hook_stages: Option<String>,
+
+    /// cap usable context length below the model metadata value
+    #[arg(long, value_parser = parse_max_seq_len)]
+    max_seq_len: Option<usize>,
+
+    /// write the serialized execution-plan.json to this path
+    #[arg(long)]
+    output: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -601,6 +640,9 @@ fn main() -> anyhow::Result<()> {
             }
             Commands::BenchLifecycle(command) => {
                 run_bench_lifecycle_command(command, k_strategy, args.k_allow_fallback)
+            }
+            Commands::InspectPlan(command) => {
+                run_inspect_plan_command(command, k_strategy, args.k_allow_fallback)
             }
         };
     }

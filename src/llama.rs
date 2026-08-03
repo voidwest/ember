@@ -5,14 +5,26 @@ use crate::experiments::{
     LayerHooks, SliceActivation,
 };
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
+use crate::plan::{
+    resolve_kernel, DispatchPlan, ExecutionMode, ExecutionPlan, FusionState, HookMode,
+    HookSitePlan, HookSiteRecord, KernelEntry, KernelId, KvLayout, LayerPlan, PlanProvenance,
+    PlannedOp, RopeSummary, ScratchPlan, ScratchRegion, TensorRecord, TensorRef,
+};
 use crate::tensor::CpuTensor;
 use crate::workspace::Workspace;
 use alloc::vec::Vec;
 use anyhow::Context;
 use std::cell::RefCell;
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 const INTERLEAVED_MIN_OUT_FEATURES: usize = 65_536;
+
+/// v0.4 execution-plan cache: keyed by (execution mode, hook mode, active
+/// stages), one immutable plan per key (contract D5).
+type PlanCache = std::sync::OnceLock<
+    std::sync::Mutex<BTreeMap<(ExecutionMode, HookMode, Vec<String>), Arc<ExecutionPlan>>>,
+>;
 
 thread_local! {
     /// One decode workspace per calling thread. Dimensions are checked before
@@ -1211,6 +1223,10 @@ pub struct Llama<B: Backend> {
     pub config: LlamaConfig,
     /// Cached eligibility result for the allocation-free single-token path.
     fast_decode_inter_dim: Option<usize>,
+    /// v0.4 execution-plan cache keyed by (mode, hook mode, active stages).
+    plan_cache: PlanCache,
+    /// Whether the LM head is tied to the embedding tensor (no output.weight).
+    head_tied: bool,
     /// Lazily computed suffix-norm table for the fused greedy lm_head
     /// (only present when the head is Q8_0).
     head_topk_norms: std::sync::OnceLock<Option<std::sync::Arc<crate::quant::Q8TopkNorms>>>,
@@ -2141,6 +2157,7 @@ impl Llama<CpuBackend> {
         }
 
         // lm_head: use output.weight if present, otherwise tie with embed_tokens
+        let has_output_weight = loader.tensors.contains_key("output.weight");
         let mut head = match loader.tensors.remove("output.weight") {
             Some(LoadedTensor::F32(tensor)) => {
                 Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
@@ -2174,6 +2191,8 @@ impl Llama<CpuBackend> {
             head,
             config,
             fast_decode_inter_dim: None,
+            plan_cache: OnceLock::new(),
+            head_tied: !has_output_weight,
             head_topk_norms: std::sync::OnceLock::new(),
         };
         model.validate_loaded_shapes()?;
@@ -2861,6 +2880,818 @@ impl<B: Backend> Llama<B> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// v0.4 execution plan construction
+// (contract: docs/v04-execution-contract.md, sections 3, 5, 10)
+// ---------------------------------------------------------------------------
+
+/// v0.4 planned decode is single-token (seq = 1); prefill stays on the
+/// reference path. The scratch arena is sized for this capacity.
+const PLAN_DECODE_SEQ: usize = 1;
+
+/// Scratch alignment for all arena regions (AVX2-safe).
+const PLAN_REGION_ALIGN: usize = 64;
+
+/// Local accumulation state for plan construction: weight table, activation
+/// regions, and the tensor->region map. All ids are assigned in a
+/// deterministic order so identical models yield identical plans.
+struct PlanBuilder {
+    next_id: usize,
+    tensor_table: Vec<TensorRecord>,
+    regions: Vec<ScratchRegion>,
+    tensor_regions: BTreeMap<usize, String>,
+}
+
+impl PlanBuilder {
+    fn new() -> Self {
+        Self {
+            next_id: 0,
+            tensor_table: Vec::new(),
+            regions: Vec::new(),
+            tensor_regions: BTreeMap::new(),
+        }
+    }
+
+    /// Register a weight tensor and return its stable id.
+    #[allow(clippy::too_many_arguments)]
+    fn add_weight(
+        &mut self,
+        name: &str,
+        shape: Vec<usize>,
+        gguf_dtype: &str,
+        execution: &str,
+        kernel: KernelId,
+        resident_bytes: usize,
+        mmap: bool,
+    ) -> TensorRef {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.tensor_table.push(TensorRecord {
+            id,
+            name: name.to_string(),
+            shape,
+            gguf_dtype: gguf_dtype.to_string(),
+            execution: execution.to_string(),
+            kernel,
+            resident_bytes,
+            mmap,
+        });
+        TensorRef::new(id)
+    }
+
+    /// Register a decode activation (scratch region) and return its id.
+    fn add_activation(&mut self, region: &str, elements: usize) -> TensorRef {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.regions.push(ScratchRegion {
+            name: region.to_string(),
+            offset: 0,
+            size: elements * 4,
+            alignment: PLAN_REGION_ALIGN,
+            first_op: usize::MAX,
+            last_op: 0,
+            shared_with: None,
+        });
+        self.tensor_regions.insert(id, region.to_string());
+        TensorRef::new(id)
+    }
+
+    /// Look up the kernel recorded for a weight tensor. Weight ids and
+    /// activation ids share one counter, so weights are located by id, not
+    /// by table position.
+    fn kernel_of(&self, tensor: TensorRef) -> KernelId {
+        self.tensor_table
+            .iter()
+            .find(|record| record.id == tensor.id)
+            .expect("matvec weight must be in the tensor table")
+            .kernel
+    }
+
+    /// Resolve every region referenced by `op` (weights have no region).
+    /// Returns owned names so callers are free to mutate the region list.
+    fn regions_touched(&self, op: &PlannedOp) -> Vec<String> {
+        let mut out = Vec::new();
+        let push = |id: TensorRef, out: &mut Vec<String>| {
+            if let Some(region) = self.tensor_regions.get(&id.id) {
+                out.push(region.clone());
+            }
+        };
+        match op {
+            PlannedOp::Embedding { out: dst, .. } => push(*dst, &mut out),
+            PlannedOp::RmsNorm {
+                input, out: dst, ..
+            } => {
+                push(*input, &mut out);
+                push(*dst, &mut out);
+            }
+            PlannedOp::Matvec {
+                input, out: dst, ..
+            } => {
+                push(*input, &mut out);
+                push(*dst, &mut out);
+            }
+            PlannedOp::Rope { target, .. } => push(*target, &mut out),
+            PlannedOp::KvStore { k, v } => {
+                push(*k, &mut out);
+                push(*v, &mut out);
+            }
+            PlannedOp::Attention {
+                q,
+                out: dst,
+                score_scratch,
+            } => {
+                push(*q, &mut out);
+                push(*dst, &mut out);
+                out.push(score_scratch.clone());
+            }
+            PlannedOp::Silu { target } => push(*target, &mut out),
+            PlannedOp::Elemul { a, b, out: dst } => {
+                push(*a, &mut out);
+                push(*b, &mut out);
+                push(*dst, &mut out);
+            }
+            PlannedOp::ResidualAdd { a, b, out: dst } => {
+                push(*a, &mut out);
+                push(*b, &mut out);
+                push(*dst, &mut out);
+            }
+            PlannedOp::OutputNorm {
+                input, out: dst, ..
+            } => {
+                push(*input, &mut out);
+                push(*dst, &mut out);
+            }
+            PlannedOp::Logits {
+                input, out: dst, ..
+            } => {
+                push(*input, &mut out);
+                push(*dst, &mut out);
+            }
+            // Fused ops fold their components' regions in via the component
+            // ops themselves; no standalone region mapping yet.
+            PlannedOp::Fused { .. } => {}
+        }
+        out
+    }
+
+    /// Assign deterministic offsets and fill in region lifetimes from the
+    /// op sequences (global op index across preamble/layers/final).
+    fn layout(&mut self, preamble: &[PlannedOp], layers: &[LayerPlan], final_ops: &[PlannedOp]) {
+        let ops: Vec<&PlannedOp> = preamble
+            .iter()
+            .chain(layers.iter().flat_map(|layer| layer.ops.iter()))
+            .chain(final_ops.iter())
+            .collect();
+        for (index, op) in ops.iter().enumerate() {
+            let touched = self.regions_touched(op);
+            for region in touched {
+                let region_index = self
+                    .regions
+                    .iter()
+                    .position(|r| r.name == region)
+                    .expect("op references a registered region");
+                let entry = &mut self.regions[region_index];
+                if entry.first_op == usize::MAX {
+                    entry.first_op = index;
+                }
+                entry.last_op = index;
+            }
+        }
+        for region in &mut self.regions {
+            if region.first_op == usize::MAX {
+                region.first_op = 0;
+            }
+        }
+        let mut cursor = 0usize;
+        for region in &mut self.regions {
+            cursor = align_up(cursor, region.alignment);
+            region.offset = cursor;
+            cursor += region.size;
+        }
+    }
+
+    fn finish(self) -> (Vec<TensorRecord>, ScratchPlan, DispatchPlan) {
+        let total_bytes = align_up(
+            self.regions
+                .iter()
+                .map(|r| r.offset + r.size)
+                .max()
+                .unwrap_or(0),
+            PLAN_REGION_ALIGN,
+        );
+        let scratch = ScratchPlan {
+            total_bytes,
+            alignment: PLAN_REGION_ALIGN,
+            seq_capacity: PLAN_DECODE_SEQ,
+            regions: self.regions,
+            tensor_regions: self.tensor_regions,
+        };
+        let kernel_per_tensor = self
+            .tensor_table
+            .iter()
+            .map(|t| KernelEntry {
+                tensor: t.id,
+                kernel: t.kernel,
+                cpu_feature: t.kernel.cpu_feature().map(str::to_string),
+                fallback: None,
+            })
+            .collect();
+        let dispatch = DispatchPlan {
+            kernel_per_tensor,
+            thread_strategy: "serial".to_string(),
+        };
+        (self.tensor_table, scratch, dispatch)
+    }
+}
+
+fn align_up(value: usize, alignment: usize) -> usize {
+    value.div_ceil(alignment) * alignment
+}
+
+/// v0.3 per-tensor execution decision name for provenance records.
+fn k_execution_name(execution: crate::quant_k::KExecution) -> &'static str {
+    match execution {
+        crate::quant_k::KExecution::EagerF32 => "eager_f32",
+        crate::quant_k::KExecution::CompressedScalar => "compressed_scalar",
+        crate::quant_k::KExecution::CompressedX86 => "compressed_x86",
+    }
+}
+
+impl Llama<CpuBackend> {
+    /// Build (or return the cached) execution plan for this model under the
+    /// given execution/hook configuration (contract D5). `max_seq_len` is
+    /// the runtime KV capacity the scratch score region is sized for.
+    pub fn execution_plan(
+        &self,
+        mode: ExecutionMode,
+        hook_mode: HookMode,
+        active_stages: &[&str],
+        max_seq_len: usize,
+        model_sha256: Option<&str>,
+        tokenizer_sha256: Option<&str>,
+    ) -> anyhow::Result<Arc<ExecutionPlan>> {
+        let key = (
+            mode,
+            hook_mode,
+            active_stages
+                .iter()
+                .map(|stage| stage.to_string())
+                .collect::<Vec<_>>(),
+        );
+        let cache = self.plan_cache.get_or_init(|| Mutex::new(BTreeMap::new()));
+        let mut cache = cache.lock().expect("plan cache poisoned");
+        if let Some(plan) = cache.get(&key) {
+            return Ok(Arc::clone(plan));
+        }
+        let plan = Arc::new(self.build_execution_plan(
+            mode,
+            hook_mode,
+            active_stages,
+            max_seq_len,
+            model_sha256,
+            tokenizer_sha256,
+        )?);
+        cache.insert(key, Arc::clone(&plan));
+        Ok(plan)
+    }
+
+    /// Construct the full architecture-specific execution plan.
+    #[allow(clippy::too_many_arguments)]
+    fn build_execution_plan(
+        &self,
+        mode: ExecutionMode,
+        hook_mode: HookMode,
+        active_stages: &[&str],
+        max_seq_len: usize,
+        model_sha256: Option<&str>,
+        tokenizer_sha256: Option<&str>,
+    ) -> anyhow::Result<ExecutionPlan> {
+        const KNOWN_STAGES: [&str; 6] = [
+            "before-layer",
+            "after-attention",
+            "after-mlp",
+            "after-layer",
+            "before-logits",
+            "after-logits",
+        ];
+        for stage in active_stages {
+            anyhow::ensure!(
+                KNOWN_STAGES.contains(stage),
+                "unknown hook stage '{stage}' (expected one of {KNOWN_STAGES:?})"
+            );
+        }
+
+        let backend = CpuBackend;
+        let config = &self.config;
+        let n_layers = self.blocks.len();
+        anyhow::ensure!(
+            n_layers > 0,
+            "cannot plan a model with zero transformer blocks"
+        );
+        let embed = config.embed_dim;
+        let q_dim = config.n_heads * config.head_dim;
+        let kv_dim = config.n_kv_heads * config.head_dim;
+        let inter = self.blocks[0].mlp.gate_proj.out_features(&backend);
+        let vocab = config.vocab_size;
+
+        let (architecture, rope_layout_name, qk_norm_order_name) = match config.rope_layout {
+            RopeLayout::AdjacentPair => ("llama", "adjacent-pair", "after-rope"),
+            RopeLayout::SplitHalf => ("qwen2", "split-half", "before-rope"),
+        };
+
+        // ---- weight table ----
+        let mut builder = PlanBuilder::new();
+
+        let embed_weight = match &self.embed_tokens {
+            LlamaEmbedding::F32(t) => builder.add_weight(
+                "token_embd.weight",
+                vec![t.shape()[0], t.shape()[1]],
+                "f32",
+                "eager_f32",
+                KernelId::EagerF32,
+                t.data().len() * 4,
+                false,
+            ),
+            LlamaEmbedding::Q8_0(w) => builder.add_weight(
+                "token_embd.weight",
+                vec![w.out_features(), w.in_features()],
+                "q8_0",
+                "compressed",
+                KernelId::Q8Packed,
+                w.byte_len(),
+                w.is_mapped(),
+            ),
+            LlamaEmbedding::KQuant(w) => {
+                let dtype = w.dtype().name();
+                let exec = k_execution_name(w.execution());
+                builder.add_weight(
+                    "token_embd.weight",
+                    vec![w.out_features(), w.in_features()],
+                    dtype,
+                    exec,
+                    resolve_kernel(dtype, exec),
+                    w.byte_len(),
+                    w.is_mapped(),
+                )
+            }
+        };
+
+        let mut q_norm_present = false;
+        let mut k_norm_present = false;
+        let mut last_x2 = None;
+        let mut x_in = builder.add_activation("layer0.x_in", embed);
+        let x0 = x_in;
+        let _scores = builder.add_activation("scores", config.n_heads * max_seq_len);
+        let mut layers = Vec::with_capacity(n_layers);
+        // (input, o, m, output) tensor ids per layer, for hook-site records.
+        let mut hook_tensors: Vec<(TensorRef, TensorRef, TensorRef, TensorRef)> = Vec::new();
+
+        for (l, block) in self.blocks.iter().enumerate() {
+            let prefix = format!("blk.{l}");
+            let attn = &block.self_attn;
+            let mlp = &block.mlp;
+
+            let attn_norm = builder.add_weight(
+                &format!("{prefix}.attn_norm.weight"),
+                block.input_layernorm.shape().to_vec(),
+                "f32",
+                "eager_f32",
+                KernelId::EagerF32,
+                block.input_layernorm.data().len() * 4,
+                false,
+            );
+            let ffn_norm = builder.add_weight(
+                &format!("{prefix}.ffn_norm.weight"),
+                block.post_attention_layernorm.shape().to_vec(),
+                "f32",
+                "eager_f32",
+                KernelId::EagerF32,
+                block.post_attention_layernorm.data().len() * 4,
+                false,
+            );
+
+            let (q_w, q_b) = plan_linear(
+                &attn.q_proj,
+                &format!("{prefix}.attn_q.weight"),
+                &mut builder,
+            );
+            let (k_w, k_b) = plan_linear(
+                &attn.k_proj,
+                &format!("{prefix}.attn_k.weight"),
+                &mut builder,
+            );
+            let (v_w, v_b) = plan_linear(
+                &attn.v_proj,
+                &format!("{prefix}.attn_v.weight"),
+                &mut builder,
+            );
+            let (o_w, o_b) = plan_linear(
+                &attn.o_proj,
+                &format!("{prefix}.attn_output.weight"),
+                &mut builder,
+            );
+            let (gate_w, gate_b) = plan_linear(
+                &mlp.gate_proj,
+                &format!("{prefix}.ffn_gate.weight"),
+                &mut builder,
+            );
+            let (up_w, up_b) = plan_linear(
+                &mlp.up_proj,
+                &format!("{prefix}.ffn_up.weight"),
+                &mut builder,
+            );
+            let (down_w, down_b) = plan_linear(
+                &mlp.down_proj,
+                &format!("{prefix}.ffn_down.weight"),
+                &mut builder,
+            );
+
+            let q_norm = attn.q_norm.as_ref().map(|t| {
+                q_norm_present = true;
+                builder.add_weight(
+                    &format!("{prefix}.attn_q_norm.weight"),
+                    t.shape().to_vec(),
+                    "f32",
+                    "eager_f32",
+                    KernelId::EagerF32,
+                    t.data().len() * 4,
+                    false,
+                )
+            });
+            let k_norm = attn.k_norm.as_ref().map(|t| {
+                k_norm_present = true;
+                builder.add_weight(
+                    &format!("{prefix}.attn_k_norm.weight"),
+                    t.shape().to_vec(),
+                    "f32",
+                    "eager_f32",
+                    KernelId::EagerF32,
+                    t.data().len() * 4,
+                    false,
+                )
+            });
+
+            // ---- activations (decode seq = 1) ----
+            let n1 = builder.add_activation(&format!("layer{l}.n1"), embed);
+            let q = builder.add_activation(&format!("layer{l}.q"), q_dim);
+            let k = builder.add_activation(&format!("layer{l}.k"), kv_dim);
+            let v = builder.add_activation(&format!("layer{l}.v"), kv_dim);
+            let attn_out = builder.add_activation(&format!("layer{l}.attn"), q_dim);
+            let o = builder.add_activation(&format!("layer{l}.o"), embed);
+            let x1 = builder.add_activation(&format!("layer{l}.x1"), embed);
+            let n2 = builder.add_activation(&format!("layer{l}.n2"), embed);
+            let g = builder.add_activation(&format!("layer{l}.g"), inter);
+            let u = builder.add_activation(&format!("layer{l}.u"), inter);
+            let gu = builder.add_activation(&format!("layer{l}.gu"), inter);
+            let m = builder.add_activation(&format!("layer{l}.m"), embed);
+            let x2 = builder.add_activation(&format!("layer{l}.x2"), embed);
+
+            // ---- unfused op sequence (contract section 3) ----
+            let ops = vec![
+                PlannedOp::RmsNorm {
+                    weight: attn_norm,
+                    input: x_in,
+                    out: n1,
+                },
+                PlannedOp::Matvec {
+                    weight: q_w,
+                    input: n1,
+                    out: q,
+                    kernel: builder.kernel_of(q_w),
+                    fused_rms_norm: None,
+                    bias: q_b,
+                },
+                PlannedOp::Matvec {
+                    weight: k_w,
+                    input: n1,
+                    out: k,
+                    kernel: builder.kernel_of(k_w),
+                    fused_rms_norm: None,
+                    bias: k_b,
+                },
+                PlannedOp::Matvec {
+                    weight: v_w,
+                    input: n1,
+                    out: v,
+                    kernel: builder.kernel_of(v_w),
+                    fused_rms_norm: None,
+                    bias: v_b,
+                },
+                PlannedOp::Rope {
+                    target: q,
+                    rope_layout: rope_layout_name.to_string(),
+                    qk_norm: q_norm,
+                    qk_norm_order: qk_norm_order_name.to_string(),
+                },
+                PlannedOp::Rope {
+                    target: k,
+                    rope_layout: rope_layout_name.to_string(),
+                    qk_norm: k_norm,
+                    qk_norm_order: qk_norm_order_name.to_string(),
+                },
+                PlannedOp::KvStore { k, v },
+                PlannedOp::Attention {
+                    q,
+                    out: attn_out,
+                    score_scratch: "scores".to_string(),
+                },
+                PlannedOp::Matvec {
+                    weight: o_w,
+                    input: attn_out,
+                    out: o,
+                    kernel: builder.kernel_of(o_w),
+                    fused_rms_norm: None,
+                    bias: o_b,
+                },
+                PlannedOp::ResidualAdd {
+                    a: x_in,
+                    b: o,
+                    out: x1,
+                },
+                PlannedOp::RmsNorm {
+                    weight: ffn_norm,
+                    input: x1,
+                    out: n2,
+                },
+                PlannedOp::Matvec {
+                    weight: gate_w,
+                    input: n2,
+                    out: g,
+                    kernel: builder.kernel_of(gate_w),
+                    fused_rms_norm: None,
+                    bias: gate_b,
+                },
+                PlannedOp::Silu { target: g },
+                PlannedOp::Matvec {
+                    weight: up_w,
+                    input: n2,
+                    out: u,
+                    kernel: builder.kernel_of(up_w),
+                    fused_rms_norm: None,
+                    bias: up_b,
+                },
+                PlannedOp::Elemul {
+                    a: g,
+                    b: u,
+                    out: gu,
+                },
+                PlannedOp::Matvec {
+                    weight: down_w,
+                    input: gu,
+                    out: m,
+                    kernel: builder.kernel_of(down_w),
+                    fused_rms_norm: None,
+                    bias: down_b,
+                },
+                PlannedOp::ResidualAdd {
+                    a: x1,
+                    b: m,
+                    out: x2,
+                },
+            ];
+
+            // Phase 3 plans the unfused sequence for every mode; the fusion
+            // set (F1-F5) is applied in a later phase. planned-fused records
+            // the gap visibly rather than pretending fusion happened.
+            let (fusion, fusion_reason) = if mode == ExecutionMode::PlannedFused {
+                (
+                    FusionState::Unfused,
+                    Some(
+                        "fusion set not yet applied: planned-fused currently plans the unfused sequence"
+                            .to_string(),
+                    ),
+                )
+            } else {
+                (FusionState::Unfused, None)
+            };
+
+            layers.push(LayerPlan {
+                layer_index: l,
+                ops,
+                fusion,
+                fusion_reason,
+            });
+            hook_tensors.push((x_in, o, m, x2));
+            last_x2 = Some(x2);
+            x_in = x2;
+        }
+
+        let x2_last = last_x2.ok_or_else(|| anyhow::anyhow!("no layer output"))?;
+        let output_norm = builder.add_weight(
+            "output_norm.weight",
+            self.norm.shape().to_vec(),
+            "f32",
+            "eager_f32",
+            KernelId::EagerF32,
+            self.norm.data().len() * 4,
+            false,
+        );
+        let (head_w, _head_b) = plan_linear(
+            &self.head,
+            if self.head_tied {
+                "output.weight (tied to token_embd.weight)"
+            } else {
+                "output.weight"
+            },
+            &mut builder,
+        );
+
+        let hf = builder.add_activation("hf", embed);
+        let logits = builder.add_activation("logits", vocab);
+        let final_ops = vec![
+            PlannedOp::OutputNorm {
+                weight: output_norm,
+                input: x2_last,
+                out: hf,
+            },
+            PlannedOp::Logits {
+                weight: head_w,
+                input: hf,
+                out: logits,
+                tied: self.head_tied,
+            },
+        ];
+
+        // ---- region layout + dispatch ----
+        let preamble = vec![PlannedOp::Embedding {
+            tensor: embed_weight,
+            out: x0,
+        }];
+
+        builder.layout(&preamble, &layers, &final_ops);
+        let (tensor_table, scratch, dispatch) = builder.finish();
+
+        // ---- hook sites ----
+        let mut sites = Vec::new();
+        for (l, &(x_in_l, o_l, m_l, x2_l)) in hook_tensors.iter().enumerate() {
+            for (stage, tensor) in [
+                ("before-layer", x_in_l),
+                ("after-attention", o_l),
+                ("after-mlp", m_l),
+                ("after-layer", x2_l),
+            ] {
+                sites.push(HookSiteRecord {
+                    stage: stage.to_string(),
+                    layer: Some(l),
+                    tensor: Some(tensor.id),
+                    materialized: active_stages.contains(&stage),
+                    route: "unfused".to_string(),
+                });
+            }
+        }
+        for stage in ["before-logits", "after-logits"] {
+            sites.push(HookSiteRecord {
+                stage: stage.to_string(),
+                layer: None,
+                tensor: None,
+                materialized: active_stages.contains(&stage),
+                route: "unfused".to_string(),
+            });
+        }
+
+        let required: Vec<String> = dispatch
+            .kernel_per_tensor
+            .iter()
+            .filter_map(|entry| entry.cpu_feature.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let features = if crate::k_matmul_x86::avx2_supported() {
+            vec!["avx2".to_string(), "fma".to_string(), "f16c".to_string()]
+        } else {
+            Vec::new()
+        };
+
+        let plan = ExecutionPlan {
+            schema_version: crate::plan::PLAN_SCHEMA_VERSION,
+            architecture: architecture.to_string(),
+            model_sha256: model_sha256.unwrap_or_default().to_string(),
+            tokenizer_sha256: tokenizer_sha256.unwrap_or_default().to_string(),
+            gguf: crate::plan::GgufSummary {
+                arch: architecture.to_string(),
+                block_count: n_layers,
+                embedding_length: embed,
+                head_count: config.n_heads,
+                head_count_kv: config.n_kv_heads,
+                ffn_dim: inter,
+                vocab_size: vocab,
+                rope_dimension_count: config.head_dim,
+                context_length: config.max_seq_len,
+                rope_theta: config.rope_theta,
+            },
+            rope: RopeSummary {
+                layout: rope_layout_name.to_string(),
+                qk_norm_order: qk_norm_order_name.to_string(),
+                has_q_norm: q_norm_present,
+                has_k_norm: k_norm_present,
+            },
+            preamble,
+            layers,
+            final_ops,
+            tensor_table,
+            scratch,
+            kv: KvLayout {
+                precision: "f16".to_string(),
+                layout: "layer-head-pos-dim".to_string(),
+                layer_stride: config.n_kv_heads * max_seq_len * config.head_dim,
+                head_stride: max_seq_len * config.head_dim,
+                pos_stride: config.head_dim,
+                head_dim: config.head_dim,
+                n_kv_heads: config.n_kv_heads,
+                max_seq: max_seq_len,
+            },
+            hook_sites: HookSitePlan {
+                mode: hook_mode,
+                active: active_stages.iter().map(|s| s.to_string()).collect(),
+                sites,
+            },
+            dispatch,
+            cpu: crate::plan::CpuSummary {
+                features,
+                threads: rayon::current_num_threads(),
+                required,
+            },
+            provenance: PlanProvenance {
+                ember_version: env!("CARGO_PKG_VERSION").to_string(),
+                git_commit: option_env!("EMBER_GIT_HASH")
+                    .unwrap_or("unknown")
+                    .to_string(),
+                rustc_version: option_env!("EMBER_RUSTC_VERSION")
+                    .unwrap_or("unknown")
+                    .to_string(),
+                plan_build_time: format!(
+                    "unix-{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                ),
+                execution_mode: mode,
+                hook_mode,
+                model_sha256: model_sha256.unwrap_or_default().to_string(),
+                tokenizer_sha256: tokenizer_sha256.unwrap_or_default().to_string(),
+            },
+            plan_hash: String::new(),
+        };
+        plan.validate()?;
+        Ok(plan.finalize())
+    }
+}
+
+/// Register a linear weight (+ optional bias) in the plan's tensor table.
+fn plan_linear(
+    linear: &Linear<CpuBackend>,
+    name: &str,
+    builder: &mut PlanBuilder,
+) -> (TensorRef, Option<TensorRef>) {
+    use crate::model::WeightKindView;
+    let weight = match linear.weight_kind() {
+        WeightKindView::F32(t) => builder.add_weight(
+            name,
+            vec![t.shape()[1], t.shape()[0]],
+            "f32",
+            "eager_f32",
+            KernelId::EagerF32,
+            t.data().len() * 4,
+            false,
+        ),
+        WeightKindView::Q8_0(w) => builder.add_weight(
+            name,
+            vec![w.out_features(), w.in_features()],
+            "q8_0",
+            "compressed",
+            KernelId::Q8Packed,
+            w.byte_len(),
+            w.is_mapped(),
+        ),
+        WeightKindView::KQuant(w) => {
+            let dtype = w.dtype().name();
+            let exec = k_execution_name(w.execution());
+            builder.add_weight(
+                name,
+                vec![w.out_features(), w.in_features()],
+                dtype,
+                exec,
+                resolve_kernel(dtype, exec),
+                w.byte_len(),
+                w.is_mapped(),
+            )
+        }
+    };
+    let bias = linear.bias().map(|b| {
+        builder.add_weight(
+            &format!("{name}.bias"),
+            b.shape().to_vec(),
+            "f32",
+            "eager_f32",
+            KernelId::EagerF32,
+            b.data().len() * 4,
+            false,
+        )
+    });
+    (weight, bias)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3073,6 +3904,8 @@ mod tests {
                 vocab_size,
             },
             fast_decode_inter_dim: Some(inter_dim),
+            plan_cache: OnceLock::new(),
+            head_tied: false,
             head_topk_norms: std::sync::OnceLock::new(),
         }
     }
@@ -3438,5 +4271,176 @@ mod tests {
                 &independent_data[independent_data.len() - vocab_size..independent_data.len()];
             assert_eq!(batched_row, independent_row);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // v0.4 execution plan construction
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn execution_plan_is_deterministic_and_complete() {
+        let model = test_llama_model_with_layers(2);
+        let plan_a = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                None,
+                None,
+            )
+            .unwrap();
+        let plan_b = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            plan_a.plan_hash, plan_b.plan_hash,
+            "plans must hash identically"
+        );
+        assert!(
+            Arc::ptr_eq(&plan_a, &plan_b),
+            "plan cache must return the same Arc for an identical key"
+        );
+        assert_eq!(plan_a.preamble.len(), 1, "one embedding op");
+        assert_eq!(plan_a.layers.len(), 2, "one layer plan per block");
+        assert_eq!(plan_a.layers[0].ops.len(), 17, "unfused layer op count");
+        assert_eq!(plan_a.final_ops.len(), 2, "output norm + logits");
+        assert_eq!(plan_a.operation_count(), 1 + 2 * 17 + 2);
+        assert!(
+            plan_a
+                .layers
+                .iter()
+                .all(|l| l.fusion == FusionState::Unfused),
+            "phase-3 plans are unfused"
+        );
+        assert_eq!(
+            plan_a
+                .scratch
+                .regions
+                .iter()
+                .filter(|r| r.name == "scores")
+                .count(),
+            1,
+            "one shared score region"
+        );
+        assert!(plan_a.scratch.total_bytes > 0);
+    }
+
+    #[test]
+    fn execution_plan_resolves_kernels_and_shapes() {
+        let model = test_llama_model();
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                None,
+                None,
+            )
+            .unwrap();
+        // layer 0 op 1 is the q_proj matvec
+        let q_w = match &plan.layers[0].ops[1] {
+            PlannedOp::Matvec { weight, .. } => *weight,
+            other => panic!("expected q_proj matvec, got {other:?}"),
+        };
+        let q_record = plan
+            .tensor_table
+            .iter()
+            .find(|t| t.id == q_w.id)
+            .expect("q_proj weight in tensor table");
+        assert_eq!(q_record.shape, vec![32, 32], "test model embed = 32");
+        assert_eq!(q_record.gguf_dtype, "q8_0");
+        assert_eq!(q_record.kernel, KernelId::Q8Packed);
+        let embed = plan
+            .tensor_table
+            .iter()
+            .find(|t| t.name == "token_embd.weight")
+            .expect("embedding weight recorded");
+        assert_eq!(embed.shape, vec![32, 32]);
+        // final logits op is untied in the test model
+        let tied = match &plan.final_ops[1] {
+            PlannedOp::Logits { tied, .. } => *tied,
+            other => panic!("expected logits op, got {other:?}"),
+        };
+        assert!(!tied);
+    }
+
+    #[test]
+    fn execution_plan_hook_sites_follow_active_stages() {
+        let model = test_llama_model();
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Observe,
+                &["after-attention"],
+                8,
+                None,
+                None,
+            )
+            .unwrap();
+        assert_eq!(plan.hook_sites.active, vec!["after-attention"]);
+        let after_attn: Vec<_> = plan
+            .hook_sites
+            .sites
+            .iter()
+            .filter(|s| s.stage == "after-attention")
+            .collect();
+        assert!(!after_attn.is_empty());
+        assert!(after_attn
+            .iter()
+            .all(|s| s.materialized && s.tensor.is_some()));
+        assert!(
+            plan.hook_sites
+                .sites
+                .iter()
+                .filter(|s| s.stage != "after-attention")
+                .all(|s| !s.materialized),
+            "inactive stages must be recorded as not materialized"
+        );
+    }
+
+    #[test]
+    fn execution_plan_rejects_unknown_stages() {
+        let model = test_llama_model();
+        assert!(
+            model
+                .execution_plan(
+                    ExecutionMode::Planned,
+                    HookMode::Observe,
+                    &["nonsense"],
+                    8,
+                    None,
+                    None
+                )
+                .is_err(),
+            "unknown hook stage must fail at plan build"
+        );
+    }
+
+    #[test]
+    fn execution_plan_serializes_to_json() {
+        let model = test_llama_model_with_layers(2);
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                None,
+                None,
+            )
+            .unwrap();
+        let json = serde_json::to_string_pretty(&*plan).unwrap();
+        assert!(json.contains("\"architecture\": \"llama\""));
+        assert!(json.contains("\"op\": \"matvec\""));
+        assert!(json.contains("\"plan_hash\": \""));
     }
 }

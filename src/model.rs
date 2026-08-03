@@ -489,6 +489,11 @@ impl Linear<CpuBackend> {
         }
     }
 
+    /// The optional bias tensor (qwen2.5 q/k/v projections carry F32 biases).
+    pub fn bias(&self) -> Option<&<CpuBackend as crate::backend::Backend>::Tensor> {
+        self.bias.as_ref()
+    }
+
     /// Return a Q8_0 weight only when the layer needs no separate bias pass.
     pub(crate) fn q8_weight_without_bias(&self) -> Option<&QuantizedWeight> {
         if self.bias.is_some() {

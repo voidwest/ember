@@ -7,8 +7,8 @@ use crate::cli_support::{
 };
 use crate::{
     rayon_current_num_threads, Args, BenchDecodeCommand, BenchLifecycleCommand,
-    CompareArtifactsCommand, ExtractCommand, LifecycleModeArg, NativeLogitsReferenceCommand,
-    ValidateBackendsCommand, ValidateRunCommand,
+    CompareArtifactsCommand, ExtractCommand, InspectPlanCommand, LifecycleModeArg,
+    NativeLogitsReferenceCommand, ValidateBackendsCommand, ValidateRunCommand,
 };
 use anyhow::Context;
 use ember::backend::Backend;
@@ -1063,6 +1063,66 @@ pub(crate) fn run_bench_decode_command(
             bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
         }
         architecture => anyhow::bail!("unsupported architecture: {architecture}"),
+    }
+}
+
+pub(crate) fn run_inspect_plan_command(
+    command: &InspectPlanCommand,
+    k_strategy: ember::quant_k::KStrategy,
+    k_allow_fallback: bool,
+) -> anyhow::Result<()> {
+    use ember::llama::Llama;
+    use ember::plan::{ExecutionMode, HookMode};
+
+    let execution = ExecutionMode::from_cli(&command.execution).map_err(anyhow::Error::msg)?;
+    let hook_mode = match command.hook.as_str() {
+        "disabled" => HookMode::Disabled,
+        "observe" => HookMode::Observe,
+        "intervene" => HookMode::Intervene,
+        other => anyhow::bail!(
+            "unknown --hook value '{other}' (expected disabled | observe | intervene)"
+        ),
+    };
+    let active_stages: Vec<String> = match command.hook_stages.as_deref() {
+        None => Vec::new(),
+        Some(stages) => stages
+            .split(',')
+            .map(|stage| stage.trim().to_string())
+            .filter(|stage| !stage.is_empty())
+            .collect(),
+    };
+    let stages: Vec<&str> = active_stages.iter().map(String::as_str).collect();
+
+    let loader = load_gguf_with_k_strategy(&command.model, k_strategy, k_allow_fallback)?;
+    let architecture = resolve_generation_architecture(&command.arch, &loader)?;
+    match architecture.as_str() {
+        "llama" | "qwen3" => {
+            let model = Llama::from_loader_with_max_seq_len(loader, command.max_seq_len)?;
+            let max_seq_len = command.max_seq_len.unwrap_or(model.config.max_seq_len);
+            let model_sha = ember::extraction::sha256_file(&command.model);
+            let tokenizer_sha = command
+                .tokenizer
+                .as_deref()
+                .and_then(ember::extraction::sha256_file);
+            let plan = model.execution_plan(
+                execution,
+                hook_mode,
+                &stages,
+                max_seq_len,
+                model_sha.as_deref(),
+                tokenizer_sha.as_deref(),
+            )?;
+            print!("{}", plan.to_summary_text());
+            if let Some(output) = &command.output {
+                let json = serde_json::to_string_pretty(&*plan)?;
+                std::fs::write(output, json)?;
+                eprintln!("wrote execution plan to {output}");
+            }
+            Ok(())
+        }
+        architecture => anyhow::bail!(
+            "inspect-plan supports llama-family models (--arch llama/qwen3), got '{architecture}'"
+        ),
     }
 }
 
