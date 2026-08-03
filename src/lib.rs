@@ -15,6 +15,7 @@ pub mod loader;
 pub mod model;
 pub mod model_backend;
 pub mod npy;
+pub mod plan;
 pub mod quant;
 pub mod quant_k;
 pub mod residency;
