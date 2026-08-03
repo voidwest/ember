@@ -7,6 +7,55 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.3.0] - 2026-08-03
+
+### Added
+
+- **Native compressed-resident Q4_K/Q6_K execution** (the v0.3 release
+  thesis): K-family weights stay packed and mmap-backed, dequantizing at
+  super-block granularity inside scalar or AVX2 kernels. `--k-strategy
+  eager-f32|scalar|x86|auto` (default `auto`: AVX2 when available, else
+  scalar) with `--k-allow-fallback` and per-tensor recorded decisions.
+  Q2_K/Q3_K/Q5_K/Q8_K remain eager-f32-only; unsupported dtypes under an
+  explicit compressed strategy hard-fail naming the tensor unless the
+  fallback flag is given.
+- **Execution/residency provenance**: capture manifests gain a per-tensor
+  execution inventory (GGUF dtype, resident representation, strategy,
+  kernel, CPU features, fallback reason, workspace) plus model-level
+  residency totals and the requested `k_strategy`; additive serde-default
+  fields keep `0.2.0-experimental` artifacts comparable.
+- **Validation gates** (frozen in `docs/v03-execution-contracts.md`):
+  kernel (Gate A), model parity vs eager-f32 with identical greedy tokens
+  (Gate B), golden logits vs pinned llama.cpp b9999 with 100% top-1
+  agreement on all six ladder rungs (Gate C), x86-vs-scalar (Gate D), and
+  the full capture → compare → patch → frozen-verdict causal workflow on
+  the compressed path.
+- **External validation tooling**: pinned llama.cpp setup
+  (`scripts/setup_llama_cpp.sh`), fresh matched quantization ladder from
+  fp16 (`scripts/quantize_ladder.sh`, manifest with commands + sha256),
+  golden-ladder runner (`scripts/validate_golden_ladder.sh` +
+  `tools/logits_dump.c`), and the benchmark matrix
+  (`scripts/bench_v03.sh` → `artifacts/benchmark-v03/`).
+- **qwen2.5 loader fix**: GGUFs from the local fp16 source omit the
+  family `vocab_size` metadata key; `LlamaConfig` now falls back to the
+  embedding tensor's row count when the key is absent.
+- `bench-decode` output records `k_strategy`, K-tensor counts, fallback
+  count, and compressed/expanded resident bytes.
+
+### Changed
+
+- The crate version jumps 0.1.0 → 0.3.0 (the 0.1 series never shipped a
+  release; v0.3 is the first tagged milestone).
+- K-quant models are ineligible for the Q8 workspace fast decode; they
+  run the generic hooked path with `DispatchPath::Generic` recorded.
+
+### Fixed
+
+- Capture: after-logits records used `execution.input_token_count`, but
+  the llama family returns last-token logits `[1, vocab]` even during
+  prefill, so multi-token prefill records failed self-validation. The
+  record token count now comes from the tensor's actual row count.
+
 ## [Unreleased]
 
 ### Added

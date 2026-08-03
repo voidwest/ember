@@ -32,8 +32,8 @@ Use these levels when interpreting Ember runs:
 | architecture | smoke | golden logits | activation reference | probe runs | status |
 |--------------|-------|---------------|----------------------|------------|--------|
 | gpt-2 | structural smoke works when local GGUF is present | none | none | not a standard Arabic morphology run yet | loader baseline; negative-control work pending |
-| llama | local/cloud structural smokes and probe extraction | q8/q6/q4 golden vs llama.cpp (top-1 match, max abs diff ≤ 0.33) | pending | preliminary LLaMA 1B/3B/8B decoder probe runs | research findings are preliminary until references and reports are complete |
-| qwen2.5 | selected warning-prone smokes through llama-family path | q8/fp16/q4 golden vs llama.cpp (top-1 match, max abs diff ≤ 0.72) | pending | pending validation | experimental; do not treat as quality-compatible |
+| llama | local/cloud structural smokes and probe extraction | v0.3 ladder golden vs pinned llama.cpp (top-1 match 100%, max abs diff 0.81, cosine ≥ 0.9989; see section below) | pending | preliminary LLaMA 1B/3B/8B decoder probe runs | research findings are preliminary until references and reports are complete |
+| qwen2.5 | selected warning-prone smokes through llama-family path | v0.3 ladder golden vs pinned llama.cpp (top-1 match 100%, max abs diff 1.74, cosine ≥ 0.9963; see section below) | pending | pending validation | experimental; do not treat as quality-compatible |
 | qwen3 | Qwen3 0.6B smoke/probe paths run locally | pending target | pending | Qwen3 0.6B local probe run exists | promising engineering path, not yet numerically validated |
 | gemma4 | local BOS smoke and llama.cpp reference comparison run | final-logit cosine ~0.87; not a golden pass | per-layer comparison pipeline operational; L0 attn_norm bit-identical | pending full runs | structural fixes applied, but the remaining numerical gap still prevents a parity claim; RMSNorm amplification is the current working explanation |
 | hf encoders | external Hugging Face extraction path works for mBERT smoke | not applicable to Ember GGUF numerics | external stack not activation-checked here | mBERT PADT smoke; full encoder suite pending | useful benchmark path, not an Ember inference validation result |
@@ -85,3 +85,45 @@ Arabic-quantization pilot (Qwen2.5-1.5B and Llama-3.2-1B across Q8/Q6/Q4;
 
 The v0.2 capture/patch/compare facilities that powered this are documented
 in the research-experiments section below.
+
+## v0.3 compressed-resident K-quant validation (2026-08)
+
+v0.3 adds native Q4_K/Q6_K execution: weights stay packed and resident
+(mmap-backed), dequantizing at super-block granularity inside scalar or
+AVX2 kernels. The full record is in `docs/v03-execution-contracts.md`
+(frozen gates, per-tensor fallback semantics, provenance fields) and the
+scripts it names; this section is the evidence summary.
+
+- **Gate A (kernel)** — scalar and AVX2 Q4_K/Q6_K kernels vs the
+  eager-f32 dequant-then-gemm oracle: max_abs ≤ 1e-4·scale across the
+  standard shape battery, zero-scale/min edges, extreme scale and
+  saturated-nibble blocks. AVX2 vs scalar within tolerance and
+  deterministic.
+- **Gate B (model parity)** — compressed vs eager-f32 on the fresh
+  ladder, both families × Q6_K/Q4_K_M: per-layer max_abs ≤ 5e-4·scale,
+  cosine ≥ 1−1e-6, logits ≤ 1e-2 (llama) / 2e-2 (qwen, amended),
+  greedy token sequences identical across 6 frozen prompts per rung.
+  Inactive hooks (no-op experiment through ActiveHooks) leave outputs
+  bit-identical.
+- **Gate C (golden)** — final-position logits vs the pinned llama.cpp
+  b9999 build (tools/logits_dump.c harness; the pinned CLI has no
+  logit dump and llama-cpp-python 0.3.27 is broken for logits on
+  python 3.14). All six ladder rungs: top-1 agreement 100%. Envelope
+  (max/mean/cosine): llama q8/q6/q4 = 0.59/0.087/0.9995,
+  0.81/0.131/0.9989, 0.65/0.105/0.9992; qwen q8/q6/q4 =
+  0.82/0.141/0.9991, 1.36/0.235/0.9975, 1.74/0.248/0.9963.
+- **Causal workflow** — capture → compare → patch → frozen verdict on
+  the compressed path (scripts/validate_k_causal.sh): intervention
+  flips 8/8 records; the patch restores every captured tensor
+  bit-exactly.
+- **Benchmarks** (artifacts/benchmark-v03/) — AVX2 compressed decode
+  beats eager-f32 2–6× on K rungs (llama q6 2.3 vs 0.8 tps; qwen q4
+  1.7 vs 0.9 tps) at ~1 GB resident vs 4–7 GB eager; scalar kernels
+  are ~0.3–0.4 tps (reference only). Pinned llama-bench peak RSS
+  1.1–1.9 GB on the same files.
+- **Known limitations** — the extraction tokenization path has a
+  pre-existing byte-offset limitation with non-ASCII prompts (the
+  golden ladder uses English prompts); qwen2.5 GGUFs from the local
+  fp16 source omit the family vocab_size metadata key, now handled by
+  a loader fallback to the embedding row count; the gemma4 numerical
+  gap is unchanged and out of v0.3 scope.

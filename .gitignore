@@ -93,3 +93,4 @@ data/**/*_activations_metadata.json
 artifacts/golden-v03/*.npy
 # v0.3 golden ember-side extraction dirs: regenerable, summaries are the evidence
 artifacts/golden-v03/*/out/
+artifacts/golden-v03/**/*.npy
