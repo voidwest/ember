@@ -157,7 +157,7 @@ pub fn dequant_q3_k(block: &[u8], out: &mut [f32]) {
 /// `get_scale_min_k4`: unpack one 6-bit (scale, min) pair from the 12-byte
 /// K4-style scale array. `j` is the sub-block index (0..8).
 #[inline]
-fn get_scale_min_k4(j: usize, scales: &[u8]) -> (u8, u8) {
+pub(crate) fn get_scale_min_k4(j: usize, scales: &[u8]) -> (u8, u8) {
     if j < 4 {
         (scales[j] & 63, scales[j + 4] & 63)
     } else {
