@@ -1,3 +1,4 @@
+mod cli_experiment;
 mod cli_support;
 
 mod cli_commands;
@@ -292,6 +293,9 @@ pub(crate) enum Commands {
     BenchLifecycle(BenchLifecycleCommand),
     /// print the v0.4 execution plan for a llama-family model
     InspectPlan(InspectPlanCommand),
+
+    /// reproducible experiment workflows (v0.5)
+    Experiment(cli_experiment::ExperimentCommand),
 }
 
 #[derive(ClapArgs)]
@@ -655,6 +659,37 @@ fn main() -> anyhow::Result<()> {
             Commands::InspectPlan(command) => {
                 run_inspect_plan_command(command, k_strategy, args.k_allow_fallback)
             }
+            Commands::Experiment(command) => match &command.command {
+                cli_experiment::ExperimentSubcommand::Validate(command) => {
+                    cli_experiment::run_validate_command(command)
+                }
+                cli_experiment::ExperimentSubcommand::Run(command) => {
+                    cli_experiment::run_experiment_command(
+                        command,
+                        k_strategy,
+                        args.k_allow_fallback,
+                    )
+                }
+                cli_experiment::ExperimentSubcommand::Inspect(command) => {
+                    cli_experiment::run_inspect_command(command)
+                }
+                cli_experiment::ExperimentSubcommand::Verify(command) => {
+                    cli_experiment::run_verify_command(command)
+                }
+                cli_experiment::ExperimentSubcommand::Compare(command) => {
+                    cli_experiment::run_compare_command(command)
+                }
+                cli_experiment::ExperimentSubcommand::Reproduce(command) => {
+                    cli_experiment::run_reproduce_command(
+                        command,
+                        k_strategy,
+                        args.k_allow_fallback,
+                    )
+                }
+                cli_experiment::ExperimentSubcommand::Tokenize(command) => {
+                    cli_experiment::run_tokenize_command(command, k_strategy, args.k_allow_fallback)
+                }
+            },
         };
     }
 
