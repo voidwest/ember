@@ -7,6 +7,63 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.4.0] - 2026-08-04
+
+### Added
+
+- **Execution planning** (frozen contract in
+  `docs/v04-execution-contract.md`): an immutable per-model `ExecutionPlan`
+  built once after load — architecture-specific operation sequence, resolved
+  per-tensor kernel dispatch, scratch arena layout, KV layout, hook-site
+  resolution, and provenance (model/tokenizer hashes, git commit, rustc,
+  deterministic plan hash). `ember inspect-plan` prints it and writes
+  `execution-plan.json` with `--output`.
+- **Plan-driven decode interpreter** (`--execution planned`): the same
+  operation sequence as the reference path, walking resolved ops against a
+  reusable aligned scratch arena — no per-token shape/dispatch rediscovery,
+  no per-token heap allocation (Gate E: after warmup, only the logits tensor
+  materialization allocates, 3 documented allocations per token).
+- **Frozen fusion set** (`--execution planned-fused`, F1-F5): fused QKV
+  orchestration with a single norm pass, Q rope inside attention, output
+  projection accumulating into the residual destination, and
+  residual+RMSNorm with a 3-operand final add; fusions that would eliminate
+  a hooked tensor are defused per layer with recorded reasons. Hook modes
+  (`Disabled`/`Observe`/`Intervene`) ride on the plan; the six semantic hook
+  sites fire at the same call sites as the reference path, and inactive
+  hooks are bit-identical to disabled.
+- **Column-parallel K-quant matvec**: large single-row decode matvecs split
+  their output dimension across the rayon pool; each column accumulates
+  identically to the serial kernel (Gate A bit-identity test across
+  gate/up/down/head shapes, both dtypes, both execution paths).
+- **Planned-path operator profiling**: `bench-decode --profile-operators`
+  records per-operator timing (operators, dimensions, execution mode) for
+  the planned interpreter; `bench-decode --execution` selects the concept
+  being benchmarked.
+- **Validation gates** (frozen in `docs/v04-execution-contract.md`): real-
+  model parity (Gate B: identical greedy tokens on the six frozen English +
+  Arabic prompts, logits within the frozen envelopes), hook semantics
+  (Gate C), memory (Gate D), allocation (Gate E), performance (Gate F), and
+  the external golden ladder (Gate G). Parity verified on all four primary
+  combinations (Llama-3.2-1B and Qwen2.5-1.5B x Q4_K_M/Q6_K).
+
+### Changed
+
+- The v0.3 Q8_0 native fast path keeps precedence and is never rerouted
+  through the plan; the generic reference path remains the default
+  (`--execution reference`) and the readable oracle.
+- A process-wide counting global allocator (`src/alloc_counter.rs`)
+  replaces the test-local allocator; Gate E and memory reporting use it.
+
+### Fixed
+
+- Planned decode diverged from the reference after the first token when
+  arena regions were reused across tokens: the quantized matvec kernels
+  accumulate into their destination, which must be zero-initialized (the
+  reference allocates fresh zeroed vectors; the arena reuses regions). The
+  interpreter now clears matvec destinations before each projection.
+- `planned-fused` silently ran the reference path until
+  `planned_decode_eligible` accepted the mode.
+
 ## [0.3.0] - 2026-08-03
 
 ### Added

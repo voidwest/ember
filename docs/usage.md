@@ -282,6 +282,48 @@ schema, recorded operation types, and caveats.
 | `validate-backends` | compare existing native and external artifact runs |
 | `bench-decode` | measure model-only single-token decode and emit JSON |
 | `bench-lifecycle` | time the Llama packed vs generic Q8 weight lifecycle across strategies and report process residency |
+| `inspect-plan` | print the v0.4 execution plan for a model (ops, kernels, scratch, hook sites) and optionally write it to JSON |
+
+### v0.4 execution planning
+
+The v0.4 release adds an immutable, per-model execution plan built once
+after load, plus a plan-driven single-token decode interpreter
+(`docs/v04-execution-contract.md`). Three execution concepts are selectable
+with `--execution` (default `reference`):
+
+- `reference` — the v0.3 generic hooked path with per-tensor K dispatch
+  (the readable oracle and parity baseline).
+- `planned` — the same operation sequence driven by the execution plan:
+  resolved kernel per tensor, scratch-region destinations, no per-token
+  shape/dispatch rediscovery, no fusion.
+- `planned-fused` — the plan with the frozen fusion set (F1-F5): fused
+  QKV orchestration with a single norm pass, Q rope inside attention,
+  output projection accumulating into the residual, and residual+RMSNorm;
+  fusions that would eliminate a hooked tensor are defused per layer.
+
+The planned path parallelizes large single-row K-quant matvecs across the
+rayon pool (column-parallel; bit-identical to the serial kernels) and
+performs no heap allocation in the steady-state token loop.
+
+```bash
+target/release/ember --model Llama-3.2-1B-Instruct.Q4_K_M.gguf \
+  --arch llama --tokenizer tokenizer.json \
+  --execution planned-fused --prompt "The capital of France is" \
+  --max-tokens 8 --temperature 0
+```
+
+`inspect-plan` prints the resolved plan (operation count, kernels per
+tensor, scratch bytes, fused/defused layers with reasons, hook mode, CPU
+requirements) and writes the serialized plan with `--output`:
+
+```bash
+target/release/ember inspect-plan --model Llama-3.2-1B-Instruct.Q4_K_M.gguf \
+  --arch llama --execution planned-fused
+```
+
+`bench-decode` accepts `--execution` to benchmark a specific concept and
+`--profile-operators` to record per-operator timing for the planned
+interpreter (operators, dimensions, execution mode) in the emitted JSON.
 
 ### demo mode
 
