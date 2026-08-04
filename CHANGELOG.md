@@ -7,6 +7,62 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.5.0] - 2026-08-04
+
+### Added: reproducible experiment workflow
+
+The v0.5 release packages exact token selection, semantic hidden-state
+capture, activation intervention, execution provenance, and offline
+verification into deterministic, self-verifying experiment bundles that
+can be run without writing Rust:
+
+- `ember.experiment.v1` specification language (strict TOML, recorded
+  defaults, fail-closed validation with exact field paths);
+- six public semantic hook sites with a frozen machine-readable
+  descriptor table (`ember.hook.v1`), mapped onto the v0.4 hook stages;
+- typed, byte-exact token selection (prompt-final, absolute/relative,
+  generated-step, matched-span with occurrence and subtoken selection,
+  byte-span), including Arabic alignment with combining marks and
+  punctuation (the `tokenizers` crate offsets are byte offsets; the
+  wrapper previously validated them against character counts, which
+  broke all non-ASCII prompts — fixed);
+- capture plans (selected rows / full tensor / summary-only, f32/f16)
+  with owned payloads in a strict safetensors codec;
+- intervention plans (replace, zero, scale, interpolate, add-delta,
+  restore-original) with fail-closed source validation and automatic
+  de-fusion when a fused plan would eliminate a requested tensor;
+- deterministic `ember.bundle.v1` bundles: semantic manifest with
+  run-invariant semantic/payload hashes, sanitized execution plans,
+  atomic staging and publish, never-overwrite policy;
+- fully offline `ember experiment verify` (15 basic checks; optional
+  deep model/tokenizer checks);
+- `ember experiment compare` with scientific-first reporting and
+  deterministic `--json`;
+- `ember experiment reproduce` with classification
+  (exact-semantic / exact / output-equivalent / top1-equivalent /
+  failed);
+- `ember experiment tokenize` for tokenizer and span-matching
+  diagnostics;
+- deterministic seeded sampling plumbing (fixed seed + temperature
+  sampling);
+- reference morphology workflow under `examples/experiments/` with an
+  Arabic prompt: layerwise capture, layer-8 intervention, exact
+  restoration (bit-identical baseline), verified and reproducible
+  end-to-end on Llama-3.2-1B-Instruct-Q8_0.
+
+Performance isolation: ordinary inference is untouched — no experiment
+spec is parsed, no bundle metadata allocated, and no hooks fire unless
+the `experiment` subcommand runs.
+
+### Compatibility
+
+- experiment specification schema, bundle schema, semantic hook schema,
+  and execution-plan schema are versioned independently;
+- unknown schema majors fail; v1 is stable within Ember 0.5.x;
+- v0.1/v0.2 experiment interfaces (`--activation-stats`,
+  `--zero-layer-output`, `--capture-activations`, `--activation-patch`,
+  `compare-artifacts`) keep their v0.2 semantics unchanged.
+
 ## [0.4.0] - 2026-08-04
 
 ### Added
