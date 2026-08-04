@@ -4262,7 +4262,11 @@ fn embed_row_into(
 
 /// Single-token causal attention over the f16 cache, mirroring the
 /// reference `cached_causal_attention_with_scratch` single-token branch
-/// (same score math, same softmax, same weighted V sum).
+/// (same score math, same softmax, same weighted V sum) with the per-token
+/// overheads removed: no output allocation (arena region), no `to_vec`
+/// copies, score region reused across layers, and cache-head slices hoisted
+/// so the inner loops iterate contiguous f16 ranges without re-deriving
+/// offsets.
 #[allow(clippy::too_many_arguments)]
 fn planned_causal_attention(
     q: &[f32],
@@ -4285,27 +4289,25 @@ fn planned_causal_attention(
     out.fill(0.0);
     for h in 0..n_heads {
         let kv_h = h / n_repeat;
-        let q_offset = h * head_dim;
+        let q_head = &q[h * head_dim..(h + 1) * head_dim];
+        let k_head = &cached_k[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
+        let v_head = &cached_v[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
         let score_row = &mut scores[h * total_seq_len..(h + 1) * total_seq_len];
+        // scores: q · k_j for each cached position
         for (j, slot) in score_row.iter_mut().enumerate() {
-            let k_offset = kv_h * cache_head_stride + j * head_dim;
-            *slot = crate::simd::dot_product_f16(
-                &q[q_offset..q_offset + head_dim],
-                &cached_k[k_offset..k_offset + head_dim],
-            ) * scale;
+            let k_j = &k_head[j * head_dim..(j + 1) * head_dim];
+            *slot = crate::simd::dot_product_f16(q_head, k_j) * scale;
         }
         crate::backend::softmax_prefix(score_row, total_seq_len);
-        let head_out = &mut out[q_offset..q_offset + head_dim];
+        let head_out = &mut out[h * head_dim..(h + 1) * head_dim];
+        // weighted V sum; the zero-weight skip mirrors the reference and
+        // keeps the accumulation bit-identical
         for (j, &weight) in score_row.iter().enumerate() {
             if weight == 0.0 {
                 continue;
             }
-            let v_offset = kv_h * cache_head_stride + j * head_dim;
-            crate::simd::weighted_add_f16(
-                head_out,
-                &cached_v[v_offset..v_offset + head_dim],
-                weight,
-            );
+            let v_j = &v_head[j * head_dim..(j + 1) * head_dim];
+            crate::simd::weighted_add_f16(head_out, v_j, weight);
         }
     }
     Ok(())
@@ -4314,6 +4316,50 @@ fn planned_causal_attention(
 /// Arena errors as `CpuError` (the arena reports `String` diagnostics).
 fn arena_err(message: String) -> CpuError {
     CpuError::ShapeMismatch(format!("decode arena: {message}"))
+}
+
+/// One planned op's profile event: created when operator profiling is
+/// enabled, records on drop. Normal decode never touches profiling state
+/// (creation is guarded by the relaxed flag read).
+struct OpTimer {
+    layer: usize,
+    operator: &'static str,
+    input_dimension: usize,
+    output_dimension: usize,
+    start: std::time::Instant,
+}
+
+impl OpTimer {
+    fn new(
+        layer: usize,
+        operator: &'static str,
+        input_dimension: usize,
+        output_dimension: usize,
+    ) -> Option<Self> {
+        crate::decode_profile::is_enabled().then(|| Self {
+            layer,
+            operator,
+            input_dimension,
+            output_dimension,
+            start: std::time::Instant::now(),
+        })
+    }
+}
+
+impl Drop for OpTimer {
+    fn drop(&mut self) {
+        if !crate::decode_profile::is_enabled() {
+            return;
+        }
+        crate::decode_profile::record(
+            self.layer,
+            self.operator,
+            self.input_dimension,
+            self.output_dimension,
+            crate::decode_profile::DecodeExecutionMode::Serial,
+            self.start.elapsed(),
+        );
+    }
 }
 
 /// Split a region-request result into two disjoint slices (request order is
@@ -4387,6 +4433,7 @@ fn forward_last_logits_planned(
         match op {
             ResolvedOp::Embed { out } => {
                 let dst = arena.region_f32(*out).map_err(arena_err)?;
+                let _timer = OpTimer::new(0, "embedding", 1, dst.len());
                 embed_row_into(&model.embed_tokens, token_ids[0], dst)?;
             }
             other => {
@@ -4413,6 +4460,12 @@ fn forward_last_logits_planned(
                 ResolvedOp::RmsNorm { role, input, out } => {
                     let (x, dst) =
                         two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
+                    let operator = match role {
+                        NormRole::AttnIn => "attn_norm",
+                        NormRole::MlpIn => "ffn_norm",
+                        NormRole::Output => "output_norm",
+                    };
+                    let _timer = OpTimer::new(layer, operator, x.len(), dst.len());
                     let weight = match role {
                         NormRole::AttnIn => block.input_layernorm.data(),
                         NormRole::MlpIn => block.post_attention_layernorm.data(),
@@ -4455,6 +4508,17 @@ fn forward_last_logits_planned(
                     );
                     let (src, dst) =
                         two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
+                    let operator = match role {
+                        ProjRole::Q => "q",
+                        ProjRole::K => "k",
+                        ProjRole::V => "v",
+                        ProjRole::O => "o",
+                        ProjRole::Gate => "gate",
+                        ProjRole::Up => "up",
+                        ProjRole::Down => "down",
+                        ProjRole::Head => "lm_head",
+                    };
+                    let _timer = OpTimer::new(layer, operator, src.len(), dst.len());
                     // The quantized kernels accumulate into dst (must be
                     // zero-initialized). The reference allocates a fresh
                     // zeroed Vec per projection; the arena reuses regions
@@ -4497,6 +4561,7 @@ fn forward_last_logits_planned(
                         let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
                         (data,)
                     };
+                    let _timer = OpTimer::new(layer, "rope", data.len(), data.len());
                     let (n_heads, qk_norm) = match role {
                         RopeRole::Q => (model.config.n_heads, block.self_attn.q_norm.as_ref()),
                         RopeRole::K => (model.config.n_kv_heads, block.self_attn.k_norm.as_ref()),
@@ -4508,6 +4573,7 @@ fn forward_last_logits_planned(
                 ResolvedOp::KvStore { k, v } => {
                     let (k_data, v_data) =
                         two_regions(arena.regions_f32([*k, *v]).map_err(arena_err)?);
+                    let _timer = OpTimer::new(layer, "kv_store", k_data.len(), v_data.len());
                     cache.append_with_layout(
                         layer,
                         start_pos,
@@ -4520,6 +4586,7 @@ fn forward_last_logits_planned(
                 ResolvedOp::Attention { q, out, scores } => {
                     let (q_data, out_data, scores_data) =
                         three_regions(arena.regions_f32([*q, *out, *scores]).map_err(arena_err)?);
+                    let _timer = OpTimer::new(layer, "attention", q_data.len(), out_data.len());
                     let (cached_k, cached_v) = cache.get(layer);
                     planned_causal_attention(
                         q_data,
@@ -4539,6 +4606,7 @@ fn forward_last_logits_planned(
                         let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
                         (data,)
                     };
+                    let _timer = OpTimer::new(layer, "silu", data.len(), data.len());
                     // in-place silu: x / (1 + exp(-x)), matching the
                     // reference `CpuTensor::silu` formula
                     for x in data.iter_mut() {
@@ -4548,11 +4616,13 @@ fn forward_last_logits_planned(
                 ResolvedOp::Elemul { a, b, out } => {
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
+                    let _timer = OpTimer::new(layer, "elemul", a_data.len(), out_data.len());
                     crate::simd::elemul(a_data, b_data, out_data);
                 }
                 ResolvedOp::ResidualAdd { a, b, out } => {
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
+                    let _timer = OpTimer::new(layer, "residual_add", a_data.len(), out_data.len());
                     add_into(a_data, b_data, out_data);
                 }
                 ResolvedOp::Logits { .. } => {
@@ -4588,6 +4658,7 @@ fn forward_last_logits_planned(
                 out,
             } => {
                 let (x, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
+                let _timer = OpTimer::new(usize::MAX, "output_norm", x.len(), dst.len());
                 rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
                 // before_logits fires on the final-norm output.
                 if let Some((hooks, _)) = hooks.as_mut() {
@@ -4598,6 +4669,7 @@ fn forward_last_logits_planned(
             ResolvedOp::Logits { input, out, tied } => {
                 debug_assert_eq!(*tied, model.head_tied, "plan head tie flag diverged");
                 let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
+                let _timer = OpTimer::new(usize::MAX, "lm_head", src.len(), dst.len());
                 dst.fill(0.0);
                 planned_linear_into(&model.head, src, dst)?;
                 let mut logits_tensor =
@@ -5646,5 +5718,69 @@ mod tests {
         )
         .unwrap();
         assert_ne!(plain.data(), planned.data(), "the intervention must fire");
+    }
+
+    /// Phase 7: the planned single-token attention must be bit-identical to
+    /// the reference `cached_causal_attention_with_scratch` single-token
+    /// branch across sequence lengths (same math, same simd primitives).
+    #[test]
+    fn planned_attention_matches_reference_single_token() {
+        let backend = CpuBackend;
+        let (n_heads, n_kv_heads, head_dim, max_seq_len) = (8, 4, 32, 64);
+        let mut cache = crate::kv_cache::KVCache::new(1, n_kv_heads, head_dim, max_seq_len);
+        // deterministic fill (xorshift-style LCG)
+        let mut state = 0x1234_5678u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as f32 / (1u64 << 31) as f32
+        };
+        for pos in 0..8 {
+            let k: Vec<f32> = (0..n_kv_heads * head_dim).map(|_| next()).collect();
+            let v: Vec<f32> = (0..n_kv_heads * head_dim).map(|_| next()).collect();
+            cache.append_with_layout(0, pos, &k, &v, n_kv_heads, head_dim);
+        }
+        let q_data: Vec<f32> = (0..n_heads * head_dim).map(|_| next()).collect();
+        let q = CpuTensor::from_data(vec![1, n_heads * head_dim], q_data.clone());
+        let (cached_k, cached_v) = cache.get(0);
+        let mut qk_scratch = Vec::new();
+        for total_seq_len in [1usize, 2, 3, 5, 8] {
+            let reference = backend
+                .cached_causal_attention_with_scratch(
+                    &q,
+                    cached_k,
+                    cached_v,
+                    CachedAttentionSpec {
+                        n_heads,
+                        n_kv_heads,
+                        head_dim,
+                        max_seq_len,
+                        total_seq_len,
+                    },
+                    &mut qk_scratch,
+                )
+                .unwrap();
+            let mut scores = vec![0.0f32; n_heads * max_seq_len];
+            let mut out = vec![0.0f32; n_heads * head_dim];
+            planned_causal_attention(
+                &q_data,
+                cached_k,
+                cached_v,
+                n_heads,
+                n_kv_heads,
+                head_dim,
+                max_seq_len,
+                total_seq_len,
+                &mut scores,
+                &mut out,
+            )
+            .unwrap();
+            assert_eq!(
+                reference.data(),
+                &out[..],
+                "planned attention diverged from reference at total_seq_len {total_seq_len}"
+            );
+        }
     }
 }

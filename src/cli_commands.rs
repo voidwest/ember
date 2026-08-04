@@ -1056,6 +1056,9 @@ pub(crate) fn run_bench_decode_command(
         "llama" | "qwen3" => {
             let model =
                 ember::llama::Llama::from_loader_with_max_seq_len(loader, command.max_seq_len)?;
+            let execution = ember::plan::ExecutionMode::from_cli(&command.execution)
+                .map_err(anyhow::Error::msg)?;
+            model.set_execution_mode(execution);
             bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
         }
         "gemma4" => {
@@ -1518,7 +1521,7 @@ where
     let operator_profile = profile_session.as_mut().map(DecodeProfileSession::finish);
     if operator_profile.as_ref().is_some_and(Vec::is_empty) {
         anyhow::bail!(
-            "operator profiling produced no events; this model does not use the instrumented packed Q8 decode path"
+            "operator profiling produced no events; this model does not use the instrumented packed Q8 decode path or the planned interpreter"
         );
     }
     let mut sorted = samples_ns.clone();

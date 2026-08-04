@@ -327,6 +327,11 @@ pub(crate) struct BenchDecodeCommand {
     /// collect fast-path per-operator timing in the benchmark JSON
     #[arg(long)]
     profile_operators: bool,
+
+    /// v0.4 execution concept for the benchmarked decode (reference |
+    /// planned | planned-fused)
+    #[arg(long, default_value = "reference")]
+    execution: String,
 }
 
 #[derive(ClapArgs)]
