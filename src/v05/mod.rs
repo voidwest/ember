@@ -9,5 +9,7 @@
 pub mod capture;
 pub mod hook;
 pub mod intervention;
+pub mod manifest;
+pub mod safetensors;
 pub mod spec;
 pub mod token_select;
