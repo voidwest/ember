@@ -17,4 +17,6 @@ pub mod runner;
 pub mod safetensors;
 pub mod spec;
 pub mod token_select;
+#[cfg(test)]
+pub mod testutil;
 pub mod verify;

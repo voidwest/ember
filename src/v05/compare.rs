@@ -513,3 +513,75 @@ fn plan_fusion_summary(root: &Path) -> Result<Vec<String>, String> {
         })
         .collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::v05::testutil;
+
+    fn temp_root(tag: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "ember-compare-{tag}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn identical_bundles_report_semantic_identity() {
+        let root_a = temp_root("a");
+        let root_b = temp_root("b");
+        testutil::write_test_bundle(&root_a, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(&root_b, &testutil::sample_rows(), &testutil::sample_positions());
+        let result = compare_bundles(&root_a, &root_b).unwrap();
+        assert!(result.identity.semantic_hash_equal);
+        assert!(result.identity.schema_compatible);
+        assert!(result.identity.tokenization_equal);
+        assert!(result.outputs[0].generated_tokens_equal);
+        let capture = &result.captures[0];
+        assert_eq!(capture.capture_id, "cap-1");
+        let metrics = capture.metrics.as_ref().unwrap();
+        assert!(metrics.exact);
+        assert_eq!(metrics.maximum_absolute_difference, Some(0.0));
+        assert_eq!(metrics.cosine_similarity, Some(1.0));
+        assert!(result.interventions.is_empty());
+        let _ = std::fs::remove_dir_all(&root_a);
+        let _ = std::fs::remove_dir_all(&root_b);
+    }
+
+    #[test]
+    fn perturbed_payload_produces_correct_metrics() {
+        let root_a = temp_root("a");
+        let root_b = temp_root("b");
+        testutil::write_test_bundle(&root_a, &testutil::sample_rows(), &testutil::sample_positions());
+        let mut perturbed = testutil::sample_rows();
+        perturbed[0] += 0.5;
+        testutil::write_test_bundle(&root_b, &perturbed, &testutil::sample_positions());
+        let result = compare_bundles(&root_a, &root_b).unwrap();
+        assert!(!result.identity.semantic_hash_equal);
+        let metrics = result.captures[0].metrics.as_ref().unwrap();
+        assert!(!metrics.exact);
+        assert_eq!(metrics.maximum_absolute_difference, Some(0.5));
+        assert_eq!(metrics.mean_absolute_difference, Some(0.125));
+        let cosine = metrics.cosine_similarity.unwrap();
+        assert!(cosine > 0.99 && cosine < 1.0);
+        let _ = std::fs::remove_dir_all(&root_a);
+        let _ = std::fs::remove_dir_all(&root_b);
+    }
+
+    #[test]
+    fn json_output_is_deterministic() {
+        let root_a = temp_root("a");
+        let root_b = temp_root("b");
+        testutil::write_test_bundle(&root_a, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(&root_b, &testutil::sample_rows(), &testutil::sample_positions());
+        let first = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
+        let second = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
+        assert_eq!(first, second);
+        let _ = std::fs::remove_dir_all(&root_a);
+        let _ = std::fs::remove_dir_all(&root_b);
+    }
+}
