@@ -837,7 +837,11 @@ mod tests {
     #[test]
     fn valid_bundle_verifies() {
         let root = temp_root("valid");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(report.ok, "{:?}", report.checks);
         assert_eq!(report.checks.len(), 15);
@@ -849,7 +853,11 @@ mod tests {
     #[test]
     fn one_byte_payload_corruption_fails() {
         let root = temp_root("corrupt");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let payload = root.join("captures/tensors.safetensors");
         let mut bytes = std::fs::read(&payload).unwrap();
         let last = bytes.len() - 1;
@@ -863,18 +871,19 @@ mod tests {
             .filter(|check| !check.ok)
             .map(|check| check.name.as_str())
             .collect();
-        assert!(names.iter().any(|name| *name == "checksums"), "{names:?}");
-        assert!(
-            names.iter().any(|name| *name == "tensor payload"),
-            "{names:?}"
-        );
+        assert!(names.contains(&"checksums"), "{names:?}");
+        assert!(names.contains(&"tensor payload"), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn removed_file_fails() {
         let root = temp_root("removed");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         std::fs::remove_file(root.join("captures/index.jsonl")).unwrap();
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(!report.ok);
@@ -884,17 +893,18 @@ mod tests {
             .filter(|check| !check.ok)
             .map(|check| check.name.as_str())
             .collect();
-        assert!(
-            names.iter().any(|name| *name == "required files"),
-            "{names:?}"
-        );
+        assert!(names.contains(&"required files"), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn altered_manifest_value_fails() {
         let root = temp_root("altered");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let path = root.join("semantic-manifest.json");
         let mut value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -908,17 +918,18 @@ mod tests {
             .filter(|check| !check.ok)
             .map(|check| check.name.as_str())
             .collect();
-        assert!(
-            names.iter().any(|name| *name == "semantic hash"),
-            "{names:?}"
-        );
+        assert!(names.contains(&"semantic hash"), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn extra_unindexed_tensor_fails() {
         let root = temp_root("extra");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         // Append a second tensor to the payload and fix checksums.sha256
         // so only the unindexed-tensor check can catch it.
         let payload_path = root.join("captures/tensors.safetensors");
@@ -951,10 +962,7 @@ mod tests {
             .filter(|check| !check.ok)
             .map(|check| check.name.as_str())
             .collect();
-        assert!(
-            names.iter().any(|name| *name == "tensor payload"),
-            "{names:?}"
-        );
+        assert!(names.contains(&"tensor payload"), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -966,9 +974,8 @@ mod tests {
         // A malformed manifest is a hard error; a missing-file bundle
         // yields a failing report. Both must be non-ok.
         let report = verify_bundle(&root, &VerifyOptions::default());
-        match report {
-            Ok(report) => assert!(!report.ok),
-            Err(_) => {}
+        if let Ok(report) = report {
+            assert!(!report.ok);
         }
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -976,7 +983,11 @@ mod tests {
     #[test]
     fn deep_model_mismatch_fails() {
         let root = temp_root("deep");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         // A non-model file with the wrong hash fails the deep check.
         let model_path = root.join("fake-model.gguf");
         std::fs::write(&model_path, b"not a model").unwrap();
@@ -992,17 +1003,18 @@ mod tests {
             .filter(|check| !check.ok)
             .map(|check| check.name.as_str())
             .collect();
-        assert!(
-            names.iter().any(|name| *name == "deep model sha256"),
-            "{names:?}"
-        );
+        assert!(names.contains(&"deep model sha256"), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn traversal_in_checksums_is_rejected() {
         let root = temp_root("traversal");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let path = root.join("checksums.sha256");
         let mut text = std::fs::read_to_string(&path).unwrap();
         text.push_str(&format!("{}\n", "00".repeat(32) + "  ../escape.bin"));
@@ -1015,17 +1027,18 @@ mod tests {
             .filter(|check| !check.ok)
             .map(|check| check.name.as_str())
             .collect();
-        assert!(
-            names.iter().any(|name| *name == "checksums"),
-            "{names:?}"
-        );
+        assert!(names.contains(&"checksums"), "{names:?}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn source_bundle_loads_only_when_verified() {
         let root = temp_root("source");
-        testutil::write_test_bundle(&root, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let loaded = load_bundle_for_source(&root).unwrap();
         let rows = loaded
             .tensor_f32_by_name("cap-1/i1/residual-post-mlp/0")
@@ -1053,12 +1066,17 @@ mod tests {
             let bytes = std::fs::read(entry.path()).unwrap();
             lines.push(format!("{}  {name}", sha256_hex(&bytes)));
         }
-        for (dir, name) in [("captures", "tensors.safetensors")] {
-            let path = root.join(dir).join(name);
-            let bytes = std::fs::read(&path).unwrap();
-            lines.push(format!("{}  {dir}/{name}", sha256_hex(&bytes)));
-        }
+        let path = root.join("captures").join("tensors.safetensors");
+        let bytes = std::fs::read(&path).unwrap();
+        lines.push(format!(
+            "{}  captures/tensors.safetensors",
+            sha256_hex(&bytes)
+        ));
         lines.sort();
-        std::fs::write(root.join("checksums.sha256"), format!("{}\n", lines.join("\n"))).unwrap();
+        std::fs::write(
+            root.join("checksums.sha256"),
+            format!("{}\n", lines.join("\n")),
+        )
+        .unwrap();
     }
 }

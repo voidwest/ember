@@ -534,8 +534,16 @@ mod tests {
     fn identical_bundles_report_semantic_identity() {
         let root_a = temp_root("a");
         let root_b = temp_root("b");
-        testutil::write_test_bundle(&root_a, &testutil::sample_rows(), &testutil::sample_positions());
-        testutil::write_test_bundle(&root_b, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root_a,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        testutil::write_test_bundle(
+            &root_b,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let result = compare_bundles(&root_a, &root_b).unwrap();
         assert!(result.identity.semantic_hash_equal);
         assert!(result.identity.schema_compatible);
@@ -556,7 +564,11 @@ mod tests {
     fn perturbed_payload_produces_correct_metrics() {
         let root_a = temp_root("a");
         let root_b = temp_root("b");
-        testutil::write_test_bundle(&root_a, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root_a,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let mut perturbed = testutil::sample_rows();
         perturbed[0] += 0.5;
         testutil::write_test_bundle(&root_b, &perturbed, &testutil::sample_positions());
@@ -576,8 +588,16 @@ mod tests {
     fn json_output_is_deterministic() {
         let root_a = temp_root("a");
         let root_b = temp_root("b");
-        testutil::write_test_bundle(&root_a, &testutil::sample_rows(), &testutil::sample_positions());
-        testutil::write_test_bundle(&root_b, &testutil::sample_rows(), &testutil::sample_positions());
+        testutil::write_test_bundle(
+            &root_a,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        testutil::write_test_bundle(
+            &root_b,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
         let first = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
         let second = serde_json::to_vec(&compare_bundles(&root_a, &root_b).unwrap()).unwrap();
         assert_eq!(first, second);

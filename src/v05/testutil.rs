@@ -10,12 +10,12 @@ use crate::v05::bundle::BundleWriter;
 use crate::v05::capture::{CaptureSpec, CaptureStorage, InputSelector, LayerSelector};
 use crate::v05::hook::SemanticHookSite;
 use crate::v05::manifest::{
-    sha256_hex, BundleIdentity, ManifestExecutionMeta, ManifestExperimentMeta,
-    ManifestGenerated, ManifestInputMeta, ManifestModelMeta, ManifestTokenizerMeta,
-    SemanticManifest, BUNDLE_SCHEMA_V1,
+    sha256_hex, BundleIdentity, ManifestExecutionMeta, ManifestExperimentMeta, ManifestGenerated,
+    ManifestInputMeta, ManifestModelMeta, ManifestTokenizerMeta, SemanticManifest,
+    BUNDLE_SCHEMA_V1,
 };
-use crate::v05::safetensors::{TensorData, TensorDType};
-use crate::v05::spec::{EXPERIMENT_SCHEMA_V1};
+use crate::v05::safetensors::{TensorDType, TensorData};
+use crate::v05::spec::EXPERIMENT_SCHEMA_V1;
 use crate::v05::token_select::{
     CoverageKind, RoundTripStatus, SubtokenSelection, TextNormalization, TokenSelectionRecord,
     TokenSelector,
@@ -37,10 +37,7 @@ const COLUMNS: usize = 4;
 pub fn fixture_plan_hash(plan_json: &mut serde_json::Value) -> String {
     if let Some(object) = plan_json.as_object_mut() {
         object.insert("plan_hash".into(), json!(""));
-        if let Some(provenance) = object
-            .get_mut("provenance")
-            .and_then(|p| p.as_object_mut())
-        {
+        if let Some(provenance) = object.get_mut("provenance").and_then(|p| p.as_object_mut()) {
             provenance.insert("plan_build_time".into(), json!(""));
         }
     }
