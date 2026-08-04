@@ -182,8 +182,10 @@ experiment per run. Active experiments do not currently participate in
 probes, hidden-state extraction, logits/layer dumps, demos, or benchmark
 subcommands. Dynamic third-party plugin loading and multiple simultaneous
 experiments are intentionally unsupported. See
-[docs/experiments.md](docs/experiments.md) for the artifact schema, hook
-lifecycle, mutation boundaries, and guarantees.
+[docs/activation-artifacts.md](docs/activation-artifacts.md) and
+[docs/activation-patching.md](docs/activation-patching.md) for the v0.2
+artifact schema, hook lifecycle, mutation boundaries, and guarantees;
+[docs/experiments.md](docs/experiments.md) documents the v0.5 workflow.
 
 ### decode benchmark
 
