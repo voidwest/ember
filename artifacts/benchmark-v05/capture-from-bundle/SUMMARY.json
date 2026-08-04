@@ -1,0 +1,53 @@
+{
+  "workflow": "capture-from-bundle real-model end-to-end",
+  "model": "Llama-3.2-1B-Instruct-Q8_0.gguf (432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3)",
+  "date": "2026-08-04",
+  "specs": [
+    "artifacts/benchmark-v05/capture-from-bundle/baseline.toml",
+    "artifacts/benchmark-v05/capture-from-bundle/intervention.toml",
+    "artifacts/benchmark-v05/capture-from-bundle/restoration.toml"
+  ],
+  "runs": {
+    "baseline": {
+      "bundle": "runs/cfb-baseline",
+      "semantic_hash": "50b5aa9f176242579ad069b5ac2def7985db3e17b55adde73cc6549886ece5f8",
+      "payload_hash": "f97634cdefe79c9e1cb4edb386a1639dbe0237c22263df861c4b046fea29fa2c",
+      "verification": "15/15 passed"
+    },
+    "cross-bundle-replace": {
+      "bundle": "runs/cfb-intervention",
+      "semantic_hash": "00df017d1f26c463880e80675ac44c61cbf72c092fc5f3542f78f31384f08fb4",
+      "payload_hash": "1100e6019aa3cef4bf3a051198d0ad85cd442e6a0e43a9c350cc94dc4a18bd1c",
+      "verification": "15/15 passed",
+      "intervention": "replace prompt-final row at attention-output layer 8 with the baseline bundle's attention-output layer-3 row (capture-from-bundle)"
+    },
+    "restoration": {
+      "bundle": "runs/cfb-restoration",
+      "semantic_hash": "97c14c529812f9a1b0a09fecab4ac1686249ffc42d8917e196edfd77a57026bc",
+      "payload_hash": "aeea0dbcbad1c752a0d9398f3562f2cb5333d2494adc645462374e5b57e9b319",
+      "verification": "15/15 passed",
+      "intervention": "replace-from-baseline + restore-original at attention-output layer 8"
+    }
+  },
+  "comparisons": {
+    "baseline_vs_intervention": {
+      "schema_compatible": true,
+      "model_hash_equal": true,
+      "tokenizer_hash_equal": true,
+      "prompts_equal": true,
+      "tokenization_equal": true,
+      "outputs": "generated tokens equal: yes; text equal: yes; final top-1 equal: no",
+      "captures": "layers 0-8 exact; layers 9-15 diverge (max-abs 3.78e-1 at layer 9, 2.68e-1 at layer 15); cosine 0.9252 -> 0.9854"
+    },
+    "baseline_vs_restoration": {
+      "schema_compatible": true,
+      "model_hash_equal": true,
+      "tokenizer_hash_equal": true,
+      "prompts_equal": true,
+      "tokenization_equal": true,
+      "outputs": "generated tokens equal: yes; text equal: yes; final top-1 equal: yes; divergence: none",
+      "captures": "all 16 attention-output layers exact (max-abs 0.0, cosine 1.0)"
+    }
+  },
+  "verdict": "cross-bundle replacement sources verified bundles only (fail-closed); restoration reproduces the baseline exactly at the tensor and output level"
+}

@@ -59,3 +59,36 @@ interventions.
    (`examples/experiments/morphology-restoration.toml`) restores
    bit-exactly — `compare` reports identical tokens, text, top-1, and
    every capture `exact`.
+
+## Cross-bundle replacement (real-model workflow)
+
+A capture from a saved bundle can back an intervention in a later run.
+The source bundle must pass full offline verification; model, tokenizer,
+hook-site, layer, and shape compatibility are checked before execution
+(model/tokenizer mismatches fail closed unless an expert override is
+recorded). The recorded real-model workflow lives under
+`artifacts/benchmark-v05/capture-from-bundle/`:
+
+```bash
+# 1. baseline: capture prompt-final attention-output across all layers
+ember experiment run artifacts/benchmark-v05/capture-from-bundle/baseline.toml
+ember experiment verify runs/cfb-baseline
+
+# 2. cross-bundle replace: layer 8's prompt-final attention row is
+#    replaced with the baseline bundle's layer-3 row
+ember experiment run artifacts/benchmark-v05/capture-from-bundle/intervention.toml
+ember experiment verify runs/cfb-intervention
+ember experiment compare runs/cfb-baseline runs/cfb-intervention
+
+# 3. restoration: the same replace followed by restore-original at
+#    layer 8; compare reports every capture exact and outputs equal
+ember experiment run artifacts/benchmark-v05/capture-from-bundle/restoration.toml
+ember experiment verify runs/cfb-restoration
+ember experiment compare runs/cfb-baseline runs/cfb-restoration
+```
+
+Observed (2026-08-04, Llama-3.2-1B-Instruct-Q8_0): the replace leaves
+layers 0-8 bit-exact (captures fire before interventions at the same
+site) and diverges from layer 9 onward; the restoration leg reproduces
+the baseline with all 16 capture layers exact, generated tokens/text
+equal, and final top-1 equal.
