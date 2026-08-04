@@ -343,9 +343,15 @@ fn v04_planned_matches_reference_real_model() {
         let reference = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
         model.set_execution_mode(ExecutionMode::Planned);
         let planned = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
+        model.set_execution_mode(ExecutionMode::PlannedFused);
+        let fused = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
         assert_eq!(
             reference.tokens, planned.tokens,
             "{model_path} | {prompt}: greedy tokens diverged under planned execution"
+        );
+        assert_eq!(
+            reference.tokens, fused.tokens,
+            "{model_path} | {prompt}: greedy tokens diverged under fused planned execution"
         );
         for (step, (expected, actual)) in reference
             .decode_logits
@@ -360,6 +366,21 @@ fn v04_planned_matches_reference_real_model() {
             assert!(
                 max_abs <= 1e-3,
                 "{model_path} | {prompt}: planned decode step {step} logits max_abs {max_abs} > 1e-3"
+            );
+        }
+        for (step, (expected, actual)) in reference
+            .decode_logits
+            .iter()
+            .zip(&fused.decode_logits)
+            .enumerate()
+        {
+            let mut max_abs = 0.0f32;
+            for (&x, &y) in expected.iter().zip(actual) {
+                max_abs = max_abs.max((x - y).abs());
+            }
+            assert!(
+                max_abs <= 1e-3,
+                "{model_path} | {prompt}: fused decode step {step} logits max_abs {max_abs} > 1e-3"
             );
         }
     }

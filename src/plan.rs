@@ -485,11 +485,15 @@ pub enum PlannedOp {
     /// KV cache store of `k`/`v` at the current cursor.
     KvStore { k: TensorRef, v: TensorRef },
     /// Causal attention over the cache. `q` -> `out`; `score_scratch` names
-    /// the arena region reused for attention scores.
+    /// the arena region reused for attention scores. `rope_q` is set for
+    /// fusion F4: the attention applies the Q RoPE (and optional qk-norm)
+    /// internally instead of a separate rope op. The K rope is never merged
+    /// (the stored K must be roped before the KV store).
     Attention {
         q: TensorRef,
         out: TensorRef,
         score_scratch: String,
+        rope_q: bool,
     },
     /// SiLU activation, in place.
     Silu { target: TensorRef },
@@ -503,6 +507,15 @@ pub enum PlannedOp {
     ResidualAdd {
         a: TensorRef,
         b: TensorRef,
+        out: TensorRef,
+    },
+    /// `out = (a + b) + c` — the final residual add when fusion F2 skips
+    /// the standalone attention residual (left-associative, bit-identical
+    /// to the unfused composition).
+    ResidualAdd3 {
+        a: TensorRef,
+        b: TensorRef,
+        c: TensorRef,
         out: TensorRef,
     },
     /// Final RMSNorm (before-logits stage input).
@@ -528,6 +541,41 @@ pub enum PlannedOp {
         eliminated: Vec<TensorRef>,
         kernel: KernelId,
     },
+    /// Fusion F1+F3: one orchestration pass over the block input computes
+    /// the RMSNorm scale, writes the scaled activation into `scaled`, and
+    /// runs the Q/K/V projections from it (shared dispatch, one norm pass
+    /// instead of one norm plus three separate dispatches).
+    FusedQkv {
+        input: TensorRef,
+        norm: TensorRef,
+        scaled: TensorRef,
+        q: TensorRef,
+        k: TensorRef,
+        v: TensorRef,
+        kernel: KernelId,
+        has_bias: bool,
+    },
+    /// Fusion F5: the output projection accumulates directly into the
+    /// residual destination (`out` starts as a copy of `residual`, the
+    /// matvec kernel accumulates W·`attn` on top). Requires
+    /// `after_attention` inactive for the layer (the o tensor is
+    /// eliminated).
+    FusedOProjResidual {
+        attn: TensorRef,
+        residual: TensorRef,
+        out: TensorRef,
+        kernel: KernelId,
+        has_bias: bool,
+    },
+    /// Fusion F2: `out = rmsnorm(residual_a + residual_b)` computed in one
+    /// pass (no standalone residual materialization). Used on the attention
+    /// residual when F5 is defused (after_attention active).
+    FusedResidualNorm {
+        a: TensorRef,
+        b: TensorRef,
+        weight: TensorRef,
+        out: TensorRef,
+    },
 }
 
 /// One layer's plan.
@@ -538,6 +586,19 @@ pub struct LayerPlan {
     pub fusion: FusionState,
     /// Why the layer is not fully fused (hook-driven de-fusion, fallback).
     pub fusion_reason: Option<String>,
+}
+
+impl PlannedOp {
+    /// Whether this op is one of the frozen fusion set's composite ops.
+    pub fn is_fused(&self) -> bool {
+        matches!(
+            self,
+            PlannedOp::Fused { .. }
+                | PlannedOp::FusedQkv { .. }
+                | PlannedOp::FusedOProjResidual { .. }
+                | PlannedOp::FusedResidualNorm { .. }
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -724,6 +785,7 @@ impl ExecutionPlan {
                     q,
                     out,
                     score_scratch,
+                    ..
                 } => {
                     check_refs(&[*q, *out], "attention")?;
                     anyhow::ensure!(
@@ -738,6 +800,9 @@ impl ExecutionPlan {
                 PlannedOp::Silu { target } => check_ref(*target, "silu target"),
                 PlannedOp::Elemul { a, b, out } => check_refs(&[*a, *b, *out], "elemul"),
                 PlannedOp::ResidualAdd { a, b, out } => check_refs(&[*a, *b, *out], "residual add"),
+                PlannedOp::ResidualAdd3 { a, b, c, out } => {
+                    check_refs(&[*a, *b, *c, *out], "residual add (3 operand)")
+                }
                 PlannedOp::OutputNorm { weight, input, out } => {
                     check_ref(*weight, "output norm weight")?;
                     check_refs(&[*input, *out], "output norm")
@@ -763,6 +828,28 @@ impl ExecutionPlan {
                         check_ref(*tensor, "fused eliminated tensor")?;
                     }
                     Ok(())
+                }
+                PlannedOp::FusedQkv {
+                    input,
+                    norm,
+                    scaled,
+                    q,
+                    k,
+                    v,
+                    ..
+                } => {
+                    check_refs(&[*input, *scaled, *q, *k, *v], "fused qkv")?;
+                    check_ref(*norm, "fused qkv norm weight")
+                }
+                PlannedOp::FusedOProjResidual {
+                    attn,
+                    residual,
+                    out,
+                    ..
+                } => check_refs(&[*attn, *residual, *out], "fused output projection"),
+                PlannedOp::FusedResidualNorm { a, b, weight, out } => {
+                    check_refs(&[*a, *b, *out], "fused residual norm")?;
+                    check_ref(*weight, "fused residual norm weight")
                 }
             }
         };
@@ -826,7 +913,7 @@ impl ExecutionPlan {
             .iter()
             .chain(self.final_ops.iter())
             .chain(self.layers.iter().flat_map(|layer| layer.ops.iter()))
-            .filter(|op| matches!(op, PlannedOp::Fused { .. }))
+            .filter(|op| op.is_fused())
             .count()
     }
 

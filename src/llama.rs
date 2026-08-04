@@ -1421,12 +1421,14 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
         if !fast_eligible {
             runner.note_dispatch(execution.phase, DispatchPath::Generic);
         }
-        // v0.4 planned path (single token, mode=planned, no tracing). Hooks
-        // fire at the same six semantic sites as the reference path; the
-        // plan is built with the runner's hook mode. Runs before
-        // `ActiveHooks` borrows the runner.
-        if *self.execution_mode.borrow() == ExecutionMode::Planned
-            && token_ids.len() == 1
+        // v0.4 planned path (single token, mode=planned/planned-fused, no
+        // tracing). Hooks fire at the same six semantic sites as the
+        // reference path; the plan is built with the runner's hook mode and
+        // defuses fusions that would eliminate a hooked tensor.
+        if matches!(
+            *self.execution_mode.borrow(),
+            ExecutionMode::Planned | ExecutionMode::PlannedFused
+        ) && token_ids.len() == 1
             && !crate::trace::is_tracing()
         {
             let hook_mode = runner.hook_mode();
@@ -3023,6 +3025,7 @@ impl PlanBuilder {
                 q,
                 out: dst,
                 score_scratch,
+                ..
             } => {
                 push(*q, &mut out);
                 push(*dst, &mut out);
@@ -3039,6 +3042,12 @@ impl PlanBuilder {
                 push(*b, &mut out);
                 push(*dst, &mut out);
             }
+            PlannedOp::ResidualAdd3 { a, b, c, out: dst } => {
+                push(*a, &mut out);
+                push(*b, &mut out);
+                push(*c, &mut out);
+                push(*dst, &mut out);
+            }
             PlannedOp::OutputNorm {
                 input, out: dst, ..
             } => {
@@ -3052,8 +3061,38 @@ impl PlanBuilder {
                 push(*dst, &mut out);
             }
             // Fused ops fold their components' regions in via the component
-            // ops themselves; no standalone region mapping yet.
+            // ops themselves; the concrete fused variants list their regions
+            // directly.
             PlannedOp::Fused { .. } => {}
+            PlannedOp::FusedQkv {
+                input,
+                scaled,
+                q,
+                k,
+                v,
+                ..
+            } => {
+                push(*input, &mut out);
+                push(*scaled, &mut out);
+                push(*q, &mut out);
+                push(*k, &mut out);
+                push(*v, &mut out);
+            }
+            PlannedOp::FusedOProjResidual {
+                attn,
+                residual,
+                out: dst,
+                ..
+            } => {
+                push(*attn, &mut out);
+                push(*residual, &mut out);
+                push(*dst, &mut out);
+            }
+            PlannedOp::FusedResidualNorm { a, b, out: dst, .. } => {
+                push(*a, &mut out);
+                push(*b, &mut out);
+                push(*dst, &mut out);
+            }
         }
         out
     }
@@ -3159,10 +3198,12 @@ impl Llama<CpuBackend> {
     }
 
     /// Whether the plan-driven single-token decode path applies: mode is
-    /// `Planned`, exactly one token, and tracing is off.
+    /// `Planned` or `PlannedFused`, exactly one token, and tracing is off.
     fn planned_decode_eligible(&self, token_ids: &[u32]) -> bool {
-        *self.execution_mode.borrow() == ExecutionMode::Planned
-            && token_ids.len() == 1
+        matches!(
+            *self.execution_mode.borrow(),
+            ExecutionMode::Planned | ExecutionMode::PlannedFused
+        ) && token_ids.len() == 1
             && !crate::trace::is_tracing()
     }
 
@@ -3423,7 +3464,7 @@ impl Llama<CpuBackend> {
             let x2 = builder.add_activation(&format!("layer{l}.x2"), embed);
 
             // ---- unfused op sequence (contract section 3) ----
-            let ops = vec![
+            let mut ops = vec![
                 PlannedOp::RmsNorm {
                     weight: attn_norm,
                     input: x_in,
@@ -3470,6 +3511,7 @@ impl Llama<CpuBackend> {
                     q,
                     out: attn_out,
                     score_scratch: "scores".to_string(),
+                    rope_q: false,
                 },
                 PlannedOp::Matvec {
                     weight: o_w,
@@ -3526,17 +3568,179 @@ impl Llama<CpuBackend> {
                 },
             ];
 
-            // Phase 3 plans the unfused sequence for every mode; the fusion
-            // set (F1-F5) is applied in a later phase. planned-fused records
-            // the gap visibly rather than pretending fusion happened.
+            // Phase 8: planned-fused applies the frozen fusion set
+            // (contract section 6). When after_attention is active, F5 is
+            // defused so the o tensor stays materialized at the hook; the
+            // mlp norm then runs fused F2 (residual+rmsnorm with the
+            // 3-operand final add). Otherwise the layer is fully fused
+            // (F1+F3 qkv orchestration, F4 q-rope in attention, F5 output
+            // projection with residual accumulate; F2 is subsumed by F5
+            // because the residual is already the fused output).
             let (fusion, fusion_reason) = if mode == ExecutionMode::PlannedFused {
-                (
-                    FusionState::Unfused,
-                    Some(
-                        "fusion set not yet applied: planned-fused currently plans the unfused sequence"
-                            .to_string(),
-                    ),
-                )
+                if active_stages.contains(&"after-attention") {
+                    ops = vec![
+                        PlannedOp::FusedQkv {
+                            input: x_in,
+                            norm: attn_norm,
+                            scaled: n1,
+                            q,
+                            k,
+                            v,
+                            kernel: builder.kernel_of(q_w),
+                            has_bias: q_b.is_some(),
+                        },
+                        PlannedOp::Rope {
+                            target: k,
+                            rope_layout: rope_layout_name.to_string(),
+                            qk_norm: k_norm,
+                            qk_norm_order: qk_norm_order_name.to_string(),
+                        },
+                        PlannedOp::KvStore { k, v },
+                        PlannedOp::Attention {
+                            q,
+                            out: attn_out,
+                            score_scratch: "scores".to_string(),
+                            rope_q: true,
+                        },
+                        PlannedOp::Matvec {
+                            weight: o_w,
+                            input: attn_out,
+                            out: o,
+                            kernel: builder.kernel_of(o_w),
+                            fused_rms_norm: None,
+                            bias: o_b,
+                        },
+                        PlannedOp::FusedResidualNorm {
+                            a: x_in,
+                            b: o,
+                            weight: ffn_norm,
+                            out: n2,
+                        },
+                        PlannedOp::Matvec {
+                            weight: gate_w,
+                            input: n2,
+                            out: g,
+                            kernel: builder.kernel_of(gate_w),
+                            fused_rms_norm: None,
+                            bias: gate_b,
+                        },
+                        PlannedOp::Silu { target: g },
+                        PlannedOp::Matvec {
+                            weight: up_w,
+                            input: n2,
+                            out: u,
+                            kernel: builder.kernel_of(up_w),
+                            fused_rms_norm: None,
+                            bias: up_b,
+                        },
+                        PlannedOp::Elemul {
+                            a: g,
+                            b: u,
+                            out: gu,
+                        },
+                        PlannedOp::Matvec {
+                            weight: down_w,
+                            input: gu,
+                            out: m,
+                            kernel: builder.kernel_of(down_w),
+                            fused_rms_norm: None,
+                            bias: down_b,
+                        },
+                        PlannedOp::ResidualAdd3 {
+                            a: x_in,
+                            b: o,
+                            c: m,
+                            out: x2,
+                        },
+                    ];
+                    (
+                        FusionState::PartiallyFused,
+                        Some(
+                            "F5 defused: after_attention requires the materialized o tensor; F2 active"
+                                .to_string(),
+                        ),
+                    )
+                } else {
+                    ops = vec![
+                        PlannedOp::FusedQkv {
+                            input: x_in,
+                            norm: attn_norm,
+                            scaled: n1,
+                            q,
+                            k,
+                            v,
+                            kernel: builder.kernel_of(q_w),
+                            has_bias: q_b.is_some(),
+                        },
+                        PlannedOp::Rope {
+                            target: k,
+                            rope_layout: rope_layout_name.to_string(),
+                            qk_norm: k_norm,
+                            qk_norm_order: qk_norm_order_name.to_string(),
+                        },
+                        PlannedOp::KvStore { k, v },
+                        PlannedOp::Attention {
+                            q,
+                            out: attn_out,
+                            score_scratch: "scores".to_string(),
+                            rope_q: true,
+                        },
+                        PlannedOp::FusedOProjResidual {
+                            attn: attn_out,
+                            residual: x_in,
+                            out: x1,
+                            kernel: builder.kernel_of(o_w),
+                            has_bias: o_b.is_some(),
+                        },
+                        PlannedOp::RmsNorm {
+                            weight: ffn_norm,
+                            input: x1,
+                            out: n2,
+                        },
+                        PlannedOp::Matvec {
+                            weight: gate_w,
+                            input: n2,
+                            out: g,
+                            kernel: builder.kernel_of(gate_w),
+                            fused_rms_norm: None,
+                            bias: gate_b,
+                        },
+                        PlannedOp::Silu { target: g },
+                        PlannedOp::Matvec {
+                            weight: up_w,
+                            input: n2,
+                            out: u,
+                            kernel: builder.kernel_of(up_w),
+                            fused_rms_norm: None,
+                            bias: up_b,
+                        },
+                        PlannedOp::Elemul {
+                            a: g,
+                            b: u,
+                            out: gu,
+                        },
+                        PlannedOp::Matvec {
+                            weight: down_w,
+                            input: gu,
+                            out: m,
+                            kernel: builder.kernel_of(down_w),
+                            fused_rms_norm: None,
+                            bias: down_b,
+                        },
+                        PlannedOp::ResidualAdd {
+                            a: x1,
+                            b: m,
+                            out: x2,
+                        },
+                    ];
+                    (
+                        FusionState::Fused,
+                        Some(
+                            "F2 subsumed by F5: the fused output projection materializes the residual"
+                                .to_string(),
+                        ),
+                    )
+                }
             } else {
                 (FusionState::Unfused, None)
             };
@@ -3835,6 +4039,7 @@ enum ResolvedOp {
         q: usize,
         out: usize,
         scores: usize,
+        rope_q: bool,
     },
     Silu {
         target: usize,
@@ -3849,10 +4054,38 @@ enum ResolvedOp {
         b: usize,
         out: usize,
     },
+    ResidualAdd3 {
+        a: usize,
+        b: usize,
+        c: usize,
+        out: usize,
+    },
     Logits {
         input: usize,
         out: usize,
         tied: bool,
+    },
+    /// Fusion F1+F3: norm-scale the block input into `scaled`, then run the
+    /// Q/K/V projections from it.
+    FusedQkv {
+        input: usize,
+        scaled: usize,
+        q: usize,
+        k: usize,
+        v: usize,
+    },
+    /// Fusion F5: `out` starts as a copy of `residual`; the matvec kernel
+    /// accumulates W·`attn` on top.
+    FusedOProjResidual {
+        attn: usize,
+        residual: usize,
+        out: usize,
+    },
+    /// Fusion F2: `out = rmsnorm(a + b)` in one pass.
+    FusedResidualNorm {
+        a: usize,
+        b: usize,
+        out: usize,
     },
 }
 
@@ -3877,7 +4110,9 @@ struct ResolvedLayerOps {
 #[derive(Debug, Clone, Copy)]
 struct ResolvedHookSites {
     before_layer: usize,
-    after_attention: usize,
+    /// `None` when the layer's fusion eliminates the o tensor (F5 active);
+    /// the hook is then inactive for this layer.
+    after_attention: Option<usize>,
     after_mlp: usize,
     after_layer: usize,
 }
@@ -3925,7 +4160,7 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
             })
     };
 
-    let resolve = |op: &PlannedOp, position: usize| -> Result<ResolvedOp, CpuError> {
+    let resolve = |op: &PlannedOp, _position: usize| -> Result<ResolvedOp, CpuError> {
         match op {
             PlannedOp::Embedding { out, .. } => Ok(ResolvedOp::Embed {
                 out: region_of(*out)?,
@@ -3988,18 +4223,23 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
                 })
             }
             PlannedOp::Rope { target, .. } => {
-                let role = match position {
-                    4 => RopeRole::Q,
-                    5 => RopeRole::K,
-                    other => {
-                        return Err(CpuError::ShapeMismatch(format!(
-                            "rope op at unexpected layer position {other}"
-                        )));
-                    }
+                // the role is read from the target region name (".q" vs
+                // ".k") so both the unfused (positions 4/5) and fused
+                // (position 1, k only) layer shapes resolve identically
+                let target_region = region_of(*target)?;
+                let region_name = &plan.scratch.regions[target_region].name;
+                let role = if region_name.ends_with(".k") {
+                    RopeRole::K
+                } else if region_name.ends_with(".q") {
+                    RopeRole::Q
+                } else {
+                    return Err(CpuError::ShapeMismatch(format!(
+                        "rope op targets unrecognized region '{region_name}'"
+                    )));
                 };
                 Ok(ResolvedOp::Rope {
                     role,
-                    target: region_of(*target)?,
+                    target: target_region,
                 })
             }
             PlannedOp::KvStore { k, v } => Ok(ResolvedOp::KvStore {
@@ -4010,10 +4250,12 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
                 q,
                 out,
                 score_scratch,
+                rope_q,
             } => Ok(ResolvedOp::Attention {
                 q: region_of(*q)?,
                 out: region_of(*out)?,
                 scores: region_by_name(score_scratch)?,
+                rope_q: *rope_q,
             }),
             PlannedOp::Silu { target } => Ok(ResolvedOp::Silu {
                 target: region_of(*target)?,
@@ -4024,6 +4266,41 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
                 out: region_of(*out)?,
             }),
             PlannedOp::ResidualAdd { a, b, out } => Ok(ResolvedOp::ResidualAdd {
+                a: region_of(*a)?,
+                b: region_of(*b)?,
+                out: region_of(*out)?,
+            }),
+            PlannedOp::ResidualAdd3 { a, b, c, out } => Ok(ResolvedOp::ResidualAdd3 {
+                a: region_of(*a)?,
+                b: region_of(*b)?,
+                c: region_of(*c)?,
+                out: region_of(*out)?,
+            }),
+            PlannedOp::FusedQkv {
+                input,
+                scaled,
+                q,
+                k,
+                v,
+                ..
+            } => Ok(ResolvedOp::FusedQkv {
+                input: region_of(*input)?,
+                scaled: region_of(*scaled)?,
+                q: region_of(*q)?,
+                k: region_of(*k)?,
+                v: region_of(*v)?,
+            }),
+            PlannedOp::FusedOProjResidual {
+                attn,
+                residual,
+                out,
+                ..
+            } => Ok(ResolvedOp::FusedOProjResidual {
+                attn: region_of(*attn)?,
+                residual: region_of(*residual)?,
+                out: region_of(*out)?,
+            }),
+            PlannedOp::FusedResidualNorm { a, b, out, .. } => Ok(ResolvedOp::FusedResidualNorm {
                 a: region_of(*a)?,
                 b: region_of(*b)?,
                 out: region_of(*out)?,
@@ -4071,13 +4348,14 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
                 .map(|(position, op)| resolve(op, position))
                 .collect::<Result<Vec<_>, _>>()?;
             // semantic hook regions (contract section 4): block input, o
-            // projection output (pre-residual), down projection output
-            // (pre-residual), and the block output.
+            // projection output (pre-residual, None when F5 fused), down
+            // projection output (pre-residual), and the block output.
             let before_layer = match ops.first() {
                 Some(ResolvedOp::RmsNorm { input, .. }) => *input,
+                Some(ResolvedOp::FusedQkv { input, .. }) => *input,
                 _ => {
                     return Err(CpuError::ShapeMismatch(
-                        "layer does not begin with the input rmsnorm".into(),
+                        "layer does not begin with the input norm or fused qkv".into(),
                     ));
                 }
             };
@@ -4100,6 +4378,7 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
             }
             let after_layer = match ops.last() {
                 Some(ResolvedOp::ResidualAdd { out, .. }) => *out,
+                Some(ResolvedOp::ResidualAdd3 { out, .. }) => *out,
                 _ => {
                     return Err(CpuError::ShapeMismatch(
                         "layer does not end with the residual add".into(),
@@ -4110,9 +4389,7 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
                 ops,
                 hooks: ResolvedHookSites {
                     before_layer,
-                    after_attention: after_attention.ok_or_else(|| {
-                        CpuError::ShapeMismatch("layer has no attention output matvec".into())
-                    })?,
+                    after_attention,
                     after_mlp: after_mlp.ok_or_else(|| {
                         CpuError::ShapeMismatch("layer has no mlp down matvec".into())
                     })?,
@@ -4167,12 +4444,15 @@ fn dense_matvec_into(src: &[f32], weight: &[f32], in_dim: usize, out_dim: usize,
 /// follows the plan's resolved kernel; the underlying implementations are
 /// the same scalar/AVX2 kernels as the v0.3 reference path. `parallel`
 /// selects the column-parallel decode matvec for large K-quant projections
-/// (bit-identical results, contract Gate A).
+/// (bit-identical results, contract Gate A). With `accumulate`, the F32
+/// dense path adds into `dst` instead of assigning (the quantized kernels
+/// accumulate by contract), which the F5 fused output projection relies on.
 fn planned_linear_into(
     linear: &Linear<CpuBackend>,
     src: &[f32],
     dst: &mut [f32],
     parallel: bool,
+    accumulate: bool,
 ) -> Result<(), CpuError> {
     match linear.weight_kind() {
         WeightKindView::F32(t) => {
@@ -4180,7 +4460,18 @@ fn planned_linear_into(
             let out_dim = t.shape()[1];
             debug_assert_eq!(src.len(), in_dim);
             debug_assert_eq!(dst.len(), out_dim);
-            dense_matvec_into(src, t.data(), in_dim, out_dim, dst);
+            if accumulate {
+                let weight = t.data();
+                for j in 0..out_dim {
+                    let mut acc = 0.0f32;
+                    for (i, &x) in src.iter().enumerate() {
+                        acc += x * weight[i * out_dim + j];
+                    }
+                    dst[j] += acc;
+                }
+            } else {
+                dense_matvec_into(src, t.data(), in_dim, out_dim, dst);
+            }
             Ok(())
         }
         WeightKindView::Q8_0(w) => {
@@ -4391,6 +4682,32 @@ fn three_regions(slices: [&mut [f32]; 3]) -> (&mut [f32], &mut [f32], &mut [f32]
     (a, b, c)
 }
 
+/// Split a region-request result into four disjoint slices.
+fn four_regions(slices: [&mut [f32]; 4]) -> (&mut [f32], &mut [f32], &mut [f32], &mut [f32]) {
+    let [a, b, c, d] = slices;
+    (a, b, c, d)
+}
+
+/// Fusion F2: `out = rmsnorm(a + b)` in one pass over both inputs (no
+/// standalone residual materialization). Bit-identical to the unfused
+/// add-then-norm composition (same elementwise adds, same sum order, same
+/// scale multiply order).
+fn fused_residual_rmsnorm_into(a: &[f32], b: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
+    debug_assert_eq!(a.len(), b.len());
+    debug_assert_eq!(a.len(), weight.len());
+    debug_assert_eq!(a.len(), out.len());
+    let mut sum = 0.0f32;
+    for i in 0..a.len() {
+        let value = a[i] + b[i];
+        sum += value * value;
+    }
+    let rstd = (sum / a.len() as f32 + eps).sqrt().recip();
+    for i in 0..a.len() {
+        let value = a[i] + b[i];
+        out[i] = value * rstd * weight[i];
+    }
+}
+
 /// Plan-driven single-token decode: walks the resolved ops against the
 /// scratch arena. Zero heap allocation in the steady state. When `hooks` is
 /// `Some`, the six semantic hook sites fire against the arena regions at the
@@ -4565,7 +4882,7 @@ fn forward_last_logits_planned(
                     // zeroed Vec per projection; the arena reuses regions
                     // across tokens, so the destination must be cleared here.
                     dst.fill(0.0);
-                    planned_linear_into(linear, src, dst, parallel_matvec)?;
+                    planned_linear_into(linear, src, dst, parallel_matvec, false)?;
                     if *has_bias {
                         if let Some(bias) = linear.bias() {
                             add_bias_into(dst, bias.data());
@@ -4574,16 +4891,17 @@ fn forward_last_logits_planned(
                     // after_attention / after_mlp fire on the pre-residual
                     // projection outputs (contract section 4/12), through the
                     // resolved hook regions so fused plans can point them at
-                    // the materialized tensor.
+                    // the materialized tensor. after_attention is None when
+                    // fusion F5 eliminated the o tensor for this layer.
                     if let Some((hooks, _)) = hooks.as_mut() {
                         match role {
                             ProjRole::O => {
-                                let [data] = arena
-                                    .regions_f32([layer_ops.hooks.after_attention])
-                                    .map_err(arena_err)?;
-                                let mut activation =
-                                    SliceActivation::new(1, model.config.embed_dim, data);
-                                hooks.after_attention(layer, &mut activation)?;
+                                if let Some(region) = layer_ops.hooks.after_attention {
+                                    let [data] = arena.regions_f32([region]).map_err(arena_err)?;
+                                    let mut activation =
+                                        SliceActivation::new(1, model.config.embed_dim, data);
+                                    hooks.after_attention(layer, &mut activation)?;
+                                }
                             }
                             ProjRole::Down => {
                                 let [data] = arena
@@ -4636,7 +4954,12 @@ fn forward_last_logits_planned(
                         model.config.head_dim,
                     );
                 }
-                ResolvedOp::Attention { q, out, scores } => {
+                ResolvedOp::Attention {
+                    q,
+                    out,
+                    scores,
+                    rope_q,
+                } => {
                     let (q_data, out_data, scores_data) =
                         three_regions(arena.regions_f32([*q, *out, *scores]).map_err(arena_err)?);
                     let _timer = OpTimer::new(
@@ -4646,6 +4969,17 @@ fn forward_last_logits_planned(
                         out_data.len(),
                         crate::decode_profile::DecodeExecutionMode::Serial,
                     );
+                    // fusion F4: the Q rope (and optional qk-norm) runs
+                    // inside the attention op; the K rope stays a separate
+                    // op because the stored K must be roped before the store.
+                    if *rope_q {
+                        block.self_attn.apply_decode_rope_and_qk_norm(
+                            q_data,
+                            model.config.n_heads,
+                            start_pos,
+                            block.self_attn.q_norm.as_ref(),
+                        );
+                    }
                     let (cached_k, cached_v) = cache.get(layer);
                     planned_causal_attention(
                         q_data,
@@ -4659,6 +4993,118 @@ fn forward_last_logits_planned(
                         scores_data,
                         out_data,
                     )?;
+                }
+                ResolvedOp::FusedQkv {
+                    input,
+                    scaled,
+                    q,
+                    k,
+                    v,
+                } => {
+                    let _timer = OpTimer::new(
+                        layer,
+                        "fused_qkv",
+                        model.config.embed_dim,
+                        model.config.embed_dim,
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
+                    // one norm pass over the block input writes the scaled
+                    // activation, then the three projections share it
+                    {
+                        let (x, n1) =
+                            two_regions(arena.regions_f32([*input, *scaled]).map_err(arena_err)?);
+                        rms_norm_into(x, block.input_layernorm.data(), model.config.norm_eps, n1);
+                    }
+                    let projections = [
+                        (*q, &block.self_attn.q_proj),
+                        (*k, &block.self_attn.k_proj),
+                        (*v, &block.self_attn.v_proj),
+                    ];
+                    for (out_region, linear) in projections {
+                        let (n1, out) = two_regions(
+                            arena
+                                .regions_f32([*scaled, out_region])
+                                .map_err(arena_err)?,
+                        );
+                        out.fill(0.0);
+                        planned_linear_into(linear, n1, out, parallel_matvec, false)?;
+                        if let Some(bias) = linear.bias() {
+                            add_bias_into(out, bias.data());
+                        }
+                    }
+                }
+                ResolvedOp::FusedOProjResidual {
+                    attn,
+                    residual,
+                    out,
+                } => {
+                    let (attn_data, residual_data, out_data) = three_regions(
+                        arena
+                            .regions_f32([*attn, *residual, *out])
+                            .map_err(arena_err)?,
+                    );
+                    let _timer = OpTimer::new(
+                        layer,
+                        "fused_o_proj",
+                        attn_data.len(),
+                        out_data.len(),
+                        if parallel_matvec
+                            && matches!(
+                                block.self_attn.o_proj.weight_kind(),
+                                WeightKindView::KQuant(_)
+                            )
+                        {
+                            crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
+                        } else {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        },
+                    );
+                    // fusion F5: out starts as the residual; the matvec
+                    // kernel accumulates W·attn on top (one pass, no
+                    // standalone o tensor).
+                    out_data.copy_from_slice(residual_data);
+                    planned_linear_into(
+                        &block.self_attn.o_proj,
+                        attn_data,
+                        out_data,
+                        parallel_matvec,
+                        true,
+                    )?;
+                    if let Some(bias) = block.self_attn.o_proj.bias() {
+                        add_bias_into(out_data, bias.data());
+                    }
+                }
+                ResolvedOp::FusedResidualNorm { a, b, out } => {
+                    let (a_data, b_data, out_data) =
+                        three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
+                    let _timer = OpTimer::new(
+                        layer,
+                        "fused_residual_norm",
+                        a_data.len(),
+                        out_data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
+                    fused_residual_rmsnorm_into(
+                        a_data,
+                        b_data,
+                        block.post_attention_layernorm.data(),
+                        model.config.norm_eps,
+                        out_data,
+                    );
+                }
+                ResolvedOp::ResidualAdd3 { a, b, c, out } => {
+                    let (a_data, b_data, c_data, out_data) =
+                        four_regions(arena.regions_f32([*a, *b, *c, *out]).map_err(arena_err)?);
+                    let _timer = OpTimer::new(
+                        layer,
+                        "residual_add3",
+                        a_data.len(),
+                        out_data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
+                    for i in 0..out_data.len() {
+                        out_data[i] = (a_data[i] + b_data[i]) + c_data[i];
+                    }
                 }
                 ResolvedOp::Silu { target } => {
                     let (data,) = {
@@ -4766,7 +5212,7 @@ fn forward_last_logits_planned(
                     },
                 );
                 dst.fill(0.0);
-                planned_linear_into(&model.head, src, dst, parallel_matvec)?;
+                planned_linear_into(&model.head, src, dst, parallel_matvec, false)?;
                 let mut logits_tensor =
                     CpuTensor::from_data(vec![1, model.config.vocab_size], dst.to_vec());
                 // after_logits fires on the final logits tensor.
@@ -5877,5 +6323,124 @@ mod tests {
                 "planned attention diverged from reference at total_seq_len {total_seq_len}"
             );
         }
+    }
+
+    /// Phase 8: the fused planned decode (F1-F5) must match the reference
+    /// greedy tokens and stay within the frozen Gate A/B logit envelope.
+    #[test]
+    fn planned_fused_matches_reference_greedy() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+
+        let run_greedy = |mode: ExecutionMode| -> (Vec<u32>, CpuTensor) {
+            model.set_execution_mode(mode);
+            let mut cache = model.create_cache(&backend, 64);
+            let prompt = [3u32, 1, 7];
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
+                .unwrap();
+            let mut tokens = prompt.to_vec();
+            let mut last_logits = None;
+            for start_pos in prompt.len()..prompt.len() + 4 {
+                let last = *tokens.last().unwrap();
+                let logits = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[last],
+                    &mut cache,
+                    start_pos,
+                )
+                .unwrap();
+                let best = crate::sampler::argmax_token(logits.data());
+                tokens.push(best as u32);
+                last_logits = Some(logits);
+            }
+            (tokens, last_logits.expect("decode produced logits"))
+        };
+
+        let (reference_tokens, reference_logits) = run_greedy(ExecutionMode::Reference);
+        let (fused_tokens, fused_logits) = run_greedy(ExecutionMode::PlannedFused);
+
+        assert_eq!(
+            reference_tokens, fused_tokens,
+            "fused greedy tokens must match the reference"
+        );
+        let max_abs = reference_logits
+            .data()
+            .iter()
+            .zip(fused_logits.data().iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs <= 1e-4,
+            "fused logits diverge from reference: max_abs {max_abs}"
+        );
+    }
+
+    /// Phase 8 defusion: planned-fused with an after_attention hook must
+    /// defuse F5, fire the hook on the materialized o tensor, and stay
+    /// within the Gate C envelope of the hooked reference path.
+    #[test]
+    fn planned_fused_defuses_after_attention_hook() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+
+        let run_hooked = |mode: ExecutionMode| -> (CpuTensor, Vec<HookRecord>) {
+            model.set_execution_mode(mode);
+            let mut cache = model.create_cache(&backend, 64);
+            let prompt = [3u32, 1, 7];
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
+                .unwrap();
+            let (experiment, records) = RecordingExperiment::new();
+            let model_context =
+                ModelContext::new(ModelFamily::Llama, None, "llama", 2, model.config.embed_dim);
+            let execution = ExecutionContext::new(
+                model_context,
+                ExecutionPhase::Decode,
+                3,
+                1,
+                TracingState::Disabled,
+            );
+            let mut runner = ExperimentRunner::new(experiment);
+            let logits = ExperimentalForwardModel::forward_last_logits_with_experiment(
+                &model,
+                &backend,
+                &[5],
+                &mut cache,
+                3,
+                execution,
+                &mut runner,
+            )
+            .unwrap();
+            let hook_records = records.lock().unwrap().clone();
+            (logits, hook_records)
+        };
+
+        // the reference path fires every stage (unfused)
+        let (reference, reference_records) = run_hooked(ExecutionMode::Reference);
+        let (fused, fused_records) = run_hooked(ExecutionMode::PlannedFused);
+
+        assert!(
+            fused_records
+                .iter()
+                .any(|r| r.hook == ExperimentHook::AfterAttention),
+            "after_attention must fire on the fused path (F5 defused)"
+        );
+        assert_eq!(
+            reference_records.len(),
+            fused_records.len(),
+            "defused fused path must fire the same hook sequence as reference"
+        );
+        let max_abs = reference
+            .data()
+            .iter()
+            .zip(fused.data().iter())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs <= 1e-4,
+            "defused fused logits diverge from hooked reference: {max_abs}"
+        );
     }
 }
