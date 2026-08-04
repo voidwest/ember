@@ -19,11 +19,49 @@ use ember::model::Gpt2;
 use ember::npy::write_npy_2d;
 use ember::sampler::{argmax_token, sample_token};
 use ember::trace;
+use rand::SeedableRng;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
+
+/// v0.5 seeded-sampling RNG: StdRng when a seed is given (deterministic),
+/// the thread RNG otherwise.
+enum SeededRng {
+    Std(Box<rand::rngs::StdRng>),
+    Thread(rand::rngs::ThreadRng),
+}
+
+impl rand::RngCore for SeededRng {
+    fn next_u32(&mut self) -> u32 {
+        match self {
+            SeededRng::Std(rng) => rng.next_u32(),
+            SeededRng::Thread(rng) => rng.next_u32(),
+        }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        match self {
+            SeededRng::Std(rng) => rng.next_u64(),
+            SeededRng::Thread(rng) => rng.next_u64(),
+        }
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        match self {
+            SeededRng::Std(rng) => rng.fill_bytes(dest),
+            SeededRng::Thread(rng) => rng.fill_bytes(dest),
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        match self {
+            SeededRng::Std(rng) => rng.try_fill_bytes(dest),
+            SeededRng::Thread(rng) => rng.try_fill_bytes(dest),
+        }
+    }
+}
 
 static RAW_DUMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -109,6 +147,7 @@ pub(crate) fn run_single_prompt_with_experiment(
         args.trace_run_metadata,
         rayon_current_num_threads(),
         effective_context_limit(backend, model, args),
+        None,
     )?;
     println!("{}", output);
     Ok(())
@@ -689,6 +728,7 @@ where
         trace_run_metadata,
         thread_count,
         context_limit,
+        None,
     )
 }
 
@@ -711,6 +751,7 @@ pub(crate) fn generate_with_experiment(
     trace_run_metadata: bool,
     thread_count: usize,
     context_limit: usize,
+    rng_seed: Option<u64>,
 ) -> anyhow::Result<String> {
     let mut execution = ActiveGeneration {
         runner,
@@ -734,6 +775,7 @@ pub(crate) fn generate_with_experiment(
         trace_run_metadata,
         thread_count,
         context_limit,
+        rng_seed,
     )
 }
 
@@ -767,6 +809,7 @@ pub(crate) fn generate_with_execution<B, M, E>(
     trace_run_metadata: bool,
     thread_count: usize,
     context_limit: usize,
+    rng_seed: Option<u64>,
 ) -> anyhow::Result<String>
 where
     B: Backend,
@@ -782,7 +825,12 @@ where
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
-    let mut rng = rand::thread_rng();
+    // v0.5: a fixed seed makes temperature sampling deterministic
+    // (StdRng/ChaCha); None keeps the historical thread-local RNG.
+    let mut rng = match rng_seed {
+        Some(seed) => SeededRng::Std(Box::new(rand::rngs::StdRng::seed_from_u64(seed))),
+        None => SeededRng::Thread(rand::thread_rng()),
+    };
 
     let mut all_tokens = tokenizer
         .encode(prompt)
