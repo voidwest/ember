@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ember is a CPU-first Rust research layer for hidden-state extraction,
-leakage-aware probing, and reproducible experiments over GGUF models — an
+leakage-aware probing, and reproducible experiments over GGUF models, an
 inspectable instrument with its own inference path for validation, not a
 llama.cpp competitor. Research direction: Arabic morphology probing and
 validation.
@@ -16,11 +16,11 @@ research write-up: https://voidwest.dev/ember
 
 A 2026-08 validation wave (Qwen2.5-1.5B and Llama-3.2-1B across Q8/Q6/Q4,
 ~500 deterministic runs) found **no Arabic-selective quantization
-degradation** — a null at every precision/family combination tested. The
+degradation**, a null at every precision/family combination tested. The
 robust output is the **causal-localization toolchain**: single-layer
 activation patches restore quantized-boundary failures, with the causal
 locus one layer before the divergence ramp (qwen L7/28, llama L1/16), and
-the mechanism is near-threshold flips — quantization noise crosses the
+the mechanism is near-threshold flips quantization noise crosses the
 model's smallest decision margins.
 
 **Validation caveat.** "Supported" in the model tables means an execution
@@ -71,4 +71,4 @@ pip install sarf-atlas
 
 ## license
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
