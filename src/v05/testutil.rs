@@ -3,8 +3,10 @@
 //! `write_test_bundle` produces a complete, verifiable `ember.bundle.v1`
 //! bundle with one selected-row capture, using the real writer, the real
 //! safetensors codec, and a reduced real execution plan fixture.
-
-#![cfg(test)]
+//!
+//! The module is gated `#[cfg(test)]` at the declaration site in
+//! `mod.rs`; do not add a file-level `#![cfg(test)]` here (rustc rejects
+//! the duplicated attribute).
 
 use crate::v05::bundle::BundleWriter;
 use crate::v05::capture::{CaptureSpec, CaptureStorage, InputSelector, LayerSelector};
