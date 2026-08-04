@@ -30,4 +30,5 @@ pub mod simd;
 pub mod tensor;
 pub mod tokenizer;
 pub mod trace;
+pub mod v05;
 pub mod workspace;
