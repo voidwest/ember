@@ -3586,8 +3586,6 @@ impl Llama<CpuBackend> {
                             q,
                             k,
                             v,
-                            kernel: builder.kernel_of(q_w),
-                            has_bias: q_b.is_some(),
                         },
                         PlannedOp::Rope {
                             target: k,
@@ -3669,8 +3667,6 @@ impl Llama<CpuBackend> {
                             q,
                             k,
                             v,
-                            kernel: builder.kernel_of(q_w),
-                            has_bias: q_b.is_some(),
                         },
                         PlannedOp::Rope {
                             target: k,
@@ -3689,8 +3685,6 @@ impl Llama<CpuBackend> {
                             attn: attn_out,
                             residual: x_in,
                             out: x1,
-                            kernel: builder.kernel_of(o_w),
-                            has_bias: o_b.is_some(),
                         },
                         PlannedOp::RmsNorm {
                             weight: ffn_norm,

@@ -284,13 +284,13 @@ fn matmul_k_scalar_parallel_into(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::tensor::CpuTensor;
 
     /// Deterministic pseudo-random Q6_K block payload with sanitized f16
     /// scale (offset 208): random bytes must not produce NaN/Inf scales.
-    fn seeded_q6_blocks(blocks: usize, seed: u64) -> Vec<u8> {
+    pub(crate) fn seeded_q6_blocks(blocks: usize, seed: u64) -> Vec<u8> {
         let mut state = seed;
         let mut bytes = vec![0u8; blocks * Q6_K_BLOCK_BYTES];
         for byte in &mut bytes {
@@ -309,7 +309,7 @@ mod tests {
     }
 
     /// Deterministic activations in [-4, 4).
-    fn seeded_activations(count: usize, seed: u64) -> Vec<f32> {
+    pub(crate) fn seeded_activations(count: usize, seed: u64) -> Vec<f32> {
         let mut state = seed;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
@@ -324,7 +324,7 @@ mod tests {
 
     /// Deterministic pseudo-random Q4_K block payload with sanitized f16
     /// scale/min fields (offsets 0 and 2).
-    fn seeded_q4_blocks(blocks: usize, seed: u64) -> Vec<u8> {
+    pub(crate) fn seeded_q4_blocks(blocks: usize, seed: u64) -> Vec<u8> {
         let mut state = seed;
         let mut bytes = vec![0u8; blocks * Q4_K_BLOCK_BYTES];
         for byte in &mut bytes {
@@ -348,7 +348,7 @@ mod tests {
     /// output row) transposed to the model's `[in, out]` layout, then a
     /// dense `CpuTensor::matmul` — exactly the reference path the scalar
     /// compressed kernels are validated against.
-    fn eager_reference(w: &KQuantWeight, src: &[f32], rows: usize) -> Vec<f32> {
+    pub(crate) fn eager_reference(w: &KQuantWeight, src: &[f32], rows: usize) -> Vec<f32> {
         let w_full = w.dequantize_all().transpose();
         let x = CpuTensor::from_data(vec![rows, w.in_features()], src.to_vec());
         x.matmul(&w_full).data().to_vec()

@@ -494,68 +494,9 @@ mod x86_64 {
 mod tests {
     use super::*;
     use crate::k_matmul::matmul_k_scalar_into;
-    use crate::tensor::CpuTensor;
-
-    fn seeded_q6_blocks(blocks: usize, seed: u64) -> Vec<u8> {
-        let mut state = seed;
-        let mut bytes = vec![0u8; blocks * Q6_K_BLOCK_BYTES];
-        for byte in &mut bytes {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            *byte = (state >> 33) as u8;
-        }
-        for block in bytes.chunks_exact_mut(Q6_K_BLOCK_BYTES) {
-            let bits = u16::from_le_bytes([block[208], block[209]]);
-            let bits = bits & 0x7FFF;
-            let bits = if bits >= 0x7C00 { 0x3C00 } else { bits };
-            block[208..210].copy_from_slice(&bits.to_le_bytes());
-        }
-        bytes
-    }
-
-    /// Deterministic pseudo-random Q4_K block payload with sanitized f16
-    /// scale/min fields (offsets 0 and 2).
-    fn seeded_q4_blocks(blocks: usize, seed: u64) -> Vec<u8> {
-        let mut state = seed;
-        let mut bytes = vec![0u8; blocks * Q4_K_BLOCK_BYTES];
-        for byte in &mut bytes {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            *byte = (state >> 33) as u8;
-        }
-        for block in bytes.chunks_exact_mut(Q4_K_BLOCK_BYTES) {
-            for offset in [0usize, 2] {
-                let bits = u16::from_le_bytes([block[offset], block[offset + 1]]);
-                let bits = bits & 0x7FFF;
-                let bits = if bits >= 0x7C00 { 0x3C00 } else { bits };
-                block[offset..offset + 2].copy_from_slice(&bits.to_le_bytes());
-            }
-        }
-        bytes
-    }
-
-    fn seeded_activations(count: usize, seed: u64) -> Vec<f32> {
-        let mut state = seed;
-        let mut values = Vec::with_capacity(count);
-        for _ in 0..count {
-            state = state
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            let v = (state >> 33) as u32 as i32;
-            values.push(v as f32 * (4.0 / 2147483648.0));
-        }
-        values
-    }
-
-    /// The eager-f32 oracle (dequant-then-gemm), identical to the scalar
-    /// kernel tests' reference.
-    fn eager_reference(w: &KQuantWeight, src: &[f32], rows: usize) -> Vec<f32> {
-        let w_full = w.dequantize_all().transpose();
-        let x = CpuTensor::from_data(vec![rows, w.in_features()], src.to_vec());
-        x.matmul(&w_full).data().to_vec()
-    }
+    use crate::k_matmul::tests::{
+        eager_reference, seeded_activations, seeded_q4_blocks, seeded_q6_blocks,
+    };
 
     fn assert_gate_d(actual: &[f32], expected: &[f32]) {
         assert_eq!(actual.len(), expected.len());

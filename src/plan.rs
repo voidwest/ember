@@ -552,8 +552,6 @@ pub enum PlannedOp {
         q: TensorRef,
         k: TensorRef,
         v: TensorRef,
-        kernel: KernelId,
-        has_bias: bool,
     },
     /// Fusion F5: the output projection accumulates directly into the
     /// residual destination (`out` starts as a copy of `residual`, the
@@ -564,8 +562,6 @@ pub enum PlannedOp {
         attn: TensorRef,
         residual: TensorRef,
         out: TensorRef,
-        kernel: KernelId,
-        has_bias: bool,
     },
     /// Fusion F2: `out = rmsnorm(residual_a + residual_b)` computed in one
     /// pass (no standalone residual materialization). Used on the attention
