@@ -8,9 +8,12 @@
 
 pub mod bundle;
 pub mod capture;
+pub mod compare;
 pub mod hook;
 pub mod intervention;
 pub mod manifest;
+pub mod run;
+pub mod runner;
 pub mod safetensors;
 pub mod spec;
 pub mod token_select;

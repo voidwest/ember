@@ -77,6 +77,26 @@ pub struct CapturedTensor {
     pub columns: usize,
     pub full_tensor: bool,
     pub bytes: usize,
+    /// Requested output dtype.
+    pub dtype: crate::v05::capture::CaptureDType,
+}
+
+/// Deterministic summary statistics for a `summary-only` capture
+/// (never usable as an intervention source).
+#[derive(Debug, Clone)]
+pub struct CaptureSummary {
+    pub capture_id: String,
+    pub input_id: String,
+    pub site: SemanticHookSite,
+    pub layer: usize,
+    pub positions: Vec<usize>,
+    /// Shape of the summarized rows tensor: [positions, columns].
+    pub shape: [usize; 2],
+    pub finite_count: usize,
+    pub minimum: f32,
+    pub maximum: f32,
+    pub mean: f64,
+    pub l2_norm: f64,
 }
 
 /// An intervention application event (contract section 5 provenance).
@@ -100,6 +120,7 @@ pub struct InputResult {
     pub tokenization: TokenizationInfo,
     pub selection_records: Vec<TokenSelectionRecord>,
     pub captures: Vec<CapturedTensor>,
+    pub summaries: Vec<CaptureSummary>,
     pub events: Vec<InterventionEvent>,
     pub generated_token_ids: Vec<u32>,
     pub generated_text: String,
@@ -350,12 +371,54 @@ impl V05Experiment {
         // 2. captures.
         if self.site_has_captures(site, layer) {
             let mut pending: Vec<(usize, CapturedTensor)> = Vec::new();
+            let mut summaries: Vec<CaptureSummary> = Vec::new();
             for target in self.captures.iter() {
                 if target.site != site || !target.layers.contains(&layer) {
                     continue;
                 }
                 if target.storage == CaptureStorage::SummaryOnly {
-                    continue; // summary records are computed at finalize
+                    // Deterministic statistics over the selected rows.
+                    let wanted: Vec<usize> = if let Some(record) = &target.static_record {
+                        record
+                            .selected_indices
+                            .iter()
+                            .copied()
+                            .filter(|&position| {
+                                if is_decode {
+                                    position == start_position
+                                } else {
+                                    position < rows
+                                }
+                            })
+                            .collect()
+                    } else {
+                        let step = self.decode_step(start_position);
+                        if target.generated_steps.contains(&step) {
+                            vec![start_position]
+                        } else {
+                            Vec::new()
+                        }
+                    };
+                    if wanted.is_empty() {
+                        continue;
+                    }
+                    let mut values: Vec<f32> = Vec::new();
+                    for &position in &wanted {
+                        let local = if is_decode { 0 } else { position };
+                        values.extend_from_slice(
+                            &tensor.values()[local * columns..(local + 1) * columns],
+                        );
+                    }
+                    summaries.push(summary_stats(
+                        &target.capture_id,
+                        &input_id,
+                        site,
+                        layer,
+                        wanted,
+                        columns,
+                        &values,
+                    ));
+                    continue;
                 }
                 if let Some(record) = &target.static_record {
                     let wanted: Vec<usize> = record
@@ -399,6 +462,7 @@ impl V05Experiment {
                             rows: rows_out,
                             full_tensor: full,
                             bytes,
+                            dtype: target.dtype,
                         },
                     ));
                 } else {
@@ -420,6 +484,7 @@ impl V05Experiment {
                             rows: row,
                             full_tensor: false,
                             bytes: columns * 4,
+                            dtype: target.dtype,
                         },
                     ));
                 }
@@ -433,6 +498,7 @@ impl V05Experiment {
             for (_, captured) in pending {
                 result.captures.push(captured);
             }
+            result.summaries.extend(summaries);
         }
 
         // 3. interventions in declaration order.
@@ -692,6 +758,54 @@ fn checksum_f32(values: &[f32]) -> String {
         .collect()
 }
 
+/// Deterministic summary statistics over a row slice.
+fn summary_stats(
+    capture_id: &str,
+    input_id: &str,
+    site: SemanticHookSite,
+    layer: usize,
+    positions: Vec<usize>,
+    columns: usize,
+    values: &[f32],
+) -> CaptureSummary {
+    let mut finite_count = 0usize;
+    let mut minimum = f32::INFINITY;
+    let mut maximum = f32::NEG_INFINITY;
+    let mut sum = 0.0f64;
+    let mut sum_sq = 0.0f64;
+    for &value in values {
+        if value.is_finite() {
+            finite_count += 1;
+            minimum = minimum.min(value);
+            maximum = maximum.max(value);
+            sum += value as f64;
+            sum_sq += (value as f64) * (value as f64);
+        }
+    }
+    if finite_count == 0 {
+        minimum = 0.0;
+        maximum = 0.0;
+    }
+    let shape = [positions.len(), columns];
+    CaptureSummary {
+        capture_id: capture_id.to_string(),
+        input_id: input_id.to_string(),
+        site,
+        layer,
+        positions,
+        shape,
+        finite_count,
+        minimum,
+        maximum,
+        mean: if finite_count > 0 {
+            sum / finite_count as f64
+        } else {
+            0.0
+        },
+        l2_norm: sum_sq.sqrt(),
+    }
+}
+
 fn argmax_row(values: &[f32]) -> Option<(usize, f32)> {
     values
         .iter()
@@ -738,6 +852,7 @@ impl Experiment for V05Experiment {
                 .ok_or_else(|| ExperimentError::new("tokenization not injected"))?,
             selection_records: Vec::new(),
             captures: Vec::new(),
+            summaries: Vec::new(),
             events: Vec::new(),
             generated_token_ids: Vec::new(),
             generated_text: String::new(),
@@ -843,7 +958,7 @@ impl V05Experiment {
     /// Consume the per-input result for the bundle, with generated-step
     /// rows merged into single per-(capture, site, layer) tensors in
     /// position order.
-    pub fn into_result(mut self) -> Result<InputResult, ExperimentError> {
+    pub fn into_result(&mut self) -> Result<InputResult, ExperimentError> {
         let mut result = self
             .result
             .take()
@@ -899,6 +1014,12 @@ impl V05Experiment {
                 .then(a.layer.cmp(&b.layer))
         });
         result.captures = grouped;
+        result.summaries.sort_by(|a, b| {
+            a.capture_id
+                .cmp(&b.capture_id)
+                .then(site_order(a.site).cmp(&site_order(b.site)))
+                .then(a.layer.cmp(&b.layer))
+        });
         result.selection_records.sort_by(|a, b| {
             a.rule
                 .cmp(&b.rule)

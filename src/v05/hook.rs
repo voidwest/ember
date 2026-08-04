@@ -15,7 +15,7 @@ pub const HOOK_SCHEMA_VERSION: u32 = 1;
 /// Serialized as kebab-case identifiers:
 /// `residual-pre-attention`, `attention-output`, `mlp-output`,
 /// `residual-post-mlp`, `final-norm-output`, `logits`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SemanticHookSite {
     /// Residual stream entering the block, before the input RMS norm

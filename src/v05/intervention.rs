@@ -39,6 +39,18 @@ impl InterventionOperation {
         )
     }
 
+    /// The kebab-case operation kind (matches the TOML/JSON `kind` tag).
+    pub fn kind_name(self) -> &'static str {
+        match self {
+            InterventionOperation::Replace => "replace",
+            InterventionOperation::Zero => "zero",
+            InterventionOperation::Scale { .. } => "scale",
+            InterventionOperation::Interpolate { .. } => "interpolate",
+            InterventionOperation::AddDelta => "add-delta",
+            InterventionOperation::RestoreOriginal => "restore-original",
+        }
+    }
+
     /// Whether this operation needs the pre-intervention snapshot.
     pub const fn uses_snapshot(self) -> bool {
         matches!(
