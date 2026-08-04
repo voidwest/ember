@@ -7,6 +7,33 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.5.1] - 2026-08-04
+
+### Fixed
+
+- CI: `src/v05/testutil.rs` carried a file-level `#![cfg(test)]` while
+  `mod.rs` already gates the module; rustc 1.92 (the pinned CI
+  toolchain) rejects the duplicated attribute under clippy. Removed,
+  verified with `cargo +1.92.0 clippy -- -D warnings` and
+  `cargo +1.92.0 test --all-targets`.
+- Docs: `docs/usage.md` linked the v0.2 activation-artifact schema to
+  `docs/experiments.md`, which now documents the v0.5 workflow; the
+  reference moves to `activation-artifacts.md`/`activation-patching.md`.
+
+### Added
+
+- Recorded real-model capture-from-bundle workflow (Gate D evidence):
+  baseline captures prompt-final `attention-output` across all layers; a
+  second run replaces layer 8's row with the baseline bundle's layer-3
+  row; a third run adds `restore-original`. Comparison: layers 0-8
+  bit-exact, 9-15 diverge; restoration reproduces the baseline with all
+  16 capture layers exact and outputs equal. Specs, hashes, and commands
+  under `artifacts/benchmark-v05/capture-from-bundle/` and
+  `docs/interventions.md`.
+- Refreshed Gate H matrix with the release binary: ordinary runs
+  2.58 s / 2,751,028 kB RSS vs 2.61 s / 2,751,024 kB with the experiment
+  machinery unused; experiment workloads +2.2% RSS (gate: <=3%).
+
 ## [0.5.0] - 2026-08-04
 
 ### Added: reproducible experiment workflow
