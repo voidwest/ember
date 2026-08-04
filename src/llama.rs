@@ -3122,7 +3122,11 @@ impl PlanBuilder {
             .collect();
         let dispatch = DispatchPlan {
             kernel_per_tensor,
-            thread_strategy: "serial".to_string(),
+            thread_strategy: if rayon::current_num_threads() > 1 {
+                "column-parallel-rayon".to_string()
+            } else {
+                "serial".to_string()
+            },
         };
         (self.tensor_table, scratch, dispatch)
     }
@@ -4161,11 +4165,14 @@ fn dense_matvec_into(src: &[f32], weight: &[f32], in_dim: usize, out_dim: usize,
 
 /// Single-row projection through a Linear weight into `dst`. Kernel dispatch
 /// follows the plan's resolved kernel; the underlying implementations are
-/// the same scalar/AVX2 kernels as the v0.3 reference path.
+/// the same scalar/AVX2 kernels as the v0.3 reference path. `parallel`
+/// selects the column-parallel decode matvec for large K-quant projections
+/// (bit-identical results, contract Gate A).
 fn planned_linear_into(
     linear: &Linear<CpuBackend>,
     src: &[f32],
     dst: &mut [f32],
+    parallel: bool,
 ) -> Result<(), CpuError> {
     match linear.weight_kind() {
         WeightKindView::F32(t) => {
@@ -4180,8 +4187,14 @@ fn planned_linear_into(
             CpuBackend.matmul_q8_0_into(src, 1, w, dst);
             Ok(())
         }
-        WeightKindView::KQuant(w) => crate::k_matmul::matmul_k_into(src, 1, w, dst)
-            .map_err(|message| CpuError::ShapeMismatch(format!("planned matvec: {message}"))),
+        WeightKindView::KQuant(w) => {
+            let result = if parallel {
+                crate::k_matmul::matmul_k_into_parallel(src, 1, w, dst)
+            } else {
+                crate::k_matmul::matmul_k_into(src, 1, w, dst)
+            };
+            result.map_err(|message| CpuError::ShapeMismatch(format!("planned matvec: {message}")))
+        }
     }
 }
 
@@ -4327,6 +4340,7 @@ struct OpTimer {
     input_dimension: usize,
     output_dimension: usize,
     start: std::time::Instant,
+    _mode: crate::decode_profile::DecodeExecutionMode,
 }
 
 impl OpTimer {
@@ -4335,6 +4349,7 @@ impl OpTimer {
         operator: &'static str,
         input_dimension: usize,
         output_dimension: usize,
+        mode: crate::decode_profile::DecodeExecutionMode,
     ) -> Option<Self> {
         crate::decode_profile::is_enabled().then(|| Self {
             layer,
@@ -4342,6 +4357,7 @@ impl OpTimer {
             input_dimension,
             output_dimension,
             start: std::time::Instant::now(),
+            _mode: mode,
         })
     }
 }
@@ -4356,7 +4372,7 @@ impl Drop for OpTimer {
             self.operator,
             self.input_dimension,
             self.output_dimension,
-            crate::decode_profile::DecodeExecutionMode::Serial,
+            self._mode,
             self.start.elapsed(),
         );
     }
@@ -4420,6 +4436,7 @@ fn forward_last_logits_planned(
         .map_err(|error| {
             CpuError::ShapeMismatch(format!("execution plan build failed: {error}"))
         })?;
+    let parallel_matvec = plan.dispatch.thread_strategy == "column-parallel-rayon";
 
     let mut state = model.decode_state.borrow_mut();
     if state.as_ref().is_none_or(|s| s.plan_hash != plan.plan_hash) {
@@ -4433,7 +4450,13 @@ fn forward_last_logits_planned(
         match op {
             ResolvedOp::Embed { out } => {
                 let dst = arena.region_f32(*out).map_err(arena_err)?;
-                let _timer = OpTimer::new(0, "embedding", 1, dst.len());
+                let _timer = OpTimer::new(
+                    0,
+                    "embedding",
+                    1,
+                    dst.len(),
+                    crate::decode_profile::DecodeExecutionMode::Serial,
+                );
                 embed_row_into(&model.embed_tokens, token_ids[0], dst)?;
             }
             other => {
@@ -4465,7 +4488,13 @@ fn forward_last_logits_planned(
                         NormRole::MlpIn => "ffn_norm",
                         NormRole::Output => "output_norm",
                     };
-                    let _timer = OpTimer::new(layer, operator, x.len(), dst.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        operator,
+                        x.len(),
+                        dst.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
                     let weight = match role {
                         NormRole::AttnIn => block.input_layernorm.data(),
                         NormRole::MlpIn => block.post_attention_layernorm.data(),
@@ -4518,13 +4547,25 @@ fn forward_last_logits_planned(
                         ProjRole::Down => "down",
                         ProjRole::Head => "lm_head",
                     };
-                    let _timer = OpTimer::new(layer, operator, src.len(), dst.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        operator,
+                        src.len(),
+                        dst.len(),
+                        if parallel_matvec
+                            && matches!(linear.weight_kind(), WeightKindView::KQuant(_))
+                        {
+                            crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
+                        } else {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        },
+                    );
                     // The quantized kernels accumulate into dst (must be
                     // zero-initialized). The reference allocates a fresh
                     // zeroed Vec per projection; the arena reuses regions
                     // across tokens, so the destination must be cleared here.
                     dst.fill(0.0);
-                    planned_linear_into(linear, src, dst)?;
+                    planned_linear_into(linear, src, dst, parallel_matvec)?;
                     if *has_bias {
                         if let Some(bias) = linear.bias() {
                             add_bias_into(dst, bias.data());
@@ -4561,7 +4602,13 @@ fn forward_last_logits_planned(
                         let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
                         (data,)
                     };
-                    let _timer = OpTimer::new(layer, "rope", data.len(), data.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        "rope",
+                        data.len(),
+                        data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
                     let (n_heads, qk_norm) = match role {
                         RopeRole::Q => (model.config.n_heads, block.self_attn.q_norm.as_ref()),
                         RopeRole::K => (model.config.n_kv_heads, block.self_attn.k_norm.as_ref()),
@@ -4573,7 +4620,13 @@ fn forward_last_logits_planned(
                 ResolvedOp::KvStore { k, v } => {
                     let (k_data, v_data) =
                         two_regions(arena.regions_f32([*k, *v]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(layer, "kv_store", k_data.len(), v_data.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        "kv_store",
+                        k_data.len(),
+                        v_data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
                     cache.append_with_layout(
                         layer,
                         start_pos,
@@ -4586,7 +4639,13 @@ fn forward_last_logits_planned(
                 ResolvedOp::Attention { q, out, scores } => {
                     let (q_data, out_data, scores_data) =
                         three_regions(arena.regions_f32([*q, *out, *scores]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(layer, "attention", q_data.len(), out_data.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        "attention",
+                        q_data.len(),
+                        out_data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
                     let (cached_k, cached_v) = cache.get(layer);
                     planned_causal_attention(
                         q_data,
@@ -4606,7 +4665,13 @@ fn forward_last_logits_planned(
                         let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
                         (data,)
                     };
-                    let _timer = OpTimer::new(layer, "silu", data.len(), data.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        "silu",
+                        data.len(),
+                        data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
                     // in-place silu: x / (1 + exp(-x)), matching the
                     // reference `CpuTensor::silu` formula
                     for x in data.iter_mut() {
@@ -4616,13 +4681,25 @@ fn forward_last_logits_planned(
                 ResolvedOp::Elemul { a, b, out } => {
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(layer, "elemul", a_data.len(), out_data.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        "elemul",
+                        a_data.len(),
+                        out_data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
                     crate::simd::elemul(a_data, b_data, out_data);
                 }
                 ResolvedOp::ResidualAdd { a, b, out } => {
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(layer, "residual_add", a_data.len(), out_data.len());
+                    let _timer = OpTimer::new(
+                        layer,
+                        "residual_add",
+                        a_data.len(),
+                        out_data.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
                     add_into(a_data, b_data, out_data);
                 }
                 ResolvedOp::Logits { .. } => {
@@ -4658,7 +4735,13 @@ fn forward_last_logits_planned(
                 out,
             } => {
                 let (x, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
-                let _timer = OpTimer::new(usize::MAX, "output_norm", x.len(), dst.len());
+                let _timer = OpTimer::new(
+                    usize::MAX,
+                    "output_norm",
+                    x.len(),
+                    dst.len(),
+                    crate::decode_profile::DecodeExecutionMode::Serial,
+                );
                 rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
                 // before_logits fires on the final-norm output.
                 if let Some((hooks, _)) = hooks.as_mut() {
@@ -4669,9 +4752,21 @@ fn forward_last_logits_planned(
             ResolvedOp::Logits { input, out, tied } => {
                 debug_assert_eq!(*tied, model.head_tied, "plan head tie flag diverged");
                 let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
-                let _timer = OpTimer::new(usize::MAX, "lm_head", src.len(), dst.len());
+                let _timer = OpTimer::new(
+                    usize::MAX,
+                    "lm_head",
+                    src.len(),
+                    dst.len(),
+                    if parallel_matvec
+                        && matches!(model.head.weight_kind(), WeightKindView::KQuant(_))
+                    {
+                        crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
+                    } else {
+                        crate::decode_profile::DecodeExecutionMode::Serial
+                    },
+                );
                 dst.fill(0.0);
-                planned_linear_into(&model.head, src, dst)?;
+                planned_linear_into(&model.head, src, dst, parallel_matvec)?;
                 let mut logits_tensor =
                     CpuTensor::from_data(vec![1, model.config.vocab_size], dst.to_vec());
                 // after_logits fires on the final logits tensor.

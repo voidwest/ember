@@ -116,6 +116,73 @@ pub fn matmul_k_into(
     }
 }
 
+/// Column-parallel decode matvec: the same math as [`matmul_k_into`] with
+/// the output dimension split across the rayon pool. Each output column
+/// accumulates identically to the serial kernel, so results are
+/// bit-identical. Only single-row (decode) matvecs of sufficient size are
+/// parallelized; everything else defers to the serial kernel.
+pub fn matmul_k_into_parallel(
+    src: &[f32],
+    rows: usize,
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) -> Result<(), String> {
+    let in_features = w.in_features();
+    let out_features = w.out_features();
+    let expected_src = rows
+        .checked_mul(in_features)
+        .ok_or_else(|| "matmul_k_parallel: input shape product overflow".to_string())?;
+    if src.len() != expected_src {
+        return Err(format!(
+            "matmul_k_parallel: src len {} != rows {rows} * in_features {in_features}",
+            src.len()
+        ));
+    }
+    let expected_dst = rows
+        .checked_mul(out_features)
+        .ok_or_else(|| "matmul_k_parallel: output shape product overflow".to_string())?;
+    if dst.len() != expected_dst {
+        return Err(format!(
+            "matmul_k_parallel: dst len {} != rows {rows} * out_features {out_features}",
+            dst.len()
+        ));
+    }
+    // prefill (rows > 1) and small projections stay on the serial kernels:
+    // the rayon split only pays off for the large decode projections
+    // (gate/up/down/lm_head).
+    if rows != 1 || in_features.saturating_mul(out_features) < 8_000_000 {
+        return matmul_k_into(src, rows, w, dst);
+    }
+    match w.execution() {
+        KExecution::CompressedScalar => {
+            let (dequant, block_bytes): (DequantFn, usize) = match w.dtype() {
+                KQuantDtype::Q6K => (dequant_q6_k, Q6_K_BLOCK_BYTES),
+                KQuantDtype::Q4K => (dequant_q4_k, Q4_K_BLOCK_BYTES),
+            };
+            matmul_k_scalar_parallel_into(dequant, block_bytes, src, w, dst);
+            Ok(())
+        }
+        KExecution::CompressedX86 => {
+            if !crate::k_matmul_x86::avx2_supported() {
+                return Err(
+                    "matmul_k_parallel: compressed-x86 recorded at load but AVX2 is unavailable at runtime"
+                        .to_string(),
+                );
+            }
+            // Safety: layout validated above; AVX2 feature set verified
+            // above; each rayon task writes a disjoint dst chunk.
+            unsafe { crate::k_matmul_x86::matmul_k_avx2_into_parallel(src, w, dst) }
+            Ok(())
+        }
+        KExecution::EagerF32 => Err(
+            "matmul_k_parallel: eager-f32 tensors are f32 CpuTensors, not KQuantWeight".to_string(),
+        ),
+    }
+}
+
+/// Dequantizer signature shared by the scalar kernel bodies.
+type DequantFn = fn(&[u8], &mut [f32]);
+
 /// Shared scalar kernel body. `dequant` must dequantize one
 /// `block_bytes`-sized super-block into `[f32; QK_K]`.
 ///
@@ -130,6 +197,12 @@ fn matmul_k_scalar_with(
     w: &KQuantWeight,
     dst: &mut [f32],
 ) -> Result<(), String> {
+    if rows == 1 {
+        // single-row body shared with the column-parallel entry so serial
+        // and parallel stay bit-identical
+        matmul_k_scalar_row1_chunk_into(dequant, block_bytes, src, w, 0, dst);
+        return Ok(());
+    }
     let in_features = w.in_features();
     let out_features = w.out_features();
     let blocks_per_row = w.blocks_per_row();
@@ -154,6 +227,60 @@ fn matmul_k_scalar_with(
         }
     }
     Ok(())
+}
+
+/// Single-row (decode) scalar body over `dst_chunk` columns starting at
+/// `j0`, with one scalar accumulator per output column (bit-identical to
+/// the serial accumulation into a zeroed `dst`).
+fn matmul_k_scalar_row1_chunk_into(
+    dequant: fn(&[u8], &mut [f32]),
+    block_bytes: usize,
+    src: &[f32],
+    w: &KQuantWeight,
+    j0: usize,
+    dst_chunk: &mut [f32],
+) {
+    let blocks_per_row = w.blocks_per_row();
+    let data = w.data();
+    for (i, j) in (j0..j0 + dst_chunk.len()).enumerate() {
+        let mut acc_j = 0.0f32;
+        let row_bytes = j * blocks_per_row * block_bytes;
+        for b in 0..blocks_per_row {
+            let block = &data[row_bytes + b * block_bytes..row_bytes + (b + 1) * block_bytes];
+            BLOCK_SCRATCH.with(|scratch| {
+                let mut scratch = scratch.borrow_mut();
+                dequant(block, &mut scratch[..QK_K]);
+                let x_base = b * QK_K;
+                let mut acc = 0.0f32;
+                for k in 0..QK_K {
+                    acc += src[x_base + k] * scratch[k];
+                }
+                acc_j += acc;
+            });
+        }
+        dst_chunk[i] = acc_j;
+    }
+}
+
+/// Column-parallel scalar decode matvec (rows = 1): the output dimension is
+/// split across the rayon pool; each task writes a disjoint `dst` range with
+/// the identical per-column accumulation order, so results are bit-identical
+/// to the serial kernel. Each rayon thread uses its own thread-local
+/// dequantization scratch.
+fn matmul_k_scalar_parallel_into(
+    dequant: fn(&[u8], &mut [f32]),
+    block_bytes: usize,
+    src: &[f32],
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) {
+    use rayon::prelude::*;
+    let chunk = 256usize;
+    dst.par_chunks_mut(chunk)
+        .enumerate()
+        .for_each(|(c, dst_chunk)| {
+            matmul_k_scalar_row1_chunk_into(dequant, block_bytes, src, w, c * chunk, dst_chunk);
+        });
 }
 
 #[cfg(test)]
@@ -264,6 +391,44 @@ mod tests {
             let mut actual = vec![0.0f32; rows * out_features];
             matmul_k_scalar_into(&src, rows, &weight, &mut actual).unwrap();
             assert_gate_a(&actual, &expected);
+        }
+    }
+
+    /// Gate A: the column-parallel decode matvec must be bit-identical to
+    /// the serial kernel for both dtypes and both execution paths, across
+    /// the decode projection shapes (gate/up, down, head).
+    #[test]
+    fn parallel_matvec_matches_serial_bit_identical() {
+        use crate::quant_k::KQuantDtype;
+        let shapes = [(2048usize, 8192usize), (8192, 2048), (1024, 16384)];
+        let executions: &[KExecution] = if crate::k_matmul_x86::avx2_supported() {
+            &[KExecution::CompressedScalar, KExecution::CompressedX86]
+        } else {
+            &[KExecution::CompressedScalar]
+        };
+        for &(in_features, out_features) in &shapes {
+            for &dtype in &[KQuantDtype::Q4K, KQuantDtype::Q6K] {
+                // Q4_K and Q6_K super-blocks are both QK_K = 256 wide
+                let blocks = in_features / 256 * out_features;
+                let payload = match dtype {
+                    KQuantDtype::Q6K => seeded_q6_blocks(blocks, 0x51_00 + in_features as u64),
+                    KQuantDtype::Q4K => seeded_q4_blocks(blocks, 0x41_00 + in_features as u64),
+                };
+                let src = seeded_activations(in_features, 0xAC_00 + out_features as u64);
+                for &execution in executions {
+                    let weight =
+                        KQuantWeight::new(payload.clone(), [out_features, in_features], dtype)
+                            .with_execution(execution);
+                    let mut serial = vec![0.0f32; out_features];
+                    let mut parallel = vec![0.0f32; out_features];
+                    matmul_k_into(&src, 1, &weight, &mut serial).unwrap();
+                    matmul_k_into_parallel(&src, 1, &weight, &mut parallel).unwrap();
+                    assert_eq!(
+                        serial, parallel,
+                        "parallel matvec diverged from serial: {in_features}x{out_features} {dtype:?} {execution:?}"
+                    );
+                }
+            }
         }
     }
 

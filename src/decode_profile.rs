@@ -24,6 +24,9 @@ pub enum DecodeExecutionMode {
     PackedRowParallelRayon,
     InterleavedSerial,
     InterleavedRowParallelRayon,
+    /// Quantized matvec with the output dimension split across the rayon
+    /// pool (decode rows = 1; each output column accumulates identically).
+    ColumnParallelRayon,
 }
 
 #[derive(Debug, Clone, Copy)]
