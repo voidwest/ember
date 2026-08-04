@@ -734,7 +734,27 @@ cache attention. the model smoke test also runs a gpt-2 forward pass when
 `gpt2.Q8_0.gguf` is present locally; otherwise it skips so ci does not need to
 download large model weights.
 
-### docs site
+### experiment (v0.5)
+
+```text
+ember experiment validate <spec.toml> [--json]
+ember experiment run <spec.toml> [--execution reference|planned|planned-fused]
+                                [--threads <n>] [--output <dir>] [--retain-incomplete]
+                                [--json]
+ember experiment inspect <bundle> [--json]
+ember experiment verify <bundle> [--model <model.gguf>] [--tokenizer <tokenizer.json>] [--json]
+ember experiment compare <bundle-a> <bundle-b> [--json]
+ember experiment reproduce <bundle> --model <model.gguf> [--output <dir>] [--json]
+ember experiment tokenize --model <model.gguf> --arch <arch> --tokenizer <tokenizer.json>
+                          --text "<text>" [--match-span "<span>"] [--json]
+```
+
+See `docs/experiments.md` (quick start), `docs/experiment-schema-v1.md`
+(specification), `docs/bundle-schema-v1.md` (bundle layout),
+`docs/token-selection.md`, `docs/interventions.md`, and
+`docs/reproducibility.md`.
+
+## docs site
 
 The static site lives in `docs/`. Shared HTML fragments such as the top
 navigation and syntax-highlighting scripts are regenerated in-place:

@@ -38,6 +38,12 @@ docs/plots/root_probe_scale_comparison.png
 !docs/v03-execution-contracts.md
 !docs/v04-execution-contract.md
 !docs/v05-research-contract.md
+!docs/v05-*.md
+!docs/reproducibility.md
+!docs/interventions.md
+!docs/token-selection.md
+!docs/bundle-schema-v1.md
+!docs/experiment-schema-v1.md
 !docs/usage.md
 !docs/validation.md
 !docs/models.md
