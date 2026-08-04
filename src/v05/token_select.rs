@@ -20,7 +20,7 @@ pub enum SubtokenSelection {
 /// The default (`none`) never normalizes; `nfc` is an explicit opt-in that
 /// matches against an NFC-normalized copy of the input (recorded in the
 /// selection record). Arabic text is never normalized silently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TextNormalization {
     None,
@@ -259,7 +259,7 @@ pub fn tokenize_for_selection(
 
 /// The full machine-readable record of one token selection (contract
 /// section 6).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenSelectionRecord {
     /// The selector as resolved (normalization applied).
     pub selector: TokenSelector,
@@ -293,7 +293,7 @@ pub struct TokenSelectionRecord {
 fn select_static(
     selector: &TokenSelector,
     info: &TokenizationInfo,
-) -> Result<(Vec<usize>, SelectionDetail), String> {
+) -> Result<SelectionOutcome, String> {
     let seq_len = info.token_ids.len();
     match selector {
         TokenSelector::PromptFinal => {
@@ -417,6 +417,9 @@ fn select_static(
     }
 }
 
+/// Outcome of one static selection: indices plus span detail.
+type SelectionOutcome = (Vec<usize>, SelectionDetail);
+
 struct SelectionDetail {
     matched_byte_span: Option<(usize, usize)>,
     coverage: CoverageKind,
@@ -435,6 +438,10 @@ impl SelectionDetail {
     }
 }
 
+/// Outcome of a covering-token selection:
+/// `(selected indices, coverage, boundary expansion, note)`.
+type CoveringSelection = (Vec<usize>, CoverageKind, Option<(usize, usize)>, Option<String>);
+
 /// Select the token indices whose byte intervals intersect `[start, end)`,
 /// per the subtoken rule, and classify coverage.
 fn select_covering_tokens(
@@ -442,12 +449,7 @@ fn select_covering_tokens(
     start: usize,
     end: usize,
     subtoken_selection: SubtokenSelection,
-) -> (
-    Vec<usize>,
-    CoverageKind,
-    Option<(usize, usize)>,
-    Option<String>,
-) {
+) -> CoveringSelection {
     let mut intersecting = Vec::new();
     for (index, &(bs, be)) in info.byte_offsets.iter().enumerate() {
         // A token intersects the span when its interval overlaps it.

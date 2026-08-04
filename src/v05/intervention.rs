@@ -71,21 +71,16 @@ pub enum InterventionSource {
 }
 
 /// Shape/dtype compatibility policy for an intervention source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ShapePolicy {
     /// Shape must match exactly; dtype conversion allowed only between f32
     /// and f16 (default).
+    #[default]
     Strict,
     /// Explicit dtype-cast permission (still never allows rank/shape
     /// mismatch; recorded in provenance).
     AllowDtypeCast,
-}
-
-impl Default for ShapePolicy {
-    fn default() -> Self {
-        ShapePolicy::Strict
-    }
 }
 
 /// Expert override policy for cross-bundle sources.
@@ -93,7 +88,7 @@ impl Default for ShapePolicy {
 /// The default is fully strict. An expert override is allowed only where
 /// semantically defensible and is recorded prominently in provenance;
 /// tensor shape incompatibility is never overridable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompatibilityPolicy {
     /// Permit a model SHA mismatch between a source bundle and the target
@@ -103,15 +98,6 @@ pub struct CompatibilityPolicy {
     /// Permit a tokenizer SHA mismatch (recorded in provenance).
     #[serde(default)]
     pub allow_tokenizer_mismatch: bool,
-}
-
-impl Default for CompatibilityPolicy {
-    fn default() -> Self {
-        CompatibilityPolicy {
-            allow_model_mismatch: false,
-            allow_tokenizer_mismatch: false,
-        }
-    }
 }
 
 /// One declared intervention (contract section 5).

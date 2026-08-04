@@ -118,10 +118,11 @@ impl InputSelector {
 }
 
 /// Storage policy for a capture (contract section 8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CaptureStorage {
     /// Store only the selected token rows (default).
+    #[default]
     SelectedRows,
     /// Store the complete sequence tensor; explicit and reported as a cost.
     FullTensor,
@@ -130,24 +131,13 @@ pub enum CaptureStorage {
     SummaryOnly,
 }
 
-impl Default for CaptureStorage {
-    fn default() -> Self {
-        CaptureStorage::SelectedRows
-    }
-}
-
 /// Output dtype for captured payloads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum CaptureDType {
+    #[default]
     F32,
     F16,
-}
-
-impl Default for CaptureDType {
-    fn default() -> Self {
-        CaptureDType::F32
-    }
 }
 
 /// One declared capture (contract section 8).
