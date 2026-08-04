@@ -1,0 +1,265 @@
+{
+  "bundle_schema": "ember.bundle.v1",
+  "experiment_schema": "ember.experiment.v1",
+  "hook_schema": 1,
+  "plan_schema": 1,
+  "ember_version": "0.5.0",
+  "ember_commit": "9f669698f2bc2410cfefad438847338533da7d2a",
+  "experiment": {
+    "name": "perf-one-layer",
+    "description": "",
+    "seed": 0
+  },
+  "model": {
+    "sha256": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+    "architecture": "llama",
+    "layer_count": 16,
+    "embed_dim": 2048,
+    "vocab_size": 128256,
+    "quantization": "f32:33,q8_0:114"
+  },
+  "tokenizer": {
+    "sha256": "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b",
+    "vocab_size": 128256
+  },
+  "execution": {
+    "mode": "reference",
+    "deterministic": true,
+    "plan_hash": "5b883e4dc86e202c3bbba8d4ca936102597cc4ddd8cfc53cd918abb653111cc0"
+  },
+  "inputs": [
+    {
+      "id": "i1",
+      "prompt_hash": "fea0513f28535e4e353b504c3dda46132046406933892b2263ef1659543a7787"
+    }
+  ],
+  "token_selections": [
+    {
+      "selector": {
+        "kind": "prompt-final"
+      },
+      "rule": "prompt-final",
+      "input_text": "في الجملة التالية، الكلمة المميزة هي: كِتَاب. اشرح معناها.",
+      "normalized_text": "في الجملة التالية، الكلمة المميزة هي: كِتَاب. اشرح معناها.",
+      "token_ids": [
+        128000,
+        102615,
+        101088,
+        126358,
+        96057,
+        105122,
+        69885,
+        101100,
+        118445,
+        126496,
+        102197,
+        26957,
+        104380,
+        25,
+        88041,
+        53804,
+        14628,
+        29010,
+        71704,
+        13,
+        13258,
+        101512,
+        30925,
+        110377,
+        114073,
+        13
+      ],
+      "pieces": [
+        "<|begin_of_text|>",
+        "ÙģÙĬ",
+        "ĠØ§ÙĦØ¬",
+        "ÙħÙĦØ©",
+        "ĠØ§ÙĦØª",
+        "Ø§ÙĦÙĬØ©",
+        "ØĮ",
+        "ĠØ§ÙĦÙĥ",
+        "ÙĦÙħØ©",
+        "ĠØ§ÙĦÙħÙħ",
+        "ÙĬØ²",
+        "Ø©",
+        "ĠÙĩÙĬ",
+        ":",
+        "ĠÙĥ",
+        "ÙĲ",
+        "Øª",
+        "Ùİ",
+        "Ø§Ø¨",
+        ".",
+        "ĠØ§",
+        "Ø´Ø±",
+        "ØŃ",
+        "ĠÙħØ¹ÙĨ",
+        "Ø§ÙĩØ§",
+        "."
+      ],
+      "byte_offsets": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          4
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          11,
+          17
+        ],
+        [
+          17,
+          24
+        ],
+        [
+          24,
+          32
+        ],
+        [
+          32,
+          34
+        ],
+        [
+          34,
+          41
+        ],
+        [
+          41,
+          47
+        ],
+        [
+          47,
+          56
+        ],
+        [
+          56,
+          60
+        ],
+        [
+          60,
+          62
+        ],
+        [
+          62,
+          67
+        ],
+        [
+          67,
+          68
+        ],
+        [
+          68,
+          71
+        ],
+        [
+          71,
+          73
+        ],
+        [
+          73,
+          75
+        ],
+        [
+          75,
+          77
+        ],
+        [
+          77,
+          81
+        ],
+        [
+          81,
+          82
+        ],
+        [
+          82,
+          85
+        ],
+        [
+          85,
+          89
+        ],
+        [
+          89,
+          91
+        ],
+        [
+          91,
+          98
+        ],
+        [
+          98,
+          104
+        ],
+        [
+          104,
+          105
+        ]
+      ],
+      "matched_byte_span": null,
+      "selected_indices": [
+        25
+      ],
+      "coverage": "exact",
+      "boundary_expansion": null,
+      "ambiguity": "resolved",
+      "round_trip": "not-applicable",
+      "note": null
+    }
+  ],
+  "captures": [
+    {
+      "id": "prompt-final",
+      "site": "residual-post-mlp",
+      "layers": [
+        7
+      ],
+      "tokens": {
+        "kind": "prompt-final"
+      },
+      "inputs": "all",
+      "storage": "selected-rows",
+      "dtype": "f32"
+    }
+  ],
+  "interventions": [],
+  "generated": {
+    "token_ids": [
+      [
+        88041,
+        53804,
+        14628,
+        29010,
+        71704,
+        101842,
+        88041,
+        118445
+      ]
+    ],
+    "texts": [
+      " كِتَاب هو كلمة"
+    ]
+  },
+  "payloads": {
+    "captures/index.jsonl": "41c9b208b2147bca5b2e63390877adf465a7567b56a971466b1a9edcc94213f9",
+    "captures/tensors.safetensors": "d1f8e0c9a0dce4635eaed290c6b5896f4ab693550b95e0f22927e4e13d77b768",
+    "execution-plan.json": "e57c1caa54798b5581172fea0b007e36b9639a1678e44eca1aa1d1a489e035e9",
+    "experiment.toml": "69c84c457fe12a6bb9920ea0bad4d9a3b54c677b6e6d1b94ea71a447ecf04055",
+    "inputs.jsonl": "2b973acae9e518d4d1db91e8bd743ae27a05b6b3e1e7dc4c082190c9b690aec8",
+    "interventions/events.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "model.json": "df8c877a28fa2cae0e8205a902b2f9d27592003d87c405af2af2afa9804a76c8",
+    "outputs.jsonl": "47906e67f451dad8a46167519c4bad1f481db0aa0b9f2cb31effff539a25bb85",
+    "tokenization.jsonl": "e704673982afbe1581338b963901337ccc2138eb0f506644ffee1acde6e13cc6",
+    "tokenizer.json": "1af61a4fa5cb06ba96f8ff2196e19efb1e078505dce9b8576cc84880fa6e6db8",
+    "traces/events.jsonl": "4a8d7d7f41fabbceff9022486b858bc5f6548e23d57dab3f80c3af978716ecac"
+  },
+  "warnings": [],
+  "complete": true
+}

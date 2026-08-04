@@ -1,0 +1,62 @@
+# Morphology layerwise capture — baseline
+
+# Capture prompt-final and target-final-subtoken representations across all
+# layers of a Llama-3.2-1B-Instruct Q8_0 model, with one exported row per
+# layer. This is the baseline bundle for the intervention comparison.
+
+# The target word is `كِتَاب` (kitāb, "book") inside an Arabic sentence. The
+# prompt-final capture selects the last token of the complete model input
+# (BOS included); the target capture selects the final subtoken covering the
+# exact text span (byte-aligned, no silent normalization).
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "morphology-layerwise-capture"
+description = "Capture prompt-final and target-final-subtoken representations across layers."
+seed = 42
+
+[model]
+# Llama-3.2-1B-Instruct, Q8_0, from Hugging Face (bartowski GGUF conversion).
+# SHA-256 recorded so a different file fails closed instead of producing
+# unreproducible numbers.
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 8
+deterministic = true
+
+[generation]
+max_new_tokens = 8
+temperature = 0.0
+
+[[inputs]]
+id = "example-001"
+text = "في الجملة التالية، الكلمة المميزة هي: كِتَاب. اشرح معناها."
+
+[[captures]]
+id = "prompt-final"
+site = "residual-post-mlp"
+layers = "all"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[captures]]
+id = "target-final-subtoken"
+site = "residual-post-mlp"
+layers = "all"
+
+[captures.tokens]
+kind = "matched-span"
+text = "كِتَاب"
+occurrence = 0
+subtokens = "final"
+
+[output]
+directory = "runs/morphology-baseline"
+overwrite = false

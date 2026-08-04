@@ -1,0 +1,71 @@
+{
+  "bundle_schema": "ember.bundle.v1",
+  "experiment_schema": "ember.experiment.v1",
+  "hook_schema": 1,
+  "plan_schema": 1,
+  "ember_version": "0.5.0",
+  "ember_commit": "9f669698f2bc2410cfefad438847338533da7d2a",
+  "experiment": {
+    "name": "perf-no-captures",
+    "description": "",
+    "seed": 0
+  },
+  "model": {
+    "sha256": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+    "architecture": "llama",
+    "layer_count": 16,
+    "embed_dim": 2048,
+    "vocab_size": 128256,
+    "quantization": "f32:33,q8_0:114"
+  },
+  "tokenizer": {
+    "sha256": "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b",
+    "vocab_size": 128256
+  },
+  "execution": {
+    "mode": "reference",
+    "deterministic": true,
+    "plan_hash": "ed96967f8941db73d6c36589accfe49dfc05ddb64033a543d4b1b2b12987b984"
+  },
+  "inputs": [
+    {
+      "id": "i1",
+      "prompt_hash": "fea0513f28535e4e353b504c3dda46132046406933892b2263ef1659543a7787"
+    }
+  ],
+  "token_selections": [],
+  "captures": [],
+  "interventions": [],
+  "generated": {
+    "token_ids": [
+      [
+        88041,
+        53804,
+        14628,
+        29010,
+        71704,
+        101842,
+        88041,
+        118445
+      ]
+    ],
+    "texts": [
+      " كِتَاب هو كلمة"
+    ]
+  },
+  "payloads": {
+    "captures/index.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "captures/tensors.safetensors": "81e7b6b2a192f3df6ca0ad22b76a4c4905747f61ba544f7f83c5fdc7e2b388ee",
+    "execution-plan.json": "e440e2d4f8833c68dbb8f8fdfe2b95ced271b0049221b0a6b0fde681d1881b5f",
+    "experiment.toml": "204bdc23e2219de121184a99e30f65df34f8e7b0dc3d496093fc60b84f3150c9",
+    "inputs.jsonl": "2b973acae9e518d4d1db91e8bd743ae27a05b6b3e1e7dc4c082190c9b690aec8",
+    "interventions/events.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "model.json": "df8c877a28fa2cae0e8205a902b2f9d27592003d87c405af2af2afa9804a76c8",
+    "outputs.jsonl": "47906e67f451dad8a46167519c4bad1f481db0aa0b9f2cb31effff539a25bb85",
+    "tokenization.jsonl": "e704673982afbe1581338b963901337ccc2138eb0f506644ffee1acde6e13cc6",
+    "tokenizer.json": "1af61a4fa5cb06ba96f8ff2196e19efb1e078505dce9b8576cc84880fa6e6db8",
+    "traces/events.jsonl": "a0b0f066713c6171c3dd68011150d71105b0c71775c26d4a07209a36273bcdca"
+  },
+  "warnings": [],
+  "complete": true
+}

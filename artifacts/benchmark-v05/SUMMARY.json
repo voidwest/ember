@@ -1,0 +1,52 @@
+{
+  "matrix": [
+    {
+      "case": "01-ordinary",
+      "wall_s": 2.09,
+      "peak_rss_kb": 2752188,
+      "artifact_bytes": 28
+    },
+    {
+      "case": "02-ordinary-v05",
+      "wall_s": 2.22,
+      "peak_rss_kb": 2750888,
+      "artifact_bytes": 28
+    },
+    {
+      "case": "03-no-captures",
+      "wall_s": 3.52,
+      "peak_rss_kb": 2812600,
+      "artifact_bytes": 9514687
+    },
+    {
+      "case": "04-one-capture",
+      "wall_s": 3.57,
+      "peak_rss_kb": 2812452,
+      "artifact_bytes": 9528407
+    },
+    {
+      "case": "05-capture-all-layers",
+      "wall_s": 3.4,
+      "peak_rss_kb": 2812620,
+      "artifact_bytes": 9852397
+    },
+    {
+      "case": "06-intervention",
+      "wall_s": 3.61,
+      "peak_rss_kb": 2812444,
+      "artifact_bytes": 9853975
+    },
+    {
+      "case": "07-capture-intervene-restore",
+      "wall_s": 3.47,
+      "peak_rss_kb": 2812592,
+      "artifact_bytes": 9855017
+    },
+    {
+      "case": "08-full-capture",
+      "wall_s": 3.58,
+      "peak_rss_kb": 2812304,
+      "artifact_bytes": 9733308
+    }
+  ]
+}

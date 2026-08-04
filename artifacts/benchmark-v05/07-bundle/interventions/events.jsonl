@@ -1,0 +1,2 @@
+{"applied":true,"input_id":"example-001","intervention_id":"replace-layer7","layer":7,"operation":"replace","positions":[25],"site":"residual-post-mlp","snapshot_checksum":"d9d866a0ae36aee51eeb2c9cf95ac61f669548c0e2d1394bef5d95c12873f6ac","source_kind":"capture-from-current-run"}
+{"applied":true,"input_id":"example-001","intervention_id":"restore-layer7","layer":7,"operation":"restore-original","positions":[25],"site":"residual-post-mlp","snapshot_checksum":"d9d866a0ae36aee51eeb2c9cf95ac61f669548c0e2d1394bef5d95c12873f6ac","source_kind":null}

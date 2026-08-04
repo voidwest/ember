@@ -1,0 +1,8921 @@
+{
+  "schema_version": 1,
+  "architecture": "llama",
+  "model_sha256": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+  "tokenizer_sha256": "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b",
+  "gguf": {
+    "arch": "llama",
+    "block_count": 16,
+    "embedding_length": 2048,
+    "head_count": 32,
+    "head_count_kv": 8,
+    "ffn_dim": 8192,
+    "vocab_size": 128256,
+    "rope_dimension_count": 64,
+    "context_length": 131072,
+    "rope_theta": 500000.0
+  },
+  "rope": {
+    "layout": "adjacent-pair",
+    "qk_norm_order": "after-rope",
+    "has_q_norm": false,
+    "has_k_norm": false
+  },
+  "preamble": [
+    {
+      "op": "embedding",
+      "tensor": {
+        "id": 0
+      },
+      "out": {
+        "id": 1
+      }
+    }
+  ],
+  "layers": [
+    {
+      "layer_index": 0,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 3
+          },
+          "input": {
+            "id": 1
+          },
+          "out": {
+            "id": 12
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 5
+          },
+          "input": {
+            "id": 12
+          },
+          "out": {
+            "id": 13
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 6
+          },
+          "input": {
+            "id": 12
+          },
+          "out": {
+            "id": 14
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 7
+          },
+          "input": {
+            "id": 12
+          },
+          "out": {
+            "id": 15
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 13
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 14
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 14
+          },
+          "v": {
+            "id": 15
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 13
+          },
+          "out": {
+            "id": 16
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 8
+          },
+          "input": {
+            "id": 16
+          },
+          "out": {
+            "id": 17
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 1
+          },
+          "b": {
+            "id": 17
+          },
+          "out": {
+            "id": 18
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 4
+          },
+          "input": {
+            "id": 18
+          },
+          "out": {
+            "id": 19
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 9
+          },
+          "input": {
+            "id": 19
+          },
+          "out": {
+            "id": 20
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 20
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 10
+          },
+          "input": {
+            "id": 19
+          },
+          "out": {
+            "id": 21
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 20
+          },
+          "b": {
+            "id": 21
+          },
+          "out": {
+            "id": 22
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 11
+          },
+          "input": {
+            "id": 22
+          },
+          "out": {
+            "id": 23
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 18
+          },
+          "b": {
+            "id": 23
+          },
+          "out": {
+            "id": 24
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 1,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 25
+          },
+          "input": {
+            "id": 24
+          },
+          "out": {
+            "id": 34
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 27
+          },
+          "input": {
+            "id": 34
+          },
+          "out": {
+            "id": 35
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 28
+          },
+          "input": {
+            "id": 34
+          },
+          "out": {
+            "id": 36
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 29
+          },
+          "input": {
+            "id": 34
+          },
+          "out": {
+            "id": 37
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 35
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 36
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 36
+          },
+          "v": {
+            "id": 37
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 35
+          },
+          "out": {
+            "id": 38
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 30
+          },
+          "input": {
+            "id": 38
+          },
+          "out": {
+            "id": 39
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 24
+          },
+          "b": {
+            "id": 39
+          },
+          "out": {
+            "id": 40
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 26
+          },
+          "input": {
+            "id": 40
+          },
+          "out": {
+            "id": 41
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 31
+          },
+          "input": {
+            "id": 41
+          },
+          "out": {
+            "id": 42
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 42
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 32
+          },
+          "input": {
+            "id": 41
+          },
+          "out": {
+            "id": 43
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 42
+          },
+          "b": {
+            "id": 43
+          },
+          "out": {
+            "id": 44
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 33
+          },
+          "input": {
+            "id": 44
+          },
+          "out": {
+            "id": 45
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 40
+          },
+          "b": {
+            "id": 45
+          },
+          "out": {
+            "id": 46
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 2,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 47
+          },
+          "input": {
+            "id": 46
+          },
+          "out": {
+            "id": 56
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 49
+          },
+          "input": {
+            "id": 56
+          },
+          "out": {
+            "id": 57
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 50
+          },
+          "input": {
+            "id": 56
+          },
+          "out": {
+            "id": 58
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 51
+          },
+          "input": {
+            "id": 56
+          },
+          "out": {
+            "id": 59
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 57
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 58
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 58
+          },
+          "v": {
+            "id": 59
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 57
+          },
+          "out": {
+            "id": 60
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 52
+          },
+          "input": {
+            "id": 60
+          },
+          "out": {
+            "id": 61
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 46
+          },
+          "b": {
+            "id": 61
+          },
+          "out": {
+            "id": 62
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 48
+          },
+          "input": {
+            "id": 62
+          },
+          "out": {
+            "id": 63
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 53
+          },
+          "input": {
+            "id": 63
+          },
+          "out": {
+            "id": 64
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 64
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 54
+          },
+          "input": {
+            "id": 63
+          },
+          "out": {
+            "id": 65
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 64
+          },
+          "b": {
+            "id": 65
+          },
+          "out": {
+            "id": 66
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 55
+          },
+          "input": {
+            "id": 66
+          },
+          "out": {
+            "id": 67
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 62
+          },
+          "b": {
+            "id": 67
+          },
+          "out": {
+            "id": 68
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 3,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 69
+          },
+          "input": {
+            "id": 68
+          },
+          "out": {
+            "id": 78
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 71
+          },
+          "input": {
+            "id": 78
+          },
+          "out": {
+            "id": 79
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 72
+          },
+          "input": {
+            "id": 78
+          },
+          "out": {
+            "id": 80
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 73
+          },
+          "input": {
+            "id": 78
+          },
+          "out": {
+            "id": 81
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 79
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 80
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 80
+          },
+          "v": {
+            "id": 81
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 79
+          },
+          "out": {
+            "id": 82
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 74
+          },
+          "input": {
+            "id": 82
+          },
+          "out": {
+            "id": 83
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 68
+          },
+          "b": {
+            "id": 83
+          },
+          "out": {
+            "id": 84
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 70
+          },
+          "input": {
+            "id": 84
+          },
+          "out": {
+            "id": 85
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 75
+          },
+          "input": {
+            "id": 85
+          },
+          "out": {
+            "id": 86
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 86
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 76
+          },
+          "input": {
+            "id": 85
+          },
+          "out": {
+            "id": 87
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 86
+          },
+          "b": {
+            "id": 87
+          },
+          "out": {
+            "id": 88
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 77
+          },
+          "input": {
+            "id": 88
+          },
+          "out": {
+            "id": 89
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 84
+          },
+          "b": {
+            "id": 89
+          },
+          "out": {
+            "id": 90
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 4,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 91
+          },
+          "input": {
+            "id": 90
+          },
+          "out": {
+            "id": 100
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 93
+          },
+          "input": {
+            "id": 100
+          },
+          "out": {
+            "id": 101
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 94
+          },
+          "input": {
+            "id": 100
+          },
+          "out": {
+            "id": 102
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 95
+          },
+          "input": {
+            "id": 100
+          },
+          "out": {
+            "id": 103
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 101
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 102
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 102
+          },
+          "v": {
+            "id": 103
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 101
+          },
+          "out": {
+            "id": 104
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 96
+          },
+          "input": {
+            "id": 104
+          },
+          "out": {
+            "id": 105
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 90
+          },
+          "b": {
+            "id": 105
+          },
+          "out": {
+            "id": 106
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 92
+          },
+          "input": {
+            "id": 106
+          },
+          "out": {
+            "id": 107
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 97
+          },
+          "input": {
+            "id": 107
+          },
+          "out": {
+            "id": 108
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 108
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 98
+          },
+          "input": {
+            "id": 107
+          },
+          "out": {
+            "id": 109
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 108
+          },
+          "b": {
+            "id": 109
+          },
+          "out": {
+            "id": 110
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 99
+          },
+          "input": {
+            "id": 110
+          },
+          "out": {
+            "id": 111
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 106
+          },
+          "b": {
+            "id": 111
+          },
+          "out": {
+            "id": 112
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 5,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 113
+          },
+          "input": {
+            "id": 112
+          },
+          "out": {
+            "id": 122
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 115
+          },
+          "input": {
+            "id": 122
+          },
+          "out": {
+            "id": 123
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 116
+          },
+          "input": {
+            "id": 122
+          },
+          "out": {
+            "id": 124
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 117
+          },
+          "input": {
+            "id": 122
+          },
+          "out": {
+            "id": 125
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 123
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 124
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 124
+          },
+          "v": {
+            "id": 125
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 123
+          },
+          "out": {
+            "id": 126
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 118
+          },
+          "input": {
+            "id": 126
+          },
+          "out": {
+            "id": 127
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 112
+          },
+          "b": {
+            "id": 127
+          },
+          "out": {
+            "id": 128
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 114
+          },
+          "input": {
+            "id": 128
+          },
+          "out": {
+            "id": 129
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 119
+          },
+          "input": {
+            "id": 129
+          },
+          "out": {
+            "id": 130
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 130
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 120
+          },
+          "input": {
+            "id": 129
+          },
+          "out": {
+            "id": 131
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 130
+          },
+          "b": {
+            "id": 131
+          },
+          "out": {
+            "id": 132
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 121
+          },
+          "input": {
+            "id": 132
+          },
+          "out": {
+            "id": 133
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 128
+          },
+          "b": {
+            "id": 133
+          },
+          "out": {
+            "id": 134
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 6,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 135
+          },
+          "input": {
+            "id": 134
+          },
+          "out": {
+            "id": 144
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 137
+          },
+          "input": {
+            "id": 144
+          },
+          "out": {
+            "id": 145
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 138
+          },
+          "input": {
+            "id": 144
+          },
+          "out": {
+            "id": 146
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 139
+          },
+          "input": {
+            "id": 144
+          },
+          "out": {
+            "id": 147
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 145
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 146
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 146
+          },
+          "v": {
+            "id": 147
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 145
+          },
+          "out": {
+            "id": 148
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 140
+          },
+          "input": {
+            "id": 148
+          },
+          "out": {
+            "id": 149
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 134
+          },
+          "b": {
+            "id": 149
+          },
+          "out": {
+            "id": 150
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 136
+          },
+          "input": {
+            "id": 150
+          },
+          "out": {
+            "id": 151
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 141
+          },
+          "input": {
+            "id": 151
+          },
+          "out": {
+            "id": 152
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 152
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 142
+          },
+          "input": {
+            "id": 151
+          },
+          "out": {
+            "id": 153
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 152
+          },
+          "b": {
+            "id": 153
+          },
+          "out": {
+            "id": 154
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 143
+          },
+          "input": {
+            "id": 154
+          },
+          "out": {
+            "id": 155
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 150
+          },
+          "b": {
+            "id": 155
+          },
+          "out": {
+            "id": 156
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 7,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 157
+          },
+          "input": {
+            "id": 156
+          },
+          "out": {
+            "id": 166
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 159
+          },
+          "input": {
+            "id": 166
+          },
+          "out": {
+            "id": 167
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 160
+          },
+          "input": {
+            "id": 166
+          },
+          "out": {
+            "id": 168
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 161
+          },
+          "input": {
+            "id": 166
+          },
+          "out": {
+            "id": 169
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 167
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 168
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 168
+          },
+          "v": {
+            "id": 169
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 167
+          },
+          "out": {
+            "id": 170
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 162
+          },
+          "input": {
+            "id": 170
+          },
+          "out": {
+            "id": 171
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 156
+          },
+          "b": {
+            "id": 171
+          },
+          "out": {
+            "id": 172
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 158
+          },
+          "input": {
+            "id": 172
+          },
+          "out": {
+            "id": 173
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 163
+          },
+          "input": {
+            "id": 173
+          },
+          "out": {
+            "id": 174
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 174
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 164
+          },
+          "input": {
+            "id": 173
+          },
+          "out": {
+            "id": 175
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 174
+          },
+          "b": {
+            "id": 175
+          },
+          "out": {
+            "id": 176
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 165
+          },
+          "input": {
+            "id": 176
+          },
+          "out": {
+            "id": 177
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 172
+          },
+          "b": {
+            "id": 177
+          },
+          "out": {
+            "id": 178
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 8,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 179
+          },
+          "input": {
+            "id": 178
+          },
+          "out": {
+            "id": 188
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 181
+          },
+          "input": {
+            "id": 188
+          },
+          "out": {
+            "id": 189
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 182
+          },
+          "input": {
+            "id": 188
+          },
+          "out": {
+            "id": 190
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 183
+          },
+          "input": {
+            "id": 188
+          },
+          "out": {
+            "id": 191
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 189
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 190
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 190
+          },
+          "v": {
+            "id": 191
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 189
+          },
+          "out": {
+            "id": 192
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 184
+          },
+          "input": {
+            "id": 192
+          },
+          "out": {
+            "id": 193
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 178
+          },
+          "b": {
+            "id": 193
+          },
+          "out": {
+            "id": 194
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 180
+          },
+          "input": {
+            "id": 194
+          },
+          "out": {
+            "id": 195
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 185
+          },
+          "input": {
+            "id": 195
+          },
+          "out": {
+            "id": 196
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 196
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 186
+          },
+          "input": {
+            "id": 195
+          },
+          "out": {
+            "id": 197
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 196
+          },
+          "b": {
+            "id": 197
+          },
+          "out": {
+            "id": 198
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 187
+          },
+          "input": {
+            "id": 198
+          },
+          "out": {
+            "id": 199
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 194
+          },
+          "b": {
+            "id": 199
+          },
+          "out": {
+            "id": 200
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 9,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 201
+          },
+          "input": {
+            "id": 200
+          },
+          "out": {
+            "id": 210
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 203
+          },
+          "input": {
+            "id": 210
+          },
+          "out": {
+            "id": 211
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 204
+          },
+          "input": {
+            "id": 210
+          },
+          "out": {
+            "id": 212
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 205
+          },
+          "input": {
+            "id": 210
+          },
+          "out": {
+            "id": 213
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 211
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 212
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 212
+          },
+          "v": {
+            "id": 213
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 211
+          },
+          "out": {
+            "id": 214
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 206
+          },
+          "input": {
+            "id": 214
+          },
+          "out": {
+            "id": 215
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 200
+          },
+          "b": {
+            "id": 215
+          },
+          "out": {
+            "id": 216
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 202
+          },
+          "input": {
+            "id": 216
+          },
+          "out": {
+            "id": 217
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 207
+          },
+          "input": {
+            "id": 217
+          },
+          "out": {
+            "id": 218
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 218
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 208
+          },
+          "input": {
+            "id": 217
+          },
+          "out": {
+            "id": 219
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 218
+          },
+          "b": {
+            "id": 219
+          },
+          "out": {
+            "id": 220
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 209
+          },
+          "input": {
+            "id": 220
+          },
+          "out": {
+            "id": 221
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 216
+          },
+          "b": {
+            "id": 221
+          },
+          "out": {
+            "id": 222
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 10,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 223
+          },
+          "input": {
+            "id": 222
+          },
+          "out": {
+            "id": 232
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 225
+          },
+          "input": {
+            "id": 232
+          },
+          "out": {
+            "id": 233
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 226
+          },
+          "input": {
+            "id": 232
+          },
+          "out": {
+            "id": 234
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 227
+          },
+          "input": {
+            "id": 232
+          },
+          "out": {
+            "id": 235
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 233
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 234
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 234
+          },
+          "v": {
+            "id": 235
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 233
+          },
+          "out": {
+            "id": 236
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 228
+          },
+          "input": {
+            "id": 236
+          },
+          "out": {
+            "id": 237
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 222
+          },
+          "b": {
+            "id": 237
+          },
+          "out": {
+            "id": 238
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 224
+          },
+          "input": {
+            "id": 238
+          },
+          "out": {
+            "id": 239
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 229
+          },
+          "input": {
+            "id": 239
+          },
+          "out": {
+            "id": 240
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 240
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 230
+          },
+          "input": {
+            "id": 239
+          },
+          "out": {
+            "id": 241
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 240
+          },
+          "b": {
+            "id": 241
+          },
+          "out": {
+            "id": 242
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 231
+          },
+          "input": {
+            "id": 242
+          },
+          "out": {
+            "id": 243
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 238
+          },
+          "b": {
+            "id": 243
+          },
+          "out": {
+            "id": 244
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 11,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 245
+          },
+          "input": {
+            "id": 244
+          },
+          "out": {
+            "id": 254
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 247
+          },
+          "input": {
+            "id": 254
+          },
+          "out": {
+            "id": 255
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 248
+          },
+          "input": {
+            "id": 254
+          },
+          "out": {
+            "id": 256
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 249
+          },
+          "input": {
+            "id": 254
+          },
+          "out": {
+            "id": 257
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 255
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 256
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 256
+          },
+          "v": {
+            "id": 257
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 255
+          },
+          "out": {
+            "id": 258
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 250
+          },
+          "input": {
+            "id": 258
+          },
+          "out": {
+            "id": 259
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 244
+          },
+          "b": {
+            "id": 259
+          },
+          "out": {
+            "id": 260
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 246
+          },
+          "input": {
+            "id": 260
+          },
+          "out": {
+            "id": 261
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 251
+          },
+          "input": {
+            "id": 261
+          },
+          "out": {
+            "id": 262
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 262
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 252
+          },
+          "input": {
+            "id": 261
+          },
+          "out": {
+            "id": 263
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 262
+          },
+          "b": {
+            "id": 263
+          },
+          "out": {
+            "id": 264
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 253
+          },
+          "input": {
+            "id": 264
+          },
+          "out": {
+            "id": 265
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 260
+          },
+          "b": {
+            "id": 265
+          },
+          "out": {
+            "id": 266
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 12,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 267
+          },
+          "input": {
+            "id": 266
+          },
+          "out": {
+            "id": 276
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 269
+          },
+          "input": {
+            "id": 276
+          },
+          "out": {
+            "id": 277
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 270
+          },
+          "input": {
+            "id": 276
+          },
+          "out": {
+            "id": 278
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 271
+          },
+          "input": {
+            "id": 276
+          },
+          "out": {
+            "id": 279
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 277
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 278
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 278
+          },
+          "v": {
+            "id": 279
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 277
+          },
+          "out": {
+            "id": 280
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 272
+          },
+          "input": {
+            "id": 280
+          },
+          "out": {
+            "id": 281
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 266
+          },
+          "b": {
+            "id": 281
+          },
+          "out": {
+            "id": 282
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 268
+          },
+          "input": {
+            "id": 282
+          },
+          "out": {
+            "id": 283
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 273
+          },
+          "input": {
+            "id": 283
+          },
+          "out": {
+            "id": 284
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 284
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 274
+          },
+          "input": {
+            "id": 283
+          },
+          "out": {
+            "id": 285
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 284
+          },
+          "b": {
+            "id": 285
+          },
+          "out": {
+            "id": 286
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 275
+          },
+          "input": {
+            "id": 286
+          },
+          "out": {
+            "id": 287
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 282
+          },
+          "b": {
+            "id": 287
+          },
+          "out": {
+            "id": 288
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 13,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 289
+          },
+          "input": {
+            "id": 288
+          },
+          "out": {
+            "id": 298
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 291
+          },
+          "input": {
+            "id": 298
+          },
+          "out": {
+            "id": 299
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 292
+          },
+          "input": {
+            "id": 298
+          },
+          "out": {
+            "id": 300
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 293
+          },
+          "input": {
+            "id": 298
+          },
+          "out": {
+            "id": 301
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 299
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 300
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 300
+          },
+          "v": {
+            "id": 301
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 299
+          },
+          "out": {
+            "id": 302
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 294
+          },
+          "input": {
+            "id": 302
+          },
+          "out": {
+            "id": 303
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 288
+          },
+          "b": {
+            "id": 303
+          },
+          "out": {
+            "id": 304
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 290
+          },
+          "input": {
+            "id": 304
+          },
+          "out": {
+            "id": 305
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 295
+          },
+          "input": {
+            "id": 305
+          },
+          "out": {
+            "id": 306
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 306
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 296
+          },
+          "input": {
+            "id": 305
+          },
+          "out": {
+            "id": 307
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 306
+          },
+          "b": {
+            "id": 307
+          },
+          "out": {
+            "id": 308
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 297
+          },
+          "input": {
+            "id": 308
+          },
+          "out": {
+            "id": 309
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 304
+          },
+          "b": {
+            "id": 309
+          },
+          "out": {
+            "id": 310
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 14,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 311
+          },
+          "input": {
+            "id": 310
+          },
+          "out": {
+            "id": 320
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 313
+          },
+          "input": {
+            "id": 320
+          },
+          "out": {
+            "id": 321
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 314
+          },
+          "input": {
+            "id": 320
+          },
+          "out": {
+            "id": 322
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 315
+          },
+          "input": {
+            "id": 320
+          },
+          "out": {
+            "id": 323
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 321
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 322
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 322
+          },
+          "v": {
+            "id": 323
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 321
+          },
+          "out": {
+            "id": 324
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 316
+          },
+          "input": {
+            "id": 324
+          },
+          "out": {
+            "id": 325
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 310
+          },
+          "b": {
+            "id": 325
+          },
+          "out": {
+            "id": 326
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 312
+          },
+          "input": {
+            "id": 326
+          },
+          "out": {
+            "id": 327
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 317
+          },
+          "input": {
+            "id": 327
+          },
+          "out": {
+            "id": 328
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 328
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 318
+          },
+          "input": {
+            "id": 327
+          },
+          "out": {
+            "id": 329
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 328
+          },
+          "b": {
+            "id": 329
+          },
+          "out": {
+            "id": 330
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 319
+          },
+          "input": {
+            "id": 330
+          },
+          "out": {
+            "id": 331
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 326
+          },
+          "b": {
+            "id": 331
+          },
+          "out": {
+            "id": 332
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    },
+    {
+      "layer_index": 15,
+      "ops": [
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 333
+          },
+          "input": {
+            "id": 332
+          },
+          "out": {
+            "id": 342
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 335
+          },
+          "input": {
+            "id": 342
+          },
+          "out": {
+            "id": 343
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 336
+          },
+          "input": {
+            "id": 342
+          },
+          "out": {
+            "id": 344
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 337
+          },
+          "input": {
+            "id": 342
+          },
+          "out": {
+            "id": 345
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 343
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "rope",
+          "target": {
+            "id": 344
+          },
+          "rope_layout": "adjacent-pair",
+          "qk_norm": null,
+          "qk_norm_order": "after-rope"
+        },
+        {
+          "op": "kv-store",
+          "k": {
+            "id": 344
+          },
+          "v": {
+            "id": 345
+          }
+        },
+        {
+          "op": "attention",
+          "q": {
+            "id": 343
+          },
+          "out": {
+            "id": 346
+          },
+          "score_scratch": "scores",
+          "rope_q": false
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 338
+          },
+          "input": {
+            "id": 346
+          },
+          "out": {
+            "id": 347
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 332
+          },
+          "b": {
+            "id": 347
+          },
+          "out": {
+            "id": 348
+          }
+        },
+        {
+          "op": "rms-norm",
+          "weight": {
+            "id": 334
+          },
+          "input": {
+            "id": 348
+          },
+          "out": {
+            "id": 349
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 339
+          },
+          "input": {
+            "id": 349
+          },
+          "out": {
+            "id": 350
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "silu",
+          "target": {
+            "id": 350
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 340
+          },
+          "input": {
+            "id": 349
+          },
+          "out": {
+            "id": 351
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "elemul",
+          "a": {
+            "id": 350
+          },
+          "b": {
+            "id": 351
+          },
+          "out": {
+            "id": 352
+          }
+        },
+        {
+          "op": "matvec",
+          "weight": {
+            "id": 341
+          },
+          "input": {
+            "id": 352
+          },
+          "out": {
+            "id": 353
+          },
+          "kernel": "q8-packed",
+          "fused_rms_norm": null,
+          "bias": null
+        },
+        {
+          "op": "residual-add",
+          "a": {
+            "id": 348
+          },
+          "b": {
+            "id": 353
+          },
+          "out": {
+            "id": 354
+          }
+        }
+      ],
+      "fusion": "unfused",
+      "fusion_reason": null
+    }
+  ],
+  "final_ops": [
+    {
+      "op": "output-norm",
+      "weight": {
+        "id": 355
+      },
+      "input": {
+        "id": 354
+      },
+      "out": {
+        "id": 357
+      }
+    },
+    {
+      "op": "logits",
+      "weight": {
+        "id": 356
+      },
+      "input": {
+        "id": 357
+      },
+      "out": {
+        "id": 358
+      },
+      "tied": true
+    }
+  ],
+  "tensor_table": [
+    {
+      "id": 0,
+      "name": "token_embd.weight",
+      "shape": [
+        128256,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 279085056,
+      "mmap": true
+    },
+    {
+      "id": 3,
+      "name": "blk.0.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 4,
+      "name": "blk.0.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 5,
+      "name": "blk.0.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 6,
+      "name": "blk.0.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 7,
+      "name": "blk.0.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 8,
+      "name": "blk.0.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 9,
+      "name": "blk.0.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 10,
+      "name": "blk.0.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 11,
+      "name": "blk.0.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 25,
+      "name": "blk.1.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 26,
+      "name": "blk.1.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 27,
+      "name": "blk.1.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 28,
+      "name": "blk.1.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 29,
+      "name": "blk.1.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 30,
+      "name": "blk.1.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 31,
+      "name": "blk.1.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 32,
+      "name": "blk.1.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 33,
+      "name": "blk.1.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 47,
+      "name": "blk.2.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 48,
+      "name": "blk.2.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 49,
+      "name": "blk.2.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 50,
+      "name": "blk.2.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 51,
+      "name": "blk.2.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 52,
+      "name": "blk.2.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 53,
+      "name": "blk.2.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 54,
+      "name": "blk.2.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 55,
+      "name": "blk.2.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 69,
+      "name": "blk.3.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 70,
+      "name": "blk.3.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 71,
+      "name": "blk.3.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 72,
+      "name": "blk.3.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 73,
+      "name": "blk.3.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 74,
+      "name": "blk.3.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 75,
+      "name": "blk.3.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 76,
+      "name": "blk.3.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 77,
+      "name": "blk.3.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 91,
+      "name": "blk.4.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 92,
+      "name": "blk.4.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 93,
+      "name": "blk.4.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 94,
+      "name": "blk.4.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 95,
+      "name": "blk.4.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 96,
+      "name": "blk.4.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 97,
+      "name": "blk.4.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 98,
+      "name": "blk.4.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 99,
+      "name": "blk.4.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 113,
+      "name": "blk.5.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 114,
+      "name": "blk.5.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 115,
+      "name": "blk.5.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 116,
+      "name": "blk.5.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 117,
+      "name": "blk.5.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 118,
+      "name": "blk.5.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 119,
+      "name": "blk.5.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 120,
+      "name": "blk.5.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 121,
+      "name": "blk.5.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 135,
+      "name": "blk.6.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 136,
+      "name": "blk.6.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 137,
+      "name": "blk.6.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 138,
+      "name": "blk.6.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 139,
+      "name": "blk.6.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 140,
+      "name": "blk.6.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 141,
+      "name": "blk.6.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 142,
+      "name": "blk.6.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 143,
+      "name": "blk.6.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 157,
+      "name": "blk.7.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 158,
+      "name": "blk.7.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 159,
+      "name": "blk.7.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 160,
+      "name": "blk.7.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 161,
+      "name": "blk.7.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 162,
+      "name": "blk.7.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 163,
+      "name": "blk.7.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 164,
+      "name": "blk.7.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 165,
+      "name": "blk.7.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 179,
+      "name": "blk.8.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 180,
+      "name": "blk.8.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 181,
+      "name": "blk.8.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 182,
+      "name": "blk.8.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 183,
+      "name": "blk.8.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 184,
+      "name": "blk.8.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 185,
+      "name": "blk.8.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 186,
+      "name": "blk.8.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 187,
+      "name": "blk.8.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 201,
+      "name": "blk.9.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 202,
+      "name": "blk.9.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 203,
+      "name": "blk.9.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 204,
+      "name": "blk.9.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 205,
+      "name": "blk.9.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 206,
+      "name": "blk.9.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 207,
+      "name": "blk.9.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 208,
+      "name": "blk.9.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 209,
+      "name": "blk.9.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 223,
+      "name": "blk.10.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 224,
+      "name": "blk.10.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 225,
+      "name": "blk.10.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 226,
+      "name": "blk.10.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 227,
+      "name": "blk.10.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 228,
+      "name": "blk.10.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 229,
+      "name": "blk.10.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 230,
+      "name": "blk.10.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 231,
+      "name": "blk.10.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 245,
+      "name": "blk.11.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 246,
+      "name": "blk.11.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 247,
+      "name": "blk.11.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 248,
+      "name": "blk.11.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 249,
+      "name": "blk.11.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 250,
+      "name": "blk.11.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 251,
+      "name": "blk.11.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 252,
+      "name": "blk.11.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 253,
+      "name": "blk.11.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 267,
+      "name": "blk.12.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 268,
+      "name": "blk.12.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 269,
+      "name": "blk.12.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 270,
+      "name": "blk.12.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 271,
+      "name": "blk.12.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 272,
+      "name": "blk.12.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 273,
+      "name": "blk.12.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 274,
+      "name": "blk.12.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 275,
+      "name": "blk.12.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 289,
+      "name": "blk.13.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 290,
+      "name": "blk.13.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 291,
+      "name": "blk.13.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 292,
+      "name": "blk.13.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 293,
+      "name": "blk.13.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 294,
+      "name": "blk.13.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 295,
+      "name": "blk.13.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 296,
+      "name": "blk.13.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 297,
+      "name": "blk.13.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 311,
+      "name": "blk.14.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 312,
+      "name": "blk.14.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 313,
+      "name": "blk.14.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 314,
+      "name": "blk.14.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 315,
+      "name": "blk.14.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 316,
+      "name": "blk.14.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 317,
+      "name": "blk.14.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 318,
+      "name": "blk.14.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 319,
+      "name": "blk.14.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 333,
+      "name": "blk.15.attn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 334,
+      "name": "blk.15.ffn_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 335,
+      "name": "blk.15.attn_q.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 336,
+      "name": "blk.15.attn_k.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 337,
+      "name": "blk.15.attn_v.weight",
+      "shape": [
+        512,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 1114112,
+      "mmap": true
+    },
+    {
+      "id": 338,
+      "name": "blk.15.attn_output.weight",
+      "shape": [
+        2048,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 4456448,
+      "mmap": true
+    },
+    {
+      "id": 339,
+      "name": "blk.15.ffn_gate.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 340,
+      "name": "blk.15.ffn_up.weight",
+      "shape": [
+        8192,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 341,
+      "name": "blk.15.ffn_down.weight",
+      "shape": [
+        2048,
+        8192
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 17825792,
+      "mmap": true
+    },
+    {
+      "id": 355,
+      "name": "output_norm.weight",
+      "shape": [
+        2048
+      ],
+      "gguf_dtype": "f32",
+      "execution": "eager_f32",
+      "kernel": "eager-f32",
+      "resident_bytes": 8192,
+      "mmap": false
+    },
+    {
+      "id": 356,
+      "name": "output.weight (tied to token_embd.weight)",
+      "shape": [
+        128256,
+        2048
+      ],
+      "gguf_dtype": "q8_0",
+      "execution": "compressed",
+      "kernel": "q8-packed",
+      "resident_bytes": 279085056,
+      "mmap": true
+    }
+  ],
+  "scratch": {
+    "total_bytes": 19993600,
+    "alignment": 64,
+    "seq_capacity": 1,
+    "regions": [
+      {
+        "name": "layer0.x_in",
+        "offset": 0,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 0,
+        "last_op": 10,
+        "shared_with": null
+      },
+      {
+        "name": "scores",
+        "offset": 8192,
+        "size": 16777216,
+        "alignment": 64,
+        "first_op": 8,
+        "last_op": 263,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.n1",
+        "offset": 16785408,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 1,
+        "last_op": 4,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.q",
+        "offset": 16793600,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 2,
+        "last_op": 8,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.k",
+        "offset": 16801792,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 3,
+        "last_op": 7,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.v",
+        "offset": 16803840,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 4,
+        "last_op": 7,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.attn",
+        "offset": 16805888,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 8,
+        "last_op": 9,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.o",
+        "offset": 16814080,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 9,
+        "last_op": 10,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.x1",
+        "offset": 16822272,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 10,
+        "last_op": 17,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.n2",
+        "offset": 16830464,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 11,
+        "last_op": 14,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.g",
+        "offset": 16838656,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 12,
+        "last_op": 15,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.u",
+        "offset": 16871424,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 14,
+        "last_op": 15,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.gu",
+        "offset": 16904192,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 15,
+        "last_op": 16,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.m",
+        "offset": 16936960,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 16,
+        "last_op": 17,
+        "shared_with": null
+      },
+      {
+        "name": "layer0.x2",
+        "offset": 16945152,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 17,
+        "last_op": 27,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.n1",
+        "offset": 16953344,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 18,
+        "last_op": 21,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.q",
+        "offset": 16961536,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 19,
+        "last_op": 25,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.k",
+        "offset": 16969728,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 20,
+        "last_op": 24,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.v",
+        "offset": 16971776,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 21,
+        "last_op": 24,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.attn",
+        "offset": 16973824,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 25,
+        "last_op": 26,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.o",
+        "offset": 16982016,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 26,
+        "last_op": 27,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.x1",
+        "offset": 16990208,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 27,
+        "last_op": 34,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.n2",
+        "offset": 16998400,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 28,
+        "last_op": 31,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.g",
+        "offset": 17006592,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 29,
+        "last_op": 32,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.u",
+        "offset": 17039360,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 31,
+        "last_op": 32,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.gu",
+        "offset": 17072128,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 32,
+        "last_op": 33,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.m",
+        "offset": 17104896,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 33,
+        "last_op": 34,
+        "shared_with": null
+      },
+      {
+        "name": "layer1.x2",
+        "offset": 17113088,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 34,
+        "last_op": 44,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.n1",
+        "offset": 17121280,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 35,
+        "last_op": 38,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.q",
+        "offset": 17129472,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 36,
+        "last_op": 42,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.k",
+        "offset": 17137664,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 37,
+        "last_op": 41,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.v",
+        "offset": 17139712,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 38,
+        "last_op": 41,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.attn",
+        "offset": 17141760,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 42,
+        "last_op": 43,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.o",
+        "offset": 17149952,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 43,
+        "last_op": 44,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.x1",
+        "offset": 17158144,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 44,
+        "last_op": 51,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.n2",
+        "offset": 17166336,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 45,
+        "last_op": 48,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.g",
+        "offset": 17174528,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 46,
+        "last_op": 49,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.u",
+        "offset": 17207296,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 48,
+        "last_op": 49,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.gu",
+        "offset": 17240064,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 49,
+        "last_op": 50,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.m",
+        "offset": 17272832,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 50,
+        "last_op": 51,
+        "shared_with": null
+      },
+      {
+        "name": "layer2.x2",
+        "offset": 17281024,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 51,
+        "last_op": 61,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.n1",
+        "offset": 17289216,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 52,
+        "last_op": 55,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.q",
+        "offset": 17297408,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 53,
+        "last_op": 59,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.k",
+        "offset": 17305600,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 54,
+        "last_op": 58,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.v",
+        "offset": 17307648,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 55,
+        "last_op": 58,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.attn",
+        "offset": 17309696,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 59,
+        "last_op": 60,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.o",
+        "offset": 17317888,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 60,
+        "last_op": 61,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.x1",
+        "offset": 17326080,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 61,
+        "last_op": 68,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.n2",
+        "offset": 17334272,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 62,
+        "last_op": 65,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.g",
+        "offset": 17342464,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 63,
+        "last_op": 66,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.u",
+        "offset": 17375232,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 65,
+        "last_op": 66,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.gu",
+        "offset": 17408000,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 66,
+        "last_op": 67,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.m",
+        "offset": 17440768,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 67,
+        "last_op": 68,
+        "shared_with": null
+      },
+      {
+        "name": "layer3.x2",
+        "offset": 17448960,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 68,
+        "last_op": 78,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.n1",
+        "offset": 17457152,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 69,
+        "last_op": 72,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.q",
+        "offset": 17465344,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 70,
+        "last_op": 76,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.k",
+        "offset": 17473536,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 71,
+        "last_op": 75,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.v",
+        "offset": 17475584,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 72,
+        "last_op": 75,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.attn",
+        "offset": 17477632,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 76,
+        "last_op": 77,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.o",
+        "offset": 17485824,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 77,
+        "last_op": 78,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.x1",
+        "offset": 17494016,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 78,
+        "last_op": 85,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.n2",
+        "offset": 17502208,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 79,
+        "last_op": 82,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.g",
+        "offset": 17510400,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 80,
+        "last_op": 83,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.u",
+        "offset": 17543168,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 82,
+        "last_op": 83,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.gu",
+        "offset": 17575936,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 83,
+        "last_op": 84,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.m",
+        "offset": 17608704,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 84,
+        "last_op": 85,
+        "shared_with": null
+      },
+      {
+        "name": "layer4.x2",
+        "offset": 17616896,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 85,
+        "last_op": 95,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.n1",
+        "offset": 17625088,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 86,
+        "last_op": 89,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.q",
+        "offset": 17633280,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 87,
+        "last_op": 93,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.k",
+        "offset": 17641472,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 88,
+        "last_op": 92,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.v",
+        "offset": 17643520,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 89,
+        "last_op": 92,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.attn",
+        "offset": 17645568,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 93,
+        "last_op": 94,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.o",
+        "offset": 17653760,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 94,
+        "last_op": 95,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.x1",
+        "offset": 17661952,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 95,
+        "last_op": 102,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.n2",
+        "offset": 17670144,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 96,
+        "last_op": 99,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.g",
+        "offset": 17678336,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 97,
+        "last_op": 100,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.u",
+        "offset": 17711104,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 99,
+        "last_op": 100,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.gu",
+        "offset": 17743872,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 100,
+        "last_op": 101,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.m",
+        "offset": 17776640,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 101,
+        "last_op": 102,
+        "shared_with": null
+      },
+      {
+        "name": "layer5.x2",
+        "offset": 17784832,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 102,
+        "last_op": 112,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.n1",
+        "offset": 17793024,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 103,
+        "last_op": 106,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.q",
+        "offset": 17801216,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 104,
+        "last_op": 110,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.k",
+        "offset": 17809408,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 105,
+        "last_op": 109,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.v",
+        "offset": 17811456,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 106,
+        "last_op": 109,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.attn",
+        "offset": 17813504,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 110,
+        "last_op": 111,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.o",
+        "offset": 17821696,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 111,
+        "last_op": 112,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.x1",
+        "offset": 17829888,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 112,
+        "last_op": 119,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.n2",
+        "offset": 17838080,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 113,
+        "last_op": 116,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.g",
+        "offset": 17846272,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 114,
+        "last_op": 117,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.u",
+        "offset": 17879040,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 116,
+        "last_op": 117,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.gu",
+        "offset": 17911808,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 117,
+        "last_op": 118,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.m",
+        "offset": 17944576,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 118,
+        "last_op": 119,
+        "shared_with": null
+      },
+      {
+        "name": "layer6.x2",
+        "offset": 17952768,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 119,
+        "last_op": 129,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.n1",
+        "offset": 17960960,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 120,
+        "last_op": 123,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.q",
+        "offset": 17969152,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 121,
+        "last_op": 127,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.k",
+        "offset": 17977344,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 122,
+        "last_op": 126,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.v",
+        "offset": 17979392,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 123,
+        "last_op": 126,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.attn",
+        "offset": 17981440,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 127,
+        "last_op": 128,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.o",
+        "offset": 17989632,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 128,
+        "last_op": 129,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.x1",
+        "offset": 17997824,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 129,
+        "last_op": 136,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.n2",
+        "offset": 18006016,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 130,
+        "last_op": 133,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.g",
+        "offset": 18014208,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 131,
+        "last_op": 134,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.u",
+        "offset": 18046976,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 133,
+        "last_op": 134,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.gu",
+        "offset": 18079744,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 134,
+        "last_op": 135,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.m",
+        "offset": 18112512,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 135,
+        "last_op": 136,
+        "shared_with": null
+      },
+      {
+        "name": "layer7.x2",
+        "offset": 18120704,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 136,
+        "last_op": 146,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.n1",
+        "offset": 18128896,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 137,
+        "last_op": 140,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.q",
+        "offset": 18137088,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 138,
+        "last_op": 144,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.k",
+        "offset": 18145280,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 139,
+        "last_op": 143,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.v",
+        "offset": 18147328,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 140,
+        "last_op": 143,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.attn",
+        "offset": 18149376,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 144,
+        "last_op": 145,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.o",
+        "offset": 18157568,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 145,
+        "last_op": 146,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.x1",
+        "offset": 18165760,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 146,
+        "last_op": 153,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.n2",
+        "offset": 18173952,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 147,
+        "last_op": 150,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.g",
+        "offset": 18182144,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 148,
+        "last_op": 151,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.u",
+        "offset": 18214912,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 150,
+        "last_op": 151,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.gu",
+        "offset": 18247680,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 151,
+        "last_op": 152,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.m",
+        "offset": 18280448,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 152,
+        "last_op": 153,
+        "shared_with": null
+      },
+      {
+        "name": "layer8.x2",
+        "offset": 18288640,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 153,
+        "last_op": 163,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.n1",
+        "offset": 18296832,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 154,
+        "last_op": 157,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.q",
+        "offset": 18305024,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 155,
+        "last_op": 161,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.k",
+        "offset": 18313216,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 156,
+        "last_op": 160,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.v",
+        "offset": 18315264,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 157,
+        "last_op": 160,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.attn",
+        "offset": 18317312,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 161,
+        "last_op": 162,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.o",
+        "offset": 18325504,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 162,
+        "last_op": 163,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.x1",
+        "offset": 18333696,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 163,
+        "last_op": 170,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.n2",
+        "offset": 18341888,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 164,
+        "last_op": 167,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.g",
+        "offset": 18350080,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 165,
+        "last_op": 168,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.u",
+        "offset": 18382848,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 167,
+        "last_op": 168,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.gu",
+        "offset": 18415616,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 168,
+        "last_op": 169,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.m",
+        "offset": 18448384,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 169,
+        "last_op": 170,
+        "shared_with": null
+      },
+      {
+        "name": "layer9.x2",
+        "offset": 18456576,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 170,
+        "last_op": 180,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.n1",
+        "offset": 18464768,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 171,
+        "last_op": 174,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.q",
+        "offset": 18472960,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 172,
+        "last_op": 178,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.k",
+        "offset": 18481152,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 173,
+        "last_op": 177,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.v",
+        "offset": 18483200,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 174,
+        "last_op": 177,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.attn",
+        "offset": 18485248,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 178,
+        "last_op": 179,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.o",
+        "offset": 18493440,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 179,
+        "last_op": 180,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.x1",
+        "offset": 18501632,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 180,
+        "last_op": 187,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.n2",
+        "offset": 18509824,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 181,
+        "last_op": 184,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.g",
+        "offset": 18518016,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 182,
+        "last_op": 185,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.u",
+        "offset": 18550784,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 184,
+        "last_op": 185,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.gu",
+        "offset": 18583552,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 185,
+        "last_op": 186,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.m",
+        "offset": 18616320,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 186,
+        "last_op": 187,
+        "shared_with": null
+      },
+      {
+        "name": "layer10.x2",
+        "offset": 18624512,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 187,
+        "last_op": 197,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.n1",
+        "offset": 18632704,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 188,
+        "last_op": 191,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.q",
+        "offset": 18640896,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 189,
+        "last_op": 195,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.k",
+        "offset": 18649088,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 190,
+        "last_op": 194,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.v",
+        "offset": 18651136,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 191,
+        "last_op": 194,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.attn",
+        "offset": 18653184,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 195,
+        "last_op": 196,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.o",
+        "offset": 18661376,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 196,
+        "last_op": 197,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.x1",
+        "offset": 18669568,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 197,
+        "last_op": 204,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.n2",
+        "offset": 18677760,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 198,
+        "last_op": 201,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.g",
+        "offset": 18685952,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 199,
+        "last_op": 202,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.u",
+        "offset": 18718720,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 201,
+        "last_op": 202,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.gu",
+        "offset": 18751488,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 202,
+        "last_op": 203,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.m",
+        "offset": 18784256,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 203,
+        "last_op": 204,
+        "shared_with": null
+      },
+      {
+        "name": "layer11.x2",
+        "offset": 18792448,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 204,
+        "last_op": 214,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.n1",
+        "offset": 18800640,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 205,
+        "last_op": 208,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.q",
+        "offset": 18808832,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 206,
+        "last_op": 212,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.k",
+        "offset": 18817024,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 207,
+        "last_op": 211,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.v",
+        "offset": 18819072,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 208,
+        "last_op": 211,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.attn",
+        "offset": 18821120,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 212,
+        "last_op": 213,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.o",
+        "offset": 18829312,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 213,
+        "last_op": 214,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.x1",
+        "offset": 18837504,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 214,
+        "last_op": 221,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.n2",
+        "offset": 18845696,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 215,
+        "last_op": 218,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.g",
+        "offset": 18853888,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 216,
+        "last_op": 219,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.u",
+        "offset": 18886656,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 218,
+        "last_op": 219,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.gu",
+        "offset": 18919424,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 219,
+        "last_op": 220,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.m",
+        "offset": 18952192,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 220,
+        "last_op": 221,
+        "shared_with": null
+      },
+      {
+        "name": "layer12.x2",
+        "offset": 18960384,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 221,
+        "last_op": 231,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.n1",
+        "offset": 18968576,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 222,
+        "last_op": 225,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.q",
+        "offset": 18976768,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 223,
+        "last_op": 229,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.k",
+        "offset": 18984960,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 224,
+        "last_op": 228,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.v",
+        "offset": 18987008,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 225,
+        "last_op": 228,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.attn",
+        "offset": 18989056,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 229,
+        "last_op": 230,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.o",
+        "offset": 18997248,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 230,
+        "last_op": 231,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.x1",
+        "offset": 19005440,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 231,
+        "last_op": 238,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.n2",
+        "offset": 19013632,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 232,
+        "last_op": 235,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.g",
+        "offset": 19021824,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 233,
+        "last_op": 236,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.u",
+        "offset": 19054592,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 235,
+        "last_op": 236,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.gu",
+        "offset": 19087360,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 236,
+        "last_op": 237,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.m",
+        "offset": 19120128,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 237,
+        "last_op": 238,
+        "shared_with": null
+      },
+      {
+        "name": "layer13.x2",
+        "offset": 19128320,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 238,
+        "last_op": 248,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.n1",
+        "offset": 19136512,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 239,
+        "last_op": 242,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.q",
+        "offset": 19144704,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 240,
+        "last_op": 246,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.k",
+        "offset": 19152896,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 241,
+        "last_op": 245,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.v",
+        "offset": 19154944,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 242,
+        "last_op": 245,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.attn",
+        "offset": 19156992,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 246,
+        "last_op": 247,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.o",
+        "offset": 19165184,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 247,
+        "last_op": 248,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.x1",
+        "offset": 19173376,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 248,
+        "last_op": 255,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.n2",
+        "offset": 19181568,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 249,
+        "last_op": 252,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.g",
+        "offset": 19189760,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 250,
+        "last_op": 253,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.u",
+        "offset": 19222528,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 252,
+        "last_op": 253,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.gu",
+        "offset": 19255296,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 253,
+        "last_op": 254,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.m",
+        "offset": 19288064,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 254,
+        "last_op": 255,
+        "shared_with": null
+      },
+      {
+        "name": "layer14.x2",
+        "offset": 19296256,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 255,
+        "last_op": 265,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.n1",
+        "offset": 19304448,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 256,
+        "last_op": 259,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.q",
+        "offset": 19312640,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 257,
+        "last_op": 263,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.k",
+        "offset": 19320832,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 258,
+        "last_op": 262,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.v",
+        "offset": 19322880,
+        "size": 2048,
+        "alignment": 64,
+        "first_op": 259,
+        "last_op": 262,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.attn",
+        "offset": 19324928,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 263,
+        "last_op": 264,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.o",
+        "offset": 19333120,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 264,
+        "last_op": 265,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.x1",
+        "offset": 19341312,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 265,
+        "last_op": 272,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.n2",
+        "offset": 19349504,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 266,
+        "last_op": 269,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.g",
+        "offset": 19357696,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 267,
+        "last_op": 270,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.u",
+        "offset": 19390464,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 269,
+        "last_op": 270,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.gu",
+        "offset": 19423232,
+        "size": 32768,
+        "alignment": 64,
+        "first_op": 270,
+        "last_op": 271,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.m",
+        "offset": 19456000,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 271,
+        "last_op": 272,
+        "shared_with": null
+      },
+      {
+        "name": "layer15.x2",
+        "offset": 19464192,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 272,
+        "last_op": 273,
+        "shared_with": null
+      },
+      {
+        "name": "hf",
+        "offset": 19472384,
+        "size": 8192,
+        "alignment": 64,
+        "first_op": 273,
+        "last_op": 274,
+        "shared_with": null
+      },
+      {
+        "name": "logits",
+        "offset": 19480576,
+        "size": 513024,
+        "alignment": 64,
+        "first_op": 274,
+        "last_op": 274,
+        "shared_with": null
+      }
+    ],
+    "tensor_regions": {
+      "1": "layer0.x_in",
+      "2": "scores",
+      "12": "layer0.n1",
+      "13": "layer0.q",
+      "14": "layer0.k",
+      "15": "layer0.v",
+      "16": "layer0.attn",
+      "17": "layer0.o",
+      "18": "layer0.x1",
+      "19": "layer0.n2",
+      "20": "layer0.g",
+      "21": "layer0.u",
+      "22": "layer0.gu",
+      "23": "layer0.m",
+      "24": "layer0.x2",
+      "34": "layer1.n1",
+      "35": "layer1.q",
+      "36": "layer1.k",
+      "37": "layer1.v",
+      "38": "layer1.attn",
+      "39": "layer1.o",
+      "40": "layer1.x1",
+      "41": "layer1.n2",
+      "42": "layer1.g",
+      "43": "layer1.u",
+      "44": "layer1.gu",
+      "45": "layer1.m",
+      "46": "layer1.x2",
+      "56": "layer2.n1",
+      "57": "layer2.q",
+      "58": "layer2.k",
+      "59": "layer2.v",
+      "60": "layer2.attn",
+      "61": "layer2.o",
+      "62": "layer2.x1",
+      "63": "layer2.n2",
+      "64": "layer2.g",
+      "65": "layer2.u",
+      "66": "layer2.gu",
+      "67": "layer2.m",
+      "68": "layer2.x2",
+      "78": "layer3.n1",
+      "79": "layer3.q",
+      "80": "layer3.k",
+      "81": "layer3.v",
+      "82": "layer3.attn",
+      "83": "layer3.o",
+      "84": "layer3.x1",
+      "85": "layer3.n2",
+      "86": "layer3.g",
+      "87": "layer3.u",
+      "88": "layer3.gu",
+      "89": "layer3.m",
+      "90": "layer3.x2",
+      "100": "layer4.n1",
+      "101": "layer4.q",
+      "102": "layer4.k",
+      "103": "layer4.v",
+      "104": "layer4.attn",
+      "105": "layer4.o",
+      "106": "layer4.x1",
+      "107": "layer4.n2",
+      "108": "layer4.g",
+      "109": "layer4.u",
+      "110": "layer4.gu",
+      "111": "layer4.m",
+      "112": "layer4.x2",
+      "122": "layer5.n1",
+      "123": "layer5.q",
+      "124": "layer5.k",
+      "125": "layer5.v",
+      "126": "layer5.attn",
+      "127": "layer5.o",
+      "128": "layer5.x1",
+      "129": "layer5.n2",
+      "130": "layer5.g",
+      "131": "layer5.u",
+      "132": "layer5.gu",
+      "133": "layer5.m",
+      "134": "layer5.x2",
+      "144": "layer6.n1",
+      "145": "layer6.q",
+      "146": "layer6.k",
+      "147": "layer6.v",
+      "148": "layer6.attn",
+      "149": "layer6.o",
+      "150": "layer6.x1",
+      "151": "layer6.n2",
+      "152": "layer6.g",
+      "153": "layer6.u",
+      "154": "layer6.gu",
+      "155": "layer6.m",
+      "156": "layer6.x2",
+      "166": "layer7.n1",
+      "167": "layer7.q",
+      "168": "layer7.k",
+      "169": "layer7.v",
+      "170": "layer7.attn",
+      "171": "layer7.o",
+      "172": "layer7.x1",
+      "173": "layer7.n2",
+      "174": "layer7.g",
+      "175": "layer7.u",
+      "176": "layer7.gu",
+      "177": "layer7.m",
+      "178": "layer7.x2",
+      "188": "layer8.n1",
+      "189": "layer8.q",
+      "190": "layer8.k",
+      "191": "layer8.v",
+      "192": "layer8.attn",
+      "193": "layer8.o",
+      "194": "layer8.x1",
+      "195": "layer8.n2",
+      "196": "layer8.g",
+      "197": "layer8.u",
+      "198": "layer8.gu",
+      "199": "layer8.m",
+      "200": "layer8.x2",
+      "210": "layer9.n1",
+      "211": "layer9.q",
+      "212": "layer9.k",
+      "213": "layer9.v",
+      "214": "layer9.attn",
+      "215": "layer9.o",
+      "216": "layer9.x1",
+      "217": "layer9.n2",
+      "218": "layer9.g",
+      "219": "layer9.u",
+      "220": "layer9.gu",
+      "221": "layer9.m",
+      "222": "layer9.x2",
+      "232": "layer10.n1",
+      "233": "layer10.q",
+      "234": "layer10.k",
+      "235": "layer10.v",
+      "236": "layer10.attn",
+      "237": "layer10.o",
+      "238": "layer10.x1",
+      "239": "layer10.n2",
+      "240": "layer10.g",
+      "241": "layer10.u",
+      "242": "layer10.gu",
+      "243": "layer10.m",
+      "244": "layer10.x2",
+      "254": "layer11.n1",
+      "255": "layer11.q",
+      "256": "layer11.k",
+      "257": "layer11.v",
+      "258": "layer11.attn",
+      "259": "layer11.o",
+      "260": "layer11.x1",
+      "261": "layer11.n2",
+      "262": "layer11.g",
+      "263": "layer11.u",
+      "264": "layer11.gu",
+      "265": "layer11.m",
+      "266": "layer11.x2",
+      "276": "layer12.n1",
+      "277": "layer12.q",
+      "278": "layer12.k",
+      "279": "layer12.v",
+      "280": "layer12.attn",
+      "281": "layer12.o",
+      "282": "layer12.x1",
+      "283": "layer12.n2",
+      "284": "layer12.g",
+      "285": "layer12.u",
+      "286": "layer12.gu",
+      "287": "layer12.m",
+      "288": "layer12.x2",
+      "298": "layer13.n1",
+      "299": "layer13.q",
+      "300": "layer13.k",
+      "301": "layer13.v",
+      "302": "layer13.attn",
+      "303": "layer13.o",
+      "304": "layer13.x1",
+      "305": "layer13.n2",
+      "306": "layer13.g",
+      "307": "layer13.u",
+      "308": "layer13.gu",
+      "309": "layer13.m",
+      "310": "layer13.x2",
+      "320": "layer14.n1",
+      "321": "layer14.q",
+      "322": "layer14.k",
+      "323": "layer14.v",
+      "324": "layer14.attn",
+      "325": "layer14.o",
+      "326": "layer14.x1",
+      "327": "layer14.n2",
+      "328": "layer14.g",
+      "329": "layer14.u",
+      "330": "layer14.gu",
+      "331": "layer14.m",
+      "332": "layer14.x2",
+      "342": "layer15.n1",
+      "343": "layer15.q",
+      "344": "layer15.k",
+      "345": "layer15.v",
+      "346": "layer15.attn",
+      "347": "layer15.o",
+      "348": "layer15.x1",
+      "349": "layer15.n2",
+      "350": "layer15.g",
+      "351": "layer15.u",
+      "352": "layer15.gu",
+      "353": "layer15.m",
+      "354": "layer15.x2",
+      "357": "hf",
+      "358": "logits"
+    }
+  },
+  "kv": {
+    "precision": "f16",
+    "layout": "layer-head-pos-dim",
+    "layer_stride": 67108864,
+    "head_stride": 8388608,
+    "pos_stride": 64,
+    "head_dim": 64,
+    "n_kv_heads": 8,
+    "max_seq": 131072
+  },
+  "hook_sites": {
+    "mode": "observe",
+    "active": [
+      "before-layer",
+      "after-attention",
+      "after-mlp",
+      "after-layer",
+      "before-logits",
+      "after-logits"
+    ],
+    "sites": [
+      {
+        "stage": "before-layer",
+        "layer": 0,
+        "tensor": 1,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 0,
+        "tensor": 17,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 0,
+        "tensor": 23,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 0,
+        "tensor": 24,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 1,
+        "tensor": 24,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 1,
+        "tensor": 39,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 1,
+        "tensor": 45,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 1,
+        "tensor": 46,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 2,
+        "tensor": 46,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 2,
+        "tensor": 61,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 2,
+        "tensor": 67,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 2,
+        "tensor": 68,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 3,
+        "tensor": 68,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 3,
+        "tensor": 83,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 3,
+        "tensor": 89,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 3,
+        "tensor": 90,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 4,
+        "tensor": 90,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 4,
+        "tensor": 105,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 4,
+        "tensor": 111,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 4,
+        "tensor": 112,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 5,
+        "tensor": 112,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 5,
+        "tensor": 127,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 5,
+        "tensor": 133,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 5,
+        "tensor": 134,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 6,
+        "tensor": 134,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 6,
+        "tensor": 149,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 6,
+        "tensor": 155,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 6,
+        "tensor": 156,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 7,
+        "tensor": 156,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 7,
+        "tensor": 171,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 7,
+        "tensor": 177,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 7,
+        "tensor": 178,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 8,
+        "tensor": 178,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 8,
+        "tensor": 193,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 8,
+        "tensor": 199,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 8,
+        "tensor": 200,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 9,
+        "tensor": 200,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 9,
+        "tensor": 215,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 9,
+        "tensor": 221,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 9,
+        "tensor": 222,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 10,
+        "tensor": 222,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 10,
+        "tensor": 237,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 10,
+        "tensor": 243,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 10,
+        "tensor": 244,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 11,
+        "tensor": 244,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 11,
+        "tensor": 259,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 11,
+        "tensor": 265,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 11,
+        "tensor": 266,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 12,
+        "tensor": 266,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 12,
+        "tensor": 281,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 12,
+        "tensor": 287,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 12,
+        "tensor": 288,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 13,
+        "tensor": 288,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 13,
+        "tensor": 303,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 13,
+        "tensor": 309,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 13,
+        "tensor": 310,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 14,
+        "tensor": 310,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 14,
+        "tensor": 325,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 14,
+        "tensor": 331,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 14,
+        "tensor": 332,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-layer",
+        "layer": 15,
+        "tensor": 332,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-attention",
+        "layer": 15,
+        "tensor": 347,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-mlp",
+        "layer": 15,
+        "tensor": 353,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-layer",
+        "layer": 15,
+        "tensor": 354,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "before-logits",
+        "layer": null,
+        "tensor": null,
+        "materialized": true,
+        "route": "unfused"
+      },
+      {
+        "stage": "after-logits",
+        "layer": null,
+        "tensor": null,
+        "materialized": true,
+        "route": "unfused"
+      }
+    ]
+  },
+  "dispatch": {
+    "kernel_per_tensor": [
+      {
+        "tensor": 0,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 3,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 4,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 5,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 6,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 7,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 8,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 9,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 10,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 11,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 25,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 26,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 27,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 28,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 29,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 30,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 31,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 32,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 33,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 47,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 48,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 49,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 50,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 51,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 52,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 53,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 54,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 55,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 69,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 70,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 71,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 72,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 73,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 74,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 75,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 76,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 77,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 91,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 92,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 93,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 94,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 95,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 96,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 97,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 98,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 99,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 113,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 114,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 115,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 116,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 117,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 118,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 119,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 120,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 121,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 135,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 136,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 137,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 138,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 139,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 140,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 141,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 142,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 143,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 157,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 158,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 159,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 160,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 161,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 162,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 163,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 164,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 165,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 179,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 180,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 181,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 182,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 183,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 184,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 185,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 186,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 187,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 201,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 202,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 203,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 204,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 205,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 206,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 207,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 208,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 209,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 223,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 224,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 225,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 226,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 227,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 228,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 229,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 230,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 231,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 245,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 246,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 247,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 248,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 249,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 250,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 251,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 252,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 253,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 267,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 268,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 269,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 270,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 271,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 272,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 273,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 274,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 275,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 289,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 290,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 291,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 292,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 293,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 294,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 295,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 296,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 297,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 311,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 312,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 313,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 314,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 315,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 316,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 317,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 318,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 319,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 333,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 334,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 335,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 336,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 337,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 338,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 339,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 340,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 341,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 355,
+        "kernel": "eager-f32",
+        "cpu_feature": null,
+        "fallback": null
+      },
+      {
+        "tensor": 356,
+        "kernel": "q8-packed",
+        "cpu_feature": null,
+        "fallback": null
+      }
+    ],
+    "thread_strategy": "column-parallel-rayon"
+  },
+  "cpu": {
+    "features": [
+      "avx2",
+      "fma",
+      "f16c"
+    ],
+    "threads": 8,
+    "required": []
+  },
+  "provenance": {
+    "ember_version": "0.5.0",
+    "git_commit": "9f669698f2bc2410cfefad438847338533da7d2a",
+    "rustc_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "plan_build_time": "unix-0",
+    "execution_mode": "reference",
+    "hook_mode": "observe",
+    "model_sha256": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+    "tokenizer_sha256": "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+  },
+  "plan_hash": "5b883e4dc86e202c3bbba8d4ca936102597cc4ddd8cfc53cd918abb653111cc0"
+}

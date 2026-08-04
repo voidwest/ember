@@ -1,0 +1,85 @@
+{
+  "bundle_schema": "ember.bundle.v1",
+  "ok": true,
+  "semantic_hash": "e8bda11e13eef7929eb4d6fc64bb33bf0808b39018ed20f3eb2736ee81bf32b0",
+  "payload_hash": "c7fb708c9c1f542c671f8bceb604105be63f97408a574f48ee3fd8f01f63e89d",
+  "checks": [
+    {
+      "name": "bundle schema",
+      "ok": true,
+      "detail": "schema 'ember.bundle.v1'"
+    },
+    {
+      "name": "bundle kind",
+      "ok": true,
+      "detail": "kind 'ember-experiment-bundle'"
+    },
+    {
+      "name": "bundle complete",
+      "ok": true,
+      "detail": "status 'complete'"
+    },
+    {
+      "name": "required files",
+      "ok": true,
+      "detail": "all present"
+    },
+    {
+      "name": "semantic manifest schema",
+      "ok": true,
+      "detail": "schema 'ember.bundle.v1'"
+    },
+    {
+      "name": "semantic manifest complete",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "checksums",
+      "ok": true,
+      "detail": "15 files verified"
+    },
+    {
+      "name": "capture index",
+      "ok": true,
+      "detail": "32 entries"
+    },
+    {
+      "name": "tensor payload",
+      "ok": true,
+      "detail": "32 tensors verified"
+    },
+    {
+      "name": "token selection records",
+      "ok": true,
+      "detail": "2 records"
+    },
+    {
+      "name": "intervention references",
+      "ok": true,
+      "detail": "0 interventions"
+    },
+    {
+      "name": "execution plan hash",
+      "ok": true,
+      "detail": "plan hash 5b883e4dc86e"
+    },
+    {
+      "name": "semantic hash",
+      "ok": true,
+      "detail": "recomputed e8bda11e13ee vs stored e8bda11e13ee"
+    },
+    {
+      "name": "payload hash",
+      "ok": true,
+      "detail": "recomputed c7fb708c9c1f vs stored c7fb708c9c1f"
+    },
+    {
+      "name": "semantic payload checksums",
+      "ok": true,
+      "detail": "11 files"
+    }
+  ],
+  "warnings": [],
+  "timestamp": "epoch-seconds-1785855923"
+}

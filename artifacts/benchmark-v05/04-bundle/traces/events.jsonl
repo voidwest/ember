@@ -1,0 +1,17 @@
+{"capture_id":"prompt-final","event":"capture","full_tensor":false,"fusion":"unfused","input_id":"i1","layer":7,"positions":[25],"route":"unfused","site":"residual-post-mlp","tensor_name":"prompt-final"}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":0}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":1}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":2}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":3}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":4}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":5}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":6}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":7}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":8}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":9}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":10}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":11}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":12}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":13}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":14}
+{"event":"layer-fusion","fusion":"unfused","fusion_reason":null,"layer":15}
