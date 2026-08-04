@@ -100,6 +100,11 @@ impl EmberTokenizer {
         self.inner.id_to_token(id).is_some()
     }
 
+    /// The vocabulary piece for a token ID, when known.
+    pub fn token_piece(&self, id: u32) -> Option<String> {
+        self.inner.id_to_token(id)
+    }
+
     /// Validate that every ID this tokenizer can emit is addressable by the
     /// model embedding table.
     pub fn validate_model_vocab(&self, model_vocab_size: usize) -> Result<()> {
