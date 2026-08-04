@@ -35,14 +35,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-/// Files excluded from the payload hash inventory.
-const RUNTIME_FILES: [&str; 4] = [
-    "manifest.json",
-    "runtime.json",
-    "verification.json",
-    "checksums.sha256",
-];
-
 /// Staging-directory guard: removes the staging dir on drop unless
 /// explicitly released.
 struct StagingGuard(PathBuf, bool);
@@ -150,7 +142,13 @@ impl BundleWriter {
             .map_err(|error| format!("runtime.json serialization failed: {error}"))?;
         write_staged(&staging, "runtime.json", &runtime_bytes)?;
 
-        // 2. checksums over everything except manifest.json
+        // 2. write semantic-manifest.json (a bundle file itself, included
+        // in the payload inventory)
+        let semantic_bytes = serde_json::to_vec_pretty(&semantic_manifest)
+            .map_err(|error| format!("semantic-manifest.json serialization failed: {error}"))?;
+        write_staged(&staging, "semantic-manifest.json", &semantic_bytes)?;
+
+        // 3. checksums over everything except manifest.json
         let mut checksums: BTreeMap<String, String> = BTreeMap::new();
         for relative in self.files.keys() {
             checksums.insert(
@@ -164,18 +162,24 @@ impl BundleWriter {
             );
         }
         checksums.insert("runtime.json".to_string(), sha256_hex(&runtime_bytes));
+        checksums.insert(
+            "semantic-manifest.json".to_string(),
+            sha256_hex(&semantic_bytes),
+        );
 
-        // 3. identity
+        // 4. identity
         let semantic_hash = BundleIdentity::semantic_hash(&semantic_manifest)?;
-        let mut payloads: BTreeMap<String, String> = BTreeMap::new();
-        for (relative, sum) in &checksums {
-            if !RUNTIME_FILES.contains(&relative.as_str()) {
-                payloads.insert(relative.clone(), sum.clone());
-            }
-        }
-        let payload_hash = BundleIdentity::payload_hash(&payloads)?;
+        // The payload hash covers the manifest's payload inventory plus
+        // the semantic manifest's own file (which cannot list itself);
+        // verification recomputes the same inventory.
+        let mut payload_inventory = semantic_manifest.payloads.clone();
+        payload_inventory.insert(
+            "semantic-manifest.json".to_string(),
+            sha256_hex(&semantic_bytes),
+        );
+        let payload_hash = BundleIdentity::payload_hash(&payload_inventory)?;
 
-        // 4. manifest.json (not part of any hash)
+        // 5. manifest.json (not part of any hash)
         let mut files: Vec<String> = checksums.keys().cloned().collect();
         files.push("manifest.json".to_string());
         files.sort();
@@ -191,7 +195,7 @@ impl BundleWriter {
             .map_err(|error| format!("manifest.json serialization failed: {error}"))?;
         write_staged(&staging, "manifest.json", &manifest_bytes)?;
 
-        // 5. checksums.sha256 including manifest.json
+        // 6. checksums.sha256 including manifest.json
         let mut checksum_lines: Vec<String> = Vec::new();
         for (relative, sum) in checksums {
             checksum_lines.push(format!("{sum}  {relative}"));
@@ -201,7 +205,7 @@ impl BundleWriter {
         let checksums_bytes = format!("{}\n", checksum_lines.join("\n")).into_bytes();
         write_staged(&staging, "checksums.sha256", &checksums_bytes)?;
 
-        // 6. atomic publish
+        // 7. atomic publish
         if self.root.exists() {
             std::fs::remove_dir_all(&self.root).map_err(|error| {
                 format!(

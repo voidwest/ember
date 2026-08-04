@@ -24,16 +24,42 @@ pub struct CaptureIndexEntry {
     pub site: SemanticHookSite,
     pub layer: usize,
     pub positions: Vec<usize>,
+    /// Payload tensor name; empty for summary-only entries.
+    #[serde(default)]
     pub tensor_name: String,
+    #[serde(default)]
     pub shape: Vec<usize>,
+    #[serde(default)]
     pub dtype: String,
+    #[serde(default)]
     pub byte_length: usize,
+    #[serde(default)]
     pub checksum: String,
+    #[serde(default)]
     pub model_sha256: String,
+    #[serde(default)]
     pub plan_hash: String,
+    #[serde(default)]
     pub hook_route: String,
+    #[serde(default)]
     pub fusion: String,
+    #[serde(default)]
     pub selection_provenance: serde_json::Value,
+    /// Deterministic summary statistics for summary-only captures.
+    #[serde(default)]
+    pub summary: Option<SummaryEntry>,
+}
+
+/// Deterministic summary statistics recorded for a summary-only capture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SummaryEntry {
+    pub shape: Vec<usize>,
+    pub finite_count: usize,
+    pub minimum: f32,
+    pub maximum: f32,
+    pub mean: f64,
+    pub l2_norm: f64,
 }
 
 /// One verification check result.
@@ -254,9 +280,20 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     // capture index consistency
     let capture_index = read_capture_index(root)?;
     let mut index_errors: Vec<String> = Vec::new();
-    let mut seen_ids: BTreeMap<String, usize> = BTreeMap::new();
+    let mut seen_ids: BTreeMap<(String, String, SemanticHookSite, usize), usize> = BTreeMap::new();
     for entry in &capture_index {
-        *seen_ids.entry(entry.capture_id.clone()).or_insert(0) += 1;
+        *seen_ids
+            .entry((
+                entry.capture_id.clone(),
+                entry.input_id.clone(),
+                entry.site,
+                entry.layer,
+            ))
+            .or_insert(0) += 1;
+        if entry.summary.is_some() {
+            // Summary-only entries carry no payload.
+            continue;
+        }
         if entry.tensor_name.is_empty() {
             index_errors.push(format!("'{}': empty tensor name", entry.capture_id));
         }
@@ -276,7 +313,9 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     let duplicate_ids: Vec<String> = seen_ids
         .iter()
         .filter(|(_, count)| **count > 1)
-        .map(|(id, count)| format!("{id} x{count}"))
+        .map(|((capture_id, input_id, site, layer), count)| {
+            format!("{capture_id}/{input_id}/{site}/layer-{layer} x{count}")
+        })
         .collect();
     if !duplicate_ids.is_empty() {
         index_errors.push(format!(
@@ -328,6 +367,9 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         }
     }
     for entry in &capture_index {
+        if entry.summary.is_some() {
+            continue;
+        }
         if !payload_tensors
             .iter()
             .any(|(name, _)| name == &entry.tensor_name)
@@ -368,9 +410,9 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     // intervention references resolve
     let mut intervention_errors: Vec<String> = Vec::new();
     for (index, intervention) in semantic_manifest.interventions.iter().enumerate() {
-        if let Some(
-            crate::v05::intervention::InterventionSource::CaptureFromCurrentRun { capture_id },
-        ) = &intervention.source
+        if let Some(crate::v05::intervention::InterventionSource::CaptureFromCurrentRun {
+            capture_id,
+        }) = &intervention.source
         {
             if !semantic_manifest
                 .captures
@@ -429,7 +471,16 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
             &stored_semantic[..12.min(stored_semantic.len())]
         ),
     );
-    let payload_hash = BundleIdentity::payload_hash(&semantic_manifest.payloads)?;
+    // The payload inventory is the manifest's payloads map plus the
+    // semantic manifest's own file (which cannot list itself).
+    let mut inventory = semantic_manifest.payloads.clone();
+    let semantic_file = std::fs::read(root.join("semantic-manifest.json"))
+        .map_err(|error| format!("cannot read semantic-manifest.json: {error}"))?;
+    inventory.insert(
+        "semantic-manifest.json".to_string(),
+        sha256_hex(&semantic_file),
+    );
+    let payload_hash = BundleIdentity::payload_hash(&inventory)?;
     let stored_payload = manifest.payload_hash.clone();
     report.record(
         "payload hash",
