@@ -6,82 +6,130 @@
 
 ember is a CPU-first Rust research layer for hidden-state extraction,
 leakage-aware probing, and reproducible experiments over GGUF models: an
-inspectable instrument with its own inference path for validation, not a
-llama.cpp competitor. Research direction: Arabic morphology probing and
-validation.
+inspectable instrument with its own inference path for validation. Current
+research focus: Arabic morphology, probing validity, and quantized-inference
+failure localization.
 
 research write-up: https://voidwest.dev/ember
 
-## headline finding: causal localization of quantized-boundary failures
+## capabilities
 
-A 2026-08 validation wave (Qwen2.5-1.5B and Llama-3.2-1B across Q8/Q6/Q4,
-~500 deterministic runs) found **no Arabic-selective quantization
-degradation**: a null at every precision/family combination tested. The
-robust output is the **causal-localization toolchain**: single-layer
-activation patches restore quantized-boundary failures, with the causal
-locus one layer before the divergence ramp (qwen L7/28, llama L1/16), and
-the mechanism is near-threshold flips, where quantization noise crosses
-the model's smallest decision margins.
+- inspectable CPU inference over GGUF
+- hidden-state capture and semantic interventions
+- compressed-resident Q4_K/Q6_K execution
+- plan-driven decode
+- deterministic, verifiable experiment bundles
+- Arabic morphology and quantization research workflows
 
-**Validation caveat.** "Supported" in the model tables means an execution
-path exists, not numerical trustworthiness. Several architectures still
-have `pending` golden-logit or activation-reference status in
-[docs/validation.md](docs/validation.md); the causal-localization result
-above is validated on the rows with completed golden checks (qwen3/llama
-families) and should not be cited as validated across all architectures.
-The full pilot record (items, results, reports) is on the local
-`pilot-001` branch under `research/pilots/arabic_quantization_001/`.
+Ember is not a llama.cpp throughput competitor. llama.cpp remains the
+external performance and correctness reference; Ember prioritizes
+inspectability, intervention semantics, and reproducible research artifacts.
 
-## v0.4: plan-driven decode
+## five-minute workflow
 
-v0.4 (tag v0.4.0) builds an immutable per-model `ExecutionPlan` once after
-load and runs single-token decode through a plan interpreter
-(`--execution reference|planned|planned-fused`), with an aligned scratch
-arena, a frozen fusion set (F1-F5), and a column-parallel K-quant matvec.
-Decode on the four primary combos (Llama-3.2-1B and Qwen2.5-1.5B x
-Q4_K_M/Q6_K) runs roughly 2.0-2.7x the v0.3 reference. Gates A-G are
-pre-registered in
-[docs/v04-execution-contract.md](docs/v04-execution-contract.md);
-`ember inspect-plan` prints the plan and `bench-decode --execution`
-measures it. Artifacts: `artifacts/benchmark-v04/2026-08-04/`.
-
-## v0.5: reproducible experiment bundles
-
-v0.5 (tag v0.5.0) ships the reproducible experiment workflow:
-`ember experiment validate|run|inspect|verify|compare|reproduce|tokenize`
-over `ember.experiment.v1` specs (strict TOML) producing deterministic
-`ember.bundle.v1` bundles with semantic/payload identity, offline
-verification, and atomic staging. A reference morphology example lives
-under `examples/experiments/` (three specs: layerwise baseline, a
-layer-8 intervention, and restoration). Run it with a
-Llama-3.2-1B-Instruct-Q8_0 model present in the repo root:
+Build once, then drive the reproducible experiment pipeline:
 
 ```bash
-ember experiment validate examples/experiments/morphology-layerwise-capture.toml
-ember experiment run examples/experiments/morphology-layerwise-capture.toml
-ember experiment verify runs/morphology-baseline
-ember experiment run examples/experiments/morphology-intervention.toml
-ember experiment compare runs/morphology-baseline runs/morphology-intervention
+cargo build --release          # debug builds enable expensive runtime
+                               # assertions and are not intended for benchmarking
+
+target/release/ember experiment validate \
+  examples/experiments/morphology-layerwise-capture.toml
+
+target/release/ember experiment run \
+  examples/experiments/morphology-layerwise-capture.toml
+
+target/release/ember experiment verify \
+  runs/morphology-baseline
 ```
 
-The restoration leg reproduces the baseline bit-exact. Gates A-I are in
-[docs/v05-research-contract.md](docs/v05-research-contract.md); the Gate H
-matrix is in `artifacts/benchmark-v05/`.
-
-## quick start
+The example spec pins `Llama-3.2-1B-Instruct-Q8_0.gguf` (SHA-256 recorded,
+so a different file fails closed instead of producing unreproducible
+numbers); keep that model in the repo root. Continue with the intervention
+leg to see the compare workflow:
 
 ```bash
-cargo build --release          # debug builds have runtime asserts that throw
-target/release/ember --arch qwen3 --model Qwen3-0.6B-Q8_0.gguf \
-  --tokenizer tokenizer-qwen3.json \
+target/release/ember experiment run \
+  examples/experiments/morphology-intervention.toml
+
+target/release/ember experiment compare \
+  runs/morphology-baseline runs/morphology-intervention
+```
+
+The restoration leg reproduces the baseline bit-exact. Full walkthrough:
+`examples/experiments/README.md`.
+
+### ordinary inference
+
+Plain generation works too. `--arch auto` reads `general.architecture` from
+the GGUF (the default), and the tokenizer resolves automatically:
+
+```bash
+target/release/ember --arch auto --model Qwen3-0.6B-Q8_0.gguf \
   --prompt "The capital of France is" --max-tokens 8 --temperature 0
 ```
 
-The v0.2 research workflow (capture activations -> intervene -> compare ->
-patch -> verify restoration) runs from `scripts/research_example_capture_patch.sh`;
-see [docs/usage.md](docs/usage.md) and [docs/validation.md](docs/validation.md).
+## architecture
 
-## docs
+```
+GGUF --> loader --> packed K-quant / f32 tensors
+                        |
+                        v
+              ExecutionPlan (built once per model)
+                        |
+                        v
+              plan interpreter --> logits
+                        |
+              capture hooks, interventions, patches
+```
+
+Ember loads GGUF directly, keeps quantized tensors packed, builds an
+immutable execution plan once per model, and runs decode through a plan
+interpreter, with capture hooks and interventions layered on the same path,
+so the research facilities measure the exact numerics that produced the
+output. Details: [docs/architecture.md](docs/architecture.md).
+
+## research result: quantization-boundary localization
+
+A deterministic validation wave across Qwen2.5-1.5B and Llama-3.2-1B at Q8,
+Q6, and Q4 found no evidence of Arabic-selective quantization degradation
+in the tested matrix.
+
+The surviving result is methodological: Ember can localize rare
+quantization-boundary failures causally. In validated cases, a single-layer
+activation patch restored the quantized output, with the causal layer
+preceding the visible divergence ramp. The observed mechanism was a
+near-threshold decision flip rather than broad representational collapse.
+
+| Model        | Layers | Causal locus |
+|--------------|--------|--------------|
+| Qwen2.5-1.5B | 28     | L7           |
+| Llama-3.2-1B | 16     | L1           |
+
+Validated on the qwen3/llama rows with completed golden checks; see
+[docs/validation.md](docs/validation.md) for the full record.
+
+## version milestones
+
+- **v0.3**: compressed-resident Q4_K/Q6_K execution; packed tensors stay
+  mmap-backed with scalar/AVX2 kernels; the Q8_0 native path is untouched.
+- **v0.4**: immutable per-model execution plans; plan-driven single-token
+  decode (`--execution reference|planned|planned-fused`), aligned scratch
+  arena, frozen fusion set F1-F5, column-parallel K-quant matvec
+  (~2.0-2.7x the v0.3 reference). Gates A-G:
+  [docs/v04-execution-contract.md](docs/v04-execution-contract.md).
+- **v0.5**: deterministic experiment bundles; `ember.experiment.v1` specs
+  producing `ember.bundle.v1` bundles with semantic/payload identity and
+  offline verification (introduced in v0.5.0; current patch release v0.5.1).
+  Gates A-I: [docs/v05-research-contract.md](docs/v05-research-contract.md).
+
+## validation status
+
+"Supported" means an execution path exists; it does not imply completed
+numerical validation. See [docs/validation.md](docs/validation.md) for
+per-architecture golden-logit and activation-reference status.
+
+## documentation
 
 - [docs/usage.md](docs/usage.md) - CLI flags, subcommands, modes, benchmarks, testing
 - [docs/validation.md](docs/validation.md) - validation ladder, evidence status, pilot wave
@@ -92,9 +140,6 @@ see [docs/usage.md](docs/usage.md) and [docs/validation.md](docs/validation.md).
 - [docs/v05-research-contract.md](docs/v05-research-contract.md) - experiment workflow, gates A-I
 - [docs/research.md](docs/research.md) - Arabic morphology dataset pipeline and probing
 - [docs/dataset_pipeline.md](docs/dataset_pipeline.md) - dataset input/output schemas
-
-Agent context: `AGENT.md` (research rules, validation ladder) and
-`AGENTS.md` (current state, branches, gotchas).
 
 ## Sarf Atlas
 
@@ -108,6 +153,7 @@ scaffolding:
 pip install sarf-atlas
 ```
 
-## license
+## citation and license
 
-MIT, see [LICENSE](LICENSE).
+Citing: see [CITATION.cff](CITATION.cff). License: MIT, see
+[LICENSE](LICENSE).

@@ -68,9 +68,9 @@ numerically untrusted until a fresh golden run exists.
 
 A validation + bounded pilot wave (2026-08) added K-quant support and ran an
 Arabic-quantization pilot (Qwen2.5-1.5B and Llama-3.2-1B across Q8/Q6/Q4;
-~500 deterministic runs). Items, results, and reports live on the local
-`pilot-001` branch under `research/pilots/arabic_quantization_001/`
-(PILOT_REPORT.md has the full record):
+~500 deterministic runs). The full record lives in PILOT_REPORT.md in the
+pilot directory (local branch, not published); the summary below is the
+public record:
 
 - **No Arabic-selective quantization degradation replicates** — a null at
   every precision/family combination tested.
