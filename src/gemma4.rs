@@ -2024,7 +2024,9 @@ struct Gemma4FullAttentionSpec {
     scale: f32,
 }
 
-#[allow(dead_code)]
+/// Gemma 4 prefill attention: one serial pass over (head, row) with
+/// optional sliding-window masking. Shares the backend prefill body
+/// (compacted qk scratch, bit-identical per (row, head)).
 fn full_attention<B: Backend>(
     backend: &B,
     q: &B::Tensor,
@@ -2040,38 +2042,30 @@ fn full_attention<B: Backend>(
     let k_data = backend.data(k);
     let v_data = backend.data(v);
     let mut out = vec![0.0; seq_len * q_width];
-    let mut scores = vec![f32::NEG_INFINITY; seq_len];
+    let mut scores = vec![0.0f32; seq_len];
 
     for h in 0..spec.n_heads {
-        let q_head = h * spec.head_dim;
-        let kv_head = (h / n_repeat) * spec.head_dim;
         for i in 0..seq_len {
-            scores.fill(f32::NEG_INFINITY);
             let min_j = spec
                 .sliding_window
                 .map(|w| (i + 1).saturating_sub(w))
                 .unwrap_or(0);
-            for (j, score) in scores.iter_mut().enumerate().take(i + 1).skip(min_j) {
-                let q_idx = i * q_width + q_head;
-                let k_idx = j * kv_width + kv_head;
-                *score = dot(
-                    &q_data[q_idx..q_idx + spec.head_dim],
-                    &k_data[k_idx..k_idx + spec.head_dim],
-                ) * spec.scale;
-            }
-            softmax_range(&mut scores, min_j, i + 1);
-            let out_idx = i * q_width + q_head;
-            for (j, &weight) in scores.iter().enumerate().take(i + 1).skip(min_j) {
-                if weight == 0.0 {
-                    continue;
-                }
-                let v_idx = j * kv_width + kv_head;
-                crate::simd::weighted_add(
-                    &mut out[out_idx..out_idx + spec.head_dim],
-                    &v_data[v_idx..v_idx + spec.head_dim],
-                    weight,
-                );
-            }
+            let out_idx = i * q_width + h * spec.head_dim;
+            crate::backend::prefill_attention_row_head(
+                q_data,
+                k_data,
+                v_data,
+                i,
+                h,
+                q_width,
+                spec.head_dim,
+                kv_width,
+                n_repeat,
+                spec.scale,
+                min_j,
+                &mut scores,
+                &mut out[out_idx..out_idx + spec.head_dim],
+            );
         }
     }
     backend.load_from_cpu(out, &[seq_len, q_width])
@@ -2107,37 +2101,31 @@ fn cached_attention_with_scratch<B: Backend>(
     let cache_head_stride = spec.max_seq_len * spec.cache_head_dim;
 
     for h in 0..spec.n_heads {
-        let q_head = h * spec.head_dim;
-        let kv_h = h / n_repeat;
         for i in 0..seq_len {
             let max_j = spec.total_seq_len - seq_len + i;
-            scores.fill(f32::NEG_INFINITY);
-            scores.resize(max_j + 1, f32::NEG_INFINITY);
+            scores.resize(max_j + 1, 0.0);
             let min_j = spec
                 .sliding_window
                 .map(|w| (max_j + 1).saturating_sub(w))
                 .unwrap_or(0);
-            let q_idx = i * q_width + q_head;
-            for (j, score) in scores.iter_mut().enumerate().take(max_j + 1).skip(min_j) {
-                let k_idx = kv_h * cache_head_stride + j * spec.cache_head_dim;
-                *score = dot_f16(
-                    &q_data[q_idx..q_idx + spec.head_dim],
-                    &cached_k[k_idx..k_idx + spec.head_dim],
-                ) * spec.scale;
-            }
-            softmax_range(scores.as_mut_slice(), min_j, max_j + 1);
-            let out_idx = i * q_width + q_head;
-            for (j, &weight) in scores.iter().enumerate().take(max_j + 1).skip(min_j) {
-                if weight == 0.0 {
-                    continue;
-                }
-                let v_idx = kv_h * cache_head_stride + j * spec.cache_head_dim;
-                crate::simd::weighted_add_f16(
-                    &mut out[out_idx..out_idx + spec.head_dim],
-                    &cached_v[v_idx..v_idx + spec.head_dim],
-                    weight,
-                );
-            }
+            let out_idx = i * q_width + h * spec.head_dim;
+            crate::backend::cached_attention_row_head(
+                q_data,
+                cached_k,
+                cached_v,
+                i,
+                h,
+                q_width,
+                spec.head_dim,
+                spec.cache_head_dim,
+                n_repeat,
+                spec.scale,
+                cache_head_stride,
+                max_j,
+                min_j,
+                scores.as_mut_slice(),
+                &mut out[out_idx..out_idx + spec.head_dim],
+            );
         }
     }
     backend.load_from_cpu(out, &[seq_len, q_width])
@@ -2145,49 +2133,6 @@ fn cached_attention_with_scratch<B: Backend>(
 
 fn dot(a: &[f32], b: &[f32]) -> f32 {
     crate::simd::dot_product(a, b)
-}
-
-fn dot_f16(a: &[f32], b: &[f16]) -> f32 {
-    crate::simd::dot_product_f16(a, b)
-}
-
-fn softmax_range(row: &mut [f32], start: usize, end: usize) {
-    assert!(
-        start < end && end <= row.len(),
-        "softmax range is out of bounds"
-    );
-    let positive_infinities = row[start..end]
-        .iter()
-        .filter(|value| **value == f32::INFINITY)
-        .count();
-    if positive_infinities > 0 {
-        let probability = 1.0 / positive_infinities as f32;
-        for value in &mut row[start..end] {
-            *value = if *value == f32::INFINITY {
-                probability
-            } else {
-                0.0
-            };
-        }
-        return;
-    }
-    let max = row[start..end]
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, f32::max);
-    if max == f32::NEG_INFINITY {
-        let probability = 1.0 / (end - start) as f32;
-        row[start..end].fill(probability);
-        return;
-    }
-    let mut sum = 0.0;
-    for v in &mut row[start..end] {
-        *v = (*v - max).exp();
-        sum += *v;
-    }
-    for v in &mut row[start..end] {
-        *v /= sum;
-    }
 }
 
 fn parse_layer_types(
