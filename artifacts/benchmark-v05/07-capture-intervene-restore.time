@@ -1,21 +1,21 @@
 experiment: input 1 (example-001) tokens=105 mode=reference
 	Command being timed: "./target/release/ember experiment run examples/experiments/morphology-restoration.toml --output artifacts/benchmark-v05/07-bundle"
-	User time (seconds): 6.28
-	System time (seconds): 0.74
-	Percent of CPU this job got: 202%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.47
+	User time (seconds): 6.59
+	System time (seconds): 0.63
+	Percent of CPU this job got: 208%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.46
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 2812592
+	Maximum resident set size (kbytes): 2812512
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 256116
-	Voluntary context switches: 12360
-	Involuntary context switches: 16608
+	Minor (reclaiming a frame) page faults: 129748
+	Voluntary context switches: 14186
+	Involuntary context switches: 6599
 	Swaps: 0
-	File system inputs: 8
+	File system inputs: 0
 	File system outputs: 19352
 	Socket messages sent: 0
 	Socket messages received: 0

@@ -2,8 +2,8 @@
   "bundle_schema": "ember.bundle.v1",
   "kind": "ember-experiment-bundle",
   "status": "complete",
-  "semantic_hash": "e8bda11e13eef7929eb4d6fc64bb33bf0808b39018ed20f3eb2736ee81bf32b0",
-  "payload_hash": "c7fb708c9c1f542c671f8bceb604105be63f97408a574f48ee3fd8f01f63e89d",
+  "semantic_hash": "1490b466baab0153629bb18ea2a3b0bafd4d96490269a35588854f3a5fe88d91",
+  "payload_hash": "685b5c9418fa4d48b687dcd4f6a24a11f3c26f28dc73a3372c700b94742678b4",
   "files": [
     "captures/index.jsonl",
     "captures/tensors.safetensors",

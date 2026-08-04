@@ -5,17 +5,17 @@
     "fma",
     "f16c"
   ],
-  "decode_throughput_tps": 10.160877736043044,
+  "decode_throughput_tps": 9.455621334911786,
   "first_token_latency_ms": null,
   "hostname": "unknown",
   "model_path": "Llama-3.2-1B-Instruct-Q8_0.gguf",
   "os": "linux",
-  "peak_rss_kb": 2812580,
+  "peak_rss_kb": 2812520,
   "prefill_throughput_tps": null,
-  "process_id": 113473,
+  "process_id": 122842,
   "scratch_bytes": 19993600,
   "threads": 8,
-  "timestamp": "epoch-seconds-1785855923",
+  "timestamp": "epoch-seconds-1785856990",
   "tokenizer_path": "tokenizer.json",
-  "wall_clock_ms": 787.333556
+  "wall_clock_ms": 846.057569
 }

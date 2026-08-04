@@ -1,19 +1,19 @@
 experiment: input 1 (example-001) tokens=105 mode=reference
 	Command being timed: "./target/release/ember experiment run examples/experiments/morphology-layerwise-capture.toml --output artifacts/benchmark-v05/05-bundle"
-	User time (seconds): 6.08
+	User time (seconds): 6.64
 	System time (seconds): 0.81
-	Percent of CPU this job got: 202%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.40
+	Percent of CPU this job got: 204%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.64
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 2812620
+	Maximum resident set size (kbytes): 2812376
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 264270
-	Voluntary context switches: 12129
-	Involuntary context switches: 14235
+	Minor (reclaiming a frame) page faults: 131555
+	Voluntary context switches: 11989
+	Involuntary context switches: 7751
 	Swaps: 0
 	File system inputs: 0
 	File system outputs: 19344

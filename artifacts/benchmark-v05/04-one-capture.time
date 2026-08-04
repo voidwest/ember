@@ -1,19 +1,19 @@
 experiment: input 1 (i1) tokens=105 mode=reference
 	Command being timed: "./target/release/ember experiment run artifacts/benchmark-v05/one-layer.toml --output artifacts/benchmark-v05/04-bundle"
-	User time (seconds): 6.36
-	System time (seconds): 0.69
-	Percent of CPU this job got: 197%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.57
+	User time (seconds): 6.59
+	System time (seconds): 0.64
+	Percent of CPU this job got: 206%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:03.50
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 2812452
+	Maximum resident set size (kbytes): 2812564
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 267824
-	Voluntary context switches: 12791
-	Involuntary context switches: 14609
+	Minor (reclaiming a frame) page faults: 129684
+	Voluntary context switches: 14075
+	Involuntary context switches: 6437
 	Swaps: 0
 	File system inputs: 0
 	File system outputs: 18720

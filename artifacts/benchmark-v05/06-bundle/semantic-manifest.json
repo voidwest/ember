@@ -4,7 +4,7 @@
   "hook_schema": 1,
   "plan_schema": 1,
   "ember_version": "0.5.0",
-  "ember_commit": "9f669698f2bc2410cfefad438847338533da7d2a",
+  "ember_commit": "151a2f93871de9ee706274fbb0981336cae8cf84",
   "experiment": {
     "name": "morphology-intervention",
     "description": "Replace the prompt-final representation at layer 7 with the target-final-subtoken representation, then restore exactly.",
