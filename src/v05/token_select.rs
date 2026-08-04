@@ -20,9 +20,11 @@ pub enum SubtokenSelection {
 /// The default (`none`) never normalizes; `nfc` is an explicit opt-in that
 /// matches against an NFC-normalized copy of the input (recorded in the
 /// selection record). Arabic text is never normalized silently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TextNormalization {
+    /// No normalization (default).
+    #[default]
     None,
     Nfc,
 }
@@ -41,16 +43,20 @@ pub enum TokenSelector {
     /// decode evaluation processing it.
     GeneratedStep { step: usize },
     /// Exact text-span match with occurrence resolution.
+    #[serde(rename = "matched-span")]
     MatchedTextSpan {
         text: String,
         occurrence: usize,
+        #[serde(rename = "subtokens")]
         subtoken_selection: SubtokenSelection,
+        #[serde(default)]
         normalization: TextNormalization,
     },
     /// Explicit byte span into the prompt text.
     ByteSpan {
         start: usize,
         end: usize,
+        #[serde(rename = "subtokens")]
         subtoken_selection: SubtokenSelection,
     },
 }
@@ -154,8 +160,10 @@ pub enum RoundTripStatus {
     NotApplicable,
 }
 
-/// Tokenizer output for one input text, with byte offsets derived
-/// deterministically from the tokenizer-provided character offsets.
+/// Tokenizer output for one input text.
+///
+/// The `tokenizers` crate reports byte offsets relative to the original
+/// (normalized) string; they are recorded as-is.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenizationInfo {
     /// Original input text.
@@ -172,40 +180,15 @@ pub struct TokenizationInfo {
 }
 
 impl TokenizationInfo {
-    /// Convert tokenizer character offsets to byte offsets.
-    ///
-    /// The `tokenizers` crate reports character (Unicode scalar) offsets;
-    /// this walks the string once and maps each char index to a byte
-    /// offset deterministically.
-    fn char_to_byte_offsets(text: &str, char_offsets: &[(usize, usize)]) -> Vec<(usize, usize)> {
-        // byte offset of each char index; char_count + 1 entries so the
-        // end of the last char maps to text.len().
-        let mut char_bytes = Vec::with_capacity(text.chars().count() + 1);
-        let mut byte_cursor = 0usize;
-        char_bytes.push(0usize);
-        for ch in text.chars() {
-            byte_cursor += ch.len_utf8();
-            char_bytes.push(byte_cursor);
-        }
-        char_offsets
-            .iter()
-            .map(|&(start, end)| {
-                let bs = char_bytes.get(start).copied().unwrap_or(byte_cursor);
-                let be = char_bytes.get(end).copied().unwrap_or(byte_cursor);
-                (bs.min(be), be.max(bs))
-            })
-            .collect()
-    }
-
-    /// Build tokenization info from the wrapper's output.
+    /// Build tokenization info from the wrapper's output. Offsets are
+    /// byte offsets relative to `normalized_text`.
     pub fn new(
         text: &str,
         normalized_text: &str,
         token_ids: Vec<u32>,
         pieces: Vec<String>,
-        char_offsets: Vec<(usize, usize)>,
+        byte_offsets: Vec<(usize, usize)>,
     ) -> TokenizationInfo {
-        let byte_offsets = Self::char_to_byte_offsets(normalized_text, &char_offsets);
         TokenizationInfo {
             text: text.to_string(),
             normalized_text: normalized_text.to_string(),
@@ -440,7 +423,12 @@ impl SelectionDetail {
 
 /// Outcome of a covering-token selection:
 /// `(selected indices, coverage, boundary expansion, note)`.
-type CoveringSelection = (Vec<usize>, CoverageKind, Option<(usize, usize)>, Option<String>);
+type CoveringSelection = (
+    Vec<usize>,
+    CoverageKind,
+    Option<(usize, usize)>,
+    Option<String>,
+);
 
 /// Select the token indices whose byte intervals intersect `[start, end)`,
 /// per the subtoken rule, and classify coverage.
@@ -591,8 +579,8 @@ mod tests {
         pieces: Vec<String>,
         offsets: Vec<(usize, usize)>,
     ) -> TokenizationInfo {
-        // Char offsets are given directly; byte offsets are derived.
-        let byte_offsets = TokenizationInfo::char_to_byte_offsets(text, &offsets);
+        // Offsets are byte offsets (the tokenizers crate semantics).
+        let byte_offsets = offsets;
         TokenizationInfo {
             text: text.to_string(),
             normalized_text: text.to_string(),
@@ -600,23 +588,6 @@ mod tests {
             pieces,
             byte_offsets,
         }
-    }
-
-    #[test]
-    fn char_to_byte_conversion_handles_multibyte() {
-        // "مرحبا" is 5 chars / 10 bytes.
-        let text = "مرحبا";
-        let offsets = vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)];
-        let byte_offsets = TokenizationInfo::char_to_byte_offsets(text, &offsets);
-        assert_eq!(byte_offsets, vec![(0, 2), (2, 4), (4, 6), (6, 8), (8, 10)]);
-        // Mixed Latin/Arabic.
-        let mixed = "aمرحبا!";
-        let mixed_offsets = vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7)];
-        let mixed_bytes = TokenizationInfo::char_to_byte_offsets(mixed, &mixed_offsets);
-        assert_eq!(
-            mixed_bytes,
-            vec![(0, 1), (1, 3), (3, 5), (5, 7), (7, 9), (9, 11), (11, 12)]
-        );
     }
 
     #[test]
@@ -668,7 +639,7 @@ mod tests {
                 " الط".into(),
                 "اولة".into(),
             ],
-            vec![(0, 0), (0, 2), (2, 6), (6, 10), (10, 13), (13, 18)],
+            vec![(0, 0), (0, 4), (4, 12), (12, 19), (19, 26), (26, 34)],
         );
         let selector = |sel: SubtokenSelection| TokenSelector::MatchedTextSpan {
             text: "كتاب".to_string(),
@@ -708,7 +679,7 @@ mod tests {
                 "ة".into(),
                 " قطة".into(),
             ],
-            vec![(0, 0), (0, 3), (3, 6), (6, 7), (7, 11)],
+            vec![(0, 0), (0, 6), (6, 11), (11, 13), (13, 20)],
         );
         let selector = |occurrence: usize| TokenSelector::MatchedTextSpan {
             text: "قطة".to_string(),
@@ -751,7 +722,7 @@ mod tests {
             "xكتابy",
             vec![1, 2, 3],
             vec!["<bos>".into(), "xكت".into(), "ابy".into()],
-            vec![(0, 0), (0, 4), (4, 8)],
+            vec![(0, 0), (0, 5), (5, 10)],
         );
         let record = resolve_static_selector(
             &TokenSelector::MatchedTextSpan {
@@ -838,7 +809,7 @@ mod tests {
             "هذا كِتَاب",
             vec![1, 2],
             vec!["<bos>".into(), " هذا".into(), " كِتَاب".into()],
-            vec![(0, 0), (0, 3), (3, 10)],
+            vec![(0, 0), (0, 6), (6, 19)],
         );
         let record = resolve_static_selector(
             &TokenSelector::MatchedTextSpan {

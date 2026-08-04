@@ -56,12 +56,14 @@ impl EmberTokenizer {
             ids.len(),
             offsets.len()
         );
-        let character_count = text.chars().count();
+        // The `tokenizers` crate reports byte offsets relative to the
+        // original string. Validate against the byte length.
+        let byte_count = text.len();
         let mut previous = None;
         for (index, &(start, end)) in offsets.iter().enumerate() {
             anyhow::ensure!(
-                start <= end && end <= character_count,
-                "tokenizer offset {index} ({start}, {end}) is invalid for {character_count} Unicode characters"
+                start <= end && end <= byte_count,
+                "tokenizer offset {index} ({start}, {end}) is invalid for {byte_count} bytes"
             );
             if start == end {
                 continue;
