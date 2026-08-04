@@ -460,3 +460,45 @@ fn v04_planned_inactive_hooks_real_model() {
         );
     }
 }
+
+/// Gate E on the real model (contract section 13): after warmup, the
+/// planned decode loop with hooks disabled performs zero heap allocations
+/// per token other than the logits tensor materialization (3 documented).
+#[test]
+fn v04_planned_zero_steady_state_allocation_real_model() {
+    let Some((model_path, tokenizer_path, _, _)) = parity_env() else {
+        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
+        return;
+    };
+    let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    use ember::plan::ExecutionMode;
+    let backend = CpuBackend;
+    let ids = tokenizer.encode(FROZEN_PROMPTS[0]).expect("encode");
+    model.set_execution_mode(ExecutionMode::Planned);
+    let mut cache = model.create_cache(&backend, 2048);
+    ForwardModel::forward_last_logits_with_cache(&model, &backend, &ids, &mut cache, 0)
+        .expect("prefill");
+    // warmup decode: plan build + decode session + rayon pool
+    ForwardModel::forward_last_logits_with_cache(
+        &model,
+        &backend,
+        &[ids[0]],
+        &mut cache,
+        ids.len(),
+    )
+    .expect("warmup decode");
+    let (_, allocations) = ember::alloc_counter::count_allocations(|| {
+        ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &[ids[1]],
+            &mut cache,
+            ids.len() + 1,
+        )
+        .expect("measured decode");
+    });
+    assert!(
+        allocations <= 3,
+        "planned decode allocated {allocations} times per token on the real model; expected at most 3 (the logits CpuTensor shape + strides + data)"
+    );
+}

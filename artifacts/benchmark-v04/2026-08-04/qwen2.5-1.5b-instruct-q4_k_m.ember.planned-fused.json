@@ -1,0 +1,48 @@
+{
+  "architecture": "qwen3",
+  "benchmark": "decode",
+  "git_commit": "a8d17b78d7645bf8fb8e5f69f914c0c372bdaff8",
+  "k_compressed_bytes": 1110790656,
+  "k_expanded_bytes": 0,
+  "k_fallback_count": 0,
+  "k_strategy": "auto",
+  "k_tensor_count": 198,
+  "median_ns": 10528751907,
+  "median_tokens_per_second": 3.039296612044294,
+  "model": "qwen2.5-1.5b-instruct-q4_k_m.ember.gguf",
+  "model_file_size_bytes": 1117320736,
+  "operator_profile": null,
+  "repetitions": 3,
+  "run_metadata": {
+    "build_mode": "release",
+    "commit_hash": "unknown",
+    "cpu_cores_logical": 8,
+    "cpu_cores_physical": 4,
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "frequency_governor": "powersave",
+    "kernel_version": "Linux version 7.1.4-arch1-1 (linux@archlinux) (gcc (GCC) 16.1.1 20260625, GNU ld (GNU Binutils) 2.46.1) #1 SMP PREEMPT_DYNAMIC Sat, 18 Jul 2026 17:30:57 +0000",
+    "rust_version": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "thread_count": 8
+  },
+  "samples_ns": [
+    10528751907,
+    10500754319,
+    10550724923
+  ],
+  "samples_tokens_per_second": [
+    3.039296612044294,
+    3.0474001226844627,
+    3.0329669509477744
+  ],
+  "schema_version": 1,
+  "threads": 8,
+  "timing_excludes": [
+    "model_load",
+    "prefill",
+    "tokenization",
+    "sampling"
+  ],
+  "token_id": 1,
+  "tokens": 32,
+  "warmups": 1
+}

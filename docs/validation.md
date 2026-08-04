@@ -127,3 +127,42 @@ scripts it names; this section is the evidence summary.
   fp16 source omit the family vocab_size metadata key, now handled by
   a loader fallback to the embedding row count; the gemma4 numerical
   gap is unchanged and out of v0.3 scope.
+
+## v0.4 execution-planning validation (2026-08-04)
+
+Contract: `docs/v04-execution-contract.md` (frozen before implementation).
+Execution concepts: `reference` (the v0.3 generic hooked path, the oracle),
+`planned` (plan-driven interpreter), `planned-fused` (frozen fusion set
+F1-F5 with hook-driven defusion).
+
+- **Gate A (kernel)** — the column-parallel decode matvec is bit-identical
+  to the serial kernels (same per-column accumulation order): verified
+  across gate/up/down/head shapes, both dtypes (Q4_K/Q6_K), and both
+  execution paths (scalar + AVX2). The planned dispatch kernel equals the
+  reference dynamic dispatch (debug assert + tests).
+- **Gate B (model parity)** — reference/planned/planned-fused greedy token
+  sequences identical on the six frozen prompts (English + Arabic) with
+  per-step logits within the frozen envelopes, on all four primary
+  combinations: Llama-3.2-1B and Qwen2.5-1.5B × Q4_K_M/Q6_K
+  (`tests/k_parity.rs`, env-gated).
+- **Gate C (hooks)** — the six semantic sites fire at the same call sites
+  with the same stages/layers/shapes on the planned path; inactive hooks
+  are bit-identical to disabled (synthetic + real model); a
+  zero-layer-output intervention lands identically; planned-fused defuses
+  F5 when after_attention is active so the hook sees the materialized o
+  tensor.
+- **Gate D (memory)** — packed K-quant weights stay mmap-resident on the
+  planned path (no eager expansion); the scratch arena is a named, reusable
+  allocation reported by `inspect-plan` and the arena report.
+- **Gate E (allocation)** — after warmup, the planned decode loop performs
+  zero heap allocations per token other than the documented logits tensor
+  materialization (3: shape + strides + data), verified on the real model
+  (counting allocator); the column-parallel matvec allocates nothing on a
+  warm rayon pool.
+- **Gate F (performance)** — see the benchmark matrix below; the final
+  numbers are collected under the documented protocol
+  (`artifacts/benchmark-v04/`).
+- **Gate G (external)** — the v0.3 golden ladder remains the external
+  reference; the planned/fused paths reproduce reference greedy outputs
+  within the frozen envelopes, so the golden-logit agreement carries over
+  by transitivity (ladder re-run for the release artifacts).

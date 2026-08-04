@@ -36,7 +36,6 @@ docs/plots/root_probe_scale_comparison.png
 !docs/activation-patching.md
 !docs/v02-validation.md
 !docs/v03-execution-contracts.md
-!docs/v04-execution-contract.md
 !docs/usage.md
 !docs/validation.md
 !docs/models.md
@@ -95,3 +94,6 @@ artifacts/golden-v03/*.npy
 # v0.3 golden ember-side extraction dirs: regenerable, summaries are the evidence
 artifacts/golden-v03/*/out/
 artifacts/golden-v03/**/*.npy
+
+# v0.4 benchmark evidence
+!/artifacts/benchmark-v04/2026-08-04/SUMMARY.md

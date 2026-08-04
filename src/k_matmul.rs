@@ -432,6 +432,43 @@ mod tests {
         }
     }
 
+    /// Gate E instrumentation: quantify what the column-parallel matvec
+    /// allocates per call (rayon's per-iterator task structures are a
+    /// documented dependency of the parallel path). The result feeds the
+    /// steady-state allocation accounting in the execution contract.
+    #[test]
+    fn parallel_matvec_allocation_count_is_quantified() {
+        use crate::quant_k::KQuantDtype;
+        if !crate::k_matmul_x86::avx2_supported() {
+            return;
+        }
+        let (in_features, out_features) = (2048usize, 8192usize);
+        let blocks = in_features / 256 * out_features;
+        let weight = KQuantWeight::new(
+            seeded_q6_blocks(blocks, 0x71),
+            [out_features, in_features],
+            KQuantDtype::Q6K,
+        )
+        .with_execution(KExecution::CompressedX86);
+        let src = seeded_activations(in_features, 0x81);
+        // warm the rayon pool + the per-thread dequant scratch
+        let mut warmup = vec![0.0f32; out_features];
+        matmul_k_into_parallel(&src, 1, &weight, &mut warmup).unwrap();
+        let (_, allocations) = crate::alloc_counter::count_allocations(|| {
+            let mut dst = vec![0.0f32; out_features];
+            matmul_k_into_parallel(&src, 1, &weight, &mut dst).unwrap();
+            dst[0]
+        });
+        eprintln!("parallel matvec allocations per call (incl. the dst Vec): {allocations}");
+        // one for the dst Vec; rayon's task structures are the documented
+        // remainder and must stay small (a bounded constant, not linear in
+        // the output size)
+        assert!(
+            allocations <= 64,
+            "parallel matvec allocated {allocations} times per call; expected a small constant"
+        );
+    }
+
     #[test]
     fn q6_k_zero_scale_blocks_contribute_exactly_zero() {
         // d = 0 (f16 zero at offset 208) dequantizes every value to 0.0,
