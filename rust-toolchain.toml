@@ -1,0 +1,6 @@
+# Pin the toolchain to the declared MSRV (Cargo.toml `rust-version` and
+# .github/workflows/ci.yml both use 1.92.0). Keeps local builds identical to
+# CI; prevents accidental reliance on newer std/lib features.
+[toolchain]
+channel = "1.92.0"
+components = ["clippy", "rustfmt"]

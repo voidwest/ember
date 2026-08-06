@@ -58,9 +58,17 @@ fn load_llama(
     model_path: &str,
     tokenizer_path: &str,
     strategy: KStrategy,
-) -> (ember::llama::Llama<CpuBackend>, EmberTokenizer, f32) {
+) -> (ember::llama::Llama<CpuBackend>, EmberTokenizer, f32, bool) {
     let loader: GgufLoader = load_gguf_with_k_strategy(model_path, strategy, false)
         .unwrap_or_else(|e| panic!("failed to load '{model_path}' with {strategy:?}: {e}"));
+    // Whether the model has any compressed K-quant tensors. The v0.4 planned
+    // decode path only runs for K-quant models: Q8_0 keeps the v0.3 native
+    // fast path (contract D1: "Q8_0 is never rerouted through the plan").
+    // Tests that assert on the *planned* path must skip pure-Q8_0/F32 models.
+    let has_k_quant = loader
+        .tensors
+        .values()
+        .any(|t| matches!(t, ember::loader::LoadedTensor::KQuant(_)));
     // Gate B logits bound: 2e-2 for qwen-family rungs (amendment
     // 2026-08-03 — qwen q4_k_m observed 0.0107 vs the llama-grade
     // 1e-2; 28 layers and larger logit magnitudes push accumulation
@@ -85,7 +93,7 @@ fn load_llama(
     tokenizer
         .validate_model_vocab(model.vocab_size(&backend))
         .expect("tokenizer/model vocab contract");
-    (model, tokenizer, logits_gate)
+    (model, tokenizer, logits_gate, has_k_quant)
 }
 
 fn run_frozen_prompt(
@@ -222,18 +230,20 @@ fn compressed_and_x86_match_eager_across_frozen_prompts() {
     for &prompt in FROZEN_PROMPTS {
         let label = format!("{model_path} | {prompt}");
 
-        let (eager_model, eager_tok, logits_gate) =
+        let (eager_model, eager_tok, logits_gate, _) =
             load_llama(&model_path, &tokenizer_path, KStrategy::EagerF32);
         let eager = run_frozen_prompt(&eager_model, &eager_tok, prompt, decode_tokens);
         drop(eager_model);
 
-        let (auto_model, auto_tok, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+        let (auto_model, auto_tok, _, _) =
+            load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
         let auto = run_frozen_prompt(&auto_model, &auto_tok, prompt, decode_tokens);
         drop(auto_model);
         assert_gate_b(&eager, &auto, &format!("{label} [auto]"), logits_gate);
 
         if x86_supported {
-            let (x86_model, x86_tok, _) = load_llama(&model_path, &tokenizer_path, KStrategy::X86);
+            let (x86_model, x86_tok, _, _) =
+                load_llama(&model_path, &tokenizer_path, KStrategy::X86);
             let x86 = run_frozen_prompt(&x86_model, &x86_tok, prompt, decode_tokens);
             drop(x86_model);
             assert_gate_b(&eager, &x86, &format!("{label} [x86]"), logits_gate);
@@ -262,7 +272,7 @@ fn inactive_hooks_do_not_alter_compressed_outputs() {
         eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
-    let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    let (model, tokenizer, _, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
     let backend = CpuBackend;
     let prompt = FROZEN_PROMPTS[0];
     let ids = tokenizer.encode(prompt).expect("encode");
@@ -335,7 +345,21 @@ fn v04_planned_matches_reference_real_model() {
         eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
-    let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    let (model, tokenizer, _, has_k_quant) =
+        load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    if !has_k_quant {
+        // Q8_0/F32 models keep the v0.3 native fast path (contract D1: Q8_0
+        // is never rerouted through the plan), so the plain run uses the fast
+        // path while the hooked run uses the generic hooked path — different
+        // dispatch, legitimately different float accumulation (tokens still
+        // match). This test asserts bit-exact logits and is only meaningful
+        // when both runs execute the *planned* interpreter, i.e. K-quant.
+        eprintln!(
+            "skipped: {model_path} has no K-quant tensors (planned path not exercised; \
+             Q8_0 keeps the v0.3 fast path per contract D1)"
+        );
+        return;
+    }
     use ember::plan::ExecutionMode;
 
     for &prompt in FROZEN_PROMPTS {
@@ -395,7 +419,21 @@ fn v04_planned_inactive_hooks_real_model() {
         eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
-    let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    let (model, tokenizer, _, has_k_quant) =
+        load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    if !has_k_quant {
+        // Q8_0/F32 models keep the v0.3 native fast path (contract D1: Q8_0
+        // is never rerouted through the plan), so the plain run uses the fast
+        // path while the hooked run uses the generic hooked path — different
+        // dispatch, legitimately different float accumulation (tokens still
+        // match). This test asserts bit-exact logits and is only meaningful
+        // when both runs execute the *planned* interpreter, i.e. K-quant.
+        eprintln!(
+            "skipped: {model_path} has no K-quant tensors (planned path not exercised; \
+             Q8_0 keeps the v0.3 fast path per contract D1)"
+        );
+        return;
+    }
     use ember::plan::ExecutionMode;
     let backend = CpuBackend;
     let prompt = FROZEN_PROMPTS[0];
@@ -470,7 +508,7 @@ fn v04_planned_zero_steady_state_allocation_real_model() {
         eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
     };
-    let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
+    let (model, tokenizer, _, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Auto);
     use ember::plan::ExecutionMode;
     let backend = CpuBackend;
     let ids = tokenizer.encode(FROZEN_PROMPTS[0]).expect("encode");

@@ -300,6 +300,42 @@ proptest! {
     }
 }
 
+// ---------------------------------------------------------------------------
+// robustness: untrusted-input boundaries must never panic (fuzz-style)
+// ---------------------------------------------------------------------------
+//
+// The GGUF loader and the v0.5 spec parser are the two external-input
+// boundaries of the crate (Luminal lesson: `Result` at external input, and
+// fuzz it). These proptests replace a cargo-fuzz setup for CI: arbitrary
+// bytes/strings must produce `Ok` or `Err`, never a panic. The loader is
+// OOM-safe by construction: tensor/metadata counts are validated against the
+// input length before any allocation (`loader.rs` header parsing uses
+// `try_reserve`).
+
+use std::io::Cursor;
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    /// Arbitrary bytes fed to the GGUF loader: Ok or Err, never a panic.
+    #[test]
+    fn gguf_loader_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..4096)) {
+        let mut cursor = Cursor::new(bytes);
+        let _ = ember::loader::load_gguf_from_reader(&mut cursor);
+    }
+
+    /// Arbitrary TOML-ish text fed to the v0.5 spec parser: Ok or Err, never
+    /// a panic; and any spec that *does* parse must also resolve or fail
+    /// cleanly (resolve() is pure — no filesystem access).
+    #[test]
+    fn v05_spec_parser_never_panics(text in prop::collection::vec(any::<char>(), 0..2048)) {
+        let text: String = text.into_iter().collect();
+        if let Ok(spec) = ember::v05::spec::RawExperimentSpec::from_toml_str(&text) {
+            let _ = spec.resolve();
+        }
+    }
+}
+
 /// The dtype-code helpers agree with the byte-size constants (load-time
 /// contract: `k_block_bytes(code) == block_bytes(code)` for the K family).
 #[test]

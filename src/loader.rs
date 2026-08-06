@@ -159,7 +159,7 @@ pub fn load_gguf_with_k_strategy<P: AsRef<Path>>(
 }
 
 /// load a GGUF file from any readable + seekable source.
-/// useful for testing with in-memory buffers (std::io::Cursor<Vec<u8>>).
+/// useful for testing with in-memory buffers (`std::io::Cursor<Vec<u8>>`).
 /// Uses the eager-f32 K strategy (reference behavior).
 pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoader> {
     load_gguf_from_reader_impl(reader, None, crate::quant_k::KStrategy::EagerF32, true)

@@ -23,7 +23,7 @@ pub struct AttentionSpec<'a> {
     pub head_dim: usize,
     /// optional block boundaries for batched independent sequences.
     /// when set, token i can only attend to positions in the same block.
-    /// boundaries[i] is the first token index of the i-th block.
+    /// `boundaries[i]` is the first token index of the i-th block.
     /// the last implicit boundary is seq_len.
     pub block_boundaries: Option<&'a [usize]>,
 }

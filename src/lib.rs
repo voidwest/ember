@@ -1,3 +1,7 @@
+// Keep rustdoc links honest: broken links and public-doc links to private
+// items fail the docs job in CI (see .github/workflows/ci.yml).
+#![warn(rustdoc::broken_intra_doc_links, rustdoc::private_intra_doc_links)]
+
 extern crate alloc;
 
 // NOTE: the counting allocator is deliberately installed by the *library*,

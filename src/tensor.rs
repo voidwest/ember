@@ -611,8 +611,8 @@ impl CpuTensor {
 ///
 /// frequencies follow: `freq[i] = theta_base^(-i * 2 / head_dim)`
 /// for each position `p` and pair `(d, d+half)`:
-///   cos_table[p][d] = cos(p * freq[d])
-///   sin_table[p][d] = sin(p * freq[d])
+///   cos_table at `[p][d]` equals `cos(p * freq[d])`
+///   sin_table at `[p][d]` equals `sin(p * freq[d])`
 ///
 /// returns `(cos, sin)` - two `[max_seq_len, head_dim / 2]` tensors.
 pub fn compute_rope_freqs(

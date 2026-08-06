@@ -20,9 +20,10 @@ jobs:
           python-version: "3.12"
 
       - name: select Rust toolchain
+        # rust-toolchain.toml pins the toolchain (1.92.0 = Cargo.toml
+        # rust-version); install it here so the runner has it.
         run: |
           rustup toolchain install 1.92.0 --profile minimal --component clippy,rustfmt
-          rustup override set 1.92.0
 
       - uses: actions/cache@v4
         with:
@@ -43,6 +44,12 @@ jobs:
 
       - name: fmt
         run: cargo fmt --all -- --check
+
+      - name: docs
+        # rustdoc lints (broken_intra_doc_links, private_intra_doc_links) are
+        # warn-level in lib.rs; -D warnings turns any regression into a red
+        # CI run.
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps --release
 
       - name: python dependencies
         run: python -m pip install -r probes/requirements.txt

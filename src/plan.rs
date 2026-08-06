@@ -1033,7 +1033,8 @@ impl ExecutionPlan {
     }
 }
 
-/// Deterministic SHA-256 over [`ExecutionPlan::hash_input_json`].
+/// Deterministic SHA-256 over the plan's canonical hash-input JSON
+/// (`ExecutionPlan::hash_input_json`, private by design).
 pub fn plan_hash(plan: &ExecutionPlan) -> String {
     let input = plan.hash_input_json();
     let bytes = serde_json::to_vec(&input).expect("plan hash input serializes");

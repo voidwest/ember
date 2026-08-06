@@ -105,7 +105,9 @@ impl CaptureSink {
     }
 
     /// Attach v0.3 execution provenance (per-tensor K-family decisions
-    /// recorded at load time) to the artifact written by [`Self::finalize`].
+    /// recorded at load time) to the artifact written by the capture sink's
+    /// `finalize` step (internal; the artifact is emitted by the experiment
+    /// runner, see [`crate::experiments::ExperimentRunner`]).
     pub fn with_execution(mut self, execution: crate::artifact::ExecutionInventory) -> Self {
         self.execution = Some(execution);
         self

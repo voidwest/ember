@@ -549,8 +549,6 @@ mod tests {
     };
 
     struct ArtifactBuilder {
-        #[allow(dead_code)]
-        dir: std::path::PathBuf,
         sink: CaptureSink,
         model: ModelContext<'static>,
         input_ids: Vec<u32>,
@@ -587,7 +585,6 @@ mod tests {
             sink.on_model_loaded(&model).unwrap();
             let input_ids: Vec<u32> = (1..=prompt_len as u32).collect();
             Self {
-                dir,
                 sink,
                 model,
                 input_ids,
