@@ -37,7 +37,7 @@ need "$Q8"; need "$TOK"
 rm -rf "$BASE" "$INTV" "$REST" "$REPRO"
 
 echo "ember conference demo"
-echo "  machine: $(uname -m), $(nproc) threads"
+echo "  machine: $(uname -m), $(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo '?') threads"
 echo "  ember:   $($BIN --version 2>/dev/null | head -1 || echo '(build first)')"
 
 # ---------------------------------------------------------------------------
