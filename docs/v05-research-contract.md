@@ -27,7 +27,7 @@ one-to-one to the existing v0.4 execution hook stages; the public
 identifiers describe model semantics, not Rust implementation details.
 The mapping below is precise and was verified against the reference path
 (`forward_last_logits_with_cache_hooked`, src/llama.rs) and the planned
-interpreter (`forward_last_logits_planned`, src/llama.rs).
+interpreter (`forward_last_logits_planned`, src/planned_decode.rs).
 
 | Public id (kebab) | Rust variant | v0.4 stage id | Tensor exposed |
 |---|---|---|---|
