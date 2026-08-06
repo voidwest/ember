@@ -8,6 +8,8 @@
 #
 # Run from the repository root with the model files present:
 #   bash scripts/conference_demo.sh
+# Pre-build before a live talk to skip the compile step:
+#   cargo build --release && SKIP_BUILD=1 bash scripts/conference_demo.sh
 #
 # Expected models (see examples/experiments/README.md):
 #   Llama-3.2-1B-Instruct-Q8_0.gguf + tokenizer.json   (workflow demo)
@@ -41,7 +43,11 @@ echo "  ember:   $($BIN --version 2>/dev/null | head -1 || echo '(build first)')
 # ---------------------------------------------------------------------------
 say "0. build (release)"
 # ---------------------------------------------------------------------------
-cargo build --release -q || fail "build failed"
+if [ "${SKIP_BUILD:-0}" = "1" ]; then
+  ok "skipping build (SKIP_BUILD=1)"
+else
+  cargo build --release -q || fail "build failed"
+fi
 
 # ---------------------------------------------------------------------------
 say "1. fast generation — 4 prompts x 20 tokens on Q8_0 (~10s)"
