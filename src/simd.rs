@@ -291,12 +291,17 @@ mod x86_64 {
     #[inline]
     #[target_feature(enable = "f16c")]
     unsafe fn f16_bits_to_f32(bits: u16) -> f32 {
+        // Safety: Caller must ensure the required x86 feature set (`f16c`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
         _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(bits as i32)))
     }
 
     // -- fused / in-place SIMD kernels -------------------------------
 
     /// SIMD RMS norm into pre-allocated dst using AVX2+FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn rms_norm_into_avx2(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
         let n = x.len();
@@ -346,6 +351,10 @@ mod x86_64 {
     }
 
     /// SIMD fused SiLU * up using AVX2+FMA: `dst[i] = silu(gate[i]) * up[i]`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn silu_mul_into_avx2(gate: &[f32], up: &[f32], dst: &mut [f32]) {
         let n = gate.len();
@@ -371,6 +380,10 @@ mod x86_64 {
     }
 
     /// SIMD SiLU into pre-allocated dst using AVX2+FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn silu_into_avx2(src: &[f32], dst: &mut [f32]) {
         let n = src.len();
@@ -392,6 +405,10 @@ mod x86_64 {
     }
 
     /// SIMD fused RMS norm + residual add: `dst[i] = (x[i] * rstd * weight[i]) + residual[i]`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn rms_norm_residual_into_avx2(
         x: &[f32],
@@ -554,6 +571,10 @@ mod x86_64 {
 
     /// Q8_0 × Q8_0 dot product using AVX-512 VNNI's packed integer dot.
     /// Processes 8 output rows simultaneously (up from 4) for 2× ILP.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,f16c,fma,avx512vl,avx512vnni`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,f16c,fma,avx512vl,avx512vnni")]
     pub unsafe fn matmul_q8_0_decode_avx512_vnni(
         x: &[u8],
@@ -680,6 +701,10 @@ mod x86_64 {
     /// Each VNNI lane accumulates the same four input coordinates for 16
     /// output rows. Eight vector accumulators preserve the row-contiguous
     /// kernel's floating-point reduction order exactly.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,f16c,fma,avx512f,avx512bw,avx512vnni`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,f16c,fma,avx512f,avx512bw,avx512vnni")]
     pub unsafe fn matmul_q8_0_decode_packed16_avx512_vnni(
         x: &[u8],
@@ -756,6 +781,10 @@ mod x86_64 {
     /// Q8_0 × Q8_0 dot product using interleaved weight layout.
     /// Processes 4 output rows per stripe, loading all 4 rows' quants
     /// for each block in one contiguous 128-byte read.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,f16c,fma,avx512vl,avx512vnni`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,f16c,fma,avx512vl,avx512vnni")]
     pub unsafe fn matmul_q8_0_decode_interleaved_avx512_vnni(
         x: &[u8],
@@ -869,6 +898,10 @@ mod x86_64 {
     ///
     /// Each weight block is loaded once and reused across all rows in the
     /// tile, reducing mmap/cache bandwidth during prompt prefill.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,f16c`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,f16c")]
     pub unsafe fn matmul_q8_0_batch_avx2(
         x: &[u8],
@@ -923,6 +956,10 @@ mod x86_64 {
     }
 
     /// AVX-512 VNNI variant of the tiled Q8_0 matrix multiply.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,f16c,fma,avx512vl,avx512vnni`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,f16c,fma,avx512vl,avx512vnni")]
     pub unsafe fn matmul_q8_0_batch_avx512_vnni(
         x: &[u8],
@@ -1039,6 +1076,10 @@ mod x86_64 {
     }
 
     /// SIMD sum of squares: `Σ x[i]²` using AVX2 FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn sum_squares_avx2(x: &[f32]) -> f32 {
         let n = x.len();
@@ -1075,6 +1116,10 @@ mod x86_64 {
     }
 
     /// SIMD `out[i] = x[i] * scale * weight[i]` using AVX2.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn scale_weight_mul_avx2(
         x: &[f32],
@@ -1100,6 +1145,10 @@ mod x86_64 {
     }
 
     /// SIMD element-wise multiply using AVX2.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn elemul_avx2(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len();
@@ -1117,6 +1166,10 @@ mod x86_64 {
     }
 
     /// Accurate SIMD exp using range reduction and a fifth-degree polynomial.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     unsafe fn exp_ps(x: __m256) -> __m256 {
         let log2e = _mm256_set1_ps(core::f32::consts::LOG2_E);
@@ -1143,6 +1196,10 @@ mod x86_64 {
     }
 
     /// SIMD dot product using AVX2 FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn dot_product_avx2(a: &[f32], b: &[f32]) -> f32 {
         let n = a.len();
@@ -1182,6 +1239,10 @@ mod x86_64 {
     }
 
     /// SIMD dot product between F32 queries and compact F16 cache rows.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma,f16c`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma,f16c")]
     pub(crate) unsafe fn dot_product_f16_avx2(a: &[f32], b: &[f16]) -> f32 {
         let n = a.len();
@@ -1221,6 +1282,10 @@ mod x86_64 {
     }
 
     /// SIMD in-place add: `dst[i] += src[i]`.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn add_assign_avx2(dst: &mut [f32], src: &[f32]) {
         let n = dst.len();
@@ -1238,6 +1303,10 @@ mod x86_64 {
     }
 
     /// SIMD element-wise add using AVX2.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn add_avx2(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len();
@@ -1255,6 +1324,10 @@ mod x86_64 {
     }
 
     /// SIMD weighted accumulate using AVX2 FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn weighted_add_avx2(acc: &mut [f32], src: &[f32], weight: f32) {
         let n = acc.len();
@@ -1274,6 +1347,10 @@ mod x86_64 {
     }
 
     /// SIMD weighted accumulate from a compact F16 cache row.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2,fma,f16c`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2,fma,f16c")]
     pub(crate) unsafe fn weighted_add_f16_avx2(acc: &mut [f32], src: &[f16], weight: f32) {
         let n = acc.len();
@@ -1293,6 +1370,10 @@ mod x86_64 {
     }
 
     /// SIMD split-half RoPE using AVX2: 8 pairs per iteration.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
     #[target_feature(enable = "avx2")]
     pub(crate) unsafe fn rope_split_half_avx2(
         x: &mut [f32],
@@ -1378,6 +1459,7 @@ mod aarch64 {
             // helper: dequantize 16 i8 values → 4 × float32x4_t
             #[inline(always)]
             unsafe fn process16(src: int8x16_t, scale: float32x4_t, out: *mut f32) {
+                // Safety: Internal helper; only callable from other `unsafe fn`s in this module that already guarantee the required CPU features.
                 // low 8 i8 → i16
                 let i16_lo = vmovl_s8(vget_low_s8(src));
                 // high 8 i8 → i16
@@ -1441,6 +1523,7 @@ mod aarch64 {
                     xp: *const f32,
                     acc: &mut float32x4_t,
                 ) {
+                    // Safety: Internal helper; only callable from other `unsafe fn`s in this module that already guarantee the required CPU features.
                     let i16_lo = vmovl_s8(vget_low_s8(src));
                     let i16_hi = vmovl_s8(vget_high_s8(src));
 
@@ -1469,6 +1552,10 @@ mod aarch64 {
     }
 
     /// SIMD sum of squares using NEON FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn sum_squares_neon(x: &[f32]) -> f32 {
         let n = x.len();
@@ -1494,6 +1581,10 @@ mod aarch64 {
     }
 
     /// SIMD `out[i] = x[i] * scale * weight[i]` using NEON.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn scale_weight_mul_neon(
         x: &[f32],
@@ -1519,6 +1610,10 @@ mod aarch64 {
     }
 
     /// SIMD element-wise multiply using NEON.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn elemul_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len();
@@ -1536,6 +1631,10 @@ mod aarch64 {
     }
 
     /// SIMD dot product using NEON FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
         let n = a.len();
@@ -1562,6 +1661,10 @@ mod aarch64 {
     }
 
     /// SIMD element-wise add using NEON.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn add_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
         let n = a.len();
@@ -1579,6 +1682,10 @@ mod aarch64 {
     }
 
     /// SIMD weighted accumulate using NEON FMA.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn weighted_add_neon(acc: &mut [f32], src: &[f32], weight: f32) {
         let n = acc.len();

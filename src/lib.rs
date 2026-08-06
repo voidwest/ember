@@ -1,6 +1,14 @@
 extern crate alloc;
 
-/// v0.4 process-wide allocation counter (Gate E measurement).
+// NOTE: the counting allocator is deliberately installed by the *library*,
+// not by the binary. Gate E (`tests/k_parity.rs`, v04-execution-contract.md)
+// measures per-token allocations under `cargo test --all-targets`, which runs
+// test binaries linked against this lib — an allocator installed only in
+// `main.rs` would make those measurements silently meaningless (always 0).
+// The cost is one relaxed atomic pair per allocation, and steady-state
+// planned decode performs no allocations at all (see `alloc_counter` module
+// docs), so the hot path pays nothing. The ember lib is not consumed as an
+// external dependency today; revisit if that changes.
 #[global_allocator]
 static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 

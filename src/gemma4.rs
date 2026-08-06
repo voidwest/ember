@@ -636,69 +636,6 @@ impl<B: Backend> Gemma4Attention<B> {
         finish_trace_span(output_span, backend, &output);
         Ok(output)
     }
-
-    #[allow(dead_code)]
-    fn forward_full(
-        &self,
-        backend: &B,
-        x: &B::Tensor,
-        start_pos: usize,
-    ) -> Result<B::Tensor, B::Error> {
-        let seq_len = backend.shape(x)[0];
-        let k_proj = self
-            .k_proj
-            .as_ref()
-            .expect("activation capture does not support shared-only Gemma 4 K/V");
-        let v_proj = self
-            .v_proj
-            .as_ref()
-            .expect("activation capture does not support shared-only Gemma 4 K/V");
-        let (q, k, v) = self.q_proj.forward_triple(backend, x, k_proj, v_proj)?;
-        let q = apply_rope_and_qk_norm(
-            backend,
-            &q,
-            &self.q_norm,
-            &self.rope_cos,
-            &self.rope_sin,
-            start_pos,
-            self.n_heads,
-            self.head_dim,
-            self.norm_eps,
-        )?;
-        let k = apply_rope_and_qk_norm(
-            backend,
-            &k,
-            &self.k_norm,
-            &self.rope_cos,
-            &self.rope_sin,
-            start_pos,
-            self.n_kv_heads,
-            self.head_dim,
-            self.norm_eps,
-        )?;
-        let out = full_attention(
-            backend,
-            &q,
-            &k,
-            &v,
-            Gemma4FullAttentionSpec {
-                n_heads: self.n_heads,
-                n_kv_heads: self.n_kv_heads,
-                head_dim: self.head_dim,
-                sliding_window: if self.layer_type == Gemma4AttentionType::Local {
-                    Some(self.sliding_window)
-                } else {
-                    None
-                },
-                scale: self.attention_scale,
-            },
-        )?;
-        debug_assert_eq!(
-            backend.shape(&out),
-            &[seq_len, self.n_heads * self.head_dim]
-        );
-        self.o_proj.forward(backend, &out)
-    }
 }
 
 struct Gemma4Block<B: Backend> {
@@ -860,28 +797,6 @@ impl<B: Backend> Gemma4Block<B> {
             finish_trace_span(scale_span, backend, &x);
         }
         Ok(x)
-    }
-
-    #[allow(dead_code)]
-    fn forward_full(
-        &self,
-        backend: &B,
-        x: &B::Tensor,
-        ple: Option<&B::Tensor>,
-    ) -> Result<B::Tensor, B::Error> {
-        let x = if let Some(ple) = ple {
-            self.add_ple(backend, x, ple)?
-        } else {
-            x.clone()
-        };
-        let normed = backend.rms_norm(&x, &self.input_norm, self.norm_eps)?;
-        let attn_out = self.attn.forward_full(backend, &normed, 0)?;
-        let attn_out = backend.rms_norm(&attn_out, &self.post_attn_norm, self.norm_eps)?;
-        let x = backend.add(&x, &attn_out)?;
-        let normed = backend.rms_norm(&x, &self.pre_ffn_norm, self.norm_eps)?;
-        let mlp_out = self.mlp.forward(backend, &normed)?;
-        let mlp_out = backend.rms_norm(&mlp_out, &self.post_ffn_norm, self.norm_eps)?;
-        backend.add(&x, &mlp_out)
     }
 
     /// Apply per-layer input following HF pathway:
@@ -2011,11 +1926,14 @@ fn apply_v_rms_norm<B: Backend>(
     backend.load_from_cpu(data, &[seq_len, width])
 }
 
-/// Debug: compute ember's L15 V for tokens [2, 818] (BOS + "The") using
-/// ember's own ops and dump the raw f32 (last position) for comparison
-/// Debug: dump blk.15 weights (attn_norm f32, attn_v Q8_0 dequantized) as
-/// Debug: dump the RAW dequantized embedding row for token 818 (pre-scale)
-#[allow(dead_code)]
+/// Parameters for the full (non-cached) prefill attention path.
+///
+/// Kept behind `cfg(test)` after the v0.5 cleanup: `full_attention` is the
+/// semantic reference for gemma-4 prefill and is exercised by the inline
+/// tests below, but no production path calls it (production uses the cached
+/// `forward_with_cache` path). Port to a feature flag if a debug CLI needs
+/// it again.
+#[cfg(test)]
 struct Gemma4FullAttentionSpec {
     n_heads: usize,
     n_kv_heads: usize,
@@ -2027,6 +1945,11 @@ struct Gemma4FullAttentionSpec {
 /// Gemma 4 prefill attention: one serial pass over (head, row) with
 /// optional sliding-window masking. Shares the backend prefill body
 /// (compacted qk scratch, bit-identical per (row, head)).
+///
+/// Test-only since the v0.5 cleanup (see `Gemma4FullAttentionSpec`): the
+/// production path uses the cached attention, and this reference stays live
+/// as the semantic oracle for the inline tests.
+#[cfg(test)]
 fn full_attention<B: Backend>(
     backend: &B,
     q: &B::Tensor,

@@ -62,7 +62,11 @@ impl CpuTensor {
         }
         CpuTensor::from_data(self.shape.clone(), new_data)
     }
-    /// 2d matrix transpose. panics if not 2d.
+    /// 2d matrix transpose.
+    ///
+    /// # Panics
+    ///
+    /// If `self` is not 2-D.
     #[must_use]
     #[inline]
     pub fn transpose(&self) -> Self {
@@ -155,7 +159,11 @@ impl CpuTensor {
     }
 
     /// matrix multiplication via `matrixmultiply::sgemm`.
-    /// both tensors must be 2d with matching inner dimensions.
+    ///
+    /// # Panics
+    ///
+    /// If either operand is not 2-D, if the inner dimensions differ, or if
+    /// the output shape `m * n` overflows `usize`.
     #[must_use]
     #[inline]
     pub fn matmul(&self, other: &Self) -> Self {
@@ -168,6 +176,11 @@ impl CpuTensor {
         let output_len = m.checked_mul(n).expect("matmul: output shape overflow");
         let mut out = vec![0.0f32; output_len];
 
+        // Safety: the shape asserts above guarantee both operands are 2-D with
+        // matching inner dimension k1 == k2, and `out` was allocated with
+        // exactly m*n f32 elements. Row-major contiguous storage with unit
+        // column stride (rs=1/cs=1) matches sgemm's expectations, and the two
+        // inputs plus `out` are distinct allocations, so no aliasing occurs.
         unsafe {
             matrixmultiply::sgemm(
                 m,
@@ -192,6 +205,10 @@ impl CpuTensor {
     /// softmax along the last dimension, numerically stable with max
     /// subtraction. if every logit in a row is -infinity (fully masked),
     /// returns a uniform distribution over that row.
+    ///
+    /// # Panics
+    ///
+    /// If the tensor has no dimensions, or if the final dimension is empty.
     #[must_use]
     #[inline]
     pub fn softmax(&self) -> Self {
@@ -264,6 +281,11 @@ impl CpuTensor {
     /// rms normalization over the last dimension of a 2d `[batch, features]`
     /// tensor. normalizes each row independently: `x * weight / sqrt(mean(x^2) + eps)`.
     /// lLaMA-family models use this instead of layer_norm - no mean subtraction, no bias.
+    ///
+    /// # Panics
+    ///
+    /// If `self` is not 2-D, if `weight` is not 1-D, or if the feature count
+    /// does not match.
     #[must_use]
     #[inline]
     pub fn rms_norm(&self, weight: &Self, eps: f32) -> Self {
@@ -357,6 +379,11 @@ impl CpuTensor {
     ///   `cos` - precomputed cos table, `[max_seq_len, head_dim]`
     ///   `sin` - precomputed sin table, `[max_seq_len, head_dim]`
     ///   `start_pos` - absolute position offset for the first element of `x`
+    ///
+    /// # Panics
+    ///
+    /// If `x` is neither 2-D nor 3-D, if its last dimension is not even, or
+    /// if the position range exceeds the cos/sin table.
     #[must_use]
     pub fn apply_rotary_emb(&self, cos: &Self, sin: &Self, start_pos: usize) -> Self {
         // accepts 2d [seq_len, head_dim] or 3d [batch, seq_len, head_dim]

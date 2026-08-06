@@ -474,7 +474,6 @@ impl KQuantWeight {
     }
 
     /// Construct from a shared read-only file mapping (loader path).
-    #[allow(dead_code)] // wired into the loader in the compressed-dispatch commit
     pub(crate) fn try_from_mmap(
         mmap: Arc<Mmap>,
         range: Range<usize>,

@@ -32,3 +32,6 @@ harness = false
 # --all-targets --all-features -- -D warnings` on GitHub Actions.
 [lints.clippy]
 all = "warn"
+
+[dev-dependencies]
+proptest = "1.11"
