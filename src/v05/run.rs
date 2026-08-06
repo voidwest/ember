@@ -544,3 +544,288 @@ fn hostname() -> String {
         .or_else(|_| std::env::var("HOST"))
         .unwrap_or_else(|_| "unknown".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plan::{ExecutionMode, HookMode};
+    use crate::v05::capture::CaptureDType;
+    use crate::v05::hook::SemanticHookSite;
+    use crate::v05::spec::RawExperimentSpec;
+    use crate::v05::token_select::{CoverageKind, TokenSelector, TokenizationInfo};
+    use crate::v05::verify;
+
+    fn spec_text() -> &'static str {
+        r#"
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "bundle-test"
+description = "unit test of bundle assembly"
+seed = 42
+
+[model]
+path = "/models/tiny.gguf"
+expected_sha256 = "aa"
+
+[execution]
+mode = "planned"
+threads = 1
+deterministic = true
+
+[generation]
+max_new_tokens = 1
+temperature = 0.0
+
+[[inputs]]
+id = "i1"
+text = "hello world"
+
+[[captures]]
+id = "cap-1"
+site = "attention-output"
+layers = [0]
+
+[captures.tokens]
+kind = "prompt-final"
+
+[output]
+directory = "runs/bundle-test"
+"#
+    }
+
+    fn resolved_spec() -> ExperimentSpecV1 {
+        RawExperimentSpec::from_toml_str(spec_text())
+            .expect("parses")
+            .resolve()
+            .expect("resolves")
+    }
+
+    fn tokenization() -> TokenizationInfo {
+        TokenizationInfo {
+            text: "hello world".into(),
+            normalized_text: "hello world".into(),
+            token_ids: vec![1, 2, 3],
+            pieces: vec!["<s>".into(), "hello".into(), "world".into()],
+            byte_offsets: vec![(0, 0), (0, 5), (6, 11)],
+        }
+    }
+
+    fn sample_result() -> InputResult {
+        InputResult {
+            input: resolved_spec().inputs[0].clone(),
+            tokenization: tokenization(),
+            selection_records: vec![TokenSelectionRecord {
+                selector: TokenSelector::PromptFinal,
+                rule: "prompt-final".into(),
+                input_text: "hello world".into(),
+                normalized_text: "hello world".into(),
+                token_ids: vec![1, 2, 3],
+                pieces: vec!["<s>".into(), "hello".into(), "world".into()],
+                byte_offsets: vec![(0, 0), (0, 5), (6, 11)],
+                matched_byte_span: None,
+                selected_indices: vec![2],
+                coverage: CoverageKind::Exact,
+                boundary_expansion: None,
+                ambiguity: crate::v05::token_select::AmbiguityStatus::Resolved,
+                round_trip: crate::v05::token_select::RoundTripStatus::NotApplicable,
+                note: None,
+            }],
+            captures: vec![CapturedTensor {
+                capture_id: "cap-1".into(),
+                input_id: "i1".into(),
+                site: SemanticHookSite::AttentionOutput,
+                layer: 0,
+                positions: vec![2],
+                columns: 4,
+                rows: vec![1.0, 2.0, 3.0, 4.0],
+                full_tensor: false,
+                bytes: 16,
+                dtype: CaptureDType::F32,
+            }],
+            summaries: vec![],
+            events: vec![],
+            generated_token_ids: vec![7],
+            generated_text: "world".into(),
+            final_top1: Some((7, 0.9)),
+        }
+    }
+
+    fn materials() -> BundleMaterials {
+        BundleMaterials {
+            spec_text: spec_text().to_string(),
+            resolved: resolved_spec(),
+            ember_version: env!("CARGO_PKG_VERSION").to_string(),
+            ember_commit: "test-commit".into(),
+            model_meta: ModelBundleMeta {
+                sha256: "aa".repeat(32),
+                architecture: "llama".into(),
+                layer_count: 1,
+                embed_dim: 4,
+                vocab_size: 100,
+                gguf_metadata: serde_json::json!({"general.architecture": "llama"}),
+            },
+            tokenizer_meta: TokenizerBundleMeta {
+                sha256: "bb".repeat(32),
+                vocab_size: 100,
+            },
+            plan: {
+                let mut plan =
+                    crate::plan::tests::sample_plan(ExecutionMode::Planned, HookMode::Disabled);
+                plan.plan_hash = crate::plan::plan_hash(&plan);
+                plan
+            },
+            results: vec![sample_result()],
+            warnings: vec![],
+            runtime: RuntimeMetrics {
+                wall_clock_ms: 12.5,
+                prefill_throughput_tps: Some(3.0),
+                decode_throughput_tps: Some(2.0),
+                first_token_latency_ms: Some(1.5),
+                peak_rss_kb: Some(42_000),
+                threads: 1,
+            },
+        }
+    }
+
+    #[test]
+    fn assemble_bundle_produces_deterministic_file_set() {
+        let bundle = assemble_bundle(&materials()).expect("assembles");
+        // Core file set (contract: bundle layout).
+        for required in [
+            "experiment.toml",
+            "resolved-experiment.json",
+            "inputs.jsonl",
+            "outputs.jsonl",
+            "tokenization.jsonl",
+            "execution-plan.json",
+            "captures/tensors.safetensors",
+        ] {
+            assert!(bundle.files.contains_key(required), "missing {required}");
+        }
+        // The capture payload lands under captures/.
+        assert!(
+            bundle
+                .files
+                .keys()
+                .any(|name| name.starts_with("captures/")),
+            "capture payload file present"
+        );
+        // Determinism: assembling twice yields byte-identical files.
+        let again = assemble_bundle(&materials()).expect("assembles");
+        assert_eq!(
+            bundle.files, again.files,
+            "bundle assembly is deterministic"
+        );
+        // runtime.json carries the metrics but is excluded from hashing.
+        let runtime = bundle
+            .runtime_json
+            .as_object()
+            .expect("runtime.json is an object");
+        assert_eq!(runtime["wall_clock_ms"], serde_json::json!(12.5));
+        // manifest payload hash covers semantic files.
+        assert!(
+            !bundle.semantic_manifest.payloads.is_empty(),
+            "payload inventory populated"
+        );
+    }
+
+    #[test]
+    fn assembled_bundle_verifies() {
+        let dir = std::env::temp_dir().join(format!(
+            "ember_verify_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut m = materials();
+        m.resolved.output.directory = dir.clone();
+        write_bundle(&m, false).expect("writes");
+        let report = verify::verify_bundle(&dir, &verify::VerifyOptions::default())
+            .expect("offline verification succeeds");
+        assert!(report.ok, "bundle verifies: {report:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn capture_payload_and_assembled_safetensors_round_trip() {
+        // build_capture_payload emits the serialized payload + index + trace.
+        // Note: the v0.5 safetensors writer omits the "<safetensors>" magic
+        // (8-byte LE header length instead) — it round-trips through the
+        // bundled deserialize, which is the contract (bundle-schema-v1.md).
+        let payload = build_capture_payload(&materials()).expect("payload");
+        let (bytes, index, trace) = payload;
+        assert!(index.len() == 1, "one capture index entry");
+        assert_eq!(index[0].capture_id, "cap-1");
+        assert_eq!(index[0].tensor_name, "cap-1/i1/attention-output/0");
+        assert!(trace.len() == 1, "one trace line");
+
+        // The assembled bundle carries the same payload bytes as the file.
+        let bundle = assemble_bundle(&materials()).expect("assembles");
+        let container = bundle
+            .files
+            .get("captures/tensors.safetensors")
+            .expect("container file");
+        assert_eq!(container, &bytes, "assemble embeds the payload verbatim");
+
+        // Round-trip through the reader: header length, then recover values.
+        let tensors =
+            crate::v05::safetensors::deserialize(container).expect("payload parses as safetensors");
+        let (name, view) = tensors
+            .iter()
+            .find(|(name, _)| *name == index[0].tensor_name)
+            .expect("named tensor present");
+        let values = crate::v05::safetensors::tensor_f32(container, view).expect("read f32");
+        assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0]);
+        let _ = name;
+    }
+
+    #[test]
+    fn write_bundle_stages_atomically_and_reports_identity() {
+        let dir = std::env::temp_dir().join(format!(
+            "ember_run_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut m = materials();
+        m.resolved.output.directory = dir.clone();
+        let (path, identity) = write_bundle(&m, false).expect("writes");
+        assert_eq!(path, dir);
+        assert!(dir.join("semantic-manifest.json").is_file());
+        assert!(dir.join("captures").is_dir());
+        assert!(!identity.payload_hash.is_empty());
+        // No staging leftovers after a successful publish.
+        let leftovers = std::fs::read_dir(dir.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .count();
+        assert_eq!(leftovers, 0, "no staging leftovers");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tensor_name_and_capture_id_leaf_are_stable() {
+        assert_eq!(
+            tensor_name(&CapturedTensor {
+                capture_id: "cap-1".into(),
+                input_id: "i1".into(),
+                site: SemanticHookSite::AttentionOutput,
+                layer: 3,
+                positions: vec![2],
+                columns: 4,
+                rows: vec![1.0; 4],
+                full_tensor: false,
+                bytes: 16,
+                dtype: CaptureDType::F32,
+            }),
+            "cap-1/i1/attention-output/3"
+        );
+        assert_eq!(capture_id_leaf("cap-1"), "cap-1");
+    }
+}

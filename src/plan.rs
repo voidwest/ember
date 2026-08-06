@@ -1060,10 +1060,10 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    fn sample_plan(execution: ExecutionMode, hook: HookMode) -> ExecutionPlan {
+    pub(crate) fn sample_plan(execution: ExecutionMode, hook: HookMode) -> ExecutionPlan {
         ExecutionPlan {
             schema_version: PLAN_SCHEMA_VERSION,
             architecture: "llama".into(),
