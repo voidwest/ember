@@ -334,6 +334,23 @@ proptest! {
             let _ = spec.resolve();
         }
     }
+
+    /// Arbitrary bytes written as a .npy file: read_npy_2d must return Ok or
+    /// Err, never panic (the parser validates magic/version/header bounds
+    /// before any slicing; this guards regressions in that ordering).
+    #[test]
+    fn npy_reader_never_panics(bytes in prop::collection::vec(any::<u8>(), 0..2048)) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "ember_npy_fuzz_{}_{}.npy",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::write(&path, &bytes).expect("temp write");
+        let _ = ember::npy::read_npy_2d(path.to_str().expect("temp path is utf8"));
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 /// The dtype-code helpers agree with the byte-size constants (load-time

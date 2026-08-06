@@ -28,6 +28,10 @@ unicode-normalization = "0.1"
 name = "q8_matmul"
 harness = false
 
+[[bench]]
+name = "hooks_overhead"
+harness = false
+
 # Mirror CI's clippy posture so local `cargo clippy` matches `cargo clippy
 # --all-targets --all-features -- -D warnings` on GitHub Actions.
 [lints.clippy]

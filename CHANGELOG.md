@@ -7,6 +7,52 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [Unreleased]
+
+### Changed
+
+- The v0.4 planned-decode interpreter moved out of `src/llama.rs` into
+  `src/planned_decode.rs` (resolved ops, scratch-arena session, planned and
+  fused kernels, `forward_last_logits_planned`). Zero behavioral change;
+  `src/llama.rs` keeps the model, eager forward, dispatch, and plan
+  construction. The v0.5 research contract's reference to the interpreter
+  path was updated accordingly.
+- Toolchain pinned via `rust-toolchain.toml` to 1.92.0 (the declared MSRV
+  and CI toolchain); local builds now match CI.
+- Dependencies: `crossbeam-epoch` 0.9.18 → 0.9.20 (RUSTSEC-2026-0204),
+  `anyhow` → 1.0.104 (RUSTSEC-2026-0190), `memmap2` → 0.9.11
+  (RUSTSEC-2026-0186). `cargo audit` is now part of CI.
+
+### Added
+
+- `tests/property.rs`: proptest suite (tensor shape ops vs hand-rolled
+  references, decode-arena disjointness/alignment/isolation, K-quant dequant
+  contracts) plus fuzz-style robustness tests for the untrusted-input
+  boundaries: the GGUF loader, the v0.5 spec parser, and the npy reader must
+  never panic on arbitrary input.
+- `benches/hooks_overhead.rs`: planned-decode cost with a noop experiment
+  runner attached vs bare (Gate H evidence; measured ≈0% overhead).
+- Rustdoc lints (`broken_intra_doc_links`, `private_intra_doc_links`) and a
+  CI docs step (`RUSTDOCFLAGS=-D warnings cargo doc`).
+
+### Fixed
+
+- `tests/k_parity.rs::v04_planned_inactive_hooks_real_model` failed on Q8_0
+  models: the plain run uses the v0.3 native fast path (contract D1) while
+  the hooked run uses the generic hooked path, so bit-exact logits were not
+  the right contract there (tokens always matched). The test now skips
+  models without K-quant tensors; all parity suites (Q8_0, Q6_K, Q4_K_M)
+  pass 5/5.
+- All 8 rustdoc warnings (math-notation brackets parsed as links,
+  private-item links, unclosed HTML tag in a doc comment).
+- Stale `#[allow(dead_code)]` on `KQuantWeight::try_from_mmap` (the loader
+  calls it), on the generic `LlamaMlp/Attention/Block` structs, and dead
+  gemma4 `forward_full` paths (test-only attention ported behind
+  `#[cfg(test)]`).
+- `// Safety:` comments on the previously undocumented `unsafe` sites: the
+  `matrixmultiply::sgemm` call in `tensor.rs` and 29 SIMD kernels in
+  `simd.rs`.
+
 ## [0.5.1] - 2026-08-04
 
 ### Fixed
