@@ -934,3 +934,151 @@ mod tests {
         assert_eq!(parsed.events[0].op_kind, OpKind::MatMulQ8_0);
     }
 }
+
+#[cfg(test)]
+mod value_tests {
+    use super::*;
+
+    #[test]
+    fn record_events_flow_into_report_summary_and_json() {
+        assert!(enable_tracing("prefill", 0));
+        record(
+            "attn_qkv",
+            3,
+            OpKind::MatMulQ8_0,
+            vec![1, 256],
+            1024,
+            vec![1, 256],
+            1024,
+            131_072,
+            1_000,
+            None,
+        );
+        record(
+            "attn_qkv",
+            3,
+            OpKind::MatMulQ8_0,
+            vec![1, 256],
+            1024,
+            vec![1, 256],
+            1024,
+            131_072,
+            1_000,
+            Some(compute_tensor_values(&[1.0, 2.0, 3.0])),
+        );
+        record(
+            "rms_norm",
+            5,
+            OpKind::RmsNorm,
+            vec![1, 256],
+            1024,
+            vec![1, 256],
+            1024,
+            512,
+            500,
+            None,
+        );
+        let report = disable_tracing().expect("report");
+        assert_eq!(report.phase, "prefill");
+        assert_eq!(report.token_index, 0);
+        assert_eq!(report.events.len(), 3);
+        // total_duration_ns is wall-clock elapsed since enable_tracing (the
+        // recorded per-event durations are synthetic here), so it is
+        // independent of them: assert it is positive.
+        assert!(report.total_duration_ns > 0);
+        assert_eq!(
+            report
+                .events
+                .iter()
+                .map(|e| e.duration_ns)
+                .collect::<Vec<_>>(),
+            vec![1_000, 1_000, 500],
+            "per-event recorded durations preserved"
+        );
+
+        // sorted by (layer, name): layers 3, 3, 5
+        let sorted = report.sorted_events();
+        assert_eq!(
+            sorted.iter().map(|e| e.layer).collect::<Vec<_>>(),
+            vec![3, 3, 5]
+        );
+
+        // summary renders the header and per-layer data
+        let summary = report.summary();
+        assert!(summary.contains("prefill summary"), "{summary}");
+        assert!(summary.contains("layer"), "{summary}");
+        assert!(summary.contains(" 3 "), "layer 3 row: {summary}");
+        assert!(summary.contains(" 5 "), "layer 5 row: {summary}");
+
+        // json round-trips with all events
+        let json = report.to_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("report json parses");
+        assert_eq!(parsed["events"].as_array().expect("events").len(), 3);
+        assert_eq!(parsed["phase"], "prefill");
+
+        // values captured only where provided
+        assert_eq!(report.events[0].output_l2_norm, None);
+        let with_values = &report.events[1];
+        let l2 = with_values.output_l2_norm.expect("l2 present");
+        assert!(
+            (l2 - 14f64.sqrt()).abs() < 1e-9,
+            "l2 of [1,2,3] is sqrt(14), got {l2}"
+        );
+        assert_eq!(with_values.output_abs_max, Some(3.0));
+        assert!(with_values.output_fingerprint.is_some());
+        assert!(report.events[2].output_fingerprint.is_none());
+    }
+
+    #[test]
+    fn span_lifecycle_records_with_layer_phase_and_values() {
+        assert!(enable_tracing("decode", 1));
+        set_current_layer(7);
+        assert_eq!(current_layer(), 7);
+        let span = span(
+            "mlp_silu",
+            current_layer(),
+            OpKind::Silu,
+            vec![1, 256],
+            1024,
+            256,
+        )
+        .expect("span while tracing");
+        span.end_with_values(vec![1, 256], 1024, Some(compute_tensor_values(&[4.0, 0.0])));
+        let report = disable_tracing().expect("report");
+        assert_eq!(report.events.len(), 1);
+        assert_eq!(report.events[0].layer, 7);
+        assert_eq!(report.events[0].token_index, 1);
+        assert_eq!(report.events[0].phase, "decode");
+        assert_eq!(report.events[0].op_kind, OpKind::Silu);
+        assert_eq!(report.events[0].output_abs_max, Some(4.0));
+        assert!(report.events[0].duration_ns > 0);
+    }
+
+    #[test]
+    fn span_returns_none_when_tracing_is_off() {
+        assert!(!is_tracing());
+        let span = span("x", 0, OpKind::Other, vec![], 0, 0);
+        assert!(span.is_none());
+        // disable with no tracer is a no-op returning None
+        assert!(disable_tracing().is_none());
+    }
+
+    #[test]
+    fn values_level_gates_value_collection() {
+        set_values_level(TraceValuesLevel::None);
+        assert!(!values_enabled());
+        set_values_level(TraceValuesLevel::Summary);
+        assert!(values_enabled());
+        // deterministic fingerprint
+        let a = compute_tensor_values(&[1.5, -2.5, 3.5]);
+        let b = compute_tensor_values(&[1.5, -2.5, 3.5]);
+        assert_eq!(a.output_fingerprint, b.output_fingerprint);
+        assert_eq!(a.output_abs_max, 3.5); // TraceValues stores plain f32
+                                           // different data -> different fingerprint (the fingerprint mixes
+                                           // every 64th element, so use 65-element inputs differing at index 64)
+        let mut c_data = vec![1.5f32; 65];
+        c_data[64] = 3.6;
+        let c = compute_tensor_values(&c_data);
+        assert_ne!(a.output_fingerprint, c.output_fingerprint);
+    }
+}

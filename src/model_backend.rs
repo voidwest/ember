@@ -1520,4 +1520,328 @@ cat > "$run_dir/{checksums_filename}" <<'JSON'
         fs::set_permissions(&path, perms).expect("chmod script");
         path
     }
+
+    // ------------------------------------------------------------------
+    // compare_backend_artifacts: parity reporting between two artifact dirs
+    // ------------------------------------------------------------------
+
+    /// Write a complete, validation-passing v0.2 artifact run directory.
+    /// `logits` optionally writes logits.npy and advertises it in the manifest.
+    fn write_artifact_dir(
+        dir: &std::path::Path,
+        model: &std::path::Path,
+        samples: &std::path::Path,
+        binary: &std::path::Path,
+        tokenization: &str,
+        positions: &str,
+        logits: Option<(&[usize; 2], Vec<f32>)>,
+    ) {
+        let config = external_config(dir, model, samples, binary);
+        let canonical_config = canonical_config_toml(&config).expect("canonical config");
+        let config_hash = stable_bytes_hash(canonical_config.as_bytes());
+        let prompt_hash = stable_prompt_hash("hello");
+        let order_hash = sample_order_hash(&[("s0".to_string(), prompt_hash.clone())]);
+        let logits_written = logits.is_some();
+        let logits_file_bytes = logits.as_ref().map(|(_, data)| {
+            let mut bytes = Vec::new();
+            for value in data {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            bytes
+        });
+        let (logits_path, logits_contract) = match logits {
+            Some((shape, data)) => {
+                crate::npy::write_npy_2d(
+                    &dir.join(LOGITS_FILENAME).to_string_lossy(),
+                    &data,
+                    shape,
+                )
+                .expect("write logits npy");
+                (
+                    Some(LOGITS_FILENAME),
+                    Some(serde_json::json!({"path": LOGITS_FILENAME, "shape": shape})),
+                )
+            }
+            None => (None, None),
+        };
+        let manifest = serde_json::json!({
+            "schema_version": ARTIFACT_CONTRACT_VERSION,
+            "layout": ARTIFACT_LAYOUT,
+            "artifact_kind": "ember_hidden_states",
+            "created_at_unix": 0,
+            "run_id": null,
+            "run_dir": dir.to_string_lossy(),
+            "config_path": CONFIG_FILENAME,
+            "samples_path": SAMPLES_FILENAME,
+            "tokenization_path": TOKENIZATION_FILENAME,
+            "positions_path": POSITIONS_FILENAME,
+            "checksums_path": CHECKSUMS_FILENAME,
+            "report_path": REPORT_FILENAME,
+            "logits_path": logits_path,
+            "tensor_contract": {
+                "storage": "layer-sharded-npy",
+                "dtype": "f32",
+                "byte_order": "little-endian",
+                "sample_axis": 0,
+                "hidden_axis": 1,
+                "layers": [],
+                "logits": logits_contract
+            },
+            "sample_count": 1,
+            "sample_order_hash": order_hash,
+            "config_hash": config_hash,
+            "dtype": "f32",
+            "output_format": "npy",
+            "model": {
+                "path": model.to_string_lossy(),
+                "architecture": null,
+                "n_layers": 0,
+                "embed_dim": 0,
+                "max_seq_len": 0,
+                "file_size_bytes": null,
+                "sha256": null,
+                "gguf_metadata": null
+            },
+            "tokenizer": null,
+            "backend": {
+                "name": "llama-cpp-external",
+                "version": null,
+                "executable": null,
+                "commit": null,
+                "details": {}
+            },
+            "extraction_config": config
+        });
+        let samples_content = format!(
+            "{{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"input_index\":0,\"prompt\":\"hello\",\"prompt_hash\":\"{prompt_hash}\"}}\n"
+        );
+        let tokenization_content = format!("{tokenization}\n");
+        let positions_content = format!("{positions}\n");
+        let report_content = format!(
+            "{{\"schema_version\":2,\"layout\":\"ember.layer_sharded_npy.v1\",\"status\":\"complete\",\"sample_count\":1,\"layer_count\":0,\"logits_written\":{logits_written}}}\n"
+        );
+        let manifest_content = format!("{}\n", serde_json::to_string_pretty(&manifest).unwrap());
+        let mut checksums = serde_json::json!({
+            CONFIG_FILENAME: crate::extraction::sha256_bytes(canonical_config.as_bytes()),
+            MANIFEST_FILENAME: crate::extraction::sha256_bytes(manifest_content.as_bytes()),
+            SAMPLES_FILENAME: crate::extraction::sha256_bytes(samples_content.as_bytes()),
+            TOKENIZATION_FILENAME: crate::extraction::sha256_bytes(tokenization_content.as_bytes()),
+            POSITIONS_FILENAME: crate::extraction::sha256_bytes(positions_content.as_bytes()),
+            REPORT_FILENAME: crate::extraction::sha256_bytes(report_content.as_bytes()),
+        });
+        std::fs::write(dir.join(CONFIG_FILENAME), &canonical_config).unwrap();
+        std::fs::write(dir.join(SAMPLES_FILENAME), &samples_content).unwrap();
+        std::fs::write(dir.join(TOKENIZATION_FILENAME), &tokenization_content).unwrap();
+        std::fs::write(dir.join(POSITIONS_FILENAME), &positions_content).unwrap();
+        std::fs::write(dir.join(REPORT_FILENAME), &report_content).unwrap();
+        std::fs::write(dir.join(MANIFEST_FILENAME), &manifest_content).unwrap();
+        if logits_file_bytes.is_some() {
+            // checksums.json records the npy *file* bytes; the writer pads
+            // the header, so hash what is actually on disk.
+            let file_bytes = std::fs::read(dir.join(LOGITS_FILENAME)).expect("logits on disk");
+            let checksums = checksums.as_object_mut().expect("checksums object");
+            checksums.insert(
+                LOGITS_FILENAME.to_string(),
+                serde_json::Value::String(crate::extraction::sha256_bytes(&file_bytes)),
+            );
+        }
+        let checksums_content = format!("{}\n", serde_json::to_string_pretty(&checksums).unwrap());
+        std::fs::write(dir.join(CHECKSUMS_FILENAME), &checksums_content).unwrap();
+    }
+
+    fn tokenization_line(token_ids: &[u32]) -> String {
+        format!(
+            "{{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"token_ids\":{token_ids:?},\"token_count\":{},\"prompt_hash\":\"{}\",\"offsets\":[[0,0],[0,2],[2,5]],\"offset_unit\":\"unicode_character_index\"}}",
+            token_ids.len(),
+            stable_prompt_hash("hello")
+        )
+    }
+
+    const POSITIONS_LINE: &str = "{\"schema_version\":2,\"sample_index\":0,\"sample_id\":\"s0\",\"position_mode\":\"prompt_final\",\"pooling\":\"single\",\"selected_token_positions\":[2],\"source_field\":null,\"source_value\":null,\"source_byte_span\":null}";
+
+    #[test]
+    fn compare_backend_artifacts_identical_reports_clean() {
+        let root = temp_test_dir("compare_clean");
+        let native = root.join("native");
+        let external = root.join("external");
+        std::fs::create_dir_all(&native).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        let model = write_file(&root, "model.gguf", "dummy");
+        let samples = write_file(
+            &root,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
+        let tokens = tokenization_line(&[1, 2, 3]);
+        for dir in [&native, &external] {
+            write_artifact_dir(
+                dir,
+                &model,
+                &samples,
+                &binary,
+                &tokens,
+                POSITIONS_LINE,
+                None,
+            );
+        }
+        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        assert!(report.sample_order_hash_matches);
+        assert!(report.prompt_hash_mismatches.is_empty());
+        assert!(report.token_id_mismatches.is_empty());
+        assert!(report.token_offset_mismatches.is_empty());
+        assert!(report.position_mismatches.is_empty());
+        assert_eq!(report.logits_status, "not_exposed");
+        assert!(report.logits_comparison.is_none());
+        assert_eq!(report.sample_count, 1);
+    }
+
+    #[test]
+    fn compare_backend_artifacts_detects_token_and_position_mismatches() {
+        let root = temp_test_dir("compare_mismatch");
+        let native = root.join("native");
+        let external = root.join("external");
+        std::fs::create_dir_all(&native).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        let model = write_file(&root, "model.gguf", "dummy");
+        let samples = write_file(
+            &root,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
+        write_artifact_dir(
+            &native,
+            &model,
+            &samples,
+            &binary,
+            &tokenization_line(&[1, 2, 3]),
+            POSITIONS_LINE,
+            None,
+        );
+        // external: different token ids. (Position records are fully
+        // canonicalized by validation — prompt-final fixes pooling, source
+        // field and positions — so position_mismatch is a defensive check
+        // that cannot fire on a valid pair; we assert it stays empty.)
+        let external_positions = POSITIONS_LINE;
+        write_artifact_dir(
+            &external,
+            &model,
+            &samples,
+            &binary,
+            &tokenization_line(&[1, 2, 4]),
+            external_positions,
+            None,
+        );
+        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        assert_eq!(report.token_id_mismatches, vec![0]);
+        assert!(report.position_mismatches.is_empty());
+        assert!(report.prompt_hash_mismatches.is_empty());
+        assert!(report.sample_order_hash_matches);
+    }
+
+    #[test]
+    fn compare_backend_artifacts_logits_identical_then_perturbed() {
+        let root = temp_test_dir("compare_logits");
+        let native = root.join("native");
+        let external = root.join("external");
+        std::fs::create_dir_all(&native).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        let model = write_file(&root, "model.gguf", "dummy");
+        let samples = write_file(
+            &root,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
+        let tokens = tokenization_line(&[1, 2, 3]);
+        let logits = (
+            [1usize, 8],
+            vec![0.5f32, 0.1, 2.0, -1.0, 0.0, 0.3, 4.0, 1.5],
+        );
+        write_artifact_dir(
+            &native,
+            &model,
+            &samples,
+            &binary,
+            &tokens,
+            POSITIONS_LINE,
+            Some((&logits.0, logits.1.clone())),
+        );
+        write_artifact_dir(
+            &external,
+            &model,
+            &samples,
+            &binary,
+            &tokens,
+            POSITIONS_LINE,
+            Some((&logits.0, logits.1.clone())),
+        );
+        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        assert_eq!(report.logits_status, "identical");
+        let comparison = report.logits_comparison.expect("comparison present");
+        assert!(comparison.exact_bits_equal);
+        assert_eq!(comparison.max_abs_diff, 0.0);
+        assert_eq!(comparison.top1_match_count, 1);
+        assert_eq!(comparison.top1_match_rate, 1.0);
+        assert!(comparison.cosine_similarity.unwrap() > 0.999);
+
+        // perturb the external logits so the argmax flips
+        let mut perturbed = logits.1.clone();
+        perturbed[0] = 100.0; // argmax was index 6 (4.0); now index 0
+        write_artifact_dir(
+            &external,
+            &model,
+            &samples,
+            &binary,
+            &tokens,
+            POSITIONS_LINE,
+            Some((&[1usize, 8], perturbed)),
+        );
+        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        assert_eq!(report.logits_status, "different");
+        let comparison = report.logits_comparison.expect("comparison present");
+        assert!(!comparison.exact_bits_equal);
+        assert!(comparison.max_abs_diff > 0.0);
+        assert_eq!(comparison.top1_match_count, 0);
+        assert_eq!(comparison.top1_match_rate, 0.0);
+    }
+
+    #[test]
+    fn compare_backend_artifacts_logits_one_side_only() {
+        let root = temp_test_dir("compare_logits_one_side");
+        let native = root.join("native");
+        let external = root.join("external");
+        std::fs::create_dir_all(&native).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+        let model = write_file(&root, "model.gguf", "dummy");
+        let samples = write_file(
+            &root,
+            "samples.jsonl",
+            "{\"id\":\"s0\",\"prompt\":\"hello\"}\n",
+        );
+        let binary = write_executable(&root, "extract.sh", "#!/bin/sh\nexit 0");
+        let tokens = tokenization_line(&[1, 2, 3]);
+        write_artifact_dir(
+            &native,
+            &model,
+            &samples,
+            &binary,
+            &tokens,
+            POSITIONS_LINE,
+            Some((&[1usize, 8], vec![0.0; 8])),
+        );
+        write_artifact_dir(
+            &external,
+            &model,
+            &samples,
+            &binary,
+            &tokens,
+            POSITIONS_LINE,
+            None,
+        );
+        let report = compare_backend_artifacts(&native, &external).expect("compare");
+        assert_eq!(report.logits_status, "native_only");
+        assert!(report.logits_comparison.is_none());
+    }
 }
