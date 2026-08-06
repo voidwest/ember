@@ -25,6 +25,19 @@ Ember is not a llama.cpp throughput competitor. llama.cpp remains the
 external performance and correctness reference; Ember prioritizes
 inspectability, intervention semantics, and reproducible research artifacts.
 
+## conference demo
+
+One script runs the full story end-to-end (~2.5 minutes): interactive
+generation, the reproducible capture/intervene/restore workflow with
+machine verdicts, and the planned-decode speedup:
+
+```bash
+bash scripts/conference_demo.sh
+```
+
+Requires `Llama-3.2-1B-Instruct-Q8_0.gguf` + `tokenizer.json` (and
+`Llama-3.2-1B-Instruct.Q6_K.gguf` for the speedup leg) in the repo root.
+
 ## five-minute workflow
 
 Build once, then drive the reproducible experiment pipeline:
