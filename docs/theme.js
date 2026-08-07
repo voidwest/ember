@@ -21,7 +21,6 @@
         document.querySelectorAll(".theme-toggle").forEach(function(button) {
             var active = root.dataset.theme;
             var next = active === "light" ? "dark" : "light";
-            button.textContent = next;
             button.setAttribute("aria-pressed", active === "light" ? "true" : "false");
             var label = root.lang === "ar"
                 ? "التبديل إلى الوضع " + (next === "light" ? "الفاتح" : "الداكن")
@@ -57,7 +56,7 @@
         });
     }
 
-    applyTheme(storedTheme() || "dark");
+    applyTheme(storedTheme() || "light"); // DESIGN.md canvas is a warm light surface
 
     document.addEventListener("DOMContentLoaded", function() {
         enhanceSiteNavigation();

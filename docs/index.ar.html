@@ -11,8 +11,8 @@
         <meta name="twitter:card" content="summary" />
         <title>voidwest</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=f0b168ef29a5" />
-        <link rel="stylesheet" href="/homepage.css?v=20260717-2" />
+        <link rel="stylesheet" href="/style.css?v=20260806-refined" />
+        <link rel="stylesheet" href="/homepage.css?v=20260806-refined" />
         <meta property="og:image" content="https://voidwest.dev/og/voidwest.png" />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
@@ -20,67 +20,60 @@
         <script src="/theme.js"></script>
     </head>
     <body class="home">
-        <header class="home-header">
-            <nav class="home-nav" aria-label="التنقل الرئيسي">
-                <a class="home-brand" href="/index.ar.html" aria-current="page">
-                    <picture>
-                        <img src="/assets/voidwest/vw-mark-light.svg" alt="" width="32" height="24" />
-                    </picture>
-                    <span>voidwest</span>
-                </a>
-                <div class="home-nav-links" id="home-menu">
-                    <a href="/ember/index.ar.html">ember</a>
-                    <a href="/research-notes/index.ar.html">research notes</a>
-                    <a href="/tools/index.ar.html">tools</a>
-                    <a href="/terms/index.ar.html">terms</a>
-                    <button class="theme-toggle mobile-theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false">light</button>
-                </div>
-                <div class="home-nav-actions">
-                    <a class="home-lang" href="/">en</a>
-                    <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false">light</button>
-                    <button class="menu-toggle" type="button" aria-label="فتح قائمة التنقل" aria-controls="home-menu" aria-expanded="false"><span></span><span></span><span></span></button>
-                </div>
-            </nav>
-        </header>
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
+            <a class="brand" href="/index.ar.html" aria-current="page">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/">en</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
 
         <main>
-            <section class="home-hero" aria-labelledby="hero-title">
-                <div class="hero-copy">
-                    <p class="section-label">// باحث مستقل</p>
-                    <h1 id="hero-title">الأنظمة، اللغة،<br />والتقييم.</h1>
-                    <p class="hero-intro">أستكشف معالجة اللغة العربية وتقييم النماذج وتحليل تمثيلاتها من خلال أبحاث دقيقة قابلة لإعادة الإنتاج.</p>
-                    <a class="text-link" href="/research-notes/index.ar.html">اقرأ ملاحظات البحث <span aria-hidden="true">←</span></a>
-                </div>
-                <div class="registration-field" aria-hidden="true">
-                    <picture>
-                        <img src="/assets/voidwest/registration-mark-light.svg" alt="" width="320" height="320" />
-                    </picture>
-                </div>
-            </section>
+            <header class="home-masthead">
+                <p class="section-label">باحث مستقل</p>
+                <h1 id="hero-title">اللغة العربية، وتقييم النماذج،<br />وأنظمة الاستدلال.</h1>
+                <p class="home-intro">أستكشف معالجة اللغة العربية وتقييم النماذج وتحليل تمثيلاتها من خلال أبحاث دقيقة قابلة لإعادة الإنتاج.</p>
+                <a class="text-link" href="/research-notes/index.ar.html">اقرأ ملاحظات البحث <span aria-hidden="true">←</span></a>
+            </header>
 
-            <section class="home-section projects-section" aria-labelledby="projects-title">
-                <h2 class="section-label" id="projects-title">// المشاريع</h2>
+            <section class="home-section" aria-labelledby="projects-title">
+                <h2 class="section-label" id="projects-title">المشاريع</h2>
                 <div class="project-grid">
                     <article class="project-record">
-                        <h3><bdi>ember</bdi></h3>
-                        <p>استخراج الحالات الخفية، واختبارات واعية بالتسرب، وتجارب صرفية قابلة لإعادة الإنتاج على نماذج <bdi>GGUF</bdi>.</p>
-                        <div class="project-meta"><a href="/ember/index.ar.html">عرض المشروع <span aria-hidden="true">←</span></a><span class="project-index">01</span></div>
+                        <div>
+                            <h3><bdi>ember</bdi></h3>
+                            <p>استدلال <bdi>CPU</bdi> قابل للتفحص لأبحاث أنظمة <bdi>LLM</bdi> القابلة لإعادة الإنتاج.</p>
+                            <div class="project-meta"><a href="/ember/index.ar.html">عرض المشروع <span aria-hidden="true">←</span></a></div>
+                        </div>
+                        <span class="project-index">01</span>
                     </article>
                     <article class="project-record">
-                        <h3><bdi>atlas</bdi></h3>
-                        <p>يرصد القيود والتقييمات الناقصة وادعاءات العمل المستقبلي في الأوراق. حتمي ويرتكز على الأدلة.</p>
-                        <div class="project-meta"><a href="https://github.com/voidwest/atlas">عرض المشروع <span aria-hidden="true">←</span></a><span class="project-index">02</span></div>
+                        <div>
+                            <h3><bdi>atlas</bdi></h3>
+                            <p>يرصد القيود والتقييمات الناقصة وادعاءات العمل المستقبلي في الأوراق. حتمي ويرتكز على الأدلة.</p>
+                            <div class="project-meta"><a href="https://github.com/voidwest/atlas">عرض المشروع <span aria-hidden="true">←</span></a></div>
+                        </div>
+                        <span class="project-index">02</span>
                     </article>
                     <article class="project-record">
-                        <h3><bdi>mini-os</bdi></h3>
-                        <p>نواة <bdi>x86_64</bdi> مصغرة بلغة <bdi>Rust</bdi> تدعم الذاكرة الافتراضية والتنفيذ غير المتزامن وقرصاً وصدفة صغيرة.</p>
-                        <div class="project-meta"><a href="https://github.com/voidwest/mini-os">عرض المصدر <span aria-hidden="true">←</span></a><span class="project-index">03</span></div>
+                        <div>
+                            <h3><bdi>mini-os</bdi></h3>
+                            <p>نواة <bdi>x86_64</bdi> مصغرة بلغة <bdi>Rust</bdi> تدعم الذاكرة الافتراضية والتنفيذ غير المتزامن وقرصاً وصدفة صغيرة.</p>
+                            <div class="project-meta"><a href="https://github.com/voidwest/mini-os">عرض المصدر <span aria-hidden="true">←</span></a></div>
+                        </div>
+                        <span class="project-index">03</span>
                     </article>
                 </div>
             </section>
 
-            <section class="home-section notes-section" aria-labelledby="notes-title">
-                <h2 class="section-label" id="notes-title">// ملاحظات البحث</h2>
+            <section class="home-section" aria-labelledby="notes-title">
+                <h2 class="section-label" id="notes-title">ملاحظات البحث</h2>
                 <div class="notes-table">
                     <a class="note-row" href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">
                         <time datetime="2026-08-01">2026-08-01</time><span class="note-title">الملف قال <bdi>Q4</bdi>. والـ<bdi>runtime</bdi> قال <bdi>f32</bdi>.</span><span class="note-tags" lang="en"><bdi>Ember</bdi> &nbsp;&nbsp; runtime systems</span><span class="note-arrow" aria-hidden="true">←</span>
@@ -102,13 +95,13 @@
             </section>
         </main>
 
-        <footer class="home-footer">
+        <footer class="site-footer">
             <span>© 2026 voidwest</span>
-            <div class="footer-links">
+            <span class="footer-social">
                 <a href="https://github.com/voidwest">github</a>
                 <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
                 <a href="mailto:mthobaiti@outlook.com">email</a>
-            </div>
+            </span>
         </footer>
     </body>
 </html>
