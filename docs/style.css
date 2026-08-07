@@ -234,15 +234,15 @@ button:focus-visible {
     color: var(--accent);
 }
 
-.theme-icon-sun {
+.theme-toggle .theme-icon-sun {
     display: none;
 }
 
-:root[data-theme="dark"] .theme-icon-sun {
+:root[data-theme="dark"] .theme-toggle .theme-icon-sun {
     display: block;
 }
 
-:root[data-theme="dark"] .theme-icon-moon {
+:root[data-theme="dark"] .theme-toggle .theme-icon-moon {
     display: none;
 }
 
