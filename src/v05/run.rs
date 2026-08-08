@@ -799,13 +799,18 @@ directory = "runs/bundle-test"
         assert!(dir.join("semantic-manifest.json").is_file());
         assert!(dir.join("captures").is_dir());
         assert!(!identity.payload_hash.is_empty());
-        // No staging leftovers after a successful publish.
+        // No staging leftovers for this bundle after a successful
+        // publish. Scoped to our own staging prefix: `dir.parent()` is the
+        // shared system temp dir and other tests/processes may legitimately
+        // hold `.tmp-` entries there (parallel `cargo test` threads, cargo
+        // itself, etc.) — a global scan is a flaky check.
+        let staging_prefix = format!(".{}.tmp-", dir.file_name().unwrap().to_string_lossy());
         let leftovers = std::fs::read_dir(dir.parent().unwrap())
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .filter(|e| e.file_name().to_string_lossy().starts_with(&staging_prefix))
             .count();
-        assert_eq!(leftovers, 0, "no staging leftovers");
+        assert_eq!(leftovers, 0, "no staging leftovers for {}", staging_prefix);
         std::fs::remove_dir_all(&dir).ok();
     }
 
