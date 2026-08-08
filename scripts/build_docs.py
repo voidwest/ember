@@ -137,6 +137,8 @@ def og_slug_for(path: Path) -> str:
         return "voidwest"
     if rel.startswith("ember/simd-qwen-gemma/"):
         return "simd-qwen-gemma"
+    if rel.startswith("ember/road-to-ember-1.0/"):
+        return "ember-road-to-1.0"
     if rel.startswith("ember/"):
         return "ember"
     if rel.startswith("research-notes/llama-probing-results"):
