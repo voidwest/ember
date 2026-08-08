@@ -160,7 +160,7 @@ pub struct ExperimentSpecV1 {
 
 /// The strict user-authored TOML form: every defaultable field is
 /// optional so omitted values are distinguishable from explicit ones.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawExperimentSpec {
     pub schema: String,
@@ -178,7 +178,7 @@ pub struct RawExperimentSpec {
     pub output: RawOutputSpec,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawExperimentMetadata {
     pub name: String,
@@ -188,7 +188,7 @@ pub struct RawExperimentMetadata {
     pub seed: Option<u64>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawModelSpec {
     pub path: PathBuf,
@@ -202,7 +202,7 @@ pub struct RawModelSpec {
     pub arch: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawExecutionSpec {
     #[serde(default)]
@@ -213,7 +213,7 @@ pub struct RawExecutionSpec {
     pub deterministic: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawGenerationSpec {
     #[serde(default)]
@@ -222,14 +222,14 @@ pub struct RawGenerationSpec {
     pub temperature: Option<f32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawInputSpec {
     pub id: String,
     pub text: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RawOutputSpec {
     pub directory: PathBuf,

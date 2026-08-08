@@ -1,5 +1,7 @@
 mod cli_experiment;
 mod cli_support;
+mod gui;
+mod gui_native;
 
 mod cli_commands;
 mod cli_generation;
@@ -296,6 +298,12 @@ pub(crate) enum Commands {
 
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
+    /// native experiment console (v0.6): iced single-window GUI over the
+    /// v0.5 experiment pipeline
+    Gui(gui_native::NativeGuiArgs),
+    /// browser experiment console (v0.6): local single-page GUI over the
+    /// v0.5 experiment pipeline
+    WebGui(gui::GuiArgs),
 }
 
 #[derive(ClapArgs)]
@@ -690,6 +698,12 @@ fn main() -> anyhow::Result<()> {
                     cli_experiment::run_tokenize_command(command, k_strategy, args.k_allow_fallback)
                 }
             },
+            Commands::Gui(command) => {
+                gui_native::run_gui_command(command, k_strategy, args.k_allow_fallback)
+            }
+            Commands::WebGui(command) => {
+                gui::run_gui_command(command, k_strategy, args.k_allow_fallback)
+            }
         };
     }
 

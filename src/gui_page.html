@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EMBER — experiment console</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --border: #d8dae0;
+    --border-strong: #b9bdc6;
+    --text: #1c2026;
+    --text-dim: #5b6270;
+    --text-faint: #8a90a0;
+    --accent: #2456c4;
+    --accent-soft: #e9eefb;
+    --ok: #157f3d;
+    --ok-soft: #e6f4ec;
+    --err: #b3261e;
+    --err-soft: #fdeceb;
+    --warn: #9a6700;
+    --warn-soft: #fdf3d9;
+    --body-bg: #fcfcfd;      /* output bodies */
+    --disabled-bg: #f0f1f3;  /* disabled fields */
+    --ghost-bg: #ffffff;     /* ghost button */
+    --pending-bg: #f6f7f9;   /* pending badges */
+    --ok-border: #9cc9ad;
+    --err-border: #e0a6a2;
+    --warn-border: #d9b45a;
+    --err-text: #7c1d18;     /* error box text */
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", "Noto Naskh Arabic",
+            "Noto Sans Arabic", "Geeza Pro", "Tahoma", system-ui, sans-serif;
+    --header: #181b20;
+    color-scheme: light;
+  }
+
+  /* dark console theme (toggled from the header; persists in localStorage) */
+  html[data-theme="dark"] {
+    --bg: #1b1f26;
+    --panel: #232830;
+    --border: #333a45;
+    --border-strong: #46505e;
+    --text: #e8eaee;
+    --text-dim: #9aa3b2;
+    --text-faint: #6e7684;
+    --accent: #5b8cf0;
+    --accent-soft: #26324a;
+    --ok: #3fb96f;
+    --ok-soft: #1d3328;
+    --err: #f06a5e;
+    --err-soft: #3a2220;
+    --warn: #d9a94f;
+    --warn-soft: #3a301e;
+    --body-bg: #2a303a;
+    --disabled-bg: #262b33;
+    --ghost-bg: #2a303a;
+    --pending-bg: #262b33;
+    --ok-border: #2e6b47;
+    --err-border: #8a4a44;
+    --warn-border: #8a6a2e;
+    --err-text: #f5a49c;
+    color-scheme: dark;
+  }
+
+  .theme-btn {
+    background: #262b33; color: #c9d0db; border: 1px solid #3a4150;
+    border-radius: 3px; padding: 4px 10px; cursor: pointer; font-size: 12px;
+    flex: 0 0 auto;
+  }
+  .theme-btn:hover { color: #ffffff; border-color: #46505e; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--text);
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .mono { font-family: var(--mono); }
+
+  /* ---------- header ---------- */
+  header {
+    background: var(--header);
+    color: #e8eaee;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 16px;
+    height: 46px;
+    flex: 0 0 auto;
+    border-bottom: 3px solid #2f6fdb;
+  }
+  .brand { font-size: 16px; font-weight: 700; letter-spacing: 0.14em; }
+  .brand span { color: #7ea6f0; }
+  .brand-sub { font-size: 11px; color: #9aa3b2; letter-spacing: 0.08em; margin-top: 1px; }
+  header .spacer { flex: 1; }
+  .head-chip {
+    font-size: 11px; color: #c9d0db; background: #262b33; border: 1px solid #3a4150;
+    padding: 3px 8px; border-radius: 3px; font-family: var(--mono); max-width: 46vw;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .head-chip b { color: #ffffff; font-weight: 600; }
+
+  /* ---------- layout ---------- */
+  main { flex: 1 1 auto; display: grid; grid-template-columns: 264px 1fr; min-height: 0; }
+  aside {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 10px 12px 14px;
+  }
+  section { flex: 1 1 auto; overflow-y: auto; padding: 12px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  /* ---------- form controls ---------- */
+  .field { margin-bottom: 10px; }
+  label.lbl {
+    display: block; font-size: 10.5px; font-weight: 600; letter-spacing: 0.09em;
+    text-transform: uppercase; color: var(--text-dim); margin-bottom: 3px;
+  }
+  .hint { font-size: 10.5px; color: var(--text-faint); margin-top: 2px; }
+  select, input[type=text], input[type=number], textarea {
+    width: 100%; font-family: var(--sans); font-size: 13px; color: var(--text);
+    background: var(--body-bg); border: 1px solid var(--border-strong); border-radius: 3px;
+    padding: 5px 7px;
+  }
+  select:focus, input:focus, textarea:focus {
+    outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(36,86,196,.18);
+  }
+  select:disabled, input:disabled { background: var(--disabled-bg); color: var(--text-faint); cursor: not-allowed; }
+  input[type=number] { font-family: var(--mono); }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; min-width: 0; }
+
+  .btn {
+    display: block; width: 100%; text-align: center; font-size: 12.5px; font-weight: 600;
+    letter-spacing: 0.06em; border-radius: 3px; padding: 8px 10px; cursor: pointer;
+    border: 1px solid transparent; font-family: var(--sans);
+  }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .btn-primary:hover:not(:disabled) { background: #1d4aab; }
+  .btn-ghost { background: var(--ghost-bg); color: var(--text-dim); border-color: var(--border-strong); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn-row { display: flex; gap: 8px; margin-top: 2px; }
+  .btn-row .btn { flex: 1; }
+  .btn.small { padding: 5px 8px; font-size: 11.5px; width: auto; }
+
+  .model-status { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-top: 6px; line-height: 1.55; }
+  .model-status .ok { color: var(--ok); }
+  .model-status .err { color: var(--err); }
+  .model-status .dim { color: var(--text-faint); }
+
+  .divider { border: none; border-top: 1px solid var(--border); margin: 12px 0 10px; }
+
+  /* ---------- prompt ---------- */
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
+    padding: 10px 12px;
+  }
+  .panel-title {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.11em; text-transform: uppercase;
+    color: var(--text-dim); margin-bottom: 6px; display: flex; align-items: center; gap: 8px;
+  }
+  textarea#prompt {
+    min-height: 68px; resize: vertical; line-height: 1.6; font-size: 14px;
+    direction: auto; text-align: start;
+  }
+  .prompt-meta { display: flex; align-items: center; gap: 10px; margin-top: 6px; flex-wrap: wrap; }
+  .prompt-meta .lbl { margin: 0; }
+  .prompt-meta .field { margin: 0; }
+  .prompt-meta input, .prompt-meta select { width: auto; }
+  .meta-note { font-size: 11px; color: var(--text-faint); font-family: var(--mono); margin-left: auto; }
+
+  /* ---------- outputs ---------- */
+  .outputs { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .output {
+    display: flex; flex-direction: column; min-height: 150px;
+  }
+  .output .statusline { display: flex; align-items: center; gap: 6px; }
+  .output .state-badge {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em; padding: 2px 7px;
+    border-radius: 2px; border: 1px solid;
+  }
+  .state-pending { color: var(--text-faint); border-color: var(--border-strong); background: var(--pending-bg); }
+  .state-running { color: var(--warn); border-color: var(--warn-border); background: var(--warn-soft); }
+  .state-done { color: var(--ok); border-color: var(--ok-border); background: var(--ok-soft); }
+  .state-error { color: var(--err); border-color: var(--err-border); background: var(--err-soft); }
+  .output-body {
+    flex: 1; border: 1px solid var(--border); border-radius: 3px; background: var(--body-bg);
+    padding: 8px 10px; font-size: 13.5px; line-height: 1.65; direction: auto; text-align: start;
+    white-space: pre-wrap; overflow-wrap: anywhere; min-height: 96px; max-height: 300px; overflow-y: auto;
+    font-family: var(--sans);
+  }
+  .output-body.placeholder { color: var(--text-faint); font-style: italic; }
+  .output-foot {
+    margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--text-faint);
+    line-height: 1.5; overflow-wrap: anywhere;
+  }
+  .output-foot b { color: var(--text-dim); font-weight: 600; }
+
+  /* ---------- verification ---------- */
+  .verify {
+    border: 1px solid var(--border); border-radius: 4px; background: var(--panel);
+    padding: 10px 12px;
+  }
+  .verify-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .verify-badge {
+    font-size: 12.5px; font-weight: 800; letter-spacing: 0.12em; padding: 4px 10px;
+    border-radius: 3px; border: 1px solid;
+  }
+  .verify-badge.ok { color: var(--ok); background: var(--ok-soft); border-color: var(--ok-border); }
+  .verify-badge.err { color: var(--err); background: var(--err-soft); border-color: var(--err-border); }
+  .verify-badge.idle { color: var(--text-faint); background: var(--pending-bg); border-color: var(--border-strong); }
+  .verify-badge.run { color: var(--warn); background: var(--warn-soft); border-color: var(--warn-border); }
+  .verify-meta { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .verify-detail { margin-top: 6px; font-size: 11.5px; color: var(--text-dim); line-height: 1.5; }
+  .verify-detail .ok { color: var(--ok); font-weight: 600; }
+  .verify-detail .err { color: var(--err); font-weight: 600; }
+
+  .error-box {
+    border: 1px solid var(--err-border); background: var(--err-soft); color: var(--err-text);
+    border-radius: 4px; padding: 8px 10px; font-size: 12px; line-height: 1.5;
+    font-family: var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+    display: none;
+  }
+  .error-box.visible { display: block; }
+
+  .warn-box {
+    border: 1px solid var(--warn-border); background: var(--warn-soft); color: var(--warn);
+    border-radius: 4px; padding: 8px 10px; font-size: 11.5px; line-height: 1.5;
+    font-family: var(--mono); display: none; white-space: pre-wrap;
+  }
+  .warn-box.visible { display: block; }
+
+  /* ---------- status bar ---------- */
+  footer {
+    flex: 0 0 auto; background: var(--header); color: #c9d0db; font-family: var(--mono);
+    font-size: 11px; display: flex; align-items: center; gap: 18px; padding: 6px 16px;
+    border-top: 1px solid #2c323b; overflow: hidden; white-space: nowrap;
+  }
+  footer .k { color: #7c8698; }
+  footer .v { color: #e8eaee; }
+  footer .sep { color: #454d5c; }
+  footer .right { margin-left: auto; display: flex; gap: 18px; }
+  footer .ok { color: #57d68d; }
+  footer .err { color: #ff8f85; }
+
+  .spin {
+    display: inline-block; width: 11px; height: 11px; border: 2px solid #c9d0db;
+    border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite;
+    vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <div class="brand">EMBER<span>·</span></div>
+    <div class="brand-sub">EXPERIMENT CONSOLE <span id="ver"></span></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="head-chip" id="head-model" title="no model loaded">model: <b>—</b></div>
+  <div class="head-chip" id="head-session" title="no model loaded">session: <b>idle</b></div>
+  <button class="theme-btn" id="theme-btn" title="toggle light/dark theme" aria-label="toggle light/dark theme">☾</button>
+</header>
+
+<main>
+  <aside>
+    <div class="field">
+      <label class="lbl" for="model-select">Model</label>
+      <select id="model-select"></select>
+      <div class="hint" id="model-hint">scanning for *.gguf…</div>
+      <div class="row" style="margin-top:5px">
+        <input type="text" id="model-path" placeholder="path to model.gguf" spellcheck="false">
+        <button class="btn small" id="btn-prepare" style="flex:0 0 auto; width:auto">Load</button>
+      </div>
+      <div class="model-status" id="model-status">no model loaded</div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="field">
+      <label class="lbl" for="site">Hook stage</label>
+      <select id="site"></select>
+      <div class="hint" id="site-hint"></div>
+    </div>
+
+    <div class="field" id="layer-field">
+      <label class="lbl" for="layer">Layer</label>
+      <input type="number" id="layer" min="0" step="1" value="0" disabled>
+      <div class="hint" id="layer-hint">0 – 0</div>
+    </div>
+
+    <div class="field">
+      <label class="lbl" for="type">Intervention</label>
+      <select id="type">
+        <option value="replace">replace</option>
+        <option value="zero">zero</option>
+        <option value="scale" selected>scale</option>
+        <option value="interpolate">interpolate</option>
+        <option value="add-delta">add-delta</option>
+      </select>
+    </div>
+
+    <div class="field hidden" id="value-field">
+      <label class="lbl" for="value">Value</label>
+      <input type="number" id="value" step="any" value="0.5">
+      <div class="hint" id="value-hint">scale factor</div>
+    </div>
+
+    <div class="field hidden" id="source-field">
+      <label class="lbl" for="source">Source</label>
+      <select id="source">
+        <option value="capture" selected>capture (previous layer)</option>
+        <option value="zero">zero</option>
+      </select>
+    </div>
+
+    <div class="field hidden" id="source-layer-field">
+      <label class="lbl" for="source-layer">Source layer</label>
+      <input type="number" id="source-layer" min="0" step="1" value="0" disabled>
+      <div class="hint">capture fires before the intervention (same pass)</div>
+    </div>
+
+    <div class="field">
+      <label class="lbl" for="token">Target tokens</label>
+      <select id="token">
+        <option value="prompt-final" selected>prompt-final</option>
+        <option value="matched-span">matched-span</option>
+      </select>
+    </div>
+    <div class="field hidden" id="span-field">
+      <label class="lbl" for="span">Span text</label>
+      <input type="text" id="span" placeholder="كلمة في النص" dir="auto" spellcheck="false">
+    </div>
+
+    <hr class="divider">
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btn-run">Run experiment</button>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" id="btn-restore">Verify restore</button>
+    </div>
+    <div class="hint" id="run-hint" style="margin-top:6px"></div>
+  </aside>
+
+  <section>
+    <div class="panel">
+      <div class="panel-title">Prompt</div>
+      <textarea id="prompt" dir="auto" spellcheck="false"
+        placeholder="اكتب جملة قصيرة عن المدينة المنورة"></textarea>
+      <div class="prompt-meta">
+        <div class="field">
+          <label class="lbl" for="max-tokens">Max tokens</label>
+          <input type="number" id="max-tokens" min="1" max="512" step="1" value="48" style="width:76px">
+        </div>
+        <div class="field">
+          <label class="lbl" for="execution">Execution</label>
+          <select id="execution">
+            <option value="reference" selected>reference</option>
+            <option value="planned">planned</option>
+            <option value="planned-fused">planned-fused</option>
+          </select>
+        </div>
+        <span class="meta-note">greedy · deterministic · temp 0.0</span>
+      </div>
+    </div>
+
+    <div class="error-box" id="error-box"></div>
+    <div class="warn-box" id="warn-box"></div>
+
+    <div class="outputs">
+      <div class="output panel">
+        <div class="panel-title">
+          <span>Baseline</span>
+          <span class="statusline"><span class="state-badge state-pending" id="base-badge">—</span></span>
+        </div>
+        <div class="output-body placeholder" id="base-body" dir="auto">no baseline run yet</div>
+        <div class="output-foot" id="base-foot">—</div>
+      </div>
+      <div class="output panel">
+        <div class="panel-title">
+          <span>Intervention</span>
+          <span class="statusline"><span class="state-badge state-pending" id="iv-badge">—</span></span>
+        </div>
+        <div class="output-body placeholder" id="iv-body" dir="auto">no intervention run yet</div>
+        <div class="output-foot" id="iv-foot">—</div>
+      </div>
+    </div>
+
+    <div class="verify">
+      <div class="verify-row">
+        <span class="verify-badge idle" id="verify-badge">NOT RUN</span>
+        <span class="verify-meta" id="verify-meta"></span>
+      </div>
+      <div class="verify-detail" id="verify-detail">Bundle self-verification and the restore-original leg report here.</div>
+    </div>
+  </section>
+</main>
+
+<footer id="statusbar">
+  <span><span class="k">model</span> <span class="v" id="sb-model">—</span></span>
+  <span class="sep">·</span>
+  <span><span class="k">layer/hook</span> <span class="v" id="sb-lh">—</span></span>
+  <span class="sep">·</span>
+  <span><span class="k">intervention</span> <span class="v" id="sb-iv">—</span></span>
+  <span class="right">
+    <span><span class="k">bundle</span> <span class="v" id="sb-bundle">—</span></span>
+    <span class="sep">·</span>
+    <span><span class="k">elapsed</span> <span class="v" id="sb-time">—</span></span>
+    <span class="sep">·</span>
+    <span><span class="k">throughput</span> <span class="v" id="sb-tps">—</span></span>
+  </span>
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const state = {
+  models: [], session: null, hookStages: [],
+  busy: false, lastResult: null, lastBaselineText: null
+};
+
+/* ---------- helpers ---------- */
+function shortId(hash) { return hash ? hash.slice(0, 6) + "…" : "—"; }
+function fmtMs(ms) { return (ms / 1000).toFixed(2) + " s"; }
+function fmtTps(tps) { return tps == null ? "—" : tps.toFixed(1) + " tok/s"; }
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+async function api(path, body) {
+  const opts = body === undefined ? {} : {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  };
+  const res = await fetch(path, opts);
+  if (!res.ok) throw new Error("HTTP " + res.status + " from " + path);
+  return res.json();
+}
+function setBusy(b) {
+  state.busy = b;
+  ["btn-run", "btn-restore", "btn-prepare"].forEach(id => $(id).disabled = b);
+  $("run-hint").textContent = b ? "running…" : "";
+}
+function showError(msg) {
+  const box = $("error-box");
+  if (msg) { box.textContent = msg; box.classList.add("visible"); }
+  else box.classList.remove("visible");
+}
+function showWarn(msg) {
+  const box = $("warn-box");
+  if (msg) { box.textContent = msg; box.classList.add("visible"); }
+  else box.classList.remove("visible");
+}
+function modelShortName(path) {
+  const base = path.split("/").pop().split("\\").pop();
+  return base.replace(/\.gguf$/i, "");
+}
+
+/* ---------- form wiring ---------- */
+const PER_LAYER_SITES = new Set(["before-layer", "after-attention", "after-mlp", "after-layer"]);
+const SITE_DESC = {
+  "before-layer": "residual stream entering the block",
+  "after-attention": "attention output, pre-residual",
+  "after-mlp": "MLP output, pre-residual",
+  "after-layer": "residual stream leaving the block",
+  "before-logits": "final norm output (no layer)",
+  "after-logits": "raw logits (no layer)"
+};
+
+function currentCfg() {
+  return {
+    model_path: ($("model-path").value.trim() || $("model-select").value),
+    prompt: $("prompt").value,
+    max_new_tokens: parseInt($("max-tokens").value, 10) || 1,
+    execution: $("execution").value,
+    site: $("site").value,
+    layer: $("layer").disabled ? null : parseInt($("layer").value, 10),
+    operation: $("type").value,
+    factor: $("type").value === "scale" ? parseFloat($("value").value) : null,
+    alpha: $("type").value === "interpolate" ? parseFloat($("value").value) : null,
+    source: $("source").value,
+    source_layer: $("source-layer").disabled ? null : parseInt($("source-layer").value, 10),
+    token_kind: $("token").value,
+    span_text: $("token").value === "matched-span" ? $("span").value : null
+  };
+}
+
+function refreshForm() {
+  const site = $("site").value;
+  const perLayer = PER_LAYER_SITES.has(site);
+  $("layer-field").classList.toggle("hidden", !perLayer);
+  $("source-layer-field").classList.toggle("hidden", !(perLayer && $("source-field").classList.contains("visible")));
+  $("site-hint").textContent = SITE_DESC[site] || "";
+  if (!perLayer) {
+    $("layer").disabled = true;
+    $("source-layer").disabled = true;
+  } else if (state.session) {
+    $("layer").disabled = false;
+    $("source-layer").disabled = false;
+  }
+  const n = state.session ? state.session.n_layers : 0;
+  $("layer-hint").textContent = perLayer && n ? `0 – ${n - 1} · ${n} layers` : "—";
+  syncSourceLayer();
+
+  const t = $("type").value;
+  const needsSource = t === "replace" || t === "interpolate" || t === "add-delta";
+  $("source-field").classList.toggle("hidden", !needsSource);
+  $("source-layer-field").classList.toggle("hidden",
+    !(perLayer && needsSource && $("source").value === "capture"));
+  const needsValue = t === "scale" || t === "interpolate";
+  $("value-field").classList.toggle("hidden", !needsValue);
+  if (t === "scale") { $("value-hint").textContent = "scale factor"; $("value").value = "0.5"; }
+  if (t === "interpolate") { $("value-hint").textContent = "interpolate alpha (0–1)"; $("value").value = "0.5"; }
+  // zero source is only meaningful for replace / interpolate
+  const zeroOk = t === "replace" || t === "interpolate";
+  const src = $("source");
+  if (src.value === "zero" && !zeroOk) src.value = "capture";
+  Array.from(src.options).forEach(o => o.disabled = (o.value === "zero" && !zeroOk));
+
+  const tk = $("token").value;
+  $("span-field").classList.toggle("hidden", tk !== "matched-span");
+  $("span").disabled = tk !== "matched-span";
+}
+
+function syncSourceLayer() {
+  if (!state.session) return;
+  const maxLayer = state.session.n_layers - 1;
+  const layer = parseInt($("layer").value, 10);
+  const src = parseInt($("source-layer").value, 10);
+  if (!isNaN(layer) && (isNaN(src) || src > layer)) {
+    $("source-layer").value = Math.max(0, layer - 1);
+  }
+  $("layer").max = maxLayer;
+  $("source-layer").max = maxLayer;
+}
+
+["site", "type", "source", "token"].forEach(id => $(id).addEventListener("change", refreshForm));
+$("layer").addEventListener("input", syncSourceLayer);
+$("prompt").addEventListener("input", () => {
+  $("prompt").setAttribute("aria-label", "prompt (" + $("prompt").value.length + " chars)");
+});
+
+/* ---------- theme ---------- */
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  $("theme-btn").textContent = theme === "dark" ? "☀" : "☾";
+  try { localStorage.setItem("ember-gui-theme", theme); } catch (_) {}
+}
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem("ember-gui-theme"); } catch (_) {}
+  const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+  applyTheme(saved || (prefersDark ? "dark" : "light"));
+  $("theme-btn").addEventListener("click", () => {
+    applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  });
+}
+
+/* ---------- session / model ---------- */
+function renderSession() {
+  const s = state.session;
+  const status = $("model-status");
+  if (!s) {
+    status.innerHTML = 'no model loaded <span class="dim">(select or type a path, then Load)</span>';
+    $("head-model").innerHTML = "model: <b>—</b>";
+    $("head-session").innerHTML = "session: <b>idle</b>";
+    return;
+  }
+  const err = s.load_error ? `<div class="err">${esc(s.load_error)}</div>` : "";
+  status.innerHTML =
+    `<div class="ok">loaded ${esc(modelShortName(s.model_path))}</div>` +
+    `arch ${esc(s.architecture)} · ${s.n_layers} layers · ${s.embed_dim}d` +
+    ` · vocab ${s.vocab_size} · load ${(s.load_ms/1000).toFixed(1)} s` + err;
+  $("head-model").innerHTML = "model: <b>" + esc(modelShortName(s.model_path)) + "</b>";
+  $("head-session").innerHTML = "session: <b>" + esc(s.architecture) + " · " + s.n_layers + "L</b>";
+  $("layer").value = Math.max(0, s.n_layers - 2);
+  $("source-layer").value = Math.max(0, $("layer").value - 1);
+  $("layer-hint").textContent = `0 – ${s.n_layers - 1} · ${s.n_layers} layers`;
+  refreshForm();
+}
+
+async function prepareModel(path) {
+  if (state.busy || !path) return;
+  setBusy(true);
+  showError(null);
+  $("model-status").innerHTML = '<span class="dim">loading model… <span class="spin"></span></span>';
+  try {
+    const res = await api("/api/prepare", { model_path: path });
+    if (!res.ok) throw new Error(res.error || "model load failed");
+    state.session = res;
+    renderSession();
+  } catch (e) {
+    showError(e.message);
+    $("model-status").innerHTML = '<span class="err">load failed</span>';
+  } finally { setBusy(false); }
+}
+
+/* ---------- run ---------- */
+function renderOutput(kind, out, badgeId, bodyId, footId) {
+  const badge = $(badgeId);
+  if (!out) { badge.className = "state-badge state-pending"; badge.textContent = "—"; return; }
+  badge.className = "state-badge state-done";
+  badge.textContent = "OK";
+  const body = $(bodyId);
+  body.classList.remove("placeholder");
+  body.textContent = out.text || "(empty output)";
+  const events = out.events && out.events.length
+    ? `${out.events.length} event${out.events.length > 1 ? "s" : ""} · ` : "";
+  $(footId).innerHTML =
+    `${events}<b>${out.generated_tokens} tok</b> · ${fmtMs(out.wall_ms)} · ${fmtTps(out.decode_tps)}` +
+    `<br>prompt ${out.prompt_tokens} tok · bundle <b>${shortId(out.semantic_hash)}</b> ${esc(out.bundle_dir)}`;
+}
+
+function renderVerification(ver, restoreStatus) {
+  const badge = $("verify-badge");
+  if (!ver) {
+    badge.className = "verify-badge idle"; badge.textContent = "NOT RUN";
+    $("verify-meta").textContent = "";
+    $("verify-detail").innerHTML = "Bundle self-verification and the restore-original leg report here.";
+    return;
+  }
+  const failed = (ver.checks || []).filter(c => !c.ok);
+  if (ver.ok && failed.length === 0) {
+    badge.className = "verify-badge ok"; badge.textContent = "VERIFIED";
+    $("verify-meta").textContent = `${ver.checks.length}/${ver.checks.length} checks passed`;
+  } else {
+    badge.className = "verify-badge err"; badge.textContent = "VERIFICATION FAILED";
+    $("verify-meta").textContent = failed.map(c => c.name + ": " + c.detail).join(" · ");
+  }
+  const parts = [];
+  if (restoreStatus === "exact") parts.push('<span class="ok">restore: BIT-EXACT</span>');
+  else if (restoreStatus === "differs") parts.push('<span class="err">restore: DIFFERS from baseline</span>');
+  else if (restoreStatus === "not-comparable") parts.push('<span class="err">restore: baseline not comparable (configuration changed)</span>');
+  else if (restoreStatus === "pending") parts.push('restore: not run');
+  if (ver.warnings && ver.warnings.length) parts.push('<span class="err">' + esc(ver.warnings.join(" · ")) + '</span>');
+  if (ver.checks && ver.checks.length) {
+    parts.push('<span class="dim">' + esc(ver.checks.map(c => c.name + (c.ok ? " ✓" : " ✗")).join(" · ")) + '</span>');
+  }
+  $("verify-detail").innerHTML = parts.join(" · ") || "&nbsp;";
+}
+
+function renderStatusBar(cfg, result) {
+  $("sb-model").textContent = modelShortName(cfg.model_path);
+  $("sb-lh").textContent = (cfg.layer != null ? "L" + cfg.layer + " · " : "") + cfg.site;
+  $("sb-iv").textContent = cfg.operation;
+  if (result && result.intervention) {
+    $("sb-bundle").textContent = shortId(result.intervention.semantic_hash);
+    $("sb-time").textContent = fmtMs(result.elapsed_ms_total);
+    $("sb-tps").textContent = fmtTps(result.intervention.decode_tps);
+  }
+}
+
+async function runExperiment() {
+  if (state.busy) return;
+  const cfg = currentCfg();
+  if (!cfg.model_path) return showError("select a model first");
+  if (!cfg.prompt.trim()) return showError("prompt must not be empty");
+  if (cfg.token_kind === "matched-span" && !(cfg.span_text || "").trim())
+    return showError("matched-span requires a span text");
+  if ((cfg.operation === "scale" || cfg.operation === "interpolate") &&
+      !(isFinite(cfg.factor) || isFinite(cfg.alpha))) {
+    return showError(cfg.operation === "scale"
+      ? "scale factor must be a number" : "interpolate alpha must be a number");
+  }
+  setBusy(true);
+  showError(null); showWarn(null);
+  $("base-badge").className = "state-badge state-running"; $("base-badge").textContent = "RUN";
+  $("iv-badge").className = "state-badge state-running"; $("iv-badge").textContent = "RUN";
+  $("verify-badge").className = "verify-badge run"; $("verify-badge").textContent = "RUNNING";
+  try {
+    const res = await api("/api/run", cfg);
+    if (!res.ok) throw new Error(res.error || "run failed");
+    state.lastResult = res;
+    state.lastBaselineText = res.baseline ? res.baseline.text : null;
+    renderOutput("baseline", res.baseline, "base-badge", "base-body", "base-foot");
+    renderOutput("intervention", res.intervention, "iv-badge", "iv-body", "iv-foot");
+    renderVerification(res.verification, "pending");
+    $("verify-meta").textContent = res.verification && res.verification.ok
+      ? "bundle self-check passed" : "bundle self-check FAILED";
+    if (res.verification && !res.verification.ok) {
+      const failed = res.verification.checks.filter(c => !c.ok);
+      showWarn("bundle verification failed: " + failed.map(c => c.name + " — " + c.detail).join(" | "));
+    }
+    renderStatusBar(cfg, res);
+    if (res.baseline && res.intervention && res.baseline.text === res.intervention.text) {
+      showWarn("baseline and intervention output are identical for this configuration.");
+    }
+  } catch (e) {
+    $("base-badge").className = "state-badge state-error"; $("base-badge").textContent = "ERR";
+    $("iv-badge").className = "state-badge state-error"; $("iv-badge").textContent = "ERR";
+    renderVerification(null, null);
+    showError(e.message);
+  } finally { setBusy(false); }
+}
+
+async function runRestore() {
+  if (state.busy) return;
+  if (!state.lastResult) return showError("run an experiment first; restore verifies against its baseline");
+  const cfg = currentCfg();
+  setBusy(true);
+  showError(null); showWarn(null);
+  $("verify-badge").className = "verify-badge run"; $("verify-badge").textContent = "RESTORING";
+  try {
+    const res = await api("/api/restore", {
+      model_path: cfg.model_path, prompt: cfg.prompt, max_new_tokens: cfg.max_new_tokens,
+      execution: cfg.execution, site: cfg.site, layer: cfg.layer,
+      token_kind: cfg.token_kind, span_text: cfg.span_text
+    });
+    if (!res.ok) throw new Error(res.error || "restore run failed");
+    let status;
+    if (!res.baseline_comparable) status = "not-comparable";
+    else if (res.restore_matches_baseline) status = "exact";
+    else status = "differs";
+    renderVerification(res.verification, status);
+    $("verify-meta").textContent =
+      (res.restore_matches_baseline ? "restore-original output equals baseline" : "restore-original output differs from baseline")
+      + " · " + (res.verification.ok ? "bundle verified" : "bundle verification FAILED");
+    if (res.restore_matches_baseline) {
+      $("sb-bundle").textContent = shortId(res.restore.semantic_hash);
+      $("sb-time").textContent = fmtMs(res.restore.wall_ms);
+      $("sb-tps").textContent = fmtTps(res.restore.decode_tps);
+    }
+  } catch (e) {
+    renderVerification(null, null);
+    showError(e.message);
+  } finally { setBusy(false); }
+}
+
+/* ---------- init ---------- */
+async function init() {
+  initTheme();
+  const res = await api("/api/state");
+  $("ver").textContent = "v" + res.version + " · " + (res.commit || "").slice(0, 8);
+  state.models = res.models || [];
+  state.hookStages = res.hook_stages || [];
+  state.session = res.session || null;
+  const sel = $("model-select");
+  sel.innerHTML = "";
+  if (state.models.length) {
+    state.models.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m; opt.textContent = modelShortName(m);
+      sel.appendChild(opt);
+    });
+    $("model-hint").textContent = state.models.length + " model(s) found";
+  } else {
+    const opt = document.createElement("option");
+    opt.value = ""; opt.textContent = "(no .gguf found — type a path)";
+    sel.appendChild(opt);
+    $("model-hint").textContent = "no .gguf found in the working tree";
+  }
+  sel.addEventListener("change", () => { $("model-path").value = sel.value; });
+  const site = $("site");
+  site.innerHTML = "";
+  (state.hookStages.length ? state.hookStages :
+    ["before-layer","after-attention","after-mlp","after-layer","before-logits","after-logits"])
+    .forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s; opt.textContent = s;
+      site.appendChild(opt);
+    });
+  site.value = "after-mlp";
+  $("model-path").value = state.models.length ? state.models[0] : "";
+  $("prompt").value = "اكتب جملة قصيرة عن المدينة المنورة";
+  $("btn-run").addEventListener("click", runExperiment);
+  $("btn-restore").addEventListener("click", runRestore);
+  $("btn-prepare").addEventListener("click", () => prepareModel($("model-path").value.trim()));
+  refreshForm();
+  renderSession();
+}
+init().catch(e => showError("init failed: " + e.message));
+</script>
+</body>
+</html>

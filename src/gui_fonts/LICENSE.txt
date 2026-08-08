@@ -1,0 +1,9 @@
+The embedded fonts in this directory are Noto fonts (SIL Open Font License 1.1):
+
+- NotoSans-Regular.ttf
+- NotoSansMono-Regular.ttf
+- NotoNaskhArabic-Regular.ttf
+
+Copyright Google LLC. Licensed under the SIL Open Font License, Version 1.1
+(https://openfontlicense.org). They are embedded so the experiment console
+renders Latin and Arabic text identically on any machine, fully offline.

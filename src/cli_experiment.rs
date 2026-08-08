@@ -24,7 +24,9 @@ use ember::v05::manifest::BundleIdentity;
 use ember::v05::run::{
     write_bundle, BundleMaterials, ModelBundleMeta, RuntimeMetrics, TokenizerBundleMeta,
 };
-use ember::v05::runner::{load_bundle_source, BundleSource, ModelFacts, V05Experiment};
+use ember::v05::runner::{
+    load_bundle_source, BundleSource, InputResult, ModelFacts, V05Experiment,
+};
 use ember::v05::spec::{RawExperimentSpec, EXPERIMENT_SCHEMA_V1};
 use ember::v05::token_select::{tokenize_for_selection, TextNormalization};
 use ember::v05::verify::{verify_bundle, VerifyOptions};
@@ -293,6 +295,7 @@ pub(crate) fn execute_resolved(
     PathBuf,
     BundleIdentity,
     ember::v05::verify::VerificationReport,
+    Vec<InputResult>,
 )> {
     let threads = if resolved.execution.threads > 0 {
         resolved.execution.threads
@@ -307,40 +310,42 @@ pub(crate) fn execute_resolved(
         .build()
         .context("failed to build the experiment thread pool")?
         .install(|| {
-            execute_resolved_inner(
+            let prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
+            execute_prepared(
+                &prepared,
                 resolved,
                 spec_text,
                 output_directory,
-                k_strategy,
-                k_allow_fallback,
                 retain_incomplete,
             )
         })
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_resolved_inner(
+/// A fully loaded, reusable experiment session.
+///
+/// Loading is separated from execution so the GUI can keep one model
+/// resident across many runs (baseline, intervention, restore). The CLI
+/// path is unchanged: `execute_resolved` prepares and executes in one call.
+pub(crate) struct PreparedRun {
+    pub model: Llama<ember::backend::CpuBackend>,
+    pub tokenizer: EmberTokenizer,
+    pub architecture: String,
+    pub n_layers: usize,
+    pub embed_dim: usize,
+    pub model_sha: String,
+    pub tokenizer_sha: String,
+    pub gguf_metadata: serde_json::Value,
+    pub model_path: PathBuf,
+}
+
+/// Load the model + tokenizer for a resolved experiment and validate
+/// provenance hashes (model/tokenizer SHA when the spec pins them).
+/// No inference happens here; the loaded model is reusable across runs.
+pub(crate) fn prepare_run(
     resolved: &ember::v05::spec::ExperimentSpecV1,
-    spec_text: &str,
-    output_directory: &std::path::Path,
     k_strategy: KStrategy,
     k_allow_fallback: bool,
-    retain_incomplete: bool,
-) -> anyhow::Result<(
-    PathBuf,
-    BundleIdentity,
-    ember::v05::verify::VerificationReport,
-)> {
-    let backend = ember::backend::CpuBackend;
-    let mode = resolved.execution.mode;
-    let threads = if resolved.execution.threads > 0 {
-        resolved.execution.threads
-    } else {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(1)
-    };
-
+) -> anyhow::Result<PreparedRun> {
     // -- model --
     let loader = load_gguf_with_k_strategy(&resolved.model.path, k_strategy, k_allow_fallback)?;
     let architecture =
@@ -389,6 +394,52 @@ fn execute_resolved_inner(
     let tokenizer = resolved_tokenizer.load()?;
     tokenizer.validate_model_vocab(model.config.vocab_size)?;
 
+    Ok(PreparedRun {
+        model,
+        tokenizer,
+        architecture,
+        n_layers,
+        embed_dim,
+        model_sha,
+        tokenizer_sha,
+        gguf_metadata,
+        model_path: resolved.model.path.clone(),
+    })
+}
+
+/// Execute a resolved experiment against an already-loaded session:
+/// build the plan, run every input through generation with the v0.5
+/// experiment attached, assemble + write the bundle, and self-verify it.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_prepared(
+    prepared: &PreparedRun,
+    resolved: &ember::v05::spec::ExperimentSpecV1,
+    spec_text: &str,
+    output_directory: &std::path::Path,
+    retain_incomplete: bool,
+) -> anyhow::Result<(
+    PathBuf,
+    BundleIdentity,
+    ember::v05::verify::VerificationReport,
+    Vec<InputResult>,
+)> {
+    let backend = ember::backend::CpuBackend;
+    let mode = resolved.execution.mode;
+    let threads = if resolved.execution.threads > 0 {
+        resolved.execution.threads
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    };
+    let model = &prepared.model;
+    let tokenizer = &prepared.tokenizer;
+    let architecture = &prepared.architecture;
+    let model_sha = &prepared.model_sha;
+    let tokenizer_sha = &prepared.tokenizer_sha;
+    let n_layers = prepared.n_layers;
+    let embed_dim = prepared.embed_dim;
+
     // -- execution plan --
     let has_captures = !resolved.captures.is_empty();
     let has_interventions = !resolved.interventions.is_empty();
@@ -417,8 +468,8 @@ fn execute_resolved_inner(
         hook_mode,
         stages,
         model.config.max_seq_len,
-        Some(&model_sha),
-        Some(&tokenizer_sha),
+        Some(model_sha),
+        Some(tokenizer_sha),
     )?;
     model.set_execution_mode(mode);
 
@@ -428,7 +479,7 @@ fn execute_resolved_inner(
         if let Some(source) = &intervention.source {
             if let ember::v05::intervention::InterventionSource::CaptureFromBundle { .. } = source {
                 let loaded =
-                    load_bundle_source(intervention, source, &model_sha, &tokenizer_sha, n_layers)
+                    load_bundle_source(intervention, source, model_sha, tokenizer_sha, n_layers)
                         .map_err(anyhow::Error::msg)?;
                 bundle_sources.push(loaded);
             }
@@ -464,7 +515,7 @@ fn execute_resolved_inner(
         )));
         {
             let mut experiment = inner.lock().expect("v05 experiment lock");
-            let info = tokenize_for_selection(&tokenizer, &input.text, TextNormalization::None)
+            let info = tokenize_for_selection(tokenizer, &input.text, TextNormalization::None)
                 .map_err(anyhow::Error::msg)?;
             experiment.inject_tokenization(info);
             for source in &bundle_sources {
@@ -474,19 +525,19 @@ fn execute_resolved_inner(
         let adapter = V05Adapter(Arc::clone(&inner));
         let mut runner = ExperimentRunner::new(adapter);
         let model_context = ModelContext::new(
-            family_for_arch(&architecture),
-            Some(resolved.model.path.to_str().unwrap_or("model.gguf")),
-            &architecture,
+            family_for_arch(architecture),
+            Some(prepared.model_path.to_str().unwrap_or("model.gguf")),
+            architecture,
             n_layers,
             embed_dim,
         )
-        .with_provenance(Some(&model_sha), Some(&tokenizer_sha));
+        .with_provenance(Some(model_sha), Some(tokenizer_sha));
         let generated_text = crate::cli_generation::generate_with_experiment(
             &backend,
-            &model,
+            model,
             &mut runner,
             model_context,
-            &tokenizer,
+            tokenizer,
             &input.text,
             resolved.generation.max_new_tokens,
             resolved.generation.temperature,
@@ -541,21 +592,21 @@ fn execute_resolved_inner(
             layer_count: n_layers,
             embed_dim,
             vocab_size: model.config.vocab_size,
-            gguf_metadata: gguf_metadata.clone(),
+            gguf_metadata: prepared.gguf_metadata.clone(),
         },
         tokenizer_meta: TokenizerBundleMeta {
             sha256: tokenizer_sha.clone(),
             vocab_size: tokenizer.vocab_size(),
         },
         plan: (*plan).clone(),
-        results,
+        results: results.clone(),
         warnings,
         runtime,
     };
     let (path, identity) =
         write_bundle(&materials, retain_incomplete).map_err(anyhow::Error::msg)?;
     let report = verify_bundle(&path, &VerifyOptions::default()).map_err(anyhow::Error::msg)?;
-    Ok((path, identity, report))
+    Ok((path, identity, report, results))
 }
 
 fn peak_rss_kb() -> Option<u64> {
@@ -633,7 +684,7 @@ pub(crate) fn run_experiment_command(
         .output
         .clone()
         .unwrap_or_else(|| resolved.output.directory.clone());
-    let (path, identity, report) = execute_resolved(
+    let (path, identity, report, _results) = execute_resolved(
         &resolved,
         &spec_text,
         &output_directory,
@@ -915,7 +966,7 @@ pub(crate) fn run_reproduce_command(
         .clone()
         .unwrap_or_else(|| command.bundle.with_extension("reproduced"));
 
-    let (path, identity, report) = execute_resolved(
+    let (path, identity, report, _results) = execute_resolved(
         &resolved,
         &spec_text,
         &output,

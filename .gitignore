@@ -39,6 +39,7 @@ docs/plots/root_probe_scale_comparison.png
 !docs/v04-execution-contract.md
 !docs/v05-research-contract.md
 !docs/v05-*.md
+!docs/v06-gui.md
 !docs/reproducibility.md
 !docs/interventions.md
 !docs/token-selection.md

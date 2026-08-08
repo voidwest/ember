@@ -7,6 +7,37 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.6.0] - 2026-08-06
+
+### Added
+
+- `ember gui` — a native, single-window experiment console for live demos
+  (v0.6): an iced app on the tiny-skia software renderer (no GPU or
+  webview dependency) with embedded Noto fonts (`src/gui_fonts/`) for
+  offline Latin + Arabic coverage, dark console theme.
+- `ember web-gui` — an offline, single-page browser console for live demos
+  (v0.6). A thin presentation layer over the existing v0.5 pipeline: the
+  page translates every action into an `ember.experiment.v1` specification,
+  validates it through the standard `RawExperimentSpec::resolve()` gate, and
+  executes it with the same `prepare_run` / `execute_prepared` code as
+  `ember experiment run`. One resident model session serves repeated
+  baseline / intervention / restore runs, so the demo loop never reloads the
+  model. Bundles are written and self-verified exactly as in v0.5; the
+  restore-original leg reports a bit-exact match against the baseline.
+  Light/dark theme toggle (defaults to the system preference, persisted in
+  localStorage). See `docs/v06-gui.md`.
+- `src/gui_native.rs`: the native console — same `GuiSession` core and
+  `parse_run_request` gate as the browser console, runs executed in a
+  worker thread so the UI never blocks.
+- `src/gui.rs` + `src/gui_page.html`: tiny embedded HTTP server (tiny_http,
+  localhost only) and a self-contained page (no web framework, no external
+  assets) with Arabic/RTL rendering via the browser (`dir="auto"` per field;
+  the UI itself stays LTR).
+- `cli_experiment::prepare_run` / `execute_prepared`: the v0.5 run path was
+  split into a reusable model-load step and an execute step so a loaded
+  model can be kept resident. `ember experiment run` behavior is unchanged
+  (it calls both in sequence).
+
 ## [Unreleased]
 
 ### Changed
