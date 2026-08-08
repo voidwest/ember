@@ -19,7 +19,7 @@ research write-up: https://voidwest.dev/ember
 - compressed-resident Q4_K/Q6_K execution
 - plan-driven decode
 - deterministic, verifiable experiment bundles
-- native and browser experiment consoles for live demos
+- native and browser experiment consoles (`ember gui`, `ember web-gui`)
 - Arabic morphology and quantization research workflows
 
 Ember is not a llama.cpp throughput competitor. llama.cpp remains the
@@ -60,13 +60,13 @@ target/release/ember experiment compare \
 The restoration leg reproduces the baseline bit-exact. Full walkthrough:
 `examples/experiments/README.md`.
 
-## experiment consoles (v0.6)
+## GUI usage (v0.6)
 
-Two offline consoles drive the same v0.5 experiment pipeline for live
-demos: every action builds an `ember.experiment.v1` spec, resolves it
-through the standard validation gate, and runs it with one resident model
-serving repeated baseline / intervention / restore runs. Bundles are
-written and self-verified exactly as `ember experiment run`.
+Two offline consoles drive the same v0.5 experiment pipeline: every action
+builds an `ember.experiment.v1` spec, resolves it through the standard
+validation gate, and runs it with one resident model serving repeated
+baseline / intervention / restore runs. Bundles are written and
+self-verified exactly as `ember experiment run`.
 
 ```bash
 target/release/ember gui          # native single-window console (iced,
