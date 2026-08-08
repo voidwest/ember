@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="road to Ember 1.0, why build another inference engine?" property="og:title"/>
+<meta content="Part 0 of the Road to Ember 1.0 series: why a CPU-first research layer with its own inference path exists alongside llama.cpp, and the constraints that shaped it." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/00-why-ember.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>road to Ember 1.0, why build another inference engine?</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/00-why-ember.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.html">road to Ember 1.0</a>
+</div>
+<h1>road to Ember 1.0, why build another inference engine?</h1>
+<div class="meta">
+            draft · part 0 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">GGUF</span>
+<span class="tag key">CPU inference</span>
+<span class="tag key">reproducibility</span>
+</div>
+<p>
+the ecosystem already has llama.cpp. Ember exists because a model that runs is not
+            the same as a model you can inspect, intervene on, and reproduce. this series follows that
+            distinction release by release, failures included.
+        </p>
+<h2>the question underneath the question</h2>
+<p>
+            if your goal is tokens per second, the honest answer to "why build another inference engine" is that
+            you shouldn't. llama.cpp exists, it is fast, and it is the reference for a reason. this series is
+            about a different goal.
+        </p>
+<p>
+            Ember started as a means to a research end. the question was about Arabic morphology: how and where
+            do neural language models represent non-concatenative morphology, roots and patterns, and why
+            does representational availability sometimes fail to produce generation behavior? answering it
+            requires hidden states at chosen layers and token positions, the ability to change those states and
+            observe the consequence, and a procedure repeatable enough that a second researcher can run it and
+            trust the result.
+        </p>
+<p>
+            the tools that move tokens through a model are excellent at moving tokens. they are not built to
+            answer "what was this tensor, at this layer, at this position, at this moment, and how do i change
+            it, and prove the change mattered?"
+        </p>
+<h2>why not just call llama.cpp</h2>
+<p>
+            llama.cpp is the external reference for Ember, for correctness and for performance. the
+            golden-logit ladder validates Ember's output against a pinned llama.cpp revision
+            (<code>scripts/validate_golden_ladder.sh</code>; reference harness <code>tools/logits_dump.c</code>),
+            and the benchmark artifacts record llama.cpp's numbers on the same files
+            (<code>artifacts/benchmark-v03/llama-3.2-1b-q4_k_m.llama-bench.json</code>).
+        </p>
+<p>
+            but the external reference has a different job. llama.cpp is engineered for breadth and throughput;
+            Ember is engineered for the inverse property: an execution path that is deliberately readable, where
+            every operator, tensor, and hook site is explicit, plus instruments for capturing, patching,
+            comparing, and restoring states with provenance attached. that is not a critique of llama.cpp. it is
+            a division of labor: llama.cpp is the oracle, and Ember validates its own path against it.
+        </p>
+<p>
+            Ember does not claim comparable breadth or throughput, and this series will not argue otherwise. the
+            reason to read on is not speed; it is that the two runtimes answer different questions.
+        </p>
+<h2>the constraints that shaped the design</h2>
+<p>three constraints, fixed from the start:</p>
+<ul>
+<li>
+<strong>inspectability is part of the execution contract, not an afterthought.</strong> the
+                engine has to say what it did: which layer, which stage, which position, which execution route,
+                which kernel. a hidden-state dump without its exact semantic and numerical origin is just
+                numbers.
+            </li>
+<li>
+<strong>intervention means identity.</strong> a patch is only scientifically meaningful when the
+                tensor identity, layer, token position, and execution route are explicit, and restoration is
+                only meaningful when it is bit-exact.
+            </li>
+<li>
+<strong>reproducibility is an artifact format, not a sentence in a README.</strong> a run
+                should produce a self-verifying bundle that another researcher can check offline, without
+                reading Rust.
+            </li>
+</ul>
+<p>
+            these constraints cost performance, and the series will show exactly how much, in what places, and
+            what was done to reduce the cost without giving the constraints up.
+        </p>
+<h2>what shipped, briefly</h2>
+<div class="table-wrap">
+<table>
+<tr><th>release</th><th>core capability</th><th>the question it answered</th></tr>
+<tr><td>v0.1</td><td>inspectable CPU inference over GGUF: prefill, decode, KV cache, tracing, hidden-state extraction, deterministic benchmarks</td><td>can inference be made legible enough for model-internals research?</td></tr>
+<tr><td>v0.2</td><td>activation capture, intervention hooks, patching between runs, exact restoration, structured artifacts with provenance</td><td>can Ember support causal experiments rather than only descriptive observation?</td></tr>
+<tr><td>v0.3</td><td>native Q4_K/Q6_K execution: packed mmap-resident weights, scalar + AVX2 kernels, per-tensor dispatch, external parity</td><td>what is the point of a Q4 model if the runtime expands it back to f32?</td></tr>
+<tr><td>v0.4</td><td>plan-driven decode: immutable per-model execution plans, scratch arenas, a frozen fusion set with hook-driven de-fusion, column-parallel matvec, profiling</td><td>can execution be planned and optimized without hiding the tensors researchers need to inspect?</td></tr>
+<tr><td>v0.5.1</td><td>reproducible experiment bundles: strict specs, byte-exact Arabic token selection, semantic hooks, interventions, offline verification, comparison, reproduction</td><td>can a researcher who did not write Ember run and verify a model-internals experiment without touching Rust?</td></tr>
+</table>
+</div>
+<p>
+            one number per release, so the shape of the series is visible up front. v0.3 took the resident
+            memory of a quantized model from gigabytes of expanded f32 down to roughly the size of the file:
+            6,989,724 KB → 844,216 KB peak RSS on Llama-3.2-1B Q4_K_M
+            (<code>artifacts/benchmark-v03/part3-binary-memory.md</code>). v0.4 more than doubled
+            reference-path decode throughput on the four primary model/precision combinations, roughly
+            2.0–2.7×, with peak RSS effectively flat
+            (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>). v0.5 made the
+            whole experiment pipeline deterministic and verifiable offline. the caveats attached to each number
+            are part of the story, not footnotes.
+        </p>
+<h2>what "supported" means</h2>
+<p>
+            "supported" in Ember's model tables means an execution path exists. it does not mean the row is
+            numerically validated. the distinction is the ladder: smoke (the command ran), golden logits
+            (output compared against a trusted reference), activation-reference checks (internal states
+            compared), probes (decodability), interventions (causal use). each rung is a different claim, and
+            the series will not slide between them.
+        </p>
+<p>
+            current state, in one breath: the llama and Qwen2.5 family rows have golden-logit agreement with the
+            pinned llama.cpp reference (100% top-1 across the six ladder rungs, agreement on the argmax, not
+            equality of the logits, with envelope max abs differences up to 1.74 (Qwen q4 rung)
+            recorded); Qwen3 rows are promising but golden validation is pending; Gemma 4 loads but is
+            numerically untrusted (single-token cosine ~0.87 against the reference and eroding across layers);
+            activation-reference checks are pending for several rows. deterministic semantic output is not
+            timing reproducibility: identical tokens and identical hidden states do not mean identical wall-clock
+            times.
+        </p>
+<h2>what this series will not claim</h2>
+<ul>
+<li>Ember is not production serving infrastructure. it is a research instrument with a deliberately inspectable path.</li>
+<li>Ember does not claim performance parity with llama.cpp, not in this article, not in the throughput posts.</li>
+<li>the Arabic-quantization pilot found no Arabic-selective degradation in the tested matrix; that null is scoped to the tested matrix and has not been reproduced externally.</li>
+<li>Ember is a separate project from Sarf Atlas; Atlas maps limitations and missing evaluations from papers, and this series is about Ember only.</li>
+</ul>
+<h2>where the series goes next</h2>
+<p>
+            the fastest way to see the constraints in action is the memory story. a Q4 file that arrives in
+            memory as f32 has, in a precise sense, been decompressed by the runtime that was supposed to run it.
+            the next article is v0.3: quantized on disk, quantized in memory, and the validation ladder that
+            kept the compressed path honest.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

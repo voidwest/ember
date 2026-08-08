@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 1 من سلسلة الطريق إلى Ember 1.0: تحميل GGUF والتتبّع واستخراج الـ hidden states، وليش لا يفيد الـ tensor إلا إذا كان مصدره صريحًا." />
+        <meta property="og:title" content="v0.1، محرك استدلال يقدر يشرح ما فعله" />
+        <meta property="og:description" content="استخراج الـ tensor هو الجزء السهل. معرفة ما يعنيه، أي طبقة، أي موضع، أي مسار تنفيذ، هو الهندسة." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/01-making-inference-legible.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>v0.1، محرك استدلال يقدر يشرح ما فعله</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/01-making-inference-legible.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>v0.1، محرك استدلال يقدر يشرح ما فعله</h1>
+
+        <div class="meta">
+            مسودة · الجزء 1 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">استدلال على CPU</span>
+            <span class="tag key">تتبّع</span>
+            <span class="tag key">hidden states</span>
+            <span class="tag model">LLaMA</span>
+            <span class="tag model">Qwen</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">حالة المسودة</div>
+            <p>
+                مسودة مكتملة باستشهادات صريحة لـ artifacts المستودع. الـ trace وartifacts الاستخراج الموصوفة هنا
+                أُنتجت مباشرة في 2026-08-04 من الثنائي الحالي ومسجّلة في
+                <code>artifacts/benchmark-v01/part1-legibility.md</code>. الشكل مضمّن كـ SVG (نسختا الوضع
+                الداكن والفاتح تحت <code>figures/</code>).
+            </p>
+        </div>
+
+        <p>
+            استخراج الـ tensor هو الجزء السهل. معرفة ما يعنيه، أي طبقة، أي موضع، أي مسار
+            تنفيذ، أي kernel، هو الهندسة.
+        </p>
+
+        <h2>المشكلة: الـ probes تحتاج hidden states بمصادر معروفة</h2>
+
+        <p>
+            سبب وجود Ember سؤال بحثي عن الصرف العربي: أين في المحوّل تمثّل الجذور والأوزان، وليش يفشل
+            توافر التمثيل أحيانًا في إنتاج سلوك توليدي؟ كل صيغة من صيغ داك السؤال تبدأ فعلًا نفسه: خذ
+            tensor من نموذج يشتغل وقل شيء عنه. الفعل لا يكون ذا معنى إلا إذا عُرف مصدر الـ tensor بدقة،
+            أي نموذج، أي طبقة، أي موضع token، أي مسار تنفيذ، وما سبقه.
+        </p>
+
+        <p>
+            تفريغ hidden state من غير داك السياق مو دليلًا؛ إنه رقم. الادعاء المركزي لالمقال دا هو ادعاء إصدار
+            v0.1: <em>تفريغ الـ hidden states لا يفيد ما لم يُعرف مصدره الدلالي والرقمي الدقيق.</em> بنى v0.1
+            المحرك اللي يجعل داك المصدر صريحًا.
+        </p>
+
+        <h2>الحل الساذج: تفريغ ما يحسبه النموذج</h2>
+
+        <p>
+            النهج الساذج هو إضافة أدوات القياس عند النهاية: شغّل النموذج، اعترض المخرجات، اكتب الـ tensors إلى القرص،
+            ودع الباحث يفرز إيش هي. ينتج ملفات بسرعة ومعنى ببطء. ثلاثة أشياء تضيع:
+        </p>
+
+        <ul>
+            <li><strong>هوية الـ tensor</strong>، أي طبقة أنتجت هذي الذاكرة؟ هل هي قبل أو بعد residual؟
+                أي norm غذّاها؟</li>
+            <li><strong>الموضع</strong>، للـ prompt tokens كثيرة وللـ decode خطوات كثيرة. تفريغ لا يقول
+                لأي موضع ينتمي الصف مو ممكن محاذاته مع أي شيء.</li>
+            <li><strong>المسار</strong>، أي kernel نفّذ هذا الإسقاط، ومن أي تمثيل (كتل Q8 مضغوطة أم f32
+                موسّعة)؟ ممكن لجريانين أن ينتجا اسم الملف نفسه وأرقامًا مختلفة.</li>
+        </ul>
+
+        <h2>ليش فشل: المحمّل كان يملك الإجابات</h2>
+
+        <p>
+            محمّل v0.1 (<code>CHANGELOG.md</code>، v0.1: تحميل GGUF v3 لـ F32/F16/BF16/Q8_0؛ أوزان Q8_0 عبر
+            mmap؛ kernels فك ترميز SIMD؛ prefill مقسّم) كان يعرف كل ما يحتاجه الباحث: الـ dtype، الشكل،
+            الترتيب، الملف اللي جاء منه الـ tensor. المشكلة أن هذي المعرفة كانت تتوقف عند حدود المحمّل. كان
+            على مسار الاستخراج أن يكتشفها من جديد، وصيغة GGUF تجعل داك صعبًا فعلًا:
+        </p>
+
+        <ul>
+            <li>تُخزَّن tensors الـ linears وembeddings بصيغة f32/f16 بترتيب <code>[in, out]</code> مع كون
+                البعد الأول متصلًا؛ تحتاج linears إلى تصحيح row-major وembeddings إلى مقايضة الأبعاد، ورأس
+                lm مرتبط يحتاج transpose حقيقي، الخطأ في أي منها يفسد كل tensor لاحق بصمت
+                (موثّق في <code>docs/architecture.md</code> ودوال الترتيب في المحمّل).</li>
+            <li>إزاحات الـ tokenizer بايتات، لا محارف. استخراج يفترض إزاحات محارف ينكسر عند أول prompt
+                عربي، وهو، لهذا المشروع، كل prompt.</li>
+            <li>معالجة الـ dtype مُرقّمة بالإصدارات (إعادة ترقيم K-quant في 2024)؛ محمّل يفترض الأرقام
+                القديمة يقرأ كل tensor K خطأ من غير خطأ.</li>
+        </ul>
+
+        <p>
+            النتيجة: الحصول على tensor ومعرفة ما يعنيه مشكلتان مختلفتان، والثانية هي الهندسة الفعلية.
+        </p>
+
+        <h2>التصميم: مسار مرجعي مقروء بالبناء</h2>
+
+        <p>
+            أبقى v0.1 مسار تنفيذ مرجعيًا غير مُحسَّن عمدًا باعتباره مرجع الصحة بجانب مسار Q8 السريع
+            المضغوط: النموذج نفسه، والمدخلات نفسها، kernels عامة، وسطيات صريحة. لازم يتفق المساران على
+            المخرجات الجشعة ضمن المغلفات المسجّلة (اختبارات A/B مضبوطة، واختبارات تتبّع بصمة وhidden states،
+            <code>CHANGELOG.md</code> v0.1). المسار المرجعي مو خطة بديلة؛ إنه تعريف ما يُسمح للمسار السريع
+            بتغييره.
+        </p>
+
+        <p>
+            ووفوق كدا: توليد مخزّن بالـ KV cache مع فك ترميز جشع حتمي، وتتبّع عمليات منظم، واستخراج حالات
+            كامنة (<code>CHANGELOG.md</code> v0.1). "حتمي" هنا حتمية دلالية: حرارة 0 مع بذرة ثابتة تنتج
+            الـ tokens نفسها والـ hidden states نفسها على الثنائي نفسه، لا بالضرورة أزمنة حائط متطابقة.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part1-diagram1.svg"
+                 alt="مسار البيانات ونقاط الملاحظة: من ملف GGUF إلى المحمّل إلى الـ tensors إلى المسار المرجعي إلى الـ logits، مع نقاط ملاحظة ومسار Q8 مضغوط"
+                 loading="lazy" width="1120" height="520" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part1-diagram1_light.svg"
+                 alt="مسار البيانات ونقاط الملاحظة (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="520" decoding="async" />
+            <figcaption>
+                الشكل 1، مسار البيانات ونقاط الملاحظة. الـ hidden states قابلة للاستخراج عند المراحل المعلّمة؛
+                ولازم يتفق مسار Q8 السريع مع المرجع ضمن المغلفات المسجّلة
+                (docs/architecture.md؛ CHANGELOG v0.1؛ artifacts/benchmark-v01/part1-legibility.md).
+            </figcaption>
+        </figure>
+
+        <h2>إيش يقول المحرك إنه فعل</h2>
+
+        <p>
+            الـ trace دفتر يوميات لكل عملية. في 2026-08-04، تتبّع الثنائي الحالي prefill من 6 tokens على
+            Llama-3.2-1B Q8_0 إلى 275 حدثًا، كل حدث يحمل اسم العملية ونوعها وفهرس الطبقة وأشكال وأحجام
+            المدخلات والمخرجات والمدة وتقدير FLOPs
+            (<code>artifacts/benchmark-v01/part1-legibility.md</code> القسم 2):
+        </p>
+
+        <pre><code>{"duration_ns": 5896, "estimated_flops": 0, "input_bytes": 49152,
+ "input_shape": [6, 2048], "layer": 18446744073709551615,
+ "name": "embedding", "op_kind": "Embedding", "output_bytes": 49152}</code></pre>
+
+        <p>
+            كل طبقة وإسقاط وnorm وعملية attention تظهر بأشكالها وأحجامها؛ ومرحلة الـ decode تُتتبَّع لكل
+            خطوة. الـ trace هو المحرك يقول ما فعله، مصدر كل tensor أنتجه، بالترتيب.
+        </p>
+
+        <p>
+            ومسار الاستخراج يكتب داك المصدر بجانب الـ tensors. استخراج مباشر على النموذج نفسه أنتج دليل
+            تشغيل من 16 شرائح لكل طبقة (صف f32 ببعد 2048 لكل طبقة، موضع نهاية الـ prompt) إضافة إلى
+            manifest يسجّل معمارية النموذج والـ tokenizer والخلفية وتجزئات العينات وتجزئة الإعداد
+            وchecksums (<code>artifacts/benchmark-v01/part1-legibility.md</code> القسم 3). الـ artifact
+            ذاتي الوصف: <code>schema_version</code> و<code>layout</code> و<code>tensor_contract</code>
+            و<code>dtype</code> و<code>output_format</code> وسجلات النموذج والـ tokenizer كاملة في
+            الـ manifest، لا مفترضة.
+        </p>
+
+        <h2>سلم التحقق</h2>
+
+        <p>
+            أسس v0.1 كمان المفردات اللي تستخدمها السلسلة كلها (<code>docs/validation.md</code>): smoke
+            (الأمر عمل) &lt; golden logits (مقارنة المخرجات بمرجع موثوق) &lt; فحوص المرجعية للتنشيطات
+            (مقارنة الحالات الداخلية) &lt; الـ probes (قابلية الفك) &lt; التدخلات (الاستخدام السببي). كل
+            درجة ادعاء مختلف. شحن v0.1 اختبارات golden logits وبصمة الـ trace للمسارات اللي يدعمها؛
+            والسلم هو ما يجعل "مدعوم" متميزًا عن "مُتحقق منه رقميًا في كل صف".
+        </p>
+
+        <h2>إيش اللي لا يشتغل بعد</h2>
+
+        <ul>
+            <li>في v0.1، كانت فحوص المرجعية للتنشيطات معلّقة لعدة صفوف؛ "مدعوم" كان يعني وجود مسار تنفيذ،
+                لا أن كل معمارية مُتحقق منها golden.</li>
+            <li>دعم Qwen2.5 كان تجريبيًا صراحة؛ gemma 4 كانت نصية كثيفة بس، وتبقى فجوتها الرقمية غير
+                موثوقة حتى اليوم.</li>
+            <li>الافتراضي <code>--arch</code> كان يسقط بصمت إلى gpt2 لما يحتاج النموذج معمارية صريحة،
+                فخ شُحن وأُصلح لاحقًا مع <code>--arch auto</code>.</li>
+            <li>بايتات الـ tokenizer كانت مصدر أخطاء غير ASCII متكررة (أُصلحت في v0.5)؛ مسار ترميز
+                الاستخراج لسه يحمل قيد إزاحات بايتية في v0.1.</li>
+            <li>llama.cpp يبقى المرجع الخارجي للأداء؛ v0.1 لم يقدّم ادعاء إنتاجية، ولا يقدّمه المقال دا.
+                صفحة إصدار v0.1 تسمي أرقامها "أرقام تحقق خاصة بالمضيف... لا لوحة صدارة".</li>
+        </ul>
+
+        <h2>إيش اللي أطلق هذا</h2>
+
+        <p>
+            معرفة من أين جاء الـ tensor ملاحظة. الخطوة التالية تغييره وملاحظة النتيجة، وهو ما يتطلب آلات
+            الالتقاط والتعديل والاستعادة في v0.2.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

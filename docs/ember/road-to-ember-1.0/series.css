@@ -1,0 +1,32 @@
+/* Road to Ember 1.0 - figure polish layered over the shared editorial system. */
+
+/* The paired assets are named for the theme they are drawn for. */
+.theme-chart-dark {
+    display: none;
+}
+
+.theme-chart-light {
+    display: block;
+}
+
+:root[data-theme="dark"] .theme-chart-dark {
+    display: block;
+}
+
+:root[data-theme="dark"] .theme-chart-light {
+    display: none;
+}
+
+/* The diagram canvas stays LTR, but Arabic captions should not inherit that. */
+[dir="rtl"] figcaption {
+    direction: rtl;
+    text-align: start;
+}
+
+/* Preserve readable diagram type on narrow screens and let the frame scroll. */
+@media (max-width: 720px) {
+    .chart-wrap .chart {
+        inline-size: 680px;
+        max-inline-size: none;
+    }
+}

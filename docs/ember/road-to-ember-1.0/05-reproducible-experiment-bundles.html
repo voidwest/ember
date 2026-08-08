@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="v0.5: from inference engine to research workflow" property="og:title"/>
+<meta content="Part 5 of Road to Ember 1.0: reproducibility as an artifact format, a verification procedure, and a fail-closed contract." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/05-reproducible-experiment-bundles.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>v0.5: from inference engine to research workflow</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/05-reproducible-experiment-bundles.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+              
+            <a href="/ember/road-to-ember-1.0/">road to ember 1.0</a>
+</div>
+<h1>v0.5: from inference engine to research workflow</h1>
+<div class="meta">
+            draft · part 5 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">reproducibility</span>
+<span class="tag key">experiment bundles</span>
+<span class="tag key">verification</span>
+<span class="tag key">Arabic tokenization</span>
+<span class="tag model">LLaMA</span>
+</div>
+<div class="callout">
+<div class="label">draft status</div>
+<p>
+                complete draft with explicit citations to repository artifacts. figures are embedded as SVG
+                (dark/light theme variants under <code>figures/</code>) with captions citing the evidence.
+                the workflow transcript, hashes,
+                comparison verdicts, and fail-closed results below were produced live on 2026-08-04 from the
+                release binary at <code>main</code> @ 359e492 and recorded in
+                <code>artifacts/benchmark-v05/part5-reproduction.md</code>; the underlying bundles remain on
+                disk under <code>runs/part5-*</code>.
+            </p>
+</div>
+<p>
+a researcher who did not write Ember should be able to run a model-internals
+            experiment and verify it without reading Rust. v0.5 makes that a runtime feature, not a promise.
+        </p>
+<h2>the problem: experiments are instructions, and instructions drift</h2>
+<p>
+            before v0.5, an Ember experiment was a set of command-line flags and a procedure in prose.
+            capture a hidden state here, patch a layer there, compare two runs. it worked, for the person
+            who wrote the flags. for anyone else, it was a series of unverifiable claims: which token did
+            that span match? which hook site is "after attention"? did this run actually execute what the
+            README says it executed? and if the artifact on disk is corrupted, who notices?
+        </p>
+<p>
+            the v0.5 contract (<code>docs/v05-research-contract.md</code>) states the response as its
+            thesis: an experiment is a strict specification that resolves deterministically, executes
+            through the v0.4 plan with observable hooks, and lands in a self-verifying bundle whose semantic
+            meaning survives transport. the central claim of this post is the one the release is built
+            around: <em>reproducibility is an artifact format, a verification procedure, and a fail-closed
+            contract, not a sentence in a README.</em>
+</p>
+<h2>the naive solution: document the commands</h2>
+<p>
+            the naive approach is honest and insufficient: write a walkthrough, pin the model file, and
+            trust the reader's machine to agree with yours. it fails on four silent axes:
+        </p>
+<ul>
+<li><strong>token offsets.</strong> the <code>tokenizers</code> crate reports byte offsets.
+                a wrapper that validates them against character counts breaks on every non-ASCII prompt ,
+                which, for Arabic morphology work, is every prompt. the v0.5 changelog records this as a
+                fixed bug (<code>CHANGELOG.md</code>, v0.5): "the wrapper previously validated them against
+                character counts, which broke all non-ASCII prompts."</li>
+<li><strong>hook semantics.</strong> "after attention" is a phrase; a hook site is a defined
+                moment with a defined tensor (contract sections 2–3). prose cannot pin either down.</li>
+<li><strong>provenance.</strong> which model, tokenizer, plan, and execution mode produced this
+                artifact? a walkthrough assumes the answer is obvious.</li>
+<li><strong>corruption.</strong> a flipped byte in a tensor payload does not announce itself.</li>
+</ul>
+<h2>the design: a specification that resolves deterministically</h2>
+<p>
+<code>ember.experiment.v1</code> is strict TOML with recorded defaults and fail-closed
+            validation that names the exact field path of any error. the reference workflow
+            (<code>examples/experiments/</code>) is one Arabic sentence containing the marked word
+            <code>كِتَاب</code> ("book"), two capture plans, and, in the intervention leg, one in-place
+            replacement (spec excerpt, <code>examples/experiments/morphology-intervention.toml</code>):
+        </p>
+<pre><code>[[captures]]
+id = "target-final-subtoken"
+site = "residual-post-mlp"
+layers = "all"
+[captures.tokens]
+kind = "matched-span"
+text = "كِتَاب"
+occurrence = 0
+subtokens = "final"
+
+[[interventions]]
+id = "replace-layer7"
+site = "residual-post-mlp"
+layers = [7]
+operation = { kind = "replace" }
+source = { kind = "capture-from-current-run", capture_id = "target-final-subtoken" }
+[interventions.tokens]
+kind = "prompt-final"</code></pre>
+<p>
+            three properties do the work. <em>byte-exact token selection</em>: prompt-final, absolute and
+            relative positions, generated steps, and matched spans with occurrence and subtoken selection,
+            all resolved against byte offsets (contract sections 5–7). <em>semantic hook identity</em>: the
+            six sites have a frozen machine-readable descriptor table (<code>ember.hook.v1</code>) mapped
+            onto the v0.4 hook stages. <em>deterministic resolution</em>: the same spec on the same
+            supported environment produces the same resolved experiment, the same token selection, and the
+            same plan, timestamps, hostnames, and local paths never enter the semantic identity (contract
+            sections 13–14).
+        </p>
+<p>
+            interventions are the v0.2 mechanism with a grammar: replace, zero, scale, interpolate,
+            add-delta, and restore-original, with fail-closed source validation, a source that does not
+            resolve to exactly one record is an error, not a guess. cross-bundle sourcing is explicit:
+            an intervention can pull a row from a different bundle, which is what the v0.5.1
+            capture-from-bundle evidence exercises (<code>artifacts/benchmark-v05/capture-from-bundle/</code>).
+            and because the fusion set is frozen (v0.4), the v0.5 de-fusion policy is short: only F5
+            eliminates a hook-observable tensor, and a capture or intervention targeting it forces the
+            unfused route with the reason recorded (contract section 9–10).
+        </p>
+<h2>bundles: an artifact that verifies itself</h2>
+<p>
+            a run lands in <code>ember.bundle.v1</code>: staged atomically, never overwriting an existing
+            directory, with a semantic manifest whose hashes are run-invariant and a payload hash over
+            manifests plus the semantic manifest itself. execution plans are sanitized before hashing
+            (the build timestamp becomes unix-0) so the plan hash does not leak machine state
+            (<code>CHANGELOG.md</code>, v0.5). the layout, reproduced from a live run on 2026-08-04
+            (<code>runs/part5-baseline</code>):
+        </p>
+<figure class="chart-wrap">
+<img alt="The ember.bundle.v1 layout: the run directory with semantic-manifest.json and checksums.sha256 forming the verification boundary" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram2.svg" width="1120" height="600" decoding="async" />
+<img alt="The ember.bundle.v1 layout (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram2_light.svg" width="1120" height="600" decoding="async" />
+<figcaption>
+                figure 2, the ember.bundle.v1 layout (17 files in the live reproduction);
+                semantic-manifest.json and checksums.sha256 are the verification boundary
+                (artifacts/benchmark-v05/part5-reproduction.md).
+            </figcaption>
+</figure>
+<p>
+            (the real bundle also carries <code>inputs.jsonl</code>, <code>outputs.jsonl</code>,
+            <code>model.json</code>, <code>traces/events.jsonl</code>, and <code>tokenizer.json</code> ,
+            17 files total, listed in
+            <code>artifacts/benchmark-v05/part5-reproduction.md</code>.) the manifest pins model and
+            tokenizer SHA-256s; a different file fails closed before a single token is computed
+            (<code>examples/experiments/README.md</code>).
+        </p>
+<h2>verification: offline, and it catches a flipped byte</h2>
+<p>
+<code>ember experiment verify</code> runs 15 basic checks fully offline, structure, schema
+            compatibility, recomputed plan/semantic/payload hashes, per-file payload checksums, and
+            tokenization/model deep checks when requested. the fail-closed behavior is the point, so here
+            is the test, reproduced live on 2026-08-04
+            (<code>artifacts/benchmark-v05/part5-reproduction.md</code> section 4):
+        </p>
+<pre><code># byte flip in the safetensors HEADER region
+$ ember experiment verify part5-corrupt
+Error: safetensors header is not valid JSON: invalid unicode code point
+
+# byte flip in the tensor DATA region
+$ ember experiment verify part5-corrupt
+  [ok] execution plan hash: plan hash 624ec2e08b63
+  [ok] semantic hash: recomputed f01c90f4deb4 vs stored f01c90f4deb4
+  [ok] payload hash: recomputed ed0b870f94c6 vs stored ed0b870f94c6
+  [FAIL] semantic payload checksums: captures/tensors.safetensors: checksum mismatch
+verdict: FAILED
+
+# control
+$ ember experiment verify runs/part5-baseline
+verdict: verified</code></pre>
+<p>
+            one flipped byte in a captured tensor produces a named failure, not a silent mismatch. that is
+            the fail-closed contract: anything that changed is either verified or named.
+        </p>
+<h2>comparison: what changed, stated precisely</h2>
+<p>
+<code>ember experiment compare</code> separates semantic facts from runtime noise: timestamps,
+            tps, and RSS are reported but never allowed to decide identity
+            (<code>docs/v05-research-contract.md</code> gate g). the live reproduction of the reference
+            workflow gives the whole causal shape in one table
+            (<code>artifacts/benchmark-v05/part5-reproduction.md</code> section 3):
+        </p>
+<div class="table-wrap">
+<table>
+<tr><th>run</th><th>generated text</th><th>final top-1 logit</th></tr>
+<tr><td>baseline</td><td>" كِتَاب هو كلمة"</td><td>15.830419540405273</td></tr>
+<tr><td>intervention (replace layer-7 prompt-final row with the target-subtoken row)</td><td>"، وَما يُشك"</td><td>12.156656265258789</td></tr>
+<tr><td>restoration</td><td>" كِتَاب هو كلمة"</td><td>15.830419540405273</td></tr>
+</table>
+</div>
+<p>
+            the comparison reports it structurally: baseline vs intervention ,
+            <code>generated_tokens_equal: false</code>, <code>first_divergence_step: 1</code>, and the
+            captured <code>prompt-final</code> tensors diverge from layer 8 onward (the layer-7
+            <code>residual-post-mlp</code> replacement is applied after that layer's residual adds per the
+            contract's intervention timing, so layers 8+ consume the replaced value). baseline vs
+            restoration, <code>generated_tokens_equal: true</code>, <code>generated_text_equal: true</code>,
+            <code>final_top1_equal: true</code>, no divergence step, and all 32 captured tensors bit-exact.
+            the restoration reproduces the baseline down to the same final logit, to the last recorded
+            f32 digit.
+        </p>
+<figure class="chart-wrap">
+<img alt="Baseline, intervention, restoration: the layer-7 replacement diverges output at step 1 and captures from layer 8; restoration reproduces the baseline bit-exactly" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram3.svg" width="1120" height="520" decoding="async" />
+<img alt="Baseline, intervention, restoration (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram3_light.svg" width="1120" height="520" decoding="async" />
+<figcaption>
+                figure 3, baseline, intervention, restoration, live (2026-08-04): the layer-7 replacement
+                diverges the output at step 1 and the prompt-final captures from layer 8; restoration
+                reproduces the baseline with all 32 captures bit-exact
+                (artifacts/benchmark-v05/part5-reproduction.md section 3).
+            </figcaption>
+</figure>
+<p>
+            the same shape appears in the v0.5.1 cross-bundle evidence
+            (<code>artifacts/benchmark-v05/capture-from-bundle/</code>, CHANGELOG v0.5.1): replace layer
+            8's row with the baseline bundle's layer-3 row → layers 0–8 bit-exact, 9–15 diverge; add
+            <code>restore-original</code> → the baseline is reproduced with all 16 capture layers exact and
+            outputs equal.
+        </p>
+<h2>the workflow, end to end</h2>
+<p>
+            the whole pipeline, run live on 2026-08-04 (commands in the evidence file; specs at
+            <code>examples/experiments/</code>):
+        </p>
+<pre><code>$ ember experiment validate examples/experiments/morphology-intervention.toml
+  inputs: 1  captures: 2  interventions: 1  defaults applied: 2
+
+$ ember experiment run examples/experiments/morphology-layerwise-capture.toml
+bundle written to runs/part5-baseline
+  semantic hash: f01c90f4deb4…
+  payload hash:  ed0b870f94c6…
+  verification: 15 check(s) passed
+
+$ ember experiment run …/morphology-intervention.toml      # bundle + 15/15
+$ ember experiment run …/morphology-restoration.toml       # bundle + 15/15
+
+$ ember experiment verify runs/part5-baseline
+verdict: verified
+
+$ ember experiment compare runs/part5-baseline runs/part5-restoration
+# generated tokens equal: true; all 32 captures bit-exact; restore event recorded</code></pre>
+<figure class="chart-wrap">
+<img alt="The experiment workflow: experiment.toml through validate, resolve, tokenize and align, execute, capture and intervene, to the atomic bundle, then verify, compare, and reproduce" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram1.svg" width="1120" height="560" decoding="async" />
+<img alt="The experiment workflow (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram1_light.svg" width="1120" height="560" decoding="async" />
+<figcaption>
+                figure 1, the experiment workflow: validate → resolve → tokenize/align → execute →
+                capture/intervene → atomic bundle → verify → compare → reproduce; the bundle is the
+                artifact boundary (artifacts/benchmark-v05/part5-reproduction.md).
+            </figcaption>
+</figure>
+<p>
+            each step is a subcommand with a deterministic, machine-readable output. the validation ladder
+            is: <code>validate</code> → <code>resolve</code> → <code>tokenize and align</code> →
+            <code>execute</code> → <code>capture/intervene</code> → atomic bundle → <code>verify</code> →
+            <code>compare</code> → <code>reproduce</code>.
+        </p>
+<h2>performance isolation</h2>
+<p>
+            the machinery must not contaminate ordinary inference (contract gate h): with the experiment
+            system unused, a run takes 2.61 s / 2,751,024 KB RSS versus 2.58 s / 2,751,028 KB for the same
+            workload without it; experiment workloads add 2.2% RSS against a ≤3% gate
+            (<code>artifacts/benchmark-v05/SUMMARY.json</code>). no experiment spec is parsed and no hook
+            fires unless the <code>experiment</code> subcommand runs.
+        </p>
+<h2>what still does not work</h2>
+<ul>
+<li>schema v1 is stable within 0.5.x only; an unknown major fails, and the compatibility
+                policy is explicit that "v1" does not mean every future field is frozen
+                (<code>docs/v05-research-contract.md</code> section 17).</li>
+<li>semantic identity is not wall-clock reproducibility: identical hashes do not imply identical
+                timings, and the comparison layer keeps runtime fields separate by design.</li>
+<li>the deep model/tokenizer verification checks are optional; the 15 basic checks do not
+                re-run the model.</li>
+<li>cross-bundle intervention sourcing is demonstrated on one real model
+                (Llama-3.2-1B Q8_0); "supported" still does not mean golden-validated on every row.</li>
+</ul>
+<h2>what this unlocked</h2>
+<p>
+            the workflow exists because a research question failed, the Arabic-selective quantization
+            hypothesis of the pilot. the next post tells that story: the null result, the rare boundary
+            failures, and the causal-localization toolchain that the v0.2–v0.5 instruments were built to
+            run.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

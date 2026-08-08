@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="600" viewBox="0 0 1120 600" role="img" aria-labelledby="t5b d5b">
+  <title id="t5b">The ember.bundle.v1 layout (v0.5)</title>
+  <desc id="d5b">The bundle tree with semantic-manifest.json and checksums.sha256 as the verification boundary.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .file { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 6; }
+    .filetext { fill: #f3efe5; font-size: 15px; text-anchor: start; }
+    .dir { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.4; rx: 6; }
+    .dirtext { fill: #b3a7e2; font-size: 15px; text-anchor: start; }
+    .root { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.8; rx: 8; }
+    .roottext { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }
+    .bound { fill: none; stroke: rgba(206,199,186,0.32); stroke-width: 1.5; stroke-dasharray: 7 5; rx: 12; }
+    .boundlabel { fill: #a6a6ad; font-size: 13px; letter-spacing: 0.05em; text-transform: uppercase; text-anchor: start; }
+    .annot { fill: #a6a6ad; font-size: 13px; text-anchor: start; }
+    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7e7f87" />
+    </marker>
+  </defs>
+  <rect class="root" x="64" y="52" width="200" height="56" />
+  <text class="mono roottext" x="164" y="86">run/</text>
+  <line class="arrow" x1="164" y1="108" x2="164" y2="140" marker-end="url(#arrow)" />
+  <g>
+    <rect class="file" x="64" y="144" width="320" height="40" />
+    <text class="mono filetext" x="84" y="169">manifest.json</text>
+    <rect class="file" x="64" y="196" width="320" height="40" />
+    <text class="mono filetext" x="84" y="221">runtime.json</text>
+    <rect class="file" x="64" y="248" width="320" height="40" />
+    <text class="mono filetext" x="84" y="273">resolved-experiment.json</text>
+    <rect class="file" x="64" y="300" width="320" height="40" />
+    <text class="mono filetext" x="84" y="325">execution-plan.json</text>
+    <rect class="file" x="64" y="352" width="320" height="40" />
+    <text class="mono filetext" x="84" y="377">tokenization.jsonl</text>
+    <rect class="file" x="64" y="404" width="320" height="40" />
+    <text class="mono filetext" x="84" y="429">inputs.jsonl</text>
+    <rect class="file" x="64" y="456" width="320" height="40" />
+    <text class="mono filetext" x="84" y="481">outputs.jsonl</text>
+  </g>
+  <rect class="bound" x="404" y="128" width="352" height="172" />
+  <text class="mono boundlabel" x="420" y="146">verification subset</text>
+  <g>
+    <rect class="dir" x="420" y="156" width="320" height="40" />
+    <text class="mono dirtext" x="440" y="181">semantic-manifest.json</text>
+    <rect class="file" x="420" y="208" width="320" height="40" />
+    <text class="mono filetext" x="440" y="233">checksums.sha256</text>
+    <rect class="file" x="420" y="260" width="320" height="40" />
+    <text class="mono filetext" x="440" y="285">verification.json</text>
+  </g>
+  <g>
+    <rect class="file" x="420" y="404" width="320" height="40" />
+    <text class="mono filetext" x="440" y="429">model.json</text>
+    <rect class="file" x="420" y="456" width="320" height="40" />
+    <text class="mono filetext" x="440" y="481">tokenizer.json</text>
+    <rect class="file" x="420" y="508" width="320" height="40" />
+    <text class="mono filetext" x="440" y="533">traces/</text>
+  </g>
+  <text class="mono annot" x="64" y="566">semantic-manifest.json + checksums.sha256 + verification.json form the verification subset of the 17-file bundle</text>
+  <text class="mono annot" x="64" y="586">live bundle: 15/15 checks, 2026-08-04</text>
+</svg>

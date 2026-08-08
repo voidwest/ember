@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="v0.1: an inference engine that can explain what it did" property="og:title"/>
+<meta content="Part 1 of Road to Ember 1.0: GGUF loading, tracing, and hidden-state extraction, and why a tensor is only useful when its origin is explicit." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/01-making-inference-legible.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>v0.1: an inference engine that can explain what it did</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/01-making-inference-legible.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+              
+            <a href="/ember/road-to-ember-1.0/">road to ember 1.0</a>
+</div>
+<h1>v0.1: an inference engine that can explain what it did</h1>
+<div class="meta">
+            draft · part 1 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">GGUF</span>
+<span class="tag key">CPU inference</span>
+<span class="tag key">tracing</span>
+<span class="tag key">hidden states</span>
+<span class="tag model">LLaMA</span>
+<span class="tag model">Qwen</span>
+</div>
+<div class="callout">
+<div class="label">draft status</div>
+<p>
+                complete draft with explicit citations to repository artifacts. the trace and extraction
+                artifacts described here were produced live on 2026-08-04 from the release binary and are
+                recorded in <code>artifacts/benchmark-v01/part1-legibility.md</code>. the figure is embedded
+                as SVG (dark/light theme variants under <code>figures/</code>).
+            </p>
+</div>
+<p>
+extracting a tensor is the easy part. knowing what it means, which layer, which
+            position, which execution route, which kernel, is the engineering.
+        </p>
+<h2>the problem: probes need hidden states with known origins</h2>
+<p>
+            Ember's reason to exist is a research question about Arabic morphology: where in a transformer
+            are roots and patterns represented, and why does representational availability sometimes fail
+            to produce generation behavior? every form of that question starts with the same act: take a
+            tensor out of a running model and say something about it. the act is only meaningful if the
+            tensor's origin is known exactly, which model, which layer, which token position, which
+            execution path, which kernel, and what came before it.
+        </p>
+<p>
+            a hidden-state dump without that context is not evidence; it is a number. the central claim of
+            this post is the v0.1 release's: <em>a hidden-state dump is not useful unless its exact
+            semantic and numerical origin is known.</em> v0.1 built the engine that makes that origin
+            explicit.
+        </p>
+<h2>the naive solution: dump whatever the model computes</h2>
+<p>
+            the naive approach is to instrument at the end: run the model, intercept the outputs, write the
+            tensors to disk, and let the researcher sort out what they are. it produces files quickly and
+            meaning slowly. three things are lost:
+        </p>
+<ul>
+<li><strong>tensor identity</strong>, which layer produced this buffer? was it pre- or
+                post-residual? which norm fed it?</li>
+<li><strong>position</strong>, a prompt has many tokens; a decode run has many steps. a dump
+                that does not say which position a row belongs to cannot be aligned to anything.</li>
+<li><strong>route</strong>, which kernel executed this projection, and from what
+                representation (packed Q8 blocks or expanded f32)? two runs can produce the same filename
+                and different numerics.</li>
+</ul>
+<h2>why it failed: the loader already had the answers</h2>
+<p>
+            the v0.1 loader (<code>CHANGELOG.md</code>, v0.1: GGUF v3 loading for F32/F16/BF16/Q8_0;
+            mmap-backed Q8_0 weights; SIMD decode kernels; tiled prefill) knew everything a researcher
+            needs: the dtype, the shape, the layout, the file the tensor came from. the problem was that
+            this knowledge stopped at the loader boundary. the extraction path had to re-discover it, and
+            the GGUF format makes that re-discovery genuinely hard:
+        </p>
+<ul>
+<li>f32/f16 linear and embedding tensors are stored <code>[in, out]</code> with the first dim
+                contiguous; linears need a row-major fixup and embeddings a dims-swap, and a tied LM head
+                needs a real transpose, get any of these wrong and every downstream tensor is silently
+                corrupted (repository gotchas, documented against the loader in
+                <code>docs/architecture.md</code> and the loader's layout helpers).</li>
+<li>tokenizer offsets are bytes, not characters. an extraction that assumes character offsets
+                breaks on the first Arabic prompt, which, for this project, is every prompt.</li>
+<li>dtype handling is versioned (the 2024 K-quant renumbering); a loader that assumes the old
+                numbers misreads every K tensor without an error.</li>
+</ul>
+<p>
+            the consequence: obtaining a tensor and knowing what it means are different problems, and the
+            second one is the actual engineering.
+        </p>
+<h2>the design: a reference path that is readable by construction</h2>
+<p>
+            v0.1 kept a deliberately unoptimized reference execution path as the correctness oracle
+            alongside the packed Q8 fast path: same model, same inputs, generic kernels, explicit
+            intermediates. the two paths must agree on greedy output within the recorded envelopes
+            (controlled a/b regression tests, trace-fingerprint and hidden-state tests ,
+            <code>CHANGELOG.md</code> v0.1). the reference path is not a fallback; it is the definition of
+            what the fast path is allowed to change.
+        </p>
+<p>
+            on top of that: KV-cached generation with deterministic greedy decoding, structured operation
+            tracing, and hidden-state extraction (<code>CHANGELOG.md</code> v0.1). "deterministic" here is
+            semantic determinism: temperature 0 with a fixed seed produces the same tokens and the same
+            hidden states on the same binary, not necessarily the same wall-clock times.
+        </p>
+<figure class="chart-wrap">
+<img alt="Data flow and observation points: GGUF file to loader to tensors to reference path to logits, with hidden-state observation points and a packed Q8 fast path" class="chart theme-chart-dark" loading="lazy" src="figures/part1-diagram1.svg" width="1120" height="520" decoding="async" />
+<img alt="Data flow and observation points (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part1-diagram1_light.svg" width="1120" height="520" decoding="async" />
+<figcaption>
+                figure 1, data flow and observation points. hidden states are extractable at the marked
+                stages; the packed Q8 fast path must agree with the reference within the recorded envelopes
+                (docs/architecture.md; CHANGELOG v0.1; artifacts/benchmark-v01/part1-legibility.md).
+            </figcaption>
+</figure>
+<h2>what the engine says it did</h2>
+<p>
+            the trace is a per-operation journal. on 2026-08-04, the release binary traced a 6-token
+            prefill on Llama-3.2-1B Q8_0 into 275 events, each carrying the op name and kind, the layer
+            index, input/output shapes and byte counts, duration, and an estimated FLOP count
+            (<code>artifacts/benchmark-v01/part1-legibility.md</code> section 2):
+        </p>
+<pre><code>{"duration_ns": 5896, "estimated_flops": 0, "input_bytes": 49152,
+ "input_shape": [6, 2048], "layer": 18446744073709551615,
+ "name": "embedding", "op_kind": "Embedding", "output_bytes": 49152}</code></pre>
+<p>
+            every layer, projection, norm, and attention op appears with its shapes and bytes; the decode
+            phase is traced per step. the trace is the engine saying what it did, the origin of every
+            tensor it produced, in order.
+        </p>
+<p>
+            the extraction path writes that origin next to the tensors. a direct-mode extraction on the
+            same model produced a run directory with 16 per-layer shards (one 2048-dim f32 row per layer,
+            the final prompt position) plus a manifest that records the model architecture, tokenizer,
+            backend, sample hashes, config hash, and checksums (<code>artifacts/benchmark-v01/part1-legibility.md</code>
+            section 3). the artifact is self-describing: <code>schema_version</code>, <code>layout</code>,
+            <code>tensor_contract</code>, <code>dtype</code>, <code>output_format</code>, and the full
+            model/tokenizer records are in the manifest, not assumed.
+        </p>
+<h2>the validation ladder</h2>
+<p>
+            v0.1 also established the vocabulary the whole series uses
+            (<code>docs/validation.md</code>): smoke (the command ran) &lt; golden logits (output compared
+            against a trusted reference) &lt; activation-reference checks (internal states compared) &lt;
+            probes (decodability) &lt; interventions (causal use). each rung is a different claim. v0.1
+            shipped golden-logit and trace-fingerprint tests for the paths it supported; the ladder is
+            what makes "supported" distinct from "numerically validated on every row".
+        </p>
+<h2>what still does not work</h2>
+<ul>
+<li>at v0.1, activation-reference checks were pending for several rows; "supported" meant an
+                execution path exists, not that every architecture was golden-validated.</li>
+<li>Qwen2.5 support was explicitly experimental; Gemma 4 was dense text-only, and its
+                numerical gap remains untrusted to this day.</li>
+<li>the <code>--arch</code> default silently fell back to gpt2 when a model needed an explicit
+                architecture, a trap that shipped and was only fixed later with <code>--arch auto</code>.</li>
+<li>the tokenizer's byte offsets were the source of repeated non-ASCII bugs (fixed in v0.5);
+                the extraction tokenization path still carried a byte-offset limitation at v0.1.</li>
+<li>llama.cpp remains the external performance reference; v0.1 made no throughput claim, and
+                neither does this post. the v0.1 release page calls its own numbers "host-specific
+                validation numbers... rather than a leaderboard".</li>
+</ul>
+<h2>what this unlocked</h2>
+<p>
+            knowing where a tensor came from is observation. the next step is changing it and observing the
+            consequence, which requires the capture, patch, and restore machinery of v0.2.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

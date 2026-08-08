@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 3 من سلسلة الطريق إلى Ember 1.0: ملف Q4 يصل إلى الذاكرة كـ f32، وما تطلبه إبقاء الأوزان الكمّية كمّية فعلًا." />
+        <meta property="og:title" content="v0.3، كمّي على القرص، كمّي في الذاكرة" />
+        <meta property="og:description" content="الملف قال Q4 والمحرك قال f32. النموذج كان أصغر على القرص وبنفس الحجم في الذاكرة، حتى أوقف v0.3 المحرك من فك ضغط النموذج." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>v0.3، كمّي على القرص، كمّي في الذاكرة</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>v0.3، كمّي على القرص، كمّي في الذاكرة</h1>
+
+        <div class="meta">
+            مسودة · الجزء 3 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">كمّية</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">ذاكرة</span>
+            <span class="tag key">AVX2</span>
+            <span class="tag model">LLaMA</span>
+            <span class="tag model">Qwen</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">حالة المسودة</div>
+            <p>
+                مسودة مكتملة باستشهادات صريحة لـ artifacts المستودع. الأشكال مضمّنة كـ SVG (نسختا الوضع الداكن
+                والفاتح) بتعليقات تستشهد بالأدلة. أرقام الأداء والذاكرة هنا أُعيد اشتقاقها من بناءات موسومة
+                في 2026-08-04 ومسجّلة في <code>artifacts/benchmark-v03/part3-binary-memory.md</code>؛ قيم
+                زمن الإصدار مستشهد بها من <code>artifacts/benchmark-v03/bench-summary.json</code> و
+                <code>docs/validation.md</code>.
+            </p>
+        </div>
+
+        <p>
+            الملف قال Q4 والمحرك قال f32. كان النموذج أصغر على القرص وبنفس الحجم في
+            الذاكرة، حتى أوقف v0.3 المحرك من فك ضغط النموذج.
+        </p>
+
+        <h2>المشكلة: الانقلاب</h2>
+
+        <p>
+            الملف الكمّي وعد بالحجم. Q4_K_M تعني نحو أربع بتات لكل وزن على القرص، والملف يفي: Llama-3.2-1B
+            بصيغة Q4_K_M أصغر نحو 39% من النموذج نفسه بصيغة Q8_0. ينكسر الوعد لما يُحمَّل النموذج. محمّل
+            Ember قبل v0.3 كان يفك كل tensor K إلى f32 عند التحميل ويُبقي المخازن الموسّعة مقيمة، ثم يشغّل
+            كل شيء عبر kernels f32 عامة. بقي الملف Q4 على القرص؛ النموذج الجاري كان f32 في الذاكرة.
+        </p>
+
+        <p>
+            العواقب قِيست قبل v0.3 في ملاحظة خط الأساس المجمّدة
+            (<code>docs/research-notes/the-file-said-q4-runtime-said-f32.html</code>) على الجهاز نفسه
+            اللي أنتج قياسات الإصدار:
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>النموذج</th><th>الملف</th><th>decode جشع tok/s</th><th>ذروة RSS</th><th>التمثيل في زمن التشغيل</th></tr>
+                <tr><td>Qwen2.5-1.5B</td><td>Q4_K_M 1066 MB</td><td>2.6</td><td>8712 MB</td><td>توسعة f32 دائمة</td></tr>
+                <tr><td>Qwen2.5-1.5B</td><td>Q6_K 1396 MB</td><td>2.5</td><td>8713 MB</td><td>توسعة f32 دائمة</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>Q4_K_M 770 MB</td><td>3.2</td><td>6965 MB</td><td>توسعة f32 دائمة</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>Q6_K 974 MB</td><td>2.9</td><td>6965 MB</td><td>توسعة f32 دائمة</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>Q8_0 1260 MB</td><td>149.6</td><td>2685 MB</td><td>مضغوط مقيم</td></tr>
+            </table>
+        </div>
+
+        <p>
+            عبر الصفوف الأربعة Q4/Q6، كانت ذروة RSS أعلى 2.59×–4.49× من خط أساس Q8_0، والـ decode أبطأ
+            15.6×–51.6×. المحور الوحيد اللي كانت فيه الملفات منخفضة البت أصغر هو الملف نفسه.
+        </p>
+
+        <p>
+            هذا هو السؤال اللي يجيب عنه الإصدار دا: <em>ما فائدة نموذج Q4 إذا كان المحرك يفكّه إلى
+            f32؟</em>
+        </p>
+
+        <h2>الحل الساذج: فك كل شيء، بأمانة</h2>
+
+        <p>
+            محمّل dequant-to-f32 ما كان كسلًا. كان الاختيار الهندسي الصحيح لمحرك بحثي وظيفته الأولى الصدق
+            الرقمي: تمثيل واحد، مسار kernels عام واحد، لا تنفيذ لكل dtype ليُتحقق. يذكر عقد v0.3
+            (<code>docs/v03-execution-contracts.md</code>) الكلفة بصراحة في القسم 3: ذاكرة الأوزان المقيمة
+            4× الحجم المضغوط، Llama-3.2-1B Q6_K بحجم 1.02 GB على القرص ونحو 4.1 GB كـ f32 مقيم، وكل
+            matmul gemm كثيف f32.
+        </p>
+
+        <p>
+            المشكلة ما كانت أبدًا أن المسار المرجعي موجود. المشكلة أنه كان المسار الوحيد. ملف Q4 لازم
+            يُوسَّع إلى f32 قبل ما يشتغل مو نشرًا منخفض الذاكرة؛ إنه محمّل بحثي يصادف أنه يقرأ ملفات Q4.
+        </p>
+
+        <h2>ليش كان لازم يتغير</h2>
+
+        <p>
+            ثلاثة قياسات جعلت التغيير لا مفر منه. أولًا، ذروة RSS للمسار الـ eager تتبّعت الأوزان
+            الموسّعة لا الملف: نحو 6.99 GB لـ Llama Q4_K_M/Q6_K ونحو 8.83 GB لـ Qwen2.5-1.5B على هذا
+            الجهاز (أُعيد في 2026-08-04؛ القسم 2 من
+            <code>artifacts/benchmark-v03/part3-binary-memory.md</code>). ثانيًا، مرجع llama.cpp المثبّت
+            شغّل الملفات نفسها عند ذروة RSS من 1.08–1.77 GB
+            (<code>artifacts/benchmark-v03/bench-summary.json</code>). ثالثًا، كان decode الـ K-quant
+            الـ eager أبطأ من جلسة Q8_0 للنموذج نفسه على الجهاز نفسه بمرتبة إلى مرتبتين. لا شيء من هذا
+            ادعاء أن Q4 "أسوأ" من Q8، إنه بيان عما يفعله المحرك بملف.
+        </p>
+
+        <h2>قيد التصميم</h2>
+
+        <p>
+            القيد، المجمّد قبل التنفيذ (<code>docs/v03-execution-contracts.md</code>)، سطر الحالة: تبقى
+            الأوزان مضغوطة ومقيمة عبر mmap، ولا يتم فك الكمّية إلا على دقة كتلة أو بلاطة داخل kernels
+            الـ matmul. لا توسعة f32 كاملة دائمة لـ tensors المسار الأصلي. جمد العقد كمان حدود التغيير:
+        </p>
+
+        <ul>
+            <li>مسار eager-f32 محفوظ كمرجع قابل للاختيار ولا يُحذف أبدًا؛</li>
+            <li>لا سقوط صامت: كل اختيار تنفيذ لكل tensor مسجّل؛</li>
+            <li>kernels أصلية لـ Q4_K وQ6_K بس، Q2_K/Q3_K/Q5_K/Q8_K تبقى eager-only؛</li>
+            <li>مساحة عمل لكل خيط محدودة (≤ 9 KiB)؛</li>
+            <li>حدود الـ hooks الدلالية الست (قبل الطبقة، بعد attention، بعد mlp، بعد الطبقة، قبل logits، بعد
+                logits) مضمونة مطابقة للمسار المرجعي، عشان نماذج K-quant تحافظ على مسار أمامي عام واحد.</li>
+        </ul>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part3-diagram1.svg"
+                 alt="التوسعة الـ eager مقابل الإقامة المضغوطة: المسار المرجعي يوسّع مصفوفة الأوزان كلها إلى f32؛ مسار v0.3 يُبقي الكتل مضغوطة عبر mmap ويشغّل matvec K-quant أصليًا"
+                 loading="lazy" width="1120" height="548" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part3-diagram1_light.svg"
+                 alt="التوسعة الـ eager مقابل الإقامة المضغوطة (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="548" decoding="async" />
+            <figcaption>
+                الشكل 1، التوسعة الـ eager مقابل الإقامة المضغوطة. ذروة RSS على بناء tag v0.3.0:
+                6,989,724–8,837,276 KB (eager) مقابل 844,216–1,266,684 KB (مضغوط) عبر Llama-3.2-1B
+                وQwen2.5-1.5B عند Q4_K_M/Q6_K (artifacts/benchmark-v03/part3-binary-memory.md).
+            </figcaption>
+        </figure>
+
+        <h2>ما تفرضه ترتيبات GGUF</h2>
+
+        <p>
+            الـ K-quants مو صيغة واحدة. tensor Q4_K يخزن 8 كتل لكل super-block مع مقاييس وإزاحات لكل
+            كتلة؛ Q6_K يخزن 16 كتلة لكل super-block بمقاييس int8؛ ونموذج "Q4_K_M" مزيج <em>لكل tensor</em>،
+            ملف Llama-3.2-1B Q4_K_M يحتوي 96 tensor من Q4_K و17 من Q6_K (قيمة attention + هبوط FFN في
+            طبقات مختارة، إضافة إلى الـ embedding المرتبط) و34 tensor من F32 للـ norms والتحيزات
+            (جرد في <code>docs/v03-execution-contracts.md</code> القسم 5). وعشان كدا لازم على المسار الأصلي أن
+            يوزّع لكل tensor لا لكل ملف، وQ4_K_M تفرض وجود kernels Q4_K وQ6_K معًا.
+        </p>
+
+        <p>
+            وولازم المحمّل كمان يحترم تحوّل ترقيم الـ dtype في 2024 (Q2_K=10 … Q6_K=14 في GGUF)،
+            فقراءة نوع tensor K خطأً تُفسد كل وزن من غير خطأ (نطاق الـ dtype موثق في القسم 3 من العقد). ومعنى
+            "لكل tensor" أن "Q4" لا تُدّعى أبدًا من اسم الملف؛ الجرد يُقرأ من رؤوس GGUF.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part3-diagram4.svg"
+                 alt="تشريح super-block لـ Q4_K وQ6_K: 8 كتل من 32 وزنًا بعوامل مقاييس 2-بت لـ Q4_K؛ 16 كتلة من 16 وزنًا بمقاييس int8 لـ Q6_K"
+                 loading="lazy" width="1120" height="540" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part3-diagram4_light.svg"
+                 alt="تشريح super-block لـ Q4_K وQ6_K (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="540" decoding="async" />
+            <figcaption>
+                الشكل 4، تشريح super-block لـ Q4_K وQ6_K (مفاهيمي). التوزيع لكل tensor لا لكل ملف: ملف
+                llama-3.2-1b q4_k_m يخلط 96 Q4_K + 17 Q6_K + 34 F32 (docs/v03-execution-contracts.md §5).
+            </figcaption>
+        </figure>
+
+        <h2>التنفيذ</h2>
+
+        <p>
+            التمثيل الجديد (<code>KQuantWeight</code> في <code>src/quant_k.rs</code>) يطابق قالب Q8_0
+            المضغوط الموجود: تخزين كتل خام مدعوم بـ mmap، مع بناء متحقق (محاذاة كتل، طول بايت، نطاق
+            معيّن). فك الكمّية يعيد استخدام <code>dequant_q4_k</code>/<code>dequant_q6_k</code>
+            المتحققَين مرجعيًا على دقة الكتلة. ووفوق كدا:
+        </p>
+
+        <ul>
+            <li><strong>kernels عددية</strong>، المرجع العددي: فك كتلة + ضرب قياسي f32، من غير SIMD.</li>
+            <li><strong>kernels AVX2</strong>، الحساب نفسه، مُتجهًا؛ تُختار عند توفر AVX2+FMA+F16C.</li>
+            <li><strong>توزيع لكل tensor</strong>، <code>--k-strategy eager-f32|scalar|x86|auto</code>؛
+                dtypes غير مدعومة تحت استراتيجية مضغوطة صريحة تفشل قاسيًا مسمّية الـ tensor ما لم يُعطَ
+                <code>--k-allow-fallback</code>؛ <code>auto</code> يختار x86 عند توافره ويسجّل القرار
+                (القسم 6 من العقد).</li>
+            <li><strong>جرد المصدر</strong>، تصبح manifests الالتقاط تحمل سجل تنفيذ لكل tensor: dtype
+                GGUF، التمثيل المقيم، الاستراتيجية، الـ kernel، متطلب ميزة CPU، سبب السقوط، بايتات
+                مساحة الشغل (القسم 10 من العقد). الـ artifact يقول دحين ما نُفّذ فعلًا.</li>
+            <li><strong>الـ embeddings والرؤوس المرتبطة</strong>، صفوف embedding الكمّية تُفك لكل بحث
+                في مخزن خيط صغير ولا تبقى مقيمة أبدًا؛ رأس LM المرتبط لملف Llama يمر عبر المسار نفسه
+                (القسمان 5 و7 من العقد).</li>
+        </ul>
+
+        <p>
+            بطارية أشكال kernels في اختبارات الوحدات عريضة عمدًا، صفوف {1,2,8,32} × in
+            {256,512,1536,2048,8960} × out {128,512,2048}، إضافة إلى حواف مقياس صفري وسالب أدنى
+            ومشبع وغير محاذاة (القسم 9 من العقد، Gate A).
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part3-diagram2.svg"
+                 alt="تشريح matvec K-quant: فك كتلة واحدة في مخزن صغير لكل خيط، ضربها بشريحة التنشيط، تراكمها؛ المصفوفة كلها لا تصبح f32 مقيمة أبدًا"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part3-diagram2_light.svg"
+                 alt="تشريح matvec K-quant (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <figcaption>
+                الشكل 2، تشريح matvec K-quant. تُفك كتلة واحدة في مخزن [f32; 256] لكل خيط في كل مرة؛
+                مساحة عمل المسار المضغوط لكل خيط ≤ 9 KiB ولا يُنشأ مخزن f32 بمقياس النموذج أبدًا
+                (docs/v03-execution-contracts.md §7).
+            </figcaption>
+        </figure>
+
+        <h2>بوابات التحقق</h2>
+
+        <p>
+            سُجّلت البوابات مسبقًا في العقد قبل التنفيذ ومو ممكن إلا تشديدها لا تخفيفها لملاءمة النتائج.
+            أربع بوابات عددية والخامسة سير الشغل السببي:
+        </p>
+
+        <ul>
+            <li><strong>Gate A، توازي kernels</strong>: kernels العددية وAVX2 مقابل المرجع
+                dequant-then-gemm الـ eager، <code>max_abs ≤ 1e-4·scale</code> عبر بطارية الأشكال
+                والحواف؛ AVX2 مقابل العددي ضمن السماحية.</li>
+            <li><strong>Gate B، توازي النموذج</strong>: المضغوط مقابل eager-f32 على السلم الجديد،
+                العائلتان × Q6_K/Q4_K_M؛ <code>max_abs ≤ 5e-4·scale</code> لكل طبقة، cosine ≥ 1−1e-6،
+                logits ≤ 1e-2 (qwen عُدّل إلى 2e-2)، تسلسلات tokens جشعة متطابقة على مجموعة الـ prompts
+                المجمّدة. انقلاب token فشل يُحقَّق، لا حدٌّ يُرخى.</li>
+            <li><strong>Gate C، golden logits</strong>: logits الموضع الأخير مقابل CLI llama.cpp المثبّت
+                على درجات السلم الست؛ توافق 100% في top-1 على كل درجة، مع المغلفات المسجّلة:
+                llama q8/q6/q4 = max abs diff 0.59/0.81/0.65، cosine 0.9995/0.9989/0.9992؛
+                qwen q8/q6/q4 = 0.82/1.36/1.74، cosine 0.9991/0.9975/0.9963
+                (<code>docs/validation.md</code>، قسم v0.3). توافق top-1 توافق على الـ argmax لا مساواة
+                logits.</li>
+            <li><strong>Gate D، x86 مقابل العددي</strong>: أرقام Gate A على مستوى الـ kernel، وGate B على
+                مستوى النموذج.</li>
+            <li><strong>سير الشغل السببي</strong>: التقاط → مقارنة → تعديل → حكم مجمّد على المسار
+                المضغوط، التدخّل يقلب 8/8 سجلات ويستعيد الـ patch كل tensor ملتقط مطابقًا للبت
+                (<code>docs/validation.md</code>).</li>
+        </ul>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part3-diagram3.svg"
+                 alt="سلم التحقق: kernel عددية مضغوطة، kernel AVX2 مضغوطة، تنفيذ النموذج المخطط، توازي الـ hidden states لكل طبقة، logits نهائية، tokens جشعة، مرجع llama.cpp المثبّت؛ hooks الالتقاط والتدخل تلتصق بالمواقع الست نفسها"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part3-diagram3_light.svg"
+                 alt="سلم التحقق (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <figcaption>
+                الشكل 3، سلم التحقق. توازي kernels (Gate A) → توازي النموذج (Gates B/D) → golden خارجي
+                مقابل llama.cpp المثبّت (Gate C)، مع التصاق مواقع الـ hooks الدلالية الست بمواقع النداء نفسها
+                في المسارين (docs/v03-execution-contracts.md §8–9؛ docs/validation.md).
+            </figcaption>
+        </figure>
+
+        <p>
+            الجزء الصادق من Gate C تاريخ تعديلاته، اللي يسجّله العقد حرفيًا. أول حدّ مسود (max abs ≤ 1e-2
+            على logits النهائية) أخطأ قراءة المعيار golden القائم، فتقرير Q8_0 للـ pilot نفسه أظهر
+            max abs 0.364 مقابل kernels تراكم الأعداد الصحيحة في llama.cpp، فلا تغيير ترتيب تراكم ممكن
+            أن يبلغ 1e-2 على هذي العائلة. أصبح المعيار المبني على الأدلة: top-1 100%، cosine ≥ 1−1e-3،
+            mean ≤ 0.1، max ≤ 1.0؛ وتعديل ثانٍ نقل حد العنصر الأقصى الفردي من 0.5 إلى 1.0 بعد ما أثبت
+            عنصر متطرف واحد من 128k لكل عينة حساسيته للمُكمِّم وللترتيب؛ وتعديل ثالث حدد المغلفات
+            النهائية لكل عائلة من تشغيل السلم الست الكامل. لم يغيّر أي منها البوابة الأولية، ظل توافق
+            top-1 100% طوال الوقت.
+        </p>
+
+        <h2>النتيجة</h2>
+
+        <p>
+            أُعيد اشتقاقها في 2026-08-04 من بناء tag v0.3.0 (الأوامر الكاملة والقيم الخام في
+            <code>artifacts/benchmark-v03/part3-binary-memory.md</code>)، بالبروتوكول نفسه لمصفوفة
+            الإصدار (<code>scripts/bench_v03.sh</code>، 64 token، إحماء 1، 3 تكرارات، 8 خيوط، ذروة RSS
+            للعملية كلها):
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>النموذج</th><th>الاستراتيجية</th><th>median tok/s</th><th>ذروة RSS</th></tr>
+                <tr><td>Llama-3.2-1B Q4_K_M</td><td>eager-f32</td><td>0.98</td><td>6,989,724 KB (6.67 GiB)</td></tr>
+                <tr><td>Llama-3.2-1B Q4_K_M</td><td>مضغوط (x86)</td><td>2.01</td><td>844,216 KB (0.81 GiB)</td></tr>
+                <tr><td>Llama-3.2-1B Q6_K</td><td>eager-f32</td><td>0.98</td><td>6,989,252 KB (6.67 GiB)</td></tr>
+                <tr><td>Llama-3.2-1B Q6_K</td><td>مضغوط (x86)</td><td>2.21</td><td>1,053,524 KB (1.00 GiB)</td></tr>
+                <tr><td>Qwen2.5-1.5B Q4_K_M</td><td>eager-f32</td><td>0.87</td><td>8,828,632 KB (8.42 GiB)</td></tr>
+                <tr><td>Qwen2.5-1.5B Q4_K_M</td><td>مضغوط (x86)</td><td>1.66</td><td>987,360 KB (0.94 GiB)</td></tr>
+                <tr><td>Qwen2.5-1.5B Q6_K</td><td>eager-f32</td><td>0.85</td><td>8,837,276 KB (8.43 GiB)</td></tr>
+                <tr><td>Qwen2.5-1.5B Q6_K</td><td>مضغوط (x86)</td><td>1.67</td><td>1,266,684 KB (1.21 GiB)</td></tr>
+            </table>
+        </div>
+
+        <p>
+            خفّض المسار المضغوط ذروة RSS 6.6×–8.9× مقابل الـ eager على الثنائي نفسه، وتحسّن الـ decode
+            1.9×–2.3× في هذي الجلسة. وسجّلت مصفوفة زمن الإصدار تسريعات مماثلة (1.94×–2.75×) وبصمة
+            الأوزان المقيمة بحجم الملف: 799.6 MB مضغوطًا مقابل نحو 3.2 GB موسّعًا لـ Llama Q4_K_M،
+            و1457.6 MB مقابل نحو 5.83 GB لـ Qwen Q6_K
+            (<code>artifacts/benchmark-v03/bench-summary.json</code>، <code>docs/v03-execution-contracts.md</code>
+            القسم 5). مرجع llama.cpp المثبّت شغّل الملفات نفسها عند 1.08–1.77 GB ذروة RSS، مسار Ember
+            المضغوط أصبح في الحي نفسه، وهو حيث لازم يعيش النموذج الكمّي.
+        </p>
+
+        <p>
+            وأذرع الـ eager لهذه الإعادة تطابق خط الأساس المجمّد قبل v0.3 ضمن 0.4% (6,989,724 KB مقابل
+            6,965 MB المسجّلة لـ Llama Q4_K_M)، وهو فحص الصحة اللي يؤكد أن المقارنة تقيس تغيير التمثيل
+            لا انجراف الجهاز (<code>artifacts/benchmark-v03/part3-binary-memory.md</code> القسم 2).
+        </p>
+
+        <p>
+            كلفة الثنائي: النمو المقاس من v0.2.0 إلى v0.3.0 هو 820,480 بايت (نحو 801 KiB) على الأداة
+            الحالية (rustc 1.95.0). تقدير داخلي بنحو "190 KB" لا يعيد إنتاجه تحت هذي الأداة؛ القيمة
+            المقاسة مسجّلة في ملف الأدلة. أضاف الإصدار نحو 0.8 MiB من kernels وتوزيع ومصدر إلى
+            القابل للتنفيذ، مقابل 6–8 GiB من الذاكرة أزالها.
+        </p>
+
+        <h2>إيش اللي لا يشتغل بعد</h2>
+
+        <ul>
+            <li>لا kernel أصليًا لـ Q2_K/Q3_K/Q5_K/Q8_K في v0.3؛ تحت استراتيجية مضغوطة صريحة تفشل قاسيًا
+                ما لم يُسمح بالسقوط.</li>
+            <li>نماذج K-quant بطيئة التحميل (13–16 ثانية على هذا الجهاز) وغير مؤهلة للمسار السريع لمساحة
+                عمل Q8؛ kernels العددية مرجعية بس (نحو 0.3–0.4 tok/s).</li>
+            <li>مسار ترميز الاستخراج يحمل قيد إزاحات بايتية سابقًا مع prompts غير ASCII (سلم golden
+                يستخدم prompts إنجليزية).</li>
+            <li>فجوة gemma 4 الرقمية لم تتغير وخارج نطاق v0.3؛ "مدعوم" لسه مو معناه مُتحققًا رقميًا
+                لكل صف.</li>
+            <li>llama.cpp يبقى أسرع بمرتبة تقريبًا في الـ decode؛ Ember مو منافس إنتاجية، والمقال دا
+                لا يقدم ادعاء توازٍ.</li>
+        </ul>
+
+        <h2>إيش اللي أطلق هذا</h2>
+
+        <p>
+            إبقاء الأوزان مضغوطة أصلح مشكلة الذاكرة، بس الـ decode لسه يشغّل المسار المربوط العام
+            مع إعادة اكتشاف توزيع لكل token ومساحة عمل لكل token. الإصدار التالي، v0.4، يخطط داك
+            التنفيذ مرة واحدة لكل نموذج، ويشتغل مشغّل الخطة على هذي الركيزة المضغوطة بالضبط. الذاكرة
+            اللي وفّرها المسار الأصلي هي الذاكرة اللي يرفض المحرك المُخطَّط إعادة تخصيصها وبعدها.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="ogt ogd">
+  <title id="ogt">Road to Ember 1.0</title>
+  <desc id="ogd">Building an inference engine that gets faster without becoming harder to trust.</desc>
+  <style>
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .kicker { fill: #a6a6ad; font-size: 26px; letter-spacing: 0.35em; text-transform: uppercase; }
+    .title { fill: #f8f4ea; font-size: 76px; font-family: Georgia, "Times New Roman", serif; }
+    .tagline { fill: #a6a6ad; font-size: 30px; font-family: Georgia, "Times New Roman", serif; }
+    .tags { fill: #7e7f87; font-size: 22px; }
+  </style>
+  <rect width="1200" height="630" fill="#090b0e"/>
+  <rect x="40" y="40" width="1120" height="550" rx="14" fill="none" stroke="rgba(206,199,186,0.18)" stroke-width="2"/>
+  <rect x="40" y="380" width="6" height="130" fill="#9b8fd1"/>
+  <text class="mono kicker" x="120" y="150">ember · research layer</text>
+  <text class="title" x="120" y="320">Road to Ember 1.0</text>
+  <text class="tagline" x="120" y="420">Building an inference engine that gets faster</text>
+  <text class="tagline" x="120" y="462">without becoming harder to trust.</text>
+  <text class="mono tags" x="120" y="530">v0.1 · v0.2 · v0.3 · v0.4 · v0.5.1 — GGUF · CPU · hidden states · reproducibility</text>
+</svg>

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="580" viewBox="0 0 1120 580" role="img" aria-labelledby="t4a d4a">
+  <title id="t4a">The three execution concepts (v0.4)</title>
+  <desc id="d4a">Reference, planned, and planned-fused pipelines from the same model tensors; the fused pipeline carries the frozen fusion set with hook-driven de-fusion.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #fbf8f1; stroke: rgba(92,84,72,0.38); stroke-width: 1.3; rx: 8; }
+    .boxlabel { fill: #18191b; font-size: 16px; text-anchor: middle; }
+    .accent-box { fill: #ece6da; stroke: #8275bc; stroke-width: 1.6; rx: 8; }
+    .accent-label { fill: #6659a1; font-size: 16px; text-anchor: middle; }
+    .ref-box { fill: #fbf8f1; stroke: rgba(92,84,72,0.38); stroke-width: 1.4; stroke-dasharray: 5 4; rx: 8; }
+    .arrow { stroke: #77746e; stroke-width: 1.6; fill: none; }
+    .accent-arrow { stroke: #8275bc; stroke-width: 1.8; fill: none; }
+    .diamond { fill: #8275bc; stroke: #fbf8f1; stroke-width: 1.4; }
+    .diamond-label { fill: #18191b; font-size: 12px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, monospace; }
+    .colhead { fill: #66676b; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; text-anchor: middle; }
+    .annot { fill: #66676b; font-size: 14px; text-anchor: middle; }
+    .tag { fill: #77746e; font-size: 13px; text-anchor: middle; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#77746e" />
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8275bc" />
+    </marker>
+  </defs>
+  <rect class="box" x="360" y="56" width="400" height="58" />
+  <text class="mono boxlabel" x="560" y="91">model tensors</text>
+  <text class="mono colhead" x="200" y="140">reference</text>
+  <line class="arrow" x1="470" y1="114" x2="200" y2="160" marker-end="url(#arrow)" />
+  <rect class="ref-box" x="80" y="164" width="240" height="72" />
+  <text class="mono boxlabel" x="200" y="192">generic hooked path</text>
+  <text class="mono tag" x="200" y="216">per-token dynamic dispatch</text>
+  <line class="arrow" x1="200" y1="236" x2="200" y2="290" marker-end="url(#arrow)" />
+  <rect class="box" x="80" y="294" width="240" height="62" />
+  <text class="mono boxlabel" x="200" y="331">readable oracle</text>
+  <text class="mono colhead" x="560" y="140">planned</text>
+  <line class="arrow" x1="560" y1="114" x2="560" y2="160" marker-end="url(#arrow)" />
+  <rect class="accent-box" x="440" y="164" width="240" height="72" />
+  <text class="mono accent-label" x="560" y="192">execution plan</text>
+  <text class="mono tag" x="560" y="216">ops · dispatch · scratch arena</text>
+  <line class="accent-arrow" x1="560" y1="236" x2="560" y2="290" marker-end="url(#arrow-accent)" />
+  <rect class="accent-box" x="440" y="294" width="240" height="62" />
+  <text class="mono accent-label" x="560" y="331">plan interpreter</text>
+  <text class="mono colhead" x="920" y="140">planned-fused</text>
+  <line class="arrow" x1="650" y1="114" x2="920" y2="160" marker-end="url(#arrow)" />
+  <rect class="accent-box" x="800" y="164" width="240" height="72" />
+  <text class="mono accent-label" x="920" y="192">execution plan + F1–F5</text>
+  <text class="mono tag" x="920" y="216">frozen fusion set</text>
+  <line class="accent-arrow" x1="920" y1="236" x2="920" y2="290" marker-end="url(#arrow-accent)" />
+  <rect class="accent-box" x="800" y="294" width="240" height="62" />
+  <text class="mono accent-label" x="920" y="331">fused interpreter</text>
+  <path class="diamond" d="M 950 368 L 968 386 L 950 404 L 932 386 Z" />
+  <text class="diamond-label" x="950" y="390">h</text>
+  <text class="mono annot" x="920" y="430">hook-driven de-fusion</text>
+  <text class="mono annot" x="920" y="452" font-size="13">(F5 defused when after_attention active)</text>
+  <line class="arrow" x1="200" y1="356" x2="200" y2="440" marker-end="url(#arrow)" />
+  <line class="arrow" x1="560" y1="356" x2="560" y2="440" marker-end="url(#arrow)" />
+  <line class="arrow" x1="920" y1="404" x2="920" y2="440" marker-end="url(#arrow)" />
+  <rect class="box" x="480" y="444" width="160" height="58" />
+  <text class="mono boxlabel" x="560" y="479">logits</text>
+  <text class="mono annot" x="560" y="548">all three produce identical greedy tokens within the frozen envelopes (docs/v04-execution-contract.md §9)</text>
+</svg>

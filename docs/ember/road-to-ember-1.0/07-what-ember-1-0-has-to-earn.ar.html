@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 7 من سلسلة الطريق إلى Ember 1.0: 1.0 تعني أن باحثين آخرين يقدرون البناء بأمان على العقود العامة، لا أن قائمة الميزات طويلة." />
+        <meta property="og:title" content="إيش لازم Ember 1.0 يكسبه" />
+        <meta property="og:description" content="رقم الإصدار وعد بما ممكن للآخرين البناء فوقه." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/07-what-ember-1-0-has-to-earn.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>إيش لازم Ember 1.0 يكسبه</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/07-what-ember-1-0-has-to-earn.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>إيش لازم Ember 1.0 يكسبه</h1>
+
+        <div class="meta">
+            مسودة · الجزء 7 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">إصدارات</span>
+            <span class="tag key">توافق</span>
+            <span class="tag key">عقود</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">حالة المسودة</div>
+            <p>
+                مسودة مكتملة. كل الادعاءات محصورة في المستودع عند الالتزام <code>359e492</code>
+                (v0.5.1). ما فيه إصدار 1.0 ولا يُدّعى؛ ولا يُختلق خارطة طريق v0.6. يحدد المقال دا
+                المعايير اللي كانت السلسلة تبني نحوها، مقابل الأدلة اللي سجلتها المقالات السابقة.
+            </p>
+        </div>
+
+        <p>
+            رقم الإصدار وعد بما ممكن للآخرين البناء فوقه.
+        </p>
+
+        <h2>المشكلة: 0.x تعني أن كل شيء قد يتغير</h2>
+
+        <p>
+            changelog v0.1 صريح في معنى رقم إصداره: واجهة Rust للتجارب غير مستقرة صراحةً، ومخطط artifact
+            تنشيطات v0.2 بلا ضمان توافق (<code>CHANGELOG.md</code>). كان داك الوضع الصحيح لمحرك بحثي
+            يكتشف شكله. وهو الوضع الخاطئ للشيء اللي تصفه السلسلة دي، سير عمل يقدر باحث لا يقرأ Rust
+            أبدًا تشغيله والتحقق منه، بمخططات artifacts لازم تصمد عبر النقل والزمن.
+        </p>
+
+        <p>
+            جادلت السلسلة، مقالًا بعد مقال، أن مخرج Ember الحقيقي عقود: مواقع hooks بدلالات معرّفة،
+            artifacts بترتيبات معرّفة، مواصفات تُحل حتميًا. يسأل المقال دا إيش لازم تصبح تلك العقود
+            قبل ما يقدر رقم الإصدار أن يقول 1.0 بأمانة.
+        </p>
+
+        <h2>ما يتطلبه 1.0</h2>
+
+        <p>
+            المعايير، كالتزامات لا كميزات:
+        </p>
+
+        <ol>
+            <li><strong>مخطط تجارب مستقر.</strong> يتوقف <code>ember.experiment.v1</code> عن معنى "v1 ضمن
+                0.5.x".</li>
+            <li><strong>مخطط حزم مستقر.</strong> تبقى artifacts <code>ember.bundle.v1</code> قابلة للتحقق
+                بثنائيات مستقبلية.</li>
+            <li><strong>معاني الـ hooks الدلالية مستقرة.</strong> تحافظ المواقع الست على دلالات واصفاتها
+                المجمّدة (<code>ember.hook.v1</code>).</li>
+            <li><strong>سياسة توافق وترحيل.</strong> قاعدة موثقة لما ينكسر وما يفشل بإغلاق آمن وكيف
+                تُرحَّل artifacts القديمة.</li>
+            <li><strong>تثبيت نظيف.</strong> خطوات بناء وتنزيل نماذج وتحقق تشتغل من التوثيق وحده على جهاز
+                مدعوم.</li>
+            <li><strong>أمثلة قابلة للاستنساخ.</strong> سير عمل الصرف المرجعي يشتغل ويتحقق من تجزئات
+                مثبّتة (<code>examples/experiments/</code> يفعل داك فعلًا).</li>
+            <li><strong>حالة تحقق واضحة.</strong> السلم في <code>docs/validation.md</code> محدث، و"مدعوم"
+                مو معناها أبدًا بصمت "مُتحقق golden".</li>
+            <li><strong>مستخدم خارجي ناجح واحد على الأقل.</strong> شخص لم يكتب Ember شغّل تجربة وتحقق
+                منها، وقال داك.</li>
+            <li><strong>لا إعادة تصميم كبرى لواجهة عامة مطلوبة.</strong> واجهات 1.0 هي اللي ستوسعها 1.1،
+                لا تستبدلها.</li>
+        </ol>
+
+        <h2>العقود الموجودة فعلًا</h2>
+
+        <p>
+            أربعة عقود مُرقّمة قائمة (<code>docs/v05-research-contract.md</code>): مواصفة التجربة
+            (<code>ember.experiment.v1</code>)، الحزمة (<code>ember.bundle.v1</code>)، جدول واصفات
+            الـ hook الدلالي (<code>ember.hook.v1</code>)، وخطة التنفيذ (<code>v04-plan/1</code>). سياسة
+            التوافق مكتوبة: majors غير معروفة تفشل بإغلاق آمن؛ minor أحدث بحقول اختيارية متوافقة
+            معروفة مسموح؛ والسياسة صريحة أن "v1 تعني مستقرًا ضمن Ember 0.5.x، لا أن كل حقل مستقبلي
+            مجمّد إلى الأبد" (القسم 17 من العقد).
+        </p>
+
+        <p>
+            تلك الجملة الأخيرة هي البيان الصادق لمكان المشروع: المخططات مُرقّمة وتفشل بإغلاق آمن، بس
+            الإصدارات لسه إصدارات المشروع نفسه. إصدار 1.0 هو لما يتوقف العقد عن كونه بيانًا عن
+            المشروع ويصبح بيانًا عن كل من بنى عليه.
+        </p>
+
+        <h2>الفجوات بين v0.5.1 وكل معيار</h2>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>المعيار</th><th>الحالة عند v0.5.1</th><th>الدليل</th></tr>
+                <tr><td>مخطط تجارب مستقر</td><td>جزئي، v1 مستقر ضمن 0.5.x بس؛ majors غير معروفة تفشل</td><td>docs/v05-research-contract.md §17</td></tr>
+                <tr><td>مخطط حزم مستقر</td><td>جزئي، النطاق نفسه</td><td>docs/v05-research-contract.md §17</td></tr>
+                <tr><td>معاني الـ hooks مستقرة</td><td>غالبًا، جدول واصفات مجمّد؛ لسه نطاق 0.x</td><td>docs/v05-research-contract.md §1</td></tr>
+                <tr><td>سياسة توافق/ترحيل</td><td>موجودة للمخططات؛ لا أدوات ترحيل بعد</td><td>docs/v05-research-contract.md §17</td></tr>
+                <tr><td>تثبيت نظيف</td><td>جزئي، بناء + scripts/download_models.sh موثّق؛ لا تثبيت معبأ</td><td>README.md؛ scripts/download_models.sh</td></tr>
+                <tr><td>أمثلة قابلة للاستنساخ</td><td>نعم، تجزئات SHA-256 مثبّتة للنموذج والـ tokenizer، سير عمل متحقق</td><td>examples/experiments/README.md</td></tr>
+                <tr><td>حالة تحقق واضحة</td><td>نعم كوثيقة؛ عدة صفوف معلّقة (qwen3 golden، gemma4 رقمي، فحوص المرجعية للتنشيطات)</td><td>جدول حالة docs/validation.md</td></tr>
+                <tr><td>مستخدم خارجي ناجح</td><td>معيار لا ادعاء</td><td>،</td></tr>
+                <tr><td>لا إعادة تصميم كبرى</td><td>واعد غير مثبت، أعلام CLI لـ v0.2 تشتغل على ثنائي v0.5؛ واجهة Rust للتجارب استقرت في v0.5 بس</td><td>قسم التوافق في CHANGELOG.md v0.5</td></tr>
+            </table>
+        </div>
+
+        <p>
+            بصدق: ستة من التسعة مُحققة جزئيًا بس، واثنان متحققان، والأهم للثقة الخارجية، باحث خارج
+            المشروع شغّل تجربة وتحقق منها، هو غير المتحقق. هذي هي نقطة القائمة: 1.0 يُعرَّف بما ممكن
+            للآخرين الاعتماد عليه، وتنتهي السلسلة حيث يتوقف هذا التعريف عن كونه أمنية.
+        </p>
+
+        <h2>ما مو معناهه 1.0</h2>
+
+        <ul>
+            <li>إنجاز أداء. Ember مو منتج إنتاجية، و1.0 لا يغير شيء في كون llama.cpp المرجع الخارجي
+                للأداء.</li>
+            <li>أن كل معمارية مُتحقق منها golden. حالة التحقق سلم بصفوف معلّقة؛ 1.0 تعني أن الإبلاغ عن
+                الحالة جدير بالثقة، لا أن كل صف أخضر.</li>
+            <li>أن النتيجة الصفرية تصبح إيجابية. نتيجة الـ pilot صفر في المصفوفة المختبرة، محصورة في
+                الصفوف المثبتة، غير مستنسخة خارجيًا.</li>
+            <li>أن واجهة التجارب تصبح مباحًا. الاستقرار يعني سلوك إغلاق آمن موثقًا، ومن ضمنه الحق في
+                الرفض.</li>
+        </ul>
+
+        <h2>أطروحة السلسلة، بإعادة صياغة</h2>
+
+        <p>
+            بناء محرك استدلال يزداد سرعة من غير ما يصبح أصعب في الوثوق به. كل مقال في السلسلة هذي كان
+            إجابة على نصف تلك الجملة: جعل v0.1 المحرك مقروءًا، وv0.2 قابلًا للتدخل، وv0.3 أبقى الأوزان
+            الكمّية صادقة، وv0.4 خطط التنفيذ من غير إخفاء الـ tensors، وv0.5 جعل التجربة قابلة للتحقق،
+            والنتيجة الصفرية جعلت الأدوات تستحق بقاءها. 1.0 هي النقطة اللي تتوقف عندها الثقة عن كونها
+            ادعاء المؤلف وتصبح عقدًا يبني عليه الآخرون. لا شيء في المقال دا يحقق ذلك؛ بس يقول ما لازم،
+            وبأي ترتيب.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

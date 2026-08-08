@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الطريق إلى Ember 1.0: سلسلة مقالات تقنية عن محرك استدلال يزداد سرعة من غير ما يصبح أصعب في الوثوق به." />
+        <meta property="og:title" content="الطريق إلى Ember 1.0" />
+        <meta property="og:description" content="بناء محرك استدلال يزداد سرعة من غير ما يصبح أصعب في الوثوق به. قصة Ember إصدارًا بإصدار، ومن ضمنها الإخفاقات." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/index.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>الطريق إلى Ember 1.0</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+        </div>
+
+        <h1>الطريق إلى Ember 1.0</h1>
+
+        <div class="meta">
+            سلسلة مقالات تقنية · مسودات قيد الإعداد · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">استدلال على CPU</span>
+            <span class="tag key">قابلية الاستنساخ</span>
+            <span class="tag key">قابلية التفسير</span>
+        </div>
+
+        <p>
+            <em>بناء محرك استدلال يزداد سرعة من غير ما يصبح أصعب في الوثوق به.</em> Ember طبقة بحثية مكتوبة
+            بـ Rust للاستدلال على CPU، مخصّصة لاستخراج الـ hidden states والتدخّل السببي والتجارب القابلة
+            للاستنساخ على نماذج GGUF. يملك مسار استدلال خاصًا به، لا لمنافسة llama.cpp في الإنتاجية، بل
+            عشان النموذج اللي يشتغل مو هو النموذج اللي تقدر تفحصه وتعدّله وتتحقق منه. تتابع السلسلة هذي داك
+            المسار إصدارًا بإصدار، ومن ضمنها الإخفاقات.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/ladder.svg"
+                 alt="سلم التحقق: smoke، golden logits، فحوص المرجعية للتنشيطات، الـ probes، التدخلات، كل درجة ادعاء مختلف"
+                 loading="eager" fetchpriority="high" width="1120" height="380" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/ladder_light.svg"
+                 alt="سلم التحقق (الوضع الفاتح)"
+                 loading="eager" fetchpriority="high" width="1120" height="380" decoding="async" />
+            <figcaption>
+                سلم التحقق، كل درجة ادعاء مختلف، والسلسلة لا تنزلق بينها أبدًا (docs/validation.md).
+            </figcaption>
+        </figure>
+
+        <h2>مسار الإصدارات</h2>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>الإصدار</th><th>التاريخ</th><th>ما أضافه</th><th>الأطروحة في سطر</th></tr>
+                <tr><td>v0.1.0</td><td>2026-07-31</td><td>تحميل GGUF، prefill/decode على CPU، KV cache، تتبّع، استخراج hidden states، قياس أداء حتمي</td><td>استدلال أصبح مقروءًا بما يكفي للبحث في دواخل النماذج</td></tr>
+                <tr><td>v0.2.0 (tag رجعي)</td><td>التنفيذ 2026-08-01</td><td>التقاط تنشيطات، hooks تدخّل، استبدال تنشيطات، patch بين الجلسات، استعادة مطابقة للبت، artifacts منظمة</td><td>من الملاحظة الوصفية إلى التجارب السببية</td></tr>
+                <tr><td>v0.3.0</td><td>2026-08-03</td><td>تنفيذ Q4_K/Q6_K أصلي، أوزان مضغوطة مقيمة في الذاكرة عبر mmap، kernels عددية وAVX2، توازٍ خارجي</td><td>كمّي على القرص، كمّي في الذاكرة</td></tr>
+                <tr><td>v0.4.0</td><td>2026-08-04</td><td>خطط تنفيذ غير قابلة للتغيير، scratch arenas، مجموعة fusion مجمّدة مع defusion بقيادة الـ hooks، matvec متوازي الأعمدة</td><td>خطّط للـ token مرة واحدة؛ أبقِ كل hook قابلًا للملاحظة</td></tr>
+                <tr><td>v0.5.1</td><td>2026-08-04</td><td>مواصفات ember.experiment.v1، اختيار tokens بدقة البايت، hooks دلالية، حزم حتمية، تحقق من غير اتصال</td><td>قابلية الاستنساخ كميزة في زمن التشغيل</td></tr>
+            </table>
+        </div>
+
+        <h2>المقالات</h2>
+<div class="note-list">
+            <div class="note-card">
+                <div class="title"><a href="00-why-ember.ar.html">الجزء 0</a>، ليش نبني محرك استدلال آخر؟</div>
+                <div class="desc">ليش يبقى llama.cpp المرجع، وما فائدة مسار مستقل قابل للفحص.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="01-making-inference-legible.ar.html">الجزء 1</a>، v0.1: محرك استدلال يقدر يشرح ما فعله.</div>
+                <div class="desc">تفريغ الـ hidden states لا يفيد ما لم يُعرف مصدره الدقيق.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="02-capturing-patching-restoring.ar.html">الجزء 2</a>، v0.2: التقاط الـ hidden states وتعديلها واستعادتها.</div>
+                <div class="desc">من الملاحظة إلى التدخّل، بدقة البت.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="03-quantized-on-disk-quantized-in-memory.ar.html">الجزء 3</a>، v0.3: كمّي على القرص، كمّي في الذاكرة.</div>
+                <div class="desc">من 6.99 GB إلى 0.84 GB بعدم فك ضغط النموذج.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="04-plan-driven-decode.ar.html">الجزء 4</a>، v0.4: فك ترميز مُخطط من غير التضحية بالـ hooks.</div>
+                <div class="desc">تسريع 2.0–2.7× على المسار المرجعي، وإخفاقات القياس اللي كادت تخفيه.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="05-reproducible-experiment-bundles.ar.html">الجزء 5</a>، v0.5: من محرك استدلال إلى سير عمل بحثي.</div>
+                <div class="desc">قابلية الاستنساخ كصيغة artifact وإجراء تحقق وعقد يفشل بإغلاق آمن.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="06-the-null-result.ar.html">الجزء 6</a>، النتيجة الصفرية اللي أنتجت أداة أفضل.</div>
+                <div class="desc">فرضية مُدحضة وأدوات تحديد المواقع السببي اللي ولّدتها.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="07-what-ember-1-0-has-to-earn.ar.html">الجزء 7</a>، إيش لازم Ember 1.0 يكسبه.</div>
+                <div class="desc">1.0 تعني أن باحثين آخرين يقدرون البناء بأمان على العقود العامة.</div>
+            </div>
+        </div>
+
+        <p>
+            <strong>ابدأ بالجزء 0</strong>، وإذا كنت تدير تجارب على دواخل النماذج، فالجزء 5 يعرض سير عمل
+            تقدر تشغيله اليوم من غير كتابة Rust. كل مقال مستقل بذاته ويستشهد بـ artifacts الموجودة في المستودع
+            خلف ادعاءاته، ومن ضمنها اللي فشلت.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="v0.3: quantized on disk, quantized in memory" property="og:title"/>
+<meta content="Part 3 of Road to Ember 1.0: why a Q4 checkpoint arrived in memory as f32, and what it took to keep quantized weights actually quantized." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>v0.3: quantized on disk, quantized in memory</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+              
+            <a href="/ember/road-to-ember-1.0/">road to ember 1.0</a>
+</div>
+<h1>v0.3: quantized on disk, quantized in memory</h1>
+<div class="meta">
+            draft · part 3 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">quantization</span>
+<span class="tag key">GGUF</span>
+<span class="tag key">memory</span>
+<span class="tag key">AVX2</span>
+<span class="tag model">LLaMA</span>
+<span class="tag model">Qwen</span>
+</div>
+<div class="callout">
+<div class="label">draft status</div>
+<p>
+                complete draft with explicit citations to repository artifacts. figures are embedded as SVG
+                (dark/light theme variants under <code>figures/</code>) with captions citing the evidence.
+                the performance and memory numbers cited here were re-derived from tagged builds on
+                2026-08-04 and recorded in
+                <code>artifacts/benchmark-v03/part3-binary-memory.md</code>; release-time values are
+                cited from <code>artifacts/benchmark-v03/bench-summary.json</code> and
+                <code>docs/validation.md</code>.
+            </p>
+</div>
+<p>
+the file said Q4. the runtime said f32. the model was smaller on disk and
+            just as large in RAM, until v0.3 stopped the runtime from undoing the model's compression.
+        </p>
+<h2>the problem: the inversion</h2>
+<p>
+            a quantized checkpoint is a promise about size. Q4_K_M means roughly four bits per weight on
+            disk, and the file delivers: Llama-3.2-1B at Q4_K_M is about 39% smaller than the same model
+            at Q8_0. the promise breaks when the runtime loads it. Ember's loader before v0.3
+            dequantized every K-quant tensor to f32 at load time and kept the expanded buffers resident,
+            then ran everything through generic f32 kernels. the checkpoint stayed Q4 on disk; the
+            running model was f32 in memory.
+        </p>
+<p>
+            the consequences were measured before v0.3, in the frozen baseline note
+            (<code>docs/research-notes/the-file-said-q4-runtime-said-f32.html</code>), on the same
+            machine that produced the release benchmarks:
+        </p>
+<div class="table-wrap">
+<table>
+<tr><th>model</th><th>file</th><th>eager decode tok/s</th><th>eager peak RSS</th><th>runtime representation</th></tr>
+<tr><td>Qwen2.5-1.5B</td><td>Q4_K_M 1066 MB</td><td>2.6</td><td>8712 MB</td><td>persistent f32 expansion</td></tr>
+<tr><td>Qwen2.5-1.5B</td><td>Q6_K 1396 MB</td><td>2.5</td><td>8713 MB</td><td>persistent f32 expansion</td></tr>
+<tr><td>Llama-3.2-1B</td><td>Q4_K_M 770 MB</td><td>3.2</td><td>6965 MB</td><td>persistent f32 expansion</td></tr>
+<tr><td>Llama-3.2-1B</td><td>Q6_K 974 MB</td><td>2.9</td><td>6965 MB</td><td>persistent f32 expansion</td></tr>
+<tr><td>Llama-3.2-1B</td><td>Q8_0 1260 MB</td><td>149.6</td><td>2685 MB</td><td>compressed-resident</td></tr>
+</table>
+</div>
+<p>
+            across the four Q4/Q6 rows, peak RSS was 2.59×–4.49× higher than the Q8_0 baseline and
+            decode was 15.6×–51.6× slower. the only axis on which the lower-bit files were smaller was
+            the file itself. Qwen Q4_K_M is about 41% smaller on disk than Q8_0 and uses about 4.49× the
+            peak RSS while decoding about 15.6× more slowly.
+        </p>
+<p>
+            that is the question this release answers: <em>what is the point of a Q4 model if the
+            runtime expands it back to f32?</em>
+</p>
+<h2>the naive solution: dequantize everything, honestly</h2>
+<p>
+            the dequant-to-f32 loader was not lazy. it was the correct engineering choice for a research
+            engine whose first job is numerical honesty: one representation, one generic kernel path,
+            no per-dtype execution to validate. the v0.3 contract
+            (<code>docs/v03-execution-contracts.md</code>) states the cost plainly in section 3:
+            resident weight memory is 4× the compressed size, Llama-3.2-1B Q6_K is 1.02 GB on disk and
+            ~4.1 GB as resident f32, and every matmul is a dense f32 gemm.
+        </p>
+<p>
+            the problem was never that the reference path existed. it was that the reference path was
+            the only path. a Q4 file that must be expanded to f32 before it can run is not a low-memory
+            deployment; it is a research loader that happens to read Q4 files.
+        </p>
+<h2>why it had to change</h2>
+<p>
+            three measurements made the change unavoidable. first, the eager path's peak RSS tracked the
+            expanded weights, not the file: ~6.99 GB for Llama Q4_K_M/Q6_K and ~8.83 GB for
+            Qwen2.5-1.5B on this machine (reproduced 2026-08-04, see section 2 of
+            <code>artifacts/benchmark-v03/part3-binary-memory.md</code>). second, the pinned llama.cpp
+            reference ran the same files at 1.08–1.77 GB peak RSS
+            (<code>artifacts/benchmark-v03/bench-summary.json</code>). third, the eager K-quant decode
+            was slower than the model's own Q8_0 run on the same machine by one to two orders of
+            magnitude. none of this is a claim that Q4 is "worse" than Q8, it is a statement about
+            what a runtime does with a file.
+        </p>
+<h2>the design constraint</h2>
+<p>
+            the constraint, frozen before implementation
+            (<code>docs/v03-execution-contracts.md</code>, status line): the weights stay packed and
+            mmap-resident, and dequantization happens only at block or tile granularity inside the
+            matmul kernels. no persistent full f32 expansion exists for native-path tensors. the
+            contract also froze the limits of the change:
+        </p>
+<ul>
+<li>the eager-f32 path is retained as a selectable reference and never removed;</li>
+<li>no silent fallback: every per-tensor execution choice is recorded;</li>
+<li>native kernels exist for Q4_K and Q6_K only, Q2_K/Q3_K/Q5_K/Q8_K stay eager-only;</li>
+<li>per-tensor workspace is bounded (≤ 9 KiB per thread);</li>
+<li>the six semantic hook boundaries (before-layer, after-attention, after-mlp, after-layer,
+                before-logits, after-logits) are guaranteed identical to the reference path, because
+                K-quant models keep the single generic forward path.</li>
+</ul>
+<figure class="chart-wrap">
+<img alt="Eager expansion vs compressed residency: the reference path expands the whole weight matrix to f32; the v0.3 path keeps packed blocks mmap-resident and runs native K-quant matvec" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram1.svg" width="1120" height="548" decoding="async" />
+<img alt="Eager expansion vs compressed residency (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram1_light.svg" width="1120" height="548" decoding="async" />
+<figcaption>
+                figure 1, eager expansion vs compressed residency. peak RSS on the v0.3.0 tag build:
+                6,989,724–8,837,276 KB (eager) vs 844,216–1,266,684 KB (compressed) across Llama-3.2-1B and
+                Qwen2.5-1.5B at Q4_K_M/Q6_K (artifacts/benchmark-v03/part3-binary-memory.md).
+            </figcaption>
+</figure>
+<h2>what the GGUF layout forces</h2>
+<p>
+            K-quants are not one format. a Q4_K tensor stores 8 blocks per super-block with per-block
+            scales and offsets; Q6_K stores 16 blocks per super-block with int8 scales; a "Q4_K_M"
+            model is a <em>per-tensor</em> mix, the Llama-3.2-1B Q4_K_M file contains 96 Q4_K tensors,
+            17 Q6_K tensors (attention value + FFN down in selected layers, plus the tied embedding),
+            and 34 F32 tensors for norms and biases (inventory in
+            <code>docs/v03-execution-contracts.md</code> section 5). a native path therefore has to
+            dispatch per tensor, not per file, and Q4_K_M forces both Q4_K and Q6_K kernels to exist.
+        </p>
+<p>
+            the loader also has to respect the 2024 dtype-numbering shift (Q2_K=10 … Q6_K=14 in GGUF) ,
+            silently misreading a K-tensor type would corrupt every weight without an error (dtype range
+            documented in <code>docs/v03-execution-contracts.md</code> section 3). and the per-tensor
+            reality means "Q4" is never claimed from the file name; the inventory is parsed from the GGUF
+            headers.
+        </p>
+<figure class="chart-wrap">
+<img alt="Q4_K and Q6_K super-block anatomy: 8 blocks of 32 weights with per-block 2-bit scale factors for Q4_K; 16 blocks of 16 weights with int8 scales for Q6_K" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram4.svg" width="1120" height="540" decoding="async" />
+<img alt="Q4_K and Q6_K super-block anatomy (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram4_light.svg" width="1120" height="540" decoding="async" />
+<figcaption>
+                figure 4, Q4_K and Q6_K super-block anatomy (conceptual). dispatch is per tensor, not per
+                file: the llama-3.2-1b Q4_K_M checkpoint mixes 96 Q4_K + 17 Q6_K + 34 F32 tensors
+                (docs/v03-execution-contracts.md section 5).
+            </figcaption>
+</figure>
+<h2>the implementation</h2>
+<p>
+            the new representation (<code>KQuantWeight</code> in <code>src/quant_k.rs</code>) mirrors
+            the existing Q8_0 compressed-resident template: raw block storage backed by the mmap, with
+            checked construction (block alignment, byte length, mapped range). dequantization reuses the
+            already-reference-validated <code>dequant_q4_k</code>/<code>dequant_q6_k</code> functions
+            at block granularity. on top of that:
+        </p>
+<ul>
+<li><strong>scalar kernels</strong>, the numerical oracle: block dequant + f32 dot, no SIMD.</li>
+<li><strong>AVX2 kernels</strong>, the same math, vectorized; selected when the AVX2+FMA+F16C feature set is present.</li>
+<li><strong>per-tensor dispatch</strong>, <code>--k-strategy eager-f32|scalar|x86|auto</code>;
+                unsupported dtypes under an explicit compressed strategy hard-fail naming the tensor
+                unless <code>--k-allow-fallback</code> is given; <code>auto</code> chooses x86 when
+                available and records the decision (contract section 6).</li>
+<li><strong>provenance inventory</strong>, capture manifests gain a per-tensor execution
+                record: GGUF dtype, resident representation, strategy, kernel, CPU feature requirement,
+                fallback reason, workspace bytes (contract section 10). an artifact now says what
+                actually executed.</li>
+<li><strong>embeddings and tied heads</strong>, K-quant embedding rows are dequantized per
+                lookup into a small thread buffer and never held resident; the tied LM head of the
+                Llama file routes through the same path (contract sections 5 and 7).</li>
+</ul>
+<p>
+            the kernel shape battery in the unit tests is deliberately wide, rows {1,2,8,32} × in
+            {256,512,1536,2048,8960} × out {128,512,2048}, plus zero-scale, negative-min, saturated,
+            and non-aligned edges (contract section 9, gate a).
+        </p>
+<figure class="chart-wrap">
+<img alt="Anatomy of a K-quant matvec: decode one block into a small per-thread buffer, multiply by the activation slice, accumulate; the whole matrix never becomes f32-resident" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram2.svg" width="1120" height="560" decoding="async" />
+<img alt="Anatomy of a K-quant matvec (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram2_light.svg" width="1120" height="560" decoding="async" />
+<figcaption>
+                figure 2, anatomy of a K-quant matvec. one block is decoded into the [f32; 256] per-thread
+                buffer at a time; per-thread workspace for the compressed path is ≤ 9 KiB and no model-scale
+                f32 buffer is created (docs/v03-execution-contracts.md section 7).
+            </figcaption>
+</figure>
+<h2>the validation gates</h2>
+<p>
+            the gates were pre-registered in the contract before implementation and could only be
+            tightened, never loosened to fit results. four are numerical; the fifth is the causal
+            workflow:
+        </p>
+<ul>
+<li><strong>gate a, kernel parity</strong>: scalar and AVX2 kernels vs the eager
+                dequant-then-gemm oracle, <code>max_abs ≤ 1e-4·scale</code> across the shape battery
+                and edge cases; AVX2 vs scalar within tolerance.</li>
+<li><strong>gate b, model parity</strong>: compressed vs eager-f32 on the fresh ladder,
+                both families × Q6_K/Q4_K_M; per-layer <code>max_abs ≤ 5e-4·scale</code>, cosine ≥
+                1−1e-6, logits ≤ 1e-2 (qwen amended to 2e-2), greedy token sequences identical on the
+                frozen prompt set. a token flip is a failure to investigate, not a threshold to relax.</li>
+<li><strong>gate c, golden logits</strong>: final-position logits vs the pinned llama.cpp
+                CLI on all six ladder rungs; 100% top-1 agreement on every rung, with the recorded
+                envelopes: llama q8/q6/q4 = max abs diff 0.59/0.81/0.65, cosine 0.9995/0.9989/0.9992;
+                qwen q8/q6/q4 = 0.82/1.36/1.74, cosine 0.9991/0.9975/0.9963
+                (<code>docs/validation.md</code> v0.3 section). Top-1 agreement is agreement on the
+                argmax, not equality of logits.</li>
+<li><strong>gate d, x86 vs scalar</strong>: gate a numbers at kernel level, gate b at
+                model level.</li>
+<li><strong>causal workflow</strong>: capture → compare → patch → frozen verdict on the
+                compressed path, intervention flips 8/8 records and the patch restores every captured
+                tensor bit-exactly (<code>docs/validation.md</code>).</li>
+</ul>
+<figure class="chart-wrap">
+<img alt="Validation ladder: scalar packed kernel, AVX2 packed kernel, planned model execution, per-layer hidden-state parity, final logits, greedy tokens, pinned llama.cpp reference; capture and intervention hooks attach at the same six semantic sites" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram3.svg" width="1120" height="560" decoding="async" />
+<img alt="Validation ladder (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram3_light.svg" width="1120" height="560" decoding="async" />
+<figcaption>
+                figure 3, the validation ladder. kernel parity (gate a) → model parity (gates b/d) →
+                external golden against pinned llama.cpp (gate c), with the six semantic hook sites attached
+                at the same call sites on both paths (docs/v03-execution-contracts.md sections 8–9;
+                docs/validation.md).
+            </figcaption>
+</figure>
+<p>
+            the honest part of gate c is its amendment history, which the contract records verbatim.
+            the first drafted bound (max abs ≤ 1e-2 on final logits) misread the existing golden
+            standard, the pilot's own Q8_0 report showed max abs 0.364 against llama.cpp's integer
+            accumulation kernels, so no accumulation-order change could reach 1e-2 on this family. the
+            evidence-based standard became top-1 100%, cosine ≥ 1−1e-3, mean ≤ 0.1, max ≤ 1.0; a
+            second amendment moved the single-element max gate from 0.5 to 1.0 after one extreme
+            element of 128k per sample proved quantizer- and order-sensitive; a third set the final
+            per-family envelopes from the full six-rung run. none of these changed the primary gate ,
+            top-1 agreement stayed 100% throughout.
+        </p>
+<h2>the result</h2>
+<p>
+            re-derived on 2026-08-04 from the v0.3.0 tag build (full commands and raw values in
+            <code>artifacts/benchmark-v03/part3-binary-memory.md</code>), the same protocol as the
+            release matrix (<code>scripts/bench_v03.sh</code>, 64 tokens, 1 warmup, 3 reps, 8 threads,
+            whole-process peak RSS):
+        </p>
+<div class="table-wrap">
+<table>
+<tr><th>model</th><th>strategy</th><th>median tok/s</th><th>peak RSS</th></tr>
+<tr><td>Llama-3.2-1B Q4_K_M</td><td>eager-f32</td><td>0.98</td><td>6,989,724 KB (6.67 GiB)</td></tr>
+<tr><td>Llama-3.2-1B Q4_K_M</td><td>compressed (x86)</td><td>2.01</td><td>844,216 KB (0.81 GiB)</td></tr>
+<tr><td>Llama-3.2-1B Q6_K</td><td>eager-f32</td><td>0.98</td><td>6,989,252 KB (6.67 GiB)</td></tr>
+<tr><td>Llama-3.2-1B Q6_K</td><td>compressed (x86)</td><td>2.21</td><td>1,053,524 KB (1.00 GiB)</td></tr>
+<tr><td>Qwen2.5-1.5B Q4_K_M</td><td>eager-f32</td><td>0.87</td><td>8,828,632 KB (8.42 GiB)</td></tr>
+<tr><td>Qwen2.5-1.5B Q4_K_M</td><td>compressed (x86)</td><td>1.66</td><td>987,360 KB (0.94 GiB)</td></tr>
+<tr><td>Qwen2.5-1.5B Q6_K</td><td>eager-f32</td><td>0.85</td><td>8,837,276 KB (8.43 GiB)</td></tr>
+<tr><td>Qwen2.5-1.5B Q6_K</td><td>compressed (x86)</td><td>1.67</td><td>1,266,684 KB (1.21 GiB)</td></tr>
+</table>
+</div>
+<p>
+            the compressed path cut peak RSS by 6.6×–8.9× versus eager on the same binary, and decode
+            improved 1.9×–2.3× in this session. the release-time matrix recorded similar speedups
+            (1.94×–2.75×) and the resident-weight footprint at file size: 799.6 MB compressed vs ~3.2
+            GB expanded for Llama Q4_K_M, 1457.6 MB vs ~5.83 GB for Qwen Q6_K
+            (<code>artifacts/benchmark-v03/bench-summary.json</code>,
+            <code>docs/v03-execution-contracts.md</code> section 5). the pinned llama.cpp reference ran
+            the same files at 1.08–1.77 GB peak RSS, Ember's compressed path now sits in the same
+            neighborhood, which is where a quantized model should live.
+        </p>
+<p>
+            the eager arms of this reproduction match the frozen pre-v0.3 baseline within 0.4%
+            (6,989,724 KB vs the recorded 6,965 MB for Llama Q4_K_M), which is the sanity check that
+            the comparison is measuring the representation change, not machine drift
+            (<code>artifacts/benchmark-v03/part3-binary-memory.md</code> section 2).
+        </p>
+<p>
+            binary cost: measured growth from v0.2.0 to v0.3.0 is 820,480 b (~801 KiB) on the current
+            toolchain (rustc 1.95.0). an internal estimate of "~190 KB" does not reproduce under this
+            toolchain; the measured value is recorded in the evidence file. the release added roughly
+            0.8 MiB of kernels, dispatch, and provenance to the executable, against 6–8 GiB of memory
+            it removed.
+        </p>
+<h2>what still does not work</h2>
+<ul>
+<li>Q2_K/Q3_K/Q5_K/Q8_K tensors have no native kernel in v0.3; under an explicit
+                compressed strategy they hard-fail unless fallback is allowed.</li>
+<li>K-quant models are slow to load (13–16 s on this machine) and ineligible for the Q8
+                workspace fast path; the scalar kernels are reference-only (~0.3–0.4 tps).</li>
+<li>the extraction tokenization path carries a pre-existing byte-offset limitation with
+                non-ASCII prompts (the golden ladder uses English prompts).</li>
+<li>Gemma 4's numerical gap is unchanged and out of v0.3 scope; "supported" still does not
+                mean numerically validated for every row.</li>
+<li>llama.cpp remains roughly an order of magnitude faster on decode; Ember is not a
+                throughput competitor, and this post makes no parity claim.</li>
+</ul>
+<h2>what this unlocked</h2>
+<p>
+            keeping weights packed fixed the memory problem, but decode still ran the generic hooked
+            path with per-token dispatch rediscovery and per-token scratch. the next release, v0.4,
+            plans that execution once per model, and the plan interpreter runs on exactly this
+            compressed substrate. the memory the native path saved is the memory the plan-driven
+            runtime then refuses to reallocate.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

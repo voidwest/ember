@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="v0.4: plan-driven decode without sacrificing hooks" property="og:title"/>
+<meta content="Part 4 of Road to Ember 1.0: planning each token's work once, and the benchmark failures that almost hid the speedup." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/04-plan-driven-decode.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>v0.4: plan-driven decode without sacrificing hooks</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/04-plan-driven-decode.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+              
+            <a href="/ember/road-to-ember-1.0/">road to ember 1.0</a>
+</div>
+<h1>v0.4: plan-driven decode without sacrificing hooks</h1>
+<div class="meta">
+            draft · part 4 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">execution plans</span>
+<span class="tag key">fusion</span>
+<span class="tag key">benchmarking</span>
+<span class="tag key">CPU inference</span>
+<span class="tag model">LLaMA</span>
+<span class="tag model">Qwen</span>
+</div>
+<div class="callout">
+<div class="label">draft status</div>
+<p>
+                complete draft with explicit citations to repository artifacts. figures are embedded as SVG
+                (dark/light theme variants under <code>figures/</code>) with captions citing the evidence.
+                performance numbers come from
+                two places: the release-time matrix (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>)
+                and a 2026-08-04 reproduction from the v0.4.0 tag build, recorded in
+                <code>artifacts/benchmark-v04/2026-08-04/part4-reproduction.md</code>. two of the six
+                "unreliable witness" failures are reconstructed from tests, the changelog, and git history;
+                each is marked as such and cites the commit or test that supports it.
+            </p>
+</div>
+<p>
+most of the work in decoding one token is deciding what to do, not doing it. v0.4
+            moves that decision out of the loop, without moving the hooks with it.
+        </p>
+<h2>the problem: the loop re-decides everything</h2>
+<p>
+            v0.3 left decode on the generic hooked forward path: for every token, for every layer, the same
+            work was rediscovered. which tensor does this projection read? which kernel handles its dtype?
+            where does the output go? does any hook target this stage? the v0.4 contract
+            (<code>docs/v04-execution-contract.md</code>) froze the reference sequence before touching it ,
+            embedding, per-layer RMSNorm → q/k/v → RoPE → KV store → attention → output projection →
+            residual → MLP → residual → final norm → head (contract section 3), and then named the waste
+            (section 9): per-token shape/dispatch rediscovery, dynamic hook checks against a registry, and
+            per-token scratch allocation.
+        </p>
+<p>
+            none of that work changes between tokens. the model does not get a new architecture at step 42.
+            the only thing that changes per token is the token itself.
+        </p>
+<h2>the design constraint</h2>
+<p>
+            the v0.4 release could have taken the usual route: keep the generic path, add a fast path beside
+            it, and hope the fast path matches the slow one. the contract forbade that in two ways. first,
+            the out-of-scope list includes <em>no second hidden runtime that bypasses hooks</em>, an
+            optimized path that researchers cannot hook is not an optimization, it is a different program.
+            second, kernels are not duplicated: the v0.3 scalar and AVX2 Q4_K/Q6_K matvecs are the only
+            matvec implementations, and the planned path resolves a kernel per tensor through the same
+            <code>resolve_kernel</code> function the legacy path uses, asserted equal by tests (contract
+            decision D6).
+        </p>
+<p>
+            so the constraint, stated once: <em>plan the work once per model; execute it per token; keep the
+            six semantic hook sites observing the exact same tensors at the exact same call sites.</em>
+</p>
+<h2>the implementation</h2>
+<ul>
+<li><strong>immutable execution plan.</strong> built once, immediately after load, by the model
+                backend that owns the tensors. it stores stable indices and validated metadata, never raw
+                pointers, so weight access is structural and cannot dangle (contract D2). the plan carries
+                the tensor table, per-layer operation lists, scratch layout, KV layout, hook-site
+                resolution, dispatch decisions, and provenance (contract section 10, schema
+                <code>v04-plan/1</code>). <code>ember inspect-plan</code> prints it; benchmarked runs write
+                <code>execution-plan.json</code>.</li>
+<li><strong>three execution concepts.</strong> <code>--execution reference</code> keeps the v0.3
+                generic hooked path as the readable oracle; <code>planned</code> runs the identical operation
+                sequence through the plan interpreter with no fusion; <code>planned-fused</code> applies the
+                frozen fusion set (contract section 9). the three stay separable for validation.</li>
+<li><strong>reusable scratch arena.</strong> one aligned allocation per decode session, sized by
+                the plan, 64-byte aligned, with regions proven non-overlapping by lifetime and an arena
+                report listing every overlap and its proof (contract section 11). the steady-state token loop
+                performs zero heap allocations.</li>
+<li><strong>frozen fusion set F1–F5.</strong> RMSNorm+projection; residual+RMSNorm; QKV
+                orchestration; RoPE inside attention; output projection accumulating into the residual
+                destination (contract section 6). each fusion names what it eliminates, why that is safe,
+                and the parity test it must pass.</li>
+<li><strong>hook-driven de-fusion.</strong> F5 eliminates the standalone <code>o</code> tensor ,
+                which is the <code>after_attention</code> hook site. if that hook is active on a layer, the
+                planner selects the unfused route for that layer, and the reason is recorded in the plan and
+                in provenance (contract sections 6–7). a hook must never silently observe a different
+                semantic tensor because fusion changed the graph.</li>
+<li><strong>column-parallel matvec.</strong> large single-row decode matvecs split their output
+                dimension across the rayon pool, each column accumulating identically to the serial kernel ,
+                bit-identical by test (gate a), not approximately equal.</li>
+<li><strong>operator profiling.</strong> <code>bench-decode --profile-operators</code> records
+                per-operator timing on the planned path, so the next optimization is chosen from a table, not
+                a guess.</li>
+</ul>
+<figure class="chart-wrap">
+<img alt="The three execution concepts: reference, planned, and planned-fused pipelines from the same model tensors, with hook-driven de-fusion on the fused path" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram1.svg" width="1120" height="580" decoding="async" />
+<img alt="The three execution concepts (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram1_light.svg" width="1120" height="580" decoding="async" />
+<figcaption>
+                figure 1, the three execution concepts: reference (readable oracle), planned (plan
+                interpreter), planned-fused (frozen fusion set with hook-driven de-fusion). all three
+                produce identical greedy tokens within the frozen envelopes
+                (docs/v04-execution-contract.md section 9; artifacts/benchmark-v04/2026-08-04/SUMMARY.md).
+            </figcaption>
+</figure>
+<figure class="chart-wrap">
+<img alt="Fusion and de-fusion on one layer: F1-F5 eliminate only non-hooked intermediates; F5 eliminates the after_attention tensor, so an active hook forces the unfused route" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram2.svg" width="1120" height="580" decoding="async" />
+<img alt="Fusion and de-fusion on one layer (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram2_light.svg" width="1120" height="580" decoding="async" />
+<figcaption>
+                figure 2, fusion and de-fusion on one layer. F1–F5 eliminate only intermediates that are
+                never hook sites; F5 eliminates the after_attention tensor o, so an active hook at that
+                site forces the unfused route with the reason recorded (docs/v04-execution-contract.md
+                sections 6–7).
+            </figcaption>
+</figure>
+<h2>when the CPU became an unreliable witness</h2>
+<p>
+            the measured speedup was real. getting the <em>measurement</em> to be real took six separate
+            failures, and they are part of the story because each one is a place a faster runtime could have
+            lied to its own authors.
+        </p>
+<ol>
+<li>
+<strong>thermal noise made fused execution appear slower.</strong> this machine runs a
+                <code>powersave</code> governor, recorded in every benchmark's <code>run_metadata</code>
+                (<code>artifacts/benchmark-v03/bench-summary.json</code>), so absolute tokens/second is
+                thermally variable, and early fused runs landed on a throttled window and looked like a
+                regression. the fix was protocol, not code: back-to-back arms per model so all execution
+                modes share the machine state, medians over 5 measured repetitions, no cross-session
+                comparisons (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>).
+            </li>
+<li>
+<strong>a benchmark mode accidentally executed the reference path.</strong> the changelog
+                records it plainly: "<code>planned-fused</code> silently ran the reference path until
+                <code>planned_decode_eligible</code> accepted the mode" (<code>CHANGELOG.md</code>, v0.4
+                fixed). a flag that names an execution mode but does not gate it is a flag that can lie.
+            </li>
+<li>
+<strong>fusion tests passed without exercising the intended route.</strong> reconstructed
+                from the same changelog entry and the parity tests
+                (<code>tests/k_parity.rs</code>): the model-level gate b tests for planned/fused exist and
+                pass, but a fused run requested through the CLI could fall through to the reference path
+                before the fix, so a test suite can be green while the named mode never runs. the response
+                was the eligibility gate plus parity tests that set the execution mode explicitly and assert
+                the greedy tokens (k_parity.rs, <code>v04_planned_matches_reference_real_model</code>).
+            </li>
+<li>
+<strong>an allocation gate tested a shadowed trait path.</strong> the gate e test comment is
+                the evidence: "trait path (ForwardModel) so v0.4 execution-mode dispatch runs; the inherent
+                Llama method would shadow it" (<code>tests/k_parity.rs</code>). an inherent method call can
+                bypass the plan interpreter entirely; the allocation test only meant something once it routed
+                through the trait that actually dispatches.
+            </li>
+<li>
+<strong>pinned-core runs distorted performance.</strong> pinning to four physical cores
+                understates the column-parallel matvec, which is the performance lever. the final protocol
+                runs the full 8-thread machine with no taskset, and the summary says so explicitly
+                (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>).
+            </li>
+<li>
+<strong>attention deduplication later exposed additional false allocation behavior.</strong>
+                after the release, a code-redundancy pass merged the triplicated attention kernels and
+                removed per-task <code>Vec</code> allocations "that could surface as a spurious allocation on
+                a rayon-stealing thread" (commit <code>624a216</code>, main, 2026-08-04, after v0.4.0, hence
+                "later"). the gate e numbers were right; the accounting had not yet caught every allocation
+                site that only a warm thread pool visits.
+            </li>
+</ol>
+<p>
+            the common thread: every one of these is a case where the harness, not the engine, was the thing
+            being benchmarked. a faster runtime is not trustworthy unless the benchmark harness and the
+            semantic execution route are also validated.
+        </p>
+<figure class="chart-wrap">
+<img alt="The six benchmark failures and the protocol fix for each: thermal noise, reference-path benchmark mode, fusion tests without route coverage, shadowed allocation gate, pinned cores, attention-dedup false allocation" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram3.svg" width="1120" height="700" decoding="async" />
+<img alt="The six benchmark failures and their fixes (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram3_light.svg" width="1120" height="700" decoding="async" />
+<figcaption>
+                figure 3, when the CPU became an unreliable witness: the six failures and the protocol fix
+                for each (CHANGELOG v0.4 fixed; artifacts/benchmark-v04/2026-08-04/SUMMARY.md;
+                tests/k_parity.rs; commit 624a216).
+            </figcaption>
+</figure>
+<h2>the validated outcome</h2>
+<p>
+            gates A–G were pre-registered in the contract before implementation (contract section 13) and
+            could only be tightened:
+        </p>
+<ul>
+<li><strong>gate a (kernel/op parity)</strong>, planned and fused outputs vs the independent
+                reference path, <code>max_abs ≤ 1e-4</code>, over the standard shape battery; the
+                column-parallel matvec is bit-identical to the serial kernel (same per-column accumulation
+                order), and the planned dispatch kernel equals the legacy dynamic dispatch (debug assert +
+                tests).</li>
+<li><strong>gate b (model parity)</strong>, reference/planned/planned-fused produce identical
+                greedy token sequences on the six frozen prompts (English + Arabic) within the frozen logit
+                envelopes, on all four primary combinations (<code>tests/k_parity.rs</code>,
+                env-gated real-model test).</li>
+<li><strong>gate c (hooks)</strong>, the six semantic sites fire at the same call sites with the
+                same stages/layers/shapes on the planned path; inactive hooks are bit-identical to disabled;
+                a zero-layer-output intervention lands identically; planned-fused de-fuses F5 when
+                <code>after_attention</code> is active so the hook sees the materialized <code>o</code>
+                tensor.</li>
+<li><strong>gate d (memory)</strong>, packed K-quant weights stay mmap-resident on the planned
+                path; peak RSS reference 844,840 KB vs planned 847,952 KB on Llama-3.2-1B Q4_K_M at release
+                (+0.37%), the named reusable arena being the whole difference.</li>
+<li><strong>gate e (allocation)</strong>, after warmup, the planned decode loop performs at most
+                3 heap allocations per token, all of them the documented logits tensor materialization
+                (shape + strides + data), verified on a real model with the counting allocator
+                (<code>src/llama.rs</code>, <code>planned_decode_is_zero_steady_state_allocation</code>).</li>
+<li><strong>gate f (performance)</strong>, the matrix below; floor was ≥1.75× on ≥3/4
+                combinations, achieved on 4/4.</li>
+<li><strong>gate g (external)</strong>, the v0.3 golden ladder is preserved; planned and fused
+                paths reproduce the reference greedy outputs within the frozen envelopes, so the 100% top-1
+                agreement with pinned llama.cpp carries over by transitivity.</li>
+</ul>
+<p>
+            the release-time matrix (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>; 64-token
+            single-token decode, 1 warmup, 5 reps, medians, 8 threads, full machine):
+        </p>
+<div class="table-wrap">
+<table>
+<tr><th>model</th><th>reference tps</th><th>planned</th><th>planned-fused</th><th>planned ratio</th><th>fused ratio</th></tr>
+<tr><td>Llama-3.2-1B Q4_K_M</td><td>1.48</td><td>3.42</td><td>3.41</td><td>2.32×</td><td>2.31×</td></tr>
+<tr><td>Llama-3.2-1B Q6_K</td><td>1.43</td><td>3.31</td><td>3.29</td><td>2.32×</td><td>2.31×</td></tr>
+<tr><td>Qwen2.5-1.5B Q4_K_M</td><td>1.52</td><td>4.04</td><td>4.03</td><td>2.66×</td><td>2.66×</td></tr>
+<tr><td>Qwen2.5-1.5B Q6_K</td><td>1.97</td><td>4.06</td><td>3.89</td><td>2.06×</td><td>1.97×</td></tr>
+</table>
+</div>
+<p>
+            that is the "roughly 2.0–2.7×" claim, stated precisely: vs the v0.3 reference path on the same
+            binary, same protocol, four primary combinations. it is not a claim against llama.cpp, the v0.4
+            matrix records no llama.cpp arm, and the contract's final framing repeats that no competitive
+            parity is claimed unless evidence unexpectedly demonstrates it (contract section 19).
+        </p>
+<p>
+            reproduced on 2026-08-04 from the v0.4.0 tag build (binary sha
+            <code>23322cd3…</code>, reproducible, the rebuild matched; full record in
+            <code>artifacts/benchmark-v04/2026-08-04/part4-reproduction.md</code>), all four primary
+            combinations with the same protocol:
+        </p>
+<div class="table-wrap">
+<table>
+<tr><th>model</th><th>reference tps</th><th>planned</th><th>planned-fused</th><th>planned ratio</th><th>fused ratio</th></tr>
+<tr><td>Llama-3.2-1B Q4_K_M</td><td>2.61</td><td>5.52</td><td>5.28</td><td>2.11×</td><td>2.02×</td></tr>
+<tr><td>Llama-3.2-1B Q6_K</td><td>2.57</td><td>4.61</td><td>4.93</td><td>1.79×</td><td>1.91×</td></tr>
+<tr><td>Qwen2.5-1.5B Q4_K_M</td><td>2.01</td><td>4.39</td><td>4.22</td><td>2.19×</td><td>2.10×</td></tr>
+<tr><td>Qwen2.5-1.5B Q6_K</td><td>1.96</td><td>4.23</td><td>4.05</td><td>2.16×</td><td>2.06×</td></tr>
+</table>
+</div>
+<p>
+            peak RSS across the same arms: Llama Q4_K_M 843,952 → 847,284 KB (+0.39%), Llama Q6_K
+            1,053,944 → 1,056,984 KB (+0.29%), Qwen Q4_K_M 986,988 → 992,404 KB (+0.55%), Qwen Q6_K
+            1,267,412 → 1,271,992 KB (+0.42%), effectively flat, confirming gate d on all four
+            combinations. the reproduction's absolute tps is higher than the release matrix on the same
+            machine (machine state differs), but the shape is identical: all four combinations clear the
+            gate f floor (≥1.75× planned on ≥3/4), with planned ratios 1.79×–2.19×. deterministic
+            semantic output is not timing reproducibility, identical tokens and identical hidden states
+            do not imply identical wall-clock times, which is exactly what the unreliable-witness section
+            is about.
+        </p>
+<h2>what still does not work</h2>
+<ul>
+<li>fused mode must de-fuse per layer whenever a hook needs a fused-away tensor; fusion is a
+                privilege granted by the hook set, not a default.</li>
+<li>the v0.3 Q8_0 native fast path keeps precedence and is never rerouted through the plan, the
+                plan's speedup applies to the four K-quant combinations, not to every path.</li>
+<li>two of the six witness failures (fusion-route and shadowed-trait) are reconstructed from
+                tests, the changelog, and git history rather than a written post-mortem; the reconstruction
+                is marked in the text and cites its evidence.</li>
+<li>the scalar kernels remain reference-only; there is no ARM/NEON path; attention is still
+                single-query at decode.</li>
+<li>Gemma 4 remains numerically untrusted and out of the planned scope; "supported" still does
+                not mean golden-validated.</li>
+</ul>
+<h2>what this unlocked</h2>
+<p>
+            the v0.5 experiment machinery rides the plan interpreter: capture and intervention specs resolve
+            to the plan's hook-site resolution, and the frozen fusion set is what the v0.5 de-fusion policy
+            reasons about. the token is now planned once; the next release makes the plan itself an
+            artifact that can be verified, compared, and reproduced by someone who never reads Rust.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

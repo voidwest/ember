@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 4 من سلسلة الطريق إلى Ember 1.0: تخطيط عمل كل token مرة واحدة، وإخفاقات القياس اللي كادت تخفي التسريع." />
+        <meta property="og:title" content="v0.4، فك ترميز مُخطط من غير التضحية بالـ hooks" />
+        <meta property="og:description" content="معظم عمل فك token واحد هو تقرير ما لازم فعله، لا فعله. v0.4 أخرج ذلك القرار من الحلقة، من غير إخراج الـ hooks معه." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/04-plan-driven-decode.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>v0.4، فك ترميز مُخطط من غير التضحية بالـ hooks</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/04-plan-driven-decode.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>v0.4، فك ترميز مُخطط من غير التضحية بالـ hooks</h1>
+
+        <div class="meta">
+            مسودة · الجزء 4 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">خطط تنفيذ</span>
+            <span class="tag key">fusion</span>
+            <span class="tag key">قياس أداء</span>
+            <span class="tag key">استدلال على CPU</span>
+            <span class="tag model">LLaMA</span>
+            <span class="tag model">Qwen</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">حالة المسودة</div>
+            <p>
+                مسودة مكتملة باستشهادات صريحة. الأشكال مضمّنة كـ SVG (نسختا الوضع الداكن والفاتح) بتعليقات
+                تستشهد بالأدلة. أرقام الأداء من مصدرين: مصفوفة زمن الإصدار
+                (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>) وإعادة إنتاج 2026-08-04 من
+                بناء tag v0.4.0، مسجّلة في
+                <code>artifacts/benchmark-v04/2026-08-04/part4-reproduction.md</code>. اثنان من إخفاقات
+                "الشاهد غير الموثوق" الستة مُعاد بناؤهما من الاختبارات والـ changelog وتاريخ git؛ كل واحد
+                معلَّم كإعادة بناء ويستشهد بالدعم.
+            </p>
+        </div>
+
+        <p>
+            معظم عمل فك token واحد هو تقرير ما لازم فعله، لا فعله. v0.4 أخرج داك القرار من
+            الحلقة، من غير إخراج الـ hooks معه.
+        </p>
+
+        <h2>المشكلة: الحلقة تعيد تقرير كل شيء</h2>
+
+        <p>
+            ترك v0.3 الـ decode على المسار الأمامي المربوط العام: لكل token، لكل طبقة، يُعاد اكتشاف الشغل
+            نفسه. أي tensor يقرأه هذا الإسقاط؟ أي kernel يتعامل مع dtype؟ أين يذهب المخرج؟ هل يستهدف أي
+            hook هذي المرحلة؟ جمد عقد v0.4 (<code>docs/v04-execution-contract.md</code>) التسلسل المرجعي
+            قبل لمسه، embedding، لكل طبقة RMSNorm → Q/K/V → RoPE → تخزين KV → attention → إسقاط المخرجات
+            → residual → MLP → residual → norm نهائية → رأس، ثم سمّى الهدر (القسم 9): إعادة اكتشاف
+            الشكل/التوزيع لكل token، فحوص hook ديناميكية ضد سجل، وتخصيص مساحة عمل لكل token.
+        </p>
+
+        <p>
+            لا شيء من داك الشغل يتغير بين الـ tokens. لا يحصل النموذج على معمارية جديدة عند الخطوة 42.
+            الشيء الوحيد اللي يتغير لكل token هو الـ token نفسه.
+        </p>
+
+        <h2>قيد التصميم</h2>
+
+        <p>
+            كان بإمكان إصدار v0.4 أن يسلك الطريق المعتاد: أبقِ المسار العام، أضف مسارًا سريعًا بجانبه،
+            وآمل أن يطابقه. حرم العقد داك بطريقتين. أولًا، قائمة خارج النطاق تشمل <em>عدم وجود محرك خفي
+            ثانٍ يتجاوز الـ hooks</em>، مسار مُحسَّن ما يقدر الباحثون يربطوه مو تحسين؛ إنه برنامج آخر.
+            ثانيًا، لا تُكرَّر الـ kernels: matvecs Q4_K/Q6_K العددية وAVX2 في v0.3 هي التنفيذات الوحيدة،
+            ويحل مسار الخطة kernel لكل tensor عبر دالة <code>resolve_kernel</code> نفسها اللي يستخدمها
+            المسار القديم، مع تأكيد المساواة بالاختبارات (قرار D6 في العقد).
+        </p>
+
+        <p>
+            القيد، بعبارة واحدة: <em>خطط للعمل مرة واحدة لكل نموذج؛ نفّذه لكل token؛ أبقِ مواقع الـ hooks
+            الدلالي الست تلاحظ الـ tensors نفسها بالضبط في مواقع النداء نفسها.</em>
+        </p>
+
+        <h2>التنفيذ</h2>
+
+        <ul>
+            <li><strong>خطة تنفيذ غير قابلة للتغيير.</strong> تُبنى مرة واحدة فور التحميل، بواسطة خلفية
+                النموذج اللي تملك الـ tensors. تخزن فهارس مستقرة وبيانات وصفية متحققة، لا مؤشرات خام،
+                فالوصول الوزني هيكلي ولا ممكن يتدلى (D2). تحمل الخطة جدول الـ tensors وقوائم العمليات
+                لكل طبقة وترتيب الـ scratch وترتيب KV وحل مواقع الـ hooks وقرارات التوزيع والمصدر
+                (القسم 10، مخطط <code>v04-plan/1</code>). <code>ember inspect-plan</code> يطبعها؛
+                تشغيلات القياس تكتب <code>execution-plan.json</code>.</li>
+            <li><strong>ثلاثة مفاهيم تنفيذ.</strong> <code>--execution reference</code> يُبقي مسار v0.3
+                المربوط العام كمرجع مقروء؛ <code>planned</code> يشغّل التسلسل نفسه عبر مشغّل الخطة من غير
+                fusion؛ <code>planned-fused</code> يطبق مجموعة الـ fusion المجمّدة (القسم 9). الثلاثة
+                تبقى منفصلة للتحقق.</li>
+            <li><strong>ساحة scratch قابلة لإعادة الاستخدام.</strong> تخصيص محاذٍ واحد لكل جلسة decode،
+                بحجم الخطة، بمحاذاة 64 بايت، مع مناطق مُثبت عدم تداخلها بالعمر وتقرير ساحة يذكر كل تداخل
+                وبرهانه (القسم 11). حلقة الـ token في الحالة المستقرة لا تخصص شيء على الكومة.</li>
+            <li><strong>مجموعة fusion مجمّدة F1–F5.</strong> RMSNorm+إسقاط؛ residual+RMSNorm؛ تنسيق QKV؛
+                RoPE داخل attention؛ إسقاط المخرجات يتراكم في وجهة الـ residual (القسم 6). كل fusion يسمي
+                ما يلغي وليش هو آمن واختبار التوازي اللي لازم يجتازه.</li>
+            <li><strong>defusion بقيادة الـ hooks.</strong> F5 يلغي tensor <code>o</code> المستقل، وهو موقع
+                hook <code>after_attention</code>. إذا كان داك الـ hook نشطًا على طبقة، يختار المخطط المسار
+                غير المدمج لتلك الطبقة، ويُسجَّل السبب في الخطة وفي المصدر (القسمان 6–7). لازم ألا يلاحظ
+                الـ hook tensor دلاليًا مختلفًا بصمت عشان الـ fusion غيّر الرسم البياني.</li>
+            <li><strong>matvec متوازي الأعمدة.</strong> matvecs decode أحادية الصف الكبيرة تقسم بُعد
+                المخرجات عبر تجمع rayon، كل عمود يتراكم مطابقًا للـ kernel التسلسلي، مطابق للبت
+                بالاختبار (Gate A)، لا متساويًا تقريبًا.</li>
+            <li><strong>تنميط العوامل.</strong> <code>bench-decode --profile-operators</code> يسجّل توقيت
+                كل عامل على المسار المخطط، فتُختار الخطوة التالية من جدول لا من تخمين.</li>
+        </ul>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part4-diagram1.svg"
+                 alt="مفاهيم التنفيذ الثلاثة: reference وplanned وplanned-fused من الـ tensors نفسها، مع defusion بقيادة الـ hooks على المسار المدمج"
+                 loading="lazy" width="1120" height="580" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part4-diagram1_light.svg"
+                 alt="مفاهيم التنفيذ الثلاثة (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="580" decoding="async" />
+            <figcaption>
+                الشكل 1، مفاهيم التنفيذ الثلاثة: reference (مرجع مقروء)، planned (مشغّل خطة)، planned-fused
+                (مجموعة fusion مجمّدة مع defusion بقيادة الـ hooks). الثلاثة تنتج tokens جشعة متطابقة ضمن
+                المغلفات المجمّدة (docs/v04-execution-contract.md §9؛
+                artifacts/benchmark-v04/2026-08-04/SUMMARY.md).
+            </figcaption>
+        </figure>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part4-diagram2.svg"
+                 alt="الـ fusion والـ defusion على طبقة واحدة: F1-F5 تلغي بس الوسطيات غير المربوطة؛ F5 يلغي tensor after_attention فيفرض الـ hook النشط المسار غير المدمج"
+                 loading="lazy" width="1120" height="580" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part4-diagram2_light.svg"
+                 alt="الـ fusion والـ defusion على طبقة واحدة (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="580" decoding="async" />
+            <figcaption>
+                الشكل 2، الـ fusion والـ defusion على طبقة واحدة. تلغي F1–F5 بس الوسطيات اللي مو مواقع
+                hook أبدًا؛ ويلغي F5 tensor after_attention (o)، فيفرض الـ hook النشط عند داك الموقع المسار
+                غير المدمج مع تسجيل السبب (docs/v04-execution-contract.md §6–7).
+            </figcaption>
+        </figure>
+
+        <h2>لما أصبحت وحدة المعالجة شاهدًا غير موثوق</h2>
+
+        <p>
+            كان التسريع المقاس حقيقيًا. جعل <em>القياس</em> حقيقيًا استغرق ستة إخفاقات منفصلة، وهي جزء من
+            القصة عشان كل واحد منها مكان ممكن يكذب فيه محرك أسرع على مؤلفيه.
+        </p>
+
+        <ol>
+            <li>
+                <strong>الضجيج الحراري جعل الـ fusion المدمج يبدو أبطأ.</strong> هذا الجهاز يشتغل بحاكم
+                <code>powersave</code>، مسجّل في <code>run_metadata</code> لكل قياس
+                (<code>artifacts/benchmark-v03/bench-summary.json</code>)، لذا فإن الـ tokens/ثانية المطلقة
+                متغيرة حرارياً، ووقعت جلسات مدمجة مبكرة في نافذة خنق وبدت تراجعًا. الإصلاح بروتوكول لا
+                كود: أذرع متتالية لكل نموذج حتى تشترك أوضاع التنفيذ كلها في حالة الجهاز، ووسطيات على 5
+                تكرارات مقاسة، لا مقارنات عبر الجلسات
+                (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>).
+            </li>
+            <li>
+                <strong>وضع قياس نفّذ المسار المرجعي بالصدفة.</strong> يسجله الـ changelog بصراحة:
+                "<code>planned-fused</code> نفّذ المسار المرجعي بصمت حتى قبل <code>planned_decode_eligible</code>
+                الوضعَ" (<code>CHANGELOG.md</code>، v0.4 Fixed). علم يسمي وضع تنفيذ من غير ما يبوّبه علم
+                يقدر الكذب.
+            </li>
+            <li>
+                <strong>اجتازت اختبارات الـ fusion من غير تشغيل المسار المقصود.</strong> إعادة بناء من نفس
+                إدخال الـ changelog واختبارات التوازي (<code>tests/k_parity.rs</code>): اختبارات Gate B
+                على مستوى النموذج لـ planned/fused موجودة وتجتاز، بس جلسة مدمجة طُلبت عبر CLI كانت تقدر
+                السقوط إلى المسار المرجعي قبل الإصلاح، فمجموعة اختبارات خضراء بينما الوضع المسمّى لا يشتغل
+                أبدًا. الاستجابة كانت بوابة الأهلية إضافة إلى اختبارات توازٍ تحدد وضع التنفيذ صراحةً
+                وتؤكد الـ tokens الجشعة (k_parity.rs، <code>v04_planned_matches_reference_real_model</code>).
+            </li>
+            <li>
+                <strong>بوابة تخصيص اختبرت مسار trait محجوبًا.</strong> تعليق اختبار Gate E هو الدليل:
+                "Trait path (ForwardModel) حتى يشتغل توزيع وضع التنفيذ v0.4؛ طريقة Llama الذاتية كانت
+                ستحجبه" (<code>tests/k_parity.rs</code>). نداء طريقة ذاتية ممكن يتجاوز مشغّل الخطة
+                بالكامل؛ اختبار التخصيص لم يعنِ شيء إلا بعد المرور عبر الـ trait اللي يوزّع فعلًا.
+            </li>
+            <li>
+                <strong>تشويه الجلسات المثبّتة على النوى.</strong> التثبيت على أربع نوى مادية يقلل من شأن
+                matvec الأعمدة المتوازي، وهو ذراع الأداء. البروتوكول النهائي يشغّل الجهاز الكامل 8 الخيوط
+                من غير taskset، والملخص يقول داك صراحةً
+                (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>).
+            </li>
+            <li>
+                <strong>كشف تكرار الـ attention لاحقًا تخصيصًا زائفًا إضافيًا.</strong> بعد الإصدار، دمج
+                تمرير إزالة التكرار الـ kernels الثلاثة المتكررة وأزال تخصيصات <code>Vec</code> لكل مهمة
+                "قد تظهر كتخصيص زائف على خيط يسرق rayon" (الالتزام <code>624a216</code>، main، 2026-08-04،
+                بعد v0.4.0، لذا "لاحقًا"). أرقام Gate E كانت صحيحة؛ الحساب ما كان قد التقط كل موقع تخصيص
+                لا يزوره إلا تجمع خيوط دافئ.
+            </li>
+        </ol>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part4-diagram3.svg"
+                 alt="إخفاقات القياس الستة وإصلاح البروتوكول لكل منها: الضجيج الحراري، وضع قياس يشغل المرجع، اختبارات fusion من غير تغطية مسار، بوابة تخصيص محجوبة، نوى مثبتة، تخصيص زائف من تكرار attention"
+                 loading="lazy" width="1120" height="700" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part4-diagram3_light.svg"
+                 alt="إخفاقات القياس الستة وإصلاحاتها (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="700" decoding="async" />
+            <figcaption>
+                الشكل 3، لما أصبحت وحدة المعالجة شاهدًا غير موثوق: الإخفاقات الستة وإصلاح البروتوكول لكل
+                منها (CHANGELOG v0.4 Fixed؛ artifacts/benchmark-v04/2026-08-04/SUMMARY.md؛
+                tests/k_parity.rs؛ الالتزام 624a216).
+            </figcaption>
+        </figure>
+
+        <p>
+            الخيط المشترك: كل واحد من هذي حالة يُقاس فيها الـ harness لا المحرك. المحرك الأسرع غير جدير
+            بالثقة ما لم يُتحقق كمان من الـ harness ومن مسار التنفيذ الدلالي.
+        </p>
+
+        <h2>النتيجة المثبتة</h2>
+
+        <p>
+            سُجّلت البوابات A–G مسبقًا في العقد قبل التنفيذ (القسم 13) ومو ممكن إلا تشديدها:
+        </p>
+
+        <ul>
+            <li><strong>Gate A (توازي kernel/عملية)</strong>، مخرجات planned وfused مقابل المسار المرجعي
+                المستقل، <code>max_abs ≤ 1e-4</code>، عبر بطارية الأشكال؛ الـ matvec المتوازي الأعمدة
+                مطابق للبت للـ kernel التسلسلي (نفس ترتيب تراكم كل عمود)، وkernel توزيع الخطة يساوي
+                التوزيع الديناميعشان القديم (تأكيد debug + اختبارات).</li>
+            <li><strong>Gate B (توازي النموذج)</strong>، reference/planned/planned-fused تنتج تسلسلات
+                tokens جشعة متطابقة على الـ prompts الستة المجمّدة (إنجليزية + عربية) ضمن مغلفات logits
+                المجمّدة، على المجموعات الأربع (<code>tests/k_parity.rs</code>، اختبار نموذج حقيقي بوابات
+                env).</li>
+            <li><strong>Gate C (hooks)</strong>، المواقع الست تطلق في مواقع النداء نفسها بالمراحل
+                والطبقات والأشكال نفسها على المسار المخطط؛ hooks غير نشطة مطابقة للبت للمعطلة؛ تدخل
+                صفر-مخرجات-طبقة يهبط مطابقًا؛ planned-fused يفك F5 لما يكون <code>after_attention</code>
+                نشطًا فيرى الـ hook tensor <code>o</code> ماديًا.</li>
+            <li><strong>Gate D (ذاكرة)</strong>، أوزان K-quant المضغوطة تبقى مقيمة عبر mmap على المسار
+                المخطط؛ ذروة RSS reference 844,840 KB مقابل planned 847,952 KB على Llama-3.2-1B Q4_K_M في
+                الإصدار (+0.37%)، والساحة المسماة هي الفرق كله.</li>
+            <li><strong>Gate E (تخصيص)</strong>، بعد الإحماء، حلقة decode المخططة لا تؤدي أكثر من 3
+                تخصيصات كومة لكل token، كلها تفصيل الـ logits الموثق (الشكل + الخطوات + البيانات)،
+                مُتحقق عليها على نموذج حقيقي بالعداد المخصص
+                (<code>src/llama.rs</code>، <code>planned_decode_is_zero_steady_state_allocation</code>).</li>
+            <li><strong>Gate F (أداء)</strong>، المصفوفة أدناه؛ كان السقف ≥1.75× على ≥3/4، تحقق على 4/4.</li>
+            <li><strong>Gate G (خارجي)</strong>، سلم golden لـ v0.3 محفوظ؛ planned وfused يعيدان إنتاج
+                مخرجات reference الجشعة ضمن المغلفات، فينتقل توافق 100% في top-1 مع llama.cpp المثبّت
+                بالتبعية.</li>
+        </ul>
+
+        <p>
+            مصفوفة زمن الإصدار (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>؛ decode 64
+            token، إحماء 1، 5 تكرارات، وسطيات، 8 خيوط، جهاز كامل):
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>النموذج</th><th>reference tps</th><th>planned</th><th>planned-fused</th><th>نسبة planned</th><th>نسبة fused</th></tr>
+                <tr><td>Llama-3.2-1B Q4_K_M</td><td>1.48</td><td>3.42</td><td>3.41</td><td>2.32×</td><td>2.31×</td></tr>
+                <tr><td>Llama-3.2-1B Q6_K</td><td>1.43</td><td>3.31</td><td>3.29</td><td>2.32×</td><td>2.31×</td></tr>
+                <tr><td>Qwen2.5-1.5B Q4_K_M</td><td>1.52</td><td>4.04</td><td>4.03</td><td>2.66×</td><td>2.66×</td></tr>
+                <tr><td>Qwen2.5-1.5B Q6_K</td><td>1.97</td><td>4.06</td><td>3.89</td><td>2.06×</td><td>1.97×</td></tr>
+            </table>
+        </div>
+
+        <p>
+            هذا هو ادعاء "نحو 2.0–2.7×" بدقته: مقابل مسار v0.3 المرجعي على الثنائي نفسه، نفس البروتوكول،
+            أربع مجموعات أولية. مو ادعاءً ضد llama.cpp، مصفوفة v0.4 لا تسجل ذراع llama.cpp، وصياغة
+            العقد النهائية تكرر أنه لا توازٍ تنافسي يُدّعى ما لم يُظهره دليل غير متوقع (القسم 19).
+        </p>
+
+        <p>
+            أُعيد في 2026-08-04 من بناء tag v0.4.0 (sha الثنائي <code>23322cd3…</code>، مسجّل في
+            <code>artifacts/benchmark-v04/2026-08-04/part4-reproduction.md</code>)، Llama-3.2-1B Q4_K_M
+            بنفس البروتوكول:
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>التنفيذ</th><th>median tps</th><th>ذروة RSS</th><th>النسبة مقابل reference</th></tr>
+                <tr><td>reference</td><td>2.61</td><td>843,952 KB</td><td>1.00×</td></tr>
+                <tr><td>planned</td><td>5.52</td><td>844,316 KB</td><td>2.11×</td></tr>
+                <tr><td>planned-fused</td><td>5.28</td><td>847,284 KB</td><td>2.02×</td></tr>
+            </table>
+        </div>
+
+        <p>
+            إعادة الإنتاج أعلى من مصفوفة الإصدار في tps المطلق (حالة الجهاز مختلفة؛ الإصدار شغل نفس
+            البروتوكول على نفس الجهاز)، بس الشكل نفسه: ذروة RSS مسطحة عبر الأوضاع، وإنتاجية تتضاعف
+            تقريبًا. أُعيد تشغيل المجموعات الثلاث المتبقية تحت نفس البروتوكول؛ قيمها في ملف الأدلة.
+            المخرجات الدلالية الحتمية مو قابلية استنساخ زمنية، tokens متطابقة وhidden states متطابقة لا
+            تعني أزمنة حائط متطابقة، وهو بالضبط ما يتحدث عنه قسم الشاهد غير الموثوق.
+        </p>
+
+        <h2>إيش اللي لا يشتغل بعد</h2>
+
+        <ul>
+            <li>لازم الوضع المدمج يفك كل طبقة كلما احتاج hook tensor مدمجًا بعيدًا؛ الـ fusion امتياز
+                تمنحه مجموعة الـ hooks، لا افتراضي.</li>
+            <li>مسار Q8_0 السريع في v0.3 يحتفظ بالأولوية ولا يُمرَّر عبر الخطة أبدًا، ينطبق تسريع الخطة
+                على المجموعات الأربع K-quant لا على كل مسار.</li>
+            <li>اثنان من إخفاقات الشاهد الستة (مسار الـ fusion والـ trait المحجوب) مُعاد بناؤهما من
+                الاختبارات والـ changelog وتاريخ git لا من تقرير مكتوب بعد الوفاة؛ إعادة البناء معلَّمة
+                في النص وتستشهد بأدلتها.</li>
+            <li>kernels العددية تبقى مرجعية بس؛ لا مسار ARM/NEON؛ attention لسه استعلامًا واحدًا في
+                الـ decode.</li>
+            <li>gemma 4 تبقى غير موثوقة رقميًا وخارج النطاق المخطط؛ "مدعوم" لسه مو معناه مُتحققًا
+                golden.</li>
+        </ul>
+
+        <h2>إيش اللي أطلق هذا</h2>
+
+        <p>
+            آلات تجارب v0.5 تركب مشغّل الخطة: تحل مواصفات الالتقاط والتدخل إلى حل مواقع الـ hooks في الخطة،
+            ومجموعة الـ fusion المجمّدة هي ما يستدل به سياسة defusion في v0.5. الـ token أصبح مُخططًا
+            مرة واحدة؛ الإصدار التالي يجعل الخطة نفسها artifact ممكن التحقق منه ومقارنته واستنساخه من
+            قبل شخص لا يقرأ Rust أبدًا.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

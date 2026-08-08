@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="road to Ember 1.0" property="og:title"/>
+<meta content="Building an inference engine that gets faster without becoming harder to trust. The story of Ember, release by release, failures included." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>road to Ember 1.0</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/index.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+</div>
+<h1>road to Ember 1.0</h1>
+<div class="meta">
+            technical blog series · drafts in progress · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">GGUF</span>
+<span class="tag key">CPU inference</span>
+<span class="tag key">reproducibility</span>
+<span class="tag key">interpretability</span>
+</div>
+<p>
+<em>building an inference engine that gets faster without becoming harder to trust.</em> Ember is
+            a CPU-first Rust research layer for hidden-state extraction, causal intervention, and
+            reproducible experiments over GGUF models. it has its own inference path, not to beat
+            llama.cpp at throughput, but because a model that runs is not the same as a model you can
+            inspect, patch, and verify. this series follows that path release by release, failures
+            included.
+        </p>
+<figure class="chart-wrap">
+<img alt="The validation ladder: smoke, golden logits, activation-reference checks, probes, interventions, each rung is a different claim" class="chart theme-chart-dark" loading="eager" fetchpriority="high" src="figures/ladder.svg" width="1120" height="380" decoding="async" />
+<img alt="The validation ladder (light theme)" class="chart theme-chart-light" loading="eager" fetchpriority="high" src="figures/ladder_light.svg" width="1120" height="380" decoding="async" />
+<figcaption>
+                the validation ladder, each rung is a different claim, and the series never slides between
+                them (docs/validation.md).
+            </figcaption>
+</figure>
+<h2>the release arc</h2>
+<div class="table-wrap">
+<table>
+<tr><th>release</th><th>date</th><th>what it added</th><th>one-line thesis</th></tr>
+<tr><td>v0.1.0</td><td>2026-07-31</td><td>GGUF loading, CPU prefill/decode, KV cache, tracing, hidden-state extraction, deterministic benchmarking</td><td>inference made legible enough for model-internals research</td></tr>
+<tr><td>v0.2.0 (retroactive tag)</td><td>impl. 2026-08-01</td><td>activation capture, intervention hooks, activation replacement, patching between runs, exact restoration, structured artifacts</td><td>from descriptive observation to causal experiments</td></tr>
+<tr><td>v0.3.0</td><td>2026-08-03</td><td>native Q4_K/Q6_K execution, packed mmap-resident weights, scalar + AVX2 kernels, external parity</td><td>quantized on disk, quantized in memory</td></tr>
+<tr><td>v0.4.0</td><td>2026-08-04</td><td>immutable execution plans, scratch arenas, frozen fusion set with hook-driven de-fusion, column-parallel matvec</td><td>plan the token once; keep every hook observable</td></tr>
+<tr><td>v0.5.1</td><td>2026-08-04</td><td>ember.experiment.v1 specs, byte-exact token selection, semantic hooks, deterministic bundles, offline verification</td><td>reproducibility as a runtime feature</td></tr>
+</table>
+</div>
+<h2>the posts</h2>
+<div class="note-list">
+            <div class="note-card">
+                <div class="title"><a href="00-why-ember.html">part 0</a>, why build another inference engine?</div>
+                <div class="desc">why llama.cpp stays the reference, and what an independent inspectable path is for.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="01-making-inference-legible.html">part 1</a>, v0.1: an inference engine that can explain what it did.</div>
+                <div class="desc">a hidden-state dump is not useful unless its exact origin is known.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="02-capturing-patching-restoring.html">part 2</a>, v0.2: capturing, patching, and restoring hidden states.</div>
+                <div class="desc">from observation to intervention, bit-exactly.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="03-quantized-on-disk-quantized-in-memory.html">part 3</a>, v0.3: quantized on disk, quantized in memory.</div>
+                <div class="desc">6.99 GB → 0.84 GB by not undoing the model's compression.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="04-plan-driven-decode.html">part 4</a>, v0.4: plan-driven decode without sacrificing hooks.</div>
+                <div class="desc">2.0–2.7× reference decode, and the benchmark failures that almost hid it.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="05-reproducible-experiment-bundles.html">part 5</a>, v0.5: from inference engine to research workflow.</div>
+                <div class="desc">reproducibility as an artifact format, a verification procedure, and a fail-closed contract.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="06-the-null-result.html">part 6</a>, the null result that produced a better tool.</div>
+                <div class="desc">a falsified hypothesis and the causal-localization toolchain it forced into existence, reproduced, harness drift documented.</div>
+            </div>
+            <div class="note-card">
+                <div class="title"><a href="07-what-ember-1-0-has-to-earn.html">part 7</a>, what Ember 1.0 has to earn.</div>
+                <div class="desc">1.0 means other researchers can safely build on the public contracts.</div>
+            </div>
+        </div>
+<p>
+<strong>start with part 0</strong>, and if you run model-internals experiments, part 5 shows a
+            workflow you can run today without writing Rust. each post is self-contained and cites the
+            repository artifacts behind its claims, including the ones that failed.
+        </p>
+<p>
+            series planning package and evidence: <code>docs/road-to-1.0-plan.html</code> and the
+            per-part evidence files under <code>artifacts/benchmark-v0*/</code> in the
+            <a href="https://github.com/voidwest/ember">ember repository</a>.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

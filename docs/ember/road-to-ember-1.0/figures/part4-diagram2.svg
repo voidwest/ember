@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="580" viewBox="0 0 1120 580" role="img" aria-labelledby="t4b d4b">
+  <title id="t4b">Fusion and de-fusion on one layer (v0.4)</title>
+  <desc id="d4b">The layer's op chain with the frozen fusion set F1-F5; F5 eliminates the after_attention tensor o, so an active hook there forces the unfused route.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }
+    .boxlabel { fill: #f3efe5; font-size: 14px; text-anchor: middle; }
+    .sub { fill: #a6a6ad; font-size: 12px; text-anchor: middle; }
+    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }
+    .accent-label { fill: #b3a7e2; font-size: 14px; text-anchor: middle; }
+    .arrow { stroke: #7e7f87; stroke-width: 1.5; fill: none; }
+    .fusion { stroke: #9b8fd1; stroke-width: 1.4; fill: none; }
+    .fusion-label { fill: #9b8fd1; font-size: 13px; }
+    .hook { fill: #9b8fd1; stroke: #0d1014; stroke-width: 1.6; }
+    .hooknum { fill: #090b0e; font-size: 11px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, monospace; }
+    .annot { fill: #a6a6ad; font-size: 13px; text-anchor: middle; }
+    .note { fill: #a6a6ad; font-size: 13px; text-anchor: start; }
+    .colhead { fill: #a6a6ad; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; text-anchor: start; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7e7f87" />
+    </marker>
+  </defs>
+  <text class="mono colhead" x="64" y="48">one transformer layer, fusion set F1–F5</text>
+  <g>
+    <rect class="box" x="64" y="64" width="110" height="56" />
+    <text class="mono boxlabel" x="119" y="96">x</text>
+    <line class="arrow" x1="174" y1="92" x2="206" y2="92" marker-end="url(#arrow)" />
+    <rect class="box" x="210" y="64" width="130" height="56" />
+    <text class="mono boxlabel" x="275" y="88">RMSNorm</text>
+    <text class="mono sub" x="275" y="108">+ QKV (F1, F3)</text>
+    <line class="arrow" x1="340" y1="92" x2="372" y2="92" marker-end="url(#arrow)" />
+    <rect class="box" x="376" y="64" width="130" height="56" />
+    <text class="mono boxlabel" x="441" y="88">attention</text>
+    <text class="mono sub" x="441" y="108">+ RoPE (F4)</text>
+    <line class="arrow" x1="506" y1="92" x2="538" y2="92" marker-end="url(#arrow)" />
+    <rect class="box" x="542" y="64" width="110" height="56" />
+    <text class="mono boxlabel" x="597" y="96">o_proj</text>
+    <line class="arrow" x1="652" y1="92" x2="684" y2="92" marker-end="url(#arrow)" />
+    <rect class="box" x="688" y="64" width="130" height="56" />
+    <text class="mono boxlabel" x="753" y="88">residual</text>
+    <text class="mono sub" x="753" y="108">+ norm (F2)</text>
+    <line class="arrow" x1="818" y1="92" x2="850" y2="92" marker-end="url(#arrow)" />
+    <rect class="box" x="854" y="64" width="100" height="56" />
+    <text class="mono boxlabel" x="904" y="96">MLP</text>
+    <line class="arrow" x1="954" y1="92" x2="986" y2="92" marker-end="url(#arrow)" />
+    <rect class="box" x="990" y="64" width="70" height="56" />
+    <text class="mono boxlabel" x="1025" y="96">out</text>
+  </g>
+  <text class="mono colhead" x="64" y="176">F5, output projection + residual add</text>
+  <rect class="box" x="64" y="192" width="230" height="72" />
+  <text class="mono boxlabel" x="179" y="218">o = o_proj(attn)</text>
+  <text class="mono annot" x="179" y="246" font-size="12">the after_attention hook site</text>
+  <line class="arrow" x1="294" y1="228" x2="348" y2="228" marker-end="url(#arrow)" />
+  <rect class="accent-box" x="352" y="192" width="260" height="72" />
+  <text class="mono accent-label" x="482" y="218">x1 = x + W·attn</text>
+  <text class="mono annot" x="482" y="246" font-size="12">fused, when no hook is active</text>
+  <line class="fusion" x1="482" y1="140" x2="482" y2="190" />
+  <text class="mono fusion-label" x="492" y="160">F5</text>
+  <text class="mono colhead" x="680" y="176">F5 defused, hook active at after_attention</text>
+  <rect class="box" x="640" y="192" width="210" height="72" />
+  <text class="mono boxlabel" x="745" y="218">o = o_proj(attn)</text>
+  <text class="mono annot" x="745" y="246" font-size="12">o materialized for the hook</text>
+  <circle class="hook" cx="870" cy="228" r="11" />
+  <text class="hooknum" x="870" y="232">h</text>
+  <line class="arrow" x1="882" y1="228" x2="930" y2="228" marker-end="url(#arrow)" />
+  <rect class="box" x="934" y="192" width="126" height="72" />
+  <text class="mono boxlabel" x="997" y="218">x1 = x + o</text>
+  <text class="mono annot" x="997" y="288" font-size="12">unfused · reason recorded</text>
+  <text class="mono note" x="64" y="420">F1–F5 eliminate only intermediates that are never hook sites; the plan chooses Fused /</text>
+  <text class="mono note" x="64" y="444">PartiallyFused / Unfused per layer at build time from the active hook set, with the selection</text>
+  <text class="mono note" x="64" y="468">recorded in the plan and in provenance (docs/v04-execution-contract.md §6–7).</text>
+</svg>

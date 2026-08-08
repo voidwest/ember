@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 6 من سلسلة الطريق إلى Ember 1.0: فرضية تدهور الكمّية الانتقائي للعربية اللي فشلت، وسلسلة أدوات التحديد السببي اللي ولّدتها." />
+        <meta property="og:title" content="النتيجة الصفرية اللي أنتجت أداة أفضل" />
+        <meta property="og:description" content="انطلقنا لإظهار أن الكمّية تدهور العربية تحديدًا. قالت البيانات لا. الأدوات اللي بنيناها للتحقق قالت شيء أنفع." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/06-the-null-result.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>النتيجة الصفرية اللي أنتجت أداة أفضل</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/06-the-null-result.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>النتيجة الصفرية اللي أنتجت أداة أفضل</h1>
+
+        <div class="meta">
+            مسودة · الجزء 6 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">كمّية</span>
+            <span class="tag key">نتائج صفرية</span>
+            <span class="tag key">تحديد سببي</span>
+            <span class="tag key">معالجة عربية</span>
+            <span class="tag model">LLaMA</span>
+            <span class="tag model">Qwen</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">حالة المسودة</div>
+            <p>
+                مسودة مكتملة باستشهادات صريحة. إعادة إنتاج التحديد السببي في القسم 5 شُغّلت مباشرة في
+                2026-08-04 ومسجّلة في <code>artifacts/road-to-1.0/part6-null-result.md</code>. الصفر محصور
+                في المصفوفة المختبرة وغير مستنسخ خارجيًا؛ والنتيجة السببية مُتحقق منها على الصفوف ذات
+                الفحوص golden المكتملة (عائلتا Qwen2.5-1.5B وLlama-3.2-1B). الشكل مضمّن كـ SVG (نسختا
+                الوضع الداكن والفاتح).
+            </p>
+        </div>
+
+        <p>
+            انطلقنا لإظهار أن الكمّية تدهور العربية تحديدًا. قالت البيانات لا. الأدوات
+            اللي بنيناها للتحقق قالت شيء أنفع.
+        </p>
+
+        <h2>الفرضية</h2>
+
+        <p>
+            بدأ الـ pilot بسؤال مبني على ورقة: هل تدهور الكمّية منخفضة البت الصرف واللهجات العربية أكثر
+            مما تدهور اللغات اللي ضُبطت عليها المُكمِّمات؟ قصة الآلية كانت معقولة، ترميز العربية غير
+            مألوف، والكتابة عالية الإنتروبيا، والتمثيل المضغوط قد يفقد التمييزات الدقيقة اللي يعتمد
+            عليها تنقيب الصرف. الفرضية، قبل التشغيلات: تدهور كمّي انتقائي للعربية عند Q4/Q6 مقابل Q8.
+        </p>
+
+        <h2>المصفوفة</h2>
+
+        <p>
+            عائلتا نماذج، Qwen2.5-1.5B وLlama-3.2-1B، بثلاث دقات لكل منهما، Q8_0 وQ6_K وQ4_K_M، بسلم
+            كمّية مطابق بتجزئات متحققة وأداة من 32 عنصرًا متوازنة عبر أربع فئات: صرف عربي، لهجة
+            وتسجيل، تنقّل رمزي ونصي، وضوابط (إنجليزية + عربية فصحى). نحو 500 تشغيل حتمي، حرارة 0
+            (<code>docs/validation.md</code>؛ مجموعة العناصر والدرجات في دليل الـ pilot، فرع محلي، غير
+            منشور).
+        </p>
+
+        <h2>الصفر</h2>
+
+        <p>
+            الفرضية الرئيسية لم تصمد. سلوكيًا: Q4 ما كان أسوأ من Q8 (q8 19/25، q6 20/25، q4 20/25 صحيحًا
+            على العناصر المقيَّمة)، و30 من 32 عنصرًا أنتجت المخرجات نفسها عبر الدقات الثلاث، والفرقان
+            كلاهما لصالح الدقة الأدنى. داخليًا: انجراف التنشيط q8-vs-q4 كان نحو 5× انجراف q8-vs-f16
+            وموحدًا، عناصر اللهجة داخل نطاق الضوابط، بلا تضخيم انتقائي للعربية (PILOT_REPORT.md، دليل
+            الـ pilot).
+        </p>
+
+        <p>
+            الفرضية المدحضة مو تجربة فاشلة. الصفر كان مفيدًا بطريقتين. أزال قصة خاطئة، العربية مو
+            هشة تحديدًا عند 4 بت في هذي المصفوفة، وأجبر السؤال اللي ممكن إجابته: حد الكمّية يكسر
+            أحيانًا، وحيث يكسر، هل ممكننا معرفة أين وليش؟
+        </p>
+
+        <h2>فشل حدود نادر، وسلسلة الأدوات اللي تحدده</h2>
+
+        <p>
+            الفشل الباقي كان نادرًا ومحددًا. عنصر صرف عربي واحد (جمع سالم، صحيح عند f16 وq6، خاطئ عند
+            q8 على Qwen2.5-1.5B) كان الحالة المهمة: فشل حدود كمّية استعادته patch تنشيط أحادي الطبقة
+            بالضبط، بزرع تنشيط من جلسة f16 <em>أو</em> q6. كان الموضع السببي الطبقة 7 من 28، طبقة واحدة
+            قبل منحدر التباعد المرئي. انتقل النمط نفسه إلى Llama-3.2-1B: عنصر صفة-عدد فشل عند q6،
+            وزرع q6 في تنشيط الطبقة 1 بعد mlp من q8 استعاد المخرج الصحيح، مع انهيار فجوة تباعد موضع
+            الإجابة من rel-L2 0.4286 إلى 0.0927 (4.6×)؛ patches أحادية الطبقة عند الطبقتين 2 و4 لم تستعد.
+            الطبقة السببية تجلس قبل المنحدر بطبقة في العائلتين (PILOT_REPORT.md).
+        </p>
+
+        <p>
+            الآلية المتسقة مع كل داك انقلاب قرب العتبة: ضجيج كمّي يعبر أصغر هامش قرار للنموذج، لا انهيار
+            تمثيلي واسع. صنفان من الفشل لم يتحددا في طبقة واحدة، تباعد الـ token الأول (العائلتان)
+            وعنصر ضابط واحد احتاج patch متعدد الطبقات لاستعادة جزئية، وهو لوحده حدٌّ مفيد على
+            الادعاء.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part6-diagram1.svg"
+                 alt="منحدر التباعد والموضع السببي: يبدأ المنحدر بعد الموضع السببي بطبقة، والـ patch أحادية الطبقة عند الموضع تستعيد المخرج"
+                 loading="lazy" width="1120" height="580" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part6-diagram1_light.svg"
+                 alt="منحدر التباعد والموضع السببي (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="580" decoding="async" />
+            <figcaption>
+                الشكل 1، منحدر التباعد والموضع السببي (مخططي؛ الشكل وفق تحليل الطبقات الكثيفة في
+                PILOT_REPORT.md، وقيم الإرساء هي أرقام llama المسجّلة). الطبقة السببية قبل المنحدر بطبقة في
+                العائلتين؛ والـ patch أحادية الطبقة تستعيد المخرج (rel-L2 0.4279 → 0.0989 في 2026-08-04).
+                محصور في الصفوف المثبتة.
+            </figcaption>
+        </figure>
+
+        <h2>أُعيد إنتاجه، مع توثيق انجراف الـ harness</h2>
+
+        <p>
+            إعادة إنتاج العرض التجريبي كانت درسًا بذاته. السكربت المثبّت من البداية إلى النهاية
+            (<code>research/pilots/arabic_quantization_001/causal_demo.sh</code>) يرقع الكمّية المتدهورة
+            بتنشيط المرجع الملتقط، ملفا نموذج مختلفان. في 2026-08-04 رفضه الثنائي الحالي، بإغلاق آمن،
+            عشان تجزئة SHA-256 لنموذج مصدر الـ patch لازم دحين أن تطابق النموذج الحالي (أُضيفت القاعدة
+            في 2026-08-03 في تمرير التقوية). ومراجعة الـ pilot الرئيسية انهارت على ملف llama Q6_K (خطأ
+            اتجاه رأس مرتبط أُصلح في اليوم نفسه اللي شُغّل فيه الـ pilot). تشغيل العرض بالمراجعة اللي
+            كُتب لها، في النافذة بعد إصلاح الرأس وقبل قاعدة SHA، أعاد إنتاج النتيجة:
+        </p>
+
+        <pre><code>baseline compare: differs 0 identical / 85 aligned
+patched run applied (5 targets)
+answer-step logits: baseline rel_l2 vs reference 0.4279 | patched 0.0989
+criterion: divergence reduced 4.3x
+VERDICT: RESTORED</code></pre>
+
+        <p>
+            تتبّع أرقام الإعادة أرقام الـ pilot المسجّلة تقريبًا بالضبط (0.4286 → 0.0927 مسجّل مقابل
+            0.4279 → 0.0989 مقاس، 4.6× مقابل 4.3×). كلا اكتشافَي الـ harness مسجّلان في
+            <code>artifacts/road-to-1.0/part6-null-result.md</code>: عقد SHA الأشد دفاعًا عنه علميًا
+            (الـ patch لا يكون ذا معنى إلا إذا تطابق المصدر والهدف في النموذج)، والعرض المثبّت يسبقه
+            بكل بساطة.
+        </p>
+
+        <h2>تحفظات التحقق</h2>
+
+        <ul>
+            <li>الصفر محصور في المصفوفة المختبرة: عائلتان، ثلاث دقات، نحو 500 تشغيل. لم يُستنسخ
+                خارجيًا.</li>
+            <li>النتيجة السببية مُتحقق منها على الصفوف ذات الفحوص golden المكتملة، Qwen2.5-1.5B
+                وLlama-3.2-1B، وأسماء النماذج الدقيقة مهمة؛ "qwen3" مو مرادفًا هنا.</li>
+            <li>آلية الانقلاب قرب العتبة حجة اتساق عبر الحالات الملاحظة، لا برهان.</li>
+            <li>سجل الـ pilot التفصيلي على فرع محلي؛ السجل العام هو الملخص في
+                <code>docs/validation.md</code> والـ README.</li>
+        </ul>
+
+        <h2>كيف أعادت الفرضية الفاشلة توجيه المشروع</h2>
+
+        <p>
+            أصبح السؤال "هل تؤذي الكمّية العربية؟" "أين، بالضبط، تكسر الكمّية؟"، وإجابة السؤال الثاني
+            تطلبت الأدوات الدقيقة اللي تصفها السلسلة هذي: التقاط بمصدر (v0.2)، تنفيذ مضغوط يُبقي
+            الدلالات متطابقة (v0.3)، hooks تصمد أمام التحسين (v0.4)، وتجارب يقدر باحث آخر التحقق
+            منها (v0.5). النتيجة الصفرية لم تنتج استنتاجًا بحثيًا للنشر؛ أنتجت سلسلة الأدوات اللي تجعل
+            السؤال التالي الأفضل صياغةً قابلًا للإجابة.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

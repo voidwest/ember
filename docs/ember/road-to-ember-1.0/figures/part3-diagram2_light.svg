@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560" role="img" aria-labelledby="t32 d32">
+  <title id="t32">Anatomy of a K-quant matvec (v0.3)</title>
+  <desc id="d32">Decode one block into a small per-thread buffer, multiply by the activation slice, accumulate; the whole matrix never becomes f32-resident.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #fbf8f1; stroke: rgba(92,84,72,0.38); stroke-width: 1.3; rx: 8; }
+    .boxlabel { fill: #18191b; font-size: 16px; text-anchor: middle; }
+    .accent-box { fill: #ece6da; stroke: #8275bc; stroke-width: 1.6; rx: 8; }
+    .accent-label { fill: #6659a1; font-size: 16px; text-anchor: middle; }
+    .red-box { fill: #fbf8f1; stroke: #ad3d30; stroke-width: 1.6; stroke-dasharray: 6 4; rx: 8; }
+    .red-label { fill: #ad3d30; font-size: 15px; text-anchor: middle; }
+    .block { fill: #ece6da; stroke: #77746e; stroke-width: 1.2; rx: 5; }
+    .blocklabel { fill: #18191b; font-size: 13px; text-anchor: middle; }
+    .arrow { stroke: #77746e; stroke-width: 1.6; fill: none; }
+    .accent-arrow { stroke: #8275bc; stroke-width: 1.8; fill: none; }
+    .annot { fill: #66676b; font-size: 14px; }
+    .colhead { fill: #66676b; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#77746e" />
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8275bc" />
+    </marker>
+  </defs>
+  <text class="mono colhead" x="64" y="52">one packed block (conceptual)</text>
+  <rect class="box" x="64" y="66" width="300" height="108" />
+  <text class="mono boxlabel" x="214" y="104">packed quant values</text>
+  <text class="mono annot" x="214" y="128" font-size="13" text-anchor="middle">qs · 4-bit / 6-bit</text>
+  <text class="mono annot" x="214" y="150" font-size="13" text-anchor="middle">block scales / metadata (d)</text>
+  <line class="accent-arrow" x1="364" y1="120" x2="448" y2="120" marker-end="url(#arrow-accent)" />
+  <rect class="accent-box" x="452" y="66" width="300" height="108" />
+  <text class="mono accent-label" x="602" y="104">decode block locally</text>
+  <text class="mono annot" x="602" y="128" font-size="13" fill="#6659a1" text-anchor="middle">into [f32; 256] per-thread buffer</text>
+  <text class="mono annot" x="602" y="150" font-size="13" fill="#6659a1" text-anchor="middle">≤ 9 KiB workspace total</text>
+  <line class="arrow" x1="752" y1="120" x2="836" y2="120" marker-end="url(#arrow)" />
+  <rect class="box" x="840" y="66" width="216" height="108" />
+  <text class="mono boxlabel" x="948" y="104">multiply by</text>
+  <text class="mono boxlabel" x="948" y="130">activation slice</text>
+  <text class="mono annot" x="948" y="154" font-size="13">row · dot</text>
+  <line class="arrow" x1="948" y1="174" x2="948" y2="226" marker-end="url(#arrow)" />
+  <rect class="accent-box" x="840" y="230" width="216" height="72" />
+  <text class="mono accent-label" x="948" y="267">accumulate into output</text>
+  <text class="mono annot" x="948" y="290" font-size="12" fill="#6659a1" text-anchor="middle">next block · …</text>
+  <rect class="red-box" x="64" y="380" width="520" height="86" />
+  <text class="mono red-label" x="324" y="413">not this: unpack the entire matrix to f32</text>
+  <text class="mono annot" x="324" y="441" font-size="13" fill="#ad3d30" text-anchor="middle">a model-scale f32 buffer is never created</text>
+  <rect class="accent-box" x="640" y="380" width="416" height="86" />
+  <text class="mono accent-label" x="848" y="413">only the current block is decoded</text>
+  <text class="mono annot" x="848" y="441" font-size="13" fill="#6659a1" text-anchor="middle">registers / tiny local temporaries</text>
+  <text class="mono annot" x="64" y="520">per-thread workspace for the compressed path is ≤ 9 KiB and no model-scale f32 buffer is created</text>
+  <text class="mono annot" x="64" y="544">(docs/v03-execution-contracts.md section 7)</text>
+</svg>

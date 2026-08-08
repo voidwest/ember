@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 0 من سلسلة الطريق إلى Ember 1.0: ليش فيه طبقة بحثية مستقلة بمسار استدلال خاص بجانب llama.cpp، والقيود اللي شكّلتها." />
+        <meta property="og:title" content="الطريق إلى Ember 1.0، ليش نبني محرك استدلال آخر؟" />
+        <meta property="og:description" content="النظام البيئي يملك llama.cpp. Ember موجود لأن النموذج اللي يشتغل مو هو النموذج اللي تقدر تفحصه وتعديله واستنساخه." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/00-why-ember.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>الطريق إلى Ember 1.0، ليش نبني محرك استدلال آخر؟</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/00-why-ember.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>الطريق إلى Ember 1.0، ليش نبني محرك استدلال آخر؟</h1>
+
+        <div class="meta">
+            مسودة · الجزء 0 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">استدلال على CPU</span>
+            <span class="tag key">قابلية الاستنساخ</span>
+        </div>
+
+        <p>
+            النظام البيئي يملك llama.cpp. Ember موجود عشان النموذج اللي يشتغل مو هو النموذج
+            اللي تقدر تفحصه وتعديله واستنساخه. تتابع السلسلة هذي هذا التمييز إصدارًا بإصدار، ومن ضمنها
+            الإخفاقات.
+        </p>
+
+        <h2>السؤال تحت السؤال</h2>
+
+        <p>
+            إذا كان هدفك هو عدد tokens في الثانية، فالإجابة الصادقة عن "ليش نبني محرك استدلال آخر" هي
+            أنك المفروض لا. llama.cpp موجود، وهو سريع، وهو المرجع لسبب وجيه. السلسلة هذي عن هدف مختلف.
+        </p>
+
+        <p>
+            بدأ Ember كوسيلة لغاية بحثية. كان السؤال عن الصرف العربي: كيف وأين تمثّل نماذج اللغة العصبية
+            الصرف غير الالتصاقي، الجذور والأوزان، وليش يفشل توافر التمثيل أحيانًا في إنتاج سلوك
+            توليدي؟ الإجابة تتطلب hidden states في طبقات ومواضع مختارة، وقدرة على تغيير تلك الحالات وملاحظة
+            النتيجة، وإجراءً قابلاً للتكرار بحيث يقدر باحث ثانٍ تشغيله والثقة بالنتيجة.
+        </p>
+
+        <p>
+            الأدوات اللي تحرّك tokens عبر النموذج ممتازة في تحريك tokens. وهي غير مبنية للإجابة عن:
+            "ما هذا الـ tensor، في هذي الطبقة، في هذا الموضع، في هذي اللحظة، وكيف أُغيّره، وأثبت أن
+            التغيير كان مؤثرًا؟"
+        </p>
+
+        <h2>ليش لا نكتفي باستدعاء llama.cpp</h2>
+
+        <p>
+            llama.cpp هو المرجع الخارجي لـ Ember، للصحة وللأداء. سلم الـ golden logits يتحقق من مخرجات
+            Ember مقابل مراجعة محدّدة من llama.cpp (<code>scripts/validate_golden_ladder.sh</code>؛ أداة
+            المرجع <code>tools/logits_dump.c</code>)، وتسجّل artifacts القياس أرقام llama.cpp على الملفات
+            نفسها (<code>artifacts/benchmark-v03/llama-3.2-1b-q4_k_m.llama-bench.json</code>).
+        </p>
+
+        <p>
+            بس المرجع الخارجي له وظيفة مختلفة. llama.cpp مُهندَس للاتساع والإنتاجية؛ Ember مُهندَس للخاصية
+            المعاكسة: مسار تنفيذ مقروء عمدًا، يكون فيه كل عامل وكل tensor وكل موقع hook صريحًا، إضافة إلى
+            أدوات للالتقاط والتعديل والمقارنة والاستعادة مع تتبّع المصدر. هذا مو نقدًا لـ llama.cpp؛ إنه
+            تقسيم عمل: llama.cpp هو المرجع، وEmber يتحقق من مساره الخاص مقابله.
+        </p>
+
+        <p>
+            لا يدّعي Ember اتساعًا أو إنتاجية مماثلة، وما راح تجادل السلسلة هذي بغير داك. سبب القراءة مو
+            السرعة؛ بل أن المحركين يجيبان عن سؤالين مختلفين.
+        </p>
+
+        <h2>القيود اللي شكّلت التصميم</h2>
+
+        <p>ثلاثة قيود، ثابتة منذ البداية:</p>
+
+        <ul>
+            <li><strong>قابلية الفحص جزء من عقد التنفيذ، لا فكرة لاحقة.</strong> لازم يقول المحرك ما
+                فعله: أي طبقة، أي مرحلة، أي موضع، أي مسار تنفيذ، أي kernel. تفريغ hidden state من غير مصدرها
+                الدلالي والرقمي الدقيق مجرد أرقام.</li>
+            <li><strong>التدخّل يعني الهوية.</strong> الـ patch لا يكون ذا معنى علمي إلا لما تكون هوية
+                الـ tensor والطبقة وموضع الـ token ومسار التنفيذ صريحة، والاستعادة لا تكون ذات معنى إلا
+                إذا كانت مطابقة للبت.</li>
+            <li><strong>قابلية الاستنساخ صيغة artifact، لا جملة في README.</strong> لازم ينتج التشغيل حزمة
+                تتحقق من نفسها باحث ثاني يقدر يفحصها من غير اتصال ومن غير ما يقرأ Rust.</li>
+        </ul>
+
+        <p>
+            القيود هذي تكلف أداءً، وستعرض السلسلة كم بالضبط، وفي أي مواضع، وإيش اللي فُعل لتقليل الكلفة من غير
+            التخلي عنها.
+        </p>
+
+        <h2>ما صدر، باختصار</h2>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>الإصدار</th><th>القدرة الأساسية</th><th>السؤال اللي أجاب عنه</th></tr>
+                <tr><td>v0.1</td><td>استدلال قابل للفحص على GGUF: prefill، decode، KV cache، تتبّع، استخراج hidden states، قياس حتمي</td><td>هل ممكن جعل الاستدلال مقروءًا بما يكفي للبحث في دواخل النماذج؟</td></tr>
+                <tr><td>v0.2</td><td>التقاط تنشيطات، hooks تدخّل، patch بين الجلسات، استعادة مطابقة للبت، artifacts منظمة مع مصدر</td><td>هل يدعم Ember تجارب سببية بدل الملاحظة الوصفية بس؟</td></tr>
+                <tr><td>v0.3</td><td>تنفيذ Q4_K/Q6_K أصلي: أوزان مضغوطة عبر mmap، kernels عددية وAVX2، توزيع لكل tensor، توازٍ خارجي</td><td>ما فائدة نموذج Q4 إذا كان المحرك يفكّه إلى f32؟</td></tr>
+                <tr><td>v0.4</td><td>فك ترميز مُخطط: خطط تنفيذ غير قابلة للتغيير، scratch arenas، مجموعة fusion مجمّدة مع defusion بالـ hooks، matvec متوازي الأعمدة، تنميط</td><td>هل ممكن تخطيط التنفيذ وتحسينه من غير إخفاء الـ tensors اللي يحتاج الباحثون فحصها؟</td></tr>
+                <tr><td>v0.5.1</td><td>حزم تجارب قابلة للاستنساخ: مواصفات صارمة، اختيار tokens بدقة البايت، hooks دلالية، تدخلات، تحقق من غير اتصال، مقارنة، استنساخ</td><td>هل ممكن لباحث لم يكتب Ember تشغيل تجربة على دواخل النموذج والتحقق منها من غير لمس Rust؟</td></tr>
+            </table>
+        </div>
+
+        <p>
+            رقم واحد لكل إصدار، ليكون شكل السلسلة مرئيًا من البداية. v0.3 خفّض الذاكرة المقيمة لنموذج كمّي
+            من غيغابايتات f32 الموسّعة إلى حجم الملف تقريبًا: 6,989,724 KB → 844,216 KB ذروة RSS على
+            Llama-3.2-1B Q4_K_M (<code>artifacts/benchmark-v03/part3-binary-memory.md</code>). v0.4 ضاعف
+            إنتاجية فك الترميز على المسار المرجعي في المجموعات الأربع الأساسية، نحو 2.0–2.7×، مع بقاء
+            ذروة RSS ثابتة تقريبًا (<code>artifacts/benchmark-v04/2026-08-04/SUMMARY.md</code>). v0.5 جعل
+            خط التجارب كله حتميًا وقابلاً للتحقق من غير اتصال. التحفظات الملحقة بكل رقم جزء من القصة، لا
+            حواشٍ.
+        </p>
+
+        <h2>إيش تعني كلمة "مدعوم"</h2>
+
+        <p>
+            "مدعوم" في جداول نماذج Ember يعني وجود مسار تنفيذ. مو معناه أن الصف مُتحقق منه رقميًا. التمييز
+            هو السلم: smoke (الأمر عمل)، golden logits (المخرجات قورنت بمرجع موثوق)، فحوص المرجعية
+            للتنشيطات (قورنت الحالات الداخلية)، الـ probes (قابلية الفك)، التدخلات (الاستخدام السببي). كل
+            درجة ادعاء مختلف، وما راح تنزلق السلسلة بينها.
+        </p>
+
+        <p>
+            الحالة الراهنة في جملة: صفوف عائلتي llama وqwen2.5 لديها توافق golden logits مع مرجع
+            llama.cpp المثبّت (توافق 100% في top-1 عبر درجات السلم الست، توافق على الـ argmax لا مساواة
+            logits، مع اختلافات مغلف تصل إلى 1.74 كحد أقصى على درجة qwen q4)؛ صفوف qwen3 واعدة بس التحقق
+            golden معلّق؛ gemma 4 يُحمَّل بسه غير موثوق رقميًا (cosine أحادية token نحو 0.87 مقابل المرجع
+            وتتآكل عبر الطبقات)؛ فحوص المرجعية للتنشيطات معلّقة لعدة صفوف. المخرجات الدلالية الحتمية مو
+            قابلية استنساخ زمنية: tokens متطابقة وhidden states متطابقة مو معناها أزمنة حائط متطابقة.
+        </p>
+
+        <h2>ما ما راح تدّعيه السلسلة هذي</h2>
+
+        <ul>
+            <li>Ember مو بنية تحتية إنتاجية للخدمة. إنه أداة بحثية بمسار قابل للفحص عمدًا.</li>
+            <li>لا يدّعي Ember توازي أداء مع llama.cpp، لا في المقال دا ولا في مقالات الإنتاجية.</li>
+            <li>وجدت تجربة الكمّية العربية عدم وجود تدهور انتقائي للعربية في المصفوفة المختبرة؛ هذا الصفر
+                محصور في المصفوفة المختبرة ولم يُستنسخ خارجيًا.</li>
+            <li>Ember مشروع منفصل عن Sarf Atlas؛ Atlas يوثّق قيود وتقييمات ناقصة من أوراق بحثية، وهذه
+                السلسلة عن Ember بس.</li>
+        </ul>
+
+        <h2>أين تذهب السلسلة وبعدها</h2>
+
+        <p>
+            أسرع طريقة لرؤية القيود في الشغل هي قصة الذاكرة. ملف Q4 يصل إلى الذاكرة كـ f32، بمعنى دقيق،
+            تم فك ضغطه بواسطة المحرك اللي كان مفترضًا أن يشغّله. المقال التالي هو v0.3: كمّي على القرص،
+            كمّي في الذاكرة، وسلم التحقق اللي أبقى المسار المضغوط صادقًا.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

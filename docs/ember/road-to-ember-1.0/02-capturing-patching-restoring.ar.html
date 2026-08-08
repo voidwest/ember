@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 2 من سلسلة الطريق إلى Ember 1.0: من الملاحظة إلى التدخّل، وليش يحتاج الادعاء السببي هوية tensor لا درجة probe." />
+        <meta property="og:title" content="v0.2، التقاط الـ hidden states وتعديلها واستعادتها" />
+        <meta property="og:description" content="الـ probe يقدر يقول إن اتجاهًا ما قابل للفك. لا يقدر يقول إن النموذج يستخدمه. v0.2 بنى الأدوات اللي تقدر." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/02-capturing-patching-restoring.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>v0.2، التقاط الـ hidden states وتعديلها واستعادتها</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/02-capturing-patching-restoring.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>v0.2، التقاط الـ hidden states وتعديلها واستعادتها</h1>
+
+        <div class="meta">
+            مسودة · الجزء 2 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">تدخلات</span>
+            <span class="tag key">hidden states</span>
+            <span class="tag key">تجارب سببية</span>
+            <span class="tag key">مصدر</span>
+            <span class="tag model">Qwen</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">حالة المسودة</div>
+            <p>
+                مسودة مكتملة باستشهادات صريحة. نص الالتقاط → المقارنة → التعديل → الاستعادة أدناه أُنتج
+                مباشرة في 2026-08-04 بتشغيل سير عمل v0.2 المثبّت
+                (<code>scripts/research_example_capture_patch.sh</code>) ومسجّل في
+                <code>artifacts/benchmark-v02/part2-capture-patch.md</code>. الشكل مضمّن كـ SVG (نسختا
+                الوضع الداكن والفاتح).
+            </p>
+        </div>
+
+        <p>
+            الـ probe يقدر يقول إن اتجاهًا في الطبقة <em>l</em> يحمل معلومات عن
+            جذر الكلمة. لا يقدر يقول إن النموذج يستخدم داك الاتجاه لإنتاج مخرجه. الفجوة هي الفرق بين
+            قابلية الفك والاستخدام السببي، وهي بالضبط الفجوة اللي يهتم بها السؤال البحثي.
+        </p>
+
+        <h2>المشكلة: الملاحظة مو سببًا</h2>
+
+        <p>
+            إجابة v0.2، كقيد: <em>التدخّل لا يكون ذا معنى علمي إلا لما تكون هوية الـ tensor والطبقة
+            وموضع الـ token ومسار التنفيذ صريحة.</em> الـ patch اللي لا يقدر يقول بدقة ما استبدل
+            يثبت شيء؛ والاستعادة غير المطابقة للبت تثبت أقل.
+        </p>
+
+        <h2>الالتقاط: ملاحظة انتقائية تحمل مصدرها</h2>
+
+        <p>
+            يسجّل <code>--capture-activations</code> الـ tensors الحية بس للسجلات المختارة صراحةً، عند
+            إحدى مراحل الـ hook الدلالي الست (قبل الطبقة، بعد attention، بعد mlp، بعد الطبقة، قبل logits،
+            بعد logits)، مرشَّحًا بالطبقة والمرحلة وموضع الـ decode، مع سقف سجلات اختياري
+            (<code>CHANGELOG.md</code>، v0.2). كل سجل يحمل مصدره: المرحلة والطبقة والطور وموضع
+            البداية وتجزئة الـ tensor ومصدر النموذج والـ tokenizer وGGUF وتجزئة الـ prompt (مع إمكانية
+            حذف الـ prompt) ومعرّفات tokens المدخلة والمولّدة وتجزئة إعداد الالتقاط بالضبط. صيغة الـ artifact
+            مُرقّمة (<code>0.2.0-experimental</code>) ولا تحمل أي ضمان توافق.
+        </p>
+
+        <h2>التعديل: مصدر واحد، يُحسم بدقة</h2>
+
+        <p>
+            يستبدل <code>--activation-patch</code> تنشيطًا حيًا في مكانه من artifact ملتقط. حسم المصدر لا
+            لبس فيه بالبناء: الهدف يحلّ إلى سجل مصدر واحد بالضبط (مؤهل بالموضع أو فريد)، وأي شيء آخر خطأ
+            قاسٍ؛ وتُتحقق العائلة والطبقة والعرض والـ dtype وترتيب البايت؛ والهدف اللي لم يُطبَّق أبدًا
+            فشل لا تخطٍّ صامت؛ والـ hook لا يخصص شيء بعد التهيئة (<code>CHANGELOG.md</code>، v0.2).
+        </p>
+
+        <h2>المثال المكثف، شُغّل مباشرة</h2>
+
+        <p>
+            سير عمل v0.2 المثبّت على Qwen3-0.6B Q8_0 (الطبقة 4، المرحلة بعد mlp، 4 tokens مولّدة، حرارة 0)،
+            مُعاد في 2026-08-04 (<code>artifacts/benchmark-v02/part2-capture-patch.md</code>):
+        </p>
+
+        <ol>
+            <li><strong>الجلسة A</strong>، خط الأساس، مع التقاط.</li>
+            <li><strong>الجلسة B</strong>، <code>--zero-layer-output 4:mlp</code>، نفس الالتقاط. مخرجات
+                الـ MLP في الطبقة 4 تُصفَّر قبل إضافة الـ residual؛ بقية الشبكة ترى تيارًا مختلفًا.</li>
+            <li><strong>مقارنة A مع B</strong>، <code>status=differs</code>، 0 من 8 سجلات متطابقة.
+                المخرجات تغيرت: معرّفات الـ tokens <code>12095 13 576 6722</code> → <code>279 6722 3283 315</code>.</li>
+            <li><strong>الجلسة C</strong>، <code>--activation-patch</code>: تنشيط الطبقة 4 بعد mlp من A
+                أُعيد في prefill وكل موضع decode (4 تطبيقات عبر 4 أهداف).</li>
+            <li><strong>مقارنة A مع C</strong>، <code>status=tensor-identical</code>، 8 من 8 سجلات
+                مطابقة للبت؛ المعرّفات عادت إلى <code>12095 13 576 6722</code>؛ تجزئات النموذج والـ
+                tokenizer والـ prompt والمدخلات كلها متطابقة. الاختلافات الوحيدة مصدر مسجّل (اسم التجربة
+                ووسائطها وتجزئة إعداد الالتقاط وargv والطابع الزمني)، و<code>created_at_unix</code> ودليل
+                مخرجات الالتقاط هما الحقلان اللذان تُحدَّد لهما أداة <code>compare-artifacts</code> أن
+                تتجاهلهما.</li>
+        </ol>
+
+        <p>
+            هذا هو معيار الاستعادة المجمّد: لازم تكون logits الـ patch الملتقطة مطابقة للبت لخط الأساس،
+            متساوية sha256 على مستوى الـ tensor، مع رفض مساواة النص المولّد صراحةً كدليل غير كافٍ (تعليق
+            السكربت نفسه يقول داك).
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part2-diagram1.svg"
+                 alt="دورة التدخل الست الخطوات: التقاط خط الأساس، جلسة معدلة، تعديل طبقة واحدة، تغيّر المخرجات، استعادة التنشيط الأصلي، عودة المخرجات لخط الأساس"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part2-diagram1_light.svg"
+                 alt="دورة التدخل الست الخطوات (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <figcaption>
+                الشكل 1، دورة التدخل الست الخطوات، مباشرة على Qwen3-0.6B Q8_0 (2026-08-04): A خط الأساس →
+                B صفر مخرجات الطبقة 4 (0/8 متطابقة) → تعديل → تغيّر المصب → استعادة → A مع C متطابق
+                tensor-identical 8/8 مع تساوي المعرّفات
+                (artifacts/benchmark-v02/part2-capture-patch.md).
+            </figcaption>
+        </figure>
+
+        <h2>النتيجة الصادقة: الـ harness انجرف، المعيار صمد</h2>
+
+        <p>
+            تشغيل السكربت المثبّت على الثنائي الحالي أنتج مفاجأة تستحق التسجيل لا الإخفاء: يخرج السكربت
+            بالفشل رغم أن المعيار نجح. يؤكد السكربت أن حالة مقارنة A مع C هي النص الحرفي
+            <code>"identical"</code>؛ بينما يبلغ <code>compare-artifacts</code> الحالي
+            <code>"tensor-identical"</code> لما تكون كل السجلات المحاذية مطابقة للبت بس المصدر المسجّل
+            مختلف. مفردات الحالة تطورت بعد v0.2 (أصناف مقارنة v0.5 هي exact-semantic وexact
+            وoutput-equivalent وtop1-equivalent وfailed)، وسكربت عصر v0.2 لم يُحدَّث.
+        </p>
+
+        <p>
+            الفحص الجوهري لا لبس فيه: 8/8 سجلات متطابقة، معرّفات الـ tokens متساوية، كل حقول الجلسة
+            الجوهرية متساوية (<code>artifacts/benchmark-v02/part2-capture-patch.md</code> القسم 3). هذا
+            انجراف الـ harness، المعيار صمد؛ نص التأكيد لم يصمد، وهو بالضبط ما لازم تبرزه سلسلة عن الثقة
+            لا أن تنعّمه.
+        </p>
+
+        <h2>ليش هذا أكثر من دقة probe</h2>
+
+        <p>
+            ممكن قراءة الجلسة نفسها بطريقتين. رؤية الـ probe: اتجاه في الطبقة 4 قابل للفك. الرؤية السببية:
+            تصفير مخرجات الـ MLP في الطبقة 4 يغيّر المخرج، واستعادة التنشيط الدقيق تستعيد المخرج الدقيق،
+            tensor بتensor، حتى الـ logits المسجّلة. الادعاء الثاني أقوى بدقة، وهو اللي بُني مخطط artifact
+            v0.2 لدعمه: تحاذي المقارنة السجلات على (المرحلة، الطبقة، الطور، موضع البداية)،
+            ترفض التكرارات، وتبلغ عن مساواة بتية لكل سجل وmax/mean/RMS وcosine وL2 ونسبية L2
+            (<code>CHANGELOG.md</code>، v0.2).
+        </p>
+
+        <h2>إيش اللي لا يشتغل بعد</h2>
+
+        <ul>
+            <li>مخطط الـ artifact <code>0.2.0-experimental</code> قد يتغير من غير إشعار؛ لا شيء في v0.2 التزام
+                توافق.</li>
+            <li>طبقة/مرحلة هدف واحدة لكل تجربة تعديل؛ الالتقاط والتعديل لا يشاركان في أوضاع
+                probe/extract/dump؛ سجلات prefill كاملة التسلسل (فلاتر الـ tokens تنطبق على decode بس).</li>
+            <li>tag الإصدار v0.2.0 رجعي، كائن الـ tag أُنشئ في 2026-08-04، بعد v0.3.0؛ مدى التنفيذ
+                قابل للتحديد في التاريخ (67ba4f5..cd7ffa1) بسه ما كان موسومًا حينها.</li>
+            <li>تأكيد حالة سكربت سير عمل v0.2 المثبّت قديم تجاه الثنائي الحالي (النتيجة أعلاه)؛ المعيار
+                اللي يفرضه سليم.</li>
+            <li>التدخّل لا يكون ذا معنى إلا بقدر مسار التنفيذ اللي يشتغل عليه، ولهذا كان على v0.3 أن
+                يحافظ على دلالات الالتقاط نفسها في المسار المضغوط، وعلى v0.4 أن يُبقي مواقع الـ hooks
+                قابلة للملاحظة تحت الـ fusion.</li>
+        </ul>
+
+        <h2>إيش اللي أطلق هذا</h2>
+
+        <p>
+            دورة الالتقاط → المقارنة → التعديل → الاستعادة هي سلسلة الأدوات اللي حدّدت لاحقًا فشل حدود
+            الكمّية سببيًا، قصة الجزء 6. والطلب على المصدر بهذه الدرجة من التفصيل هو ما حوّله v0.5 إلى
+            صيغة artifact قابلة للتحقق.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

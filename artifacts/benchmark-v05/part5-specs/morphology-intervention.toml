@@ -1,0 +1,71 @@
+# Morphology layerwise capture — intervention + restoration
+
+# Second run of the morphology workflow: a controlled activation replacement
+# at one layer, then an exact restoration to the baseline activation.
+
+# The intervention replaces the prompt-final residual stream at layer 7 with
+# the target word's final-subtoken residual at the same layer (same site, so
+# the source capture fires before the intervention in the same hook). The
+# restore run writes the pre-intervention snapshot back at the same site;
+# its generated tokens must match the baseline bundle.
+
+# Baseline: runs/part5-intervention (from morphology-layerwise-capture.toml)
+
+schema = "ember.experiment.v1"
+
+[experiment]
+name = "morphology-intervention"
+description = "Replace the prompt-final representation at layer 7 with the target-final-subtoken representation, then restore exactly."
+seed = 42
+
+[model]
+path = "Llama-3.2-1B-Instruct-Q8_0.gguf"
+expected_sha256 = "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+tokenizer = "tokenizer.json"
+tokenizer_expected_sha256 = "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+
+[execution]
+mode = "reference"
+threads = 8
+deterministic = true
+
+[generation]
+max_new_tokens = 8
+temperature = 0.0
+
+[[inputs]]
+id = "example-001"
+text = "في الجملة التالية، الكلمة المميزة هي: كِتَاب. اشرح معناها."
+
+[[captures]]
+id = "prompt-final"
+site = "residual-post-mlp"
+layers = "all"
+
+[captures.tokens]
+kind = "prompt-final"
+
+[[captures]]
+id = "target-final-subtoken"
+site = "residual-post-mlp"
+layers = "all"
+
+[captures.tokens]
+kind = "matched-span"
+text = "كِتَاب"
+occurrence = 0
+subtokens = "final"
+
+[[interventions]]
+id = "replace-layer7"
+site = "residual-post-mlp"
+layers = [7]
+operation = { kind = "replace" }
+source = { kind = "capture-from-current-run", capture_id = "target-final-subtoken" }
+
+[interventions.tokens]
+kind = "prompt-final"
+
+[output]
+directory = "runs/part5-intervention"
+overwrite = false

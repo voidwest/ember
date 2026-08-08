@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="الجزء 5 من سلسلة الطريق إلى Ember 1.0: قابلية الاستنساخ كصيغة artifact وإجراء تحقق وعقد يفشل بإغلاق آمن." />
+        <meta property="og:title" content="v0.5، من محرك استدلال إلى سير عمل بحثي" />
+        <meta property="og:description" content="باحث لم يكتب Ember لازم يقدر تشغيل تجربة على دواخل النموذج والتحقق منها من غير قراءة Rust. v0.5 جعل ذلك ميزة زمن تشغيل لا وعدًا." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/05-reproducible-experiment-bundles.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>v0.5، من محرك استدلال إلى سير عمل بحثي</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/05-reproducible-experiment-bundles.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/ember/">ember</a>
+            &nbsp;&nbsp;
+            <a href="index.ar.html">الطريق إلى Ember 1.0</a>
+        </div>
+
+        <h1>v0.5، من محرك استدلال إلى سير عمل بحثي</h1>
+
+        <div class="meta">
+            مسودة · الجزء 5 من سلسلة الطريق إلى Ember 1.0 · غير منشورة بعد<br>
+            محمد الثبيتي · 2026-08-04<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">قابلية الاستنساخ</span>
+            <span class="tag key">حزم تجارب</span>
+            <span class="tag key">تحقق</span>
+            <span class="tag key">ترميز عربي</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <div class="callout">
+            <div class="label">حالة المسودة</div>
+            <p>
+                مسودة مكتملة باستشهادات صريحة. الأشكال مضمّنة كـ SVG (نسختا الوضع الداكن والفاتح) بتعليقات
+                تستشهد بالأدلة. نص سير الشغل والتجزئات وأحكام المقارنة ونتائج الإغلاق الآمن أدناه أُنتجت
+                مباشرة في 2026-08-04 من ثنائي الإصدار عند <code>main</code> @ 359e492 ومسجّلة في
+                <code>artifacts/benchmark-v05/part5-reproduction.md</code>؛ الحزم الأساسية تبقى على القرص
+                تحت <code>runs/part5-*</code>.
+            </p>
+        </div>
+
+        <p>
+            باحث لم يكتب Ember لازم يقدر تشغيل تجربة على دواخل النموذج والتحقق منها
+            من غير قراءة Rust. v0.5 جعل داك ميزة زمن تشغيل لا وعدًا.
+        </p>
+
+        <h2>المشكلة: التجارب تعليمات، والتعليمات تنحرف</h2>
+
+        <p>
+            قبل v0.5، كانت تجربة Ember مجموعة أعلام سطر أوامر وإجراءً نثريًا. التقط hidden state هنا،
+            عدّل طبقة هناك، قارن جريانين. عمل، لمن كتب الأعلام. لأي شخص آخر، كان سلسلة ادعاءات غير
+            قابلة للتحقق: أي token طابقه داك النطاق؟ أي موقع hook هو "بعد attention"؟ هل نفّذ هذا
+            التشغيل ما يقول الـ README إنه نفّذه؟ وإذا فسد الـ artifact على القرص، من يلاحظ؟
+        </p>
+
+        <p>
+            يذكر عقد v0.5 (<code>docs/v05-research-contract.md</code>) الاستجابة كأطروحته: التجربة مواصفة
+            صارمة تُحل حتميًا، وتُنفَّذ عبر خطة v0.4 بhooks قابلة للملاحظة، وتهبط في حزمة تتحقق من
+            نفسها ويصمد معناها الدلالي عبر النقل. الادعاء المركزي لالمقال دا هو اللي بُني عليه الإصدار:
+            <em>قابلية الاستنساخ صيغة artifact، وإجراء تحقق، وعقد يفشل بإغلاق آمن، لا جملة في README.</em>
+        </p>
+
+        <h2>الحل الساذج: وثّق الأوامر</h2>
+
+        <p>
+            النهج الساذج صادق وغير كافٍ: اكتب إرشادًا، ثبّت ملف النموذج، وثق أن جهاز القارئ يوافق جهازك.
+            يفشل على أربعة محاور صامتة:
+        </p>
+
+        <ul>
+            <li><strong>إزاحات الـ tokens.</strong> يبلّغ crate <code>tokenizers</code> عن إزاحات بايتية.
+                غلاف يتحقق منها ضد عدد المحارف ينكسر عند كل prompt غير ASCII، وهو، لعمل الصرف العربي، كل
+                prompt. يسجّل changelog v0.5 هذا كخطأ مُصلح (<code>CHANGELOG.md</code>، v0.5): "الغلاف
+                تحقق سابقًا منها ضد عدد المحارف، وكسر كل prompts غير ASCII".</li>
+            <li><strong>دلالات الـ hook.</strong> "بعد attention" عبارة؛ موقع الـ hook لحظة معرّفة بتensor
+                معرّف (القسمان 2–3 من العقد). مو ممكن للنثر تثبيت أيٍّ منهما.</li>
+            <li><strong>المصدر.</strong> أي نموذج وtokenizer وخطة ووضع تنفيذ أنتج هذا الـ artifact؟ يفترض
+                الإرشاد أن الإجابة بديهية.</li>
+            <li><strong>الفساد.</strong> البايت المقلوب في حمولة tensor لا يعلن عن نفسه.</li>
+        </ul>
+
+        <h2>التصميم: مواصفة تُحل حتميًا</h2>
+
+        <p>
+            <code>ember.experiment.v1</code> TOML صارم بافتراضات مسجّلة وتحقق يفشل بإغلاق آمن يسمي مسار
+            الحقل الدقيق لأي خطأ. سير الشغل المرجعي (<code>examples/experiments/</code>) جملة عربية
+            واحدة تحتوي الكلمة المعلّمة <code>كِتَاب</code> ("book")، وخططي التقاط، وفي ذراع التدخل
+            استبدالًا واحدًا في المكان (مقتطف مواصفة، <code>examples/experiments/morphology-intervention.toml</code>):
+        </p>
+
+        <pre><code>[[captures]]
+id = "target-final-subtoken"
+site = "residual-post-mlp"
+layers = "all"
+[captures.tokens]
+kind = "matched-span"
+text = "كِتَاب"
+occurrence = 0
+subtokens = "final"
+
+[[interventions]]
+id = "replace-layer7"
+site = "residual-post-mlp"
+layers = [7]
+operation = { kind = "replace" }
+source = { kind = "capture-from-current-run", capture_id = "target-final-subtoken" }
+[interventions.tokens]
+kind = "prompt-final"</code></pre>
+
+        <p>
+            ثلاث خصائص تشتغل. <em>اختيار tokens بدقة البايت</em>: نهاية الـ prompt، مواضع مطلقة ونسبية،
+            خطوات مولّدة، ونطاقات مطابقة مع occurrence واختيار subtoken، كلها محلولة ضد إزاحات بايتية
+            (القسمان 5–7 من العقد). <em>هوية الـ hooks الدلالية</em>: المواقع الست لها جدول واصفات مجمّد
+            آلي القراءة (<code>ember.hook.v1</code>) معيّن على مراحل hook v0.4. <em>حل حتمي</em>: نفس
+            المواصفة على نفس البيئة المدعومة تنتج نفس التجربة المحلولة ونفس اختيار الـ tokens ونفس
+            الخطة، الطوابع الزمنية وأسماء المضيفين والمسارات المحلية لا تدخل الهوية الدلالية أبدًا
+            (القسمان 13–14 من العقد).
+        </p>
+
+        <p>
+            التدخلات هي آلية v0.2 بقواعد: replace وzero وscale وinterpolate وadd-delta وrestore-original،
+            مع تحقق مصدر يفشل بإغلاق آمن، مصدر لا يحل إلى سجل واحد بالضبط خطأ لا تخمين. التوريد عبر
+            الحزم صريح: ممكن للتدخل سحب صف من حزمة مختلفة، وهو ما يمارسه دليل v0.5.1 capture-from-bundle
+            (<code>artifacts/benchmark-v05/capture-from-bundle/</code>). ولأن مجموعة الـ fusion مجمّدة
+            (v0.4)، سياسة defusion في v0.5 قصيرة: F5 بس يلغي tensor قابلاً لملاحظة الـ hook، والالتقاط أو
+            التدخل المستهدِف له يفرض المسار غير المدمج مع تسجيل السبب (القسمان 9–10 من العقد).
+        </p>
+
+        <h2>الحزم: artifact يتحقق من نفسه</h2>
+
+        <p>
+            يهبط التشغيل في <code>ember.bundle.v1</code>: مرحلة ذرية، لا يكتب فوق دليل موجود أبدًا، مع
+            manifest دلالي تجزئاته ثابتة تجاه التشغيل وتجزئة حمولة فوق الـ manifests إضافة إلى
+            manifest الدلالي نفسه. خطط التنفيذ تُعقَّم قبل التجزئة (يصبح طابع بناء الخطة unix-0) حتى لا
+            تسرّب تجزئة الخطة حالة الجهاز (<code>CHANGELOG.md</code>، v0.5). الترتيب، مُعاد من تشغيل حي
+            في 2026-08-04 (<code>runs/part5-baseline</code>):
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part5-diagram2.svg"
+                 alt="ترتيب ember.bundle.v1: manifest.json وsemantic-manifest.json وruntime.json وresolved-experiment.json وexecution-plan.json وtokenization.jsonl وcaptures/ وinterventions/ وchecksums.sha256 وverification.json"
+                 loading="lazy" width="1120" height="600" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part5-diagram2_light.svg"
+                 alt="ترتيب ember.bundle.v1 (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="600" decoding="async" />
+            <figcaption>
+                الشكل 2، ترتيب ember.bundle.v1 (17 ملفًا في إعادة الإنتاج الحية)؛
+                semantic-manifest.json وchecksums.sha256 هما حد التحقق
+                (artifacts/benchmark-v05/part5-reproduction.md).
+            </figcaption>
+        </figure>
+
+        <p>
+            (الحزمة الحقيقية تحمل كمان <code>inputs.jsonl</code> و<code>outputs.jsonl</code> و
+            <code>model.json</code> و<code>traces/events.jsonl</code> و<code>tokenizer.json</code>،
+            17 ملفًا إجمالًا، مدرجة في <code>artifacts/benchmark-v05/part5-reproduction.md</code>.)
+            يثبّت الـ manifest تجزئتي SHA-256 للنموذج والـ tokenizer؛ ملف مختلف يفشل بإغلاق آمن قبل
+            حساب token واحد (<code>examples/experiments/README.md</code>).
+        </p>
+
+        <h2>التحقق: من غير اتصال، ويلتقط بايتًا مقلوبًا</h2>
+
+        <p>
+            يشغّل <code>ember experiment verify</code> 15 فحصًا أساسيًا من غير اتصال بالكامل، بنية، توافق
+            مخطط، تجزئات خطة/دلالية/حمولة مُعاد حسابها، checksums الحمولة لكل ملف، وفحوص ترميز/نموذج عميقة
+            عند الطلب. سلوك الإغلاق الآمن هو النقطة، فإليك الاختبار، مُعادًا مباشرة في 2026-08-04
+            (<code>artifacts/benchmark-v05/part5-reproduction.md</code> القسم 4):
+        </p>
+
+        <pre><code># قلب بايت في منطقة رأس safetensors
+$ ember experiment verify part5-corrupt
+Error: safetensors header is not valid JSON: invalid unicode code point
+
+# قلب بايت في منطقة بيانات الـ tensors
+$ ember experiment verify part5-corrupt
+  [ok] execution plan hash: plan hash 624ec2e08b63
+  [ok] semantic hash: recomputed f01c90f4deb4 vs stored f01c90f4deb4
+  [ok] payload hash: recomputed ed0b870f94c6 vs stored ed0b870f94c6
+  [FAIL] semantic payload checksums: captures/tensors.safetensors: checksum mismatch
+verdict: FAILED
+
+# الضابط
+$ ember experiment verify runs/part5-baseline
+verdict: verified</code></pre>
+
+        <p>
+            بايت مقلوب واحد في tensor ملتقط ينتج فشلًا مسمّى لا عدم تطابق صامتًا. هذا هو عقد الإغلاق
+            الآمن: أي شيء تغير إما متحقق منه أو مسمّى.
+        </p>
+
+        <h2>المقارنة: إيش اللي تغير، بدقة</h2>
+
+        <p>
+            يفصل <code>ember experiment compare</code> الحقائق الدلالية عن ضجيج التشغيل: الطوابع
+            الزمنية وtps وRSS تُبلغ بس لا يُسمح لها أبدًا بحسم الهوية (Gate G في
+            <code>docs/v05-research-contract.md</code>). الإعادة الحية لسير الشغل المرجعي تعطي الشكل
+            السببي كله في جدول واحد (<code>artifacts/benchmark-v05/part5-reproduction.md</code> القسم 3):
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <tr><th>التشغيل</th><th>النص المولد</th><th>logit النهائي top-1</th></tr>
+                <tr><td>خط الأساس</td><td>" كِتَاب هو كلمة"</td><td>15.830419540405273</td></tr>
+                <tr><td>التدخل (استبدال صف الطبقة 7 بصف subtoken الهدف)</td><td>"، وَما يُشك"</td><td>12.156656265258789</td></tr>
+                <tr><td>الاستعادة</td><td>" كِتَاب هو كلمة"</td><td>15.830419540405273</td></tr>
+            </table>
+        </div>
+
+        <p>
+            والمقارنة تبلغها بنيويًا: خط الأساس مقابل التدخل، <code>generated_tokens_equal: false</code>،
+            <code>first_divergence_step: 1</code>، وtensors الـ <code>prompt-final</code> الملتقطة تتباعد
+            من الطبقة 8 فصاعدًا (استبدال الطبقة 7 <code>residual-post-mlp</code> يُطبَّق بعد إضافات
+            residual تلك الطبقة وفق توقيت تدخل العقد، فتستهلك الطبقات 8+ القيمة المستبدلة). خط الأساس
+            مقابل الاستعادة، <code>generated_tokens_equal: true</code>، <code>generated_text_equal:
+            true</code>، <code>final_top1_equal: true</code>، لا خطوة تباعد، وكل الـ 32 tensor ملتقطة
+            مطابقة للبت. الاستعادة تعيد إنتاج خط الأساس حتى نفس الـ logit النهائي، إلى آخر رقم f32
+            مسجّل.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part5-diagram3.svg"
+                 alt="خط الأساس والتدخل والاستعادة: استبدال الطبقة 7 يباعد المخرجات عند الخطوة 1 والالتقاطات من الطبقة 8؛ الاستعادة تعيد إنتاج خط الأساس مطابقة للبت"
+                 loading="lazy" width="1120" height="520" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part5-diagram3_light.svg"
+                 alt="خط الأساس والتدخل والاستعادة (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="520" decoding="async" />
+            <figcaption>
+                الشكل 3، خط الأساس والتدخل والاستعادة، مباشرة (2026-08-04): استبدال الطبقة 7 يباعد
+                المخرجات عند الخطوة 1 والتقاطات prompt-final من الطبقة 8؛ الاستعادة تعيد إنتاج خط الأساس
+                مع كل الـ 32 التقاطًا مطابقة للبت
+                (artifacts/benchmark-v05/part5-reproduction.md §3).
+            </figcaption>
+        </figure>
+
+        <p>
+            يظهر الشكل نفسه في دليل v0.5.1 عبر الحزم
+            (<code>artifacts/benchmark-v05/capture-from-bundle/</code>، CHANGELOG v0.5.1): استبدل صف
+            الطبقة 8 بصف الطبقة 3 من حزمة خط الأساس → الطبقات 0–8 مطابقة للبت، و9–15 تتباعد؛ أضف
+            <code>restore-original</code> → يُعاد إنتاج خط الأساس مع كل طبقات الـ 16 التقاطًا مطابقة
+            والمخرجات متساوية.
+        </p>
+
+        <h2>سير الشغل، من البداية إلى النهاية</h2>
+
+        <p>
+            خط الأنابيب كله، شُغّل مباشرة في 2026-08-04 (الأوامر في ملف الأدلة؛ المواصفات عند
+            <code>examples/experiments/</code>):
+        </p>
+
+        <pre><code>$ ember experiment validate examples/experiments/morphology-intervention.toml
+  inputs: 1  captures: 2  interventions: 1  defaults applied: 2
+
+$ ember experiment run examples/experiments/morphology-layerwise-capture.toml
+bundle written to runs/part5-baseline
+  semantic hash: f01c90f4deb4…
+  payload hash:  ed0b870f94c6…
+  verification: 15 check(s) passed
+
+$ ember experiment run …/morphology-intervention.toml      # حزمة + 15/15
+$ ember experiment run …/morphology-restoration.toml       # حزمة + 15/15
+
+$ ember experiment verify runs/part5-baseline
+verdict: verified
+
+$ ember experiment compare runs/part5-baseline runs/part5-restoration
+# generated tokens equal: true; all 32 captures bit-exact; restore event recorded</code></pre>
+
+        <p>
+            كل خطوة أمر فرعي بمخرجات حتمية آلي القراءة. سلم التحقق: <code>validate</code> →
+            <code>resolve</code> → <code>tokenize and align</code> → <code>execute</code> →
+            <code>capture/intervene</code> → حزمة ذرية → <code>verify</code> → <code>compare</code> →
+            <code>reproduce</code>.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="figures/part5-diagram1.svg"
+                 alt="سير عمل التجربة: validate ثم resolve ثم tokenize and align ثم execute ثم capture/intervene ثم حزمة ذرية ثم verify ثم compare ثم reproduce"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <img class="chart theme-chart-light" src="figures/part5-diagram1_light.svg"
+                 alt="سير عمل التجربة (الوضع الفاتح)"
+                 loading="lazy" width="1120" height="560" decoding="async" />
+            <figcaption>
+                الشكل 1، سير عمل التجربة: validate → resolve → tokenize/align → execute →
+                capture/intervene → حزمة ذرية → verify → compare → reproduce؛ الحزمة هي حد الـ artifact
+                (examples/experiments/README.md؛ artifacts/benchmark-v05/part5-reproduction.md).
+            </figcaption>
+        </figure>
+
+        <h2>عزل الأداء</h2>
+
+        <p>
+            لازم ألا تلوّث الآلات الاستدلال العادي (Gate H في العقد): مع عدم استخدام نظام التجارب،
+            يستغرق التشغيل 2.61 ثانية / 2,751,024 KB RSS مقابل 2.58 ثانية / 2,751,028 KB لنفس الشغل
+            بمن غيره؛ تضيف أعباء التجارب 2.2% RSS مقابل بوابة ≤3%
+            (<code>artifacts/benchmark-v05/SUMMARY.json</code>). لا تُحلَّ مواصفة تجربة ولا يطلق hook
+            ما لم يشغّل أمر <code>experiment</code> الفرعي.
+        </p>
+
+        <h2>إيش اللي لا يشتغل بعد</h2>
+
+        <ul>
+            <li>مخطط v1 مستقر ضمن 0.5.x بس؛ major غير معروف يفشل، وسياسة التوافق صريحة أن "v1" مو معناها
+                أن كل حقل مستقبلي مجمّد (<code>docs/v05-research-contract.md</code> القسم 17).</li>
+            <li>الهوية الدلالية مو قابلية استنساخ زمنية: تجزئات متطابقة مو معناها توقيتات متطابقة، وطبقة
+                المقارنة تُبقي حقول التشغيل منفصلة بالتصميم.</li>
+            <li>فحوص النموذج/الـ tokenizer العميقة اختيارية؛ الفحوص الأساسية الـ 15 لا تعيد تشغيل
+                النموذج.</li>
+            <li>توريد التدخل عبر الحزم مُثبت على نموذج حقيقي واحد (Llama-3.2-1B Q8_0)؛ "مدعوم" لسه لا
+                يعني مُتحققًا golden لكل صف.</li>
+        </ul>
+
+        <h2>إيش اللي أطلق هذا</h2>
+
+        <p>
+            سير الشغل موجود عشان سؤال بحثي فشل، فرضية تدهور الكمّية الانتقائي للعربية في الـ pilot.
+            المقال التالي يحعشان تلك القصة: النتيجة الصفرية، فشل الحدود النادر، وسلسلة أدوات التحديد السببي اللي
+            بُنيت آلات v0.2–v0.5 لتشغيلها.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

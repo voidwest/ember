@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="t1 d1">
+  <title id="t1">Data flow and observation points (v0.1)</title>
+  <desc id="d1">GGUF file to loader to tensors to the reference path to logits, with hidden-state observation points on the reference path and a packed Q8 fast path that must agree within the recorded envelopes.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.2; rx: 8; }
+    .boxlabel { fill: #f3efe5; font-size: 17px; text-anchor: middle; }
+    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }
+    .accent-label { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }
+    .ref-box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.4; stroke-dasharray: 5 4; rx: 8; }
+    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }
+    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.8; fill: none; }
+    .dashed { stroke: #7e7f87; stroke-width: 1.4; stroke-dasharray: 5 4; fill: none; }
+    .hook { fill: #9b8fd1; stroke: #0d1014; stroke-width: 1.6; }
+    .hooknum { fill: #090b0e; font-size: 11px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, monospace; }
+    .hooklabel { fill: #a6a6ad; font-size: 14px; }
+    .annot { fill: #a6a6ad; font-size: 14px; }
+    .colhead { fill: #a6a6ad; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7e7f87" />
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9b8fd1" />
+    </marker>
+  </defs>
+  <text class="mono colhead" x="64" y="72">the main path</text>
+  <rect class="box" x="64" y="100" width="160" height="58" />
+  <text class="mono boxlabel" x="144" y="135">GGUF file</text>
+  <line class="arrow" x1="224" y1="129" x2="272" y2="129" marker-end="url(#arrow)" />
+  <rect class="box" x="276" y="100" width="160" height="58" />
+  <text class="mono boxlabel" x="356" y="135">loader</text>
+  <line class="arrow" x1="436" y1="129" x2="484" y2="129" marker-end="url(#arrow)" />
+  <rect class="box" x="488" y="100" width="200" height="58" />
+  <text class="mono boxlabel" x="588" y="127">tensors</text>
+  <text class="mono annot" x="588" y="148" font-size="13" text-anchor="middle">packed Q8 · f32</text>
+  <line class="arrow" x1="688" y1="129" x2="736" y2="129" marker-end="url(#arrow)" />
+  <rect class="ref-box" x="740" y="100" width="260" height="58" />
+  <text class="mono boxlabel" x="870" y="135">reference path</text>
+  <line class="arrow" x1="1000" y1="129" x2="1048" y2="129" marker-end="url(#arrow)" />
+  <rect class="box" x="1052" y="100" width="60" height="58" />
+  <text class="mono boxlabel" x="1082" y="135">logits</text>
+  <text class="mono colhead" x="64" y="216">hidden-state observation points</text>
+  <line class="dashed" x1="870" y1="158" x2="870" y2="232" />
+  <g>
+    <circle class="hook" cx="88" cy="248" r="11" />
+    <text class="hooknum" x="88" y="252">1</text>
+    <text class="mono hooklabel" x="108" y="253">before-layer</text>
+    <circle class="hook" cx="88" cy="300" r="11" />
+    <text class="hooknum" x="88" y="304">2</text>
+    <text class="mono hooklabel" x="108" y="305">after-mlp</text>
+    <circle class="hook" cx="88" cy="352" r="11" />
+    <text class="hooknum" x="88" y="356">3</text>
+    <text class="mono hooklabel" x="108" y="357">after-layer</text>
+    <circle class="hook" cx="88" cy="404" r="11" />
+    <text class="hooknum" x="88" y="408">4</text>
+    <text class="mono hooklabel" x="108" y="409">after-logits</text>
+  </g>
+  <rect class="accent-box" x="488" y="330" width="320" height="62" />
+  <text class="mono accent-label" x="648" y="358">packed Q8 fast path</text>
+  <text class="mono annot" x="648" y="381" font-size="13" fill="#b3a7e2" text-anchor="middle">SIMD decode · workspace</text>
+  <line class="dashed" x1="588" y1="158" x2="588" y2="328" marker-end="url(#arrow)" />
+  <line class="accent-arrow" x1="808" y1="360" x2="1082" y2="160" marker-end="url(#arrow-accent)" />
+  <text class="mono annot" x="880" y="300" font-size="13">must agree within envelopes</text>
+</svg>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="what Ember 1.0 has to earn" property="og:title"/>
+<meta content="Part 7 of Road to Ember 1.0: 1.0 means other researchers can safely build on the public contracts, not merely that the feature list is long." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/07-what-ember-1-0-has-to-earn.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>what Ember 1.0 has to earn</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/07-what-ember-1-0-has-to-earn.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+              
+            <a href="/ember/road-to-ember-1.0/">road to ember 1.0</a>
+</div>
+<h1>what Ember 1.0 has to earn</h1>
+<div class="meta">
+            draft · part 7 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">versioning</span>
+<span class="tag key">compatibility</span>
+<span class="tag key">contracts</span>
+</div>
+<div class="callout">
+<div class="label">draft status</div>
+<p>
+                complete draft. all claims are scoped to the repository at commit <code>359e492</code>
+                (v0.5.1). no version 1.0 exists and none is claimed; no v0.6 roadmap is invented. this post
+                defines the criteria the series has been building toward, against the evidence the earlier
+                posts recorded.
+            </p>
+</div>
+<p>
+a version number is a promise about what other people can build on top of.
+        </p>
+<h2>the problem: 0.x means everything may change</h2>
+<p>
+            the v0.1 changelog is blunt about what its version number means: the Rust experiment API is
+            explicitly unstable, and the v0.2 activation-artifact schema carries no compatibility guarantee
+            (<code>CHANGELOG.md</code>). that was the right posture for a research engine discovering its
+            own shape. it is the wrong posture for the thing this series has been describing, a workflow
+            that a researcher who never reads Rust can run and verify, with artifact schemas that must
+            survive transport and time.
+        </p>
+<p>
+            the series has argued, post by post, that Ember's real output is contracts: hook sites with
+            defined semantics, artifacts with defined layouts, specifications that resolve deterministically.
+            this post asks what those contracts have to become before the version number can honestly say
+            1.0.
+        </p>
+<h2>what 1.0 requires</h2>
+<p>
+            the criteria, stated as commitments rather than features:
+        </p>
+<ol>
+<li><strong>stable experiment schema.</strong> <code>ember.experiment.v1</code> stops meaning
+                "v1 within 0.5.x".</li>
+<li><strong>stable bundle schema.</strong> <code>ember.bundle.v1</code> artifacts remain
+                verifiable by future binaries.</li>
+<li><strong>stable semantic hook meanings.</strong> the six sites keep their frozen descriptor
+                semantics (<code>ember.hook.v1</code>).</li>
+<li><strong>compatibility and migration policy.</strong> a documented rule for what breaks,
+                what fails closed, and how old artifacts migrate.</li>
+<li><strong>clean installation.</strong> build, model download, and verification steps that
+                work from the documentation alone on a supported machine.</li>
+<li><strong>reproducible examples.</strong> the reference morphology workflow runs and verifies
+                from pinned hashes (<code>examples/experiments/</code> already does this).</li>
+<li><strong>clear validation status.</strong> the ladder in <code>docs/validation.md</code> is
+                current, and "supported" never silently means "golden-validated".</li>
+<li><strong>at least one successful external user.</strong> a person who did not write Ember
+                has run and verified an experiment, and said so.</li>
+<li><strong>no major public-interface redesign required.</strong> the 1.0 interfaces are the
+                interfaces 1.1 will extend, not replace.</li>
+</ol>
+<h2>the contracts that already exist</h2>
+<p>
+            four versioned contracts are in place (<code>docs/v05-research-contract.md</code>): the
+            experiment specification (<code>ember.experiment.v1</code>), the bundle
+            (<code>ember.bundle.v1</code>), the semantic hook descriptor table (<code>ember.hook.v1</code>),
+            and the execution plan (<code>v04-plan/1</code>). the compatibility policy is written down:
+            unknown schema majors fail closed; a newer minor with only optional recognized-compatible
+            fields is tolerated; and the policy is explicit that "v1 means stable within Ember 0.5.x, not
+            that every future field is frozen forever" (contract section 17).
+        </p>
+<p>
+            that last clause is the honest statement of where the project is: the schemas are versioned
+            and fail-closed, but the versions are still the project's own. a 1.0 release is when the
+            contract stops being a statement about the project and becomes a statement about everyone who
+            built on it.
+        </p>
+<h2>the gaps between v0.5.1 and each criterion</h2>
+<div class="table-wrap">
+<table>
+<tr><th>criterion</th><th>status at v0.5.1</th><th>evidence</th></tr>
+<tr><td>stable experiment schema</td><td>partial, v1 is stable within 0.5.x only; unknown majors fail</td><td>docs/v05-research-contract.md §17</td></tr>
+<tr><td>stable bundle schema</td><td>partial, same scope</td><td>docs/v05-research-contract.md §17</td></tr>
+<tr><td>stable hook meanings</td><td>mostly, frozen descriptor table; still 0.x-scoped</td><td>docs/v05-research-contract.md §1</td></tr>
+<tr><td>compatibility/migration policy</td><td>exists for schemas; no migration tooling yet</td><td>docs/v05-research-contract.md §17</td></tr>
+<tr><td>clean installation</td><td>partial, build + scripts/download_models.sh documented; no packaged install</td><td>README.md; scripts/download_models.sh</td></tr>
+<tr><td>reproducible examples</td><td>yes, pinned model/tokenizer SHA-256s, verified workflow</td><td>examples/experiments/README.md</td></tr>
+<tr><td>clear validation status</td><td>yes as a document; several rows still pending (Qwen3 golden, Gemma 4 numerical, activation-reference checks)</td><td>docs/validation.md status table</td></tr>
+<tr><td>one successful external user</td><td>criterion, not a claim</td><td>,</td></tr>
+<tr><td>no major redesign</td><td>promising but unproven, v0.2 CLI flags still work on the v0.5 binary; the Rust experiment API stabilized only in v0.5</td><td>CHANGELOG.md v0.5 compatibility section</td></tr>
+</table>
+</div>
+<p>
+            read honestly: six of the nine are only partially met, two are met, and the one that matters
+            most for external trust, a researcher outside the project who has run and verified an
+            experiment, is the one not yet earned. that is the point of the list: 1.0 is defined by what
+            other people can rely on, and the series ends where that definition stops being a wish.
+        </p>
+<h2>what 1.0 does not mean</h2>
+<ul>
+<li>a performance milestone. Ember is not a throughput product, and 1.0 changes nothing about
+                llama.cpp being the external performance reference.</li>
+<li>that every architecture is golden-validated. validation status is a ladder with pending
+                rows; 1.0 means the status reporting is trustworthy, not that every row is green.</li>
+<li>that the null result becomes positive. the pilot's finding is a null in the tested matrix,
+                scoped to the validated rows, not externally reproduced.</li>
+<li>that the experiment API becomes a free-for-all. stability means documented fail-closed
+                behavior, including the right to refuse.</li>
+</ul>
+<h2>the series thesis, restated</h2>
+<p>
+            building an inference engine that gets faster without becoming harder to trust. every post in
+            this series was one answer to one half of that sentence: v0.1 made the engine legible, v0.2
+            made it intervenable, v0.3 kept quantized weights honest, v0.4 planned execution without
+            hiding tensors, v0.5 made the experiment verifiable, and the null result made the instruments
+            earn their keep. 1.0 is the point where the trust stops being the author's claim and becomes
+            a contract other people build on. nothing in this post makes that happen; it only says what
+            must, and in what order.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

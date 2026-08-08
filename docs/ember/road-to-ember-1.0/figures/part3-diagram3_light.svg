@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560" role="img" aria-labelledby="t33 d33">
+  <title id="t33">The validation ladder (v0.3)</title>
+  <desc id="d33">Kernel parity, model parity, external golden against pinned llama.cpp, with the six semantic hook sites attached at the same call sites on both paths.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #fbf8f1; stroke: rgba(92,84,72,0.38); stroke-width: 1.3; rx: 8; }
+    .boxlabel { fill: #18191b; font-size: 16px; text-anchor: middle; }
+    .accent-box { fill: #ece6da; stroke: #8275bc; stroke-width: 1.6; rx: 8; }
+    .accent-label { fill: #6659a1; font-size: 16px; text-anchor: middle; }
+    .gatebox { fill: #fbf8f1; stroke: rgba(92,84,72,0.38); stroke-width: 1.4; stroke-dasharray: 6 4; rx: 10; }
+    .gatename { fill: #66676b; font-size: 13px; letter-spacing: 0.05em; text-transform: uppercase; }
+    .arrow { stroke: #77746e; stroke-width: 1.7; fill: none; }
+    .accent-arrow { stroke: #8275bc; stroke-width: 1.9; fill: none; }
+    .hook { fill: #8275bc; stroke: #fbf8f1; stroke-width: 1.6; }
+    .hooknum { fill: #18191b; font-size: 11px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, monospace; }
+    .annot { fill: #66676b; font-size: 14px; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#77746e" />
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8275bc" />
+    </marker>
+  </defs>
+  <text class="mono colhead" x="64" y="52" style="fill:#66676b;font-size:14px;letter-spacing:0.06em;text-transform:uppercase">the trust chain</text>
+  <g>
+    <rect class="box" x="64" y="72" width="300" height="58" />
+    <text class="mono boxlabel" x="214" y="107">scalar packed kernel</text>
+    <line class="arrow" x1="214" y1="130" x2="214" y2="162" marker-end="url(#arrow)" />
+    <rect class="box" x="64" y="166" width="300" height="58" />
+    <text class="mono boxlabel" x="214" y="201">AVX2 packed kernel</text>
+    <line class="arrow" x1="214" y1="224" x2="214" y2="256" marker-end="url(#arrow)" />
+    <rect class="box" x="64" y="260" width="300" height="58" />
+    <text class="mono boxlabel" x="214" y="295">planned model execution</text>
+    <line class="arrow" x1="214" y1="318" x2="214" y2="350" marker-end="url(#arrow)" />
+    <rect class="box" x="64" y="354" width="300" height="58" />
+    <text class="mono boxlabel" x="214" y="389">per-layer hidden-state parity</text>
+    <line class="arrow" x1="214" y1="412" x2="214" y2="444" marker-end="url(#arrow)" />
+    <rect class="box" x="64" y="448" width="300" height="58" />
+    <text class="mono boxlabel" x="214" y="483">final logits</text>
+  </g>
+  <g>
+    <rect class="accent-box" x="480" y="72" width="300" height="58" />
+    <text class="mono accent-label" x="630" y="107">greedy tokens</text>
+    <line class="accent-arrow" x1="630" y1="130" x2="630" y2="162" marker-end="url(#arrow-accent)" />
+    <rect class="accent-box" x="480" y="166" width="300" height="58" />
+    <text class="mono accent-label" x="630" y="201">pinned llama.cpp reference</text>
+  </g>
+  <line class="arrow" x1="364" y1="477" x2="478" y2="201" marker-end="url(#arrow)" />
+  <text class="mono annot" x="396" y="392" font-size="13">Gate C</text>
+  <text class="mono annot" x="396" y="410" font-size="13">100% top-1</text>
+  <rect class="gatebox" x="480" y="300" width="600" height="160" />
+  <text class="mono gatename" x="504" y="330">semantic hook sites, unchanged on both paths</text>
+  <g>
+    <circle class="hook" cx="520" cy="366" r="10" />
+    <text class="hooknum" x="520" y="370">1</text>
+    <text class="mono annot" x="538" y="371" font-size="13">before-layer</text>
+    <circle class="hook" cx="520" cy="412" r="10" />
+    <text class="hooknum" x="520" y="416">2</text>
+    <text class="mono annot" x="538" y="417" font-size="13">after-attention</text>
+    <circle class="hook" cx="760" cy="366" r="10" />
+    <text class="hooknum" x="760" y="370">3</text>
+    <text class="mono annot" x="778" y="371" font-size="13">after-mlp</text>
+    <circle class="hook" cx="760" cy="412" r="10" />
+    <text class="hooknum" x="760" y="416">4</text>
+    <text class="mono annot" x="778" y="417" font-size="13">after-layer</text>
+    <circle class="hook" cx="940" cy="366" r="10" />
+    <text class="hooknum" x="940" y="370">5</text>
+    <text class="mono annot" x="958" y="371" font-size="13">before-logits</text>
+    <circle class="hook" cx="940" cy="412" r="10" />
+    <text class="hooknum" x="940" y="416">6</text>
+    <text class="mono annot" x="958" y="417" font-size="13">after-logits</text>
+  </g>
+  <text class="mono annot" x="64" y="544">kernel parity (Gate A) → model parity (Gates B/D) → external golden against pinned llama.cpp (Gate C);</text>
+</svg>

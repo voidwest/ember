@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560" role="img" aria-labelledby="t5a d5a">
+  <title id="t5a">The experiment workflow (v0.5)</title>
+  <desc id="d5a">validate, resolve, tokenize and align, execute, capture/intervene, atomic bundle, verify, compare, reproduce, the bundle is the artifact boundary.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }
+    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }
+    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.8; rx: 8; }
+    .accent-label { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }
+    .arrow { stroke: #7e7f87; stroke-width: 1.7; fill: none; }
+    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.9; fill: none; }
+    .annot { fill: #a6a6ad; font-size: 13px; text-anchor: middle; }
+    .colhead { fill: #a6a6ad; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; text-anchor: start; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7e7f87" />
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9b8fd1" />
+    </marker>
+  </defs>
+  <text class="mono colhead" x="64" y="56">the pipeline</text>
+  <rect class="accent-box" x="64" y="76" width="190" height="64" />
+  <text class="mono accent-label" x="159" y="114">experiment.toml</text>
+  <line class="arrow" x1="254" y1="108" x2="286" y2="108" marker-end="url(#arrow)" />
+  <rect class="box" x="286" y="76" width="170" height="64" />
+  <text class="mono boxlabel" x="371" y="114">validate</text>
+  <line class="arrow" x1="456" y1="108" x2="488" y2="108" marker-end="url(#arrow)" />
+  <rect class="box" x="488" y="76" width="170" height="64" />
+  <text class="mono boxlabel" x="573" y="114">resolve</text>
+  <line class="arrow" x1="658" y1="108" x2="690" y2="108" marker-end="url(#arrow)" />
+  <rect class="box" x="690" y="76" width="220" height="64" />
+  <text class="mono boxlabel" x="800" y="104">tokenize</text>
+  <text class="mono annot" x="800" y="128" font-size="12">and align (bytes)</text>
+  <line class="arrow" x1="910" y1="108" x2="942" y2="108" marker-end="url(#arrow)" />
+  <rect class="box" x="942" y="76" width="120" height="64" />
+  <text class="mono boxlabel" x="1002" y="114">execute</text>
+  <line class="arrow" x1="1002" y1="140" x2="1002" y2="184" marker-end="url(#arrow)" />
+  <rect class="accent-box" x="742" y="188" width="260" height="64" />
+  <text class="mono accent-label" x="872" y="216">capture / intervene</text>
+  <text class="mono annot" x="872" y="240" font-size="12">hook-driven de-fusion</text>
+  <line class="accent-arrow" x1="872" y1="252" x2="640" y2="276" marker-end="url(#arrow-accent)" />
+  <rect class="accent-box" x="320" y="280" width="480" height="80" />
+  <text class="mono accent-label" x="560" y="316">atomic bundle · ember.bundle.v1</text>
+  <text class="mono annot" x="560" y="342" font-size="13">staged atomically · never overwrites · self-verifying</text>
+  <polyline class="arrow" points="560,360 560,390 390,390 390,418" marker-end="url(#arrow)" />
+  <rect class="box" x="300" y="420" width="180" height="64" />
+  <text class="mono boxlabel" x="390" y="448">verify (offline)</text>
+  <text class="mono annot" x="390" y="472" font-size="12">15 checks · fail-closed</text>
+  <line class="arrow" x1="480" y1="452" x2="560" y2="452" marker-end="url(#arrow)" />
+  <rect class="box" x="560" y="420" width="180" height="64" />
+  <text class="mono boxlabel" x="650" y="452">compare</text>
+  <line class="arrow" x1="740" y1="452" x2="820" y2="452" marker-end="url(#arrow)" />
+  <rect class="box" x="820" y="420" width="180" height="64" />
+  <text class="mono boxlabel" x="910" y="452">reproduce</text>
+  <text class="mono annot" x="560" y="528" font-size="14">the bundle is the artifact boundary: everything downstream runs offline on the bundle alone</text>
+</svg>

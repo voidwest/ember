@@ -1,0 +1,6232 @@
+{
+  "schema": "ember.diagram-spec.v1",
+  "note": "Declarative source for every road-to-1.0 figure. Coordinates are SVG user units; edit text and shape attributes here, then run generate_figures.py.",
+  "diagrams": {
+    "ladder": {
+      "attrs": {
+        "width": "1120",
+        "height": "380",
+        "viewBox": "0 0 1120 380",
+        "role": "img",
+        "aria-labelledby": "tl tl2"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "tl"
+          },
+          "text": "The validation ladder"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "tl2"
+          },
+          "text": "Five rungs from support to causal claims: smoke, golden logits, activation-reference checks, probes, interventions. Each rung is a different claim; \"supported\" means an execution path exists."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .rung { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.4; rx: 8; }\n    .rungtext { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-rung { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.8; rx: 8; }\n    .accent-text { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }\n    .step { fill: #a6a6ad; font-size: 13px; text-anchor: middle; }\n    .annot { fill: #7e7f87; font-size: 14px; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.7; fill: none; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono step",
+            "x": "64",
+            "y": "80",
+            "fill": "#7e7f87"
+          },
+          "text": "support"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "rung",
+            "x": "120",
+            "y": "52",
+            "width": "150",
+            "height": "56"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono rungtext",
+            "x": "195",
+            "y": "78"
+          },
+          "text": "smoke"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono step",
+            "x": "195",
+            "y": "98",
+            "font-size": "12"
+          },
+          "text": "the command ran"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "270",
+            "y1": "80",
+            "x2": "310",
+            "y2": "80",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "rung",
+            "x": "314",
+            "y": "52",
+            "width": "150",
+            "height": "56"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono rungtext",
+            "x": "389",
+            "y": "78"
+          },
+          "text": "golden logits"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono step",
+            "x": "389",
+            "y": "98",
+            "font-size": "12"
+          },
+          "text": "vs trusted ref"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "464",
+            "y1": "80",
+            "x2": "504",
+            "y2": "80",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "rung",
+            "x": "508",
+            "y": "52",
+            "width": "150",
+            "height": "56"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono rungtext",
+            "x": "583",
+            "y": "78"
+          },
+          "text": "activation-ref"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono step",
+            "x": "583",
+            "y": "98",
+            "font-size": "12"
+          },
+          "text": "states compared"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "658",
+            "y1": "80",
+            "x2": "698",
+            "y2": "80",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "rung",
+            "x": "702",
+            "y": "52",
+            "width": "150",
+            "height": "56"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono rungtext",
+            "x": "777",
+            "y": "78"
+          },
+          "text": "probes"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono step",
+            "x": "777",
+            "y": "98",
+            "font-size": "12"
+          },
+          "text": "decodability"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "852",
+            "y1": "80",
+            "x2": "892",
+            "y2": "80",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-rung",
+            "x": "896",
+            "y": "52",
+            "width": "160",
+            "height": "56"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-text",
+            "x": "976",
+            "y": "78"
+          },
+          "text": "interventions"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono step",
+            "x": "976",
+            "y": "98",
+            "font-size": "12"
+          },
+          "text": "causal use"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "160"
+          },
+          "text": "each rung is a different claim: \"supported\" means an execution path exists, it does not mean the row is"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "182"
+          },
+          "text": "numerically validated. top-1 agreement is not logit equality; deterministic semantic output is not"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "204"
+          },
+          "text": "timing reproducibility (docs/validation.md; the rungs the whole series cites)."
+        }
+      ]
+    },
+    "part1-diagram1": {
+      "attrs": {
+        "width": "1120",
+        "height": "520",
+        "viewBox": "0 0 1120 520",
+        "role": "img",
+        "aria-labelledby": "t1 d1"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t1"
+          },
+          "text": "Data flow and observation points (v0.1)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d1"
+          },
+          "text": "GGUF file to loader to tensors to the reference path to logits, with hidden-state observation points on the reference path and a packed Q8 fast path that must agree within the recorded envelopes."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.2; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 17px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }\n    .ref-box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.4; stroke-dasharray: 5 4; rx: 8; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }\n    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.8; fill: none; }\n    .dashed { stroke: #7e7f87; stroke-width: 1.4; stroke-dasharray: 5 4; fill: none; }\n    .hook { fill: #9b8fd1; stroke: #0d1014; stroke-width: 1.6; }\n    .hooknum { fill: #090b0e; font-size: 11px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, monospace; }\n    .hooklabel { fill: #a6a6ad; font-size: 14px; }\n    .annot { fill: #a6a6ad; font-size: 14px; }\n    .colhead { fill: #a6a6ad; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            },
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-accent",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#9b8fd1"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "72"
+          },
+          "text": "the main path"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "64",
+            "y": "100",
+            "width": "160",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "144",
+            "y": "135"
+          },
+          "text": "GGUF file"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "224",
+            "y1": "129",
+            "x2": "272",
+            "y2": "129",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "276",
+            "y": "100",
+            "width": "160",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "356",
+            "y": "135"
+          },
+          "text": "loader"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "436",
+            "y1": "129",
+            "x2": "484",
+            "y2": "129",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "488",
+            "y": "100",
+            "width": "200",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "588",
+            "y": "127"
+          },
+          "text": "tensors"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "588",
+            "y": "148",
+            "font-size": "13",
+            "text-anchor": "middle"
+          },
+          "text": "packed Q8 · f32"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "688",
+            "y1": "129",
+            "x2": "736",
+            "y2": "129",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "ref-box",
+            "x": "740",
+            "y": "100",
+            "width": "260",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "870",
+            "y": "135"
+          },
+          "text": "reference path"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "1000",
+            "y1": "129",
+            "x2": "1048",
+            "y2": "129",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "1052",
+            "y": "100",
+            "width": "60",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "1082",
+            "y": "135"
+          },
+          "text": "logits"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "216"
+          },
+          "text": "hidden-state observation points"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "dashed",
+            "x1": "870",
+            "y1": "158",
+            "x2": "870",
+            "y2": "232"
+          }
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "88",
+                "cy": "248",
+                "r": "11"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "88",
+                "y": "252"
+              },
+              "text": "1"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono hooklabel",
+                "x": "108",
+                "y": "253"
+              },
+              "text": "before-layer"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "88",
+                "cy": "300",
+                "r": "11"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "88",
+                "y": "304"
+              },
+              "text": "2"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono hooklabel",
+                "x": "108",
+                "y": "305"
+              },
+              "text": "after-mlp"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "88",
+                "cy": "352",
+                "r": "11"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "88",
+                "y": "356"
+              },
+              "text": "3"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono hooklabel",
+                "x": "108",
+                "y": "357"
+              },
+              "text": "after-layer"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "88",
+                "cy": "404",
+                "r": "11"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "88",
+                "y": "408"
+              },
+              "text": "4"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono hooklabel",
+                "x": "108",
+                "y": "409"
+              },
+              "text": "after-logits"
+            }
+          ]
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "488",
+            "y": "330",
+            "width": "320",
+            "height": "62"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "648",
+            "y": "358"
+          },
+          "text": "packed Q8 fast path"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "648",
+            "y": "381",
+            "font-size": "13",
+            "fill": "#b3a7e2",
+            "text-anchor": "middle"
+          },
+          "text": "SIMD decode · workspace"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "dashed",
+            "x1": "588",
+            "y1": "158",
+            "x2": "588",
+            "y2": "328",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "accent-arrow",
+            "x1": "808",
+            "y1": "360",
+            "x2": "1082",
+            "y2": "160",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "880",
+            "y": "300",
+            "font-size": "13"
+          },
+          "text": "must agree within envelopes"
+        }
+      ]
+    },
+    "part2-diagram1": {
+      "attrs": {
+        "width": "1120",
+        "height": "560",
+        "viewBox": "0 0 1120 560",
+        "role": "img",
+        "aria-labelledby": "t2 d2"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t2"
+          },
+          "text": "The six-step intervention cycle (v0.2)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d2"
+          },
+          "text": "Baseline capture, altered run, patch one layer, downstream output changes, restore the original activation, output returns to baseline, the frozen restoration criterion is bit-exact."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }\n    .red-box { fill: #0d1014; stroke: #e0645a; stroke-width: 1.7; stroke-dasharray: 6 4; rx: 8; }\n    .red-label { fill: #e0645a; font-size: 16px; text-anchor: middle; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }\n    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.8; fill: none; }\n    .loop { stroke: #b3a7e2; stroke-width: 1.6; stroke-dasharray: 6 4; fill: none; }\n    .hook { fill: #9b8fd1; stroke: #0d1014; stroke-width: 1.6; }\n    .hooknum { fill: #090b0e; font-size: 11px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, monospace; }\n    .steplabel { fill: #a6a6ad; font-size: 14px; }\n    .annot { fill: #a6a6ad; font-size: 14px; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            },
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-accent",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#9b8fd1"
+                  }
+                }
+              ]
+            },
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-loop",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#b3a7e2"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono steplabel",
+            "x": "64",
+            "y": "76"
+          },
+          "text": "run A, baseline, with capture"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "64",
+            "y": "88",
+            "width": "250",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "189",
+            "y": "124",
+            "style": "font-size:14px"
+          },
+          "text": "1 · capture baseline"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "314",
+            "y1": "120",
+            "x2": "368",
+            "y2": "120",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono steplabel",
+            "x": "372",
+            "y": "76"
+          },
+          "text": "run B, zero-layer-output 4:mlp"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "red-box",
+            "x": "372",
+            "y": "88",
+            "width": "250",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono red-label",
+            "x": "497",
+            "y": "124",
+            "style": "font-size:14px"
+          },
+          "text": "2 · altered (0/8 match)"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "622",
+            "y1": "120",
+            "x2": "676",
+            "y2": "120",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono steplabel",
+            "x": "680",
+            "y": "76"
+          },
+          "text": "run C, patch A's layer-4 activation back"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "680",
+            "y": "88",
+            "width": "300",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "830",
+            "y": "124",
+            "style": "font-size:14px"
+          },
+          "text": "3 · patch one layer"
+        },
+        {
+          "tag": "circle",
+          "attrs": {
+            "class": "hook",
+            "cx": "964",
+            "cy": "120",
+            "r": "11"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "hooknum",
+            "x": "964",
+            "y": "124"
+          },
+          "text": "h"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "accent-arrow",
+            "x1": "830",
+            "y1": "152",
+            "x2": "830",
+            "y2": "230",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono steplabel",
+            "x": "64",
+            "y": "248"
+          },
+          "text": "replaced value propagates"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "64",
+            "y": "260",
+            "width": "250",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "189",
+            "y": "296",
+            "style": "font-size:14px"
+          },
+          "text": "4 · downstream shifts"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "314",
+            "y1": "292",
+            "x2": "368",
+            "y2": "292",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono steplabel",
+            "x": "372",
+            "y": "248"
+          },
+          "text": "restore original at same site"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "372",
+            "y": "260",
+            "width": "250",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "497",
+            "y": "296",
+            "style": "font-size:14px"
+          },
+          "text": "5 · restore activation"
+        },
+        {
+          "tag": "circle",
+          "attrs": {
+            "class": "hook",
+            "cx": "610",
+            "cy": "292",
+            "r": "11"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "hooknum",
+            "x": "610",
+            "y": "296"
+          },
+          "text": "h"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "622",
+            "y1": "292",
+            "x2": "676",
+            "y2": "292",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono steplabel",
+            "x": "680",
+            "y": "248"
+          },
+          "text": "frozen criterion: bit-exact logits"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "680",
+            "y": "260",
+            "width": "300",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "830",
+            "y": "296",
+            "style": "font-size:14px"
+          },
+          "text": "6 · output returns to baseline"
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "class": "loop",
+            "d": "M 980 260 C 1060 260 1060 84 980 84 L 316 84",
+            "marker-end": "url(#arrow-loop)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "1010",
+            "y": "210",
+            "font-size": "13",
+            "text-anchor": "end"
+          },
+          "text": "tensor-identical 8/8"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "404"
+          },
+          "text": "live reproduction, 2026-08-04, Qwen3-0.6B Q8_0: A ids 12095 13 576 6722 · B 279 6722 3283 315 · C 12095 13 576 6722"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "432"
+          },
+          "text": "A vs B differs 0/8 · A vs C tensor-identical 8/8, generated ids equal (artifacts/benchmark-v02/part2-capture-patch.md)"
+        }
+      ]
+    },
+    "part3-diagram1": {
+      "attrs": {
+        "width": "1120",
+        "height": "548",
+        "viewBox": "0 0 1120 548",
+        "role": "img",
+        "aria-labelledby": "t3 d3"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t3"
+          },
+          "text": "Eager expansion vs compressed residency (v0.3)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d3"
+          },
+          "text": "The reference path expands the whole weight matrix to f32; the v0.3 path keeps packed blocks mmap-resident and runs native K-quant matvec."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }\n    .red-box { fill: #0d1014; stroke: #e0645a; stroke-width: 1.7; stroke-dasharray: 6 4; rx: 8; }\n    .red-label { fill: #e0645a; font-size: 16px; text-anchor: middle; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }\n    .colhead { fill: #a6a6ad; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; }\n    .annot { fill: #a6a6ad; font-size: 14px; }\n    .verdict { fill: #f3efe5; font-size: 16px; text-anchor: middle; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "60"
+          },
+          "text": "old path, eager f32 expansion (reference)"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "78",
+                "width": "260",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "194",
+                "y": "113"
+              },
+              "text": "GGUF Q4_K/Q6_K"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "194",
+                "y1": "136",
+                "x2": "194",
+                "y2": "168",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "172",
+                "width": "260",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "194",
+                "y": "207"
+              },
+              "text": "load tensor"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "194",
+                "y1": "230",
+                "x2": "194",
+                "y2": "262",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "red-box",
+                "x": "64",
+                "y": "266",
+                "width": "260",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono red-label",
+                "x": "194",
+                "y": "301"
+              },
+              "text": "dequantize entire matrix"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "194",
+                "y1": "324",
+                "x2": "194",
+                "y2": "356",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "red-box",
+                "x": "64",
+                "y": "360",
+                "width": "260",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono red-label",
+                "x": "194",
+                "y": "395"
+              },
+              "text": "f32 heap allocation"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "194",
+                "y1": "418",
+                "x2": "194",
+                "y2": "450",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "454",
+                "width": "260",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "194",
+                "y": "489"
+              },
+              "text": "f32 matvec"
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "533"
+          },
+          "text": "eager: roughly 6.99–8.84 GB peak RSS (measured, 2026-08-04)"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "620",
+            "y": "60"
+          },
+          "text": "v0.3, compressed residency (native)"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "620",
+                "y": "78",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "770",
+                "y": "113"
+              },
+              "text": "GGUF Q4_K/Q6_K"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "770",
+                "y1": "136",
+                "x2": "770",
+                "y2": "168",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "accent-box",
+                "x": "620",
+                "y": "172",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono accent-label",
+                "x": "770",
+                "y": "207"
+              },
+              "text": "mmap packed blocks"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "770",
+                "y1": "230",
+                "x2": "770",
+                "y2": "262",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "accent-box",
+                "x": "620",
+                "y": "266",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono accent-label",
+                "x": "770",
+                "y": "301"
+              },
+              "text": "KQuantWeight view"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "770",
+                "y1": "324",
+                "x2": "770",
+                "y2": "356",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "accent-box",
+                "x": "620",
+                "y": "360",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono accent-label",
+                "x": "770",
+                "y": "395"
+              },
+              "text": "scalar / AVX2 packed matvec"
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "620",
+            "y": "519"
+          },
+          "text": "compressed: roughly 0.84–1.27 GB peak RSS"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "620",
+            "y": "537"
+          },
+          "text": "no full-weight expansion"
+        }
+      ]
+    },
+    "part3-diagram2": {
+      "attrs": {
+        "width": "1120",
+        "height": "560",
+        "viewBox": "0 0 1120 560",
+        "role": "img",
+        "aria-labelledby": "t32 d32"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t32"
+          },
+          "text": "Anatomy of a K-quant matvec (v0.3)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d32"
+          },
+          "text": "Decode one block into a small per-thread buffer, multiply by the activation slice, accumulate; the whole matrix never becomes f32-resident."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }\n    .red-box { fill: #0d1014; stroke: #e0645a; stroke-width: 1.6; stroke-dasharray: 6 4; rx: 8; }\n    .red-label { fill: #e0645a; font-size: 15px; text-anchor: middle; }\n    .block { fill: #12151a; stroke: #7e7f87; stroke-width: 1.2; rx: 5; }\n    .blocklabel { fill: #f3efe5; font-size: 13px; text-anchor: middle; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }\n    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.8; fill: none; }\n    .annot { fill: #a6a6ad; font-size: 14px; }\n    .colhead { fill: #a6a6ad; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            },
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-accent",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#9b8fd1"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "52"
+          },
+          "text": "one packed block (conceptual)"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "64",
+            "y": "66",
+            "width": "300",
+            "height": "108"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "214",
+            "y": "104"
+          },
+          "text": "packed quant values"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "214",
+            "y": "128",
+            "font-size": "13",
+            "text-anchor": "middle"
+          },
+          "text": "qs · 4-bit / 6-bit"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "214",
+            "y": "150",
+            "font-size": "13",
+            "text-anchor": "middle"
+          },
+          "text": "block scales / metadata (d)"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "accent-arrow",
+            "x1": "364",
+            "y1": "120",
+            "x2": "448",
+            "y2": "120",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "452",
+            "y": "66",
+            "width": "300",
+            "height": "108"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "602",
+            "y": "104"
+          },
+          "text": "decode block locally"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "602",
+            "y": "128",
+            "font-size": "13",
+            "fill": "#b3a7e2",
+            "text-anchor": "middle"
+          },
+          "text": "into [f32; 256] per-thread buffer"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "602",
+            "y": "150",
+            "font-size": "13",
+            "fill": "#b3a7e2",
+            "text-anchor": "middle"
+          },
+          "text": "≤ 9 KiB workspace total"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "752",
+            "y1": "120",
+            "x2": "836",
+            "y2": "120",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "840",
+            "y": "66",
+            "width": "216",
+            "height": "108"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "948",
+            "y": "104"
+          },
+          "text": "multiply by"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "948",
+            "y": "130"
+          },
+          "text": "activation slice"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "948",
+            "y": "154",
+            "font-size": "13"
+          },
+          "text": "row · dot"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "948",
+            "y1": "174",
+            "x2": "948",
+            "y2": "226",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "840",
+            "y": "230",
+            "width": "216",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "948",
+            "y": "267"
+          },
+          "text": "accumulate into output"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "948",
+            "y": "290",
+            "font-size": "12",
+            "fill": "#b3a7e2",
+            "text-anchor": "middle"
+          },
+          "text": "next block · …"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "red-box",
+            "x": "64",
+            "y": "380",
+            "width": "520",
+            "height": "86"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono red-label",
+            "x": "324",
+            "y": "413"
+          },
+          "text": "not this: unpack the entire matrix to f32"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "324",
+            "y": "441",
+            "font-size": "13",
+            "fill": "#e0645a",
+            "text-anchor": "middle"
+          },
+          "text": "a model-scale f32 buffer is never created"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "640",
+            "y": "380",
+            "width": "416",
+            "height": "86"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "848",
+            "y": "413"
+          },
+          "text": "only the current block is decoded"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "848",
+            "y": "441",
+            "font-size": "13",
+            "fill": "#b3a7e2",
+            "text-anchor": "middle"
+          },
+          "text": "registers / tiny local temporaries"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "520"
+          },
+          "text": "per-thread workspace for the compressed path is ≤ 9 KiB and no model-scale f32 buffer is created"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "544"
+          },
+          "text": "(docs/v03-execution-contracts.md section 7)"
+        }
+      ]
+    },
+    "part3-diagram3": {
+      "attrs": {
+        "width": "1120",
+        "height": "560",
+        "viewBox": "0 0 1120 560",
+        "role": "img",
+        "aria-labelledby": "t33 d33"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t33"
+          },
+          "text": "The validation ladder (v0.3)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d33"
+          },
+          "text": "Kernel parity, model parity, external golden against pinned llama.cpp, with the six semantic hook sites attached at the same call sites on both paths."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }\n    .gatebox { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.4; stroke-dasharray: 6 4; rx: 10; }\n    .gatename { fill: #a6a6ad; font-size: 13px; letter-spacing: 0.05em; text-transform: uppercase; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.7; fill: none; }\n    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.9; fill: none; }\n    .hook { fill: #9b8fd1; stroke: #0d1014; stroke-width: 1.6; }\n    .hooknum { fill: #090b0e; font-size: 11px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, monospace; }\n    .annot { fill: #a6a6ad; font-size: 14px; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            },
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-accent",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#9b8fd1"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "52",
+            "style": "fill:#a6a6ad;font-size:14px;letter-spacing:0.06em;text-transform:uppercase"
+          },
+          "text": "the trust chain"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "72",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "214",
+                "y": "107"
+              },
+              "text": "scalar packed kernel"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "214",
+                "y1": "130",
+                "x2": "214",
+                "y2": "162",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "166",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "214",
+                "y": "201"
+              },
+              "text": "AVX2 packed kernel"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "214",
+                "y1": "224",
+                "x2": "214",
+                "y2": "256",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "260",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "214",
+                "y": "295"
+              },
+              "text": "planned model execution"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "214",
+                "y1": "318",
+                "x2": "214",
+                "y2": "350",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "354",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "214",
+                "y": "389"
+              },
+              "text": "per-layer hidden-state parity"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "214",
+                "y1": "412",
+                "x2": "214",
+                "y2": "444",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "448",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "214",
+                "y": "483"
+              },
+              "text": "final logits"
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "accent-box",
+                "x": "480",
+                "y": "72",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono accent-label",
+                "x": "630",
+                "y": "107"
+              },
+              "text": "greedy tokens"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "accent-arrow",
+                "x1": "630",
+                "y1": "130",
+                "x2": "630",
+                "y2": "162",
+                "marker-end": "url(#arrow-accent)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "accent-box",
+                "x": "480",
+                "y": "166",
+                "width": "300",
+                "height": "58"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono accent-label",
+                "x": "630",
+                "y": "201"
+              },
+              "text": "pinned llama.cpp reference"
+            }
+          ]
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "364",
+            "y1": "477",
+            "x2": "478",
+            "y2": "201",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "396",
+            "y": "392",
+            "font-size": "13"
+          },
+          "text": "Gate C"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "396",
+            "y": "410",
+            "font-size": "13"
+          },
+          "text": "100% top-1"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "gatebox",
+            "x": "480",
+            "y": "300",
+            "width": "600",
+            "height": "160"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono gatename",
+            "x": "504",
+            "y": "330"
+          },
+          "text": "semantic hook sites, unchanged on both paths"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "520",
+                "cy": "366",
+                "r": "10"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "520",
+                "y": "370"
+              },
+              "text": "1"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono annot",
+                "x": "538",
+                "y": "371",
+                "font-size": "13"
+              },
+              "text": "before-layer"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "520",
+                "cy": "412",
+                "r": "10"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "520",
+                "y": "416"
+              },
+              "text": "2"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono annot",
+                "x": "538",
+                "y": "417",
+                "font-size": "13"
+              },
+              "text": "after-attention"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "760",
+                "cy": "366",
+                "r": "10"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "760",
+                "y": "370"
+              },
+              "text": "3"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono annot",
+                "x": "778",
+                "y": "371",
+                "font-size": "13"
+              },
+              "text": "after-mlp"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "760",
+                "cy": "412",
+                "r": "10"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "760",
+                "y": "416"
+              },
+              "text": "4"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono annot",
+                "x": "778",
+                "y": "417",
+                "font-size": "13"
+              },
+              "text": "after-layer"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "940",
+                "cy": "366",
+                "r": "10"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "940",
+                "y": "370"
+              },
+              "text": "5"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono annot",
+                "x": "958",
+                "y": "371",
+                "font-size": "13"
+              },
+              "text": "before-logits"
+            },
+            {
+              "tag": "circle",
+              "attrs": {
+                "class": "hook",
+                "cx": "940",
+                "cy": "412",
+                "r": "10"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "hooknum",
+                "x": "940",
+                "y": "416"
+              },
+              "text": "6"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono annot",
+                "x": "958",
+                "y": "417",
+                "font-size": "13"
+              },
+              "text": "after-logits"
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "544"
+          },
+          "text": "kernel parity (Gate A) → model parity (Gates B/D) → external golden against pinned llama.cpp (Gate C);"
+        }
+      ]
+    },
+    "part3-diagram4": {
+      "attrs": {
+        "width": "1120",
+        "height": "540",
+        "viewBox": "0 0 1120 540",
+        "role": "img",
+        "aria-labelledby": "t34 d34"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t34"
+          },
+          "text": "Q4_K and Q6_K super-block anatomy (v0.3)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d34"
+          },
+          "text": "Conceptual super-block layout: Q4_K groups 8 blocks of 32 weights with per-block 2-bit scale factors and offsets; Q6_K groups 16 blocks of 16 weights with int8 scales; dispatch is per tensor because a Q4_K_M file mixes tensor dtypes."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }\n    .block { fill: #12151a; stroke: #7e7f87; stroke-width: 1.2; rx: 5; }\n    .blocklabel { fill: #f3efe5; font-size: 13px; text-anchor: middle; }\n    .annot { fill: #a6a6ad; font-size: 14px; }\n    .colhead { fill: #a6a6ad; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "52"
+          },
+          "text": "Q4_K, 8 blocks × 32 weights per super-block"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "64",
+            "y": "66",
+            "width": "480",
+            "height": "140"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "304",
+            "y": "96"
+          },
+          "text": "super-block: 256 weights"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "84",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "122",
+                "y": "132"
+              },
+              "text": "qs"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "122",
+                "y": "152"
+              },
+              "text": "4-bit ×32"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "172",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "210",
+                "y": "132"
+              },
+              "text": "d"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "210",
+                "y": "152"
+              },
+              "text": "2-bit ×16"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "260",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "298",
+                "y": "132"
+              },
+              "text": "d"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "298",
+                "y": "152"
+              },
+              "text": "scale"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "360",
+                "y": "140"
+              },
+              "text": "…"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "392",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "430",
+                "y": "132"
+              },
+              "text": "qs"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "430",
+                "y": "152"
+              },
+              "text": "4-bit ×32"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "480",
+                "y": "112",
+                "width": "40",
+                "height": "52"
+              }
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "304",
+            "y": "242",
+            "text-anchor": "middle"
+          },
+          "text": "per-block 2-bit scale factors (d) and offsets"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "304",
+            "y": "262",
+            "text-anchor": "middle"
+          },
+          "text": "4-bit quantized values (qs)"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "580",
+            "y": "52"
+          },
+          "text": "Q6_K, 16 blocks × 16 weights per super-block"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "580",
+            "y": "66",
+            "width": "480",
+            "height": "140"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "820",
+            "y": "96"
+          },
+          "text": "super-block: 256 weights"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "600",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "638",
+                "y": "132"
+              },
+              "text": "qs"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "638",
+                "y": "152"
+              },
+              "text": "6-bit ×16"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "688",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "726",
+                "y": "132"
+              },
+              "text": "d"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "726",
+                "y": "152"
+              },
+              "text": "int8"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "784",
+                "y": "140"
+              },
+              "text": "…"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "816",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "854",
+                "y": "132"
+              },
+              "text": "qs"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "854",
+                "y": "152"
+              },
+              "text": "6-bit ×16"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "904",
+                "y": "112",
+                "width": "76",
+                "height": "52"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "942",
+                "y": "132"
+              },
+              "text": "d"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono blocklabel",
+                "x": "942",
+                "y": "152"
+              },
+              "text": "int8"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "block",
+                "x": "992",
+                "y": "112",
+                "width": "48",
+                "height": "52"
+              }
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "820",
+            "y": "242",
+            "font-size": "13",
+            "text-anchor": "middle"
+          },
+          "text": "per-block int8 scales · 6-bit qs"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "330"
+          },
+          "text": "dispatch is per tensor, not per file: a Q4_K_M checkpoint mixes dtypes, llama-3.2-1b q4_k_m contains"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "356"
+          },
+          "text": "96 × Q4_K + 17 × Q6_K + 34 × F32 tensors (docs/v03-execution-contracts.md §5), so both native kernels must exist,"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "382"
+          },
+          "text": "and the loader reads the inventory from the GGUF headers rather than trusting the file name."
+        }
+      ]
+    },
+    "part4-diagram1": {
+      "attrs": {
+        "width": "1120",
+        "height": "580",
+        "viewBox": "0 0 1120 580",
+        "role": "img",
+        "aria-labelledby": "t4a d4a"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t4a"
+          },
+          "text": "The three execution concepts (v0.4)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d4a"
+          },
+          "text": "Reference, planned, and planned-fused pipelines from the same model tensors; the fused pipeline carries the frozen fusion set with hook-driven de-fusion."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }\n    .ref-box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.4; stroke-dasharray: 5 4; rx: 8; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }\n    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.8; fill: none; }\n    .diamond { fill: #9b8fd1; stroke: #0d1014; stroke-width: 1.4; }\n    .diamond-label { fill: #090b0e; font-size: 12px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, monospace; }\n    .colhead { fill: #a6a6ad; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; text-anchor: middle; }\n    .annot { fill: #a6a6ad; font-size: 14px; text-anchor: middle; }\n    .tag { fill: #7e7f87; font-size: 13px; text-anchor: middle; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            },
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-accent",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#9b8fd1"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "360",
+            "y": "56",
+            "width": "400",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "560",
+            "y": "91"
+          },
+          "text": "model tensors"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "200",
+            "y": "140"
+          },
+          "text": "reference"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "470",
+            "y1": "114",
+            "x2": "200",
+            "y2": "160",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "ref-box",
+            "x": "80",
+            "y": "164",
+            "width": "240",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "200",
+            "y": "192"
+          },
+          "text": "generic hooked path"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tag",
+            "x": "200",
+            "y": "216"
+          },
+          "text": "per-token dynamic dispatch"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "200",
+            "y1": "236",
+            "x2": "200",
+            "y2": "290",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "80",
+            "y": "294",
+            "width": "240",
+            "height": "62"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "200",
+            "y": "331"
+          },
+          "text": "readable oracle"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "560",
+            "y": "140"
+          },
+          "text": "planned"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "560",
+            "y1": "114",
+            "x2": "560",
+            "y2": "160",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "440",
+            "y": "164",
+            "width": "240",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "560",
+            "y": "192"
+          },
+          "text": "execution plan"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tag",
+            "x": "560",
+            "y": "216"
+          },
+          "text": "ops · dispatch · scratch arena"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "accent-arrow",
+            "x1": "560",
+            "y1": "236",
+            "x2": "560",
+            "y2": "290",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "440",
+            "y": "294",
+            "width": "240",
+            "height": "62"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "560",
+            "y": "331"
+          },
+          "text": "plan interpreter"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "920",
+            "y": "140"
+          },
+          "text": "planned-fused"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "650",
+            "y1": "114",
+            "x2": "920",
+            "y2": "160",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "800",
+            "y": "164",
+            "width": "240",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "920",
+            "y": "192"
+          },
+          "text": "execution plan + F1–F5"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tag",
+            "x": "920",
+            "y": "216"
+          },
+          "text": "frozen fusion set"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "accent-arrow",
+            "x1": "920",
+            "y1": "236",
+            "x2": "920",
+            "y2": "290",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "800",
+            "y": "294",
+            "width": "240",
+            "height": "62"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "920",
+            "y": "331"
+          },
+          "text": "fused interpreter"
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "class": "diamond",
+            "d": "M 950 368 L 968 386 L 950 404 L 932 386 Z"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "diamond-label",
+            "x": "950",
+            "y": "390"
+          },
+          "text": "h"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "920",
+            "y": "430"
+          },
+          "text": "hook-driven de-fusion"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "920",
+            "y": "452",
+            "font-size": "13"
+          },
+          "text": "(F5 defused when after_attention active)"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "200",
+            "y1": "356",
+            "x2": "200",
+            "y2": "440",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "560",
+            "y1": "356",
+            "x2": "560",
+            "y2": "440",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "920",
+            "y1": "404",
+            "x2": "920",
+            "y2": "440",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "480",
+            "y": "444",
+            "width": "160",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "560",
+            "y": "479"
+          },
+          "text": "logits"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "560",
+            "y": "548"
+          },
+          "text": "all three produce identical greedy tokens within the frozen envelopes (docs/v04-execution-contract.md §9)"
+        }
+      ]
+    },
+    "part4-diagram2": {
+      "attrs": {
+        "width": "1120",
+        "height": "580",
+        "viewBox": "0 0 1120 580",
+        "role": "img",
+        "aria-labelledby": "t4b d4b"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t4b"
+          },
+          "text": "Fusion and de-fusion on one layer (v0.4)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d4b"
+          },
+          "text": "The layer's op chain with the frozen fusion set F1-F5; F5 eliminates the after_attention tensor o, so an active hook there forces the unfused route."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 14px; text-anchor: middle; }\n    .sub { fill: #a6a6ad; font-size: 12px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 14px; text-anchor: middle; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.5; fill: none; }\n    .fusion { stroke: #9b8fd1; stroke-width: 1.4; fill: none; }\n    .fusion-label { fill: #9b8fd1; font-size: 13px; }\n    .hook { fill: #9b8fd1; stroke: #0d1014; stroke-width: 1.6; }\n    .hooknum { fill: #090b0e; font-size: 11px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, monospace; }\n    .annot { fill: #a6a6ad; font-size: 13px; text-anchor: middle; }\n    .note { fill: #a6a6ad; font-size: 13px; text-anchor: start; }\n    .colhead { fill: #a6a6ad; font-size: 15px; letter-spacing: 0.06em; text-transform: uppercase; text-anchor: start; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "48"
+          },
+          "text": "one transformer layer, fusion set F1–F5"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "64",
+                "y": "64",
+                "width": "110",
+                "height": "56"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "119",
+                "y": "96"
+              },
+              "text": "x"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "174",
+                "y1": "92",
+                "x2": "206",
+                "y2": "92",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "210",
+                "y": "64",
+                "width": "130",
+                "height": "56"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "275",
+                "y": "88"
+              },
+              "text": "RMSNorm"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono sub",
+                "x": "275",
+                "y": "108"
+              },
+              "text": "+ QKV (F1, F3)"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "340",
+                "y1": "92",
+                "x2": "372",
+                "y2": "92",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "376",
+                "y": "64",
+                "width": "130",
+                "height": "56"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "441",
+                "y": "88"
+              },
+              "text": "attention"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono sub",
+                "x": "441",
+                "y": "108"
+              },
+              "text": "+ RoPE (F4)"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "506",
+                "y1": "92",
+                "x2": "538",
+                "y2": "92",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "542",
+                "y": "64",
+                "width": "110",
+                "height": "56"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "597",
+                "y": "96"
+              },
+              "text": "o_proj"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "652",
+                "y1": "92",
+                "x2": "684",
+                "y2": "92",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "688",
+                "y": "64",
+                "width": "130",
+                "height": "56"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "753",
+                "y": "88"
+              },
+              "text": "residual"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono sub",
+                "x": "753",
+                "y": "108"
+              },
+              "text": "+ norm (F2)"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "818",
+                "y1": "92",
+                "x2": "850",
+                "y2": "92",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "854",
+                "y": "64",
+                "width": "100",
+                "height": "56"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "904",
+                "y": "96"
+              },
+              "text": "MLP"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "954",
+                "y1": "92",
+                "x2": "986",
+                "y2": "92",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "box",
+                "x": "990",
+                "y": "64",
+                "width": "70",
+                "height": "56"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono boxlabel",
+                "x": "1025",
+                "y": "96"
+              },
+              "text": "out"
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "176"
+          },
+          "text": "F5, output projection + residual add"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "64",
+            "y": "192",
+            "width": "230",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "179",
+            "y": "218"
+          },
+          "text": "o = o_proj(attn)"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "179",
+            "y": "246",
+            "font-size": "12"
+          },
+          "text": "the after_attention hook site"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "294",
+            "y1": "228",
+            "x2": "348",
+            "y2": "228",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "352",
+            "y": "192",
+            "width": "260",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "482",
+            "y": "218"
+          },
+          "text": "x1 = x + W·attn"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "482",
+            "y": "246",
+            "font-size": "12"
+          },
+          "text": "fused, when no hook is active"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "fusion",
+            "x1": "482",
+            "y1": "140",
+            "x2": "482",
+            "y2": "190"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono fusion-label",
+            "x": "492",
+            "y": "160"
+          },
+          "text": "F5"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "680",
+            "y": "176"
+          },
+          "text": "F5 defused, hook active at after_attention"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "640",
+            "y": "192",
+            "width": "210",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "745",
+            "y": "218"
+          },
+          "text": "o = o_proj(attn)"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "745",
+            "y": "246",
+            "font-size": "12"
+          },
+          "text": "o materialized for the hook"
+        },
+        {
+          "tag": "circle",
+          "attrs": {
+            "class": "hook",
+            "cx": "870",
+            "cy": "228",
+            "r": "11"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "hooknum",
+            "x": "870",
+            "y": "232"
+          },
+          "text": "h"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "882",
+            "y1": "228",
+            "x2": "930",
+            "y2": "228",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "934",
+            "y": "192",
+            "width": "126",
+            "height": "72"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "997",
+            "y": "218"
+          },
+          "text": "x1 = x + o"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "997",
+            "y": "288",
+            "font-size": "12"
+          },
+          "text": "unfused · reason recorded"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono note",
+            "x": "64",
+            "y": "420"
+          },
+          "text": "F1–F5 eliminate only intermediates that are never hook sites; the plan chooses Fused /"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono note",
+            "x": "64",
+            "y": "444"
+          },
+          "text": "PartiallyFused / Unfused per layer at build time from the active hook set, with the selection"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono note",
+            "x": "64",
+            "y": "468"
+          },
+          "text": "recorded in the plan and in provenance (docs/v04-execution-contract.md §6–7)."
+        }
+      ]
+    },
+    "part4-diagram3": {
+      "attrs": {
+        "width": "1120",
+        "height": "700",
+        "viewBox": "0 0 1120 700",
+        "role": "img",
+        "aria-labelledby": "t4c d4c"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t4c"
+          },
+          "text": "When the CPU became an unreliable witness"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d4c"
+          },
+          "text": "Six benchmark failures and the protocol fix for each."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .fail { fill: #0d1014; stroke: #e0645a; stroke-width: 1.5; rx: 8; }\n    .failtext { fill: #f3efe5; font-size: 15px; text-anchor: start; }\n    .fix { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.5; rx: 8; }\n    .fixtext { fill: #b3a7e2; font-size: 15px; text-anchor: start; }\n    .num { fill: #e0645a; font-size: 19px; font-family: \"SFMono-Regular\", Consolas, monospace; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }\n    .foot { fill: #a6a6ad; font-size: 14px; text-anchor: start; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "num",
+                "x": "64",
+                "y": "52"
+              },
+              "text": "1"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fail",
+                "x": "96",
+                "y": "30",
+                "width": "460",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "54"
+              },
+              "text": "thermal noise, fused execution appeared slower"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "78",
+                "font-size": "13",
+                "fill": "#e0645a"
+              },
+              "text": "powersave governor, throttled window"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "556",
+                "y1": "60",
+                "x2": "580",
+                "y2": "60",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fix",
+                "x": "584",
+                "y": "30",
+                "width": "496",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "54"
+              },
+              "text": "back-to-back arms per model · medians over 5 reps"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "78",
+                "font-size": "13",
+                "fill": "#9b8fd1"
+              },
+              "text": "all modes share the machine state"
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "num",
+                "x": "64",
+                "y": "128"
+              },
+              "text": "2"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fail",
+                "x": "96",
+                "y": "106",
+                "width": "460",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "130"
+              },
+              "text": "benchmark mode ran the reference path"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "154",
+                "font-size": "13",
+                "fill": "#e0645a"
+              },
+              "text": "planned-fused until planned_decode_eligible"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "556",
+                "y1": "136",
+                "x2": "580",
+                "y2": "136",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fix",
+                "x": "584",
+                "y": "106",
+                "width": "496",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "130"
+              },
+              "text": "execution-mode eligibility gate on the CLI path"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "154",
+                "font-size": "13",
+                "fill": "#9b8fd1"
+              },
+              "text": "a named mode must actually run (CHANGELOG v0.4 Fixed)"
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "num",
+                "x": "64",
+                "y": "204"
+              },
+              "text": "3"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fail",
+                "x": "96",
+                "y": "182",
+                "width": "460",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "206"
+              },
+              "text": "fusion tests passed without exercising"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "230",
+                "font-size": "13",
+                "fill": "#e0645a"
+              },
+              "text": "the intended route (reconstruction)"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "556",
+                "y1": "212",
+                "x2": "580",
+                "y2": "212",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fix",
+                "x": "584",
+                "y": "182",
+                "width": "496",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "206"
+              },
+              "text": "explicit-mode parity tests assert greedy tokens"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "230",
+                "font-size": "13",
+                "fill": "#9b8fd1"
+              },
+              "text": "tests/k_parity.rs, real-model gates B"
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "num",
+                "x": "64",
+                "y": "280"
+              },
+              "text": "4"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fail",
+                "x": "96",
+                "y": "258",
+                "width": "460",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "282"
+              },
+              "text": "allocation gate tested a shadowed trait path"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "306",
+                "font-size": "13",
+                "fill": "#e0645a"
+              },
+              "text": "inherent method shadowed the dispatch"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "556",
+                "y1": "288",
+                "x2": "580",
+                "y2": "288",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fix",
+                "x": "584",
+                "y": "258",
+                "width": "496",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "282"
+              },
+              "text": "gate routed through the ForwardModel trait"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "306",
+                "font-size": "13",
+                "fill": "#9b8fd1"
+              },
+              "text": "the path the real CLI actually dispatches"
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "num",
+                "x": "64",
+                "y": "356"
+              },
+              "text": "5"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fail",
+                "x": "96",
+                "y": "334",
+                "width": "460",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "358"
+              },
+              "text": "pinned-core runs distorted performance"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "382",
+                "font-size": "13",
+                "fill": "#e0645a"
+              },
+              "text": "taskset on 4 physical cores"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "556",
+                "y1": "364",
+                "x2": "580",
+                "y2": "364",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fix",
+                "x": "584",
+                "y": "334",
+                "width": "496",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "358"
+              },
+              "text": "full 8-thread machine, no taskset"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "382",
+                "font-size": "13",
+                "fill": "#9b8fd1"
+              },
+              "text": "the column-parallel matvec is the lever"
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "num",
+                "x": "64",
+                "y": "432"
+              },
+              "text": "6"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fail",
+                "x": "96",
+                "y": "410",
+                "width": "460",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "434"
+              },
+              "text": "attention dedup exposed false allocation"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono failtext",
+                "x": "112",
+                "y": "458",
+                "font-size": "13",
+                "fill": "#e0645a"
+              },
+              "text": "per-task Vecs on rayon-stealing threads"
+            },
+            {
+              "tag": "line",
+              "attrs": {
+                "class": "arrow",
+                "x1": "556",
+                "y1": "440",
+                "x2": "580",
+                "y2": "440",
+                "marker-end": "url(#arrow)"
+              }
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "fix",
+                "x": "584",
+                "y": "410",
+                "width": "496",
+                "height": "60"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "434"
+              },
+              "text": "zero-initialized matvec destinations"
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono fixtext",
+                "x": "600",
+                "y": "458",
+                "font-size": "13",
+                "fill": "#9b8fd1"
+              },
+              "text": "post-release dedup pass (commit 624a216)"
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono foot",
+            "x": "96",
+            "y": "540"
+          },
+          "text": "every failure is the harness being benchmarked instead of the engine"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono foot",
+            "x": "96",
+            "y": "566"
+          },
+          "text": "a faster runtime is not trustworthy unless the harness and the semantic route are also validated"
+        }
+      ]
+    },
+    "part5-diagram1": {
+      "attrs": {
+        "width": "1120",
+        "height": "560",
+        "viewBox": "0 0 1120 560",
+        "role": "img",
+        "aria-labelledby": "t5a d5a"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t5a"
+          },
+          "text": "The experiment workflow (v0.5)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d5a"
+          },
+          "text": "validate, resolve, tokenize and align, execute, capture/intervene, atomic bundle, verify, compare, reproduce, the bundle is the artifact boundary."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }\n    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }\n    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.8; rx: 8; }\n    .accent-label { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.7; fill: none; }\n    .accent-arrow { stroke: #9b8fd1; stroke-width: 1.9; fill: none; }\n    .annot { fill: #a6a6ad; font-size: 13px; text-anchor: middle; }\n    .colhead { fill: #a6a6ad; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; text-anchor: start; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            },
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-accent",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#9b8fd1"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono colhead",
+            "x": "64",
+            "y": "56"
+          },
+          "text": "the pipeline"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "64",
+            "y": "76",
+            "width": "190",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "159",
+            "y": "114"
+          },
+          "text": "experiment.toml"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "254",
+            "y1": "108",
+            "x2": "286",
+            "y2": "108",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "286",
+            "y": "76",
+            "width": "170",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "371",
+            "y": "114"
+          },
+          "text": "validate"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "456",
+            "y1": "108",
+            "x2": "488",
+            "y2": "108",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "488",
+            "y": "76",
+            "width": "170",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "573",
+            "y": "114"
+          },
+          "text": "resolve"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "658",
+            "y1": "108",
+            "x2": "690",
+            "y2": "108",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "690",
+            "y": "76",
+            "width": "220",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "800",
+            "y": "104"
+          },
+          "text": "tokenize"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "800",
+            "y": "128",
+            "font-size": "12"
+          },
+          "text": "and align (bytes)"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "910",
+            "y1": "108",
+            "x2": "942",
+            "y2": "108",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "942",
+            "y": "76",
+            "width": "120",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "1002",
+            "y": "114"
+          },
+          "text": "execute"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "1002",
+            "y1": "140",
+            "x2": "1002",
+            "y2": "184",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "742",
+            "y": "188",
+            "width": "260",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "872",
+            "y": "216"
+          },
+          "text": "capture / intervene"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "872",
+            "y": "240",
+            "font-size": "12"
+          },
+          "text": "hook-driven de-fusion"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "accent-arrow",
+            "x1": "872",
+            "y1": "252",
+            "x2": "640",
+            "y2": "276",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-box",
+            "x": "320",
+            "y": "280",
+            "width": "480",
+            "height": "80"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-label",
+            "x": "560",
+            "y": "316"
+          },
+          "text": "atomic bundle · ember.bundle.v1"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "560",
+            "y": "342",
+            "font-size": "13"
+          },
+          "text": "staged atomically · never overwrites · self-verifying"
+        },
+        {
+          "tag": "polyline",
+          "attrs": {
+            "class": "arrow",
+            "points": "560,360 560,390 390,390 390,418",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "300",
+            "y": "420",
+            "width": "180",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "390",
+            "y": "448"
+          },
+          "text": "verify (offline)"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "390",
+            "y": "472",
+            "font-size": "12"
+          },
+          "text": "15 checks · fail-closed"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "480",
+            "y1": "452",
+            "x2": "560",
+            "y2": "452",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "560",
+            "y": "420",
+            "width": "180",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "650",
+            "y": "452"
+          },
+          "text": "compare"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "740",
+            "y1": "452",
+            "x2": "820",
+            "y2": "452",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "box",
+            "x": "820",
+            "y": "420",
+            "width": "180",
+            "height": "64"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boxlabel",
+            "x": "910",
+            "y": "452"
+          },
+          "text": "reproduce"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "560",
+            "y": "528",
+            "font-size": "14"
+          },
+          "text": "the bundle is the artifact boundary: everything downstream runs offline on the bundle alone"
+        }
+      ]
+    },
+    "part5-diagram2": {
+      "attrs": {
+        "width": "1120",
+        "height": "600",
+        "viewBox": "0 0 1120 600",
+        "role": "img",
+        "aria-labelledby": "t5b d5b"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t5b"
+          },
+          "text": "The ember.bundle.v1 layout (v0.5)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d5b"
+          },
+          "text": "The bundle tree with semantic-manifest.json and checksums.sha256 as the verification boundary."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .file { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 6; }\n    .filetext { fill: #f3efe5; font-size: 15px; text-anchor: start; }\n    .dir { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.4; rx: 6; }\n    .dirtext { fill: #b3a7e2; font-size: 15px; text-anchor: start; }\n    .root { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.8; rx: 8; }\n    .roottext { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }\n    .bound { fill: none; stroke: rgba(206,199,186,0.32); stroke-width: 1.5; stroke-dasharray: 7 5; rx: 12; }\n    .boundlabel { fill: #a6a6ad; font-size: 13px; letter-spacing: 0.05em; text-transform: uppercase; text-anchor: start; }\n    .annot { fill: #a6a6ad; font-size: 13px; text-anchor: start; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "root",
+            "x": "64",
+            "y": "52",
+            "width": "200",
+            "height": "56"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono roottext",
+            "x": "164",
+            "y": "86"
+          },
+          "text": "run/"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "164",
+            "y1": "108",
+            "x2": "164",
+            "y2": "140",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "64",
+                "y": "144",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "84",
+                "y": "169"
+              },
+              "text": "manifest.json"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "64",
+                "y": "196",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "84",
+                "y": "221"
+              },
+              "text": "runtime.json"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "64",
+                "y": "248",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "84",
+                "y": "273"
+              },
+              "text": "resolved-experiment.json"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "64",
+                "y": "300",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "84",
+                "y": "325"
+              },
+              "text": "execution-plan.json"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "64",
+                "y": "352",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "84",
+                "y": "377"
+              },
+              "text": "tokenization.jsonl"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "64",
+                "y": "404",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "84",
+                "y": "429"
+              },
+              "text": "inputs.jsonl"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "64",
+                "y": "456",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "84",
+                "y": "481"
+              },
+              "text": "outputs.jsonl"
+            }
+          ]
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "bound",
+            "x": "404",
+            "y": "128",
+            "width": "352",
+            "height": "172"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono boundlabel",
+            "x": "420",
+            "y": "146"
+          },
+          "text": "verification subset"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "dir",
+                "x": "420",
+                "y": "156",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono dirtext",
+                "x": "440",
+                "y": "181"
+              },
+              "text": "semantic-manifest.json"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "420",
+                "y": "208",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "440",
+                "y": "233"
+              },
+              "text": "checksums.sha256"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "420",
+                "y": "260",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "440",
+                "y": "285"
+              },
+              "text": "verification.json"
+            }
+          ]
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "420",
+                "y": "404",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "440",
+                "y": "429"
+              },
+              "text": "model.json"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "420",
+                "y": "456",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "440",
+                "y": "481"
+              },
+              "text": "tokenizer.json"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "class": "file",
+                "x": "420",
+                "y": "508",
+                "width": "320",
+                "height": "40"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono filetext",
+                "x": "440",
+                "y": "533"
+              },
+              "text": "traces/"
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "566"
+          },
+          "text": "semantic-manifest.json + checksums.sha256 + verification.json form the verification subset of the 17-file bundle"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "586"
+          },
+          "text": "live bundle: 15/15 checks, 2026-08-04"
+        }
+      ]
+    },
+    "part5-diagram3": {
+      "attrs": {
+        "width": "1120",
+        "height": "520",
+        "viewBox": "0 0 1120 520",
+        "role": "img",
+        "aria-labelledby": "t5c d5c"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t5c"
+          },
+          "text": "Baseline, intervention, restoration (v0.5)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d5c"
+          },
+          "text": "Three runs of the reference workflow: the intervention changes the generated text and diverges from step 1 with captures diverging from layer 8; restoration reproduces the baseline bit-exactly."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .rowlabel { fill: #a6a6ad; font-size: 15px; text-anchor: start; }\n    .bar { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.4; rx: 8; }\n    .bartext { fill: #f3efe5; font-size: 16px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace, \"Noto Naskh Arabic\", \"Noto Sans Arabic\", sans-serif; }\n    .accent-bar { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.7; rx: 8; }\n    .accent-text { fill: #b3a7e2; font-size: 16px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace, \"Noto Naskh Arabic\", \"Noto Sans Arabic\", sans-serif; }\n    .red-bar { fill: #0d1014; stroke: #e0645a; stroke-width: 1.7; rx: 8; }\n    .red-text { fill: #e0645a; font-size: 16px; text-anchor: middle; font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace, \"Noto Naskh Arabic\", \"Noto Sans Arabic\", sans-serif; }\n    .annot { fill: #a6a6ad; font-size: 14px; text-anchor: start; }\n    .eq { stroke: #b3a7e2; stroke-width: 1.6; fill: none; }\n    .layer { fill: #7e7f87; font-size: 12px; text-anchor: middle; }\n    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#7e7f87"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono rowlabel",
+            "x": "64",
+            "y": "52"
+          },
+          "text": "baseline"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "bar",
+            "x": "200",
+            "y": "34",
+            "width": "380",
+            "height": "44"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono bartext",
+            "x": "390",
+            "y": "61"
+          },
+          "text": "\" كِتَاب هو كلمة\" · logit 15.830…"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "bar",
+            "x": "640",
+            "y": "34",
+            "width": "420",
+            "height": "44"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono bartext",
+            "x": "850",
+            "y": "61"
+          },
+          "text": "32/32 captures bit-exact (all layers)"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono rowlabel",
+            "x": "64",
+            "y": "130"
+          },
+          "text": "intervention"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "red-bar",
+            "x": "200",
+            "y": "112",
+            "width": "380",
+            "height": "44"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono red-text",
+            "x": "390",
+            "y": "139"
+          },
+          "text": "\"، وَما يُشك\" · logit 12.156…"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "arrow",
+            "x1": "200",
+            "y1": "134",
+            "x2": "160",
+            "y2": "134",
+            "marker-end": "url(#arrow)"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "172"
+          },
+          "text": "first divergence at step 1"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "red-bar",
+            "x": "640",
+            "y": "112",
+            "width": "420",
+            "height": "44"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono red-text",
+            "x": "850",
+            "y": "139"
+          },
+          "text": "prompt-final captures diverge layers 8–15"
+        },
+        {
+          "tag": "g",
+          "children": [
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "640",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "652",
+                "y": "196"
+              },
+              "text": "0"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "666",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "678",
+                "y": "196"
+              },
+              "text": "1"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "692",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "704",
+                "y": "196"
+              },
+              "text": "2"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "718",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "730",
+                "y": "196"
+              },
+              "text": "3"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "744",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "756",
+                "y": "196"
+              },
+              "text": "4"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "770",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "782",
+                "y": "196"
+              },
+              "text": "5"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "796",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "808",
+                "y": "196"
+              },
+              "text": "6"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "822",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "none",
+                "stroke": "#7e7f87",
+                "stroke-width": "0.9"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "834",
+                "y": "196"
+              },
+              "text": "7"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "848",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "860",
+                "y": "196"
+              },
+              "text": "8"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "874",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "886",
+                "y": "196"
+              },
+              "text": "9"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "900",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "912",
+                "y": "196"
+              },
+              "text": "10"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "926",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "938",
+                "y": "196"
+              },
+              "text": "11"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "952",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "964",
+                "y": "196"
+              },
+              "text": "12"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "978",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "990",
+                "y": "196"
+              },
+              "text": "13"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "1004",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "1016",
+                "y": "196"
+              },
+              "text": "14"
+            },
+            {
+              "tag": "rect",
+              "attrs": {
+                "x": "1030",
+                "y": "170",
+                "width": "24",
+                "height": "10",
+                "fill": "#e0645a",
+                "opacity": "0.6"
+              }
+            },
+            {
+              "tag": "text",
+              "attrs": {
+                "class": "mono layer",
+                "x": "1042",
+                "y": "196"
+              },
+              "text": "15"
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "850",
+            "y": "226",
+            "fill": "#e0645a",
+            "text-anchor": "middle"
+          },
+          "text": "layer-7 residual-post-mlp patch"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "850",
+            "y": "246",
+            "fill": "#e0645a",
+            "text-anchor": "middle"
+          },
+          "text": "consumed from layer 8 onward"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono rowlabel",
+            "x": "64",
+            "y": "280"
+          },
+          "text": "restoration"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-bar",
+            "x": "200",
+            "y": "262",
+            "width": "380",
+            "height": "44"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-text",
+            "x": "390",
+            "y": "289"
+          },
+          "text": "\" كِتَاب هو كلمة\" · logit 15.830…"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "accent-bar",
+            "x": "640",
+            "y": "262",
+            "width": "420",
+            "height": "44"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent-text",
+            "x": "850",
+            "y": "289"
+          },
+          "text": "32/32 captures bit-exact · outputs equal"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "eq",
+            "x1": "390",
+            "y1": "258",
+            "x2": "390",
+            "y2": "78"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "eq",
+            "x1": "850",
+            "y1": "258",
+            "x2": "850",
+            "y2": "78"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "410",
+            "y": "170"
+          },
+          "text": "identical"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "870",
+            "y": "170"
+          },
+          "text": "bit-exact"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "392",
+            "font-size": "13"
+          },
+          "text": "live reproduction 2026-08-04, Llama-3.2-1B Q8_0, runs/part5-{baseline,intervention,restoration}"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono annot",
+            "x": "64",
+            "y": "418",
+            "font-size": "13"
+          },
+          "text": "intervention events 0 vs 1 · restore event 0 vs 1 (artifacts/benchmark-v05/part5-reproduction.md §3)"
+        }
+      ]
+    },
+    "part6-diagram1": {
+      "attrs": {
+        "width": "1120",
+        "height": "580",
+        "viewBox": "0 0 1120 580",
+        "role": "img",
+        "aria-labelledby": "t6 d6"
+      },
+      "children": [
+        {
+          "tag": "title",
+          "attrs": {
+            "id": "t6"
+          },
+          "text": "Divergence ramp and causal locus (Part 6)"
+        },
+        {
+          "tag": "desc",
+          "attrs": {
+            "id": "d6"
+          },
+          "text": "Two model-family divergence profiles show the causal locus immediately before the visible ramp. Patching that single layer restores the output."
+        },
+        {
+          "tag": "style",
+          "text": ".mono { font-family: \"SFMono-Regular\", Consolas, \"Liberation Mono\", Menlo, monospace; }\n    .panel { fill: #0d1014; stroke: rgba(206,199,186,0.18); stroke-width: 1.2; rx: 8; }\n    .axis { stroke: #7e7f87; stroke-width: 1.2; }\n    .grid { stroke: rgba(206,199,186,0.18); stroke-width: 1; stroke-dasharray: 3 5; }\n    .curve { stroke: #b3a7e2; stroke-width: 3; fill: none; stroke-linejoin: round; stroke-linecap: round; }\n    .locus { fill: #e0645a; stroke: #0d1014; stroke-width: 2; }\n    .title { fill: #f3efe5; font-size: 17px; text-anchor: middle; }\n    .panel-title { fill: #f3efe5; font-size: 15px; text-anchor: start; }\n    .muted { fill: #a6a6ad; font-size: 12px; }\n    .tick { fill: #7e7f87; font-size: 11px; text-anchor: middle; }\n    .accent { fill: #b3a7e2; font-size: 13px; }\n    .evidence { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.4; rx: 7; }\n    .result { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.8; rx: 9; }\n    .arrow { stroke: #9b8fd1; stroke-width: 1.8; fill: none; }\n    .result-title { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }\n    .result-copy { fill: #f3efe5; font-size: 13px; text-anchor: middle; }\n    .foot { fill: #a6a6ad; font-size: 12px; text-anchor: middle; }"
+        },
+        {
+          "tag": "defs",
+          "children": [
+            {
+              "tag": "marker",
+              "attrs": {
+                "id": "arrow-accent",
+                "viewBox": "0 0 10 10",
+                "refX": "8",
+                "refY": "5",
+                "markerWidth": "8",
+                "markerHeight": "8",
+                "orient": "auto-start-reverse"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "attrs": {
+                    "d": "M 0 0 L 10 5 L 0 10 z",
+                    "fill": "#9b8fd1"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono title",
+            "x": "560",
+            "y": "36"
+          },
+          "text": "causal locus first, visible divergence one layer later"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "panel",
+            "x": "54",
+            "y": "58",
+            "width": "492",
+            "height": "270"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "panel",
+            "x": "574",
+            "y": "58",
+            "width": "492",
+            "height": "270"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono panel-title",
+            "x": "78",
+            "y": "88"
+          },
+          "text": "llama-3.2-1b"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono muted",
+            "x": "78",
+            "y": "108"
+          },
+          "text": "dense-layer divergence · schematic"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono panel-title",
+            "x": "598",
+            "y": "88"
+          },
+          "text": "qwen2.5-1.5b"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono muted",
+            "x": "598",
+            "y": "108"
+          },
+          "text": "gradual mid-network ramp · schematic"
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "axis",
+            "x1": "92",
+            "y1": "272",
+            "x2": "516",
+            "y2": "272"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "axis",
+            "x1": "92",
+            "y1": "126",
+            "x2": "92",
+            "y2": "272"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "grid",
+            "x1": "92",
+            "y1": "224",
+            "x2": "516",
+            "y2": "224"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "grid",
+            "x1": "92",
+            "y1": "176",
+            "x2": "516",
+            "y2": "176"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "axis",
+            "x1": "612",
+            "y1": "272",
+            "x2": "1036",
+            "y2": "272"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "axis",
+            "x1": "612",
+            "y1": "126",
+            "x2": "612",
+            "y2": "272"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "grid",
+            "x1": "612",
+            "y1": "224",
+            "x2": "1036",
+            "y2": "224"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "grid",
+            "x1": "612",
+            "y1": "176",
+            "x2": "1036",
+            "y2": "176"
+          }
+        },
+        {
+          "tag": "polyline",
+          "attrs": {
+            "class": "curve",
+            "points": "92,266 120,263 148,218 176,197 232,188 316,184 400,184 472,186 516,221"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "grid",
+            "x1": "120",
+            "y1": "126",
+            "x2": "120",
+            "y2": "272"
+          }
+        },
+        {
+          "tag": "circle",
+          "attrs": {
+            "class": "locus",
+            "cx": "120",
+            "cy": "263",
+            "r": "9"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent",
+            "x": "138",
+            "y": "250"
+          },
+          "text": "ramp begins at L2"
+        },
+        {
+          "tag": "polyline",
+          "attrs": {
+            "class": "curve",
+            "points": "612,266 648,258 684,242 720,218 748,180 776,164 804,166 832,184 860,210"
+          }
+        },
+        {
+          "tag": "line",
+          "attrs": {
+            "class": "grid",
+            "x1": "720",
+            "y1": "126",
+            "x2": "720",
+            "y2": "272"
+          }
+        },
+        {
+          "tag": "circle",
+          "attrs": {
+            "class": "locus",
+            "cx": "720",
+            "cy": "218",
+            "r": "9"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent",
+            "x": "738",
+            "y": "205"
+          },
+          "text": "ramp follows L7"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "92",
+            "y": "292"
+          },
+          "text": "L0"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "120",
+            "y": "292"
+          },
+          "text": "L1"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "148",
+            "y": "292"
+          },
+          "text": "L2"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "232",
+            "y": "292"
+          },
+          "text": "L5"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "372",
+            "y": "292"
+          },
+          "text": "L10"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "516",
+            "y": "292"
+          },
+          "text": "L15"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "612",
+            "y": "292"
+          },
+          "text": "L0"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "720",
+            "y": "292"
+          },
+          "text": "L7"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "804",
+            "y": "292"
+          },
+          "text": "L14"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "916",
+            "y": "292"
+          },
+          "text": "L21"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono tick",
+            "x": "1036",
+            "y": "292"
+          },
+          "text": "L28"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono muted",
+            "x": "78",
+            "y": "315"
+          },
+          "text": "causal locus: L1"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono muted",
+            "x": "598",
+            "y": "315"
+          },
+          "text": "causal locus: L7"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "evidence",
+            "x": "64",
+            "y": "360",
+            "width": "300",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent",
+            "x": "214",
+            "y": "384",
+            "text-anchor": "middle"
+          },
+          "text": "llama: L1 locus → ramp at L2"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono muted",
+            "x": "214",
+            "y": "402",
+            "text-anchor": "middle"
+          },
+          "text": "one-layer lead"
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "evidence",
+            "x": "756",
+            "y": "360",
+            "width": "300",
+            "height": "58"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono accent",
+            "x": "906",
+            "y": "384",
+            "text-anchor": "middle"
+          },
+          "text": "qwen: L7 locus → ramp after L7"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono muted",
+            "x": "906",
+            "y": "402",
+            "text-anchor": "middle"
+          },
+          "text": "same causal ordering"
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "class": "arrow",
+            "d": "M 364 389 C 420 389, 410 438, 452 438",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "path",
+          "attrs": {
+            "class": "arrow",
+            "d": "M 756 389 C 700 389, 710 438, 668 438",
+            "marker-end": "url(#arrow-accent)"
+          }
+        },
+        {
+          "tag": "rect",
+          "attrs": {
+            "class": "result",
+            "x": "390",
+            "y": "420",
+            "width": "340",
+            "height": "84"
+          }
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono result-title",
+            "x": "560",
+            "y": "448"
+          },
+          "text": "patch one causal layer"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono result-copy",
+            "x": "560",
+            "y": "474"
+          },
+          "text": "output restored · rel-L2 0.4279 → 0.0989"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono muted",
+            "x": "560",
+            "y": "492",
+            "text-anchor": "middle"
+          },
+          "text": "validated rows · 2026-08-04"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono foot",
+            "x": "560",
+            "y": "544"
+          },
+          "text": "the visible ramp is a downstream symptom, not the causal starting point"
+        },
+        {
+          "tag": "text",
+          "attrs": {
+            "class": "mono foot",
+            "x": "560",
+            "y": "564"
+          },
+          "text": "schematic shape; anchors from PILOT_REPORT.md dense-layer analysis"
+        }
+      ]
+    }
+  }
+}

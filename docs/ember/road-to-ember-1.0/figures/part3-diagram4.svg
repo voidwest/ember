@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="540" viewBox="0 0 1120 540" role="img" aria-labelledby="t34 d34">
+  <title id="t34">Q4_K and Q6_K super-block anatomy (v0.3)</title>
+  <desc id="d34">Conceptual super-block layout: Q4_K groups 8 blocks of 32 weights with per-block 2-bit scale factors and offsets; Q6_K groups 16 blocks of 16 weights with int8 scales; dispatch is per tensor because a Q4_K_M file mixes tensor dtypes.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #0d1014; stroke: rgba(206,199,186,0.32); stroke-width: 1.3; rx: 8; }
+    .boxlabel { fill: #f3efe5; font-size: 16px; text-anchor: middle; }
+    .accent-box { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.6; rx: 8; }
+    .accent-label { fill: #b3a7e2; font-size: 16px; text-anchor: middle; }
+    .block { fill: #12151a; stroke: #7e7f87; stroke-width: 1.2; rx: 5; }
+    .blocklabel { fill: #f3efe5; font-size: 13px; text-anchor: middle; }
+    .annot { fill: #a6a6ad; font-size: 14px; }
+    .colhead { fill: #a6a6ad; font-size: 14px; letter-spacing: 0.06em; text-transform: uppercase; }</style>
+  <text class="mono colhead" x="64" y="52">Q4_K, 8 blocks × 32 weights per super-block</text>
+  <rect class="accent-box" x="64" y="66" width="480" height="140" />
+  <text class="mono accent-label" x="304" y="96">super-block: 256 weights</text>
+  <g>
+    <rect class="block" x="84" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="122" y="132">qs</text>
+    <text class="mono blocklabel" x="122" y="152">4-bit ×32</text>
+    <rect class="block" x="172" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="210" y="132">d</text>
+    <text class="mono blocklabel" x="210" y="152">2-bit ×16</text>
+    <rect class="block" x="260" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="298" y="132">d</text>
+    <text class="mono blocklabel" x="298" y="152">scale</text>
+    <text class="mono blocklabel" x="360" y="140">…</text>
+    <rect class="block" x="392" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="430" y="132">qs</text>
+    <text class="mono blocklabel" x="430" y="152">4-bit ×32</text>
+    <rect class="block" x="480" y="112" width="40" height="52" />
+  </g>
+  <text class="mono annot" x="304" y="242" text-anchor="middle">per-block 2-bit scale factors (d) and offsets</text>
+  <text class="mono annot" x="304" y="262" text-anchor="middle">4-bit quantized values (qs)</text>
+  <text class="mono colhead" x="580" y="52">Q6_K, 16 blocks × 16 weights per super-block</text>
+  <rect class="accent-box" x="580" y="66" width="480" height="140" />
+  <text class="mono accent-label" x="820" y="96">super-block: 256 weights</text>
+  <g>
+    <rect class="block" x="600" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="638" y="132">qs</text>
+    <text class="mono blocklabel" x="638" y="152">6-bit ×16</text>
+    <rect class="block" x="688" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="726" y="132">d</text>
+    <text class="mono blocklabel" x="726" y="152">int8</text>
+    <text class="mono blocklabel" x="784" y="140">…</text>
+    <rect class="block" x="816" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="854" y="132">qs</text>
+    <text class="mono blocklabel" x="854" y="152">6-bit ×16</text>
+    <rect class="block" x="904" y="112" width="76" height="52" />
+    <text class="mono blocklabel" x="942" y="132">d</text>
+    <text class="mono blocklabel" x="942" y="152">int8</text>
+    <rect class="block" x="992" y="112" width="48" height="52" />
+  </g>
+  <text class="mono annot" x="820" y="242" font-size="13" text-anchor="middle">per-block int8 scales · 6-bit qs</text>
+  <text class="mono annot" x="64" y="330">dispatch is per tensor, not per file: a Q4_K_M checkpoint mixes dtypes, llama-3.2-1b q4_k_m contains</text>
+  <text class="mono annot" x="64" y="356">96 × Q4_K + 17 × Q6_K + 34 × F32 tensors (docs/v03-execution-contracts.md §5), so both native kernels must exist,</text>
+  <text class="mono annot" x="64" y="382">and the loader reads the inventory from the GGUF headers rather than trusting the file name.</text>
+</svg>

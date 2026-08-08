@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="520" viewBox="0 0 1120 520" role="img" aria-labelledby="t5c d5c">
+  <title id="t5c">Baseline, intervention, restoration (v0.5)</title>
+  <desc id="d5c">Three runs of the reference workflow: the intervention changes the generated text and diverges from step 1 with captures diverging from layer 8; restoration reproduces the baseline bit-exactly.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .rowlabel { fill: #66676b; font-size: 15px; text-anchor: start; }
+    .bar { fill: #fbf8f1; stroke: rgba(92,84,72,0.38); stroke-width: 1.4; rx: 8; }
+    .bartext { fill: #18191b; font-size: 16px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace, "Noto Naskh Arabic", "Noto Sans Arabic", sans-serif; }
+    .accent-bar { fill: #ece6da; stroke: #8275bc; stroke-width: 1.7; rx: 8; }
+    .accent-text { fill: #6659a1; font-size: 16px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace, "Noto Naskh Arabic", "Noto Sans Arabic", sans-serif; }
+    .red-bar { fill: #fbf8f1; stroke: #ad3d30; stroke-width: 1.7; rx: 8; }
+    .red-text { fill: #ad3d30; font-size: 16px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace, "Noto Naskh Arabic", "Noto Sans Arabic", sans-serif; }
+    .annot { fill: #66676b; font-size: 14px; text-anchor: start; }
+    .eq { stroke: #6659a1; stroke-width: 1.6; fill: none; }
+    .layer { fill: #77746e; font-size: 12px; text-anchor: middle; }
+    .arrow { stroke: #77746e; stroke-width: 1.6; fill: none; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#77746e" />
+    </marker>
+  </defs>
+  <text class="mono rowlabel" x="64" y="52">baseline</text>
+  <rect class="bar" x="200" y="34" width="380" height="44" />
+  <text class="mono bartext" x="390" y="61">" كِتَاب هو كلمة" · logit 15.830…</text>
+  <rect class="bar" x="640" y="34" width="420" height="44" />
+  <text class="mono bartext" x="850" y="61">32/32 captures bit-exact (all layers)</text>
+  <text class="mono rowlabel" x="64" y="130">intervention</text>
+  <rect class="red-bar" x="200" y="112" width="380" height="44" />
+  <text class="mono red-text" x="390" y="139">"، وَما يُشك" · logit 12.156…</text>
+  <line class="arrow" x1="200" y1="134" x2="160" y2="134" marker-end="url(#arrow)" />
+  <text class="mono annot" x="64" y="172">first divergence at step 1</text>
+  <rect class="red-bar" x="640" y="112" width="420" height="44" />
+  <text class="mono red-text" x="850" y="139">prompt-final captures diverge layers 8–15</text>
+  <g>
+    <rect x="640" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="652" y="196">0</text>
+    <rect x="666" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="678" y="196">1</text>
+    <rect x="692" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="704" y="196">2</text>
+    <rect x="718" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="730" y="196">3</text>
+    <rect x="744" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="756" y="196">4</text>
+    <rect x="770" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="782" y="196">5</text>
+    <rect x="796" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="808" y="196">6</text>
+    <rect x="822" y="170" width="24" height="10" fill="none" stroke="#77746e" stroke-width="0.9" />
+    <text class="mono layer" x="834" y="196">7</text>
+    <rect x="848" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="860" y="196">8</text>
+    <rect x="874" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="886" y="196">9</text>
+    <rect x="900" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="912" y="196">10</text>
+    <rect x="926" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="938" y="196">11</text>
+    <rect x="952" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="964" y="196">12</text>
+    <rect x="978" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="990" y="196">13</text>
+    <rect x="1004" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="1016" y="196">14</text>
+    <rect x="1030" y="170" width="24" height="10" fill="#ad3d30" opacity="0.6" />
+    <text class="mono layer" x="1042" y="196">15</text>
+  </g>
+  <text class="mono annot" x="850" y="226" fill="#ad3d30" text-anchor="middle">layer-7 residual-post-mlp patch</text>
+  <text class="mono annot" x="850" y="246" fill="#ad3d30" text-anchor="middle">consumed from layer 8 onward</text>
+  <text class="mono rowlabel" x="64" y="280">restoration</text>
+  <rect class="accent-bar" x="200" y="262" width="380" height="44" />
+  <text class="mono accent-text" x="390" y="289">" كِتَاب هو كلمة" · logit 15.830…</text>
+  <rect class="accent-bar" x="640" y="262" width="420" height="44" />
+  <text class="mono accent-text" x="850" y="289">32/32 captures bit-exact · outputs equal</text>
+  <line class="eq" x1="390" y1="258" x2="390" y2="78" />
+  <line class="eq" x1="850" y1="258" x2="850" y2="78" />
+  <text class="mono annot" x="410" y="170">identical</text>
+  <text class="mono annot" x="870" y="170">bit-exact</text>
+  <text class="mono annot" x="64" y="392" font-size="13">live reproduction 2026-08-04, Llama-3.2-1B Q8_0, runs/part5-{baseline,intervention,restoration}</text>
+  <text class="mono annot" x="64" y="418" font-size="13">intervention events 0 vs 1 · restore event 0 vs 1 (artifacts/benchmark-v05/part5-reproduction.md §3)</text>
+</svg>

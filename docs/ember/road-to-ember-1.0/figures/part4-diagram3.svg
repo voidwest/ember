@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="700" viewBox="0 0 1120 700" role="img" aria-labelledby="t4c d4c">
+  <title id="t4c">When the CPU became an unreliable witness</title>
+  <desc id="d4c">Six benchmark failures and the protocol fix for each.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .fail { fill: #0d1014; stroke: #e0645a; stroke-width: 1.5; rx: 8; }
+    .failtext { fill: #f3efe5; font-size: 15px; text-anchor: start; }
+    .fix { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.5; rx: 8; }
+    .fixtext { fill: #b3a7e2; font-size: 15px; text-anchor: start; }
+    .num { fill: #e0645a; font-size: 19px; font-family: "SFMono-Regular", Consolas, monospace; }
+    .arrow { stroke: #7e7f87; stroke-width: 1.6; fill: none; }
+    .foot { fill: #a6a6ad; font-size: 14px; text-anchor: start; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#7e7f87" />
+    </marker>
+  </defs>
+  <g>
+    <text class="num" x="64" y="52">1</text>
+    <rect class="fail" x="96" y="30" width="460" height="60" />
+    <text class="mono failtext" x="112" y="54">thermal noise, fused execution appeared slower</text>
+    <text class="mono failtext" x="112" y="78" font-size="13" fill="#e0645a">powersave governor, throttled window</text>
+    <line class="arrow" x1="556" y1="60" x2="580" y2="60" marker-end="url(#arrow)" />
+    <rect class="fix" x="584" y="30" width="496" height="60" />
+    <text class="mono fixtext" x="600" y="54">back-to-back arms per model · medians over 5 reps</text>
+    <text class="mono fixtext" x="600" y="78" font-size="13" fill="#9b8fd1">all modes share the machine state</text>
+  </g>
+  <g>
+    <text class="num" x="64" y="128">2</text>
+    <rect class="fail" x="96" y="106" width="460" height="60" />
+    <text class="mono failtext" x="112" y="130">benchmark mode ran the reference path</text>
+    <text class="mono failtext" x="112" y="154" font-size="13" fill="#e0645a">planned-fused until planned_decode_eligible</text>
+    <line class="arrow" x1="556" y1="136" x2="580" y2="136" marker-end="url(#arrow)" />
+    <rect class="fix" x="584" y="106" width="496" height="60" />
+    <text class="mono fixtext" x="600" y="130">execution-mode eligibility gate on the CLI path</text>
+    <text class="mono fixtext" x="600" y="154" font-size="13" fill="#9b8fd1">a named mode must actually run (CHANGELOG v0.4 Fixed)</text>
+  </g>
+  <g>
+    <text class="num" x="64" y="204">3</text>
+    <rect class="fail" x="96" y="182" width="460" height="60" />
+    <text class="mono failtext" x="112" y="206">fusion tests passed without exercising</text>
+    <text class="mono failtext" x="112" y="230" font-size="13" fill="#e0645a">the intended route (reconstruction)</text>
+    <line class="arrow" x1="556" y1="212" x2="580" y2="212" marker-end="url(#arrow)" />
+    <rect class="fix" x="584" y="182" width="496" height="60" />
+    <text class="mono fixtext" x="600" y="206">explicit-mode parity tests assert greedy tokens</text>
+    <text class="mono fixtext" x="600" y="230" font-size="13" fill="#9b8fd1">tests/k_parity.rs, real-model gates B</text>
+  </g>
+  <g>
+    <text class="num" x="64" y="280">4</text>
+    <rect class="fail" x="96" y="258" width="460" height="60" />
+    <text class="mono failtext" x="112" y="282">allocation gate tested a shadowed trait path</text>
+    <text class="mono failtext" x="112" y="306" font-size="13" fill="#e0645a">inherent method shadowed the dispatch</text>
+    <line class="arrow" x1="556" y1="288" x2="580" y2="288" marker-end="url(#arrow)" />
+    <rect class="fix" x="584" y="258" width="496" height="60" />
+    <text class="mono fixtext" x="600" y="282">gate routed through the ForwardModel trait</text>
+    <text class="mono fixtext" x="600" y="306" font-size="13" fill="#9b8fd1">the path the real CLI actually dispatches</text>
+  </g>
+  <g>
+    <text class="num" x="64" y="356">5</text>
+    <rect class="fail" x="96" y="334" width="460" height="60" />
+    <text class="mono failtext" x="112" y="358">pinned-core runs distorted performance</text>
+    <text class="mono failtext" x="112" y="382" font-size="13" fill="#e0645a">taskset on 4 physical cores</text>
+    <line class="arrow" x1="556" y1="364" x2="580" y2="364" marker-end="url(#arrow)" />
+    <rect class="fix" x="584" y="334" width="496" height="60" />
+    <text class="mono fixtext" x="600" y="358">full 8-thread machine, no taskset</text>
+    <text class="mono fixtext" x="600" y="382" font-size="13" fill="#9b8fd1">the column-parallel matvec is the lever</text>
+  </g>
+  <g>
+    <text class="num" x="64" y="432">6</text>
+    <rect class="fail" x="96" y="410" width="460" height="60" />
+    <text class="mono failtext" x="112" y="434">attention dedup exposed false allocation</text>
+    <text class="mono failtext" x="112" y="458" font-size="13" fill="#e0645a">per-task Vecs on rayon-stealing threads</text>
+    <line class="arrow" x1="556" y1="440" x2="580" y2="440" marker-end="url(#arrow)" />
+    <rect class="fix" x="584" y="410" width="496" height="60" />
+    <text class="mono fixtext" x="600" y="434">zero-initialized matvec destinations</text>
+    <text class="mono fixtext" x="600" y="458" font-size="13" fill="#9b8fd1">post-release dedup pass (commit 624a216)</text>
+  </g>
+  <text class="mono foot" x="96" y="540">every failure is the harness being benchmarked instead of the engine</text>
+  <text class="mono foot" x="96" y="566">a faster runtime is not trustworthy unless the harness and the semantic route are also validated</text>
+</svg>

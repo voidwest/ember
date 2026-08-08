@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="560" viewBox="0 0 1120 560" role="img" aria-labelledby="t2 d2">
+  <title id="t2">The six-step intervention cycle (v0.2)</title>
+  <desc id="d2">Baseline capture, altered run, patch one layer, downstream output changes, restore the original activation, output returns to baseline, the frozen restoration criterion is bit-exact.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .box { fill: #fbf8f1; stroke: rgba(92,84,72,0.38); stroke-width: 1.3; rx: 8; }
+    .boxlabel { fill: #18191b; font-size: 16px; text-anchor: middle; }
+    .accent-box { fill: #ece6da; stroke: #8275bc; stroke-width: 1.6; rx: 8; }
+    .accent-label { fill: #6659a1; font-size: 16px; text-anchor: middle; }
+    .red-box { fill: #fbf8f1; stroke: #ad3d30; stroke-width: 1.7; stroke-dasharray: 6 4; rx: 8; }
+    .red-label { fill: #ad3d30; font-size: 16px; text-anchor: middle; }
+    .arrow { stroke: #77746e; stroke-width: 1.6; fill: none; }
+    .accent-arrow { stroke: #8275bc; stroke-width: 1.8; fill: none; }
+    .loop { stroke: #6659a1; stroke-width: 1.6; stroke-dasharray: 6 4; fill: none; }
+    .hook { fill: #8275bc; stroke: #fbf8f1; stroke-width: 1.6; }
+    .hooknum { fill: #18191b; font-size: 11px; text-anchor: middle; font-family: "SFMono-Regular", Consolas, monospace; }
+    .steplabel { fill: #66676b; font-size: 14px; }
+    .annot { fill: #66676b; font-size: 14px; }</style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#77746e" />
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8275bc" />
+    </marker>
+    <marker id="arrow-loop" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#6659a1" />
+    </marker>
+  </defs>
+  <text class="mono steplabel" x="64" y="76">run A, baseline, with capture</text>
+  <rect class="box" x="64" y="88" width="250" height="64" />
+  <text class="mono boxlabel" x="189" y="124" style="font-size:14px">1 · capture baseline</text>
+  <line class="arrow" x1="314" y1="120" x2="368" y2="120" marker-end="url(#arrow)" />
+  <text class="mono steplabel" x="372" y="76">run B, zero-layer-output 4:mlp</text>
+  <rect class="red-box" x="372" y="88" width="250" height="64" />
+  <text class="mono red-label" x="497" y="124" style="font-size:14px">2 · altered (0/8 match)</text>
+  <line class="arrow" x1="622" y1="120" x2="676" y2="120" marker-end="url(#arrow)" />
+  <text class="mono steplabel" x="680" y="76">run C, patch A's layer-4 activation back</text>
+  <rect class="accent-box" x="680" y="88" width="300" height="64" />
+  <text class="mono accent-label" x="830" y="124" style="font-size:14px">3 · patch one layer</text>
+  <circle class="hook" cx="964" cy="120" r="11" />
+  <text class="hooknum" x="964" y="124">h</text>
+  <line class="accent-arrow" x1="830" y1="152" x2="830" y2="230" marker-end="url(#arrow-accent)" />
+  <text class="mono steplabel" x="64" y="248">replaced value propagates</text>
+  <rect class="box" x="64" y="260" width="250" height="64" />
+  <text class="mono boxlabel" x="189" y="296" style="font-size:14px">4 · downstream shifts</text>
+  <line class="arrow" x1="314" y1="292" x2="368" y2="292" marker-end="url(#arrow)" />
+  <text class="mono steplabel" x="372" y="248">restore original at same site</text>
+  <rect class="accent-box" x="372" y="260" width="250" height="64" />
+  <text class="mono accent-label" x="497" y="296" style="font-size:14px">5 · restore activation</text>
+  <circle class="hook" cx="610" cy="292" r="11" />
+  <text class="hooknum" x="610" y="296">h</text>
+  <line class="arrow" x1="622" y1="292" x2="676" y2="292" marker-end="url(#arrow)" />
+  <text class="mono steplabel" x="680" y="248">frozen criterion: bit-exact logits</text>
+  <rect class="accent-box" x="680" y="260" width="300" height="64" />
+  <text class="mono accent-label" x="830" y="296" style="font-size:14px">6 · output returns to baseline</text>
+  <path class="loop" d="M 980 260 C 1060 260 1060 84 980 84 L 316 84" marker-end="url(#arrow-loop)" />
+  <text class="mono annot" x="1010" y="210" font-size="13" text-anchor="end">tensor-identical 8/8</text>
+  <text class="mono annot" x="64" y="404">live reproduction, 2026-08-04, Qwen3-0.6B Q8_0: A ids 12095 13 576 6722 · B 279 6722 3283 315 · C 12095 13 576 6722</text>
+  <text class="mono annot" x="64" y="432">A vs B differs 0/8 · A vs C tensor-identical 8/8, generated ids equal (artifacts/benchmark-v02/part2-capture-patch.md)</text>
+</svg>

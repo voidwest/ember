@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="580" viewBox="0 0 1120 580" role="img" aria-labelledby="t6 d6">
+  <title id="t6">Divergence ramp and causal locus (Part 6)</title>
+  <desc id="d6">Two model-family divergence profiles show the causal locus immediately before the visible ramp. Patching that single layer restores the output.</desc>
+  <style>.mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; }
+    .panel { fill: #0d1014; stroke: rgba(206,199,186,0.18); stroke-width: 1.2; rx: 8; }
+    .axis { stroke: #7e7f87; stroke-width: 1.2; }
+    .grid { stroke: rgba(206,199,186,0.18); stroke-width: 1; stroke-dasharray: 3 5; }
+    .curve { stroke: #b3a7e2; stroke-width: 3; fill: none; stroke-linejoin: round; stroke-linecap: round; }
+    .locus { fill: #e0645a; stroke: #0d1014; stroke-width: 2; }
+    .title { fill: #f3efe5; font-size: 17px; text-anchor: middle; }
+    .panel-title { fill: #f3efe5; font-size: 15px; text-anchor: start; }
+    .muted { fill: #a6a6ad; font-size: 12px; }
+    .tick { fill: #7e7f87; font-size: 11px; text-anchor: middle; }
+    .accent { fill: #b3a7e2; font-size: 13px; }
+    .evidence { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.4; rx: 7; }
+    .result { fill: #12151a; stroke: #9b8fd1; stroke-width: 1.8; rx: 9; }
+    .arrow { stroke: #9b8fd1; stroke-width: 1.8; fill: none; }
+    .result-title { fill: #b3a7e2; font-size: 17px; text-anchor: middle; }
+    .result-copy { fill: #f3efe5; font-size: 13px; text-anchor: middle; }
+    .foot { fill: #a6a6ad; font-size: 12px; text-anchor: middle; }</style>
+  <defs>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9b8fd1" />
+    </marker>
+  </defs>
+  <text class="mono title" x="560" y="36">causal locus first, visible divergence one layer later</text>
+  <rect class="panel" x="54" y="58" width="492" height="270" />
+  <rect class="panel" x="574" y="58" width="492" height="270" />
+  <text class="mono panel-title" x="78" y="88">llama-3.2-1b</text>
+  <text class="mono muted" x="78" y="108">dense-layer divergence · schematic</text>
+  <text class="mono panel-title" x="598" y="88">qwen2.5-1.5b</text>
+  <text class="mono muted" x="598" y="108">gradual mid-network ramp · schematic</text>
+  <line class="axis" x1="92" y1="272" x2="516" y2="272" />
+  <line class="axis" x1="92" y1="126" x2="92" y2="272" />
+  <line class="grid" x1="92" y1="224" x2="516" y2="224" />
+  <line class="grid" x1="92" y1="176" x2="516" y2="176" />
+  <line class="axis" x1="612" y1="272" x2="1036" y2="272" />
+  <line class="axis" x1="612" y1="126" x2="612" y2="272" />
+  <line class="grid" x1="612" y1="224" x2="1036" y2="224" />
+  <line class="grid" x1="612" y1="176" x2="1036" y2="176" />
+  <polyline class="curve" points="92,266 120,263 148,218 176,197 232,188 316,184 400,184 472,186 516,221" />
+  <line class="grid" x1="120" y1="126" x2="120" y2="272" />
+  <circle class="locus" cx="120" cy="263" r="9" />
+  <text class="mono accent" x="138" y="250">ramp begins at L2</text>
+  <polyline class="curve" points="612,266 648,258 684,242 720,218 748,180 776,164 804,166 832,184 860,210" />
+  <line class="grid" x1="720" y1="126" x2="720" y2="272" />
+  <circle class="locus" cx="720" cy="218" r="9" />
+  <text class="mono accent" x="738" y="205">ramp follows L7</text>
+  <text class="mono tick" x="92" y="292">L0</text>
+  <text class="mono tick" x="120" y="292">L1</text>
+  <text class="mono tick" x="148" y="292">L2</text>
+  <text class="mono tick" x="232" y="292">L5</text>
+  <text class="mono tick" x="372" y="292">L10</text>
+  <text class="mono tick" x="516" y="292">L15</text>
+  <text class="mono tick" x="612" y="292">L0</text>
+  <text class="mono tick" x="720" y="292">L7</text>
+  <text class="mono tick" x="804" y="292">L14</text>
+  <text class="mono tick" x="916" y="292">L21</text>
+  <text class="mono tick" x="1036" y="292">L28</text>
+  <text class="mono muted" x="78" y="315">causal locus: L1</text>
+  <text class="mono muted" x="598" y="315">causal locus: L7</text>
+  <rect class="evidence" x="64" y="360" width="300" height="58" />
+  <text class="mono accent" x="214" y="384" text-anchor="middle">llama: L1 locus → ramp at L2</text>
+  <text class="mono muted" x="214" y="402" text-anchor="middle">one-layer lead</text>
+  <rect class="evidence" x="756" y="360" width="300" height="58" />
+  <text class="mono accent" x="906" y="384" text-anchor="middle">qwen: L7 locus → ramp after L7</text>
+  <text class="mono muted" x="906" y="402" text-anchor="middle">same causal ordering</text>
+  <path class="arrow" d="M 364 389 C 420 389, 410 438, 452 438" marker-end="url(#arrow-accent)" />
+  <path class="arrow" d="M 756 389 C 700 389, 710 438, 668 438" marker-end="url(#arrow-accent)" />
+  <rect class="result" x="390" y="420" width="340" height="84" />
+  <text class="mono result-title" x="560" y="448">patch one causal layer</text>
+  <text class="mono result-copy" x="560" y="474">output restored · rel-L2 0.4279 → 0.0989</text>
+  <text class="mono muted" x="560" y="492" text-anchor="middle">validated rows · 2026-08-04</text>
+  <text class="mono foot" x="560" y="544">the visible ramp is a downstream symptom, not the causal starting point</text>
+  <text class="mono foot" x="560" y="564">schematic shape; anchors from PILOT_REPORT.md dense-layer analysis</text>
+</svg>

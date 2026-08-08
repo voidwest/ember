@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="the null result that produced a better tool" property="og:title"/>
+<meta content="Part 6 of Road to Ember 1.0: the Arabic-selective quantization hypothesis that failed, and the causal-localization toolchain it forced into existence." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/06-the-null-result.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>the null result that produced a better tool</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/06-the-null-result.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+              
+            <a href="/ember/road-to-ember-1.0/">road to ember 1.0</a>
+</div>
+<h1>the null result that produced a better tool</h1>
+<div class="meta">
+            draft · part 6 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">quantization</span>
+<span class="tag key">null results</span>
+<span class="tag key">causal localization</span>
+<span class="tag key">Arabic NLP</span>
+<span class="tag model">LLaMA</span>
+<span class="tag model">Qwen</span>
+</div>
+<div class="callout">
+<div class="label">draft status</div>
+<p>
+                complete draft with explicit citations. the causal-localization reproduction in section 5
+                was run live on 2026-08-04 and is recorded in
+                <code>artifacts/road-to-1.0/part6-null-result.md</code>. the null is scoped to the tested
+                matrix and is not externally reproduced; the causal result is validated on the rows with
+                completed golden checks (Qwen2.5-1.5B and Llama-3.2-1B families). the figure is embedded as
+                SVG (dark/light theme variants under <code>figures/</code>).
+            </p>
+</div>
+<p>
+we set out to show that quantization degrades Arabic specifically. the data said
+            no. the tools we built to check said something more useful.
+        </p>
+<h2>the hypothesis</h2>
+<p>
+            the pilot began with a paper-driven question: does low-bit quantization degrade Arabic
+            morphology and dialect behavior more than it degrades the languages the quantizers were tuned
+            on? the mechanism story was plausible, Arabic tokenization is unusual, the writing system is
+            high-entropy, and a compressed representation could plausibly lose the fine distinctions that
+            morphology probing depends on. the hypothesis, stated before the runs: an Arabic-selective
+            quantization degradation exists at Q4/Q6 relative to Q8.
+        </p>
+<h2>the matrix</h2>
+<p>
+            two model families, Qwen2.5-1.5B and Llama-3.2-1B, at three precisions each, Q8_0, Q6_K,
+            Q4_K_M, with a matched, hash-verified quantization ladder and a 32-item instrument balanced
+            across four categories: Arabic morphology, dialect and register, code-switching and script,
+            and controls (English + MSA). roughly 500 deterministic runs, temperature 0
+            (<code>docs/validation.md</code>; the item set and scoring live in the pilot directory,
+            local branch, not published).
+        </p>
+<h2>the null</h2>
+<p>
+            the headline hypothesis did not survive. behaviorally: Q4 was not worse than Q8 (q8 19/25,
+            q6 20/25, q4 20/25 correct on the scored items), 30 of 32 items produced identical output
+            across all three quants, and the two differences both favored lower precision. internally:
+            the q8-vs-q4 activation drift was about 5× the q8-vs-f16 drift and was uniform, dialect
+            items sat inside the control range, with no Arabic-selective amplification
+            (PILOT_REPORT.md, pilot directory).
+        </p>
+<p>
+            a falsified hypothesis is not a failed experiment. the null was informative in two ways. it
+            removed a wrong story, Arabic is not specially fragile at 4-bit in this matrix, and it
+            forced the question that could be answered: the quantization boundary does occasionally
+            break, and where it breaks, can we find out where and why?
+        </p>
+<h2>rare boundary failures, and the toolchain that localizes them</h2>
+<p>
+            the surviving failures were rare and specific. one Arabic morphology item (sound plural,
+            correct at f16 and q6, wrong at q8 on Qwen2.5-1.5B) was the case that mattered: a
+            quantization-boundary failure that a single-layer activation patch restored exactly, by
+            patching in the activation from <em>either</em> the f16 or the q6 run. the causal locus was
+            layer 7 of 28, one layer before the visible divergence ramp. the same pattern transferred to
+            Llama-3.2-1B: an adjective-number item failed at q6, and patching q6's layer-1 after-mlp
+            activation from q8 restored the correct output, with the answer-position divergence gap
+            collapsing from rel-L2 0.4286 to 0.0927 (4.6×); single-layer patches at layers 2 and 4 did
+            not restore. the causal layer sits one before the ramp in both families
+            (PILOT_REPORT.md).
+        </p>
+<p>
+            the mechanism consistent with all of it is a near-threshold flip: quantization noise crossing
+            the model's smallest decision margin, not a broad representational collapse. two failure
+            classes did not localize at a single layer, first-token divergence (both families) and one
+            control item that needed a multi-layer patch for partial restoration, which is itself a
+            useful boundary on the claim.
+        </p>
+<figure class="chart-wrap">
+<img alt="Divergence ramp and causal locus: the ramp starts one layer after the causal locus, and a single-layer patch at the locus restores the output" class="chart theme-chart-dark" loading="lazy" src="figures/part6-diagram1.svg" width="1120" height="580" decoding="async" />
+<img alt="Divergence ramp and causal locus (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part6-diagram1_light.svg" width="1120" height="580" decoding="async" />
+<figcaption>
+                figure 1, divergence ramp and causal locus (schematic, shape per PILOT_REPORT.md; the
+                anchor values are the recorded llama numbers). the causal layer sits one before the ramp
+                in both families; the single-layer patch restores the output (rel-L2 0.4279 → 0.0989 on
+                2026-08-04). scoped to the validated rows.
+            </figcaption>
+</figure>
+<h2>reproduced, with the harness drift documented</h2>
+<p>
+            reproducing the demo was its own lesson. the committed end-to-end script
+            (<code>research/pilots/arabic_quantization_001/causal_demo.sh</code>) patches the degraded
+            quant with the reference quant's captured activation, different model files. on 2026-08-04
+            the current binary refused it, fail-closed, because the patch source's model SHA-256 must now
+            match the current model (the rule was added 2026-08-03 in the hardening pass). and the
+            pilot's headline revision panicked on the llama Q6_K file (a tied-embedding orientation bug
+            fixed the same day the pilot ran). running the demo with the revision it was written for ,
+            in the window after the head fix and before the SHA rule, reproduced the finding:
+        </p>
+<pre><code>baseline compare: differs 0 identical / 85 aligned
+patched run applied (5 targets)
+answer-step logits: baseline rel_l2 vs reference 0.4279 | patched 0.0989
+criterion: divergence reduced 4.3x
+VERDICT: RESTORED</code></pre>
+<p>
+            the reproduction's numbers track the pilot's recorded numbers almost exactly (0.4286 → 0.0927
+            recorded vs 0.4279 → 0.0989 measured, 4.6× vs 4.3×). both harness findings are recorded in
+            <code>artifacts/road-to-1.0/part6-null-result.md</code>: the stricter model-SHA contract is
+            scientifically defensible (a patch is only meaningful when source and target are the same
+            model), and the as-committed demo simply predates it.
+        </p>
+<h2>validation caveats</h2>
+<ul>
+<li>the null is scoped to the tested matrix: two families, three precisions, ~500 runs. it
+                has not been reproduced externally.</li>
+<li>the causal result is validated on the rows with completed golden checks, Qwen2.5-1.5B
+                and Llama-3.2-1B, and the exact model names matter; "Qwen3" is not a synonym here.</li>
+<li>the near-threshold-flip mechanism is a consistency argument across the observed cases,
+                not a proof.</li>
+<li>the pilot's detail record lives on a local branch; the public record is the summary in
+                <code>docs/validation.md</code> and the README.</li>
+</ul>
+<h2>how the failed hypothesis redirected the project</h2>
+<p>
+            the question "does quantization hurt Arabic?" became "where, exactly, does quantization
+            break?", and answering the second question required the exact instruments this series has
+            been describing: capture with provenance (v0.2), compressed execution that keeps semantics
+            identical (v0.3), hooks that survive optimization (v0.4), and experiments another researcher
+            can verify (v0.5). the null result did not produce a research conclusion to publish; it
+            produced the toolchain that makes the next, better-posed question answerable.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<meta content="v0.2: capturing, patching, and restoring hidden states" property="og:title"/>
+<meta content="Part 2 of Road to Ember 1.0: from observation to intervention, and why a causal claim needs a tensor identity, not a probe score." property="og:description"/>
+<meta content="article" property="og:type"/>
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/02-capturing-patching-restoring.html" property="og:url"/>
+<meta content="voidwest" property="og:site_name"/>
+<meta content="summary" name="twitter:card"/>
+<title>v0.2: capturing, patching, and restoring hidden states</title>
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <!-- docs:og-image end -->
+        <link rel="stylesheet" href="series.css" />
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+<body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/02-capturing-patching-restoring.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+<a href="/">← voidwest</a>
+              
+            <a href="/ember/">ember</a>
+              
+            <a href="/ember/road-to-ember-1.0/">road to ember 1.0</a>
+</div>
+<h1>v0.2: capturing, patching, and restoring hidden states</h1>
+<div class="meta">
+            draft · part 2 of the road to Ember 1.0 series · not yet published<br/>
+            mohammed al-thobaiti · 2026-08-04<br/>
+<span class="tag key">Ember</span>
+<span class="tag key">interventions</span>
+<span class="tag key">hidden states</span>
+<span class="tag key">causal experiments</span>
+<span class="tag key">provenance</span>
+<span class="tag model">Qwen</span>
+</div>
+<div class="callout">
+<div class="label">draft status</div>
+<p>
+                complete draft with explicit citations to repository artifacts. the capture → compare →
+                patch → restore transcript below was produced live on 2026-08-04 by running the committed
+                v0.2 workflow (<code>scripts/research_example_capture_patch.sh</code>) and is recorded in
+                <code>artifacts/benchmark-v02/part2-capture-patch.md</code>. the figure is embedded as SVG
+                (dark/light theme variants under <code>figures/</code>).
+            </p>
+</div>
+<p>
+a probe can tell you that a direction is decodable. it cannot tell you whether
+            the model uses it. v0.2 built the instruments that can.
+        </p>
+<h2>the problem: observation is not causation</h2>
+<p>
+            a linear probe over cached hidden states shows that some direction in layer <em>l</em> carries
+            information about a word's morphological root. it does not show that the model uses that
+            direction to produce its output. the gap is the difference between decodability and causal
+            use, and it is exactly the gap the research question cares about: representational availability
+            without behavioral consequence.
+        </p>
+<p>
+            v0.2's answer, stated as its constraint: <em>intervention is scientifically meaningful only
+            when the tensor identity, layer, token position, and execution route are explicit.</em> a patch
+            that cannot say precisely what it replaced proves nothing; a restoration that is not bit-exact
+            proves less.
+        </p>
+<h2>capture: selective, provenance-carrying observation</h2>
+<p>
+<code>--capture-activations</code> records live tensors only for explicitly selected records ,
+            at one of six semantic hook stages (before-layer, after-attention, after-mlp, after-layer,
+            before-logits, after-logits), filtered by layer, phase, and decode position, with an optional
+            record cap (<code>CHANGELOG.md</code>, v0.2). each record carries its origin: the stage, layer,
+            phase, start position, the tensor hash, the model/tokenizer/GGUF provenance, a prompt hash
+            (with optional prompt omission), input and generated token ids, and the exact capture-config
+            hash. the artifact schema is versioned (<code>0.2.0-experimental</code>) and explicitly
+            carries no compatibility guarantee.
+        </p>
+<p>
+            the capture config is deliberately small, a TOML with an output dir, layers, stages, and
+            phase. the v0.2 workflow generates three of them, one per run (the workflow script embeds the
+            generator; <code>scripts/research_example_capture_patch.sh</code>).
+        </p>
+<h2>patch: one source, exactly resolved</h2>
+<p>
+<code>--activation-patch</code> replaces a live activation in place from a captured artifact.
+            the source resolution is unambiguous by construction: a target resolves to exactly one source
+            record (position-qualified or unique match), anything else is a hard error; family, layer,
+            width, dtype, and byte order are validated; a target that is never applied is a failure, not a
+            silent skip; and the hook allocates nothing after initialization
+            (<code>CHANGELOG.md</code>, v0.2).
+        </p>
+<h2>the compact example, run live</h2>
+<p>
+            the committed v0.2 workflow on Qwen3-0.6B Q8_0 (layer 4, stage after-mlp, 4 generated tokens,
+            temperature 0), reproduced on 2026-08-04
+            (<code>artifacts/benchmark-v02/part2-capture-patch.md</code>):
+        </p>
+<ol>
+<li><strong>run a</strong>, baseline, with capture.</li>
+<li><strong>run b</strong>, <code>--zero-layer-output 4:mlp</code>, same capture. the layer-4
+                MLP output is zeroed; the intervention is applied before the residual add, so the rest of
+                the network sees a different residual stream.</li>
+<li><strong>compare a vs b</strong>, <code>status=differs</code>, 0 of 8 records identical.
+                the output changed: token ids <code>12095 13 576 6722</code> → <code>279 6722 3283 315</code>.</li>
+<li><strong>run c</strong>, <code>--activation-patch</code>: a's layer-4 after-mlp activation
+                patched back in at prefill and every decode position (4 patch applications across 4
+                targets).</li>
+<li><strong>compare a vs c</strong>, <code>status=tensor-identical</code>, 8 of 8 records
+                bit-identical; generated ids back to <code>12095 13 576 6722</code>; model, tokenizer,
+                prompt, and input hashes all match. the only differences are recorded provenance
+                (the experiment's name and arguments, the capture config hash, argv, timestamp) ,
+                and <code>created_at_unix</code> plus the capture output dir are the fields
+                <code>compare-artifacts</code> is specified to ignore.</li>
+</ol>
+<p>
+            that is the frozen restoration criterion: the patched run's captured logits must be
+            bit-identical to the baseline's, sha256-equal at the tensor level, with generated-text
+            equality explicitly rejected as insufficient evidence (the script's own comment says so).
+        </p>
+<figure class="chart-wrap">
+<img alt="The six-step intervention cycle: baseline capture, altered run, patch one layer, downstream output changes, restore the original activation, output returns to baseline" class="chart theme-chart-dark" loading="lazy" src="figures/part2-diagram1.svg" width="1120" height="560" decoding="async" />
+<img alt="The six-step intervention cycle (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part2-diagram1_light.svg" width="1120" height="560" decoding="async" />
+<figcaption>
+                figure 1, the six-step intervention cycle, live on Qwen3-0.6B Q8_0 (2026-08-04): a baseline
+                → b zeroed layer-4 MLP output (0/8 records identical) → patch → downstream changes →
+                restore → a vs c tensor-identical 8/8 with generated ids equal
+                (artifacts/benchmark-v02/part2-capture-patch.md).
+            </figcaption>
+</figure>
+<h2>the honest finding: the harness drifted, the criterion held</h2>
+<p>
+            running the committed script on the current binary produced a surprise worth reporting rather
+            than hiding: the script exits with a failure even though the criterion passes. the script
+            asserts that the a-vs-c comparison status is the literal string <code>"identical"</code>; the
+            current <code>compare-artifacts</code> reports <code>"tensor-identical"</code> when every
+            aligned record is bit-identical but recorded provenance differs. the status vocabulary
+            evolved after v0.2 (the v0.5 comparison classes are exact-semantic, exact, output-equivalent,
+            top1-equivalent, failed), and the v0.2-era script was never updated.
+        </p>
+<p>
+            the substantive check is unambiguous: 8/8 records identical, generated token ids equal, all
+            substantive run fields equal (<code>artifacts/benchmark-v02/part2-capture-patch.md</code>
+            section 3). this is a harness-drift finding, the criterion held; the assertion string did not
+           , and it is exactly the kind of thing a series about trust should surface rather than smooth
+            over.
+        </p>
+<h2>why this is more than probe accuracy</h2>
+<p>
+            the same run can be read two ways. probe view: a direction at layer 4 is decodable. causal
+            view: zeroing the layer-4 MLP output changes the output, and restoring the exact activation
+            restores the exact output, tensor-for-tensor, down to the recorded logits. the second claim
+            is strictly stronger, and it is the one the v0.2 artifact schema is built to support: the
+            comparison aligns records on (phase, layer, stage, start position), refuses duplicates, and
+            reports per-record bit-exact equality, max/mean/RMS diff, cosine, L2 norms, and relative L2
+            error (<code>CHANGELOG.md</code>, v0.2).
+        </p>
+<h2>what still does not work</h2>
+<ul>
+<li>the <code>0.2.0-experimental</code> artifact schema may change without notice; nothing in
+                v0.2 is a compatibility commitment.</li>
+<li>one target layer/stage per patch experiment; capture and patching do not participate in
+                probe/extract/dump modes; prefill records are whole-sequence (token filters apply to
+                decode only).</li>
+<li>the v0.2.0 tag is retroactive, the tag object was created 2026-08-04, after v0.3.0; the
+                implementation range is identifiable in history (67ba4f5..cd7ffa1) but was not tagged at
+                the time.</li>
+<li>the committed v0.2 workflow script's status assertion is stale against the current binary
+                (the finding above); the criterion it enforces is intact.</li>
+<li>an intervention is only as meaningful as the execution route it runs on, which is why
+                v0.3 had to keep capture semantics identical on the compressed path, and why v0.4 had to
+                keep the hook sites observable under fusion.</li>
+</ul>
+<h2>what this unlocked</h2>
+<p>
+            the capture → compare → patch → restore cycle is the toolchain that later localized
+            quantization-boundary failures causally, the story of part 6. and the demand for provenance
+            at this granularity is what v0.5 turned into a verifiable artifact format.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
