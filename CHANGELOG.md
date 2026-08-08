@@ -7,6 +7,15 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.6.1] - 2026-08-09
+
+### Added
+
+- `ember gui` (native console): light/dark theme toggle in the header
+  (defaults to dark). Every color role in the console switches with the
+  palette, including iced widgets (inputs, combo boxes, editor, buttons)
+  which follow the iced `Theme`.
+
 ## [0.6.0] - 2026-08-06
 
 ### Added

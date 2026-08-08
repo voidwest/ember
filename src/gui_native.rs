@@ -184,6 +184,8 @@ struct Console {
     execution_combo: combo_box::State<String>,
     execution: String,
     prompt: text_editor::Content<iced::Renderer>,
+    // theme
+    dark: bool,
     // session + results
     session: Option<SessionInfo>,
     status: Status,
@@ -255,6 +257,7 @@ impl Console {
                  \u{642}\u{635}\u{64A}\u{631}\u{629} \u{639}\u{646} \u{627}\u{644}\u{645}\u{62F}\u{64A}\u{646}\u{629} \
                  \u{627}\u{644}\u{645}\u{646}\u{648}\u{631}\u{629}",
             ),
+            dark: true,
             session: None,
             status: Status::Idle,
             error: None,
@@ -270,6 +273,15 @@ impl Console {
 
     fn busy(&self) -> bool {
         self.status != Status::Idle
+    }
+
+    /// The active palette (dark by default; toggled from the header).
+    fn colors(&self) -> &'static Colors {
+        if self.dark {
+            &DARK
+        } else {
+            &LIGHT
+        }
     }
 
     fn model_name(&self) -> String {
@@ -463,6 +475,7 @@ enum Message {
     Run,
     Restore,
     Poll,
+    ToggleTheme,
 }
 
 fn update(state: &mut Console, message: Message) -> Task<Message> {
@@ -549,6 +562,7 @@ fn update(state: &mut Console, message: Message) -> Task<Message> {
             }
         }
         Message::Poll => state.drain_replies(),
+        Message::ToggleTheme => state.dark = !state.dark,
     }
     Task::none()
 }
@@ -565,50 +579,102 @@ fn subscription(state: &Console) -> Subscription<Message> {
 // view
 // ---------------------------------------------------------------------------
 
-// Dark console palette: light text on deep gray-blue surfaces.
-const BG: Color = Color::from_rgb8(0x1b, 0x1f, 0x26); // window background
-const PANEL: Color = Color::from_rgb8(0x23, 0x28, 0x30); // card/panel background
-const PANEL_ALT: Color = Color::from_rgb8(0x2a, 0x30, 0x3a); // nested output box
-const TEXT: Color = Color::from_rgb8(0xe8, 0xea, 0xee); // primary text
-const DIM: Color = Color::from_rgb8(0x9a, 0xa3, 0xb2); // secondary text
-const FAINT: Color = Color::from_rgb8(0x6e, 0x76, 0x84); // muted text
-const BORDER: Color = Color::from_rgb8(0x33, 0x3a, 0x45); // hairline borders
-const ACCENT: Color = Color::from_rgb8(0x5b, 0x8c, 0xf0); // interactive accent
-const OK: Color = Color::from_rgb8(0x3f, 0xb9, 0x6f);
-const ERR: Color = Color::from_rgb8(0xf0, 0x6a, 0x5e);
-const WARN: Color = Color::from_rgb8(0xd9, 0xa9, 0x4f);
+// The console palette (light and dark variants). The header stays dark in
+// both themes, so HEADER is a plain constant; everything else follows the
+// in-window theme toggle.
 const HEADER: Color = Color::from_rgb8(0x12, 0x15, 0x1a);
+
+struct Colors {
+    bg: Color,
+    panel: Color,
+    panel_alt: Color,
+    text: Color,
+    dim: Color,
+    faint: Color,
+    border: Color,
+    accent: Color,
+    ok: Color,
+    err: Color,
+    warn: Color,
+    err_box_bg: Color,
+    err_box_border: Color,
+    warn_box_bg: Color,
+    warn_box_border: Color,
+}
+
+/// Light console theme: dark text on white surfaces.
+const LIGHT: Colors = Colors {
+    bg: Color::from_rgb8(0xf4, 0xf5, 0xf7),
+    panel: Color::from_rgb8(0xff, 0xff, 0xff),
+    panel_alt: Color::from_rgb8(0xfc, 0xfc, 0xfd),
+    text: Color::from_rgb8(0x1c, 0x20, 0x26),
+    dim: Color::from_rgb8(0x5b, 0x62, 0x70),
+    faint: Color::from_rgb8(0x8a, 0x90, 0xa0),
+    border: Color::from_rgb8(0xd8, 0xda, 0xe0),
+    accent: Color::from_rgb8(0x24, 0x56, 0xc4),
+    ok: Color::from_rgb8(0x15, 0x7f, 0x3d),
+    err: Color::from_rgb8(0xb3, 0x26, 0x1e),
+    warn: Color::from_rgb8(0x9a, 0x67, 0x00),
+    err_box_bg: Color::from_rgb8(0xfd, 0xec, 0xeb),
+    err_box_border: Color::from_rgb8(0xe0, 0xa6, 0xa2),
+    warn_box_bg: Color::from_rgb8(0xfd, 0xf3, 0xd9),
+    warn_box_border: Color::from_rgb8(0xd9, 0xb4, 0x5a),
+};
+
+/// Dark console theme: light text on deep gray-blue surfaces.
+const DARK: Colors = Colors {
+    bg: Color::from_rgb8(0x1b, 0x1f, 0x26),
+    panel: Color::from_rgb8(0x23, 0x28, 0x30),
+    panel_alt: Color::from_rgb8(0x2a, 0x30, 0x3a),
+    text: Color::from_rgb8(0xe8, 0xea, 0xee),
+    dim: Color::from_rgb8(0x9a, 0xa3, 0xb2),
+    faint: Color::from_rgb8(0x6e, 0x76, 0x84),
+    border: Color::from_rgb8(0x33, 0x3a, 0x45),
+    accent: Color::from_rgb8(0x5b, 0x8c, 0xf0),
+    ok: Color::from_rgb8(0x3f, 0xb9, 0x6f),
+    err: Color::from_rgb8(0xf0, 0x6a, 0x5e),
+    warn: Color::from_rgb8(0xd9, 0xa9, 0x4f),
+    err_box_bg: Color::from_rgb8(0x3a, 0x22, 0x20),
+    err_box_border: Color::from_rgb8(0x8a, 0x4a, 0x44),
+    warn_box_bg: Color::from_rgb8(0x3a, 0x30, 0x1e),
+    warn_box_border: Color::from_rgb8(0x8a, 0x6a, 0x2e),
+};
 
 fn mono(text: impl Into<String>) -> iced::widget::Text<'static> {
     iced::widget::text(text.into()).font(Font::with_name(FONT_MONO_NAME))
 }
 
 fn field<'a>(
+    colors: &Colors,
     title: &'static str,
     control: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    column![text(title).size(10).color(DIM), control.into()]
+    column![text(title).size(10).color(colors.dim), control.into()]
         .spacing(2)
         .width(Length::Fill)
         .into()
 }
 
-fn panel<'a>(content: impl Into<Element<'a, Message>>) -> container::Container<'a, Message> {
+fn panel<'a>(
+    colors: &'static Colors,
+    content: impl Into<Element<'a, Message>>,
+) -> container::Container<'a, Message> {
     container(content.into())
         .width(Length::Fill)
         .padding(10)
-        .style(|_: &Theme| container::Style {
-            background: Some(iced::Background::Color(PANEL)),
-            border: border::rounded(3).width(1).color(BORDER),
+        .style(move |_: &Theme| container::Style {
+            background: Some(iced::Background::Color(colors.panel)),
+            border: border::rounded(3).width(1).color(colors.border),
             ..Default::default()
         })
 }
 
-fn section_title(text: &'static str) -> iced::widget::Text<'static> {
-    iced::widget::text(text).size(10).color(DIM)
+fn section_title(colors: &Colors, text: &'static str) -> iced::widget::Text<'static> {
+    iced::widget::text(text).size(10).color(colors.dim)
 }
 
 fn header<'a>(state: &'a Console) -> Element<'a, Message> {
+    let colors = state.colors();
     let session_chip = match &state.session {
         Some(info) => format!(
             "model: {} · {} · {}L",
@@ -630,6 +696,30 @@ fn header<'a>(state: &'a Console) -> Element<'a, Message> {
                 mono(session_chip)
                     .size(11)
                     .color(Color::from_rgb8(0xc9, 0xd0, 0xdb)),
+                button(text(if state.dark { "☀" } else { "☾" }).size(12))
+                    .on_press(Message::ToggleTheme)
+                    .style(|_theme: &Theme, status| {
+                        use iced::widget::button::Status;
+                        let (bg, fg, border) = match status {
+                            Status::Hovered => (
+                                Color::from_rgb8(0x33, 0x3a, 0x45),
+                                Color::WHITE,
+                                Color::from_rgb8(0x46, 0x50, 0x5e),
+                            ),
+                            _ => (
+                                Color::from_rgb8(0x26, 0x2b, 0x33),
+                                Color::from_rgb8(0xc9, 0xd0, 0xdb),
+                                Color::from_rgb8(0x3a, 0x41, 0x50),
+                            ),
+                        };
+                        button::Style {
+                            background: Some(iced::Background::Color(bg)),
+                            text_color: fg,
+                            border: border::rounded(3).width(1).color(border),
+                            ..Default::default()
+                        }
+                    })
+                    .padding([2, 8]),
             ]
             .align_y(Alignment::Center)
             .padding(12)
@@ -642,8 +732,8 @@ fn header<'a>(state: &'a Console) -> Element<'a, Message> {
         }),
         container(space().width(Length::Fill).height(3))
             .width(Length::Fill)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(ACCENT)),
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(colors.accent)),
                 ..Default::default()
             }),
     ]
@@ -651,6 +741,7 @@ fn header<'a>(state: &'a Console) -> Element<'a, Message> {
 }
 
 fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
+    let colors = state.colors();
     let n_layers = state.session.as_ref().map(|s| s.n_layers).unwrap_or(0);
     let layer_hint = if per_layer(&state.site) && n_layers > 0 {
         format!("0 \u{2013} {} \u{00b7} {n_layers} layers", n_layers - 1)
@@ -669,6 +760,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
 
     let mut children: Vec<Element<'a, Message>> = Vec::new();
     children.push(field(
+        colors,
         "MODEL",
         combo_box(
             &state.model_combo,
@@ -713,20 +805,20 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
                 fmt_load_ms(info.load_ms)
             ))
             .size(10)
-            .color(OK)
+            .color(colors.ok)
             .into(),
         ),
         None => children.push(
             text("no model loaded \u{2014} pick a .gguf, then LOAD")
                 .size(10)
-                .color(FAINT)
+                .color(colors.faint)
                 .into(),
         ),
     }
     children.push(
         rule::horizontal(1)
-            .style(|_| rule::Style {
-                color: BORDER,
+            .style(move |_| rule::Style {
+                color: colors.border,
                 radius: 0.0.into(),
                 fill_mode: rule::FillMode::Full,
                 snap: false,
@@ -734,6 +826,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
             .into(),
     );
     children.push(field(
+        colors,
         "HOOK STAGE",
         combo_box(
             &state.site_combo,
@@ -743,6 +836,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
         ),
     ));
     children.push(field(
+        colors,
         "LAYER",
         text_input("0", &state.layer)
             .on_input(Message::LayerChanged)
@@ -750,8 +844,9 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
             .width(Length::Fill)
             .padding(4),
     ));
-    children.push(text(layer_hint).size(9).color(FAINT).into());
+    children.push(text(layer_hint).size(9).color(colors.faint).into());
     children.push(field(
+        colors,
         "INTERVENTION",
         combo_box(
             &state.op_combo,
@@ -764,6 +859,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
         children.push(
             column![
                 field(
+                    colors,
                     value_label,
                     text_input("0.5", &state.value).on_input(Message::ValueChanged)
                 ),
@@ -773,7 +869,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
                     "multiplicative factor"
                 })
                 .size(9)
-                .color(FAINT),
+                .color(colors.faint),
             ]
             .spacing(2)
             .into(),
@@ -781,6 +877,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
     }
     if needs_source {
         children.push(field(
+            colors,
             "SOURCE",
             combo_box(
                 &state.source_combo,
@@ -793,6 +890,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
             children.push(
                 column![
                     field(
+                        colors,
                         "SOURCE LAYER",
                         text_input("0", &state.source_layer)
                             .on_input(Message::SourceLayerChanged)
@@ -800,7 +898,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
                     ),
                     text("capture fires before the intervention (same pass)")
                         .size(9)
-                        .color(FAINT),
+                        .color(colors.faint),
                 ]
                 .spacing(2)
                 .into(),
@@ -808,6 +906,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
         }
     }
     children.push(field(
+        colors,
         "TARGET TOKENS",
         combo_box(
             &state.token_combo,
@@ -829,8 +928,8 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
     }
     children.push(
         rule::horizontal(1)
-            .style(|_| rule::Style {
-                color: BORDER,
+            .style(move |_| rule::Style {
+                color: colors.border,
                 radius: 0.0.into(),
                 fill_mode: rule::FillMode::Full,
                 snap: false,
@@ -862,7 +961,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
     children.push(
         text("change layer or intervention \u{2192} RUN \u{2192} compare \u{2192} VERIFY RESTORE")
             .size(9)
-            .color(FAINT)
+            .color(colors.faint)
             .into(),
     );
     Column::with_children(children)
@@ -872,6 +971,7 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
 }
 
 fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
+    let colors = state.colors();
     let prompt_editor = text_editor(&state.prompt)
         .on_action(Message::PromptEdited)
         .height(74)
@@ -880,6 +980,7 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         .size(14);
     let prompt_meta = row![
         field(
+            colors,
             "MAX TOKENS",
             text_input("48", &state.max_tokens)
                 .on_input(Message::MaxTokensChanged)
@@ -887,6 +988,7 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
                 .padding(4),
         ),
         field(
+            colors,
             "EXECUTION",
             combo_box(
                 &state.execution_combo,
@@ -898,7 +1000,7 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         space().width(Length::Fill).height(Length::Shrink),
         text("greedy \u{00b7} deterministic \u{00b7} temp 0.0")
             .size(9)
-            .color(FAINT),
+            .color(colors.faint),
     ]
     .align_y(Alignment::End)
     .spacing(10);
@@ -907,14 +1009,12 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         .error
         .as_ref()
         .map(|error| {
-            container(mono(error.clone()).size(11).color(ERR))
+            container(mono(error.clone()).size(11).color(colors.err))
                 .width(Length::Fill)
                 .padding(8)
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb8(0x3a, 0x22, 0x20))),
-                    border: border::rounded(3)
-                        .width(1)
-                        .color(Color::from_rgb8(0x8a, 0x4a, 0x44)),
+                .style(move |_| container::Style {
+                    background: Some(iced::Background::Color(colors.err_box_bg)),
+                    border: border::rounded(3).width(1).color(colors.err_box_border),
                     ..Default::default()
                 })
         })
@@ -924,22 +1024,25 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         .warning
         .as_ref()
         .map(|warning| {
-            container(mono(warning.clone()).size(10).color(WARN))
+            container(mono(warning.clone()).size(10).color(colors.warn))
                 .width(Length::Fill)
                 .padding(8)
-                .style(|_| container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgb8(0x3a, 0x30, 0x1e))),
-                    border: border::rounded(3)
-                        .width(1)
-                        .color(Color::from_rgb8(0x8a, 0x6a, 0x2e)),
+                .style(move |_| container::Style {
+                    background: Some(iced::Background::Color(colors.warn_box_bg)),
+                    border: border::rounded(3).width(1).color(colors.warn_box_border),
                     ..Default::default()
                 })
         })
         .unwrap_or_else(|| container(Column::new()).height(0));
 
     let outputs = row![
-        output_panel("BASELINE", state.baseline.as_ref(), state.status),
-        output_panel("INTERVENTION", state.intervention.as_ref(), state.status),
+        output_panel(colors, "BASELINE", state.baseline.as_ref(), state.status),
+        output_panel(
+            colors,
+            "INTERVENTION",
+            state.intervention.as_ref(),
+            state.status
+        ),
     ]
     .spacing(10);
 
@@ -947,7 +1050,10 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
 
     scrollable(
         column![
-            panel(column![section_title("PROMPT"), prompt_editor, prompt_meta,].spacing(4)),
+            panel(
+                colors,
+                column![section_title(colors, "PROMPT"), prompt_editor, prompt_meta,].spacing(4),
+            ),
             error,
             warning,
             outputs,
@@ -960,16 +1066,17 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
 }
 
 fn output_panel<'a>(
+    colors: &'static Colors,
     title: &'static str,
     output: Option<&'a RunOutput>,
     status: Status,
 ) -> Element<'a, Message> {
     let (badge_text, badge_color) = match (output, status) {
-        (Some(_), _) => ("OK", OK),
-        (None, Status::Running) => ("RUN", WARN),
-        (None, Status::Preparing) => ("—", FAINT),
-        (None, Status::Restoring) => ("—", FAINT),
-        (None, Status::Idle) => ("—", FAINT),
+        (Some(_), _) => ("OK", colors.ok),
+        (None, Status::Running) => ("RUN", colors.warn),
+        (None, Status::Preparing) => ("—", colors.faint),
+        (None, Status::Restoring) => ("—", colors.faint),
+        (None, Status::Idle) => ("—", colors.faint),
     };
     let body: Element<'a, Message> = match output {
         Some(out) if !out.text.is_empty() => column![
@@ -981,9 +1088,9 @@ fn output_panel<'a>(
             )
             .width(Length::Fill)
             .padding(8)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(PANEL_ALT)),
-                border: border::rounded(3).width(1).color(BORDER),
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(colors.panel_alt)),
+                border: border::rounded(3).width(1).color(colors.border),
                 ..Default::default()
             }),
             mono(format!(
@@ -993,7 +1100,7 @@ fn output_panel<'a>(
                 fmt_tps(out.decode_tps)
             ))
             .size(10)
-            .color(FAINT),
+            .color(colors.faint),
             mono(format!(
                 "prompt {} tok \u{00b7} bundle {} {}",
                 out.prompt_tokens,
@@ -1001,17 +1108,18 @@ fn output_panel<'a>(
                 out.bundle_dir
             ))
             .size(9)
-            .color(FAINT),
+            .color(colors.faint),
         ]
         .spacing(4)
         .into(),
-        Some(_out) => text("(empty output)").size(12).color(FAINT).into(),
-        None => text("no run yet").size(12).color(FAINT).into(),
+        Some(_out) => text("(empty output)").size(12).color(colors.faint).into(),
+        None => text("no run yet").size(12).color(colors.faint).into(),
     };
     panel(
+        colors,
         column![
             row![
-                section_title(title),
+                section_title(colors, title),
                 space().width(Length::Fill).height(Length::Shrink),
                 text(badge_text).size(10).color(badge_color),
             ],
@@ -1023,12 +1131,13 @@ fn output_panel<'a>(
 }
 
 fn verification_panel<'a>(state: &'a Console) -> Element<'a, Message> {
+    let colors = state.colors();
     let (badge, badge_color) = match (&state.verification, state.status) {
-        (Some(verification), _) if verification.ok => ("VERIFIED", OK),
-        (Some(_), _) => ("VERIFICATION FAILED", ERR),
-        (None, Status::Running) => ("RUNNING", WARN),
-        (None, Status::Restoring) => ("RESTORING", WARN),
-        (None, _) => ("NOT RUN", FAINT),
+        (Some(verification), _) if verification.ok => ("VERIFIED", colors.ok),
+        (Some(_), _) => ("VERIFICATION FAILED", colors.err),
+        (None, Status::Running) => ("RUNNING", colors.warn),
+        (None, Status::Restoring) => ("RESTORING", colors.warn),
+        (None, _) => ("NOT RUN", colors.faint),
     };
     let mut lines: Vec<String> = Vec::new();
     if let Some(restore) = &state.restore {
@@ -1062,13 +1171,13 @@ fn verification_panel<'a>(state: &'a Console) -> Element<'a, Message> {
     let detail: Element<'a, Message> = if lines.is_empty() {
         text("bundle self-verification and the restore-original leg report here.")
             .size(10)
-            .color(FAINT)
+            .color(colors.faint)
             .into()
     } else {
         Column::with_children(
             lines
                 .iter()
-                .map(|line| mono(line.clone()).size(10).color(DIM).into())
+                .map(|line| mono(line.clone()).size(10).color(colors.dim).into())
                 .collect::<Vec<Element<'static, Message>>>(),
         )
         .spacing(2)
@@ -1086,11 +1195,12 @@ fn verification_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         None => String::new(),
     };
     panel(
+        colors,
         column![
             row![
                 text(badge).size(12).color(badge_color),
                 space().width(Length::Fill).height(Length::Shrink),
-                mono(metrics).size(10).color(FAINT),
+                mono(metrics).size(10).color(colors.faint),
             ],
             detail,
         ]
@@ -1150,16 +1260,17 @@ fn statusbar<'a>(state: &'a Console) -> Element<'a, Message> {
 }
 
 fn view(state: &Console) -> Element<'_, Message> {
+    let colors = state.colors();
     let body = row![
         container(sidebar(state))
             .width(264)
             .height(Length::Fill)
-            .style(|_| container::Style {
-                background: Some(iced::Background::Color(PANEL)),
+            .style(move |_| container::Style {
+                background: Some(iced::Background::Color(colors.panel)),
                 ..Default::default()
             }),
-        rule::vertical(1).style(|_| rule::Style {
-            color: BORDER,
+        rule::vertical(1).style(move |_| rule::Style {
+            color: colors.border,
             radius: 0.0.into(),
             fill_mode: rule::FillMode::Full,
             snap: false,
@@ -1201,16 +1312,21 @@ fn fmt_load_ms(ms: f64) -> String {
     format!("{:.1} s", ms / 1000.0)
 }
 
-fn theme(_state: &Console) -> Theme {
+fn theme(state: &Console) -> Theme {
+    let colors = state.colors();
     Theme::custom(
-        "ember",
+        if state.dark {
+            "ember-dark"
+        } else {
+            "ember-light"
+        },
         iced::theme::Palette {
-            background: BG,
-            text: TEXT,
-            primary: ACCENT,
-            success: OK,
-            danger: ERR,
-            warning: WARN,
+            background: colors.bg,
+            text: colors.text,
+            primary: colors.accent,
+            success: colors.ok,
+            danger: colors.err,
+            warning: colors.warn,
         },
     )
 }
@@ -1262,6 +1378,44 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let (_rtx, rrx) = mpsc::channel();
         Console::new(tx, Arc::new(Mutex::new(rrx)))
+    }
+
+    #[test]
+    fn console_defaults_to_dark_and_toggle_switches_palette() {
+        let state = console();
+        assert!(state.dark, "the console starts in dark mode");
+        assert_eq!(state.colors().bg, DARK.bg);
+        let mut state = console();
+        let _ = update(&mut state, Message::ToggleTheme);
+        assert!(!state.dark);
+        assert_eq!(state.colors().bg, LIGHT.bg);
+        assert_eq!(state.colors().panel, LIGHT.panel);
+        let _ = update(&mut state, Message::ToggleTheme);
+        assert!(state.dark);
+    }
+
+    #[test]
+    fn light_and_dark_palettes_differ_in_every_role() {
+        // Every color role must differ between the two themes, otherwise a
+        // theme switch would silently leave text or surfaces unreadable.
+        let dark = DARK;
+        let light = LIGHT;
+        assert_ne!(dark.bg, light.bg);
+        assert_ne!(dark.panel, light.panel);
+        assert_ne!(dark.text, light.text);
+        assert_ne!(dark.dim, light.dim);
+        assert_ne!(dark.faint, light.faint);
+        assert_ne!(dark.border, light.border);
+        assert_ne!(dark.accent, light.accent);
+        assert_ne!(dark.ok, light.ok);
+        assert_ne!(dark.err, light.err);
+        assert_ne!(dark.warn, light.warn);
+        assert_ne!(dark.err_box_bg, light.err_box_bg);
+        assert_ne!(dark.warn_box_bg, light.warn_box_bg);
+        // contrast sanity: light theme has dark text on light surfaces,
+        // dark theme has light text on dark surfaces.
+        assert!(light.bg.r > light.text.r);
+        assert!(dark.text.r > dark.bg.r);
     }
 
     #[test]

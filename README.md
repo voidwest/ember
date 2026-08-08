@@ -19,6 +19,7 @@ research write-up: https://voidwest.dev/ember
 - compressed-resident Q4_K/Q6_K execution
 - plan-driven decode
 - deterministic, verifiable experiment bundles
+- native and browser experiment consoles for live demos
 - Arabic morphology and quantization research workflows
 
 Ember is not a llama.cpp throughput competitor. llama.cpp remains the
@@ -58,6 +59,28 @@ target/release/ember experiment compare \
 
 The restoration leg reproduces the baseline bit-exact. Full walkthrough:
 `examples/experiments/README.md`.
+
+## experiment consoles (v0.6)
+
+Two offline consoles drive the same v0.5 experiment pipeline for live
+demos: every action builds an `ember.experiment.v1` spec, resolves it
+through the standard validation gate, and runs it with one resident model
+serving repeated baseline / intervention / restore runs. Bundles are
+written and self-verified exactly as `ember experiment run`.
+
+```bash
+target/release/ember gui          # native single-window console (iced,
+                                  # dark theme by default, light/dark toggle
+                                  # in the header)
+target/release/ember web-gui      # browser console on http://127.0.0.1:8337/
+                                  # (light/dark toggle, defaults to the
+                                  # system preference)
+```
+
+Arabic input/output renders correctly in both: the native console shapes
+RTL text with its embedded Noto fonts (offline, identical on any machine);
+the browser console uses `dir="auto"` per field. Details:
+[docs/v06-gui.md](docs/v06-gui.md).
 
 ### ordinary inference
 
@@ -122,6 +145,11 @@ Validated on the qwen3/llama rows with completed golden checks; see
   producing `ember.bundle.v1` bundles with semantic/payload identity and
   offline verification (introduced in v0.5.0; current patch release v0.5.1).
   Gates A-I: [docs/v05-research-contract.md](docs/v05-research-contract.md).
+- **v0.6**: experiment consoles — `ember gui` (native iced window, dark
+  theme with light/dark toggle) and `ember web-gui` (single-page browser
+  console with a light/dark toggle); the v0.5 run path was split into
+  `prepare_run` / `execute_prepared` so one resident model serves repeated
+  runs. [docs/v06-gui.md](docs/v06-gui.md).
 
 ## validation status
 
@@ -138,6 +166,7 @@ per-architecture golden-logit and activation-reference status.
 - [docs/experiments.md](docs/experiments.md) - v0.5 experiment spec and bundle workflow
 - [docs/v04-execution-contract.md](docs/v04-execution-contract.md) - plan-driven decode, gates A-G
 - [docs/v05-research-contract.md](docs/v05-research-contract.md) - experiment workflow, gates A-I
+- [docs/v06-gui.md](docs/v06-gui.md) - native + browser experiment consoles (v0.6)
 - [docs/research.md](docs/research.md) - Arabic morphology dataset pipeline and probing
 - [docs/dataset_pipeline.md](docs/dataset_pipeline.md) - dataset input/output schemas
 
