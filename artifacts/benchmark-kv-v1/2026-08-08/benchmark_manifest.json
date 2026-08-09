@@ -1,0 +1,259 @@
+{
+  "command_templates": {
+    "export": "$EMBER --k-strategy auto kv export ...",
+    "native": "$EMBER --k-strategy auto kv trace-native ...",
+    "replay": "$EMBER --k-strategy auto kv replay ...",
+    "verify": "$EMBER kv verify $SNAPSHOT"
+  },
+  "created_utc": "2026-08-09T00:58:04Z",
+  "environment": {
+    "binary_sha256": "b9e9ce9fb868b5866ec9fd42a767e7f9486b9654199f22474ae3530fe73099d5",
+    "cache_note": "Observation 0 receives best-effort POSIX_FADV_DONTNEED before each process. The CLI then hashes the full GGUF before inference, so neither observation is a verified cold/resident-cache measurement. Observation labels are chronological only. Trace rows are streamed between timed forwards and can perturb later cache state; snapshot_import includes a second in-memory integrity verification.",
+    "cache_state": "unverified",
+    "cpu_model": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+    "git_commit": "3d2b77fd574cfeb287a61a706b84b83338e9c0c8",
+    "git_status_porcelain": "M .gitignore\n M src/atomic_file.rs\n M src/kv_cache.rs\n M src/lib.rs\n M src/llama.rs\n M src/main.rs\n M src/npy.rs\n M src/plan.rs\n?? CODE_CHANGES_KV_SNAPSHOT.md\n?? KV_ARCHITECTURE_AUDIT.md\n?? KV_FIRST_CLASS_PLAN.md\n?? docs/kv-snapshots.md\n?? docs/kv-transfer-research.md\n?? docs/road-to-1.0-plan.html\n?? scripts/validate_kv_replay_matrix.py\n?? src/cli_kv.rs\n?? src/kv_snapshot.rs\n?? src/kv_transfer/",
+    "kernel": "7.1.5-arch1-2",
+    "logical_cpus": 8,
+    "machine": "x86_64",
+    "numpy": "2.4.6",
+    "platform": "Linux-7.1.5-arch1-2-x86_64-with-glibc2.44",
+    "python": "3.14.6",
+    "rayon_num_threads": 4,
+    "rustc": "rustc 1.92.0 (ded5c06cf 2025-12-08)"
+  },
+  "harness": {
+    "path": "scripts/validate_kv_replay_matrix.py",
+    "sha256": "a6154f8ebd332163fd65a1ad792663bc7743b8ae8780226da7912d64b845be5d"
+  },
+  "invocation": {
+    "evidence_output": "artifacts/benchmark-kv-v1/2026-08-08",
+    "family_filters": [],
+    "max_seq_len": 256,
+    "observations": 2,
+    "prompt_filters": [],
+    "raw_output": "runs/kv-replay-matrix/2026-08-08-full",
+    "rung_filters": [],
+    "skip_build": true,
+    "threads": 4,
+    "timeout_seconds": 900,
+    "tokens": 4
+  },
+  "ladder_manifest": {
+    "label": "models/v03-ladder/ladder-manifest.json",
+    "sha256": "0a154271c18bdf88b49a3117dcf8fc1725aed7b8357cf476b4593b751bb7a6b8"
+  },
+  "models": {
+    "llama-3.2-1b/q4_k_m": {
+      "bytes": 807694176,
+      "identity_after": {
+        "device": 66307,
+        "inode": 19808448,
+        "mtime_ns": 1785732923995089063,
+        "size": 807694176
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 19808448,
+        "mtime_ns": 1785732923995089063,
+        "size": 807694176
+      },
+      "identity_unchanged": true,
+      "label": "llama-3.2-1b-q4_k_m.gguf",
+      "ladder_manifest_sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5",
+      "sha256": "26bac8efd811cb41a80db4393dbe5c8360abd54b98954ec766aa4ba7dacc0bc5"
+    },
+    "llama-3.2-1b/q6_k": {
+      "bytes": 1021800288,
+      "identity_after": {
+        "device": 66307,
+        "inode": 19808447,
+        "mtime_ns": 1785732908508960308,
+        "size": 1021800288
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 19808447,
+        "mtime_ns": 1785732908508960308,
+        "size": 1021800288
+      },
+      "identity_unchanged": true,
+      "label": "llama-3.2-1b-q6_k.gguf",
+      "ladder_manifest_sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3",
+      "sha256": "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3"
+    },
+    "llama-3.2-1b/q8_0": {
+      "bytes": 1321082720,
+      "identity_after": {
+        "device": 66307,
+        "inode": 19808446,
+        "mtime_ns": 1785732898697878781,
+        "size": 1321082720
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 19808446,
+        "mtime_ns": 1785732898697878781,
+        "size": 1321082720
+      },
+      "identity_unchanged": true,
+      "label": "llama-3.2-1b-q8_0.gguf",
+      "ladder_manifest_sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823",
+      "sha256": "da49f51ced8c15546e7779beb677fb53eb5d0b3b38ac4607ac60d58d77074823"
+    },
+    "qwen2.5-1.5b/q4_k_m": {
+      "bytes": 1117320736,
+      "identity_after": {
+        "device": 66307,
+        "inode": 19808445,
+        "mtime_ns": 1785740817531559214,
+        "size": 1117320736
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 19808445,
+        "mtime_ns": 1785740817531559214,
+        "size": 1117320736
+      },
+      "identity_unchanged": true,
+      "label": "qwen2.5-1.5b-q4_k_m.gguf",
+      "ladder_manifest_sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+      "sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5"
+    },
+    "qwen2.5-1.5b/q6_k": {
+      "bytes": 1464178720,
+      "identity_after": {
+        "device": 66307,
+        "inode": 19808444,
+        "mtime_ns": 1785740772718816103,
+        "size": 1464178720
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 19808444,
+        "mtime_ns": 1785740772718816103,
+        "size": 1464178720
+      },
+      "identity_unchanged": true,
+      "label": "qwen2.5-1.5b-q6_k.gguf",
+      "ladder_manifest_sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+      "sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1"
+    },
+    "qwen2.5-1.5b/q8_0": {
+      "bytes": 1894532128,
+      "identity_after": {
+        "device": 66307,
+        "inode": 19808443,
+        "mtime_ns": 1785740743522002380,
+        "size": 1894532128
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 19808443,
+        "mtime_ns": 1785740743522002380,
+        "size": 1894532128
+      },
+      "identity_unchanged": true,
+      "label": "qwen2.5-1.5b-q8_0.gguf",
+      "ladder_manifest_sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a",
+      "sha256": "bcbdf6b481ca6cd7197c80516b621da3238dc51d703062e0667b71c6aa08676a"
+    }
+  },
+  "non_claims": [
+    "No cross-model transfer or mapper is exercised.",
+    "No logits are compared across model families or quantization rungs.",
+    "This is Ember-internal replay, not llama.cpp or quality parity.",
+    "Arabic is a multilingual smoke prompt, not a morphology result.",
+    "Timing observations do not establish controlled cold/warm performance or a speedup.",
+    "Q8 uses Ember's frozen native Q8 fast path even though provenance mode is planned."
+  ],
+  "partial_matrix": false,
+  "protocol": {
+    "common_cache_capacity": 256,
+    "comparison_gate": "f32 payload bit equality; no tolerance",
+    "continuation_tokens": 4,
+    "eos_policy": "ignore-fixed-count",
+    "execution": "planned",
+    "families": [
+      "llama-3.2-1b",
+      "qwen2.5-1.5b"
+    ],
+    "k_strategy": "auto",
+    "observations": 2,
+    "prompts": [
+      {
+        "id": "en_france",
+        "language": "English",
+        "text": "The capital of France is",
+        "utf8_sha256": "bbaff4d2ecd5892d4a442b0f53131641bf6e6f284761dd20fc0664bc97145762"
+      },
+      {
+        "id": "ar_france",
+        "language": "Arabic",
+        "text": "ما هي عاصمة فرنسا؟",
+        "utf8_sha256": "4915d94a2cbdd0478b680f4e3dd1fc3ea2e5179e3229a577d157688a48b2d240"
+      }
+    ],
+    "row_contract": "native[N,V] == concatenate(export_boundary[1,V], replay_continuation[N-1,V])",
+    "rungs": [
+      "q8_0",
+      "q6_k",
+      "q4_k_m"
+    ],
+    "sampling": "greedy full-f32 argmax, lowest token id wins ties"
+  },
+  "raw_run_directory": "runs/kv-replay-matrix/2026-08-08-full",
+  "schema": "ember.kv-replay-matrix.v1",
+  "status": "complete-pass",
+  "tested_source_files": {
+    "scripts/validate_kv_replay_matrix.py": "a6154f8ebd332163fd65a1ad792663bc7743b8ae8780226da7912d64b845be5d",
+    "src/atomic_file.rs": "2dd80f23b634081e8edd82bbb238804b5a8f4450fd9728d49a081cea9a7f1c08",
+    "src/cli_kv.rs": "22729df3fa4cfd77f8e24b604c38cd34f3fa2a92a51d15b4e1ac692e2aa0b2be",
+    "src/kv_cache.rs": "d0b177fb1cc3b4e95e13ec25c6e96b8846407adafb48939631a20a533f0211ac",
+    "src/kv_snapshot.rs": "a0bc9756502b5dd46766cec7bb8aa8670bd57b81e5e969319290c12f654f9afd",
+    "src/kv_transfer/mod.rs": "8b47792d8b065bc7e511c5dbcc927fd17e029c9ea10a5ed8baad9fab5b4471c7",
+    "src/kv_transfer/rope.rs": "38c18aede03c3f267f1cb5380bc5c11b735404dfce284422320d39b8437af85c",
+    "src/llama.rs": "2599e245d6a873def25eaccd26d8fb2e02dd402a18484b56adec0f15e727d079",
+    "src/main.rs": "a9de09ce54185bcd1eac305abd8a21afe863d7106811834b80dfcd54ef3ca6e6",
+    "src/npy.rs": "fd2549942740108501b82a7782b1d0f315eb330a5ff555365d586f6b22f5ae68",
+    "src/plan.rs": "416d45a5374a350c452e2b927bc0c732745ff9dda4e5082115263c26730616ed"
+  },
+  "tokenizers": {
+    "llama-3.2-1b": {
+      "bytes": 17209920,
+      "identity_after": {
+        "device": 66307,
+        "inode": 15346654,
+        "mtime_ns": 1779416930698633708,
+        "size": 17209920
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 15346654,
+        "mtime_ns": 1779416930698633708,
+        "size": 17209920
+      },
+      "identity_unchanged": true,
+      "label": "tokenizer.json",
+      "sha256": "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+    },
+    "qwen2.5-1.5b": {
+      "bytes": 7031645,
+      "identity_after": {
+        "device": 66307,
+        "inode": 15606133,
+        "mtime_ns": 1781780367387335001,
+        "size": 7031645
+      },
+      "identity_before": {
+        "device": 66307,
+        "inode": 15606133,
+        "mtime_ns": 1781780367387335001,
+        "size": 7031645
+      },
+      "identity_unchanged": true,
+      "label": "external:443909a61d429dff23010e5bddd28ff530edda00",
+      "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
+    }
+  }
+}

@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="ليش خلّى Ember حالة KV cache قابلة للتحقق وإعادة التشغيل والقياس قبل تجربة ridge mapper بين نموذجين Qwen." />
+        <meta property="og:title" content="قبل ما نربط ذاكرات KV بين النماذج، لازم نخليها قابلة للقياس" />
+        <meta property="og:description" content="حد واضح لحالة KV، وإعادة تشغيل مطابقة داخل النموذج نفسه، وتشخيصات سببية قبل أي ridge mapping بين نماذج Qwen." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/before-mapping-kv-caches.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>قبل ما نربط ذاكرات KV بين النماذج، لازم نخليها قابلة للقياس · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/before-mapping-kv-caches.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>قبل ما نربط ذاكرات <bdi>KV</bdi> بين النماذج، لازم نخليها قابلة للقياس</h1>
+
+        <div class="meta">
+            حد قابل للتحقق قبل تجربة <bdi>ridge</bdi> بين نموذجين <bdi>Qwen</bdi><br>
+            محمد الثبيتي · 2026-08-09<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">KV cache</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag key">causal diagnostics</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <h2>الملخص</h2>
+
+        <p>
+            بدأت هذا العمل من خطوة مغرية: آخذ <bdi>KV cache</bdi> من نموذج،
+            وأتعلم <bdi>linear map</bdi> صغير، ثم أختبر إذا كان نموذج ثاني يقدر
+            يكمل منه من دون ما يعيد حساب الـ<bdi>prefix</bdi> كامل.
+        </p>
+
+        <p>لكن ما بنيت الـ<bdi>mapper</bdi>.</p>
+
+        <p>
+            بدل ذلك، قضيت اليوم أخلي حالة الـ<bdi>KV</bdi> شيئاً يقدر
+            <bdi>Ember</bdi> يصدّره، ويتحقق منه، ويستورده، ويعيد تشغيله، ويقارنه،
+            ويغيره تحت عقد واضح. النتيجة هي <bdi>snapshot</bdi> من ثلاثة ملفات،
+            وإعادة تشغيل مطابقة داخل النموذج نفسه، ومقاييس على مستوى كل طبقة
+            ورأس، وتشخيصات لـ<bdi>attention output</bdi> والـ<bdi>logits</bdi>،
+            ومسار تغيير مضبوط داخل الذاكرة.
+        </p>
+
+        <p>
+            هذا أقل إثارة من عرض <bdi>transfer</bdi>. لكنه الشغل اللي يخلي أي
+            نتيجة نقل لاحقة قابلة للفهم.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">الحالة</div>
+            <p>
+                يقدر <bdi>Ember</bdi> الآن يقيس حالة <bdi>KV</bdi> المتوافقة
+                ويطبق عليها تغييراً سببياً مضبوطاً. هذه مو نتيجة نقل بين
+                نموذجين، ومو دليل إن <bdi>ridge mapper</bdi> راح ينجح، ومو
+                ادعاء تسريع.
+            </p>
+        </div>
+
+        <h2>ليش كان لازم نأجل الـ<bdi>mapper</bdi>؟</h2>
+
+        <p>
+            الـ<bdi>cache</bdi> المحوّل ممكن يفشل لأسباب كثيرة ما لها علاقة
+            ببعض. ممكن يكون الـ<bdi>snapshot</bdi> ناقص، أو تسلسل
+            الـ<bdi>tokens</bdi> مختلف، أو مؤشر الـ<bdi>cache</bdi> متقدم أو
+            متأخر بموقع واحد. ممكن نفسر <bdi>RoPE</bdi> أو
+            <bdi>Q/K normalization</bdi> في فضاء غلط، أو يتغير بت واحد عند
+            الاستيراد، أو يأخذ النموذج مسار تنفيذ مختلف. وممكن ببساطة يكون
+            الـ<bdi>map</bdi> المتعلم ضعيفاً.
+        </p>
+
+        <p>
+            إذا جمعنا كل هالأخطاء في نص مولّد واحد، فالنتيجة السلبية ما تقول
+            لنا كثير. وحتى النص اللي شكله صحيح ممكن يخفي انحرافاً عددياً، أو
+            تعادلاً محظوظاً في <bdi>top-1</bdi>، أو مسار إعادة تشغيل ما استخدم
+            الحالة اللي نقصدها أصلاً.
+        </p>
+
+        <p>
+            لذلك صار السؤال الأول أضيق: هل يقدر <bdi>Ember</bdi> يجمّد حالة
+            <bdi>KV</bdi> الأصلية ويثبت إن استيرادها ما يغير شيئاً تحت عقد صارم
+            داخل النموذج نفسه؟
+        </p>
+
+        <p>
+            بعدها يجي السؤال الثاني: لما نغير الحالة عمداً، وين يظهر الفرق
+            أول مرة؟ في إعادة بناء <bdi>K/V</bdi>؟ أو في
+            <bdi>attention output</bdi>؟ أو في الـ<bdi>logits</bdi>؟ أو في مسار
+            التوليد الجشع؟
+        </p>
+
+        <h2>وش صار جزءاً أساسياً؟</h2>
+
+        <p>
+            الأثر الجديد له إصدار مستقل باسم
+            <code>ember.kv-snapshot.v1</code>. ما غيّر عقد خطة التنفيذ المجمّد،
+            ولا صيغة حزم التجارب في <bdi>Ember</bdi>.
+        </p>
+
+        <pre><code>snapshot/
+├── manifest.json
+├── keys.f16le
+└── values.f16le</code></pre>
+
+        <p>
+            تُخزّن <bdi>K</bdi> و<bdi>V</bdi> كبتات <bdi>f16</bdi> مضغوطة
+            بالترتيب
+            <code>[layer][kv_head][position][dimension]</code>. ما نحفظ المساحة
+            غير المستخدمة من الـ<bdi>cache</bdi>. ويسجل الـ<bdi>manifest</bdi>
+            بصمات النموذج والـ<bdi>tokenizer</bdi>، وهندسة الـ<bdi>cache</bdi>،
+            وتخطيط <bdi>RoPE</bdi> و<bdi>theta</bdi>، ودلالة
+            <bdi>Q/K normalization</bdi>، وحالة <bdi>V</bdi>، ووضع التنفيذ
+            وبصمته، وبصمة <bdi>prefix tokens</bdi>، و<bdi>resume token</bdi>،
+            وبصمات الملفات.
+        </p>
+
+        <p>
+            الاستيراد صارم عمداً. ما فيه خيار «قريب بما يكفي». أي اختلاف في
+            هوية النموذج، أو الـ<bdi>tokenizer</bdi>، أو الهندسة، أو دلالة
+            المواقع والتمثيل، أو مصدر التنفيذ العددي يُرفض قبل
+            <bdi>decode</bdi>.
+        </p>
+
+        <pre><code>ember kv export --model MODEL.gguf --tokenizer TOKENIZER.json   --arch qwen3 --prompt 'prefix' --output runs/kv/prefix
+ember kv verify runs/kv/prefix
+ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKENIZER.json --arch qwen3</code></pre>
+
+        <h2>فرق الموقع الواحد اللي لازم يظل واضح</h2>
+
+        <p>
+            الـ<bdi>snapshot</bdi> يغطي الـ<bdi>prefix</bdi> المكتمل، لكن
+            الـ<bdi>token</bdi> المختار من <bdi>prefix-boundary logits</bdi> ما
+            دخل الـ<bdi>cache</bdi> إلى الآن. إذا كان طول الـ<bdi>prefix</bdi>
+            هو <code>P</code>، فالـ<bdi>resume token</bdi> مكانه المطلق
+            <code>P</code>.
+        </p>
+
+        <p>
+            أول <bdi>forward</bdi> في إعادة التشغيل يقيّم هذا الـ<bdi>token</bdi>،
+            ويضيف صف <bdi>K/V</bdi> الخاص به، وينتج <bdi>logits</bdi> للموقع
+            <code>P+1</code>. لو أدخلنا آخر <bdi>token</bdi> من الـ<bdi>prompt</bdi>
+            مرة ثانية، نكون كررناه. ولو قلنا إن الـ<bdi>snapshot</bdi> يحتوي
+            <bdi>boundary logits</bdi> الأصلية، نكون وصفناه بشكل غلط.
+        </p>
+
+        <p>
+            هذا يبدو مثل محاسبة بسيطة للمواقع. لكنه بالضبط نوع الخطأ اللي ممكن
+            يخلي تجربة <bdi>transfer</bdi> تبدو فاشلة بينما المشكلة الحقيقية هي
+            محاذاة التسلسل.
+        </p>
+
+        <h2>كيف تحققنا من إعادة التشغيل المطابقة؟</h2>
+
+        <p>
+            التحقق بين العمليات ما قارن النص المفكوك، وما استخدم تسامح
+            <code>allclose</code>. حفظ <bdi>full f32 logits</bdi> من التوليد
+            المتصل، وحد التصدير، وإعادة التشغيل:
+        </p>
+
+        <pre><code>native[N,V] == concatenate(export_boundary[1,V], replay[N-1,V])</code></pre>
+
+        <p>
+            المساواة هنا تعني تطابق بتات <bdi>f32</bdi>. المصفوفة المكتملة شملت
+            <bdi>Llama-3.2-1B</bdi> و<bdi>Qwen2.5-1.5B</bdi>، وثلاثة مسارات
+            <bdi>Q8_0/Q6_K/Q4_K_M</bdi>، و<bdi>prompts</bdi> ثابتة بالإنجليزي
+            والعربي.
+        </p>
+
+        <div class="callout result">
+            <div class="label">نتيجة إعادة التشغيل داخل النموذج نفسه</div>
+            <p>
+                نجحت <bdi>12/12</bdi> خلية و<bdi>24/24</bdi> ملاحظة زمنية. من
+                أصل <bdi>13,449,216</bdi> قيمة <bdi>f32</bdi> تمت مقارنتها، ما
+                ظهر أي اختلاف في البتات. ونجحت العمليات الفرعية الـ<bdi>72</bdi>
+                كلها.
+            </p>
+        </div>
+
+        <p>
+            هذا يثبت حد الـ<bdi>snapshot/replay</bdi> في الحالات المختبرة. ما
+            يثبت صحة المرجع لكل نموذج، وأرقام التوقيت المسجلة ملاحظات فقط، مو
+            ادعاء تسريع.
+        </p>
+
+        <h2>القياس قبل الـ<bdi>mapping</bdi></h2>
+
+        <p>
+            إعادة التشغيل المطابقة هي حالة الضبط. بعدها أضفت
+            <code>ember kv compare</code>، وهو ما يقارن حالتين إلا إذا ثبت إن
+            إحداثيات النموذج والـ<bdi>prefix</bdi> متطابقة.
+        </p>
+
+        <p>لكل طبقة ورأس <bdi>KV</bdi>، التقرير يعطي لـ<bdi>K</bdi> و<bdi>V</bdi>:</p>
+
+        <ul>
+            <li><bdi>cosine similarity</bdi>،</li>
+            <li><bdi>mean squared error</bdi>،</li>
+            <li><bdi>directional R²</bdi> اختياري،</li>
+            <li>أكبر خطأ مطلق،</li>
+            <li>وعدد بتات <bdi>f16</bdi> المختلفة.</li>
+        </ul>
+
+        <p>
+            الحدود الاختيارية تنتج قائمة فشل ثابتة وأول تجاوز. وتقرير
+            <bdi>JSON</bdi> ما يحتوي توقيت، أو اسم جهاز، أو
+            <bdi>process ID</bdi>، أو حقول غير مرتبة.
+        </p>
+
+        <pre><code>ember kv compare LEFT RIGHT --json --r2   --max-abs 0.001 --min-cosine 0.999</code></pre>
+
+        <p>
+            ومع تحميل النموذج الهدف نفسه، يقدر الأمر يدخل مسار
+            <bdi>reference-greedy</bdi> مشترك إلى الـ<bdi>caches</bdi>. بعدها
+            يقارن ناتج <bdi>attention O-projection</bdi> الدلالي في كل طبقة،
+            والـ<bdi>full logits</bdi>، واتفاق <bdi>top-1</bdi>، وأول اختلاف في
+            التوقع.
+        </p>
+
+        <p>
+            مرحلة منفصلة تعيد استيراد حالتين نظيفتين وتترك كل فرع يتبع
+            <bdi>argmax</bdi> الخاص به. بهذا نحصل على اتفاق التسلسل وأول اختلاف
+            من دون ما نفسر تنشيطات ما بعد الاختلاف كأنها ناتجة عن نفس الإدخال.
+        </p>
+
+        <h2>ضابط سببي من دون <bdi>mapper provenance</bdi> وهمي</h2>
+
+        <p>
+            احتجت أتأكد إن مسار التشخيص يكتشف تغييراً حقيقياً في
+            الـ<bdi>cache</bdi> قبل ما أعطيه ناتج <bdi>mapper</bdi>. الضابط
+            الضيق يصفّر أو يضرب بقيمة ثابتة رأس <bdi>K/V</bdi> واحد عبر
+            الـ<bdi>prefix</bdi> داخل الذاكرة.
+        </p>
+
+        <p>
+            العملية لها إيصال مكتوب يحدد الـ<bdi>snapshot</bdi> الأصلي،
+            والطبقة، والرأس، واختيار <bdi>K/V</bdi>، وبتات معامل الضرب، وعدد
+            العناصر المتأثرة. ما نقدر نحفظها كـ<code>ember.kv-snapshot.v1</code>،
+            وما نحط قيمة وهمية في حقل بصمة الـ<bdi>mapper</bdi>. وإعادة التشغيل
+            العادية ما زالت تقبل <bdi>native snapshots</bdi> فقط.
+        </p>
+
+        <p>
+            في <bdi>smoke</bdi> على <bdi>Qwen2.5-1.5B Q6_K planned</bdi>،
+            مقارنة الـ<bdi>snapshot</bdi> بنفسه أعطت فروقاً صفرية، واتفاق
+            <bdi>top-1</bdi>، ونفس التسلسل الجشع القصير. تصفير <bdi>K</bdi>
+            و<bdi>V</bdi> في الطبقة <bdi>0</bdi> والرأس <bdi>0</bdi> أعطى
+            <bdi>attention-output cosine</bdi> يقارب <bdi>0.886</bdi> في الطبقة
+            الأولى، و<bdi>final-logit cosine</bdi> يقارب <bdi>0.9953</bdi>.
+            بقي <bdi>top-1</bdi> متفقاً في الأفق القصير جداً.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">كيف نقرأ هذا الـ<bdi>smoke</bdi>؟</div>
+            <p>
+                التشغيل المعدّل يثبت إن الأداة تقدر تحدد تغيير <bdi>KV</bdi>
+                مضبوط وتتابع انتقال أثره. عدم انقلاب الـ<bdi>token</bdi> خلال
+                توقع واحد مو دليل متانة، وقيم الـ<bdi>cosine</bdi> مو دليل على
+                جودة نقل بين نموذجين.
+            </p>
+        </div>
+
+        <h2>وش يثبته الدليل الحالي؟</h2>
+
+        <ul>
+            <li>حد الـ<bdi>native snapshot</bdi> المختبر يحفظ بتات <bdi>f16 KV</bdi> المستخدمة ويعيد الـ<bdi>cursor</bdi>،</li>
+            <li>استمرار الـ<bdi>logits</bdi> داخل النموذج نفسه مطابق بتاً ببت عبر المصفوفة المكتملة،</li>
+            <li>نقدر نحدد فرق المقارنة في طبقة ورأس ومكوّن <bdi>K/V</bdi> بعينه،</li>
+            <li>ونقدر نقيس تغييراً معلوماً داخل الذاكرة عبر خرج الانتباه والـ<bdi>logits</bdi>، مع تقرير السلوك قصير الأفق بشكل منفصل.</li>
+        </ul>
+
+        <p>
+            هذي نتائج عن صلاحية أداة القياس. تخلي تجربة <bdi>mapper</bdi> لاحقة
+            أسهل في التشخيص؛ لكنها مو دليل على نجاح الـ<bdi>mapper</bdi>.
+        </p>
+
+        <h2>وش ما يثبته هذا العمل؟</h2>
+
+        <ul>
+            <li>ما تم تدريب <bdi>ridge mapper</bdi> أو <bdi>neural mapper</bdi>،</li>
+            <li>ما تم بناء أو تشغيل <bdi>cross-model cache</bdi>،</li>
+            <li>ما ثبت إن تحويل متعلم يحسن إعادة البناء على بيانات محجوبة،</li>
+            <li>ما ثبت احتفاظ الانتباه أو التوليد بعد النقل،</li>
+            <li>ما تم قياس فائدة زمنية تحت <bdi>benchmark</bdi> مضبوط،</li>
+            <li>وما زالت دلالة <bdi>Gemma</bdi> غير المتجانسة خارج النطاق.</li>
+        </ul>
+
+        <p>
+            <bdi>attention-output cosine</bdi> مفيد، لكنه مو احتمال انتباه، ومو
+            تفسير سببي لوحده. و<bdi>K/V R²</bdi> إحصاء لإعادة البناء، مو دليل إن
+            النموذج الهدف يستخدم الـ<bdi>cache</bdi> المعاد بناؤه. واتفاق
+            التوليد لفترة قصيرة سلوك فعلي، لكنه يظل مقياساً محدود الأفق ويعتمد
+            على الـ<bdi>prompt</bdi>.
+        </p>
+
+        <h2>التجربة الصغيرة المقصودة لاحقاً</h2>
+
+        <p>
+            تجربة <bdi>ridge</bdi> ممكن تجي لاحقاً، ولازم تظل أصغر من البنية
+            اللي صارت تقيسها.
+        </p>
+
+        <p>
+            النطاق المقترح الآن زوج واحد ثابت من <bdi>Qwen</bdi> إلى
+            <bdi>Qwen</bdi>، بنفس الـ<bdi>tokenizer</bdi> وهندسة
+            <bdi>KV</bdi> متطابقة. تُحوّل المفاتيح في فضاء المحتوى المعلن بعد
+            التطبيع وقبل <bdi>RoPE</bdi>، وتُحوّل القيم في حالتها المعلنة. لكل
+            طبقة ورأس هدف <bdi>ridge map</bdi> مغلق وثابت، مع تقسيم معايرة
+            مجمّد، وقيمة <bdi>lambda</bdi> واحدة، ومن دون بحث عن الطبقات.
+        </p>
+
+        <p>
+            التجربة تقارن <bdi>identity baseline</bdi> مع إعادة بناء
+            <bdi>ridge</bdi> أولاً، ثم تستخدم تشخيصات الانتباه والـ<bdi>logits</bdi>
+            على نفس الإدخال، وبعدها المسار الجشع المستقل. ما نعمم الهندسة، وما
+            نحسن مسار التشغيل، وما نضبط <bdi>kernels</bdi>، وما ننشئ صيغة إنتاج
+            لـ<bdi>transformed snapshots</bdi>.
+        </p>
+
+        <p>
+            وإذا بقيت الملفات المحلية الحالية هي الزوج الوحيد، فالمسار من
+            <bdi>Q4_K_M</bdi> إلى <bdi>Q8_0</bdi> بيكون تجربة على حد التكميم في
+            نفس النموذج الأساسي، مو دليلاً على نقل بين حجمين مختلفين. لازم هذا
+            الفرق يظل واضحاً في العنوان، والـ<bdi>metadata</bdi>، والخلاصة.
+        </p>
+
+        <h2>الخلاصة</h2>
+
+        <p>
+            اليوم ما أنتج <bdi>mapper</bdi>. أنتج الشروط اللي تخلي فشله
+            صريحاً وقابلاً للقياس.
+        </p>
+
+        <p>
+            صار للحالة الأصلية هوية صارمة. وصار لإعادة التشغيل ضابط مطابق على
+            مستوى البتات. وصار لإعادة البناء مقاييس على مستوى الطبقة والرأس.
+            وصار للأثر اللاحق قياس انتباه و<bdi>logits</bdi> على نفس الإدخال.
+            وصار للانحراف السلوكي مسار جشع مستقل. وصار للحالة المعدلة مصدر واضح
+            من دون ما ندّعي إنها أثر متعلم.
+        </p>
+
+        <p>
+            هذا هو الحد الممل اللي أبيه قبل ما أسأل إذا كان
+            <bdi>KV cache</bdi> من <bdi>Qwen</bdi> يقدر يقوم مقام
+            <bdi>cache</bdi> من <bdi>Qwen</bdi> ثاني.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

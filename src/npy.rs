@@ -233,6 +233,16 @@ impl NpyStreamWriter {
     }
 
     pub fn finish(&mut self) -> anyhow::Result<()> {
+        self.finish_with_policy(true)
+    }
+
+    /// Publish only if the destination is still absent. This closes the race
+    /// between a caller's preflight existence check and final publication.
+    pub fn finish_no_replace(&mut self) -> anyhow::Result<()> {
+        self.finish_with_policy(false)
+    }
+
+    fn finish_with_policy(&mut self, overwrite: bool) -> anyhow::Result<()> {
         if self.committed {
             return Ok(());
         }
@@ -250,13 +260,23 @@ impl NpyStreamWriter {
         writer.flush()?;
         writer.get_ref().sync_all()?;
         drop(writer);
-        fs::rename(&self.temporary_path, &self.final_path).with_context(|| {
-            format!(
-                "failed to publish npy '{}' from temporary file '{}'",
-                self.final_path.display(),
-                self.temporary_path.display()
-            )
-        })?;
+        if overwrite {
+            fs::rename(&self.temporary_path, &self.final_path).with_context(|| {
+                format!(
+                    "failed to publish npy '{}' from temporary file '{}'",
+                    self.final_path.display(),
+                    self.temporary_path.display()
+                )
+            })?;
+        } else {
+            fs::hard_link(&self.temporary_path, &self.final_path).with_context(|| {
+                format!(
+                    "failed to publish new npy '{}' without replacement",
+                    self.final_path.display()
+                )
+            })?;
+            let _ = fs::remove_file(&self.temporary_path);
+        }
         self.committed = true;
         Ok(())
     }
@@ -413,6 +433,27 @@ mod tests {
         assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn no_replace_stream_preserves_a_concurrent_destination() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ember_npy_no_replace_{}_{}.npy",
+            std::process::id(),
+            unique
+        ));
+        let mut writer =
+            NpyStreamWriter::create(path.to_str().expect("temp path should be utf-8"), &[1, 1])
+                .expect("create npy stream");
+        writer.write_f32s(&[1.0]).expect("write value");
+        fs::write(&path, b"concurrent").expect("create concurrent destination");
+        assert!(writer.finish_no_replace().is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"concurrent");
+        fs::remove_file(path).ok();
     }
 
     #[test]

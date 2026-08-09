@@ -1,0 +1,2525 @@
+{
+  "cases": [
+    {
+      "architecture_argument": "llama",
+      "case_id": "llama-3.2-1b__q8_0__en_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1396.582102,
+        "logits_hash": 0.363097,
+        "logits_write": 1.607561,
+        "model_load": 721.256339,
+        "prefill_inference": 210.220562,
+        "snapshot_build_and_verify": 0.502734,
+        "snapshot_write": 9.917330999999999,
+        "tokenizer_load_and_encode": 394.716768
+      },
+      "export_process_wall_ns": 2835465121,
+      "family": "llama-3.2-1b",
+      "language": "English",
+      "model_label": "llama-3.2-1b-q8_0.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "dfa6c94e58983347de0b3deb3821ff3aa78f7f401766b2ccafb369090d66e891",
+            "exact": true,
+            "expected_payload_sha256": "dfa6c94e58983347de0b3deb3821ff3aa78f7f401766b2ccafb369090d66e891",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "5318f7d205eb0da2d663c6eda653366b9eea6141347d25fd3bc590fbb23bbe3e",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "12ff76daec318726140fefd83e8b26ffc365567dc1d3f97b4df479a2952a67ff",
+            "exact": true,
+            "expected_payload_sha256": "12ff76daec318726140fefd83e8b26ffc365567dc1d3f97b4df479a2952a67ff",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12366,
+            13,
+            578,
+            469
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "34d5ba9483e1856a7cf225cacb294677083560ca81c4199c438a789366b2eb57",
+          "native_process_wall_ns": 2996847623,
+          "native_time_v": {
+            "filesystem_inputs": 2636088,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 144,
+            "max_rss_kib": 2666048,
+            "minor_page_faults": 365348,
+            "system_seconds": 0.68,
+            "user_seconds": 2.71
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 207.655294,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 93.402241,
+            "native_prefill_ms": 211.395013,
+            "native_prefill_plus_decode_ms": 304.797254,
+            "replay_decode_ms": 95.69422899999999,
+            "replay_import_ms": 0.474484,
+            "replay_load_verify_ms": 3.265235,
+            "replay_setup_plus_decode_ms": 99.43394799999999
+          },
+          "replay_logits_file_sha256": "4b30acdbff7d4bfb3890f92ad01a3f5ec41b8a631688e2199111739072f96265",
+          "replay_process_wall_ns": 2709883216,
+          "replay_time_v": {
+            "filesystem_inputs": 2636744,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 141,
+            "max_rss_kib": 1778712,
+            "minor_page_faults": 370884,
+            "system_seconds": 0.6,
+            "user_seconds": 1.98
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "dfa6c94e58983347de0b3deb3821ff3aa78f7f401766b2ccafb369090d66e891",
+            "exact": true,
+            "expected_payload_sha256": "dfa6c94e58983347de0b3deb3821ff3aa78f7f401766b2ccafb369090d66e891",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "5318f7d205eb0da2d663c6eda653366b9eea6141347d25fd3bc590fbb23bbe3e",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "12ff76daec318726140fefd83e8b26ffc365567dc1d3f97b4df479a2952a67ff",
+            "exact": true,
+            "expected_payload_sha256": "12ff76daec318726140fefd83e8b26ffc365567dc1d3f97b4df479a2952a67ff",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12366,
+            13,
+            578,
+            469
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "34d5ba9483e1856a7cf225cacb294677083560ca81c4199c438a789366b2eb57",
+          "native_process_wall_ns": 2530508244,
+          "native_time_v": {
+            "filesystem_inputs": 88,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 4,
+            "max_rss_kib": 2666228,
+            "minor_page_faults": 369369,
+            "system_seconds": 0.59,
+            "user_seconds": 2.68
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 217.942102,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 92.679953,
+            "native_prefill_ms": 218.947631,
+            "native_prefill_plus_decode_ms": 311.627584,
+            "replay_decode_ms": 89.746944,
+            "replay_import_ms": 0.494732,
+            "replay_load_verify_ms": 0.5107970000000001,
+            "replay_setup_plus_decode_ms": 90.752473
+          },
+          "replay_logits_file_sha256": "4b30acdbff7d4bfb3890f92ad01a3f5ec41b8a631688e2199111739072f96265",
+          "replay_process_wall_ns": 2343044221,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 0,
+            "max_rss_kib": 1779476,
+            "minor_page_faults": 374511,
+            "system_seconds": 0.56,
+            "user_seconds": 2.01
+          }
+        }
+      ],
+      "prompt_id": "en_france",
+      "prompt_utf8_sha256": "bbaff4d2ecd5892d4a442b0f53131641bf6e6f284761dd20fc0664bc97145762",
+      "rung": "q8_0",
+      "snapshot_hash": "bdc40439bb681781095f10fa74cafb4f40077e50c0572e2601103dddc87f2fd9",
+      "status": "pass",
+      "verify_process_wall_ns": 3587058
+    },
+    {
+      "architecture_argument": "llama",
+      "case_id": "llama-3.2-1b__q8_0__ar_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1050.24355,
+        "logits_hash": 0.66739,
+        "logits_write": 2.0022189999999997,
+        "model_load": 698.938578,
+        "prefill_inference": 282.596568,
+        "snapshot_build_and_verify": 0.7809699999999999,
+        "snapshot_write": 10.757736,
+        "tokenizer_load_and_encode": 386.488832
+      },
+      "export_process_wall_ns": 2538580299,
+      "family": "llama-3.2-1b",
+      "language": "Arabic",
+      "model_label": "llama-3.2-1b-q8_0.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "972f58de5b23dc9306445684b1eb78915dad447d98a276bed1d4506e71a010da",
+            "exact": true,
+            "expected_payload_sha256": "972f58de5b23dc9306445684b1eb78915dad447d98a276bed1d4506e71a010da",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "0935c46c34bbb01bfba3c6b0c770c99045489ed7ffacc2006b73568ee85b8d5a",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "ff0a035521298c67b4b48e0b81ecb6eefa4dcebd706e63035395d43ffde9a2d6",
+            "exact": true,
+            "expected_payload_sha256": "ff0a035521298c67b4b48e0b81ecb6eefa4dcebd706e63035395d43ffde9a2d6",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            104151,
+            101481,
+            627,
+            14628
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "55fd051b372787d98470bcb28b9672a953192696bbc3ad35f459602dd1618c0e",
+          "native_process_wall_ns": 3071938614,
+          "native_time_v": {
+            "filesystem_inputs": 2636088,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 144,
+            "max_rss_kib": 2665724,
+            "minor_page_faults": 366081,
+            "system_seconds": 0.71,
+            "user_seconds": 2.79
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 270.77769099999995,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 96.221582,
+            "native_prefill_ms": 275.137394,
+            "native_prefill_plus_decode_ms": 371.358976,
+            "replay_decode_ms": 101.203305,
+            "replay_import_ms": 0.552731,
+            "replay_load_verify_ms": 3.806972,
+            "replay_setup_plus_decode_ms": 105.563008
+          },
+          "replay_logits_file_sha256": "10d16d8c091c41ade28fc035f62a08ba24ccd62d0acd47bb545bdca0cbe42692",
+          "replay_process_wall_ns": 2805644684,
+          "replay_time_v": {
+            "filesystem_inputs": 2636920,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 140,
+            "max_rss_kib": 1779076,
+            "minor_page_faults": 375102,
+            "system_seconds": 0.64,
+            "user_seconds": 2.11
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "972f58de5b23dc9306445684b1eb78915dad447d98a276bed1d4506e71a010da",
+            "exact": true,
+            "expected_payload_sha256": "972f58de5b23dc9306445684b1eb78915dad447d98a276bed1d4506e71a010da",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "0935c46c34bbb01bfba3c6b0c770c99045489ed7ffacc2006b73568ee85b8d5a",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "ff0a035521298c67b4b48e0b81ecb6eefa4dcebd706e63035395d43ffde9a2d6",
+            "exact": true,
+            "expected_payload_sha256": "ff0a035521298c67b4b48e0b81ecb6eefa4dcebd706e63035395d43ffde9a2d6",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            104151,
+            101481,
+            627,
+            14628
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "55fd051b372787d98470bcb28b9672a953192696bbc3ad35f459602dd1618c0e",
+          "native_process_wall_ns": 2789341796,
+          "native_time_v": {
+            "filesystem_inputs": 104,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 5,
+            "max_rss_kib": 2666444,
+            "minor_page_faults": 376287,
+            "system_seconds": 0.64,
+            "user_seconds": 2.85
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 288.613589,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 98.090375,
+            "native_prefill_ms": 290.013643,
+            "native_prefill_plus_decode_ms": 388.104018,
+            "replay_decode_ms": 118.71632299999999,
+            "replay_import_ms": 0.655657,
+            "replay_load_verify_ms": 0.7443970000000001,
+            "replay_setup_plus_decode_ms": 120.11637699999999
+          },
+          "replay_logits_file_sha256": "10d16d8c091c41ade28fc035f62a08ba24ccd62d0acd47bb545bdca0cbe42692",
+          "replay_process_wall_ns": 2562468553,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 0,
+            "max_rss_kib": 1779532,
+            "minor_page_faults": 377196,
+            "system_seconds": 0.59,
+            "user_seconds": 2.27
+          }
+        }
+      ],
+      "prompt_id": "ar_france",
+      "prompt_utf8_sha256": "4915d94a2cbdd0478b680f4e3dd1fc3ea2e5179e3229a577d157688a48b2d240",
+      "rung": "q8_0",
+      "snapshot_hash": "6cdb1471784df909c2874a88410765b7c569f87a5d1b89316aad4ee73145216e",
+      "status": "pass",
+      "verify_process_wall_ns": 3738331
+    },
+    {
+      "architecture_argument": "llama",
+      "case_id": "llama-3.2-1b__q6_k__en_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1100.569675,
+        "logits_hash": 0.39795899999999995,
+        "logits_write": 2.233869,
+        "model_load": 37.154334999999996,
+        "prefill_inference": 970.9829599999999,
+        "snapshot_build_and_verify": 0.550912,
+        "snapshot_write": 9.459213,
+        "tokenizer_load_and_encode": 398.910635
+      },
+      "export_process_wall_ns": 2571029319,
+      "family": "llama-3.2-1b",
+      "language": "English",
+      "model_label": "llama-3.2-1b-q6_k.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "35006e0813654ec3cf5cb417fa3de724bed52c389b388c747c42003eacadc919",
+            "exact": true,
+            "expected_payload_sha256": "35006e0813654ec3cf5cb417fa3de724bed52c389b388c747c42003eacadc919",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "94d95e73d1018101ea1240a5076b9cb69edc92b6a10a90e1cffa80e8a7bb4698",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "8552840cbefaf805320f7edba568aed1a99252b347eaf61eca7c6350933c5fca",
+            "exact": true,
+            "expected_payload_sha256": "8552840cbefaf805320f7edba568aed1a99252b347eaf61eca7c6350933c5fca",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12366,
+            13,
+            578,
+            469
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "9148e30cc15478579762759e2fe4deabc45d938125f5774b834ab1b40622acec",
+          "native_process_wall_ns": 3050282440,
+          "native_time_v": {
+            "filesystem_inputs": 2051776,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 145,
+            "max_rss_kib": 1145652,
+            "minor_page_faults": 51027,
+            "system_seconds": 0.28,
+            "user_seconds": 3.23
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 931.4973719999999,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 439.50183599999997,
+            "native_prefill_ms": 935.214982,
+            "native_prefill_plus_decode_ms": 1374.7168179999999,
+            "replay_decode_ms": 482.81928200000004,
+            "replay_import_ms": 0.47553100000000004,
+            "replay_load_verify_ms": 3.242079,
+            "replay_setup_plus_decode_ms": 486.536892
+          },
+          "replay_logits_file_sha256": "73264235745f1476f3c57d8dcf8e1cf44c6865ca340283d31e87b5dd3fafd332",
+          "replay_process_wall_ns": 2182935279,
+          "replay_time_v": {
+            "filesystem_inputs": 2052344,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 144,
+            "max_rss_kib": 1176092,
+            "minor_page_faults": 48844,
+            "system_seconds": 0.27,
+            "user_seconds": 2.46
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "35006e0813654ec3cf5cb417fa3de724bed52c389b388c747c42003eacadc919",
+            "exact": true,
+            "expected_payload_sha256": "35006e0813654ec3cf5cb417fa3de724bed52c389b388c747c42003eacadc919",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "94d95e73d1018101ea1240a5076b9cb69edc92b6a10a90e1cffa80e8a7bb4698",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "8552840cbefaf805320f7edba568aed1a99252b347eaf61eca7c6350933c5fca",
+            "exact": true,
+            "expected_payload_sha256": "8552840cbefaf805320f7edba568aed1a99252b347eaf61eca7c6350933c5fca",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12366,
+            13,
+            578,
+            469
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "9148e30cc15478579762759e2fe4deabc45d938125f5774b834ab1b40622acec",
+          "native_process_wall_ns": 2699613287,
+          "native_time_v": {
+            "filesystem_inputs": 72,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 2,
+            "max_rss_kib": 1145724,
+            "minor_page_faults": 48546,
+            "system_seconds": 0.19,
+            "user_seconds": 3.2
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 958.501953,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 431.613964,
+            "native_prefill_ms": 959.603117,
+            "native_prefill_plus_decode_ms": 1391.217081,
+            "replay_decode_ms": 476.54130000000004,
+            "replay_import_ms": 0.511432,
+            "replay_load_verify_ms": 0.589732,
+            "replay_setup_plus_decode_ms": 477.642464
+          },
+          "replay_logits_file_sha256": "73264235745f1476f3c57d8dcf8e1cf44c6865ca340283d31e87b5dd3fafd332",
+          "replay_process_wall_ns": 1805841683,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 0,
+            "max_rss_kib": 1175776,
+            "minor_page_faults": 53012,
+            "system_seconds": 0.21,
+            "user_seconds": 2.39
+          }
+        }
+      ],
+      "prompt_id": "en_france",
+      "prompt_utf8_sha256": "bbaff4d2ecd5892d4a442b0f53131641bf6e6f284761dd20fc0664bc97145762",
+      "rung": "q6_k",
+      "snapshot_hash": "433ec5205536fecd354d511c6f8a3c8ed26375c2ec13c6f011ddc0ff4d2f1225",
+      "status": "pass",
+      "verify_process_wall_ns": 3561881
+    },
+    {
+      "architecture_argument": "llama",
+      "case_id": "llama-3.2-1b__q6_k__ar_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 819.47684,
+        "logits_hash": 0.407511,
+        "logits_write": 1.844479,
+        "model_load": 37.043117,
+        "prefill_inference": 1295.359576,
+        "snapshot_build_and_verify": 0.712264,
+        "snapshot_write": 11.108533,
+        "tokenizer_load_and_encode": 393.086461
+      },
+      "export_process_wall_ns": 2608993654,
+      "family": "llama-3.2-1b",
+      "language": "Arabic",
+      "model_label": "llama-3.2-1b-q6_k.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "38812788f1a155d87d967a41d5794e1f792fc7b0d7aafb4cf3bb0e1c9f567b39",
+            "exact": true,
+            "expected_payload_sha256": "38812788f1a155d87d967a41d5794e1f792fc7b0d7aafb4cf3bb0e1c9f567b39",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "19e3d10964d6a9a1850811625ef9ae95eb144066ae04288f64db970041c327a8",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "826ecf25e034a96b3511ed8910ab59b580cdd969cff03dcf752693d138ea4f22",
+            "exact": true,
+            "expected_payload_sha256": "826ecf25e034a96b3511ed8910ab59b580cdd969cff03dcf752693d138ea4f22",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            104151,
+            101481,
+            627,
+            14628
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "ef783414ab62e6564c02133601513040cd4ac3e32cc2c49bb9912b15a20ff735",
+          "native_process_wall_ns": 3420745763,
+          "native_time_v": {
+            "filesystem_inputs": 2051776,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 145,
+            "max_rss_kib": 1145536,
+            "minor_page_faults": 51546,
+            "system_seconds": 0.3,
+            "user_seconds": 3.58
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1311.262986,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 460.608857,
+            "native_prefill_ms": 1315.7655809999999,
+            "native_prefill_plus_decode_ms": 1776.3744379999998,
+            "replay_decode_ms": 471.06017999999995,
+            "replay_import_ms": 0.558688,
+            "replay_load_verify_ms": 3.943907,
+            "replay_setup_plus_decode_ms": 475.56277499999993
+          },
+          "replay_logits_file_sha256": "63a9ca7cdaa8edb3d7d748504231f62201d2bedc219ac4c9a40239105ae92855",
+          "replay_process_wall_ns": 2120982658,
+          "replay_time_v": {
+            "filesystem_inputs": 2052536,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 144,
+            "max_rss_kib": 1176012,
+            "minor_page_faults": 51061,
+            "system_seconds": 0.28,
+            "user_seconds": 2.38
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "38812788f1a155d87d967a41d5794e1f792fc7b0d7aafb4cf3bb0e1c9f567b39",
+            "exact": true,
+            "expected_payload_sha256": "38812788f1a155d87d967a41d5794e1f792fc7b0d7aafb4cf3bb0e1c9f567b39",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "19e3d10964d6a9a1850811625ef9ae95eb144066ae04288f64db970041c327a8",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "826ecf25e034a96b3511ed8910ab59b580cdd969cff03dcf752693d138ea4f22",
+            "exact": true,
+            "expected_payload_sha256": "826ecf25e034a96b3511ed8910ab59b580cdd969cff03dcf752693d138ea4f22",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            104151,
+            101481,
+            627,
+            14628
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "ef783414ab62e6564c02133601513040cd4ac3e32cc2c49bb9912b15a20ff735",
+          "native_process_wall_ns": 3043371614,
+          "native_time_v": {
+            "filesystem_inputs": 72,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 2,
+            "max_rss_kib": 1146060,
+            "minor_page_faults": 49544,
+            "system_seconds": 0.19,
+            "user_seconds": 3.56
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1269.4088,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 429.27075,
+            "native_prefill_ms": 1271.125629,
+            "native_prefill_plus_decode_ms": 1700.3963789999998,
+            "replay_decode_ms": 462.207402,
+            "replay_import_ms": 0.650826,
+            "replay_load_verify_ms": 1.066003,
+            "replay_setup_plus_decode_ms": 463.924231
+          },
+          "replay_logits_file_sha256": "63a9ca7cdaa8edb3d7d748504231f62201d2bedc219ac4c9a40239105ae92855",
+          "replay_process_wall_ns": 1882952430,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 0,
+            "max_rss_kib": 1176352,
+            "minor_page_faults": 49572,
+            "system_seconds": 0.21,
+            "user_seconds": 2.42
+          }
+        }
+      ],
+      "prompt_id": "ar_france",
+      "prompt_utf8_sha256": "4915d94a2cbdd0478b680f4e3dd1fc3ea2e5179e3229a577d157688a48b2d240",
+      "rung": "q6_k",
+      "snapshot_hash": "25bce45177ff71fe941048d6c68ac913ec1becd5ffdb584d336729771d75924d",
+      "status": "pass",
+      "verify_process_wall_ns": 4045640
+    },
+    {
+      "architecture_argument": "llama",
+      "case_id": "llama-3.2-1b__q4_k_m__en_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 715.713963,
+        "logits_hash": 0.371679,
+        "logits_write": 2.163463,
+        "model_load": 38.189621,
+        "prefill_inference": 1277.786045,
+        "snapshot_build_and_verify": 0.5080399999999999,
+        "snapshot_write": 10.265889999999999,
+        "tokenizer_load_and_encode": 403.869341
+      },
+      "export_process_wall_ns": 2501044013,
+      "family": "llama-3.2-1b",
+      "language": "English",
+      "model_label": "llama-3.2-1b-q4_k_m.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "2dab34c1efdfe5784cc5b74a934be9ba9aa996bf319255f47dc3275c6ba51ba3",
+            "exact": true,
+            "expected_payload_sha256": "2dab34c1efdfe5784cc5b74a934be9ba9aa996bf319255f47dc3275c6ba51ba3",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "dc6a03b13822b6c97906cbb8248c7d00a751dfc1cf45d22581abbdc9d6f49587",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "7f0534bd1f2daa9e30c00c38e758f670731840a01c6e3a6e10b3661d4d63405b",
+            "exact": true,
+            "expected_payload_sha256": "7f0534bd1f2daa9e30c00c38e758f670731840a01c6e3a6e10b3661d4d63405b",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12366,
+            13,
+            578,
+            6864
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "efec8004dd79c07255797ec3fae05167078b604b584c15e3c1b223be84def2b1",
+          "native_process_wall_ns": 3073948179,
+          "native_time_v": {
+            "filesystem_inputs": 1633608,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 145,
+            "max_rss_kib": 936672,
+            "minor_page_faults": 46825,
+            "system_seconds": 0.22,
+            "user_seconds": 3.36
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1242.562066,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 438.08287700000005,
+            "native_prefill_ms": 1246.247711,
+            "native_prefill_plus_decode_ms": 1684.330588,
+            "replay_decode_ms": 440.36015100000003,
+            "replay_import_ms": 0.45059499999999997,
+            "replay_load_verify_ms": 3.23505,
+            "replay_setup_plus_decode_ms": 444.04579600000005
+          },
+          "replay_logits_file_sha256": "30e38254a2327afaa2610c52aaa507b7843b103946590538ea39e9841d8818c3",
+          "replay_process_wall_ns": 1826085231,
+          "replay_time_v": {
+            "filesystem_inputs": 1634168,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 145,
+            "max_rss_kib": 966632,
+            "minor_page_faults": 42611,
+            "system_seconds": 0.23,
+            "user_seconds": 2.12
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "2dab34c1efdfe5784cc5b74a934be9ba9aa996bf319255f47dc3275c6ba51ba3",
+            "exact": true,
+            "expected_payload_sha256": "2dab34c1efdfe5784cc5b74a934be9ba9aa996bf319255f47dc3275c6ba51ba3",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "dc6a03b13822b6c97906cbb8248c7d00a751dfc1cf45d22581abbdc9d6f49587",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "7f0534bd1f2daa9e30c00c38e758f670731840a01c6e3a6e10b3661d4d63405b",
+            "exact": true,
+            "expected_payload_sha256": "7f0534bd1f2daa9e30c00c38e758f670731840a01c6e3a6e10b3661d4d63405b",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12366,
+            13,
+            578,
+            6864
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "efec8004dd79c07255797ec3fae05167078b604b584c15e3c1b223be84def2b1",
+          "native_process_wall_ns": 2924757910,
+          "native_time_v": {
+            "filesystem_inputs": 72,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 2,
+            "max_rss_kib": 936736,
+            "minor_page_faults": 45878,
+            "system_seconds": 0.2,
+            "user_seconds": 3.49
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1268.0344089999999,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 468.46799699999997,
+            "native_prefill_ms": 1269.074995,
+            "native_prefill_plus_decode_ms": 1737.542992,
+            "replay_decode_ms": 462.975635,
+            "replay_import_ms": 0.49014,
+            "replay_load_verify_ms": 0.550446,
+            "replay_setup_plus_decode_ms": 464.01622100000003
+          },
+          "replay_logits_file_sha256": "30e38254a2327afaa2610c52aaa507b7843b103946590538ea39e9841d8818c3",
+          "replay_process_wall_ns": 1613731555,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 0,
+            "max_rss_kib": 967024,
+            "minor_page_faults": 40615,
+            "system_seconds": 0.16,
+            "user_seconds": 2.24
+          }
+        }
+      ],
+      "prompt_id": "en_france",
+      "prompt_utf8_sha256": "bbaff4d2ecd5892d4a442b0f53131641bf6e6f284761dd20fc0664bc97145762",
+      "rung": "q4_k_m",
+      "snapshot_hash": "f6c5efcfc3183b0b086cd3de4f77f18168d2ace918c00b971dd8e44cd6e0604e",
+      "status": "pass",
+      "verify_process_wall_ns": 3641522
+    },
+    {
+      "architecture_argument": "llama",
+      "case_id": "llama-3.2-1b__q4_k_m__ar_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 721.863075,
+        "logits_hash": 0.405581,
+        "logits_write": 1.887421,
+        "model_load": 41.42432,
+        "prefill_inference": 1806.712136,
+        "snapshot_build_and_verify": 0.774558,
+        "snapshot_write": 10.747279,
+        "tokenizer_load_and_encode": 432.00240299999996
+      },
+      "export_process_wall_ns": 3065754636,
+      "family": "llama-3.2-1b",
+      "language": "Arabic",
+      "model_label": "llama-3.2-1b-q4_k_m.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "9f2736019879f2fea23152b0e6beb8ead4c3d2955f36b9df1a5fab1087936b8e",
+            "exact": true,
+            "expected_payload_sha256": "9f2736019879f2fea23152b0e6beb8ead4c3d2955f36b9df1a5fab1087936b8e",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "af342d7fcb541556fd830e85553a5cc10222c72359b1bd9c26c3112ab0973b66",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "e30c3c8e49c65a05422c811cca1444b76db4513b02ac5029cc43a862a8e3e854",
+            "exact": true,
+            "expected_payload_sha256": "e30c3c8e49c65a05422c811cca1444b76db4513b02ac5029cc43a862a8e3e854",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            104151,
+            101481,
+            198,
+            24102
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "a5a5998d87af313221e9bb02b152fa8f8612a54fbd7cc2b62ae63a0392f8f606",
+          "native_process_wall_ns": 3654657814,
+          "native_time_v": {
+            "filesystem_inputs": 1633600,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 145,
+            "max_rss_kib": 936140,
+            "minor_page_faults": 46832,
+            "system_seconds": 0.24,
+            "user_seconds": 3.93
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1776.3820159999998,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 427.487839,
+            "native_prefill_ms": 1780.9931649999999,
+            "native_prefill_plus_decode_ms": 2208.4810039999998,
+            "replay_decode_ms": 439.88727900000004,
+            "replay_import_ms": 0.59081,
+            "replay_load_verify_ms": 4.020339000000001,
+            "replay_setup_plus_decode_ms": 444.49842800000005
+          },
+          "replay_logits_file_sha256": "d1a683567e5412145c8c3769eba90df604b441bfa20c9fc86923fd65a0e91e5d",
+          "replay_process_wall_ns": 1840163928,
+          "replay_time_v": {
+            "filesystem_inputs": 1634360,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 145,
+            "max_rss_kib": 966964,
+            "minor_page_faults": 42750,
+            "system_seconds": 0.24,
+            "user_seconds": 2.11
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "9f2736019879f2fea23152b0e6beb8ead4c3d2955f36b9df1a5fab1087936b8e",
+            "exact": true,
+            "expected_payload_sha256": "9f2736019879f2fea23152b0e6beb8ead4c3d2955f36b9df1a5fab1087936b8e",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              128256
+            ]
+          },
+          "boundary_logits_file_sha256": "af342d7fcb541556fd830e85553a5cc10222c72359b1bd9c26c3112ab0973b66",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "e30c3c8e49c65a05422c811cca1444b76db4513b02ac5029cc43a862a8e3e854",
+            "exact": true,
+            "expected_payload_sha256": "e30c3c8e49c65a05422c811cca1444b76db4513b02ac5029cc43a862a8e3e854",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              128256
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            104151,
+            101481,
+            198,
+            24102
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "a5a5998d87af313221e9bb02b152fa8f8612a54fbd7cc2b62ae63a0392f8f606",
+          "native_process_wall_ns": 3443377865,
+          "native_time_v": {
+            "filesystem_inputs": 72,
+            "filesystem_outputs": 4024,
+            "major_page_faults": 2,
+            "max_rss_kib": 936740,
+            "minor_page_faults": 46886,
+            "system_seconds": 0.16,
+            "user_seconds": 4.03
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1808.561212,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 462.35305900000003,
+            "native_prefill_ms": 1810.042113,
+            "native_prefill_plus_decode_ms": 2272.395172,
+            "replay_decode_ms": 455.328479,
+            "replay_import_ms": 0.626356,
+            "replay_load_verify_ms": 0.854545,
+            "replay_setup_plus_decode_ms": 456.80938000000003
+          },
+          "replay_logits_file_sha256": "d1a683567e5412145c8c3769eba90df604b441bfa20c9fc86923fd65a0e91e5d",
+          "replay_process_wall_ns": 1617200058,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3016,
+            "major_page_faults": 0,
+            "max_rss_kib": 967296,
+            "minor_page_faults": 43308,
+            "system_seconds": 0.16,
+            "user_seconds": 2.22
+          }
+        }
+      ],
+      "prompt_id": "ar_france",
+      "prompt_utf8_sha256": "4915d94a2cbdd0478b680f4e3dd1fc3ea2e5179e3229a577d157688a48b2d240",
+      "rung": "q4_k_m",
+      "snapshot_hash": "d5327a0f0b6c05738643e973cd9420e5763e04cd194ed05e8cff25fb79368d8c",
+      "status": "pass",
+      "verify_process_wall_ns": 3828888
+    },
+    {
+      "architecture_argument": "qwen3",
+      "case_id": "qwen2.5-1.5b__q8_0__en_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1802.9357770000001,
+        "logits_hash": 0.974259,
+        "logits_write": 2.480839,
+        "model_load": 172.77029399999998,
+        "prefill_inference": 516.9782349999999,
+        "snapshot_build_and_verify": 0.7364,
+        "snapshot_write": 6.679093,
+        "tokenizer_load_and_encode": 247.514309
+      },
+      "export_process_wall_ns": 2833610913,
+      "family": "qwen2.5-1.5b",
+      "language": "English",
+      "model_label": "qwen2.5-1.5b-q8_0.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "6989ade1a277e2c49c45c7f8c306e44524ef6b29da5615ab3efe518ab71c34de",
+            "exact": true,
+            "expected_payload_sha256": "6989ade1a277e2c49c45c7f8c306e44524ef6b29da5615ab3efe518ab71c34de",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "72f15da8b62f5056b95dc53c6a1998ff1d8895c1a1e858df663b8e4ba9380943",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "38fdaf1a674e963b5f5cb8901ecfdd6e23a1a82473c826970ece0675b0901b21",
+            "exact": true,
+            "expected_payload_sha256": "38fdaf1a674e963b5f5cb8901ecfdd6e23a1a82473c826970ece0675b0901b21",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12095,
+            13,
+            576,
+            6722
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "71ddec9aa719ffa8bfd47b1afd0488e3b82d557a69c611e18a1112d31266281c",
+          "native_process_wall_ns": 3856402426,
+          "native_time_v": {
+            "filesystem_inputs": 5081408,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 2129,
+            "max_rss_kib": 1930060,
+            "minor_page_faults": 80707,
+            "system_seconds": 0.67,
+            "user_seconds": 3.35
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 912.6357790000001,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 262.226769,
+            "native_prefill_ms": 916.2168240000001,
+            "native_prefill_plus_decode_ms": 1178.443593,
+            "replay_decode_ms": 723.2862359999999,
+            "replay_import_ms": 0.429248,
+            "replay_load_verify_ms": 3.151797,
+            "replay_setup_plus_decode_ms": 726.8672809999999
+          },
+          "replay_logits_file_sha256": "756d4b48bf5aaa5f4763d3f2aa330637994c02c7721049e27495b04377014e11",
+          "replay_process_wall_ns": 3305276914,
+          "replay_time_v": {
+            "filesystem_inputs": 4872968,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 1335,
+            "max_rss_kib": 1929660,
+            "minor_page_faults": 47254,
+            "system_seconds": 0.55,
+            "user_seconds": 2.39
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "6989ade1a277e2c49c45c7f8c306e44524ef6b29da5615ab3efe518ab71c34de",
+            "exact": true,
+            "expected_payload_sha256": "6989ade1a277e2c49c45c7f8c306e44524ef6b29da5615ab3efe518ab71c34de",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "72f15da8b62f5056b95dc53c6a1998ff1d8895c1a1e858df663b8e4ba9380943",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "38fdaf1a674e963b5f5cb8901ecfdd6e23a1a82473c826970ece0675b0901b21",
+            "exact": true,
+            "expected_payload_sha256": "38fdaf1a674e963b5f5cb8901ecfdd6e23a1a82473c826970ece0675b0901b21",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12095,
+            13,
+            576,
+            6722
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "71ddec9aa719ffa8bfd47b1afd0488e3b82d557a69c611e18a1112d31266281c",
+          "native_process_wall_ns": 2610630328,
+          "native_time_v": {
+            "filesystem_inputs": 890384,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 5,
+            "max_rss_kib": 1930296,
+            "minor_page_faults": 117177,
+            "system_seconds": 0.49,
+            "user_seconds": 3.19
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 284.62344,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 208.465941,
+            "native_prefill_ms": 286.436937,
+            "native_prefill_plus_decode_ms": 494.902878,
+            "replay_decode_ms": 221.781841,
+            "replay_import_ms": 0.852646,
+            "replay_load_verify_ms": 0.960851,
+            "replay_setup_plus_decode_ms": 223.595338
+          },
+          "replay_logits_file_sha256": "756d4b48bf5aaa5f4763d3f2aa330637994c02c7721049e27495b04377014e11",
+          "replay_process_wall_ns": 2243234049,
+          "replay_time_v": {
+            "filesystem_inputs": 288,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 0,
+            "max_rss_kib": 1930412,
+            "minor_page_faults": 104503,
+            "system_seconds": 0.37,
+            "user_seconds": 2.38
+          }
+        }
+      ],
+      "prompt_id": "en_france",
+      "prompt_utf8_sha256": "bbaff4d2ecd5892d4a442b0f53131641bf6e6f284761dd20fc0664bc97145762",
+      "rung": "q8_0",
+      "snapshot_hash": "1c0407882a2ccb0a067b9580bf319aea48ccf67cd8dd4ecde61d876e9ad41d30",
+      "status": "pass",
+      "verify_process_wall_ns": 3472509
+    },
+    {
+      "architecture_argument": "qwen3",
+      "case_id": "qwen2.5-1.5b__q8_0__ar_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1578.39162,
+        "logits_hash": 0.601739,
+        "logits_write": 1.941318,
+        "model_load": 122.72856999999999,
+        "prefill_inference": 423.655932,
+        "snapshot_build_and_verify": 0.819009,
+        "snapshot_write": 10.151627999999999,
+        "tokenizer_load_and_encode": 232.720082
+      },
+      "export_process_wall_ns": 2454448635,
+      "family": "qwen2.5-1.5b",
+      "language": "Arabic",
+      "model_label": "qwen2.5-1.5b-q8_0.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "7a20033f8ae4122ad25cb8951238f51fa0c06c7a32094359c4b58bcc52e36e03",
+            "exact": true,
+            "expected_payload_sha256": "7a20033f8ae4122ad25cb8951238f51fa0c06c7a32094359c4b58bcc52e36e03",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "12a2e3ae485169d48685675827a8835fcea9eb8f538c1bbeee529585d48e09dc",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "978f8e558bfc12733c746aaef784701ab76b78d3328d72d3b96039e059b91300",
+            "exact": true,
+            "expected_payload_sha256": "978f8e558bfc12733c746aaef784701ab76b78d3328d72d3b96039e059b91300",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            481,
+            23364,
+            125463,
+            124179
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "12e657f76991af19951bc0a2f48c2675f783fa3623adb4de4ae28765b57802ca",
+          "native_process_wall_ns": 4243462423,
+          "native_time_v": {
+            "filesystem_inputs": 4231536,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 152,
+            "max_rss_kib": 1931304,
+            "minor_page_faults": 105055,
+            "system_seconds": 1.49,
+            "user_seconds": 3.46
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 426.93392800000004,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 222.11864500000001,
+            "native_prefill_ms": 431.626142,
+            "native_prefill_plus_decode_ms": 653.7447870000001,
+            "replay_decode_ms": 225.994863,
+            "replay_import_ms": 0.989972,
+            "replay_load_verify_ms": 3.702242,
+            "replay_setup_plus_decode_ms": 230.68707700000002
+          },
+          "replay_logits_file_sha256": "97da7834cc2d459b81a48f943680886392573b49dd6147b17e62a0fff03a0c18",
+          "replay_process_wall_ns": 2857099682,
+          "replay_time_v": {
+            "filesystem_inputs": 4233496,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 147,
+            "max_rss_kib": 1930440,
+            "minor_page_faults": 99076,
+            "system_seconds": 0.56,
+            "user_seconds": 2.32
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "7a20033f8ae4122ad25cb8951238f51fa0c06c7a32094359c4b58bcc52e36e03",
+            "exact": true,
+            "expected_payload_sha256": "7a20033f8ae4122ad25cb8951238f51fa0c06c7a32094359c4b58bcc52e36e03",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "12a2e3ae485169d48685675827a8835fcea9eb8f538c1bbeee529585d48e09dc",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "978f8e558bfc12733c746aaef784701ab76b78d3328d72d3b96039e059b91300",
+            "exact": true,
+            "expected_payload_sha256": "978f8e558bfc12733c746aaef784701ab76b78d3328d72d3b96039e059b91300",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            481,
+            23364,
+            125463,
+            124179
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "12e657f76991af19951bc0a2f48c2675f783fa3623adb4de4ae28765b57802ca",
+          "native_process_wall_ns": 3127687689,
+          "native_time_v": {
+            "filesystem_inputs": 2113552,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 9,
+            "max_rss_kib": 1933232,
+            "minor_page_faults": 100417,
+            "system_seconds": 0.61,
+            "user_seconds": 3.59
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 451.803677,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 279.44099,
+            "native_prefill_ms": 454.372913,
+            "native_prefill_plus_decode_ms": 733.813903,
+            "replay_decode_ms": 259.39745800000003,
+            "replay_import_ms": 1.010281,
+            "replay_load_verify_ms": 1.558955,
+            "replay_setup_plus_decode_ms": 261.966694
+          },
+          "replay_logits_file_sha256": "97da7834cc2d459b81a48f943680886392573b49dd6147b17e62a0fff03a0c18",
+          "replay_process_wall_ns": 2415994223,
+          "replay_time_v": {
+            "filesystem_inputs": 1061176,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 0,
+            "max_rss_kib": 1930632,
+            "minor_page_faults": 101179,
+            "system_seconds": 0.41,
+            "user_seconds": 2.43
+          }
+        }
+      ],
+      "prompt_id": "ar_france",
+      "prompt_utf8_sha256": "4915d94a2cbdd0478b680f4e3dd1fc3ea2e5179e3229a577d157688a48b2d240",
+      "rung": "q8_0",
+      "snapshot_hash": "4513e24372f47c9a4fd35d1533ba24a9faf9436a0192e35544ac60b861e9528e",
+      "status": "pass",
+      "verify_process_wall_ns": 3786386
+    },
+    {
+      "architecture_argument": "qwen3",
+      "case_id": "qwen2.5-1.5b__q6_k__en_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1284.370212,
+        "logits_hash": 0.442661,
+        "logits_write": 2.3625640000000003,
+        "model_load": 32.839169,
+        "prefill_inference": 1104.603534,
+        "snapshot_build_and_verify": 0.38959900000000003,
+        "snapshot_write": 11.093629,
+        "tokenizer_load_and_encode": 231.31147399999998
+      },
+      "export_process_wall_ns": 2725307193,
+      "family": "qwen2.5-1.5b",
+      "language": "English",
+      "model_label": "qwen2.5-1.5b-q6_k.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "915259a74d42a197704317491ab19525bdf19bcd28145b963d2b64ee66442bdc",
+            "exact": true,
+            "expected_payload_sha256": "915259a74d42a197704317491ab19525bdf19bcd28145b963d2b64ee66442bdc",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "f95986e17fec40b296346d839818fb09b078dc506bed984936fa18f135129202",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "69e6d2c20a6cb43229474a0e6de178c2a6a46840e75802e26fb6063f99796407",
+            "exact": true,
+            "expected_payload_sha256": "69e6d2c20a6cb43229474a0e6de178c2a6a46840e75802e26fb6063f99796407",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12095,
+            13,
+            576,
+            6722
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "d07761ce6546e8e983e36896a9415a412c2e1cfa19464e354e7bc2f42f4a1fa6",
+          "native_process_wall_ns": 3784250049,
+          "native_time_v": {
+            "filesystem_inputs": 2896128,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 144,
+            "max_rss_kib": 1326056,
+            "minor_page_faults": 25306,
+            "system_seconds": 0.39,
+            "user_seconds": 4.24
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1199.4141419999999,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 584.1512260000001,
+            "native_prefill_ms": 1203.045369,
+            "native_prefill_plus_decode_ms": 1787.196595,
+            "replay_decode_ms": 595.993171,
+            "replay_import_ms": 0.49014100000000005,
+            "replay_load_verify_ms": 3.141086,
+            "replay_setup_plus_decode_ms": 599.6243979999999
+          },
+          "replay_logits_file_sha256": "1c2310c7cd9c361c7a5f2d31d02287c9270b30ca67b8750262a612bd4b3ec67d",
+          "replay_process_wall_ns": 2583161381,
+          "replay_time_v": {
+            "filesystem_inputs": 2896408,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 145,
+            "max_rss_kib": 1323592,
+            "minor_page_faults": 22073,
+            "system_seconds": 0.35,
+            "user_seconds": 3.02
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "915259a74d42a197704317491ab19525bdf19bcd28145b963d2b64ee66442bdc",
+            "exact": true,
+            "expected_payload_sha256": "915259a74d42a197704317491ab19525bdf19bcd28145b963d2b64ee66442bdc",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "f95986e17fec40b296346d839818fb09b078dc506bed984936fa18f135129202",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "69e6d2c20a6cb43229474a0e6de178c2a6a46840e75802e26fb6063f99796407",
+            "exact": true,
+            "expected_payload_sha256": "69e6d2c20a6cb43229474a0e6de178c2a6a46840e75802e26fb6063f99796407",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12095,
+            13,
+            576,
+            6722
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "d07761ce6546e8e983e36896a9415a412c2e1cfa19464e354e7bc2f42f4a1fa6",
+          "native_process_wall_ns": 3476072092,
+          "native_time_v": {
+            "filesystem_inputs": 256,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 4,
+            "max_rss_kib": 1325008,
+            "minor_page_faults": 25037,
+            "system_seconds": 0.23,
+            "user_seconds": 4.22
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1196.195135,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 587.2373620000001,
+            "native_prefill_ms": 1197.025206,
+            "native_prefill_plus_decode_ms": 1784.262568,
+            "replay_decode_ms": 575.984923,
+            "replay_import_ms": 0.433581,
+            "replay_load_verify_ms": 0.39649,
+            "replay_setup_plus_decode_ms": 576.814994
+          },
+          "replay_logits_file_sha256": "1c2310c7cd9c361c7a5f2d31d02287c9270b30ca67b8750262a612bd4b3ec67d",
+          "replay_process_wall_ns": 2091706615,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 0,
+            "max_rss_kib": 1324284,
+            "minor_page_faults": 23264,
+            "system_seconds": 0.24,
+            "user_seconds": 2.84
+          }
+        }
+      ],
+      "prompt_id": "en_france",
+      "prompt_utf8_sha256": "bbaff4d2ecd5892d4a442b0f53131641bf6e6f284761dd20fc0664bc97145762",
+      "rung": "q6_k",
+      "snapshot_hash": "d034a68886124fa9b48c88832e7c8cb6aa25dc8d9e4a743faa93fc8e148df53a",
+      "status": "pass",
+      "verify_process_wall_ns": 3471901
+    },
+    {
+      "architecture_argument": "qwen3",
+      "case_id": "qwen2.5-1.5b__q6_k__ar_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1290.542695,
+        "logits_hash": 0.462091,
+        "logits_write": 1.958597,
+        "model_load": 32.923859,
+        "prefill_inference": 1890.466299,
+        "snapshot_build_and_verify": 0.730034,
+        "snapshot_write": 9.712213,
+        "tokenizer_load_and_encode": 234.726586
+      },
+      "export_process_wall_ns": 3518737446,
+      "family": "qwen2.5-1.5b",
+      "language": "Arabic",
+      "model_label": "qwen2.5-1.5b-q6_k.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "cdc1d6e63130e64d02f2fc880d6ec37560bb93970f1e781793c6cce4e6260aba",
+            "exact": true,
+            "expected_payload_sha256": "cdc1d6e63130e64d02f2fc880d6ec37560bb93970f1e781793c6cce4e6260aba",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "b5242c37a5432b26b8b4f06231042eb872bb2c9e1f47a69ae0aee17a33ce2bb1",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "6e8d04aa0a35d556941102d656ec428eb5f7ff67bb0fed79172b566103a2fb42",
+            "exact": true,
+            "expected_payload_sha256": "6e8d04aa0a35d556941102d656ec428eb5f7ff67bb0fed79172b566103a2fb42",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            481,
+            129436,
+            125637,
+            33090
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "4c477eb68dc182319bdbdc0e7184bfcdf936609df11736df87079302cf881bec",
+          "native_process_wall_ns": 4465013257,
+          "native_time_v": {
+            "filesystem_inputs": 2896120,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 144,
+            "max_rss_kib": 1328108,
+            "minor_page_faults": 24651,
+            "system_seconds": 0.35,
+            "user_seconds": 4.95
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1976.3392059999999,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 611.875992,
+            "native_prefill_ms": 1980.863275,
+            "native_prefill_plus_decode_ms": 2592.739267,
+            "replay_decode_ms": 591.1880960000001,
+            "replay_import_ms": 0.8102349999999999,
+            "replay_load_verify_ms": 3.713834,
+            "replay_setup_plus_decode_ms": 595.7121650000001
+          },
+          "replay_logits_file_sha256": "bcec66cf3773d413c31b43fa9bf6edb4696f8d58d27321dce81ac4edb1e73b44",
+          "replay_process_wall_ns": 2500086871,
+          "replay_time_v": {
+            "filesystem_inputs": 2896680,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 145,
+            "max_rss_kib": 1325096,
+            "minor_page_faults": 23044,
+            "system_seconds": 0.35,
+            "user_seconds": 2.93
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "cdc1d6e63130e64d02f2fc880d6ec37560bb93970f1e781793c6cce4e6260aba",
+            "exact": true,
+            "expected_payload_sha256": "cdc1d6e63130e64d02f2fc880d6ec37560bb93970f1e781793c6cce4e6260aba",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "b5242c37a5432b26b8b4f06231042eb872bb2c9e1f47a69ae0aee17a33ce2bb1",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "6e8d04aa0a35d556941102d656ec428eb5f7ff67bb0fed79172b566103a2fb42",
+            "exact": true,
+            "expected_payload_sha256": "6e8d04aa0a35d556941102d656ec428eb5f7ff67bb0fed79172b566103a2fb42",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            481,
+            129436,
+            125637,
+            33090
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "4c477eb68dc182319bdbdc0e7184bfcdf936609df11736df87079302cf881bec",
+          "native_process_wall_ns": 4181224311,
+          "native_time_v": {
+            "filesystem_inputs": 248,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 4,
+            "max_rss_kib": 1326012,
+            "minor_page_faults": 26377,
+            "system_seconds": 0.24,
+            "user_seconds": 5.0
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1946.37086,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 598.706734,
+            "native_prefill_ms": 1947.692639,
+            "native_prefill_plus_decode_ms": 2546.399373,
+            "replay_decode_ms": 564.903996,
+            "replay_import_ms": 0.587457,
+            "replay_load_verify_ms": 0.734322,
+            "replay_setup_plus_decode_ms": 566.225775
+          },
+          "replay_logits_file_sha256": "bcec66cf3773d413c31b43fa9bf6edb4696f8d58d27321dce81ac4edb1e73b44",
+          "replay_process_wall_ns": 2076419861,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 0,
+            "max_rss_kib": 1324472,
+            "minor_page_faults": 23391,
+            "system_seconds": 0.22,
+            "user_seconds": 2.85
+          }
+        }
+      ],
+      "prompt_id": "ar_france",
+      "prompt_utf8_sha256": "4915d94a2cbdd0478b680f4e3dd1fc3ea2e5179e3229a577d157688a48b2d240",
+      "rung": "q6_k",
+      "snapshot_hash": "4322a75beaee2401c0a9aa02c9ebb38f42b037dcb175f1ebf83703c771cedc6f",
+      "status": "pass",
+      "verify_process_wall_ns": 3769787
+    },
+    {
+      "architecture_argument": "qwen3",
+      "case_id": "qwen2.5-1.5b__q4_k_m__en_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 1017.2363710000001,
+        "logits_hash": 0.5070250000000001,
+        "logits_write": 2.357568,
+        "model_load": 32.090502,
+        "prefill_inference": 1502.3214440000002,
+        "snapshot_build_and_verify": 0.643903,
+        "snapshot_write": 10.299372,
+        "tokenizer_load_and_encode": 236.29230800000002
+      },
+      "export_process_wall_ns": 2859501745,
+      "family": "qwen2.5-1.5b",
+      "language": "English",
+      "model_label": "qwen2.5-1.5b-q4_k_m.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "3c7a6a4c92d489571f1f95a34ad307507f0cb904eb2379f7cc9b21ce908df82e",
+            "exact": true,
+            "expected_payload_sha256": "3c7a6a4c92d489571f1f95a34ad307507f0cb904eb2379f7cc9b21ce908df82e",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "60a47fddbe4945c3835a65635caff9a6bf5306f80359c1002b8ca25ddcbeaf18",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "c11bd95a7f4cf362baa9c8a4d2c19d0ef9d0501f497d5b388dd7df8d0d7ac10e",
+            "exact": true,
+            "expected_payload_sha256": "c11bd95a7f4cf362baa9c8a4d2c19d0ef9d0501f497d5b388dd7df8d0d7ac10e",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12095,
+            13,
+            576,
+            6722
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "ef48586618fa8e06477f7f136539206538ae8b5832e1898d504cf8da164b9077",
+          "native_process_wall_ns": 3613201665,
+          "native_time_v": {
+            "filesystem_inputs": 2218672,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 144,
+            "max_rss_kib": 1045272,
+            "minor_page_faults": 22498,
+            "system_seconds": 0.27,
+            "user_seconds": 4.07
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1500.865431,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 566.121795,
+            "native_prefill_ms": 1504.989384,
+            "native_prefill_plus_decode_ms": 2071.111179,
+            "replay_decode_ms": 571.792165,
+            "replay_import_ms": 0.384308,
+            "replay_load_verify_ms": 3.7396450000000003,
+            "replay_setup_plus_decode_ms": 575.916118
+          },
+          "replay_logits_file_sha256": "3ffbcef3aada8deeee020d797b87a25cfee855797679f1808c2c0f482ed6391d",
+          "replay_process_wall_ns": 2115773436,
+          "replay_time_v": {
+            "filesystem_inputs": 2218952,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 146,
+            "max_rss_kib": 1044244,
+            "minor_page_faults": 21102,
+            "system_seconds": 0.3,
+            "user_seconds": 2.57
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "3c7a6a4c92d489571f1f95a34ad307507f0cb904eb2379f7cc9b21ce908df82e",
+            "exact": true,
+            "expected_payload_sha256": "3c7a6a4c92d489571f1f95a34ad307507f0cb904eb2379f7cc9b21ce908df82e",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "60a47fddbe4945c3835a65635caff9a6bf5306f80359c1002b8ca25ddcbeaf18",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "c11bd95a7f4cf362baa9c8a4d2c19d0ef9d0501f497d5b388dd7df8d0d7ac10e",
+            "exact": true,
+            "expected_payload_sha256": "c11bd95a7f4cf362baa9c8a4d2c19d0ef9d0501f497d5b388dd7df8d0d7ac10e",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            12095,
+            13,
+            576,
+            6722
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "ef48586618fa8e06477f7f136539206538ae8b5832e1898d504cf8da164b9077",
+          "native_process_wall_ns": 3279670280,
+          "native_time_v": {
+            "filesystem_inputs": 256,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 4,
+            "max_rss_kib": 1044752,
+            "minor_page_faults": 21584,
+            "system_seconds": 0.18,
+            "user_seconds": 4.07
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 1469.468553,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 569.779684,
+            "native_prefill_ms": 1470.505696,
+            "native_prefill_plus_decode_ms": 2040.2853799999998,
+            "replay_decode_ms": 554.942168,
+            "replay_import_ms": 0.635385,
+            "replay_load_verify_ms": 0.401758,
+            "replay_setup_plus_decode_ms": 555.979311
+          },
+          "replay_logits_file_sha256": "3ffbcef3aada8deeee020d797b87a25cfee855797679f1808c2c0f482ed6391d",
+          "replay_process_wall_ns": 1780146737,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 0,
+            "max_rss_kib": 1047116,
+            "minor_page_faults": 19787,
+            "system_seconds": 0.2,
+            "user_seconds": 2.52
+          }
+        }
+      ],
+      "prompt_id": "en_france",
+      "prompt_utf8_sha256": "bbaff4d2ecd5892d4a442b0f53131641bf6e6f284761dd20fc0664bc97145762",
+      "rung": "q4_k_m",
+      "snapshot_hash": "484b51b13f220f3e0a449292217cec1b33fedb4c0437f997c0c41be8bd7bd322",
+      "status": "pass",
+      "verify_process_wall_ns": 3303525
+    },
+    {
+      "architecture_argument": "qwen3",
+      "case_id": "qwen2.5-1.5b__q4_k_m__ar_france",
+      "errors": [],
+      "export_phase_timing": {
+        "hash_inputs": 909.457909,
+        "logits_hash": 0.452409,
+        "logits_write": 1.888688,
+        "model_load": 31.318985,
+        "prefill_inference": 2666.151692,
+        "snapshot_build_and_verify": 0.7060569999999999,
+        "snapshot_write": 9.949654,
+        "tokenizer_load_and_encode": 223.278383
+      },
+      "export_process_wall_ns": 3898843043,
+      "family": "qwen2.5-1.5b",
+      "language": "Arabic",
+      "model_label": "qwen2.5-1.5b-q4_k_m.gguf",
+      "observations": [
+        {
+          "access_class": "post-export-first-observed-with-best-effort-dontneed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "d1ce024eb606ec5f15f3dfef75cd80333d4d287a9fa6fdbc2dfbe1b9f06bde71",
+            "exact": true,
+            "expected_payload_sha256": "d1ce024eb606ec5f15f3dfef75cd80333d4d287a9fa6fdbc2dfbe1b9f06bde71",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "a7d5f19e8f58f5ac4f6c8d2ee7c54689fd2b6854107861f968cd0868baff657a",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "d3e9191e9833137e5873a7e0227292579416c63ed4cc1581dd22342cb3aec306",
+            "exact": true,
+            "expected_payload_sha256": "d3e9191e9833137e5873a7e0227292579416c63ed4cc1581dd22342cb3aec306",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            481,
+            129436,
+            23364,
+            124676
+          ],
+          "index": 0,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "190f1eed32d27953b2362dbc281fa0bd465f61dfb1a86f325a502deac1d58bee",
+          "native_process_wall_ns": 4686884931,
+          "native_time_v": {
+            "filesystem_inputs": 2218664,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 144,
+            "max_rss_kib": 1045756,
+            "minor_page_faults": 21468,
+            "system_seconds": 0.26,
+            "user_seconds": 5.13
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 2548.1432219999997,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 553.798577,
+            "native_prefill_ms": 2552.621679,
+            "native_prefill_plus_decode_ms": 3106.420256,
+            "replay_decode_ms": 611.894139,
+            "replay_import_ms": 0.7520870000000001,
+            "replay_load_verify_ms": 3.72637,
+            "replay_setup_plus_decode_ms": 616.372596
+          },
+          "replay_logits_file_sha256": "fb925ba2da9a3bbbec1d027186855df29f9d0a19e3830519c5d5f641b6cb4421",
+          "replay_process_wall_ns": 2136549930,
+          "replay_time_v": {
+            "filesystem_inputs": 2219224,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 146,
+            "max_rss_kib": 1047032,
+            "minor_page_faults": 19885,
+            "system_seconds": 0.29,
+            "user_seconds": 2.72
+          }
+        },
+        {
+          "access_class": "post-export-subsequent-observed",
+          "boundary_comparison": {
+            "actual_payload_sha256": "d1ce024eb606ec5f15f3dfef75cd80333d4d287a9fa6fdbc2dfbe1b9f06bde71",
+            "exact": true,
+            "expected_payload_sha256": "d1ce024eb606ec5f15f3dfef75cd80333d4d287a9fa6fdbc2dfbe1b9f06bde71",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              1,
+              151936
+            ]
+          },
+          "boundary_logits_file_sha256": "a7d5f19e8f58f5ac4f6c8d2ee7c54689fd2b6854107861f968cd0868baff657a",
+          "cache_state": "unverified",
+          "continuation_comparison": {
+            "actual_payload_sha256": "d3e9191e9833137e5873a7e0227292579416c63ed4cc1581dd22342cb3aec306",
+            "exact": true,
+            "expected_payload_sha256": "d3e9191e9833137e5873a7e0227292579416c63ed4cc1581dd22342cb3aec306",
+            "max_abs_difference": 0.0,
+            "mean_abs_difference": 0.0,
+            "mismatch_count": 0,
+            "shape": [
+              3,
+              151936
+            ]
+          },
+          "exact": true,
+          "generated_token_ids": [
+            481,
+            129436,
+            23364,
+            124676
+          ],
+          "index": 1,
+          "metadata_checks": {
+            "boundary_argmax_matches_resume": true,
+            "cache_capacities_match_requested": true,
+            "execution_fingerprints_match": true,
+            "execution_plan_hashes_match": true,
+            "generated_tokens_match": true,
+            "model_hashes_match": true,
+            "native_argmax_matches_tokens": true,
+            "prefix_token_hashes_match": true,
+            "prompt_hashes_match": true,
+            "replay_argmax_matches_tokens_1_plus": true,
+            "resume_token_matches": true,
+            "snapshot_hashes_match": true,
+            "snapshot_inventory_exact": true,
+            "snapshot_source_capacity_matches": true,
+            "tokenizer_hashes_match": true,
+            "trace_file_hashes_match": true,
+            "trace_kinds_and_rows_match": true,
+            "trace_modes_and_counts_match": true,
+            "trace_positions_match": true
+          },
+          "native_logits_file_sha256": "190f1eed32d27953b2362dbc281fa0bd465f61dfb1a86f325a502deac1d58bee",
+          "native_process_wall_ns": 4392488348,
+          "native_time_v": {
+            "filesystem_inputs": 248,
+            "filesystem_outputs": 4760,
+            "major_page_faults": 4,
+            "max_rss_kib": 1045848,
+            "minor_page_faults": 24338,
+            "system_seconds": 0.21,
+            "user_seconds": 5.06
+          },
+          "phase_timing": {
+            "avoided_prefill_minus_replay_setup_ms": 2614.0894,
+            "interpretation": "Named in-process phases only; excludes model/tokenizer hashing and load. Resume-token emission is not a forward and is not called first-token inference. Trace rows stream between forwards; import includes repeated in-memory verification.",
+            "native_decode_ms": 530.127466,
+            "native_prefill_ms": 2615.650808,
+            "native_prefill_plus_decode_ms": 3145.778274,
+            "replay_decode_ms": 603.203712,
+            "replay_import_ms": 0.8485539999999999,
+            "replay_load_verify_ms": 0.712854,
+            "replay_setup_plus_decode_ms": 604.76512
+          },
+          "replay_logits_file_sha256": "fb925ba2da9a3bbbec1d027186855df29f9d0a19e3830519c5d5f641b6cb4421",
+          "replay_process_wall_ns": 1921297213,
+          "replay_time_v": {
+            "filesystem_inputs": 0,
+            "filesystem_outputs": 3576,
+            "major_page_faults": 0,
+            "max_rss_kib": 1047576,
+            "minor_page_faults": 19930,
+            "system_seconds": 0.21,
+            "user_seconds": 2.82
+          }
+        }
+      ],
+      "prompt_id": "ar_france",
+      "prompt_utf8_sha256": "4915d94a2cbdd0478b680f4e3dd1fc3ea2e5179e3229a577d157688a48b2d240",
+      "rung": "q4_k_m",
+      "snapshot_hash": "96f061f4686eca7264bac6c68ebd54f7caf771ed02ffd26f50cfab50d573cec6",
+      "status": "pass",
+      "verify_process_wall_ns": 3796589
+    }
+  ],
+  "commands_executed": 72,
+  "completed_cases": 12,
+  "expected_cases": 12,
+  "failed_cases": 0,
+  "failures": [],
+  "finished_utc": "2026-08-09T01:00:54Z",
+  "inputs_unchanged": true,
+  "partial_matrix": false,
+  "passed_cases": 12,
+  "raw_run_directory": "runs/kv-replay-matrix/2026-08-08-full",
+  "schema": "ember.kv-replay-matrix.v1",
+  "status": "complete-pass",
+  "timing_verdict": "observational-only-no-controlled-cold-warm-claim"
+}

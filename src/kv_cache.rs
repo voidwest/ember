@@ -31,27 +31,63 @@ pub struct KVCache {
 
 impl KVCache {
     pub fn new(n_layers: usize, n_kv_heads: usize, head_dim: usize, max_seq_len: usize) -> Self {
-        assert!(n_layers > 0, "kv cache requires at least one layer");
-        assert!(n_kv_heads > 0, "kv cache requires at least one KV head");
-        assert!(head_dim > 0, "kv cache requires a non-zero head dimension");
-        assert!(
-            max_seq_len > 0,
-            "kv cache requires a positive sequence length"
-        );
+        Self::try_new(n_layers, n_kv_heads, head_dim, max_seq_len)
+            .expect("invalid or unallocatable KV cache geometry")
+    }
+
+    /// Fallible cache allocation for metadata-driven import paths.
+    ///
+    /// Ordinary model construction continues to use [`KVCache::new`], whose
+    /// assertion-level contract is unchanged. Snapshot import uses this
+    /// method so malformed or excessive dimensions fail before decode rather
+    /// than overflowing shape arithmetic or panicking during allocation.
+    pub fn try_new(
+        n_layers: usize,
+        n_kv_heads: usize,
+        head_dim: usize,
+        max_seq_len: usize,
+    ) -> Result<Self, String> {
+        if n_layers == 0 {
+            return Err("kv cache requires at least one layer".into());
+        }
+        if n_kv_heads == 0 {
+            return Err("kv cache requires at least one KV head".into());
+        }
+        if head_dim == 0 {
+            return Err("kv cache requires a non-zero head dimension".into());
+        }
+        if max_seq_len == 0 {
+            return Err("kv cache requires a positive sequence length".into());
+        }
         let len = [n_layers, n_kv_heads, max_seq_len, head_dim]
             .into_iter()
             .try_fold(1usize, |count, dim| count.checked_mul(dim))
-            .expect("kv cache shape product overflow");
-        Self {
-            k: vec![f16::ZERO; len],
-            v: vec![f16::ZERO; len],
+            .ok_or_else(|| "kv cache shape product overflow".to_string())?;
+
+        let allocate_f16 = |name: &str| -> Result<Vec<f16>, String> {
+            let mut values = Vec::new();
+            values.try_reserve_exact(len).map_err(|error| {
+                format!("cannot allocate {name} KV payload ({len} f16): {error}")
+            })?;
+            values.resize(len, f16::ZERO);
+            Ok(values)
+        };
+        let mut qk_scratch = Vec::new();
+        qk_scratch.try_reserve_exact(max_seq_len).map_err(|error| {
+            format!("cannot allocate KV attention scratch ({max_seq_len} f32): {error}")
+        })?;
+        qk_scratch.resize(max_seq_len, 0.0);
+
+        Ok(Self {
+            k: allocate_f16("key")?,
+            v: allocate_f16("value")?,
             n_layers,
             n_kv_heads,
-            qk_scratch: vec![0.0; max_seq_len],
+            qk_scratch,
             head_dim,
             max_seq_len,
             cursor: 0,
-        }
+        })
     }
 
     pub fn append(&mut self, layer: usize, pos: usize, k_new: &[f32], v_new: &[f32]) {
@@ -122,6 +158,103 @@ impl KVCache {
                 .convert_from_f32_slice(&v_new[src..src + active_head_dim]);
         }
     }
+    /// Export the initialized prefix into compact
+    /// `[layer][head][position][dimension]` payloads.
+    ///
+    /// Unlike the live allocation, the returned head stride is
+    /// `sequence_length * head_dim`; unused capacity is not serialized.
+    /// This is a read-only copy and never mutates or aliases the cache.
+    pub(crate) fn export_compact_prefix(
+        &self,
+        sequence_length: usize,
+    ) -> Result<(Vec<f16>, Vec<f16>), String> {
+        if sequence_length != self.cursor {
+            return Err(format!(
+                "snapshot sequence length {sequence_length} does not match cache cursor {}",
+                self.cursor
+            ));
+        }
+        if sequence_length > self.max_seq_len {
+            return Err(format!(
+                "snapshot sequence length {sequence_length} exceeds cache capacity {}",
+                self.max_seq_len
+            ));
+        }
+        let compact_head = sequence_length
+            .checked_mul(self.head_dim)
+            .ok_or_else(|| "compact KV head stride overflow".to_string())?;
+        let compact_len = self
+            .n_layers
+            .checked_mul(self.n_kv_heads)
+            .and_then(|count| count.checked_mul(compact_head))
+            .ok_or_else(|| "compact KV payload length overflow".to_string())?;
+        let mut keys = Vec::new();
+        let mut values = Vec::new();
+        keys.try_reserve_exact(compact_len)
+            .map_err(|error| format!("cannot allocate compact key payload: {error}"))?;
+        values
+            .try_reserve_exact(compact_len)
+            .map_err(|error| format!("cannot allocate compact value payload: {error}"))?;
+        for layer in 0..self.n_layers {
+            let layer_offset = self.layer_offset(layer);
+            for head in 0..self.n_kv_heads {
+                let start = layer_offset + head * self.max_seq_len * self.head_dim;
+                let end = start + compact_head;
+                keys.extend_from_slice(&self.k[start..end]);
+                values.extend_from_slice(&self.v[start..end]);
+            }
+        }
+        Ok((keys, values))
+    }
+
+    /// Restore compact prefix payloads without f16 -> f32 -> f16 conversion.
+    ///
+    /// This is restricted to the snapshot layer so external callers cannot
+    /// bypass compatibility validation. The copy owns its destination and
+    /// therefore never aliases snapshot memory.
+    pub(crate) fn import_compact_prefix(
+        &mut self,
+        sequence_length: usize,
+        keys: &[f16],
+        values: &[f16],
+    ) -> Result<(), String> {
+        if sequence_length > self.max_seq_len {
+            return Err(format!(
+                "snapshot sequence length {sequence_length} exceeds cache capacity {}",
+                self.max_seq_len
+            ));
+        }
+        let compact_head = sequence_length
+            .checked_mul(self.head_dim)
+            .ok_or_else(|| "compact KV head stride overflow".to_string())?;
+        let expected = self
+            .n_layers
+            .checked_mul(self.n_kv_heads)
+            .and_then(|count| count.checked_mul(compact_head))
+            .ok_or_else(|| "compact KV payload length overflow".to_string())?;
+        if keys.len() != expected || values.len() != expected {
+            return Err(format!(
+                "compact KV payload length mismatch: expected {expected} elements each, got keys={} values={}",
+                keys.len(),
+                values.len()
+            ));
+        }
+        let mut source = 0usize;
+        for layer in 0..self.n_layers {
+            let layer_offset = self.layer_offset(layer);
+            for head in 0..self.n_kv_heads {
+                let destination = layer_offset + head * self.max_seq_len * self.head_dim;
+                self.k[destination..destination + compact_head]
+                    .copy_from_slice(&keys[source..source + compact_head]);
+                self.v[destination..destination + compact_head]
+                    .copy_from_slice(&values[source..source + compact_head]);
+                source += compact_head;
+            }
+        }
+        self.cursor = sequence_length;
+        Ok(())
+    }
+
     pub fn get(&self, layer: usize) -> (&[f16], &[f16]) {
         let layer_offset = self.layer_offset(layer);
         let len = self.layer_stride();
@@ -141,8 +274,24 @@ impl KVCache {
         )
     }
 
+    /// Number of layer slabs in the cache.
+    pub fn n_layers(&self) -> usize {
+        self.n_layers
+    }
+
     pub fn head_dim(&self) -> usize {
         self.head_dim
+    }
+
+    /// Element strides of the live `[layer][head][position][dimension]`
+    /// allocation, in that order.
+    pub fn element_strides(&self) -> [usize; 4] {
+        [
+            self.layer_stride(),
+            self.max_seq_len * self.head_dim,
+            self.head_dim,
+            1,
+        ]
     }
 
     pub fn cursor(&self) -> usize {

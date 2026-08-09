@@ -63,6 +63,28 @@ For now `llama-cpp-external` supports tokenization-only smoke plumbing when
 paired with an external helper. Hidden-state layer requests are rejected until
 the patched extractor contract is implemented.
 
+## KV snapshot and measurement commands
+
+The independently versioned `ember.kv-snapshot.v1` workflow is under
+`ember kv`:
+
+```bash
+ember kv export --model MODEL --tokenizer TOKENIZER --arch llama \
+  --prompt 'prefix' --output runs/kv/prefix
+ember kv inspect --json runs/kv/prefix
+ember kv verify runs/kv/prefix
+ember kv replay --snapshot runs/kv/prefix \
+  --model MODEL --tokenizer TOKENIZER --arch llama
+ember kv compare runs/kv/reference runs/kv/candidate --json --r2
+```
+
+`kv compare` also supports typed in-memory head zero/scale controls and optional
+same-input attention/logit plus independent greedy diagnostics when model,
+tokenizer, architecture, and a continuation horizon are supplied. It does not
+create a transformed snapshot or mapper. Full schema, strict compatibility,
+off-by-one continuation semantics, safety limits, and command examples are in
+[docs/kv-snapshots.md](docs/kv-snapshots.md).
+
 ### flags
 
 | flag | default | description |

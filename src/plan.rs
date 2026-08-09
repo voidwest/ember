@@ -629,6 +629,7 @@ pub struct RopeSummary {
 pub struct KvLayout {
     pub precision: String,
     pub layout: String,
+    /// Live-cache strides in scalar elements (not bytes).
     pub layer_stride: usize,
     pub head_stride: usize,
     pub pos_stride: usize,
@@ -1151,9 +1152,9 @@ pub(crate) mod tests {
             kv: KvLayout {
                 precision: "f16".into(),
                 layout: "layer-head-pos-dim".into(),
-                layer_stride: 8 * 2048 * 64 * 2,
-                head_stride: 2048 * 64 * 2,
-                pos_stride: 64 * 2,
+                layer_stride: 8 * 2048 * 64,
+                head_stride: 2048 * 64,
+                pos_stride: 64,
                 head_dim: 64,
                 n_kv_heads: 8,
                 max_seq: 2048,

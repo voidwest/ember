@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="Why Ember made KV cache state verifiable, replayable, and measurable before attempting a Qwen-to-Qwen ridge mapper." />
+        <meta property="og:title" content="Before Mapping KV Caches, Make Them Measurable" />
+        <meta property="og:description" content="A first-class KV snapshot boundary, exact same-model replay, and causal diagnostics built before any cross-model ridge mapping." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/before-mapping-kv-caches.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>Before Mapping KV Caches, Make Them Measurable · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/before-mapping-kv-caches.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>Before Mapping KV Caches, Make Them Measurable</h1>
+
+        <div class="meta">
+            a verified state boundary before a Qwen-to-Qwen ridge pilot<br>
+            mohammed al-thobaiti · 2026-08-09<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">KV cache</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag key">causal diagnostics</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <h2>summary</h2>
+
+        <p>
+            i started this work with a tempting next step: take a KV cache from
+            one model, learn a small linear map, and test whether another model
+            can continue from it without repeating the full prefix.
+        </p>
+
+        <p>i did not build the mapper.</p>
+
+        <p>
+            instead, i spent the day making KV state into something Ember can
+            export, verify, import, replay, compare, and perturb under explicit
+            contracts. the result is a first-class three-file snapshot, exact
+            same-model replay validation, per-layer and per-head K/V metrics,
+            attention-output and logit diagnostics, and a controlled in-memory
+            altered-state path.
+        </p>
+
+        <p>
+            that is less exciting than a transfer demo. it is also the work
+            that makes a later transfer result interpretable.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">status</div>
+            <p>
+                Ember can now measure and causally perturb compatible KV state.
+                this is not a cross-model transfer result, not evidence that a
+                ridge mapper will work, and not a latency claim.
+            </p>
+        </div>
+
+        <h2>why the mapper had to wait</h2>
+
+        <p>
+            a mapped cache can fail for several unrelated reasons. the snapshot
+            may be malformed. the token prefix may not match. the cache cursor
+            may be off by one. RoPE or Q/K normalization may be interpreted in
+            the wrong coordinate system. import may change f16 bits. the model
+            may take a different execution path. or the learned map may simply
+            be bad.
+        </p>
+
+        <p>
+            if all of those failures collapse into one final generated string,
+            a negative result says almost nothing. even a positive-looking
+            string is weak evidence: it can hide numerical drift, a lucky
+            top-1 tie, or a replay path that never used the intended state.
+        </p>
+
+        <p>
+            so the first question became narrower: can Ember freeze native KV
+            state and prove that importing it changes nothing under a strict
+            same-model contract?
+        </p>
+
+        <p>
+            only after that comes the second question: when state is deliberately
+            changed, where does the difference first appear—in K/V reconstruction,
+            the target attention output, the logits, or the greedy trajectory?
+        </p>
+
+        <h2>what became first-class</h2>
+
+        <p>
+            the new artifact is independently versioned as
+            <code>ember.kv-snapshot.v1</code>. it does not modify Ember's frozen
+            execution-plan or experiment-bundle schemas.
+        </p>
+
+        <pre><code class="language-text">snapshot/
+├── manifest.json
+├── keys.f16le
+└── values.f16le</code></pre>
+
+        <p>
+            K and V are stored as compact f16 bit patterns in
+            <code>[layer][kv_head][position][dimension]</code> order. unused
+            cache capacity is not serialized. the manifest records the model
+            and tokenizer hashes, cache geometry, RoPE layout and theta, Q/K
+            normalization semantics, value state, execution mode and
+            fingerprint, prefix-token hash, resume token, and payload hashes.
+        </p>
+
+        <p>
+            import is intentionally strict. there is no “close enough” switch.
+            a mismatch in model identity, tokenizer, geometry, position
+            semantics, representation state, or numerical execution provenance
+            is rejected before decode.
+        </p>
+
+        <pre><code class="language-bash">ember kv export --model MODEL.gguf --tokenizer TOKENIZER.json   --arch qwen3 --prompt 'prefix' --output runs/kv/prefix
+ember kv verify runs/kv/prefix
+ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKENIZER.json --arch qwen3</code></pre>
+
+        <h2>the off-by-one that has to stay visible</h2>
+
+        <p>
+            a snapshot covers the completed prefix, but the token selected from
+            the prefix-boundary logits is not yet in the cache. if the prefix
+            length is <code>P</code>, the stored resume token belongs at absolute
+            position <code>P</code>.
+        </p>
+
+        <p>
+            the first replay forward evaluates that token, appends its K/V row,
+            and produces logits for position <code>P+1</code>. feeding the last
+            prompt token again would duplicate it. pretending that the snapshot
+            contains the original boundary logits would also be wrong.
+        </p>
+
+        <p>
+            this sounds like bookkeeping. it is exactly the kind of bookkeeping
+            that can make a transfer experiment look broken when the actual bug
+            is sequence alignment.
+        </p>
+
+        <h2>how exact replay was checked</h2>
+
+        <p>
+            the process-level validation did not compare decoded text or use an
+            <code>allclose</code> tolerance. it saved full f32 selection logits
+            from uninterrupted generation, the export boundary, and replay:
+        </p>
+
+        <pre><code class="language-text">native[N,V] == concatenate(export_boundary[1,V], replay[N-1,V])</code></pre>
+
+        <p>
+            equality here means exact f32 bit equality. the completed matrix
+            covered Llama-3.2-1B and Qwen2.5-1.5B, Q8_0/Q6_K/Q4_K_M, and fixed
+            English and Arabic prompts.
+        </p>
+
+        <div class="callout result">
+            <div class="label">same-model replay result</div>
+            <p>
+                12 of 12 cells and 24 of 24 chronological observations passed.
+                across 13,449,216 compared f32 values, the process gate found
+                zero bit mismatches. all 72 subprocesses completed successfully.
+            </p>
+        </div>
+
+        <p>
+            this establishes the tested snapshot/replay boundary. it does not
+            establish reference correctness for every model, and the recorded
+            phase timings are observational rather than a speedup claim.
+        </p>
+
+        <h2>measurement before mapping</h2>
+
+        <p>
+            exact replay is the control condition. the next addition was
+            <code>ember kv compare</code>, which measures two snapshots only
+            when their target and prefix coordinates are proven to align.
+        </p>
+
+        <p>for every layer and KV head, it reports K and V:</p>
+
+        <ul>
+            <li>cosine similarity,</li>
+            <li>mean squared error,</li>
+            <li>optional directional R²,</li>
+            <li>maximum absolute error,</li>
+            <li>and f16 bit-mismatch counts.</li>
+        </ul>
+
+        <p>
+            optional thresholds produce a deterministic failure list and first
+            exceedance. the machine-readable report contains no timing, host,
+            process ID, or unordered map fields.
+        </p>
+
+        <pre><code class="language-bash">ember kv compare LEFT RIGHT --json --r2   --max-abs 0.001 --min-cosine 0.999</code></pre>
+
+        <p>
+            with the exact target model loaded, the same command can feed a
+            shared reference-greedy token path into both caches. it then compares
+            the semantic attention O-projection output at every layer, the full
+            logits, top-1 agreement, and the first prediction disagreement.
+        </p>
+
+        <p>
+            a separate phase re-imports two clean caches and lets each branch
+            follow its own greedy predictions. that gives sequence agreement
+            and first divergence without treating post-divergence activations
+            as if they still had the same input.
+        </p>
+
+        <h2>a causal control without fake mapper provenance</h2>
+
+        <p>
+            i also needed to know that the diagnostic path could detect a real
+            cache change before giving it mapper output. the narrow control
+            zeroes or scales one selected K/V head across the initialized prefix
+            in memory.
+        </p>
+
+        <p>
+            the operation has a typed receipt naming the native source snapshot,
+            layer, head, K/V selection, exact scale bits, and affected element
+            counts. it cannot be saved as <code>ember.kv-snapshot.v1</code> and
+            it does not fill the reserved mapper hash with a placeholder.
+            ordinary replay still accepts native snapshots only.
+        </p>
+
+        <p>
+            on a Qwen2.5-1.5B Q6_K planned smoke, comparing a snapshot with
+            itself produced zero paired differences, top-1 agreement, and the
+            same short greedy sequence. zeroing K and V for layer 0, head 0
+            produced a layer-0 attention-output cosine of about 0.886 and a
+            final-logit cosine of about 0.9953. top-1 still agreed over the very
+            short horizon.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">how to read that smoke</div>
+            <p>
+                the altered-state run proves that the instrument can localize
+                and propagate a controlled KV change. the absence of a token
+                flip over one predicted token does not show robustness, and the
+                cosine values are not evidence for model transfer quality.
+            </p>
+        </div>
+
+        <h2>what the current evidence establishes</h2>
+
+        <ul>
+            <li>the tested native snapshot boundary preserves active f16 KV bits and the restored cursor,</li>
+            <li>same-model continuation logits are bit-exact across the completed process matrix,</li>
+            <li>comparison failures can be localized to a specific layer, head, and K/V component,</li>
+            <li>and a known in-memory cache edit can be measured through attention output and logits, with short-horizon behavior reported separately.</li>
+        </ul>
+
+        <p>
+            those are instrument-validity results. they make a later mapper
+            experiment easier to diagnose; they are not mapper evidence.
+        </p>
+
+        <h2>what this work does not prove</h2>
+
+        <ul>
+            <li>no ridge or neural mapper was fitted,</li>
+            <li>no cross-model cache was authored or replayed,</li>
+            <li>no learned transform improved held-out reconstruction,</li>
+            <li>no attention or generation retention claim was established,</li>
+            <li>no latency benefit was measured under a controlled benchmark,</li>
+            <li>and Gemma's heterogeneous cache semantics remain out of scope.</li>
+        </ul>
+
+        <p>
+            attention-output cosine is useful, but it is not an attention
+            probability and not a causal explanation by itself. K/V R² is a
+            reconstruction statistic, not proof that the target model can use
+            the reconstructed cache. greedy agreement over a short horizon is
+            behavior, but it is still a censored and prompt-dependent measure.
+        </p>
+
+        <h2>the deliberately small next experiment</h2>
+
+        <p>
+            a ridge pilot can happen later, and it should stay smaller than the
+            infrastructure built around it.
+        </p>
+
+        <p>
+            the current proposed scope is one fixed Qwen-to-Qwen pair with the
+            same tokenizer and matched KV geometry. keys would be mapped in the
+            declared post-normalization, pre-RoPE content space; values would be
+            mapped in their declared value state. each target layer/head would
+            get its own fixed closed-form ridge map, with a frozen calibration
+            split, one lambda, and no layer search.
+        </p>
+
+        <p>
+            the pilot should compare identity and ridge reconstruction first,
+            then use the existing same-input attention/logit and independent
+            greedy diagnostics. it should not generalize architectures, tune a
+            serving path, optimize kernels, or create a production transformed
+            snapshot format.
+        </p>
+
+        <p>
+            if the local files remain the only available Qwen pair, Q4_K_M to
+            Q8_0 would be a quantization-boundary pilot on the same base model,
+            not evidence for cross-size model transfer. that distinction needs
+            to stay in the title, artifact metadata, and conclusion.
+        </p>
+
+        <h2>bottom line</h2>
+
+        <p>
+            today did not produce a mapper. it produced the conditions under
+            which a mapper can fail honestly.
+        </p>
+
+        <p>
+            native state now has a strict identity. replay has a bit-exact
+            control. reconstruction has layer/head metrics. downstream effects
+            have same-input attention and logit measurements. behavioral drift
+            has an independent greedy trajectory. altered state has explicit
+            provenance without pretending to be a learned artifact.
+        </p>
+
+        <p>
+            that is the boring boundary i want before asking whether one Qwen
+            cache can stand in for another.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

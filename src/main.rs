@@ -5,6 +5,7 @@ mod gui_native;
 
 mod cli_commands;
 mod cli_generation;
+mod cli_kv;
 mod cli_probe;
 
 use cli_commands::{
@@ -20,7 +21,7 @@ use cli_generation::{
 use cli_probe::{run_probe_jobs, TensorDumpConfig};
 
 use anyhow::Context;
-use clap::{Args as ClapArgs, Parser, Subcommand, ValueEnum};
+use clap::{Args as ClapArgs, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use cli_support::{
     build_run_manifest, default_tokenizer_for_arch, gguf_metadata_json, parse_max_seq_len,
     parse_temperature, parse_top_k, parse_top_p, resolve_generation_architecture,
@@ -295,6 +296,8 @@ pub(crate) enum Commands {
     BenchLifecycle(BenchLifecycleCommand),
     /// print the v0.4 execution plan for a llama-family model
     InspectPlan(InspectPlanCommand),
+    /// export, inspect, verify, replay, and trace first-class KV snapshots
+    Kv(cli_kv::KvCommand),
 
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
@@ -642,7 +645,27 @@ fn validate_tokenizer_model_contract<B: Backend>(
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    let mut args = Args::parse();
+    let matches = Args::command().get_matches();
+    if matches.subcommand_name() == Some("kv") {
+        let misplaced = [
+            "model",
+            "tokenizer",
+            "prompt",
+            "max_tokens",
+            "max_seq_len",
+            "arch",
+            "execution",
+        ]
+        .into_iter()
+        .filter(|id| matches.value_source(id) == Some(clap::parser::ValueSource::CommandLine))
+        .collect::<Vec<_>>();
+        anyhow::ensure!(
+            misplaced.is_empty(),
+            "KV model/generation options must follow the leaf command (for example `ember kv replay --model ...`); misplaced top-level options: {}",
+            misplaced.join(", ")
+        );
+    }
+    let mut args = Args::from_arg_matches(&matches)?;
     validate_experiment_options(&args)?;
 
     if let Some(command) = &args.command {
@@ -666,6 +689,9 @@ fn main() -> anyhow::Result<()> {
             }
             Commands::InspectPlan(command) => {
                 run_inspect_plan_command(command, k_strategy, args.k_allow_fallback)
+            }
+            Commands::Kv(command) => {
+                cli_kv::run_kv_command(command, k_strategy, args.k_allow_fallback)
             }
             Commands::Experiment(command) => match &command.command {
                 cli_experiment::ExperimentSubcommand::Validate(command) => {

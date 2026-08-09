@@ -58,7 +58,18 @@ fn create_sibling_temp(path: &Path) -> io::Result<(PathBuf, File)> {
 /// before the rename, the temporary file is removed and the prior destination
 /// remains untouched.
 pub fn atomic_write(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
-    let path = path.as_ref();
+    atomic_write_with_policy(path.as_ref(), bytes, true)
+}
+
+/// Atomically publish a new file and fail if the destination already exists.
+///
+/// The hard-link publication step is atomic and cannot replace a file that
+/// appeared after a caller's preflight check.
+pub fn atomic_write_new(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_with_policy(path.as_ref(), bytes, false)
+}
+
+fn atomic_write_with_policy(path: &Path, bytes: &[u8], overwrite: bool) -> io::Result<()> {
     let (temporary_path, mut file) = create_sibling_temp(path)?;
 
     let write_result = (|| {
@@ -73,9 +84,17 @@ pub fn atomic_write(path: impl AsRef<Path>, bytes: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&temporary_path);
         return Err(error);
     }
-    if let Err(error) = fs::rename(&temporary_path, path) {
+    let publish_result = if overwrite {
+        fs::rename(&temporary_path, path)
+    } else {
+        fs::hard_link(&temporary_path, path)
+    };
+    if let Err(error) = publish_result {
         let _ = fs::remove_file(&temporary_path);
         return Err(error);
+    }
+    if !overwrite {
+        let _ = fs::remove_file(&temporary_path);
     }
     Ok(())
 }
@@ -102,6 +121,19 @@ mod tests {
         atomic_write(&output, b"new payload\n").unwrap();
 
         assert_eq!(fs::read(&output).unwrap(), b"new payload\n");
+        assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn new_publication_never_replaces_existing_file() {
+        let directory = temp_dir();
+        fs::create_dir(&directory).unwrap();
+        let output = directory.join("artifact.json");
+        fs::write(&output, b"concurrent").unwrap();
+
+        assert!(atomic_write_new(&output, b"new payload").is_err());
+        assert_eq!(fs::read(&output).unwrap(), b"concurrent");
         assert_eq!(fs::read_dir(&directory).unwrap().count(), 1);
         fs::remove_dir_all(directory).unwrap();
     }

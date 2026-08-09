@@ -21,11 +21,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 const INTERLEAVED_MIN_OUT_FEATURES: usize = 65_536;
 
-/// v0.4 execution-plan cache: keyed by (execution mode, hook mode, active
-/// stages), one immutable plan per key (contract D5).
-type PlanCache = std::sync::OnceLock<
-    std::sync::Mutex<BTreeMap<(ExecutionMode, HookMode, Vec<String>), Arc<ExecutionPlan>>>,
->;
+/// v0.4 execution-plan cache. Every input that changes serialized plan
+/// content or scratch/KV capacity participates in the key; otherwise a
+/// snapshot replay using a different cache capacity could reuse an undersized
+/// score arena or stale provenance.
+type PlanCacheKey = (ExecutionMode, HookMode, Vec<String>, usize, String, String);
+type PlanCache = std::sync::OnceLock<std::sync::Mutex<BTreeMap<PlanCacheKey, Arc<ExecutionPlan>>>>;
 
 thread_local! {
     /// One decode workspace per calling thread. Dimensions are checked before
@@ -3276,6 +3277,9 @@ impl Llama<CpuBackend> {
                 .iter()
                 .map(|stage| stage.to_string())
                 .collect::<Vec<_>>(),
+            max_seq_len,
+            model_sha256.unwrap_or_default().to_string(),
+            tokenizer_sha256.unwrap_or_default().to_string(),
         );
         let cache = self.plan_cache.get_or_init(|| Mutex::new(BTreeMap::new()));
         let mut cache = cache.lock().expect("plan cache poisoned");
@@ -4573,6 +4577,36 @@ mod tests {
     }
 
     #[test]
+    fn execution_plan_cache_keys_capacity_and_provenance() {
+        let model = test_llama_model();
+        let small = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                4,
+                None,
+                None,
+            )
+            .unwrap();
+        let large = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                Some(&"aa".repeat(32)),
+                Some(&"bb".repeat(32)),
+            )
+            .unwrap();
+        assert!(!Arc::ptr_eq(&small, &large));
+        assert_eq!(small.kv.max_seq, 4);
+        assert_eq!(large.kv.max_seq, 8);
+        assert!(small.model_sha256.is_empty());
+        assert_eq!(large.model_sha256, "aa".repeat(32));
+    }
+
+    #[test]
     fn execution_plan_resolves_kernels_and_shapes() {
         let model = test_llama_model();
         let plan = model
@@ -4740,6 +4774,273 @@ mod tests {
             model.decode_state.borrow().is_some(),
             "planned decode must populate the decode session"
         );
+    }
+
+    #[test]
+    fn kv_snapshot_same_model_replay_is_bit_exact() {
+        use crate::kv_snapshot::{KvCompatibilityTarget, KvSnapshot};
+
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        model.set_execution_mode(ExecutionMode::Planned);
+        let backend = CpuBackend;
+        let capacity = 8;
+        let prompt = [3u32, 1, 7];
+        let model_hash = "aa".repeat(32);
+        let tokenizer_hash = "bb".repeat(32);
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                capacity,
+                Some(&model_hash),
+                Some(&tokenizer_hash),
+            )
+            .unwrap();
+        let target = KvCompatibilityTarget::from_execution_plan(&plan).unwrap();
+
+        // A: uninterrupted native path.
+        let mut native_cache = model.create_cache(&backend, capacity);
+        let mut native_logits = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &prompt,
+            &mut native_cache,
+            0,
+        )
+        .unwrap();
+
+        // B: independent prefill, deterministic disk artifact, original cache
+        // dropped, then import into fresh owned storage.
+        let mut replay_source = model.create_cache(&backend, capacity);
+        let replay_prefill_logits = ForwardModel::forward_last_logits_with_cache(
+            &model,
+            &backend,
+            &prompt,
+            &mut replay_source,
+            0,
+        )
+        .unwrap();
+        assert_eq!(native_logits.data(), replay_prefill_logits.data());
+        let resume_token = crate::sampler::argmax_token(replay_prefill_logits.data()) as u32;
+        let exported = KvSnapshot::export_native(
+            &replay_source,
+            target.clone(),
+            Some(&prompt),
+            Some(resume_token),
+        )
+        .unwrap();
+        let snapshot_hash = exported.manifest().snapshot_hash.clone();
+        let root = std::env::temp_dir().join(format!(
+            "ember-kv-replay-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        exported.save_dir(&root, false).unwrap();
+        drop(replay_source);
+        let loaded = KvSnapshot::load_dir(&root).unwrap();
+        assert_eq!(loaded.manifest().snapshot_hash, snapshot_hash);
+        let mut replay_cache = loaded.import_cache(&target).unwrap();
+        assert_eq!(replay_cache.cursor(), prompt.len());
+        assert_eq!(native_cache.cursor(), replay_cache.cursor());
+        let imported_export = KvSnapshot::export_native(
+            &replay_cache,
+            target.clone(),
+            Some(&prompt),
+            Some(resume_token),
+        )
+        .unwrap();
+        assert_eq!(loaded.keys(), imported_export.keys());
+        assert_eq!(loaded.values(), imported_export.values());
+        assert_eq!(
+            loaded.manifest().snapshot_hash,
+            imported_export.manifest().snapshot_hash
+        );
+
+        let mut replay_logits = replay_prefill_logits;
+        let mut native_tokens = Vec::new();
+        let mut replay_tokens = Vec::new();
+        const CONTINUATION: usize = 4;
+        for step in 0..CONTINUATION {
+            assert_eq!(
+                native_logits.data(),
+                replay_logits.data(),
+                "replayed logits differ at continuation step {step}"
+            );
+            let native_token = crate::sampler::argmax_token(native_logits.data()) as u32;
+            let replay_token = crate::sampler::argmax_token(replay_logits.data()) as u32;
+            native_tokens.push(native_token);
+            replay_tokens.push(replay_token);
+            assert_eq!(native_token, replay_token);
+            if step + 1 < CONTINUATION {
+                let native_start = native_cache.cursor();
+                let replay_start = replay_cache.cursor();
+                assert_eq!(native_start, replay_start);
+                native_logits = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[native_token],
+                    &mut native_cache,
+                    native_start,
+                )
+                .unwrap();
+                replay_logits = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[replay_token],
+                    &mut replay_cache,
+                    replay_start,
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(native_tokens, replay_tokens);
+        assert_eq!(native_cache.cursor(), replay_cache.cursor());
+
+        // Snapshot import must not contaminate subsequent ordinary planned
+        // decode with checksum/metadata work or per-token allocations. The
+        // only permitted allocations are the existing logits CpuTensor's
+        // shape, strides, and data vectors (Gate E's bound of three).
+        let next_input = *replay_tokens.last().unwrap();
+        let replay_start = replay_cache.cursor();
+        let (result, allocations) = crate::alloc_counter::count_allocations(|| {
+            ForwardModel::forward_last_logits_with_cache(
+                &model,
+                &backend,
+                &[next_input],
+                &mut replay_cache,
+                replay_start,
+            )
+        });
+        result.unwrap();
+        assert!(
+            allocations <= 3,
+            "planned decode after snapshot import allocated {allocations} times"
+        );
+        assert!(
+            model.decode_state.borrow().is_some(),
+            "planned path did not run"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn kv_continuation_diagnostics_duplicate_and_perturbed_control() {
+        use crate::experiments::ModelFamily;
+        use crate::kv_compare::{
+            prepare_diagnostic_perturbation, KvDiagnosticPerturbation, KvPerturbComponent,
+            KvPerturbOperation,
+        };
+        use crate::kv_diagnostics::{diagnose_continuation, KvContinuationCandidate};
+        use crate::kv_snapshot::{KvCompatibilityTarget, KvSnapshot};
+
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        model.set_execution_mode(ExecutionMode::Planned);
+        let backend = CpuBackend;
+        let capacity = 6;
+        let prompt = [3u32, 1, 7];
+        let model_hash = "aa".repeat(32);
+        let tokenizer_hash = "bb".repeat(32);
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                capacity,
+                Some(&model_hash),
+                Some(&tokenizer_hash),
+            )
+            .unwrap();
+        let target = KvCompatibilityTarget::from_execution_plan(&plan).unwrap();
+        let mut cache = model.create_cache(&backend, capacity);
+        let boundary =
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &prompt, &mut cache, 0)
+                .unwrap();
+        let resume = crate::sampler::argmax_token(boundary.data()) as u32;
+        let snapshot =
+            KvSnapshot::export_native(&cache, target.clone(), Some(&prompt), Some(resume)).unwrap();
+
+        let control = diagnose_continuation(
+            &model,
+            &backend,
+            &snapshot,
+            KvContinuationCandidate::Snapshot(&snapshot),
+            &target,
+            ModelFamily::Llama,
+            resume,
+            4,
+            None,
+        )
+        .unwrap();
+        assert!(control.forced_top1_all_agree);
+        assert!(control.greedy_sequences_match);
+        assert_eq!(control.final_logit_cosine, Some(1.0));
+        assert!(control
+            .attention_by_layer
+            .iter()
+            .all(|layer| layer.metrics.cosine_similarity == Some(1.0)));
+        assert_eq!(control.forced_input_token_ids.len(), 3);
+        assert_eq!(
+            control
+                .forced_steps
+                .iter()
+                .map(|step| (
+                    step.evaluation_index,
+                    step.absolute_input_position,
+                    step.predicted_continuation_index,
+                ))
+                .collect::<Vec<_>>(),
+            vec![(0, 3, 1), (1, 4, 2), (2, 5, 3)]
+        );
+
+        let alteration = prepare_diagnostic_perturbation(
+            &snapshot,
+            KvDiagnosticPerturbation {
+                layer: 0,
+                head: 0,
+                component: KvPerturbComponent::Both,
+                operation: KvPerturbOperation::Zero,
+            },
+        )
+        .unwrap();
+        let altered = diagnose_continuation(
+            &model,
+            &backend,
+            &snapshot,
+            KvContinuationCandidate::Diagnostic {
+                source: &snapshot,
+                alteration: &alteration,
+            },
+            &target,
+            ModelFamily::Llama,
+            resume,
+            4,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            altered
+                .diagnostic_perturbation
+                .as_ref()
+                .unwrap()
+                .source_snapshot_hash,
+            snapshot.manifest().snapshot_hash
+        );
+        assert_eq!(
+            altered.forced_input_token_ids, control.forced_input_token_ids,
+            "altered candidate must not choose its own teacher-forced inputs"
+        );
+        assert!(altered
+            .forced_steps
+            .iter()
+            .flat_map(|step| &step.attention_by_layer)
+            .any(|layer| layer.metrics.max_abs_error > 0.0));
+        snapshot.verify().unwrap();
     }
 
     #[test]
