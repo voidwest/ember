@@ -469,15 +469,6 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
 }
 
 /// RMSNorm on flat slices: `x * weight / sqrt(mean(x^2) + eps)` per row.
-/// Matches `CpuTensor::rms_norm` exactly (same simd primitives).
-fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
-    debug_assert_eq!(x.len(), weight.len());
-    debug_assert_eq!(x.len(), dst.len());
-    let mean_sq = crate::simd::sum_squares(x) / x.len() as f32;
-    let rstd = (mean_sq + eps).sqrt().recip();
-    crate::simd::scale_weight_mul(x, rstd, weight, dst);
-}
-
 /// Dense f32 matvec for a `[in, out]` row-major weight (reference F32 path).
 fn dense_matvec_into(src: &[f32], weight: &[f32], in_dim: usize, out_dim: usize, dst: &mut [f32]) {
     debug_assert_eq!(src.len(), in_dim);
@@ -873,7 +864,7 @@ pub(crate) fn forward_last_logits_planned(
                             ));
                         }
                     };
-                    rms_norm_into(x, weight, model.config.norm_eps, dst);
+                    crate::simd::rms_norm_into(x, weight, model.config.norm_eps, dst);
                 }
                 ResolvedOp::Matvec {
                     role,
@@ -1065,7 +1056,12 @@ pub(crate) fn forward_last_logits_planned(
                     {
                         let (x, n1) =
                             two_regions(arena.regions_f32([*input, *scaled]).map_err(arena_err)?);
-                        rms_norm_into(x, block.input_layernorm.data(), model.config.norm_eps, n1);
+                        crate::simd::rms_norm_into(
+                            x,
+                            block.input_layernorm.data(),
+                            model.config.norm_eps,
+                            n1,
+                        );
                     }
                     let projections = [
                         (*q, &block.self_attn.q_proj),
@@ -1240,7 +1236,7 @@ pub(crate) fn forward_last_logits_planned(
                     dst.len(),
                     crate::decode_profile::DecodeExecutionMode::Serial,
                 );
-                rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
+                crate::simd::rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
                 // before_logits fires on the final-norm output.
                 if let Some((hooks, _)) = hooks.as_mut() {
                     let mut activation = SliceActivation::new(1, model.config.embed_dim, dst);

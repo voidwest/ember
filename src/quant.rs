@@ -122,46 +122,6 @@ pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
     }
 }
 
-/// dequantize a q8_0 block-compressed buffer into f32 values.
-///
-/// each block: 2-byte fp16 scale `d`, followed by 32 int8 quantized values `q`.
-/// output: `dst[j] = (q[j] as f32) * d`.
-#[inline]
-pub fn dequantize_q8_0(src: &[u8], dst: &mut [f32]) -> Result<()> {
-    if !src.len().is_multiple_of(Q8_0_TYPE_SIZE) {
-        bail!(
-            "q8_0 source length {} is not a multiple of block size {}",
-            src.len(),
-            Q8_0_TYPE_SIZE
-        );
-    }
-    let n_blocks = src.len() / Q8_0_TYPE_SIZE;
-    let expected_dst_len = n_blocks
-        .checked_mul(Q8_0_BLOCK_SIZE)
-        .ok_or_else(|| anyhow::anyhow!("q8_0 output length overflow"))?;
-    if dst.len() != expected_dst_len {
-        bail!(
-            "q8_0 destination length {} does not match expected {}",
-            dst.len(),
-            expected_dst_len
-        );
-    }
-
-    for i in 0..n_blocks {
-        let block_start = i * Q8_0_TYPE_SIZE;
-        let out_start = i * Q8_0_BLOCK_SIZE;
-
-        let d_bits = u16::from_le_bytes(src[block_start..block_start + 2].try_into()?);
-        let d = f16::from_bits(d_bits).to_f32();
-
-        for j in 0..Q8_0_BLOCK_SIZE {
-            let q = src[block_start + 2 + j] as i8;
-            dst[out_start + j] = q as f32 * d;
-        }
-    }
-    Ok(())
-}
-
 /// a q8_0 weight matrix kept in raw block-compressed form.
 ///
 /// weights are never stored as f32 - `dequantize_row(j)` dequantizes
@@ -593,11 +553,5 @@ mod tests {
     #[test]
     fn quantized_weight_rejects_non_block_aligned_rows() {
         assert!(QuantizedWeight::try_new(vec![], vec![1, 31]).is_err());
-    }
-
-    #[test]
-    fn dequantize_rejects_malformed_buffer_lengths() {
-        assert!(dequantize_q8_0(&[0; Q8_0_TYPE_SIZE - 1], &mut [0.0; Q8_0_BLOCK_SIZE]).is_err());
-        assert!(dequantize_q8_0(&[0; Q8_0_TYPE_SIZE], &mut [0.0; Q8_0_BLOCK_SIZE - 1]).is_err());
     }
 }
