@@ -16,7 +16,6 @@
 //! println!("{}", report.summary());
 //! ```
 
-use crate::tensor::CpuTensor;
 use std::cell::RefCell;
 use std::time::Instant;
 
@@ -625,11 +624,6 @@ pub fn flops_embedding() -> u64 {
 // ---------------------------------------------------------------------------
 
 /// Bytes in a CpuTensor (f32 elements × 4 bytes).
-#[inline]
-pub fn bytes_tensor(t: &CpuTensor) -> usize {
-    t.data().len() * 4
-}
-
 /// Bytes from a shape (number of elements × 4).
 #[inline]
 pub fn bytes_from_shape(shape: &[usize]) -> usize {
@@ -648,14 +642,6 @@ pub fn bytes_matmul_input(m: usize, k: usize, weight_bytes: usize) -> usize {
 #[inline]
 pub fn bytes_matmul_output(m: usize, n: usize) -> usize {
     m * n * 4
-}
-
-/// Dequant FLOPs for q8_0: each output element requires 1 scale lookup
-/// (shared across 32 elements) and 1 multiply.  Conservative: 2 per element.
-/// These are *in addition* to the matmul FLOPs.
-#[inline]
-pub fn flops_dequant(n_elements: usize) -> u64 {
-    2u64 * n_elements as u64
 }
 
 // ---------------------------------------------------------------------------

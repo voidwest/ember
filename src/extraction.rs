@@ -218,13 +218,6 @@ impl ExtractionConfig {
         Ok(())
     }
 
-    pub fn with_backend_override(mut self, backend: Option<ExecutionBackendName>) -> Self {
-        if let Some(backend) = backend {
-            self.backend = backend;
-        }
-        self
-    }
-
     pub fn effective_layers(&self, n_layers: usize) -> Result<Vec<usize>> {
         if self.layers.is_empty() {
             return Ok((0..n_layers).collect());

@@ -463,7 +463,7 @@ impl KvSnapshot {
     /// Import with an explicit upper bound on newly allocated live-cache
     /// bytes. The compact artifact limit and destination-cache limit are
     /// independent because replay may request a larger capacity.
-    pub fn import_cache_with_limit(
+    fn import_cache_with_limit(
         &self,
         target: &KvCompatibilityTarget,
         max_live_cache_bytes: u64,
@@ -702,7 +702,7 @@ pub struct KvSnapshotCompatibilityMetadata {
 }
 
 /// Validate a manifest against a target without allocating a cache.
-pub fn validate_compatibility(
+fn validate_compatibility(
     manifest: &KvSnapshotManifest,
     target: &KvCompatibilityTarget,
 ) -> KvCompatibilityReport {

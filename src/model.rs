@@ -374,7 +374,7 @@ impl<B: Backend> Linear<B> {
     ///
     /// When both weights are Q8_0 the backend can quantize the activations
     /// once and schedule both projections together.
-    pub fn forward_pair(
+    fn forward_pair(
         &self,
         backend: &B,
         x: &B::Tensor,

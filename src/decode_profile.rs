@@ -30,7 +30,7 @@ pub enum DecodeExecutionMode {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct DecodeOpEvent {
+struct DecodeOpEvent {
     pub layer: usize,
     pub operator: &'static str,
     pub input_dimension: usize,

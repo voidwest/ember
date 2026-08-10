@@ -181,13 +181,6 @@ pub struct KvSnapshotComparison {
     pub first_threshold_exceedance: Option<KvThresholdExceedance>,
 }
 
-impl KvSnapshotComparison {
-    #[must_use]
-    pub fn threshold_exceeded(&self) -> bool {
-        self.first_threshold_exceedance.is_some()
-    }
-}
-
 /// Compare two verified snapshots in the same target/prefix coordinate system.
 /// Capacity, source model, and native/transformed origin may differ; target
 /// execution and prefix alignment may not.

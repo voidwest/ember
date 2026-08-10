@@ -246,8 +246,9 @@ pub struct ScratchPlan {
 
 /// Deterministic arena diagnostics (contract section 11: total bytes,
 /// region names, offsets, alignments, maximum live interval).
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArenaReport {
+struct ArenaReport {
     pub total_bytes: usize,
     pub alignment: usize,
     pub seq_capacity: usize,
@@ -259,7 +260,8 @@ pub struct ArenaReport {
 
 impl ScratchPlan {
     /// Build the deterministic arena report.
-    pub fn arena_report(&self) -> ArenaReport {
+    #[cfg(test)]
+    fn arena_report(&self) -> ArenaReport {
         let max_live_interval = self
             .regions
             .iter()
@@ -586,7 +588,7 @@ pub struct LayerPlan {
 
 impl PlannedOp {
     /// Whether this op is one of the frozen fusion set's composite ops.
-    pub fn is_fused(&self) -> bool {
+    fn is_fused(&self) -> bool {
         matches!(
             self,
             PlannedOp::Fused { .. }
@@ -905,7 +907,7 @@ impl ExecutionPlan {
     }
 
     /// Fused op count (for diagnostics).
-    pub fn fused_op_count(&self) -> usize {
+    fn fused_op_count(&self) -> usize {
         self.preamble
             .iter()
             .chain(self.final_ops.iter())
@@ -915,7 +917,7 @@ impl ExecutionPlan {
     }
 
     /// Layers not fully fused, with reasons.
-    pub fn defused_layers(&self) -> Vec<(usize, String)> {
+    fn defused_layers(&self) -> Vec<(usize, String)> {
         self.layers
             .iter()
             .filter(|layer| layer.fusion != FusionState::Fused)

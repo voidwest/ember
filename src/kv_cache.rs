@@ -283,17 +283,6 @@ impl KVCache {
         self.head_dim
     }
 
-    /// Element strides of the live `[layer][head][position][dimension]`
-    /// allocation, in that order.
-    pub fn element_strides(&self) -> [usize; 4] {
-        [
-            self.layer_stride(),
-            self.max_seq_len * self.head_dim,
-            self.head_dim,
-            1,
-        ]
-    }
-
     pub fn cursor(&self) -> usize {
         self.cursor
     }
@@ -309,23 +298,14 @@ impl KVCache {
         );
     }
 
-    /// return a mutable reference to the pre-allocated `qk_scratch` buffer.
-    ///
-    /// the caller should `clear()` and then `resize(total_seq_len, f32::NEG_INFINITY)`
-    /// before use. because the buffer was allocated to `max_seq_len`,
-    /// `resize` will never reallocate as long as `total_seq_len <= max_seq_len`.
-    #[inline]
-    pub fn qk_scratch_mut(&mut self) -> &mut Vec<f32> {
-        &mut self.qk_scratch
-    }
-
     /// maximum sequence length the cache was allocated for
     pub fn max_seq_len(&self) -> usize {
         self.max_seq_len
     }
 
     /// bytes reserved for K and V storage, excluding the small score scratch.
-    pub fn storage_bytes(&self) -> usize {
+    #[cfg(test)]
+    fn storage_bytes(&self) -> usize {
         self.k
             .capacity()
             .saturating_add(self.v.capacity())
