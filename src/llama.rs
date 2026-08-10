@@ -1705,6 +1705,32 @@ impl Llama<CpuBackend> {
         let inter_dim = workspace.inter_dim();
         let profile_operators = crate::decode_profile::is_enabled();
 
+        // Profiling helper for the non-matmul ops (norms, rope, kv store,
+        // attention, silu, residual adds): guarded by the same
+        // `profile_operators` flag as the matmul timings, so the normal
+        // path pays nothing extra.
+        macro_rules! profile_op {
+            ($layer:expr, $name:expr, $in_dim:expr, $out_dim:expr, $body:block) => {{
+                let start = if profile_operators {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
+                let result = $body;
+                if let Some(start) = start {
+                    crate::decode_profile::record(
+                        $layer,
+                        $name,
+                        $in_dim,
+                        $out_dim,
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                        start.elapsed(),
+                    );
+                }
+                result
+            }};
+        }
+
         let Workspace {
             norm_out,
             residual_out,
@@ -1719,37 +1745,39 @@ impl Llama<CpuBackend> {
             ..
         } = workspace;
         let x = &mut residual_out[..embed_dim];
-        match &self.embed_tokens {
-            LlamaEmbedding::F32(table) => {
-                if token_id as usize >= table.shape()[0] {
-                    return Err(CpuError::ShapeMismatch(format!(
-                        "embedding token {} out of bounds for vocabulary {}",
-                        token_id,
-                        table.shape()[0]
-                    )));
+        profile_op!(usize::MAX, "embedding", 1, embed_dim, {
+            match &self.embed_tokens {
+                LlamaEmbedding::F32(table) => {
+                    if token_id as usize >= table.shape()[0] {
+                        return Err(CpuError::ShapeMismatch(format!(
+                            "embedding token {} out of bounds for vocabulary {}",
+                            token_id,
+                            table.shape()[0]
+                        )));
+                    }
+                    let embedding_start = token_id as usize * embed_dim;
+                    x.copy_from_slice(&table.data()[embedding_start..embedding_start + embed_dim]);
                 }
-                let embedding_start = token_id as usize * embed_dim;
-                x.copy_from_slice(&table.data()[embedding_start..embedding_start + embed_dim]);
-            }
-            LlamaEmbedding::Q8_0(table) => {
-                if token_id as usize >= table.out_features() {
-                    return Err(CpuError::ShapeMismatch(format!(
-                        "embedding token {} out of bounds for vocabulary {}",
-                        token_id,
-                        table.out_features()
-                    )));
+                LlamaEmbedding::Q8_0(table) => {
+                    if token_id as usize >= table.out_features() {
+                        return Err(CpuError::ShapeMismatch(format!(
+                            "embedding token {} out of bounds for vocabulary {}",
+                            token_id,
+                            table.out_features()
+                        )));
+                    }
+                    table.dequantize_row(token_id as usize, x);
                 }
-                table.dequantize_row(token_id as usize, x);
+                // Fast decode is ineligible for K-quant models (checked at
+                // construction); this arm exists for match exhaustiveness and
+                // must never fire.
+                LlamaEmbedding::KQuant(_) => {
+                    return Err(CpuError::ShapeMismatch(
+                        "fast decode path is ineligible for K-quant embeddings".into(),
+                    ));
+                }
             }
-            // Fast decode is ineligible for K-quant models (checked at
-            // construction); this arm exists for match exhaustiveness and
-            // must never fire.
-            LlamaEmbedding::KQuant(_) => {
-                return Err(CpuError::ShapeMismatch(
-                    "fast decode path is ineligible for K-quant embeddings".into(),
-                ));
-            }
-        }
+        });
 
         let norm = &mut norm_out[..embed_dim];
         let q = &mut q_out[..q_dim];
@@ -1766,7 +1794,9 @@ impl Llama<CpuBackend> {
                 let mut hidden = SliceActivation::new(1, embed_dim, x);
                 hooks.before_layer(layer, &mut hidden)?;
             }
-            crate::simd::rms_norm_into(x, block.input_layernorm.data(), block.norm_eps, norm);
+            profile_op!(layer, "attn_rms_norm", embed_dim, embed_dim, {
+                crate::simd::rms_norm_into(x, block.input_layernorm.data(), block.norm_eps, norm)
+            });
 
             let q_weight = block
                 .self_attn
@@ -1810,21 +1840,27 @@ impl Llama<CpuBackend> {
                 backend.matmul_q8_0_triple_into(norm, 1, q_weight, k_weight, v_weight, q, k, v);
             }
 
-            block.self_attn.apply_decode_rope_and_qk_norm(
-                q,
-                self.config.n_heads,
-                start_pos,
-                block.self_attn.q_norm.as_ref(),
-            );
-            block.self_attn.apply_decode_rope_and_qk_norm(
-                k,
-                self.config.n_kv_heads,
-                start_pos,
-                block.self_attn.k_norm.as_ref(),
-            );
+            profile_op!(layer, "rope_q", q_dim, q_dim, {
+                block.self_attn.apply_decode_rope_and_qk_norm(
+                    q,
+                    self.config.n_heads,
+                    start_pos,
+                    block.self_attn.q_norm.as_ref(),
+                )
+            });
+            profile_op!(layer, "rope_k", kv_dim, kv_dim, {
+                block.self_attn.apply_decode_rope_and_qk_norm(
+                    k,
+                    self.config.n_kv_heads,
+                    start_pos,
+                    block.self_attn.k_norm.as_ref(),
+                )
+            });
 
             let cursor = cache.cursor();
-            cache.append(layer, cursor, k, v);
+            profile_op!(layer, "kv_store", kv_dim * 2, kv_dim * 2, {
+                cache.append(layer, cursor, k, v)
+            });
             let attention_spec = CachedAttentionSpec {
                 n_heads: self.config.n_heads,
                 n_kv_heads: self.config.n_kv_heads,
@@ -1833,14 +1869,16 @@ impl Llama<CpuBackend> {
                 total_seq_len: cursor + 1,
             };
             let (cached_k, cached_v, qk_scratch) = cache.get_with_scratch(layer);
-            backend.cached_causal_attention_into(
-                q,
-                cached_k,
-                cached_v,
-                attention_spec,
-                qk_scratch,
-                attention,
-            )?;
+            profile_op!(layer, "attention", q_dim, q_dim, {
+                backend.cached_causal_attention_into(
+                    q,
+                    cached_k,
+                    cached_v,
+                    attention_spec,
+                    qk_scratch,
+                    attention,
+                )?
+            });
 
             let o_weight = block
                 .self_attn
@@ -1866,14 +1904,18 @@ impl Llama<CpuBackend> {
                 let mut attention_output = SliceActivation::new(1, embed_dim, projected);
                 hooks.after_attention(layer, &mut attention_output)?;
             }
-            crate::simd::add_assign(x, projected);
+            profile_op!(layer, "attn_residual_add", embed_dim, embed_dim, {
+                crate::simd::add_assign(x, projected)
+            });
 
-            crate::simd::rms_norm_into(
-                x,
-                block.post_attention_layernorm.data(),
-                block.norm_eps,
-                norm,
-            );
+            profile_op!(layer, "ffn_rms_norm", embed_dim, embed_dim, {
+                crate::simd::rms_norm_into(
+                    x,
+                    block.post_attention_layernorm.data(),
+                    block.norm_eps,
+                    norm,
+                )
+            });
             let gate_weight = block
                 .mlp
                 .gate_proj
@@ -1908,7 +1950,9 @@ impl Llama<CpuBackend> {
             } else {
                 backend.matmul_q8_0_pair_into(norm, 1, gate_weight, up_weight, gate, up);
             }
-            crate::simd::silu_mul_into(gate, up, gated);
+            profile_op!(layer, "silu_mul", inter_dim, inter_dim, {
+                crate::simd::silu_mul_into(gate, up, gated)
+            });
 
             let down_weight = block
                 .mlp
@@ -1934,7 +1978,9 @@ impl Llama<CpuBackend> {
                 let mut mlp_output = SliceActivation::new(1, embed_dim, projected);
                 hooks.after_mlp(layer, &mut mlp_output)?;
             }
-            crate::simd::add_assign(x, projected);
+            profile_op!(layer, "mlp_residual_add", embed_dim, embed_dim, {
+                crate::simd::add_assign(x, projected)
+            });
             {
                 let mut hidden = SliceActivation::new(1, embed_dim, x);
                 hooks.after_layer(layer, &mut hidden)?;
@@ -1942,7 +1988,9 @@ impl Llama<CpuBackend> {
         }
         cache.advance_cursor();
 
-        crate::simd::rms_norm_into(x, self.norm.data(), self.config.norm_eps, norm);
+        profile_op!(usize::MAX, "final_rms_norm", embed_dim, embed_dim, {
+            crate::simd::rms_norm_into(x, self.norm.data(), self.config.norm_eps, norm)
+        });
         {
             let mut hidden = SliceActivation::new(1, embed_dim, norm);
             hooks.before_logits(&mut hidden)?;

@@ -1,0 +1,103 @@
+{
+ "commit": "f8e97a7d78c4558999c484e84b3645d4c187ddbc",
+ "cpu": "11th Gen Intel(R) Core(TM) i5-1135G7 @ 2.40GHz",
+ "date": "2026-08-10T10:07:31",
+ "qwen-1.5b-q8": {
+  "time_v": {
+   "cold": [
+    {
+     "trial": 0,
+     "wall": "0:05.56",
+     "user": "13.97",
+     "sys": "1.24",
+     "cpu_pct": "273",
+     "max_rss_kb": "1890652",
+     "minor_faults": "36121",
+     "major_faults": "5628",
+     "vol_ctx": "65411",
+     "invol_ctx": "46472",
+     "fs_inputs": "3216568",
+     "fs_outputs": "0",
+     "rc": 0
+    },
+    {
+     "trial": 1,
+     "wall": "0:05.36",
+     "user": "14.15",
+     "sys": "1.25",
+     "cpu_pct": "287",
+     "max_rss_kb": "1890760",
+     "minor_faults": "36103",
+     "major_faults": "5609",
+     "vol_ctx": "66231",
+     "invol_ctx": "53787",
+     "fs_inputs": "3216568",
+     "fs_outputs": "0",
+     "rc": 0
+    },
+    {
+     "trial": 2,
+     "wall": "0:05.38",
+     "user": "14.32",
+     "sys": "1.29",
+     "cpu_pct": "290",
+     "max_rss_kb": "1890796",
+     "minor_faults": "36120",
+     "major_faults": "5560",
+     "vol_ctx": "65910",
+     "invol_ctx": "47213",
+     "fs_inputs": "3216568",
+     "fs_outputs": "0",
+     "rc": 0
+    }
+   ],
+   "warm": [
+    {
+     "trial": 0,
+     "wall": "0:02.61",
+     "user": "14.53",
+     "sys": "0.93",
+     "cpu_pct": "592",
+     "max_rss_kb": "1890336",
+     "minor_faults": "33755",
+     "major_faults": "0",
+     "vol_ctx": "48650",
+     "invol_ctx": "52096",
+     "fs_inputs": "0",
+     "fs_outputs": "0",
+     "rc": 0
+    },
+    {
+     "trial": 1,
+     "wall": "0:02.67",
+     "user": "14.81",
+     "sys": "0.96",
+     "cpu_pct": "590",
+     "max_rss_kb": "1891032",
+     "minor_faults": "33756",
+     "major_faults": "0",
+     "vol_ctx": "49175",
+     "invol_ctx": "54247",
+     "fs_inputs": "0",
+     "fs_outputs": "0",
+     "rc": 0
+    },
+    {
+     "trial": 2,
+     "wall": "0:02.72",
+     "user": "14.88",
+     "sys": "1.13",
+     "cpu_pct": "587",
+     "max_rss_kb": "1890588",
+     "minor_faults": "33750",
+     "major_faults": "0",
+     "vol_ctx": "49406",
+     "invol_ctx": "55547",
+     "fs_inputs": "0",
+     "fs_outputs": "0",
+     "rc": 0
+    }
+   ]
+  }
+ }
+}

@@ -25,6 +25,7 @@ static TOTAL_ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
 thread_local! {
     static TRACK_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
     static ALLOCATION_COUNT: Cell<usize> = const { Cell::new(0) };
+    static ALLOCATED_BYTES: Cell<usize> = const { Cell::new(0) };
 }
 
 #[inline]
@@ -35,6 +36,7 @@ fn count_one(layout_size: usize) {
         .try_with(|tracking| {
             if tracking.get() {
                 ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
+                ALLOCATED_BYTES.with(|bytes| bytes.set(bytes.get() + layout_size));
             }
         })
         .ok();
@@ -72,12 +74,32 @@ unsafe impl GlobalAlloc for CountingAllocator {
 /// Run `run` with allocation tracking enabled on the calling thread and
 /// return its result plus the number of allocation events performed.
 pub fn count_allocations<T>(run: impl FnOnce() -> T) -> (T, usize) {
+    count_allocations_with_bytes(run).map_allocations()
+}
+
+/// Run `run` with allocation tracking enabled on the calling thread and
+/// return its result plus the number of allocation events and the total
+/// requested bytes (layout sizes) of those events.
+pub fn count_allocations_with_bytes<T>(run: impl FnOnce() -> T) -> (T, usize, usize) {
     ALLOCATION_COUNT.with(|count| count.set(0));
+    ALLOCATED_BYTES.with(|bytes| bytes.set(0));
     TRACK_ALLOCATIONS.with(|tracking| tracking.set(true));
     let result = run();
     TRACK_ALLOCATIONS.with(|tracking| tracking.set(false));
     let allocations = ALLOCATION_COUNT.with(Cell::get);
-    (result, allocations)
+    let bytes = ALLOCATED_BYTES.with(Cell::get);
+    (result, allocations, bytes)
+}
+
+/// Adapter turning a `(T, usize, usize)` triple into a `(T, usize)` pair.
+trait MapAllocations<T> {
+    fn map_allocations(self) -> (T, usize);
+}
+
+impl<T> MapAllocations<T> for (T, usize, usize) {
+    fn map_allocations(self) -> (T, usize) {
+        (self.0, self.1)
+    }
 }
 
 /// Total allocation events since process start.

@@ -1,0 +1,10 @@
+{
+ "model": "llama-1b-q8",
+ "mode": "intervene",
+ "threads": 4,
+ "benchmark_lines": [
+  "prefill: 26 tokens in 450.523ms -> 57.711 tok/s",
+  "decode:  63 evals in 2089.838ms -> 30.146 eval/s"
+ ],
+ "rc": 0
+}

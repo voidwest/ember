@@ -1,0 +1,6 @@
+{
+ "model": "llama-1b-q8",
+ "mode": "capture",
+ "threads": 8,
+ "trace_file": "trace_llama-1b-q8_capture_t8.trace.json"
+}

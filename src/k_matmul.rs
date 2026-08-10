@@ -97,6 +97,11 @@ pub fn matmul_k_into(
             dst.len()
         ));
     }
+    // Batch-1 decode: route through the bandwidth-competitive GEMV
+    // (exact f32 activations; the v0.3 kernels remain the prefill path).
+    if rows == 1 {
+        return crate::k_gemv::matmul_k_gemv_serial(src, w, dst);
+    }
     match w.execution() {
         KExecution::CompressedScalar => matmul_k_scalar_into(src, rows, w, dst),
         KExecution::CompressedX86 => {
@@ -147,10 +152,16 @@ pub fn matmul_k_into_parallel(
             dst.len()
         ));
     }
+    // Batch-1 decode: route through the bandwidth-competitive GEMV, which
+    // applies its own measured shape-dependent parallel threshold (the old
+    // 8M-MAC rule serialized q/k/v/o even at high thread counts).
+    if rows == 1 {
+        return crate::k_gemv::matmul_k_gemv_parallel(src, w, dst);
+    }
     // prefill (rows > 1) and small projections stay on the serial kernels:
     // the rayon split only pays off for the large decode projections
     // (gate/up/down/lm_head).
-    if rows != 1 || in_features.saturating_mul(out_features) < 8_000_000 {
+    if in_features.saturating_mul(out_features) < 8_000_000 {
         return matmul_k_into(src, rows, w, dst);
     }
     match w.execution() {
@@ -227,6 +238,20 @@ fn matmul_k_scalar_with(
         }
     }
     Ok(())
+}
+
+/// Benchmark-only accessor for the pre-GEMV scalar row-1 kernel.
+#[doc(hidden)]
+pub fn bench_legacy_row1_scalar(src: &[f32], w: &KQuantWeight, dst: &mut [f32]) {
+    let block_bytes = match w.dtype() {
+        KQuantDtype::Q4K => Q4_K_BLOCK_BYTES,
+        KQuantDtype::Q6K => Q6_K_BLOCK_BYTES,
+    };
+    let dequant: fn(&[u8], &mut [f32]) = match w.dtype() {
+        KQuantDtype::Q4K => dequant_q4_k,
+        KQuantDtype::Q6K => dequant_q6_k,
+    };
+    matmul_k_scalar_row1_chunk_into(dequant, block_bytes, src, w, 0, dst);
 }
 
 /// Single-row (decode) scalar body over `dst_chunk` columns starting at

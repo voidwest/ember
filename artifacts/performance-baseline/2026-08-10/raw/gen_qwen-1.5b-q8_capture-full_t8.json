@@ -1,0 +1,10 @@
+{
+ "model": "qwen-1.5b-q8",
+ "mode": "capture-full",
+ "threads": 8,
+ "benchmark_lines": [
+  "prefill: 26 tokens in 779.785ms -> 33.343 tok/s",
+  "decode:  63 evals in 4382.077ms -> 14.377 eval/s"
+ ],
+ "rc": 0
+}

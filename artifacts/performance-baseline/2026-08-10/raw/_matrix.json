@@ -1,0 +1,15 @@
+{
+ "commit": "f8e97a7d78c4558999c484e84b3645d4c187ddbc",
+ "tokens": 128,
+ "reps": 5,
+ "warmups": 2,
+ "prompt": "Arabic morphology prompt",
+ "model_keys": [
+  "llama-1b-q8",
+  "llama-1b-q4km",
+  "llama-1b-q6k",
+  "qwen-1.5b-q8"
+ ],
+ "capture_toml": "schema_version = 1\noutput_dir = \"/home/west/ember/runs/perf-capture-8388-1\"\nlayers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]\nstages = [\"after-attention\", \"after-mlp\"]\nphase = \"decode\"\ntoken_positions = []\nmax_records = 512\nomit_prompt_text = true\n",
+ "zero_layer": "8:attention"
+}

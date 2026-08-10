@@ -40,6 +40,8 @@ docs/plots/root_probe_scale_comparison.png
 !docs/v05-research-contract.md
 !docs/v05-*.md
 !docs/v06-gui.md
+!docs/performance-baseline-dossier.md
+!docs/k-quant-gemv-design.md
 !docs/reproducibility.md
 !docs/interventions.md
 !docs/token-selection.md
@@ -113,3 +115,6 @@ artifacts/golden-v03/**/*.npy
 !/artifacts/benchmark-v04/2026-08-04/SUMMARY.md
 
 runs/
+# giant per-op trace dumps (regeneration data, kept local; dossier is the citable summary)
+artifacts/performance-baseline/2026-08-10/analysis-summary.json
+artifacts/performance-baseline/2026-08-10/raw/*.trace.json

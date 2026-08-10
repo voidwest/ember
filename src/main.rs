@@ -343,6 +343,11 @@ pub(crate) struct BenchDecodeCommand {
     #[arg(long)]
     profile_operators: bool,
 
+    /// collect per-token allocation events/bytes (counting allocator) in
+    /// the benchmark JSON; adds a small thread-local overhead per token
+    #[arg(long)]
+    allocations: bool,
+
     /// v0.4 execution concept for the benchmarked decode (reference |
     /// planned | planned-fused)
     #[arg(long, default_value = "reference")]

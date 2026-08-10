@@ -36,6 +36,10 @@ harness = false
 name = "hooks_overhead"
 harness = false
 
+[[bench]]
+name = "k_gemv"
+harness = false
+
 # Mirror CI's clippy posture so local `cargo clippy` matches `cargo clippy
 # --all-targets --all-features -- -D warnings` on GitHub Actions.
 [lints.clippy]

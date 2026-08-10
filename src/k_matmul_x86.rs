@@ -72,6 +72,35 @@ pub unsafe fn matmul_k_avx2_into_parallel(src: &[f32], w: &KQuantWeight, dst: &m
     }
 }
 
+/// Benchmark-only accessor for the pre-GEMV AVX2 row-1 kernel (Q4_K).
+/// Not used by any production path; kept for old-vs-new measurements.
+#[doc(hidden)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn bench_legacy_q4k_row1_avx2(
+    src: &[f32],
+    w: &KQuantWeight,
+    j0: usize,
+    dst: &mut [f32],
+) {
+    if crate::k_matmul_x86::avx2_supported() {
+        x86_64::matmul_q4_k_avx2_row1_into(src, w, j0, dst);
+    }
+}
+
+/// Benchmark-only accessor for the pre-GEMV AVX2 row-1 kernel (Q6_K).
+#[doc(hidden)]
+#[cfg(target_arch = "x86_64")]
+pub unsafe fn bench_legacy_q6k_row1_avx2(
+    src: &[f32],
+    w: &KQuantWeight,
+    j0: usize,
+    dst: &mut [f32],
+) {
+    if crate::k_matmul_x86::avx2_supported() {
+        x86_64::matmul_q6_k_avx2_row1_into(src, w, j0, dst);
+    }
+}
+
 /// Non-x86 stub: the dispatch entry never reaches this on non-x86 builds
 /// because `avx2_supported()` is false there, but the error is explicit.
 #[cfg(not(target_arch = "x86_64"))]

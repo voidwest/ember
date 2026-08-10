@@ -1,0 +1,6 @@
+model: Llama-3.2-1B-Instruct.Q6_K.gguf
+k-quant: true
+tokens: 8 (incl. prefill)
+bare:    2028.59 ms/run
+hooked:  2040.54 ms/run
+hook overhead: +0.6%

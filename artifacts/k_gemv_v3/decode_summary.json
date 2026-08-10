@@ -1,0 +1,57 @@
+{
+ "schema_version": 1,
+ "benchmark": "k_gemv_decode_summary",
+ "date": "2026-08-10",
+ "host": "i5-1135G7 4c/8t, powersave governor, thermal-noise-limited",
+ "protocol": "bench-decode --execution planned, 64 tok / 3 reps, 3 rounds with cooldown to <=70C between rounds, best (coolest) round reported; CB=1 (default) kernels",
+ "git": {
+  "commit": "uncommitted at measurement time"
+ },
+ "baseline_before_phase": {
+  "Q4_K_M": 6.25,
+  "Q6_K": 6.04
+ },
+ "results_tps_8t": {
+  "Q4_K_M": 15.37,
+  "Q6_K": 11.54,
+  "Q8_0_untouched": 26.14
+ },
+ "rounds": [
+  {
+   "round": 1,
+   "temp_mC": 70000,
+   "Q4_K_M": 15.37,
+   "Q6_K": 11.03,
+   "Q8_0": 24.97
+  },
+  {
+   "round": 2,
+   "temp_mC": 70000,
+   "Q4_K_M": 15.0,
+   "Q6_K": 11.54,
+   "Q8_0": 26.14
+  },
+  {
+   "round": 3,
+   "temp_mC": 70000,
+   "Q4_K_M": 15.34,
+   "Q6_K": 11.25,
+   "Q8_0": 24.18
+  }
+ ],
+ "cb_ab_8t_q4km": {
+  "cb1": [
+   13.55,
+   10.33
+  ],
+  "cb2": [
+   11.63,
+   9.94
+  ],
+  "cb4": [
+   7.51,
+   6.77
+  ]
+ },
+ "notes": "Thermal state dominates run-to-run variance (idle 84C with GUI; same binary: 6.1 tps hot vs 15.4 tps cool). Multi-column bodies (CB=2/4) regress decode by defeating the sequential weight-row prefetcher."
+}

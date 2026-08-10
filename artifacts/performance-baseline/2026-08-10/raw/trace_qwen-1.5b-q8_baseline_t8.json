@@ -1,0 +1,6 @@
+{
+ "model": "qwen-1.5b-q8",
+ "mode": "baseline",
+ "threads": 8,
+ "trace_file": "trace_qwen-1.5b-q8_baseline_t8.trace.json"
+}
