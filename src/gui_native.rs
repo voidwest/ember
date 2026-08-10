@@ -19,11 +19,16 @@ use crate::gui::{
 use anyhow::Context;
 use clap::Args as ClapArgs;
 use ember::quant_k::KStrategy;
+use iced::gradient::Linear;
 use iced::widget::{
-    button, column, combo_box, container, row, rule, scrollable, space, text, text_editor,
-    text_input, Column,
+    button, column, combo_box, container, overlay::menu, row, rule, scrollable, space, text,
+    text_editor, text_input, Column,
 };
-use iced::{border, Alignment, Color, Element, Font, Length, Subscription, Task, Theme};
+use iced::{
+    border, Alignment, Background, Color, Element, Font, Gradient, Length, Shadow, Subscription,
+    Task, Theme, Vector,
+};
+use std::f32::consts::{FRAC_PI_2, PI};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -579,10 +584,16 @@ fn subscription(state: &Console) -> Subscription<Message> {
 // view
 // ---------------------------------------------------------------------------
 
-// The console palette (light and dark variants). The header stays dark in
-// both themes, so HEADER is a plain constant; everything else follows the
-// in-window theme toggle.
-const HEADER: Color = Color::from_rgb8(0x12, 0x15, 0x1a);
+// The console palette — "ember" styling: a warm ember-orange accent over deep
+// cool charcoal surfaces, with soft shadows and rounded corners throughout.
+// The header and status bar stay dark in both themes (brand constants), while
+// everything else follows the in-window theme toggle.
+
+const HEADER_TOP: Color = Color::from_rgb8(0x0d, 0x0f, 0x14);
+const HEADER_BOTTOM: Color = Color::from_rgb8(0x16, 0x1b, 0x23);
+const HEADER_TEXT: Color = Color::from_rgb8(0xe8, 0xea, 0xee);
+const HEADER_DIM: Color = Color::from_rgb8(0x93, 0x9c, 0xad);
+const HEADER_CHIP_TEXT: Color = Color::from_rgb8(0xc3, 0xca, 0xd6);
 
 struct Colors {
     bg: Color,
@@ -593,6 +604,9 @@ struct Colors {
     faint: Color,
     border: Color,
     accent: Color,
+    accent_hi: Color,
+    accent_lo: Color,
+    accent_soft: Color,
     ok: Color,
     err: Color,
     warn: Color,
@@ -600,48 +614,83 @@ struct Colors {
     err_box_border: Color,
     warn_box_bg: Color,
     warn_box_border: Color,
+    shadow: Color,
 }
 
-/// Light console theme: dark text on white surfaces.
+/// Light console theme: dark text on white surfaces, ember accent.
 const LIGHT: Colors = Colors {
-    bg: Color::from_rgb8(0xf4, 0xf5, 0xf7),
+    bg: Color::from_rgb8(0xf1, 0xf2, 0xf6),
     panel: Color::from_rgb8(0xff, 0xff, 0xff),
-    panel_alt: Color::from_rgb8(0xfc, 0xfc, 0xfd),
-    text: Color::from_rgb8(0x1c, 0x20, 0x26),
-    dim: Color::from_rgb8(0x5b, 0x62, 0x70),
-    faint: Color::from_rgb8(0x8a, 0x90, 0xa0),
-    border: Color::from_rgb8(0xd8, 0xda, 0xe0),
-    accent: Color::from_rgb8(0x24, 0x56, 0xc4),
-    ok: Color::from_rgb8(0x15, 0x7f, 0x3d),
+    panel_alt: Color::from_rgb8(0xf5, 0xf6, 0xfa),
+    text: Color::from_rgb8(0x1a, 0x1d, 0x26),
+    dim: Color::from_rgb8(0x4d, 0x55, 0x66),
+    faint: Color::from_rgb8(0x8a, 0x92, 0xa4),
+    border: Color::from_rgb8(0xda, 0xde, 0xe7),
+    accent: Color::from_rgb8(0xc8, 0x3e, 0x0a),
+    accent_hi: Color::from_rgb8(0xdd, 0x4f, 0x16),
+    accent_lo: Color::from_rgb8(0xa8, 0x32, 0x06),
+    accent_soft: Color::from_rgba8(0xc8, 0x3e, 0x0a, 0.10),
+    ok: Color::from_rgb8(0x14, 0x7d, 0x3c),
     err: Color::from_rgb8(0xb3, 0x26, 0x1e),
     warn: Color::from_rgb8(0x9a, 0x67, 0x00),
-    err_box_bg: Color::from_rgb8(0xfd, 0xec, 0xeb),
-    err_box_border: Color::from_rgb8(0xe0, 0xa6, 0xa2),
-    warn_box_bg: Color::from_rgb8(0xfd, 0xf3, 0xd9),
-    warn_box_border: Color::from_rgb8(0xd9, 0xb4, 0x5a),
+    err_box_bg: Color::from_rgb8(0xfd, 0xed, 0xeb),
+    err_box_border: Color::from_rgb8(0xdf, 0xa5, 0xa0),
+    warn_box_bg: Color::from_rgb8(0xfd, 0xf4, 0xda),
+    warn_box_border: Color::from_rgb8(0xd8, 0xb3, 0x59),
+    shadow: Color::from_rgba8(0x17, 0x1c, 0x28, 0.10),
 };
 
-/// Dark console theme: light text on deep gray-blue surfaces.
+/// Dark console theme: light text on deep charcoal surfaces, ember accent.
 const DARK: Colors = Colors {
-    bg: Color::from_rgb8(0x1b, 0x1f, 0x26),
-    panel: Color::from_rgb8(0x23, 0x28, 0x30),
-    panel_alt: Color::from_rgb8(0x2a, 0x30, 0x3a),
-    text: Color::from_rgb8(0xe8, 0xea, 0xee),
-    dim: Color::from_rgb8(0x9a, 0xa3, 0xb2),
-    faint: Color::from_rgb8(0x6e, 0x76, 0x84),
-    border: Color::from_rgb8(0x33, 0x3a, 0x45),
-    accent: Color::from_rgb8(0x5b, 0x8c, 0xf0),
-    ok: Color::from_rgb8(0x3f, 0xb9, 0x6f),
-    err: Color::from_rgb8(0xf0, 0x6a, 0x5e),
-    warn: Color::from_rgb8(0xd9, 0xa9, 0x4f),
-    err_box_bg: Color::from_rgb8(0x3a, 0x22, 0x20),
-    err_box_border: Color::from_rgb8(0x8a, 0x4a, 0x44),
-    warn_box_bg: Color::from_rgb8(0x3a, 0x30, 0x1e),
-    warn_box_border: Color::from_rgb8(0x8a, 0x6a, 0x2e),
+    bg: Color::from_rgb8(0x10, 0x13, 0x18),
+    panel: Color::from_rgb8(0x1a, 0x1e, 0x26),
+    panel_alt: Color::from_rgb8(0x21, 0x26, 0x30),
+    text: Color::from_rgb8(0xec, 0xee, 0xf2),
+    dim: Color::from_rgb8(0xa7, 0xae, 0xbd),
+    faint: Color::from_rgb8(0x67, 0x70, 0x83),
+    border: Color::from_rgb8(0x2b, 0x32, 0x3e),
+    accent: Color::from_rgb8(0xff, 0x77, 0x35),
+    accent_hi: Color::from_rgb8(0xff, 0x90, 0x59),
+    accent_lo: Color::from_rgb8(0xdf, 0x5c, 0x1c),
+    accent_soft: Color::from_rgba8(0xff, 0x77, 0x35, 0.15),
+    ok: Color::from_rgb8(0x4a, 0xd1, 0x8c),
+    err: Color::from_rgb8(0xf1, 0x6b, 0x62),
+    warn: Color::from_rgb8(0xe9, 0xb4, 0x4e),
+    err_box_bg: Color::from_rgb8(0x35, 0x20, 0x1e),
+    err_box_border: Color::from_rgb8(0x7c, 0x44, 0x3e),
+    warn_box_bg: Color::from_rgb8(0x35, 0x2c, 0x1a),
+    warn_box_border: Color::from_rgb8(0x7c, 0x60, 0x2c),
+    shadow: Color::from_rgba8(0x00, 0x00, 0x00, 0.35),
 };
 
 fn mono(text: impl Into<String>) -> iced::widget::Text<'static> {
     iced::widget::text(text.into()).font(Font::with_name(FONT_MONO_NAME))
+}
+
+/// The ember brand gradient: a bright accent melting into its darker sibling.
+fn ember_gradient(hi: Color, lo: Color) -> Gradient {
+    // angle PI runs top -> bottom (see Radians::to_distance)
+    Gradient::Linear(Linear::new(PI).add_stop(0.0, hi).add_stop(1.0, lo))
+}
+
+/// A soft drop shadow using the theme's shadow color.
+fn panel_shadow(colors: &Colors, blur: f32, offset: f32) -> Shadow {
+    Shadow {
+        color: colors.shadow,
+        offset: Vector::new(0.0, offset),
+        blur_radius: blur,
+    }
+}
+
+fn rule_h(colors: &'static Colors) -> Element<'static, Message> {
+    rule::horizontal(1)
+        .style(move |_| rule::Style {
+            color: colors.border,
+            radius: 0.0.into(),
+            fill_mode: rule::FillMode::Full,
+            snap: false,
+        })
+        .into()
 }
 
 fn field<'a>(
@@ -649,28 +698,211 @@ fn field<'a>(
     title: &'static str,
     control: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    column![text(title).size(10).color(colors.dim), control.into()]
-        .spacing(2)
+    column![text(title).size(9).color(colors.faint), control.into()]
+        .spacing(3)
         .width(Length::Fill)
         .into()
 }
 
+/// A card: rounded panel with a hairline border and a soft shadow.
 fn panel<'a>(
     colors: &'static Colors,
     content: impl Into<Element<'a, Message>>,
 ) -> container::Container<'a, Message> {
     container(content.into())
         .width(Length::Fill)
-        .padding(10)
+        .padding(12)
         .style(move |_: &Theme| container::Style {
-            background: Some(iced::Background::Color(colors.panel)),
-            border: border::rounded(3).width(1).color(colors.border),
+            background: Some(Background::Color(colors.panel)),
+            border: border::rounded(10).width(1).color(colors.border),
+            shadow: panel_shadow(colors, 8.0, 2.0),
             ..Default::default()
         })
 }
 
-fn section_title(colors: &Colors, text: &'static str) -> iced::widget::Text<'static> {
-    iced::widget::text(text).size(10).color(colors.dim)
+/// A small uppercase group label with an ember tick.
+fn section_label(colors: &'static Colors, label: &'static str) -> Element<'static, Message> {
+    row![
+        container(space().width(3).height(11)).style(move |_| container::Style {
+            background: Some(Background::Color(colors.accent)),
+            border: border::rounded(2),
+            ..Default::default()
+        }),
+        space().width(6),
+        text(label).size(9).color(colors.dim),
+    ]
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn input_style(
+    colors: &'static Colors,
+) -> impl Fn(&Theme, text_input::Status) -> text_input::Style + 'static {
+    move |_theme, status| {
+        let (background, border_color, width) = match status {
+            text_input::Status::Focused { .. } => (colors.panel, colors.accent, 1.5),
+            text_input::Status::Hovered => (colors.panel_alt, colors.accent_hi, 1.0),
+            _ => (colors.panel_alt, colors.border, 1.0),
+        };
+        text_input::Style {
+            background: Background::Color(background),
+            border: border::rounded(6).width(width).color(border_color),
+            icon: colors.faint,
+            placeholder: colors.faint,
+            value: colors.text,
+            selection: colors.accent,
+        }
+    }
+}
+
+fn editor_style(
+    colors: &'static Colors,
+) -> impl Fn(&Theme, text_editor::Status) -> text_editor::Style + 'static {
+    move |_theme, status| {
+        let (background, border_color, width) = match status {
+            text_editor::Status::Focused { .. } => (colors.panel, colors.accent, 1.5),
+            text_editor::Status::Hovered => (colors.panel_alt, colors.accent_hi, 1.0),
+            _ => (colors.panel_alt, colors.border, 1.0),
+        };
+        text_editor::Style {
+            background: Background::Color(background),
+            border: border::rounded(6).width(width).color(border_color),
+            placeholder: colors.faint,
+            value: colors.text,
+            selection: colors.accent,
+        }
+    }
+}
+
+fn menu_style(colors: &'static Colors) -> impl Fn(&Theme) -> menu::Style + 'static {
+    move |_theme| menu::Style {
+        background: Background::Color(colors.panel),
+        border: border::rounded(6).width(1).color(colors.border),
+        text_color: colors.text,
+        selected_text_color: colors.accent,
+        selected_background: Background::Color(colors.accent_soft),
+        shadow: panel_shadow(colors, 10.0, 3.0),
+    }
+}
+
+/// A combo box with the console's input + menu styling.
+fn combo<'a>(
+    colors: &'static Colors,
+    state: &'a combo_box::State<String>,
+    placeholder: &'static str,
+    selected: Option<&'a String>,
+    on_selected: fn(String) -> Message,
+    on_input: Option<fn(String) -> Message>,
+) -> Element<'a, Message> {
+    let base = combo_box(state, placeholder, selected, on_selected)
+        .input_style(input_style(colors))
+        .menu_style(menu_style(colors));
+    match on_input {
+        Some(f) => base.on_input(f).into(),
+        None => base.into(),
+    }
+}
+
+fn scroll_style(
+    colors: &'static Colors,
+) -> impl Fn(&Theme, scrollable::Status) -> scrollable::Style + 'static {
+    move |_theme, _status| {
+        let rail = scrollable::Rail {
+            background: None,
+            border: border::rounded(4),
+            scroller: scrollable::Scroller {
+                background: Background::Color(colors.faint),
+                border: border::rounded(4),
+            },
+        };
+        scrollable::Style {
+            container: container::Style::default(),
+            vertical_rail: rail,
+            horizontal_rail: rail,
+            gap: None,
+            auto_scroll: scrollable::AutoScroll {
+                background: Background::Color(colors.accent_soft),
+                border: border::rounded(6).width(1).color(colors.accent),
+                shadow: panel_shadow(colors, 6.0, 2.0),
+                icon: colors.accent,
+            },
+        }
+    }
+}
+
+/// A rounded status pill (tinted background + matching text).
+fn chip<'a>(label: &'a str, color: Color) -> Element<'a, Message> {
+    container(text(label).size(9).color(color))
+        .padding([2, 8])
+        .style(move |_| container::Style {
+            background: Some(Background::Color(color.scale_alpha(0.13))),
+            border: border::rounded(999).width(1).color(color.scale_alpha(0.40)),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// A small colored status dot.
+fn status_dot(color: Color) -> Element<'static, Message> {
+    container(space().width(8).height(8))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(color)),
+            border: border::rounded(4).width(1).color(color.scale_alpha(0.45)),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Full-width ember gradient primary button.
+fn btn_primary<'a>(
+    colors: &'static Colors,
+    label: &'a str,
+    message: Option<Message>,
+) -> iced::widget::Button<'a, Message> {
+    button(text(label).size(12))
+        .on_press_maybe(message)
+        .width(Length::Fill)
+        .padding([10, 16])
+        .style(move |_theme, status| {
+            let (hi, lo) = match status {
+                button::Status::Hovered => (colors.accent_hi, colors.accent),
+                button::Status::Pressed => (colors.accent_lo, colors.accent_lo),
+                _ => (colors.accent, colors.accent_lo),
+            };
+            button::Style {
+                background: Some(Background::Gradient(ember_gradient(hi, lo))),
+                text_color: Color::WHITE,
+                border: border::rounded(7),
+                shadow: panel_shadow(colors, 6.0, 2.0),
+                ..Default::default()
+            }
+        })
+}
+
+/// Full-width secondary (outlined) button.
+fn btn_secondary<'a>(
+    colors: &'static Colors,
+    label: &'a str,
+    message: Option<Message>,
+) -> iced::widget::Button<'a, Message> {
+    button(text(label).size(12))
+        .on_press_maybe(message)
+        .width(Length::Fill)
+        .padding([10, 16])
+        .style(move |_theme, status| {
+            let (bg, border_color, fg) = match status {
+                button::Status::Hovered => (colors.panel_alt, colors.accent, colors.text),
+                button::Status::Pressed => (colors.panel, colors.accent_lo, colors.dim),
+                _ => (colors.panel, colors.border, colors.text),
+            };
+            button::Style {
+                background: Some(Background::Color(bg)),
+                text_color: fg,
+                border: border::rounded(7).width(1).color(border_color),
+                shadow: panel_shadow(colors, 4.0, 1.0),
+                ..Default::default()
+            }
+        })
 }
 
 fn header<'a>(state: &'a Console) -> Element<'a, Message> {
@@ -685,55 +917,79 @@ fn header<'a>(state: &'a Console) -> Element<'a, Message> {
     column![
         container(
             row![
+                container(text("E").size(14).color(Color::WHITE))
+                    .width(26)
+                    .height(26)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .style(move |_| container::Style {
+                        background: Some(Background::Gradient(ember_gradient(
+                            colors.accent_hi,
+                            colors.accent_lo
+                        ))),
+                        border: border::rounded(7),
+                        shadow: panel_shadow(colors, 4.0, 1.0),
+                        ..Default::default()
+                    }),
                 column![
-                    text("EMBER").size(15).color(Color::WHITE),
-                    text("EXPERIMENT CONSOLE · v0.6")
-                        .size(9)
-                        .color(Color::from_rgb8(0x9a, 0xa3, 0xb2)),
+                    text("EMBER").size(15).color(HEADER_TEXT),
+                    text("EXPERIMENT CONSOLE · v0.6").size(9).color(HEADER_DIM),
                 ]
                 .spacing(0),
                 space().width(Length::Fill).height(Length::Shrink),
-                mono(session_chip)
-                    .size(11)
-                    .color(Color::from_rgb8(0xc9, 0xd0, 0xdb)),
+                container(mono(session_chip).size(11).color(HEADER_CHIP_TEXT))
+                    .padding([4, 10])
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x18, 0x1d, 0x26))),
+                        border: border::rounded(999)
+                            .width(1)
+                            .color(Color::from_rgb8(0x2c, 0x33, 0x40)),
+                        ..Default::default()
+                    }),
                 button(text(if state.dark { "☀" } else { "☾" }).size(12))
                     .on_press(Message::ToggleTheme)
-                    .style(|_theme: &Theme, status| {
-                        use iced::widget::button::Status;
-                        let (bg, fg, border) = match status {
-                            Status::Hovered => (
-                                Color::from_rgb8(0x33, 0x3a, 0x45),
+                    .padding([4, 10])
+                    .style(move |_theme, status| {
+                        let (bg, fg, border_color) = match status {
+                            button::Status::Hovered => (
+                                Color::from_rgb8(0x2a, 0x31, 0x3d),
                                 Color::WHITE,
-                                Color::from_rgb8(0x46, 0x50, 0x5e),
+                                Color::from_rgb8(0x3a, 0x43, 0x52),
                             ),
                             _ => (
-                                Color::from_rgb8(0x26, 0x2b, 0x33),
-                                Color::from_rgb8(0xc9, 0xd0, 0xdb),
-                                Color::from_rgb8(0x3a, 0x41, 0x50),
+                                Color::from_rgb8(0x1c, 0x21, 0x2b),
+                                Color::from_rgb8(0xc3, 0xca, 0xd6),
+                                Color::from_rgb8(0x2c, 0x33, 0x40),
                             ),
                         };
                         button::Style {
-                            background: Some(iced::Background::Color(bg)),
+                            background: Some(Background::Color(bg)),
                             text_color: fg,
-                            border: border::rounded(3).width(1).color(border),
+                            border: border::rounded(6).width(1).color(border_color),
                             ..Default::default()
                         }
-                    })
-                    .padding([2, 8]),
+                    }),
             ]
             .align_y(Alignment::Center)
-            .padding(12)
+            .padding([10, 14])
             .spacing(12),
         )
         .width(Length::Fill)
         .style(|_| container::Style {
-            background: Some(iced::Background::Color(HEADER)),
+            background: Some(Background::Gradient(ember_gradient(
+                HEADER_TOP,
+                HEADER_BOTTOM
+            ))),
             ..Default::default()
         }),
         container(space().width(Length::Fill).height(3))
             .width(Length::Fill)
             .style(move |_| container::Style {
-                background: Some(iced::Background::Color(colors.accent)),
+                background: Some(Background::Gradient(Gradient::Linear(
+                    Linear::new(FRAC_PI_2)
+                        .add_stop(0.0, colors.accent_hi)
+                        .add_stop(1.0, colors.accent),
+                ))),
                 ..Default::default()
             }),
     ]
@@ -759,10 +1015,14 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
     let source_is_capture = state.source == "capture";
 
     let mut children: Vec<Element<'a, Message>> = Vec::new();
+
+    // ---- MODEL ----
+    children.push(section_label(colors, "MODEL"));
     children.push(field(
         colors,
         "MODEL",
-        combo_box(
+        combo(
+            colors,
             &state.model_combo,
             "select a model\u{2026}",
             if state.model_path.is_empty() {
@@ -771,28 +1031,28 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
                 Some(&state.model_path)
             },
             Message::ModelSelected,
-        )
-        .on_input(Message::ModelPathChanged),
+            Some(Message::ModelPathChanged),
+        ),
     ));
     children.push(
         text_input("path to model.gguf", &state.model_path)
             .on_input(Message::ModelPathChanged)
             .font(Font::with_name(FONT_MONO_NAME))
             .size(12)
+            .padding(6)
+            .style(input_style(colors))
             .into(),
     );
     children.push(
-        button(
-            text(if state.status == Status::Preparing {
+        btn_secondary(
+            colors,
+            if state.status == Status::Preparing {
                 "LOADING\u{2026}"
             } else {
                 "LOAD"
-            })
-            .size(11),
+            },
+            (!state.busy()).then_some(Message::Load),
         )
-        .on_press_maybe((!state.busy()).then_some(Message::Load))
-        .width(Length::Fill)
-        .style(button::secondary)
         .into(),
     );
     match &state.session {
@@ -815,24 +1075,20 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
                 .into(),
         ),
     }
-    children.push(
-        rule::horizontal(1)
-            .style(move |_| rule::Style {
-                color: colors.border,
-                radius: 0.0.into(),
-                fill_mode: rule::FillMode::Full,
-                snap: false,
-            })
-            .into(),
-    );
+    children.push(rule_h(colors));
+
+    // ---- HOOK & INTERVENTION ----
+    children.push(section_label(colors, "HOOK & INTERVENTION"));
     children.push(field(
         colors,
         "HOOK STAGE",
-        combo_box(
+        combo(
+            colors,
             &state.site_combo,
             "hook\u{2026}",
             Some(&state.site),
             Message::SiteSelected,
+            None,
         ),
     ));
     children.push(field(
@@ -842,17 +1098,20 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
             .on_input(Message::LayerChanged)
             .font(Font::with_name(FONT_MONO_NAME))
             .width(Length::Fill)
-            .padding(4),
+            .padding(6)
+            .style(input_style(colors)),
     ));
     children.push(text(layer_hint).size(9).color(colors.faint).into());
     children.push(field(
         colors,
         "INTERVENTION",
-        combo_box(
+        combo(
+            colors,
             &state.op_combo,
             "intervention\u{2026}",
             Some(&state.op),
             Message::OpSelected,
+            None,
         ),
     ));
     if needs_value {
@@ -861,7 +1120,10 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
                 field(
                     colors,
                     value_label,
-                    text_input("0.5", &state.value).on_input(Message::ValueChanged)
+                    text_input("0.5", &state.value)
+                        .on_input(Message::ValueChanged)
+                        .padding(6)
+                        .style(input_style(colors)),
                 ),
                 text(if state.op == "interpolate" {
                     "blend toward the source"
@@ -879,11 +1141,13 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
         children.push(field(
             colors,
             "SOURCE",
-            combo_box(
+            combo(
+                colors,
                 &state.source_combo,
                 "source\u{2026}",
                 Some(&state.source),
                 Message::SourceSelected,
+                None,
             ),
         ));
         if source_is_capture {
@@ -894,7 +1158,9 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
                         "SOURCE LAYER",
                         text_input("0", &state.source_layer)
                             .on_input(Message::SourceLayerChanged)
-                            .font(Font::with_name(FONT_MONO_NAME)),
+                            .font(Font::with_name(FONT_MONO_NAME))
+                            .padding(6)
+                            .style(input_style(colors)),
                     ),
                     text("capture fires before the intervention (same pass)")
                         .size(9)
@@ -905,14 +1171,20 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
             );
         }
     }
+    children.push(rule_h(colors));
+
+    // ---- TARGET ----
+    children.push(section_label(colors, "TARGET"));
     children.push(field(
         colors,
         "TARGET TOKENS",
-        combo_box(
+        combo(
+            colors,
             &state.token_combo,
             "tokens\u{2026}",
             Some(&state.token),
             Message::TokenSelected,
+            None,
         ),
     ));
     if state.token == "matched-span" {
@@ -923,40 +1195,35 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
             )
             .on_input(Message::SpanChanged)
             .font(Font::with_name(FONT_ARABIC_NAME))
+            .padding(6)
+            .style(input_style(colors))
             .into(),
         );
     }
+    children.push(rule_h(colors));
+
+    // ---- ACTIONS ----
+    children.push(section_label(colors, "ACTIONS"));
     children.push(
-        rule::horizontal(1)
-            .style(move |_| rule::Style {
-                color: colors.border,
-                radius: 0.0.into(),
-                fill_mode: rule::FillMode::Full,
-                snap: false,
-            })
-            .into(),
-    );
-    children.push(
-        button(
-            text(match state.status {
+        btn_primary(
+            colors,
+            match state.status {
                 Status::Running => "RUNNING\u{2026}",
                 Status::Preparing => "LOADING MODEL\u{2026}",
                 Status::Restoring => "RESTORING\u{2026}",
                 Status::Idle => "RUN EXPERIMENT",
-            })
-            .size(12),
+            },
+            (!state.busy()).then_some(Message::Run),
         )
-        .on_press_maybe((!state.busy()).then_some(Message::Run))
-        .width(Length::Fill)
-        .style(button::primary)
         .into(),
     );
     children.push(
-        button(text("VERIFY RESTORE").size(12))
-            .on_press_maybe((!state.busy()).then_some(Message::Restore))
-            .width(Length::Fill)
-            .style(button::secondary)
-            .into(),
+        btn_secondary(
+            colors,
+            "VERIFY RESTORE",
+            (!state.busy()).then_some(Message::Restore),
+        )
+        .into(),
     );
     children.push(
         text("change layer or intervention \u{2192} RUN \u{2192} compare \u{2192} VERIFY RESTORE")
@@ -964,9 +1231,9 @@ fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
             .color(colors.faint)
             .into(),
     );
-    Column::with_children(children)
-        .spacing(6)
-        .padding(12)
+
+    scrollable(Column::with_children(children).spacing(10).padding(14))
+        .style(scroll_style(colors))
         .into()
 }
 
@@ -974,10 +1241,11 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
     let colors = state.colors();
     let prompt_editor = text_editor(&state.prompt)
         .on_action(Message::PromptEdited)
-        .height(74)
-        .padding(8)
+        .height(84)
+        .padding(10)
         .font(Font::with_name(FONT_ARABIC_NAME))
-        .size(14);
+        .size(14)
+        .style(editor_style(colors));
     let prompt_meta = row![
         field(
             colors,
@@ -985,16 +1253,19 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
             text_input("48", &state.max_tokens)
                 .on_input(Message::MaxTokensChanged)
                 .width(76)
-                .padding(4),
+                .padding(6)
+                .style(input_style(colors)),
         ),
         field(
             colors,
             "EXECUTION",
-            combo_box(
+            combo(
+                colors,
                 &state.execution_combo,
-                "execution…",
+                "execution\u{2026}",
                 Some(&state.execution),
                 Message::ExecutionSelected,
+                None,
             ),
         ),
         space().width(Length::Fill).height(Length::Shrink),
@@ -1011,10 +1282,10 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         .map(|error| {
             container(mono(error.clone()).size(11).color(colors.err))
                 .width(Length::Fill)
-                .padding(8)
+                .padding([9, 12])
                 .style(move |_| container::Style {
-                    background: Some(iced::Background::Color(colors.err_box_bg)),
-                    border: border::rounded(3).width(1).color(colors.err_box_border),
+                    background: Some(Background::Color(colors.err_box_bg)),
+                    border: border::rounded(8).width(1).color(colors.err_box_border),
                     ..Default::default()
                 })
         })
@@ -1026,10 +1297,10 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         .map(|warning| {
             container(mono(warning.clone()).size(10).color(colors.warn))
                 .width(Length::Fill)
-                .padding(8)
+                .padding([9, 12])
                 .style(move |_| container::Style {
-                    background: Some(iced::Background::Color(colors.warn_box_bg)),
-                    border: border::rounded(3).width(1).color(colors.warn_box_border),
+                    background: Some(Background::Color(colors.warn_box_bg)),
+                    border: border::rounded(8).width(1).color(colors.warn_box_border),
                     ..Default::default()
                 })
         })
@@ -1044,7 +1315,7 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
             state.status
         ),
     ]
-    .spacing(10);
+    .spacing(12);
 
     let verification = verification_panel(state);
 
@@ -1052,16 +1323,17 @@ fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         column![
             panel(
                 colors,
-                column![section_title(colors, "PROMPT"), prompt_editor, prompt_meta,].spacing(4),
+                column![section_label(colors, "PROMPT"), prompt_editor, prompt_meta,].spacing(8),
             ),
             error,
             warning,
             outputs,
             verification,
         ]
-        .spacing(10),
+        .spacing(12),
     )
     .width(Length::Fill)
+    .style(scroll_style(colors))
     .into()
 }
 
@@ -1074,58 +1346,66 @@ fn output_panel<'a>(
     let (badge_text, badge_color) = match (output, status) {
         (Some(_), _) => ("OK", colors.ok),
         (None, Status::Running) => ("RUN", colors.warn),
-        (None, Status::Preparing) => ("—", colors.faint),
-        (None, Status::Restoring) => ("—", colors.faint),
-        (None, Status::Idle) => ("—", colors.faint),
+        (None, Status::Preparing) => ("\u{2014}", colors.faint),
+        (None, Status::Restoring) => ("\u{2014}", colors.faint),
+        (None, Status::Idle) => ("\u{2014}", colors.faint),
     };
     let body: Element<'a, Message> = match output {
         Some(out) if !out.text.is_empty() => column![
             container(
                 text(out.text.clone())
                     .font(Font::with_name(FONT_ARABIC_NAME))
-                    .size(13)
+                    .size(14)
                     .width(Length::Fill),
             )
             .width(Length::Fill)
-            .padding(8)
+            .padding(10)
             .style(move |_| container::Style {
-                background: Some(iced::Background::Color(colors.panel_alt)),
-                border: border::rounded(3).width(1).color(colors.border),
+                background: Some(Background::Color(colors.panel_alt)),
+                border: border::rounded(8).width(1).color(colors.border),
                 ..Default::default()
             }),
-            mono(format!(
-                "{} tok \u{00b7} {} \u{00b7} {}",
-                out.generated_tokens,
-                fmt_ms(out.wall_ms),
-                fmt_tps(out.decode_tps)
-            ))
-            .size(10)
-            .color(colors.faint),
-            mono(format!(
-                "prompt {} tok \u{00b7} bundle {} {}",
-                out.prompt_tokens,
-                short_id(&out.semantic_hash),
-                out.bundle_dir
-            ))
-            .size(9)
-            .color(colors.faint),
+            row![
+                mono(format!(
+                    "{} tok \u{00b7} {} \u{00b7} {}",
+                    out.generated_tokens,
+                    fmt_ms(out.wall_ms),
+                    fmt_tps(out.decode_tps)
+                ))
+                .size(10)
+                .color(colors.dim),
+                space().width(Length::Fill).height(Length::Shrink),
+                mono(format!(
+                    "prompt {} tok \u{00b7} bundle {}",
+                    out.prompt_tokens,
+                    short_id(&out.semantic_hash)
+                ))
+                .size(9)
+                .color(colors.faint),
+            ]
+            .align_y(Alignment::Center),
+            mono(out.bundle_dir.clone()).size(9).color(colors.faint),
         ]
-        .spacing(4)
+        .spacing(6)
         .into(),
         Some(_out) => text("(empty output)").size(12).color(colors.faint).into(),
-        None => text("no run yet").size(12).color(colors.faint).into(),
+        None => text("no run yet \u{2014} outputs appear here")
+            .size(12)
+            .color(colors.faint)
+            .into(),
     };
     panel(
         colors,
         column![
             row![
-                section_title(colors, title),
+                text(title).size(11).color(colors.dim),
                 space().width(Length::Fill).height(Length::Shrink),
-                text(badge_text).size(10).color(badge_color),
-            ],
+                chip(badge_text, badge_color),
+            ]
+            .align_y(Alignment::Center),
             body,
         ]
-        .spacing(6),
+        .spacing(8),
     )
     .into()
 }
@@ -1198,10 +1478,11 @@ fn verification_panel<'a>(state: &'a Console) -> Element<'a, Message> {
         colors,
         column![
             row![
-                text(badge).size(12).color(badge_color),
+                chip(badge, badge_color),
                 space().width(Length::Fill).height(Length::Shrink),
                 mono(metrics).size(10).color(colors.faint),
-            ],
+            ]
+            .align_y(Alignment::Center),
             detail,
         ]
         .spacing(6),
@@ -1210,6 +1491,16 @@ fn verification_panel<'a>(state: &'a Console) -> Element<'a, Message> {
 }
 
 fn statusbar<'a>(state: &'a Console) -> Element<'a, Message> {
+    let colors = state.colors();
+    let (dot, status_text) = match state.status {
+        Status::Idle => (Color::from_rgb8(0x6e, 0x77, 0x8a), "idle"),
+        Status::Preparing => (colors.warn, "loading model\u{2026}"),
+        Status::Running => (colors.accent, "running experiment\u{2026}"),
+        Status::Restoring => (
+            Color::from_rgb8(0x6b, 0xa7, 0xff),
+            "verifying restore\u{2026}",
+        ),
+    };
     let layer_hook = if per_layer(&state.site) {
         format!("L{} \u{00b7} {}", state.layer, state.site)
     } else {
@@ -1232,28 +1523,36 @@ fn statusbar<'a>(state: &'a Console) -> Element<'a, Message> {
             )
         })
         .unwrap_or_default();
+    let divider = container(space().width(1).height(12)).style(|_| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x2a, 0x30, 0x3c))),
+        ..Default::default()
+    });
     container(
         row![
+            status_dot(dot),
+            text(status_text).size(10).color(HEADER_CHIP_TEXT),
+            divider,
             mono(format!("model {}", state.model_name()))
                 .size(10)
-                .color(Color::from_rgb8(0xe8, 0xea, 0xee)),
+                .color(HEADER_TEXT),
             mono(format!("layer/hook {layer_hook}"))
                 .size(10)
-                .color(Color::from_rgb8(0xe8, 0xea, 0xee)),
+                .color(HEADER_TEXT),
             mono(format!("intervention {intervention}"))
                 .size(10)
-                .color(Color::from_rgb8(0xe8, 0xea, 0xee)),
+                .color(HEADER_TEXT),
             space().width(Length::Fill).height(Length::Shrink),
             mono(metrics)
                 .size(10)
                 .color(Color::from_rgb8(0x57, 0xd6, 0x8d)),
         ]
-        .spacing(18)
-        .padding(6),
+        .align_y(Alignment::Center)
+        .spacing(12)
+        .padding([7, 14]),
     )
     .width(Length::Fill)
     .style(|_| container::Style {
-        background: Some(iced::Background::Color(HEADER)),
+        background: Some(Background::Color(HEADER_BOTTOM)),
         ..Default::default()
     })
     .into()
@@ -1263,10 +1562,10 @@ fn view(state: &Console) -> Element<'_, Message> {
     let colors = state.colors();
     let body = row![
         container(sidebar(state))
-            .width(264)
+            .width(272)
             .height(Length::Fill)
             .style(move |_| container::Style {
-                background: Some(iced::Background::Color(colors.panel)),
+                background: Some(Background::Color(colors.panel)),
                 ..Default::default()
             }),
         rule::vertical(1).style(move |_| rule::Style {
@@ -1278,7 +1577,7 @@ fn view(state: &Console) -> Element<'_, Message> {
         container(main_panel(state))
             .width(Length::Fill)
             .height(Length::Fill)
-            .padding(10),
+            .padding(12),
     ]
     .width(Length::Fill)
     .height(Length::Fill);
@@ -1358,7 +1657,7 @@ pub(crate) fn run_gui_command(
     };
     iced::application(boot, update, view)
         .title(|_: &Console| "EMBER \u{2014} experiment console".to_string())
-        .window_size(iced::Size::new(1180.0, 820.0))
+        .window_size(iced::Size::new(1240.0, 860.0))
         .theme(theme)
         .default_font(Font::with_name(FONT_SANS_NAME))
         .font(FONT_SANS)
