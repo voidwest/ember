@@ -110,7 +110,11 @@ pub fn matmul_k_prefill_into_parallel(
             dst.len()
         ));
     }
-    if rayon::current_num_threads() <= 1 || out_features < 2 * PARALLEL_COL_TILE {
+    let col_tile = std::env::var("EMBER_KPREFILL_CTILE")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(PARALLEL_COL_TILE);
+    if rayon::current_num_threads() <= 1 || out_features < 2 * col_tile {
         return matmul_k_prefill_into(src, rows, w, dst);
     }
     #[cfg(target_arch = "x86_64")]
@@ -122,19 +126,20 @@ pub fn matmul_k_prefill_into_parallel(
         let forced_legacy = std::env::var("EMBER_KPREFILL_LEGACY").is_ok_and(|v| v == "1");
         if use_avx512 && !forced_legacy {
             use rayon::prelude::*;
-            let task: fn(usize, SendDst, usize, &[f32], usize, &KQuantWeight) = match w.dtype() {
-                KQuantDtype::Q4K => prefill_q4k_task,
-                KQuantDtype::Q6K => prefill_q6k_task,
-            };
+            let task: fn(usize, usize, SendDst, usize, &[f32], usize, &KQuantWeight) =
+                match w.dtype() {
+                    KQuantDtype::Q4K => prefill_q4k_task,
+                    KQuantDtype::Q6K => prefill_q6k_task,
+                };
             let dst_ptr = SendDst(dst.as_mut_ptr());
             let dst_len = dst.len();
             (0..out_features)
                 .into_par_iter()
-                .step_by(PARALLEL_COL_TILE)
-                .for_each(|c0| {
+                .step_by(col_tile)
+                .for_each(move |c0| {
                     // The wrapper is moved whole (not field-captured), so
                     // the closure stays Send+Sync via the explicit impls.
-                    task(c0, dst_ptr, dst_len, src, rows, w)
+                    task(c0, col_tile, dst_ptr, dst_len, src, rows, w)
                 });
             return Ok(());
         }
@@ -153,13 +158,14 @@ pub fn matmul_k_prefill_into_parallel(
 #[cfg(target_arch = "x86_64")]
 fn prefill_q4k_task(
     c0: usize,
+    col_tile: usize,
     dst_ptr: SendDst,
     dst_len: usize,
     src: &[f32],
     rows: usize,
     w: &KQuantWeight,
 ) {
-    let c1 = (c0 + PARALLEL_COL_TILE).min(w.out_features());
+    let c1 = (c0 + col_tile).min(w.out_features());
     // SAFETY: dst_ptr points at the validated dst buffer; this task only
     // writes columns c0..c1 of every row (disjoint across tasks).
     let dst_cols = unsafe { std::slice::from_raw_parts_mut(dst_ptr.0, dst_len) };
@@ -198,13 +204,14 @@ unsafe fn prefill_q6k_avx512(
 #[cfg(target_arch = "x86_64")]
 fn prefill_q6k_task(
     c0: usize,
+    col_tile: usize,
     dst_ptr: SendDst,
     dst_len: usize,
     src: &[f32],
     rows: usize,
     w: &KQuantWeight,
 ) {
-    let c1 = (c0 + PARALLEL_COL_TILE).min(w.out_features());
+    let c1 = (c0 + col_tile).min(w.out_features());
     // SAFETY: dst_ptr points at the validated dst buffer; this task only
     // writes columns c0..c1 of every row (disjoint across tasks).
     let dst_cols = unsafe { std::slice::from_raw_parts_mut(dst_ptr.0, dst_len) };
@@ -237,7 +244,11 @@ mod x86 {
                 dst: &mut [f32],
             ) {
                 let mask0f = _mm_set1_epi8(0x0F);
-                let mut acc = [[[_mm512_setzero_ps(); 2]; $ct]; $rt];
+                // ONE accumulator per (row, column): the two 16-lane
+                // sub-chunks of each 32-value group share a register, so
+                // 4x4 uses 16 zmm of accumulators (fits the file without
+                // spills; the final horizontal sum is lane-agnostic).
+                let mut acc = [[_mm512_setzero_ps(); $ct]; $rt];
                 for b in 0..blocks_per_row {
                     let xb = b * QK_K;
                     for g in 0..4 {
@@ -286,10 +297,8 @@ mod x86 {
                                     bm2,
                                 );
                                 for r in 0..$rt {
-                                    acc[r][col][0] =
-                                        _mm512_fmadd_ps(xv[r][0], v_low, acc[r][col][0]);
-                                    acc[r][col][1] =
-                                        _mm512_fmadd_ps(xv[r][1], v_high, acc[r][col][1]);
+                                    acc[r][col] = _mm512_fmadd_ps(xv[r][0], v_low, acc[r][col]);
+                                    acc[r][col] = _mm512_fmadd_ps(xv[r][1], v_high, acc[r][col]);
                                 }
                             }
                         }
@@ -297,8 +306,8 @@ mod x86 {
                 }
                 for r in 0..$rt {
                     for col in 0..$ct {
-                        let s = _mm512_add_ps(acc[r][col][0], acc[r][col][1]);
-                        dst[(r0 + r) * out_features + c0 + col] += _mm512_reduce_add_ps(s);
+                        dst[(r0 + r) * out_features + c0 + col] +=
+                            _mm512_reduce_add_ps(acc[r][col]);
                     }
                 }
             }
