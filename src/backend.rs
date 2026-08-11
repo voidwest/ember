@@ -937,7 +937,11 @@ impl Backend for CpuBackend {
     ) -> Result<CpuTensor, CpuError> {
         let (seq_len, output_len) = k_matmul_output_len(x, w)?;
         let mut out = vec![0.0f32; output_len];
-        crate::k_matmul::matmul_k_into(x.data(), seq_len, w, &mut out).map_err(CpuError::Kernel)?;
+        // Parallel entry: rows == 1 routes to the decode GEMV (with its own
+        // shape threshold) and rows > 1 to the column-tile prefill split;
+        // both are bit-identical to their serial forms.
+        crate::k_matmul::matmul_k_into_parallel(x.data(), seq_len, w, &mut out)
+            .map_err(CpuError::Kernel)?;
         Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))
     }
 

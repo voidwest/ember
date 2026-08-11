@@ -28,6 +28,7 @@ pub mod gemma4;
 pub mod k_gemv;
 pub mod k_matmul;
 pub mod k_matmul_x86;
+pub mod k_prefill;
 pub mod kv_cache;
 pub mod kv_compare;
 pub mod kv_diagnostics;

@@ -167,3 +167,66 @@ cool).
   current build; the llama.cpp cross-check is the live external gate.)
 - End-to-end decode (cool, interleaved): Q4_K_M ~13.5 tps, Q6_K ~11 tps at
   8t planned (vs 6.25/6.04 before this phase; ~2×).
+
+## 8. K-quant prefill: register-blocked GEMM (2026-08-10, second phase)
+
+The v0.3 prefill path (`rows > 1`) was catastrophic: 4.7 tok/s vs llama.cpp
+121-132 tok/s (a 28x gap). The old kernels had the same anti-patterns the
+decode phase fixed, worse: for each output column they re-read every
+activation from L2, horizontal-reduced every 8 values, and
+read-modify-wrote `dst` per 8-value chunk — and prefill was never
+parallelized (the generic path called the serial `matmul_k_into`).
+
+### Implementation (`src/k_prefill.rs`)
+
+A register-blocked exact-f32 GEMM (AVX-512):
+- fixed (RT x CT) tiles with **compile-time loop bounds** — the first
+  attempt used runtime `acc[r][col]` indexing and the compiler spilled every
+  accumulator to the stack (`vmovaps (%rsp)... / vfmadd / vmovaps ...(%rsp)`
+  per FMA — ~3 memory ops per FMA, ~10-15 GFLOPS). The macro-generated
+  constant tiles keep all 16-32 accumulators in zmm registers (zero spills).
+- Q4_K main tile 4x4 (measured best of 4x2/2x4/4x4 via `EMBER_KPREFILL_TILE`),
+  Q6_K tile 2x1, small fixed remainder tiles.
+- dequantized weight chunk shared across the RT rows; activation chunk
+  shared across the CT columns.
+- parallel split over 256-column tiles (bit-identical to serial; each task
+  reads only its own weight columns; x re-reads hit L2).
+- `CpuBackend::matmul_k` now routes through the parallel entry for both
+  decode and prefill (matches the Q8_0 batch pattern); non-AVX-512 builds
+  fall back to the v0.3 kernels via `matmul_k_legacy_prefill_into`.
+
+### Measured results (cool host, best of 3 rounds, 26-token Arabic prompt)
+
+| model | before | after | llama.cpp | gap |
+|---|---|---|---|---|
+| llama-1B Q4_K_M | 4.7 tok/s | **33.0** (7.0x) | 121 | 3.7x |
+| llama-1B Q6_K | ~5.4 | **38.1** (~7x) | ~121 | ~3.2x |
+| qwen-1.5B Q4_K_M | — | **22.1** | 96.4 | 4.4x |
+
+Isolated kernel (26 rows, 8 threads, aggregate): q 82 GFLOP/s, o 87,
+gate/up 71-74, down (Q6K) 100; single-thread ~20-28 GFLOPS (the
+single-thread kernel is the main remaining inefficiency, ~13% of the
+Tiger-Lake FMA ceiling; parallel scaling caps at ~4x on 8 threads,
+memory-bound).
+
+### Verification
+
+- `k_prefill` unit suite 4/4: Q4_K/Q6_K vs the eager-f32 oracle (Gate A,
+  1e-4 relative) across shapes incl. rows=26/33; serial == parallel
+  bit-identical; zero-scale blocks contribute exactly zero; length
+  mismatches rejected.
+- Full lib suite 301, k_parity (real-model Gates B/C/E, which **includes
+  multi-token prefill logits**): Q4_K_M 5/5 and Q6_K 5/5.
+- Decode regression check: Q4_K_M 15.4 -> 19.0 tps (cooler run; no
+  regression from the routing change).
+- clippy -D warnings + fmt clean.
+
+### Remaining (ranked)
+
+1. Single-thread tile kernel efficiency (~20 GFLOPS; dequant port
+   contention + x L1 re-reads); deeper unrolling or a hybrid
+   dequant-once-two-level cache scheme.
+2. Parallel scaling caps at ~4x (8 threads) — memory contention on x
+   re-reads/weights; larger per-task column tiles may help.
+3. Generic-path per-op Vec materialization for the non-matmul ops (silu,
+   norms, residual adds) — the Q8 path has the same overhead.

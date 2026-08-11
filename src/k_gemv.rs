@@ -59,7 +59,7 @@ const PARALLEL_CHUNK: usize = 256;
 /// `quant_k::get_scale_min_k4`), vectorized into byte arrays so the hot
 /// loop can broadcast from registers.
 #[inline]
-fn unpack_k4_scales(scales: &[u8]) -> ([u8; 8], [u8; 8]) {
+pub(crate) fn unpack_k4_scales(scales: &[u8]) -> ([u8; 8], [u8; 8]) {
     const K1: u32 = 0x0303_0303;
     const K2: u32 = 0x0f0f_0f0f;
     const K3: u32 = 0x3f3f_3f3f;

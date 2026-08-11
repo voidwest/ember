@@ -98,27 +98,13 @@ pub fn matmul_k_into(
         ));
     }
     // Batch-1 decode: route through the bandwidth-competitive GEMV
-    // (exact f32 activations; the v0.3 kernels remain the prefill path).
+    // (exact f32 activations). Prefill (rows > 1) routes through the
+    // register-blocked AVX-512 prefill GEMM when available, falling back
+    // to the v0.3 kernels otherwise.
     if rows == 1 {
         return crate::k_gemv::matmul_k_gemv_serial(src, w, dst);
     }
-    match w.execution() {
-        KExecution::CompressedScalar => matmul_k_scalar_into(src, rows, w, dst),
-        KExecution::CompressedX86 => {
-            if !crate::k_matmul_x86::avx2_supported() {
-                return Err(
-                    "matmul_k: compressed-x86 recorded at load but AVX2 is unavailable at runtime"
-                        .to_string(),
-                );
-            }
-            // Safety: layout validated above; AVX2 feature set verified
-            // above; the weight layout invariants hold by construction.
-            unsafe { crate::k_matmul_x86::matmul_k_avx2_into(src, rows, w, dst) }
-        }
-        KExecution::EagerF32 => {
-            Err("matmul_k: eager-f32 tensors are f32 CpuTensors, not KQuantWeight".to_string())
-        }
-    }
+    crate::k_prefill::matmul_k_prefill_into(src, rows, w, dst)
 }
 
 /// Column-parallel decode matvec: the same math as [`matmul_k_into`] with
@@ -158,41 +144,40 @@ pub fn matmul_k_into_parallel(
     if rows == 1 {
         return crate::k_gemv::matmul_k_gemv_parallel(src, w, dst);
     }
-    // prefill (rows > 1) and small projections stay on the serial kernels:
-    // the rayon split only pays off for the large decode projections
-    // (gate/up/down/lm_head).
-    if in_features.saturating_mul(out_features) < 8_000_000 {
-        return matmul_k_into(src, rows, w, dst);
-    }
+    // Prefill: the register-blocked GEMM has its own column-tile parallel
+    // split (bit-identical to its serial entry).
+    crate::k_prefill::matmul_k_prefill_into_parallel(src, rows, w, dst)
+}
+
+/// v0.3 prefill entry (rows > 1, no register blocking): the scalar or
+/// AVX2 batch kernels by execution decision. Called by [`crate::k_prefill`]
+/// when the AVX-512 register-blocked body is unavailable; never routes back
+/// through [`matmul_k_into`] (that would recurse).
+pub fn matmul_k_legacy_prefill_into(
+    src: &[f32],
+    rows: usize,
+    w: &KQuantWeight,
+    dst: &mut [f32],
+) -> Result<(), String> {
     match w.execution() {
-        KExecution::CompressedScalar => {
-            let (dequant, block_bytes): (DequantFn, usize) = match w.dtype() {
-                KQuantDtype::Q6K => (dequant_q6_k, Q6_K_BLOCK_BYTES),
-                KQuantDtype::Q4K => (dequant_q4_k, Q4_K_BLOCK_BYTES),
-            };
-            matmul_k_scalar_parallel_into(dequant, block_bytes, src, w, dst);
-            Ok(())
-        }
+        KExecution::CompressedScalar => matmul_k_scalar_into(src, rows, w, dst),
         KExecution::CompressedX86 => {
             if !crate::k_matmul_x86::avx2_supported() {
                 return Err(
-                    "matmul_k_parallel: compressed-x86 recorded at load but AVX2 is unavailable at runtime"
+                    "matmul_k: compressed-x86 recorded at load but AVX2 is unavailable at runtime"
                         .to_string(),
                 );
             }
-            // Safety: layout validated above; AVX2 feature set verified
-            // above; each rayon task writes a disjoint dst chunk.
-            unsafe { crate::k_matmul_x86::matmul_k_avx2_into_parallel(src, w, dst) }
+            // Safety: layout validated by the caller; the AVX2 kernels only
+            // touch dst rows/cols they own.
+            unsafe { crate::k_matmul_x86::matmul_k_avx2_into(src, rows, w, dst)? }
             Ok(())
         }
-        KExecution::EagerF32 => Err(
-            "matmul_k_parallel: eager-f32 tensors are f32 CpuTensors, not KQuantWeight".to_string(),
-        ),
+        KExecution::EagerF32 => {
+            Err("matmul_k: eager-f32 tensors are f32 CpuTensors, not KQuantWeight".to_string())
+        }
     }
 }
-
-/// Dequantizer signature shared by the scalar kernel bodies.
-type DequantFn = fn(&[u8], &mut [f32]);
 
 /// Shared scalar kernel body. `dequant` must dequantize one
 /// `block_bytes`-sized super-block into `[f32; QK_K]`.
@@ -285,27 +270,6 @@ fn matmul_k_scalar_row1_chunk_into(
         }
         dst_chunk[i] = acc_j;
     }
-}
-
-/// Column-parallel scalar decode matvec (rows = 1): the output dimension is
-/// split across the rayon pool; each task writes a disjoint `dst` range with
-/// the identical per-column accumulation order, so results are bit-identical
-/// to the serial kernel. Each rayon thread uses its own thread-local
-/// dequantization scratch.
-fn matmul_k_scalar_parallel_into(
-    dequant: fn(&[u8], &mut [f32]),
-    block_bytes: usize,
-    src: &[f32],
-    w: &KQuantWeight,
-    dst: &mut [f32],
-) {
-    use rayon::prelude::*;
-    let chunk = 256usize;
-    dst.par_chunks_mut(chunk)
-        .enumerate()
-        .for_each(|(c, dst_chunk)| {
-            matmul_k_scalar_row1_chunk_into(dequant, block_bytes, src, w, c * chunk, dst_chunk);
-        });
 }
 
 #[cfg(test)]
