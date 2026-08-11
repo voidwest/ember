@@ -47,7 +47,7 @@ carries no compatibility guarantee.
   model can be kept resident. `ember experiment run` behavior is unchanged
   (it calls both in sequence).
 
-## [Unreleased]
+## [0.6.2] - 2026-08-12
 
 ### Changed
 
@@ -79,6 +79,15 @@ carries no compatibility guarantee.
 
 ### Added
 
+- First-class KV-prefix snapshots for the Llama/Qwen CPU runtime through the
+  `ember kv` command family: deterministic `ember.kv-snapshot.v1` artifacts,
+  strict integrity and compatibility checks, bit-exact same-model replay,
+  cache comparison and perturbation diagnostics, replay traces, and explicit
+  RoPE remove/reapply research utilities. The validation matrix and benchmark
+  evidence are recorded under `artifacts/benchmark-kv-v1/2026-08-08/`.
+- The bilingual “Road to Ember 1.0” documentation series and a substantial
+  native-console visual refresh, while preserving the same v0.5 experiment
+  execution path and offline behavior.
 - A pinned llama.cpp known-answer verifier for Q8_K bytes and Q4_K/Q6_K dots,
   fail-closed 1B real-model scalar/x86 validation, a dedicated x86 CI gate,
   adversarial kernel matrices, and schema-4 path-interleaved benchmark output
