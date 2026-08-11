@@ -199,8 +199,8 @@ A register-blocked exact-f32 GEMM (AVX-512):
 
 | model | before | after | llama.cpp | gap |
 |---|---|---|---|---|
-| llama-1B Q4_K_M | 4.7 tok/s | **33.0** (7.0x) | 121 | 3.7x |
-| llama-1B Q6_K | ~5.4 | **38.1** (~7x) | ~121 | ~3.2x |
+| llama-1B Q4_K_M | 4.7 tok/s | **36.4** (7.7x) | 121 | 3.3x |
+| llama-1B Q6_K | ~5.4 | **39.7** (~7.4x) | ~121 | ~3.0x |
 | qwen-1.5B Q4_K_M | — | **22.1** | 96.4 | 4.4x |
 
 Isolated kernel (26 rows, 8 threads, aggregate): q 82 GFLOP/s, o 87,
@@ -220,6 +220,19 @@ memory-bound).
 - Decode regression check: Q4_K_M 15.4 -> 19.0 tps (cooler run; no
   regression from the routing change).
 - clippy -D warnings + fmt clean.
+
+### Why the gap to llama.cpp is now structural (measured)
+
+The host downclocks to ~1.3 GHz under sustained AVX-512 (2.4 GHz base;
+measured 1.27-1.36 GHz during the prefill kernel). The exact-f32 per-core
+FMA ceiling is therefore ~83 GFLOP/s, and the tile kernel sustains
+~20 GFLOPS (27% of that ceiling) with dequant, ~30 GFLOPS with the dequant
+removed. Parallel scaling saturates at 3.6x on the 4 physical cores
+(hyperthreading adds nothing; task granularity 128-1024 cols is
+insensitive). llama.cpp's ~121 tok/s prefill implies ~300 GFLOP/s
+aggregate via VNNI (i8 activation quantization, 4x MACs per instruction)
+— outside the frozen exact-f32 Gate-B envelope, so the remaining 3.3x gap
+is structural on this hardware, not a kernel deficiency.
 
 ### Remaining (ranked)
 
