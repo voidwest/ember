@@ -1,32 +1,63 @@
 //! Build-time environment capture for execution-plan provenance.
 //!
-//! Records the Rust compiler version and the workspace git commit (when the
-//! tree is a git checkout) as `EMBER_RUSTC_VERSION` / `EMBER_GIT_HASH` env
-//! vars consumed by `src/plan.rs`. The git lookup is best-effort: outside a
-//! git checkout both vars fall back to `unknown` at the call site.
+//! Records the Rust compiler, target, and workspace git commit when available.
+//! Consumers use explicit `EMBER_*` names so Cargo/build-script-only variables
+//! are never mistaken for variables available to crate compilation.
+
+fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-
-    let rustc = std::process::Command::new("rustc")
-        .arg("--version")
-        .output();
-    if let Ok(output) = rustc {
-        if output.status.success() {
-            if let Ok(version) = String::from_utf8(output.stdout) {
-                println!("cargo:rustc-env=EMBER_RUSTC_VERSION={}", version.trim());
-            }
+    if let Some(head_path) = command_stdout("git", &["rev-parse", "--git-path", "HEAD"]) {
+        println!("cargo:rerun-if-changed={head_path}");
+    }
+    if let Some(head_ref) = command_stdout("git", &["symbolic-ref", "-q", "HEAD"]) {
+        if let Some(ref_path) = command_stdout("git", &["rev-parse", "--git-path", &head_ref]) {
+            println!("cargo:rerun-if-changed={ref_path}");
         }
     }
+    if let Some(packed_refs) = command_stdout("git", &["rev-parse", "--git-path", "packed-refs"]) {
+        println!("cargo:rerun-if-changed={packed_refs}");
+    }
 
-    let git = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output();
-    if let Ok(output) = git {
-        if output.status.success() {
-            if let Ok(commit) = String::from_utf8(output.stdout) {
-                println!("cargo:rustc-env=EMBER_GIT_HASH={}", commit.trim());
-            }
+    if let Some(version) = command_stdout("rustc", &["--version"]) {
+        println!("cargo:rustc-env=EMBER_RUSTC_VERSION={version}");
+    }
+    if let Ok(target) = std::env::var("TARGET") {
+        println!("cargo:rustc-env=EMBER_TARGET={target}");
+    }
+    if let Some(commit) = command_stdout("git", &["rev-parse", "HEAD"]) {
+        println!("cargo:rustc-env=EMBER_GIT_COMMIT={commit}");
+    }
+
+    // This is build-time state only. Auditable benchmark records additionally
+    // capture runtime git state because an already-built binary can outlive a
+    // later working-tree edit.
+    if let Some(status) = command_stdout(
+        "git",
+        &["status", "--porcelain", "--untracked-files=normal"],
+    ) {
+        println!("cargo:rustc-env=EMBER_GIT_DIRTY={}", !status.is_empty());
+    } else {
+        // `command_stdout` filters empty output, which is the clean-tree case.
+        let clean = std::process::Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=normal"])
+            .output()
+            .is_ok_and(|output| output.status.success() && output.stdout.is_empty());
+        if clean {
+            println!("cargo:rustc-env=EMBER_GIT_DIRTY=false");
         }
     }
 }

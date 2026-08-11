@@ -51,6 +51,20 @@ carries no compatibility guarantee.
 
 ### Changed
 
+- Q4_K/Q6_K production matmul now uses canonical transient Q8_K activation
+  packing and integer dots for decode and prefill. The exact-f32 dequantize/dot
+  implementation remains an explicit slow oracle. Non-finite activations fail
+  before destination mutation; warmed workspace and accumulate semantics are
+  explicit contracts.
+- Execution plans retain loader fallback provenance and identify the numerical
+  runtime with `kernel_revision = 2` while preserving offline verification and
+  hashes of historical revision-1 plans. Plan/dispatch disagreement is a
+  release-mode error, and the cache key now includes Rayon thread count.
+- The superseded internal K-quant modules (`k_gemv`, `k_prefill`,
+  `k_matmul_x86`) and their ad-hoc examples/benches were replaced by
+  `k_quant_matmul`. Ember's Rust library is internal/unstable; this is an
+  intentional source-level break rather than compatibility shims over dead hot
+  paths.
 - The v0.4 planned-decode interpreter moved out of `src/llama.rs` into
   `src/planned_decode.rs` (resolved ops, scratch-arena session, planned and
   fused kernels, `forward_last_logits_planned`). Zero behavioral change;
@@ -65,6 +79,10 @@ carries no compatibility guarantee.
 
 ### Added
 
+- A pinned llama.cpp known-answer verifier for Q8_K bytes and Q4_K/Q6_K dots,
+  fail-closed 1B real-model scalar/x86 validation, a dedicated x86 CI gate,
+  adversarial kernel matrices, and schema-4 path-interleaved benchmark output
+  with checksums and full dispatch/workspace provenance.
 - `tests/property.rs`: proptest suite (tensor shape ops vs hand-rolled
   references, decode-arena disjointness/alignment/isolation, K-quant dequant
   contracts) plus fuzz-style robustness tests for the untrusted-input
@@ -77,6 +95,16 @@ carries no compatibility guarantee.
 
 ### Fixed
 
+- `forward_last_logits_planned` had hard-coded `ExecutionMode::Planned`, so
+  `planned-fused` parity tests never executed F1-F5. It now routes the model's
+  actual mode; tests use execution counters. This exposed Q8_0 F5 overwriting
+  the residual (Q8_0 assigns rather than accumulates), so Q8_0 F5 now de-fuses
+  with a serialized reason while f32 and canonical K kernels execute F5.
+- Owned reader-backed K weights now receive the loader-resolved execution tier
+  at construction, matching mmap-backed weights. Loader fallback reasons and
+  original dtype survive model construction into execution plans.
+- Build provenance now exports the `EMBER_GIT_COMMIT` name consumed by plans,
+  traces, and benchmarks (plus dirty-tree status for benchmark records).
 - `tests/k_parity.rs::v04_planned_inactive_hooks_real_model` failed on Q8_0
   models: the plain run uses the v0.3 native fast path (contract D1) while
   the hooked run uses the generic hooked path, so bit-exact logits were not

@@ -19,7 +19,7 @@ pub use context::{
 };
 pub use zero_layer_output::{ZeroLayerOutput, ZeroLayerOutputSpec, ZeroLayerOutputStage};
 
-use crate::artifact::{DispatchObservation, DispatchPath, ManifestExperiment};
+use crate::artifact::{ActivationStage, DispatchObservation, DispatchPath, ManifestExperiment};
 use crate::backend::{CpuBackend, CpuError};
 use crate::kv_cache::KVCache;
 use crate::model::ForwardModel;
@@ -186,6 +186,25 @@ pub trait Experiment: Send {
         false
     }
 
+    /// Whether this experiment can observe or mutate a semantic activation
+    /// stage. The conservative default is `true` so third-party/internal
+    /// experiments written before this method was added never lose a hook;
+    /// implementations should override it for precise fusion planning.
+    fn uses_activation_stage(&self, _stage: ActivationStage) -> bool {
+        true
+    }
+
+    /// Layer-specific refinement for plan de-fusion. `None` denotes a global
+    /// logits hook. The default preserves the stage-wide conservative behavior.
+    fn uses_activation_site(
+        &self,
+        stage: ActivationStage,
+        _layer: Option<usize>,
+        _phase: ExecutionPhase,
+    ) -> bool {
+        self.uses_activation_stage(stage)
+    }
+
     /// Structured arguments describing this experiment instance, recorded in
     /// capture artifacts for provenance.
     fn arguments(&self) -> serde_json::Value {
@@ -324,6 +343,58 @@ impl ExperimentRunner {
         } else {
             crate::plan::HookMode::Disabled
         }
+    }
+
+    /// Whether a semantic site is active for exact per-layer fusion planning.
+    pub(crate) fn uses_activation_site(
+        &self,
+        stage: ActivationStage,
+        layer: Option<usize>,
+        phase: ExecutionPhase,
+    ) -> bool {
+        self.experiment
+            .as_ref()
+            .is_some_and(|experiment| experiment.uses_activation_site(stage, layer, phase))
+            || self.capture.as_ref().is_some_and(|capture| {
+                let phase_name = match phase {
+                    ExecutionPhase::Prefill => "prefill",
+                    ExecutionPhase::Decode => "decode",
+                };
+                capture.selection().phase.includes(phase_name)
+                    && capture.selection().stages.contains(&stage)
+                    && layer.is_none_or(|layer| capture.selection().layers.contains(&layer))
+            })
+    }
+
+    /// Canonical plan/cache keys: a bare stage means every layer; `stage@N`
+    /// names one layer. Global logits stages never carry a suffix.
+    pub(crate) fn active_plan_sites(
+        &self,
+        layer_count: usize,
+        phase: ExecutionPhase,
+    ) -> Vec<String> {
+        let mut sites = Vec::new();
+        for stage in [
+            ActivationStage::BeforeLayer,
+            ActivationStage::AfterAttention,
+            ActivationStage::AfterMlp,
+            ActivationStage::AfterLayer,
+        ] {
+            let active: Vec<usize> = (0..layer_count)
+                .filter(|&layer| self.uses_activation_site(stage, Some(layer), phase))
+                .collect();
+            if active.len() == layer_count && layer_count != 0 {
+                sites.push(stage.to_string());
+            } else {
+                sites.extend(active.into_iter().map(|layer| format!("{stage}@{layer}")));
+            }
+        }
+        for stage in [ActivationStage::BeforeLogits, ActivationStage::AfterLogits] {
+            if self.uses_activation_site(stage, None, phase) {
+                sites.push(stage.to_string());
+            }
+        }
+        sites
     }
 
     /// Record the kernel/dispatch path used by the current evaluation.
@@ -721,6 +792,10 @@ impl<'runner, 'model> ActiveHooks<'runner, 'model> {
         execution: ExecutionContext<'model>,
     ) -> Self {
         Self { runner, execution }
+    }
+
+    pub(crate) fn note_dispatch_path(&mut self, path: DispatchPath) {
+        self.runner.note_dispatch(self.execution.phase, path);
     }
 }
 

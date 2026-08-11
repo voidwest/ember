@@ -59,13 +59,16 @@ Out of scope (hard constraints, from the release spec):
 - D5: HookMode is resolved at plan build: `Disabled`, `Observe`, or
   `Intervene`, derived from the active experiment set. The plan is built
   per-run (mode and active sites are known before decode starts); the model
-  execution-plan build is cached per `(model, execution, hook-mode)` key.
-- D6: kernels are not duplicated: the v0.3 scalar and AVX2 Q4_K/Q6_K
-  kernels are the only matvec implementations. Planning resolves a
-  `KernelId` per tensor; the legacy dynamic dispatch path and the plan
-  share one `resolve_kernel` function so they cannot diverge (asserted by
-  tests, Gate A).
-- D7: `execution-plan.json` (schema `v04-plan/1`) is written under
+  execution-plan build is cached per `(model, execution, hook-mode,
+  active-sites, KV capacity, model/tokenizer hashes, Rayon thread count)` key.
+- D6: kernels are not duplicated. Planning resolves a `KernelId` per tensor;
+  the serialized plan is authoritative and the release interpreter hard-fails
+  if it disagrees with the resident weight. Plan validation enforces a
+  one-to-one tensor/dispatch table, kernel identity, and CPU requirement. The
+  Q4_K/Q6_K × Q8_K rewrite is `PLAN_KERNEL_REVISION = 2`; historical revision
+  1 plans remain deserializable for offline bundle verification but cannot be
+  executed as current plans.
+- D7: `execution-plan.json` (schema `v04-plan/1`, kernel revision 2) is written under
   `artifacts/benchmark-v04/<run>/` for every benchmarked run and is also
   available through `ember inspect-plan`.
 
@@ -182,17 +185,16 @@ observation, de-fusion under intervention, numerical equivalence tolerance
 
 F1 — RMSNorm + quantized linear projection.
 - Unfused: `n = RMSNorm(x, w_n)`; `y = W·n`.
-- Fused: compute the norm scale once, then the matvec consumes `x` with
-  fused per-element scaling (one pass over `x` for the norm, one fused
-  pass feeding the kernel).
-- Eliminated: the standalone `n` tensor (never a hook site; safe).
-- Observation: norm outputs are not capture stages; `Observe` mode does
-  not need `n`. If a future hook targets `n`, the planner must de-fuse.
-- De-fusion: `Intervene` targeting any stage in the layer forces the
-  unfused sequence for that layer.
-- Tolerance: Gate A per-op envelope.
-- Kernel: the resolved Q4_K/Q6_K matvec plus a norm-scale preamble;
-  parity-tested against `RMSNorm` then `matmul_k_into`.
+- Current concrete route: `FusedQkv` executes the norm once into the shared
+  `scaled` arena region, then runs Q/K/V projections from that region. It is an
+  executed fused plan op, but it does **not** yet fold per-element norm scaling
+  into the matvec kernel and does not eliminate the scaled buffer. The earlier
+  design text claiming that elimination was aspirational, not measured fact.
+- Observation: norm outputs are not capture stages. If one is added, the
+  planner must de-fuse.
+- Tolerance/kernel: the ordinary resolved projection kernels after the same
+  `simd::rms_norm_into`; test-only execution counters prove the concrete F1/F3
+  branch runs rather than accepting output parity alone.
 
 F2 — residual add + RMSNorm.
 - Unfused: `x1 = x + o`; `n2 = RMSNorm(x1, w_n)`.
@@ -217,29 +219,28 @@ F3 — Q/K/V projection orchestration with shared normalized input.
 - Kernel: resolved per projection.
 
 F4 — RoPE within the planned attention path.
-- Unfused: `apply_rope_and_qk_norm` per Q then K.
-- Fused: the planned attention op applies RoPE (+ optional qk-norm, per
-  `RopeLayout`/`QkNormOrder`) to the Q and K scratch regions as part of
-  its own traversal, in the exact order of the reference implementation.
-- Eliminated: repeated shape construction and table indexing only; `q_r`
-  and `k_r` remain materialized.
-- Tolerance: bit-identical order to reference RoPE; Gate A.
-- Kernel: the existing `simd::rope_*` and headwise qk-norm routines.
+- Unfused: separate Q and K RoPE ops before KV storage/attention.
+- Current concrete route: K remains a separate RoPE op because the roped K
+  must be stored; Q RoPE (+ optional qk-norm in architecture order) executes
+  inside the planned attention branch. Q and K remain materialized. Test-only
+  counters prove the in-attention Q branch executes.
+- Tolerance: the same architecture-specific routines and ordering as the
+  reference route; Gate A.
 
 F5 — output projection + residual add.
 - Unfused: `o = o_proj(attn)`; `x1 = x + o`.
-- Fused: accumulate the o_proj output directly into the residual
-  destination (`x1 = x + W·attn` in one pass), only when
-  `after_attention` is not active for this layer.
-- Eliminated: the standalone `o` tensor — **but `o` is the
-  `after_attention` hook site**. Therefore:
-  - `after_attention` inactive → fused allowed;
-  - `after_attention` active (Observe or Intervene) → the planner selects
-    the unfused (or partially de-fused) route for this layer so `o` is a
-    real tensor at the hook.
-- Tolerance: Gate A (same accumulation math, one fused add).
-- Kernel: resolved Q4_K/Q6_K matvec with fused residual accumulate;
-  parity-tested against `matmul_k_into` then `add`.
+- Fused: accumulate the output projection directly into a destination seeded
+  with the residual (`x1 = x + W·attn`). Dense f32 and canonical
+  Q4_K/Q6_K × Q8_K kernels have explicit accumulate semantics and are eligible.
+- Q8_0's legacy `matmul_q8_0_into` has assignment semantics. F5 is therefore
+  automatically de-fused for a Q8_0 output projection (F2 remains active), with
+  the reason serialized. This restriction fixed a latent bug previously masked
+  by a hard-coded `Planned` route in the fused entry point.
+- `after_attention` also forces de-fusion because `o` is that hook's real
+  pre-residual tensor.
+- Tests assert nonzero-destination K accumulation, actual F5 execution for an
+  eligible projection, automatic Q8_0 de-fusion, and zero F5 execution when the
+  hook is active; output parity alone is not the execution proof.
 
 Cross-cutting rules:
 
@@ -257,8 +258,9 @@ Cross-cutting rules:
 
 1. At plan build, the active hook set is resolved to a bitset of the six
    stages (section 4).
-2. Any layer with an active `after_attention` stage gets `F5 = Unfused`;
-   any layer with active `before_layer`/`after_layer` stages keeps those
+2. Any layer with an active `after_attention` stage or an assignment-only
+   Q8_0 output projection gets `F5 = Unfused`; any layer with active
+   `before_layer`/`after_layer` stages keeps those
    block-input/block-output tensors materialized (they are never
    eliminated by the fusion set, but the planner asserts it).
 3. If a fusion would eliminate an intermediate that a hook targets, the
@@ -316,6 +318,7 @@ decisions are load-time and orthogonal to execution planning).
 
 ```text
 schema_version: 1            # "v04-plan/1"
+kernel_revision: 2           # numerical/runtime ABI; legacy missing field = 1
 architecture: string         # "llama" | "qwen2" | "qwen3" (scope: llama, qwen2)
 model_sha256, tokenizer_sha256
 gguf_metadata: { arch, block_count, embedding_length, head_count,
@@ -360,7 +363,7 @@ materialized: bool, route: fused|unfused } ] }`.
 requirement, fallback? } ], thread_strategy }`.
 
 `PlanProvenance` = `{ ember_version, git_commit (build env
-EMBER_GIT_HASH when set), rustc_version (from build.rs), plan_build_time
+EMBER_GIT_COMMIT when set), rustc_version (from build.rs), plan_build_time
 (iso8601, the only nondeterministic field), execution_mode, hook_mode }`.
 
 Serialization: `artifacts/benchmark-v04/<run>/execution-plan.json`;
@@ -373,10 +376,12 @@ provenance and run artifacts.
 - One arena per decode session, allocated once before decode begins,
   sized by `ScratchPlan.total_bytes`, aligned to 64 bytes (AVX2-safe;
   regions needing 256-byte alignment get it via offset rounding).
-- Steady-state token loop performs zero heap allocations; any allocation
-  inside the loop is a bug unless documented and justified in the arena
-  report (spec: "no heap allocation in the steady-state token loop unless
-  explicitly documented and justified").
+- Plan arithmetic performs zero calling-thread heap allocations after warmup.
+  The returned logits `CpuTensor` still performs three attributable allocations
+  (shape, strides, data). K-quant execution additionally owns a TLS Q8_K pack
+  buffer outside the arena: first/larger/nested calls may allocate it; a warmed
+  same-thread same-or-smaller call allocates zero times. Its exact formula and
+  lifecycle are in `docs/v03-execution-contracts.md` section 7.
 - Debug builds validate region bounds and detect illegal aliasing where
   practical (offset/size checks per op; region overlap asserted against
   the planner's proof).
@@ -384,8 +389,9 @@ provenance and run artifacts.
   retain references into mutable scratch after the step completes
   (existing artifact contract).
 - A counting global allocator (one relaxed atomic per allocation) records
-  per-run allocation events; Gate E asserts zero steady-state allocations
-  on the normal no-capture planned path.
+  per-run allocation events. Gate E separately asserts zero warmed K-matmul
+  workspace allocations and the documented logits/all-scheduler envelope for
+  a full decode; it does not label output materialization as arena scratch.
 - Diagnostic mode reports: total scratch bytes, region names, offsets,
   alignments, maximum live interval, and whether any decode-time
   allocation occurred.
@@ -432,6 +438,20 @@ English prompts + smoke set + >= 3 Arabic morphology prompts per family).
 Top-1 agreement is the primary functional gate; logit/cosine envelopes are
 recorded. A token flip is a failure to investigate, not a threshold to
 relax.
+
+Amendment 2026-08-11: for compressed Q4_K/Q6_K weights, all three execution
+modes share the canonical Q8_K activation primitive. The matrix above is the
+pre-registered v0.4 target, not a claim that every listed dimension is in one
+unit test. Current attributable coverage is: full API rows
+`{1,2,3,4,5,7}`, inputs `{256,512}`, outputs `{1,3,17}`, both dtypes and
+scalar/x86 tiers; a forced two-thread case above the 2M-MAC threshold; extrema,
+zero scale, finite subnormal, non-finite rejection, accumulation, x4 and tail
+rows; a pinned independent llama.cpp known answer; and the fail-closed 1B model
+script. The tight route-parity bounds apply when reference/planned/fused execute
+the same Q8_K primitive; they do not require production to reproduce the
+separate exact-f32 dequantize-and-dot oracle. Historical benchmark/golden
+numbers are not relabeled as current evidence unless their artifact records
+kernel revision 2 and actual dispatch.
 
 Gate C — hook semantics, every supported site: inactive hooks bit-identical
 to disabled; captures match between reference and planned paths (same
@@ -490,7 +510,7 @@ instrumentation extended to the planned path, fully disabled in release
 benchmarks except where a category is the measured subject.
 
 Hardware metadata required in every benchmark summary: CPU model and
-microarchitecture, core/thread count, AVX2/FMA/F16C presence, RAM, OS and
+microarchitecture, core/thread count, AVX2/FMA/F16C/SSSE3 presence, RAM, OS and
 kernel, rustc and cargo versions, llama.cpp pinned commit, Ember commit,
 thread count used.
 

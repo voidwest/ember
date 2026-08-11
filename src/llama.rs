@@ -6,9 +6,10 @@ use crate::experiments::{
 };
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::plan::{
-    resolve_kernel, DispatchPlan, ExecutionMode, ExecutionPlan, FusionState, HookMode,
-    HookSitePlan, HookSiteRecord, KernelEntry, KernelId, KvLayout, LayerPlan, PlanProvenance,
-    PlannedOp, RopeSummary, ScratchPlan, ScratchRegion, TensorRecord, TensorRef,
+    resolve_embedding_kernel, resolve_kernel, DispatchPlan, ExecutionMode, ExecutionPlan,
+    FusionState, HookMode, HookSitePlan, HookSiteRecord, KernelEntry, KernelId, KvLayout,
+    LayerPlan, PlanProvenance, PlannedOp, RopeSummary, ScratchPlan, ScratchRegion, TensorRecord,
+    TensorRef,
 };
 use crate::planned_decode::{forward_last_logits_planned, PlannedDecodeState};
 use crate::tensor::CpuTensor;
@@ -25,7 +26,15 @@ const INTERLEAVED_MIN_OUT_FEATURES: usize = 65_536;
 /// content or scratch/KV capacity participates in the key; otherwise a
 /// snapshot replay using a different cache capacity could reuse an undersized
 /// score arena or stale provenance.
-type PlanCacheKey = (ExecutionMode, HookMode, Vec<String>, usize, String, String);
+type PlanCacheKey = (
+    ExecutionMode,
+    HookMode,
+    Vec<String>,
+    usize,
+    usize,
+    String,
+    String,
+);
 type PlanCache = std::sync::OnceLock<std::sync::Mutex<BTreeMap<PlanCacheKey, Arc<ExecutionPlan>>>>;
 
 thread_local! {
@@ -1241,6 +1250,11 @@ pub struct Llama<B: Backend> {
     fast_decode_inter_dim: Option<usize>,
     /// v0.4 execution-plan cache keyed by (mode, hook mode, active stages).
     plan_cache: PlanCache,
+    /// Run-level hashes used by both the serialized and actually executed plan.
+    plan_provenance: RefCell<(Option<String>, Option<String>, Option<usize>)>,
+    /// Original per-tensor K-family decisions retained after the loader is
+    /// consumed so execution plans preserve dtype and fallback provenance.
+    k_decisions: BTreeMap<String, crate::quant_k::KTensorDecision>,
     /// Whether the LM head is tied to the embedding tensor (no output.weight).
     ///
     /// `pub(crate)` so `src/planned_decode.rs` (the plan interpreter) can
@@ -1437,35 +1451,16 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
         execution: ExecutionContext<'_>,
         runner: &mut ExperimentRunner,
     ) -> Result<CpuTensor, CpuError> {
+        let hook_mode = runner.hook_mode();
+        let active_site_keys = runner.active_plan_sites(self.blocks.len(), execution.phase);
+        let active_sites: Vec<&str> = active_site_keys.iter().map(String::as_str).collect();
         let fast_eligible = token_ids.len() == 1
             && !crate::trace::is_tracing()
             && self.fast_decode_inter_dim.is_some();
-        if !fast_eligible {
-            runner.note_dispatch(execution.phase, DispatchPath::Generic);
-        }
-        // v0.4 planned path (single token, mode=planned/planned-fused, no
-        // tracing). Hooks fire at the same six semantic sites as the
-        // reference path; the plan is built with the runner's hook mode and
-        // defuses fusions that would eliminate a hooked tensor.
-        if matches!(
-            *self.execution_mode.borrow(),
-            ExecutionMode::Planned | ExecutionMode::PlannedFused
-        ) && token_ids.len() == 1
-            && !crate::trace::is_tracing()
-        {
-            let hook_mode = runner.hook_mode();
-            runner.note_dispatch(execution.phase, DispatchPath::Planned);
-            let mut planned_hooks = ActiveHooks::new(runner, execution);
-            let hooks = if hook_mode == HookMode::Disabled {
-                None
-            } else {
-                Some((&mut planned_hooks, &execution))
-            };
-            return forward_last_logits_planned(
-                self, token_ids, cache, start_pos, hooks, hook_mode,
-            );
-        }
         let mut hooks = ActiveHooks::new(runner, execution);
+
+        // Q8_0's native hooked fast path retains precedence over v0.4 plans.
+        // It records `Fast` only if the concrete route succeeds.
         if fast_eligible {
             if let Some(result) =
                 self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
@@ -1473,6 +1468,29 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
                 return result;
             }
         }
+
+        // K-quant models are fast-path ineligible and reach the v0.4 plan.
+        if self.planned_decode_eligible(token_ids) {
+            hooks.note_dispatch_path(DispatchPath::Planned);
+            let planned_hooks = if hook_mode == HookMode::Disabled {
+                None
+            } else {
+                Some((&mut hooks, &execution))
+            };
+            return forward_last_logits_planned(
+                self,
+                token_ids,
+                cache,
+                start_pos,
+                planned_hooks,
+                hook_mode,
+                &active_sites,
+            );
+        }
+
+        // Record Generic only for the route that actually executes; do not
+        // pre-record it for a planned evaluation.
+        hooks.note_dispatch_path(DispatchPath::Generic);
         self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
     }
 }
@@ -2102,6 +2120,10 @@ impl Llama<CpuBackend> {
         use crate::loader::LoadedTensor;
         use crate::tensor::compute_rope_freqs;
 
+        let k_decisions = std::mem::take(&mut loader.k_decisions)
+            .into_iter()
+            .collect::<BTreeMap<_, _>>();
+
         if let Some(architecture) = loader.metadata.get("general.architecture") {
             match architecture {
                 crate::loader::GgufValue::Str(architecture) => anyhow::ensure!(
@@ -2286,6 +2308,8 @@ impl Llama<CpuBackend> {
             config,
             fast_decode_inter_dim: None,
             plan_cache: OnceLock::new(),
+            plan_provenance: RefCell::new((None, None, None)),
+            k_decisions,
             head_tied: !has_output_weight,
             execution_mode: RefCell::new(ExecutionMode::Reference),
             decode_state: RefCell::new(None),
@@ -3263,6 +3287,15 @@ impl Llama<CpuBackend> {
         log::info!("execution mode: {}", mode.name());
     }
 
+    pub fn set_plan_provenance(&self, model: String, tokenizer: String, canonical_capacity: usize) {
+        *self.plan_provenance.borrow_mut() =
+            (Some(model), Some(tokenizer), Some(canonical_capacity));
+    }
+
+    pub(crate) fn plan_provenance(&self) -> (Option<String>, Option<String>, Option<usize>) {
+        self.plan_provenance.borrow().clone()
+    }
+
     /// The active v0.4 execution mode.
     pub fn execution_mode(&self) -> ExecutionMode {
         *self.execution_mode.borrow()
@@ -3299,6 +3332,7 @@ impl Llama<CpuBackend> {
                 start_pos,
                 None,
                 HookMode::Disabled,
+                &[],
             );
         }
         Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
@@ -3318,14 +3352,18 @@ impl Llama<CpuBackend> {
         model_sha256: Option<&str>,
         tokenizer_sha256: Option<&str>,
     ) -> anyhow::Result<Arc<ExecutionPlan>> {
+        let mut canonical_sites = active_stages
+            .iter()
+            .map(|stage| stage.to_string())
+            .collect::<Vec<_>>();
+        canonical_sites.sort();
+        canonical_sites.dedup();
         let key = (
             mode,
             hook_mode,
-            active_stages
-                .iter()
-                .map(|stage| stage.to_string())
-                .collect::<Vec<_>>(),
+            canonical_sites.clone(),
             max_seq_len,
+            rayon::current_num_threads(),
             model_sha256.unwrap_or_default().to_string(),
             tokenizer_sha256.unwrap_or_default().to_string(),
         );
@@ -3334,10 +3372,14 @@ impl Llama<CpuBackend> {
         if let Some(plan) = cache.get(&key) {
             return Ok(Arc::clone(plan));
         }
+        let canonical_refs = canonical_sites
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
         let plan = Arc::new(self.build_execution_plan(
             mode,
             hook_mode,
-            active_stages,
+            &canonical_refs,
             max_seq_len,
             model_sha256,
             tokenizer_sha256,
@@ -3365,13 +3407,12 @@ impl Llama<CpuBackend> {
             "before-logits",
             "after-logits",
         ];
-        for stage in active_stages {
-            anyhow::ensure!(
-                KNOWN_STAGES.contains(stage),
-                "unknown hook stage '{stage}' (expected one of {KNOWN_STAGES:?})"
-            );
-        }
-
+        const LAYER_STAGES: [&str; 4] = [
+            "before-layer",
+            "after-attention",
+            "after-mlp",
+            "after-layer",
+        ];
         let backend = CpuBackend;
         let config = &self.config;
         let n_layers = self.blocks.len();
@@ -3379,6 +3420,39 @@ impl Llama<CpuBackend> {
             n_layers > 0,
             "cannot plan a model with zero transformer blocks"
         );
+        anyhow::ensure!(
+            hook_mode != HookMode::Disabled || active_stages.is_empty(),
+            "disabled hook mode cannot carry active sites"
+        );
+        let mut parsed_sites = Vec::with_capacity(active_stages.len());
+        for key in active_stages {
+            let (stage, layer) = if let Some((stage, suffix)) = key.rsplit_once('@') {
+                anyhow::ensure!(
+                    LAYER_STAGES.contains(&stage),
+                    "hook site '{key}' cannot carry a layer suffix"
+                );
+                let layer = suffix
+                    .parse::<usize>()
+                    .map_err(|_| anyhow::anyhow!("invalid hook layer in '{key}'"))?;
+                anyhow::ensure!(
+                    layer < n_layers,
+                    "hook site '{key}' exceeds layer count {n_layers}"
+                );
+                (stage, Some(layer))
+            } else {
+                (*key, None)
+            };
+            anyhow::ensure!(
+                KNOWN_STAGES.contains(&stage),
+                "unknown hook stage '{stage}' (expected one of {KNOWN_STAGES:?})"
+            );
+            parsed_sites.push((stage, layer));
+        }
+        let site_active = |stage: &str, layer: Option<usize>| {
+            parsed_sites.iter().any(|&(candidate, target_layer)| {
+                candidate == stage && (target_layer.is_none() || target_layer == layer)
+            })
+        };
         let embed = config.embed_dim;
         let q_dim = config.n_heads * config.head_dim;
         let kv_dim = config.n_kv_heads * config.head_dim;
@@ -3399,7 +3473,7 @@ impl Llama<CpuBackend> {
                 vec![t.shape()[0], t.shape()[1]],
                 "f32",
                 "eager_f32",
-                KernelId::EagerF32,
+                KernelId::EmbeddingF32Row,
                 t.data().len() * 4,
                 false,
             ),
@@ -3408,7 +3482,7 @@ impl Llama<CpuBackend> {
                 vec![w.out_features(), w.in_features()],
                 "q8_0",
                 "compressed",
-                KernelId::Q8Packed,
+                KernelId::EmbeddingQ8Row,
                 w.byte_len(),
                 w.is_mapped(),
             ),
@@ -3420,7 +3494,7 @@ impl Llama<CpuBackend> {
                     vec![w.out_features(), w.in_features()],
                     dtype,
                     exec,
-                    resolve_kernel(dtype, exec),
+                    resolve_embedding_kernel(dtype, exec).expect("native K embedding dtype"),
                     w.byte_len(),
                     w.is_mapped(),
                 )
@@ -3651,7 +3725,9 @@ impl Llama<CpuBackend> {
             // projection with residual accumulate; F2 is subsumed by F5
             // because the residual is already the fused output).
             let (fusion, fusion_reason) = if mode == ExecutionMode::PlannedFused {
-                if active_stages.contains(&"after-attention") {
+                let after_attention_active = site_active("after-attention", Some(l));
+                let f5_requires_assignment = builder.kernel_of(o_w) == KernelId::Q8Packed;
+                if after_attention_active || f5_requires_assignment {
                     ops = vec![
                         PlannedOp::FusedQkv {
                             input: x_in,
@@ -3727,10 +3803,13 @@ impl Llama<CpuBackend> {
                     ];
                     (
                         FusionState::PartiallyFused,
-                        Some(
+                        Some(if after_attention_active {
                             "F5 defused: after_attention requires the materialized o tensor; F2 active"
-                                .to_string(),
-                        ),
+                                .to_string()
+                        } else {
+                            "F5 defused: q8-packed projection has assignment semantics; F2 active"
+                                .to_string()
+                        }),
                     )
                 } else {
                     ops = vec![
@@ -3867,7 +3946,47 @@ impl Llama<CpuBackend> {
         }];
 
         builder.layout(&preamble, &layers, &final_ops);
-        let (tensor_table, scratch, dispatch) = builder.finish();
+        let (mut tensor_table, scratch, mut dispatch) = builder.finish();
+        for record in &mut tensor_table {
+            let decision_name = if record
+                .name
+                .starts_with("output.weight (tied to token_embd.weight)")
+            {
+                "token_embd.weight"
+            } else {
+                record.name.as_str()
+            };
+            let Some(decision) = self.k_decisions.get(decision_name) else {
+                continue;
+            };
+            let gguf_dtype = crate::loader::ggml_dtype_name(decision.gguf_dtype)
+                .unwrap_or("unknown")
+                .to_string();
+            let execution = k_execution_name(decision.execution).to_string();
+            let resolved = if record.name == "token_embd.weight" {
+                resolve_embedding_kernel(&gguf_dtype, &execution)
+                    .ok_or_else(|| anyhow::anyhow!("unsupported K embedding dtype {gguf_dtype}"))?
+            } else {
+                resolve_kernel(&gguf_dtype, &execution)
+            };
+            anyhow::ensure!(
+                resolved == record.kernel,
+                "loader decision for '{}' resolves to {} but resident model uses {}",
+                record.name,
+                resolved.name(),
+                record.kernel.name()
+            );
+            record.gguf_dtype = gguf_dtype;
+            record.execution = execution;
+            let entry = dispatch
+                .kernel_per_tensor
+                .iter_mut()
+                .find(|entry| entry.tensor == record.id)
+                .expect("dispatch is one-to-one with the tensor table");
+            entry.kernel = resolved;
+            entry.cpu_feature = resolved.cpu_feature().map(str::to_string);
+            entry.fallback = decision.fallback_reason.clone();
+        }
 
         // ---- hook sites ----
         let mut sites = Vec::new();
@@ -3878,12 +3997,24 @@ impl Llama<CpuBackend> {
                 ("after-mlp", m_l),
                 ("after-layer", x2_l),
             ] {
+                let active = site_active(stage, Some(l));
+                let f5_eliminated = stage == "after-attention"
+                    && mode == ExecutionMode::PlannedFused
+                    && layers[l]
+                        .ops
+                        .iter()
+                        .any(|op| matches!(op, PlannedOp::FusedOProjResidual { .. }));
                 sites.push(HookSiteRecord {
                     stage: stage.to_string(),
                     layer: Some(l),
-                    tensor: Some(tensor.id),
-                    materialized: active_stages.contains(&stage),
-                    route: "unfused".to_string(),
+                    tensor: (!f5_eliminated).then_some(tensor.id),
+                    materialized: active && !f5_eliminated,
+                    route: if f5_eliminated {
+                        "fused-eliminated"
+                    } else {
+                        "unfused"
+                    }
+                    .to_string(),
                 });
             }
         }
@@ -3892,7 +4023,7 @@ impl Llama<CpuBackend> {
                 stage: stage.to_string(),
                 layer: None,
                 tensor: None,
-                materialized: active_stages.contains(&stage),
+                materialized: site_active(stage, None),
                 route: "unfused".to_string(),
             });
         }
@@ -3904,14 +4035,24 @@ impl Llama<CpuBackend> {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let features = if crate::k_matmul_x86::avx2_supported() {
-            vec!["avx2".to_string(), "fma".to_string(), "f16c".to_string()]
-        } else {
-            Vec::new()
-        };
+        #[cfg(target_arch = "x86_64")]
+        let features = ["avx2", "fma", "f16c", "ssse3"]
+            .into_iter()
+            .filter(|feature| match *feature {
+                "avx2" => std::is_x86_feature_detected!("avx2"),
+                "fma" => std::is_x86_feature_detected!("fma"),
+                "f16c" => std::is_x86_feature_detected!("f16c"),
+                "ssse3" => std::is_x86_feature_detected!("ssse3"),
+                _ => false,
+            })
+            .map(str::to_string)
+            .collect();
+        #[cfg(not(target_arch = "x86_64"))]
+        let features = Vec::new();
 
         let plan = ExecutionPlan {
             schema_version: crate::plan::PLAN_SCHEMA_VERSION,
+            kernel_revision: crate::plan::PLAN_KERNEL_REVISION,
             architecture: architecture.to_string(),
             model_sha256: model_sha256.unwrap_or_default().to_string(),
             tokenizer_sha256: tokenizer_sha256.unwrap_or_default().to_string(),
@@ -3961,7 +4102,7 @@ impl Llama<CpuBackend> {
             },
             provenance: PlanProvenance {
                 ember_version: env!("CARGO_PKG_VERSION").to_string(),
-                git_commit: option_env!("EMBER_GIT_HASH")
+                git_commit: option_env!("EMBER_GIT_COMMIT")
                     .unwrap_or("unknown")
                     .to_string(),
                 rustc_version: option_env!("EMBER_RUSTC_VERSION")
@@ -4088,6 +4229,16 @@ mod tests {
         )
     }
 
+    fn test_f32_linear(out_features: usize, in_features: usize, seed: usize) -> Linear<CpuBackend> {
+        let weights = (0..in_features * out_features)
+            .map(|index| ((index * 17 + seed * 11) % 61) as f32 * 0.002 - 0.06)
+            .collect();
+        Linear::new(
+            CpuTensor::from_data(vec![in_features, out_features], weights),
+            None,
+        )
+    }
+
     fn test_attention_with_rope(
         rope_cos: Arc<CpuTensor>,
         rope_sin: Arc<CpuTensor>,
@@ -4194,6 +4345,8 @@ mod tests {
             },
             fast_decode_inter_dim: Some(inter_dim),
             plan_cache: OnceLock::new(),
+            plan_provenance: RefCell::new((None, None, None)),
+            k_decisions: BTreeMap::new(),
             head_tied: false,
             execution_mode: RefCell::new(ExecutionMode::Reference),
             decode_state: RefCell::new(None),
@@ -4655,6 +4808,50 @@ mod tests {
     }
 
     #[test]
+    fn execution_plan_cache_keys_rayon_thread_count() {
+        let model = test_llama_model();
+        let one_thread = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let two_threads = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        let (model, serial) = one_thread.install(move || {
+            let plan = model
+                .execution_plan(
+                    ExecutionMode::Planned,
+                    HookMode::Disabled,
+                    &[],
+                    8,
+                    None,
+                    None,
+                )
+                .unwrap();
+            (model, plan)
+        });
+        let (_model, parallel) = two_threads.install(move || {
+            let plan = model
+                .execution_plan(
+                    ExecutionMode::Planned,
+                    HookMode::Disabled,
+                    &[],
+                    8,
+                    None,
+                    None,
+                )
+                .unwrap();
+            (model, plan)
+        });
+        assert!(!Arc::ptr_eq(&serial, &parallel));
+        assert_eq!(serial.cpu.threads, 1);
+        assert_eq!(serial.dispatch.thread_strategy, "serial");
+        assert_eq!(parallel.cpu.threads, 2);
+        assert_eq!(parallel.dispatch.thread_strategy, "column-parallel-rayon");
+    }
+
+    #[test]
     fn execution_plan_resolves_kernels_and_shapes() {
         let model = test_llama_model();
         let plan = model
@@ -4686,12 +4883,96 @@ mod tests {
             .find(|t| t.name == "token_embd.weight")
             .expect("embedding weight recorded");
         assert_eq!(embed.shape, vec![32, 32]);
+        assert_eq!(embed.kernel, KernelId::EmbeddingF32Row);
         // final logits op is untied in the test model
         let tied = match &plan.final_ops[1] {
             PlannedOp::Logits { tied, .. } => *tied,
             other => panic!("expected logits op, got {other:?}"),
         };
         assert!(!tied);
+    }
+
+    #[test]
+    fn execution_plan_preserves_loader_fallback_provenance() {
+        let mut model = test_llama_model();
+        model.blocks[0].self_attn.q_proj = test_f32_linear(32, 32, 77);
+        model.k_decisions.insert(
+            "blk.0.attn_q.weight".into(),
+            crate::quant_k::KTensorDecision {
+                gguf_dtype: 10,
+                execution: crate::quant_k::KExecution::EagerF32,
+                fallback_reason: Some("Q2_K has no canonical native kernel".into()),
+            },
+        );
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                None,
+                None,
+            )
+            .unwrap();
+        let tensor = plan
+            .tensor_table
+            .iter()
+            .find(|record| record.name == "blk.0.attn_q.weight")
+            .unwrap();
+        assert_eq!(tensor.gguf_dtype, "q2_k");
+        assert_eq!(tensor.execution, "eager_f32");
+        assert_eq!(tensor.kernel, KernelId::EagerF32);
+        let dispatch = plan
+            .dispatch
+            .kernel_per_tensor
+            .iter()
+            .find(|entry| entry.tensor == tensor.id)
+            .unwrap();
+        assert_eq!(
+            dispatch.fallback.as_deref(),
+            Some("Q2_K has no canonical native kernel")
+        );
+    }
+
+    #[test]
+    fn execution_plan_validation_rejects_kernel_identity_tampering() {
+        let model = test_llama_model();
+        let plan = model
+            .execution_plan(
+                ExecutionMode::Planned,
+                HookMode::Disabled,
+                &[],
+                8,
+                None,
+                None,
+            )
+            .unwrap();
+
+        let mut wrong_revision = (*plan).clone();
+        wrong_revision.kernel_revision -= 1;
+        assert!(wrong_revision
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("kernel revision"));
+
+        let mut wrong_kernel = (*plan).clone();
+        let entry = wrong_kernel
+            .dispatch
+            .kernel_per_tensor
+            .first_mut()
+            .expect("test plan has resident tensors");
+        entry.kernel = if entry.kernel == KernelId::EagerF32 {
+            KernelId::KQuantScalarQ6K
+        } else {
+            KernelId::EagerF32
+        };
+        entry.cpu_feature = entry.kernel.cpu_feature().map(str::to_string);
+        assert!(wrong_kernel
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("disagrees with tensor-table kernel"));
     }
 
     #[test]
@@ -5438,6 +5719,9 @@ mod tests {
     fn planned_fused_matches_reference_greedy() {
         let mut model = test_llama_model_with_layers(2);
         model.fast_decode_inter_dim = None;
+        for (layer, block) in model.blocks.iter_mut().enumerate() {
+            block.self_attn.o_proj = test_f32_linear(32, 32, 100 + layer);
+        }
         let backend = CpuBackend;
 
         let run_greedy = |mode: ExecutionMode| -> (Vec<u32>, CpuTensor) {
@@ -5466,7 +5750,25 @@ mod tests {
         };
 
         let (reference_tokens, reference_logits) = run_greedy(ExecutionMode::Reference);
+        crate::planned_decode::reset_fused_execution_counts();
         let (fused_tokens, fused_logits) = run_greedy(ExecutionMode::PlannedFused);
+        let counts = crate::planned_decode::fused_execution_counts();
+        assert!(
+            counts.f1_rmsnorm_linear > 0,
+            "F1 never executed: {counts:?}"
+        );
+        assert!(
+            counts.f3_qkv_orchestration > 0,
+            "F3 never executed: {counts:?}"
+        );
+        assert!(
+            counts.f4_rope_in_attention > 0,
+            "F4 never executed: {counts:?}"
+        );
+        assert!(
+            counts.f5_output_proj_residual > 0,
+            "F5 never executed: {counts:?}"
+        );
 
         assert_eq!(
             reference_tokens, fused_tokens,
@@ -5482,6 +5784,58 @@ mod tests {
             max_abs <= 1e-4,
             "fused logits diverge from reference: max_abs {max_abs}"
         );
+    }
+
+    #[test]
+    fn planned_fused_defuses_f5_for_q8_assignment_kernel() {
+        let mut model = test_llama_model_with_layers(2);
+        model.fast_decode_inter_dim = None;
+        let backend = CpuBackend;
+        let run = |mode: ExecutionMode| {
+            model.set_execution_mode(mode);
+            let mut cache = model.create_cache(&backend, 64);
+            ForwardModel::forward_last_logits_with_cache(
+                &model,
+                &backend,
+                &[3u32, 1, 7],
+                &mut cache,
+                0,
+            )
+            .unwrap();
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &[7], &mut cache, 3)
+                .unwrap()
+        };
+        let reference = run(ExecutionMode::Reference);
+        crate::planned_decode::reset_fused_execution_counts();
+        let fused = run(ExecutionMode::PlannedFused);
+        let counts = crate::planned_decode::fused_execution_counts();
+        assert_eq!(counts.f5_output_proj_residual, 0, "{counts:?}");
+        assert!(counts.f2_residual_rmsnorm > 0, "{counts:?}");
+        let max_abs = reference
+            .data()
+            .iter()
+            .zip(fused.data())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(max_abs <= 1e-4, "Q8 defused logits diverged: {max_abs}");
+
+        let plan = model
+            .execution_plan(
+                ExecutionMode::PlannedFused,
+                HookMode::Disabled,
+                &[],
+                64,
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(plan.layers.iter().all(|layer| {
+            layer.fusion == FusionState::PartiallyFused
+                && layer
+                    .fusion_reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("assignment semantics"))
+        }));
     }
 
     /// Phase 8 defusion: planned-fused with an after_attention hook must
@@ -5526,7 +5880,17 @@ mod tests {
 
         // the reference path fires every stage (unfused)
         let (reference, reference_records) = run_hooked(ExecutionMode::Reference);
+        crate::planned_decode::reset_fused_execution_counts();
         let (fused, fused_records) = run_hooked(ExecutionMode::PlannedFused);
+        let counts = crate::planned_decode::fused_execution_counts();
+        assert!(
+            counts.f2_residual_rmsnorm > 0,
+            "F2 never executed: {counts:?}"
+        );
+        assert_eq!(
+            counts.f5_output_proj_residual, 0,
+            "F5 executed despite after_attention defusion: {counts:?}"
+        );
 
         assert!(
             fused_records

@@ -78,7 +78,7 @@ pub trait Backend {
     /// raw super-block-compressed weight with logical shape
     /// `[out_features, in_features]` (GGUF dims reversed, blocks
     /// contiguous per output feature). The weight is never stored as f32;
-    /// dequantization happens at block granularity inside the kernel.
+    /// activations are packed once per row as Q8_K and consumed by integer dots.
     fn matmul_k(
         &self,
         x: &Self::Tensor,
@@ -937,9 +937,9 @@ impl Backend for CpuBackend {
     ) -> Result<CpuTensor, CpuError> {
         let (seq_len, output_len) = k_matmul_output_len(x, w)?;
         let mut out = vec![0.0f32; output_len];
-        // Parallel entry: rows == 1 routes to the decode GEMV (with its own
-        // shape threshold) and rows > 1 to the column-tile prefill split;
-        // both are bit-identical to their serial forms.
+        // Decode and prefill use the same Q8_K integer-dot primitive. The
+        // parallel scheduler partitions disjoint output columns, so it is
+        // bit-identical to the serial entry.
         crate::k_matmul::matmul_k_into_parallel(x.data(), seq_len, w, &mut out)
             .map_err(CpuError::Kernel)?;
         Ok(CpuTensor::from_data(vec![seq_len, w.out_features()], out))

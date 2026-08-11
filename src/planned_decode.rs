@@ -23,11 +23,52 @@ use crate::experiments::{ActiveHooks, ExecutionContext, LayerHooks, SliceActivat
 use crate::llama::{k_execution_name, Llama, LlamaEmbedding};
 use crate::model::{Linear, WeightKindView};
 use crate::plan::{
-    resolve_kernel, DecodeArena, ExecutionMode, ExecutionPlan, HookMode, KernelId, PlannedOp,
-    TensorRef,
+    resolve_embedding_kernel, resolve_kernel, DecodeArena, ExecutionMode, ExecutionPlan, HookMode,
+    KernelId, PlannedOp, TensorRef,
 };
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct FusedExecutionCounts {
+    pub f1_rmsnorm_linear: usize,
+    pub f2_residual_rmsnorm: usize,
+    pub f3_qkv_orchestration: usize,
+    pub f4_rope_in_attention: usize,
+    pub f5_output_proj_residual: usize,
+}
+
+#[cfg(test)]
+thread_local! {
+    static FUSED_EXECUTION_COUNTS: std::cell::Cell<FusedExecutionCounts> =
+        const { std::cell::Cell::new(FusedExecutionCounts {
+            f1_rmsnorm_linear: 0,
+            f2_residual_rmsnorm: 0,
+            f3_qkv_orchestration: 0,
+            f4_rope_in_attention: 0,
+            f5_output_proj_residual: 0,
+        }) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_fused_execution_counts() {
+    FUSED_EXECUTION_COUNTS.with(|counts| counts.set(FusedExecutionCounts::default()));
+}
+
+#[cfg(test)]
+pub(crate) fn fused_execution_counts() -> FusedExecutionCounts {
+    FUSED_EXECUTION_COUNTS.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+fn record_fused_execution(update: impl FnOnce(&mut FusedExecutionCounts)) {
+    FUSED_EXECUTION_COUNTS.with(|counts| {
+        let mut current = counts.get();
+        update(&mut current);
+        counts.set(current);
+    });
+}
 
 /// Which norm a resolved RmsNorm op reads (resolved once at session build,
 /// never per token).
@@ -66,6 +107,7 @@ enum RopeRole {
 enum ResolvedOp {
     Embed {
         out: usize,
+        kernel: KernelId,
     },
     RmsNorm {
         role: NormRole,
@@ -116,6 +158,7 @@ enum ResolvedOp {
         input: usize,
         out: usize,
         tied: bool,
+        kernel: KernelId,
     },
     /// Fusion F1+F3: norm-scale the block input into `scaled`, then run the
     /// Q/K/V projections from it.
@@ -125,6 +168,7 @@ enum ResolvedOp {
         q: usize,
         k: usize,
         v: usize,
+        kernels: [KernelId; 3],
     },
     /// Fusion F5: `out` starts as a copy of `residual`; the matvec kernel
     /// accumulates W·`attn` on top.
@@ -132,6 +176,7 @@ enum ResolvedOp {
         attn: usize,
         residual: usize,
         out: usize,
+        kernel: KernelId,
     },
     /// Fusion F2: `out = rmsnorm(a + b)` in one pass.
     FusedResidualNorm {
@@ -181,6 +226,15 @@ pub(crate) struct PlannedDecodeState {
 /// Resolve a plan into region indices and role discriminants. Runs once per
 /// session; the decode loop then walks [`ResolvedOps`] with no lookups.
 fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuError> {
+    plan.validate()
+        .map_err(|error| CpuError::Kernel(format!("invalid execution plan: {error}")))?;
+    let recomputed_hash = crate::plan::plan_hash(plan);
+    if plan.plan_hash != recomputed_hash {
+        return Err(CpuError::Kernel(format!(
+            "execution plan hash mismatch: recorded {} recomputed {recomputed_hash}",
+            plan.plan_hash
+        )));
+    }
     let arena = DecodeArena::new(&plan.scratch);
     let region_of = |tensor: TensorRef| -> Result<usize, CpuError> {
         let name = plan.scratch.tensor_regions.get(&tensor.id).ok_or_else(|| {
@@ -211,11 +265,34 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
                 ))
             })
     };
+    let kernel_by_name = |name: &str| -> Result<KernelId, CpuError> {
+        plan.tensor_table
+            .iter()
+            .find(|record| record.name == name)
+            .map(|record| record.kernel)
+            .ok_or_else(|| {
+                CpuError::ShapeMismatch(format!("plan kernel tensor '{name}' not found"))
+            })
+    };
 
-    let resolve = |op: &PlannedOp, _position: usize| -> Result<ResolvedOp, CpuError> {
+    let resolve = |op: &PlannedOp,
+                   _position: usize,
+                   layer_index: Option<usize>|
+     -> Result<ResolvedOp, CpuError> {
         match op {
-            PlannedOp::Embedding { out, .. } => Ok(ResolvedOp::Embed {
+            PlannedOp::Embedding { tensor, out } => Ok(ResolvedOp::Embed {
                 out: region_of(*out)?,
+                kernel: plan
+                    .tensor_table
+                    .iter()
+                    .find(|record| record.id == tensor.id)
+                    .map(|record| record.kernel)
+                    .ok_or_else(|| {
+                        CpuError::ShapeMismatch(format!(
+                            "embedding weight tensor {} not in tensor table",
+                            tensor.id
+                        ))
+                    })?,
             }),
             PlannedOp::RmsNorm { weight, input, out } => {
                 let name = weight_name(*weight)?;
@@ -330,28 +407,46 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
             }),
             PlannedOp::FusedQkv {
                 input,
+                norm,
                 scaled,
                 q,
                 k,
                 v,
-                ..
-            } => Ok(ResolvedOp::FusedQkv {
-                input: region_of(*input)?,
-                scaled: region_of(*scaled)?,
-                q: region_of(*q)?,
-                k: region_of(*k)?,
-                v: region_of(*v)?,
-            }),
+            } => {
+                let norm_name = weight_name(*norm)?;
+                let prefix = norm_name.strip_suffix(".attn_norm.weight").ok_or_else(|| {
+                    CpuError::ShapeMismatch(format!(
+                        "fused qkv norm has unrecognized name '{norm_name}'"
+                    ))
+                })?;
+                Ok(ResolvedOp::FusedQkv {
+                    input: region_of(*input)?,
+                    scaled: region_of(*scaled)?,
+                    q: region_of(*q)?,
+                    k: region_of(*k)?,
+                    v: region_of(*v)?,
+                    kernels: [
+                        kernel_by_name(&format!("{prefix}.attn_q.weight"))?,
+                        kernel_by_name(&format!("{prefix}.attn_k.weight"))?,
+                        kernel_by_name(&format!("{prefix}.attn_v.weight"))?,
+                    ],
+                })
+            }
             PlannedOp::FusedOProjResidual {
                 attn,
                 residual,
                 out,
-                ..
-            } => Ok(ResolvedOp::FusedOProjResidual {
-                attn: region_of(*attn)?,
-                residual: region_of(*residual)?,
-                out: region_of(*out)?,
-            }),
+            } => {
+                let layer_index = layer_index.ok_or_else(|| {
+                    CpuError::ShapeMismatch("fused output projection outside a layer".into())
+                })?;
+                Ok(ResolvedOp::FusedOProjResidual {
+                    attn: region_of(*attn)?,
+                    residual: region_of(*residual)?,
+                    out: region_of(*out)?,
+                    kernel: kernel_by_name(&format!("blk.{layer_index}.attn_output.weight"))?,
+                })
+            }
             PlannedOp::FusedResidualNorm { a, b, out, .. } => Ok(ResolvedOp::FusedResidualNorm {
                 a: region_of(*a)?,
                 b: region_of(*b)?,
@@ -371,11 +466,25 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
                 })
             }
             PlannedOp::Logits {
-                input, out, tied, ..
+                weight,
+                input,
+                out,
+                tied,
             } => Ok(ResolvedOp::Logits {
                 input: region_of(*input)?,
                 out: region_of(*out)?,
                 tied: *tied,
+                kernel: plan
+                    .tensor_table
+                    .iter()
+                    .find(|record| record.id == weight.id)
+                    .map(|record| record.kernel)
+                    .ok_or_else(|| {
+                        CpuError::ShapeMismatch(format!(
+                            "logits weight tensor {} not in tensor table",
+                            weight.id
+                        ))
+                    })?,
             }),
             PlannedOp::Fused { .. } => Err(CpuError::ShapeMismatch(
                 "fused ops are not supported by the v0.4 phase-4 interpreter".into(),
@@ -387,17 +496,18 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
         .preamble
         .iter()
         .enumerate()
-        .map(|(position, op)| resolve(op, position))
+        .map(|(position, op)| resolve(op, position, None))
         .collect::<Result<Vec<_>, _>>()?;
     let layers = plan
         .layers
         .iter()
-        .map(|layer| {
+        .enumerate()
+        .map(|(layer_index, layer)| {
             let ops = layer
                 .ops
                 .iter()
                 .enumerate()
-                .map(|(position, op)| resolve(op, position))
+                .map(|(position, op)| resolve(op, position, Some(layer_index)))
                 .collect::<Result<Vec<_>, _>>()?;
             // semantic hook regions (contract section 4): block input, o
             // projection output (pre-residual, None when F5 fused), down
@@ -454,7 +564,7 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
         .final_ops
         .iter()
         .enumerate()
-        .map(|(position, op)| resolve(op, position))
+        .map(|(position, op)| resolve(op, position, None))
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(PlannedDecodeState {
@@ -485,7 +595,7 @@ fn dense_matvec_into(src: &[f32], weight: &[f32], in_dim: usize, out_dim: usize,
 
 /// Single-row projection through a Linear weight into `dst`. Kernel dispatch
 /// follows the plan's resolved kernel; the underlying implementations are
-/// the same scalar/AVX2 kernels as the v0.3 reference path. `parallel`
+/// the scalar/AVX2 Q4_K/Q6_K × Q8_K kernels. `parallel`
 /// selects the column-parallel decode matvec for large K-quant projections
 /// (bit-identical results, contract Gate A). With `accumulate`, the F32
 /// dense path adds into `dst` instead of assigning (the quantized kernels
@@ -518,6 +628,12 @@ fn planned_linear_into(
             Ok(())
         }
         WeightKindView::Q8_0(w) => {
+            if accumulate {
+                return Err(CpuError::Kernel(
+                    "Q8_0 matmul has assignment semantics and cannot execute fused accumulation"
+                        .into(),
+                ));
+            }
             CpuBackend.matmul_q8_0_into(src, 1, w, dst);
             Ok(())
         }
@@ -542,6 +658,48 @@ fn planned_kernel_for(linear: &Linear<CpuBackend>) -> KernelId {
             let dtype = w.dtype().name();
             resolve_kernel(dtype, k_execution_name(w.execution()))
         }
+    }
+}
+
+fn planned_embedding_kernel(embedding: &LlamaEmbedding<CpuBackend>) -> KernelId {
+    match embedding {
+        LlamaEmbedding::F32(_) => KernelId::EmbeddingF32Row,
+        LlamaEmbedding::Q8_0(_) => KernelId::EmbeddingQ8Row,
+        LlamaEmbedding::KQuant(weight) => {
+            resolve_embedding_kernel(weight.dtype().name(), k_execution_name(weight.execution()))
+                .expect("resident K embedding has a supported row-dequant dtype")
+        }
+    }
+}
+
+fn ensure_planned_kernel(
+    expected: KernelId,
+    linear: &Linear<CpuBackend>,
+    operation: &str,
+) -> Result<(), CpuError> {
+    let resident = planned_kernel_for(linear);
+    if expected == resident {
+        return Ok(());
+    }
+    Err(CpuError::Kernel(format!(
+        "planned kernel {} does not match resident kernel {} for {operation}",
+        expected.name(),
+        resident.name()
+    )))
+}
+
+fn planned_scheduler(
+    linear: &Linear<CpuBackend>,
+    parallel_requested: bool,
+) -> crate::decode_profile::DecodeExecutionMode {
+    match linear.weight_kind() {
+        WeightKindView::KQuant(weight)
+            if crate::k_quant_matmul::scheduler_name(1, weight, parallel_requested)
+                == "column-parallel-rayon" =>
+        {
+            crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
+        }
+        _ => crate::decode_profile::DecodeExecutionMode::Serial,
     }
 }
 
@@ -763,6 +921,7 @@ pub(crate) fn forward_last_logits_planned(
     start_pos: usize,
     mut hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
     hook_mode: HookMode,
+    active_stages: &[&str],
 ) -> Result<CpuTensor, CpuError> {
     if token_ids.len() != 1 {
         return Err(CpuError::ShapeMismatch(
@@ -770,28 +929,31 @@ pub(crate) fn forward_last_logits_planned(
         ));
     }
     cache.validate_start_pos(start_pos);
-    let max_seq_len = cache.max_seq_len();
-    const ALL_STAGES: [&str; 6] = [
-        "before-layer",
-        "after-attention",
-        "after-mlp",
-        "after-layer",
-        "before-logits",
-        "after-logits",
-    ];
-    let stages: &[&str] = if hook_mode == HookMode::Disabled {
-        &[]
-    } else {
-        &ALL_STAGES
-    };
+    let runtime_cache_capacity = cache.max_seq_len();
+    if hook_mode == HookMode::Disabled && !active_stages.is_empty() {
+        return Err(CpuError::Kernel(
+            "disabled hook mode cannot carry active semantic sites".into(),
+        ));
+    }
+    let execution_mode = model.execution_mode();
+    if !matches!(
+        execution_mode,
+        ExecutionMode::Planned | ExecutionMode::PlannedFused
+    ) {
+        return Err(CpuError::ShapeMismatch(format!(
+            "planned decode called for execution mode {}",
+            execution_mode.name()
+        )));
+    }
+    let (model_sha256, tokenizer_sha256, canonical_capacity) = model.plan_provenance();
     let plan = model
         .execution_plan(
-            ExecutionMode::Planned,
+            execution_mode,
             hook_mode,
-            stages,
-            max_seq_len,
-            None,
-            None,
+            active_stages,
+            canonical_capacity.unwrap_or(runtime_cache_capacity),
+            model_sha256.as_deref(),
+            tokenizer_sha256.as_deref(),
         )
         .map_err(|error| {
             CpuError::ShapeMismatch(format!("execution plan build failed: {error}"))
@@ -808,7 +970,15 @@ pub(crate) fn forward_last_logits_planned(
     // preamble: embedding lookup
     for op in &ops.preamble {
         match op {
-            ResolvedOp::Embed { out } => {
+            ResolvedOp::Embed { out, kernel } => {
+                let resident = planned_embedding_kernel(&model.embed_tokens);
+                if *kernel != resident {
+                    return Err(CpuError::Kernel(format!(
+                        "planned kernel {} does not match resident kernel {} for embedding",
+                        kernel.name(),
+                        resident.name()
+                    )));
+                }
                 let dst = arena.region_f32(*out).map_err(arena_err)?;
                 let _timer = OpTimer::new(
                     0,
@@ -887,14 +1057,6 @@ pub(crate) fn forward_last_logits_planned(
                             ));
                         }
                     };
-                    // Gate A assertion: the plan's resolved kernel must equal
-                    // the kernel the reference dynamic dispatch would choose
-                    // for this weight.
-                    debug_assert_eq!(
-                        *kernel,
-                        planned_kernel_for(linear),
-                        "planned dispatch diverged from dynamic dispatch"
-                    );
                     let (src, dst) =
                         two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                     let operator = match role {
@@ -907,18 +1069,16 @@ pub(crate) fn forward_last_logits_planned(
                         ProjRole::Down => "down",
                         ProjRole::Head => "lm_head",
                     };
+                    // The serialized plan is authoritative: fail closed in
+                    // release builds if the resident weight no longer matches
+                    // the kernel identity resolved when the plan was built.
+                    ensure_planned_kernel(*kernel, linear, operator)?;
                     let _timer = OpTimer::new(
                         layer,
                         operator,
                         src.len(),
                         dst.len(),
-                        if parallel_matvec
-                            && matches!(linear.weight_kind(), WeightKindView::KQuant(_))
-                        {
-                            crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
-                        } else {
-                            crate::decode_profile::DecodeExecutionMode::Serial
-                        },
+                        planned_scheduler(linear, parallel_matvec),
                     );
                     // The quantized kernels accumulate into dst (must be
                     // zero-initialized). The reference allocates a fresh
@@ -1016,6 +1176,8 @@ pub(crate) fn forward_last_logits_planned(
                     // inside the attention op; the K rope stays a separate
                     // op because the stored K must be roped before the store.
                     if *rope_q {
+                        #[cfg(test)]
+                        record_fused_execution(|counts| counts.f4_rope_in_attention += 1);
                         block.self_attn.apply_decode_rope_and_qk_norm(
                             q_data,
                             model.config.n_heads,
@@ -1043,17 +1205,25 @@ pub(crate) fn forward_last_logits_planned(
                     q,
                     k,
                     v,
+                    kernels,
                 } => {
-                    let _timer = OpTimer::new(
-                        layer,
-                        "fused_qkv",
-                        model.config.embed_dim,
-                        model.config.embed_dim,
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
-                    // one norm pass over the block input writes the scaled
-                    // activation, then the three projections share it
+                    #[cfg(test)]
+                    record_fused_execution(|counts| {
+                        counts.f1_rmsnorm_linear += 1;
+                        counts.f3_qkv_orchestration += 1;
+                    });
+                    // One norm pass over the block input writes the scaled
+                    // activation, then the three projections share it. Profile
+                    // the norm and each projection separately because their
+                    // shape gates can select different schedulers.
                     {
+                        let _timer = OpTimer::new(
+                            layer,
+                            "fused_qkv_norm",
+                            model.config.embed_dim,
+                            model.config.embed_dim,
+                            crate::decode_profile::DecodeExecutionMode::Serial,
+                        );
                         let (x, n1) =
                             two_regions(arena.regions_f32([*input, *scaled]).map_err(arena_err)?);
                         crate::simd::rms_norm_into(
@@ -1064,17 +1234,25 @@ pub(crate) fn forward_last_logits_planned(
                         );
                     }
                     let projections = [
-                        (*q, &block.self_attn.q_proj),
-                        (*k, &block.self_attn.k_proj),
-                        (*v, &block.self_attn.v_proj),
+                        (*q, &block.self_attn.q_proj, kernels[0], "fused_q"),
+                        (*k, &block.self_attn.k_proj, kernels[1], "fused_k"),
+                        (*v, &block.self_attn.v_proj, kernels[2], "fused_v"),
                     ];
-                    for (out_region, linear) in projections {
+                    for (out_region, linear, kernel, operation) in projections {
+                        ensure_planned_kernel(kernel, linear, operation)?;
                         let (n1, out) = two_regions(
                             arena
                                 .regions_f32([*scaled, out_region])
                                 .map_err(arena_err)?,
                         );
                         out.fill(0.0);
+                        let _timer = OpTimer::new(
+                            layer,
+                            operation,
+                            n1.len(),
+                            out.len(),
+                            planned_scheduler(linear, parallel_matvec),
+                        );
                         planned_linear_into(linear, n1, out, parallel_matvec, false)?;
                         if let Some(bias) = linear.bias() {
                             add_bias_into(out, bias.data());
@@ -1085,27 +1263,22 @@ pub(crate) fn forward_last_logits_planned(
                     attn,
                     residual,
                     out,
+                    kernel,
                 } => {
+                    #[cfg(test)]
+                    record_fused_execution(|counts| counts.f5_output_proj_residual += 1);
                     let (attn_data, residual_data, out_data) = three_regions(
                         arena
                             .regions_f32([*attn, *residual, *out])
                             .map_err(arena_err)?,
                     );
+                    ensure_planned_kernel(*kernel, &block.self_attn.o_proj, "fused_o")?;
                     let _timer = OpTimer::new(
                         layer,
                         "fused_o_proj",
                         attn_data.len(),
                         out_data.len(),
-                        if parallel_matvec
-                            && matches!(
-                                block.self_attn.o_proj.weight_kind(),
-                                WeightKindView::KQuant(_)
-                            )
-                        {
-                            crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
-                        } else {
-                            crate::decode_profile::DecodeExecutionMode::Serial
-                        },
+                        planned_scheduler(&block.self_attn.o_proj, parallel_matvec),
                     );
                     // fusion F5: out starts as the residual; the matvec
                     // kernel accumulates W·attn on top (one pass, no
@@ -1123,6 +1296,8 @@ pub(crate) fn forward_last_logits_planned(
                     }
                 }
                 ResolvedOp::FusedResidualNorm { a, b, out } => {
+                    #[cfg(test)]
+                    record_fused_execution(|counts| counts.f2_residual_rmsnorm += 1);
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
                     let _timer = OpTimer::new(
@@ -1243,26 +1418,40 @@ pub(crate) fn forward_last_logits_planned(
                     hooks.before_logits(&mut activation)?;
                 }
             }
-            ResolvedOp::Logits { input, out, tied } => {
-                debug_assert_eq!(*tied, model.head_tied, "plan head tie flag diverged");
+            ResolvedOp::Logits {
+                input,
+                out,
+                tied,
+                kernel,
+            } => {
+                if *tied != model.head_tied {
+                    return Err(CpuError::Kernel(
+                        "plan head tie flag diverged from the resident model".into(),
+                    ));
+                }
+                ensure_planned_kernel(*kernel, &model.head, "lm_head")?;
                 let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
-                let _timer = OpTimer::new(
-                    usize::MAX,
-                    "lm_head",
-                    src.len(),
-                    dst.len(),
-                    if parallel_matvec
-                        && matches!(model.head.weight_kind(), WeightKindView::KQuant(_))
-                    {
-                        crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
-                    } else {
-                        crate::decode_profile::DecodeExecutionMode::Serial
-                    },
-                );
-                dst.fill(0.0);
-                planned_linear_into(&model.head, src, dst, parallel_matvec, false)?;
-                let mut logits_tensor =
-                    CpuTensor::from_data(vec![1, model.config.vocab_size], dst.to_vec());
+                {
+                    let _timer = OpTimer::new(
+                        usize::MAX,
+                        "lm_head",
+                        src.len(),
+                        dst.len(),
+                        planned_scheduler(&model.head, parallel_matvec),
+                    );
+                    dst.fill(0.0);
+                    planned_linear_into(&model.head, src, dst, parallel_matvec, false)?;
+                }
+                let mut logits_tensor = {
+                    let _materialize_timer = OpTimer::new(
+                        usize::MAX,
+                        "logits_materialize",
+                        dst.len(),
+                        dst.len(),
+                        crate::decode_profile::DecodeExecutionMode::Serial,
+                    );
+                    CpuTensor::from_data(vec![1, model.config.vocab_size], dst.to_vec())
+                };
                 // after_logits fires on the final logits tensor.
                 if let Some((hooks, _)) = hooks.as_mut() {
                     hooks.after_logits(&mut logits_tensor)?;

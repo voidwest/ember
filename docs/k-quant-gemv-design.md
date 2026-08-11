@@ -1,3 +1,46 @@
+# Superseded: the exact-f32 production path was the wrong primitive
+
+**Status (2026-08-11): superseded by `src/k_quant_matmul.rs`.** The text
+below is retained as a postmortem of the discarded design, not as a description
+of current execution.
+
+The old design correctly identified ggml's normal dataflow—pack each activation
+row once as Q8_K, then run Q4_K/Q6_K × Q8_K integer dots—but rejected it to
+preserve an internal eager-f32 parity threshold. That made a slow oracle into a
+production semantic. The separate float GEMV and register-tiled float GEMM,
+their AVX-512 downclock, Rayon pointer plumbing, and environment tuning knobs
+were compensations for that wrong decision.
+
+Current execution is one primitive for decode and prefill:
+
+1. pack each f32 input row once into a typed 292-byte Q8_K block (f32 scale,
+   256 signed quants, and sixteen signed 16-value sums);
+2. dot packed Q4_K/Q6_K weights directly with Q8_K using the canonical integer
+   scale and min-correction equations;
+3. use a portable scalar body or the recorded AVX2+FMA+F16C+SSSE3 body; prefill applies
+   a four-row tile over the same operator and partitions disjoint output columns;
+   x86 kernels convert f16 scales with direct `vcvtph2ps` rather than calling
+   a runtime-dispatched conversion helper inside the block loop;
+4. retain only `k_matmul::matmul_k_scalar_into` as the explicit exact-f32
+   dequantize-and-dot oracle.
+
+The legacy `k_gemv.rs`, `k_prefill.rs`, and `k_matmul_x86.rs` implementations
+and their hidden tuning variables were deleted. The loader's recorded scalar/x86
+choice is again authoritative, including reader-backed (non-mmap) loads.
+
+### Validation status
+
+In-tree adversarial tests and the independent pinned llama.cpp known-answer
+vector are current for kernel revision 2. The historical golden and throughput
+artifacts below predate this rewrite and are **not** evidence for it. A new
+real-model llama.cpp ladder and end-to-end performance artifact remain pending;
+release claims require model/tokenizer hashes, kernel revision 2, actual
+dispatch, executable/source provenance, and raw interleaved samples. The
+fail-closed commands are `tools/verify_k_quant_llamacpp.sh` and
+`scripts/validate_k_parity.sh`.
+
+---
+
 # K-quant batch-1 GEMV redesign — design notes (pre-implementation)
 
 Status: design + pre-coding analysis for the K-quant decode optimization phase.

@@ -11,6 +11,7 @@
 //! position; decode tensors are `[1, embed]` whose single row is the
 //! evaluated absolute position `start_position`.
 
+use crate::artifact::ActivationStage;
 use crate::experiments::{
     ExecutionContext, ExecutionPhase, Experiment, ExperimentError, GenerationContext, LayerContext,
     ModelContext, TensorAccess,
@@ -823,6 +824,45 @@ impl Experiment for V05Experiment {
         !self.spec.interventions.is_empty()
     }
 
+    fn uses_activation_site(
+        &self,
+        stage: ActivationStage,
+        layer: Option<usize>,
+        phase: ExecutionPhase,
+    ) -> bool {
+        let site = match stage {
+            ActivationStage::BeforeLayer => SemanticHookSite::ResidualPreAttention,
+            ActivationStage::AfterAttention => SemanticHookSite::AttentionOutput,
+            ActivationStage::AfterMlp => SemanticHookSite::MlpOutput,
+            ActivationStage::AfterLayer => SemanticHookSite::ResidualPostMlp,
+            ActivationStage::BeforeLogits => SemanticHookSite::FinalNormOutput,
+            ActivationStage::AfterLogits => SemanticHookSite::Logits,
+        };
+        let phase_matches = |generated: bool| match phase {
+            ExecutionPhase::Prefill => !generated,
+            ExecutionPhase::Decode => generated,
+        };
+        let layer_matches = |layers: &crate::v05::capture::LayerSelector| {
+            if !site.is_per_layer() {
+                return layer.is_none();
+            }
+            layer.is_some_and(|layer| {
+                layers
+                    .resolve(self.facts.n_layers)
+                    .is_ok_and(|layers| layers.contains(&layer))
+            })
+        };
+        self.spec.captures.iter().any(|target| {
+            target.site == site
+                && phase_matches(target.tokens.is_generated())
+                && layer_matches(&target.layers)
+        }) || self.spec.interventions.iter().any(|target| {
+            target.site == site
+                && phase_matches(target.tokens.is_generated())
+                && layer_matches(&target.layers)
+        })
+    }
+
     fn arguments(&self) -> serde_json::Value {
         serde_json::json!({
             "spec": self.spec.experiment.name,
@@ -1258,6 +1298,36 @@ directory = "runs/runner-test"
         token_count: usize,
     ) -> ExecutionContext<'static> {
         ExecutionContext::new(model, phase, position, token_count, TracingState::Disabled)
+    }
+
+    #[test]
+    fn plan_site_routing_is_phase_and_layer_exact() {
+        let experiment = new_experiment(&test_spec(), 0);
+        assert!(experiment.uses_activation_site(
+            ActivationStage::AfterAttention,
+            Some(0),
+            ExecutionPhase::Prefill,
+        ));
+        assert!(!experiment.uses_activation_site(
+            ActivationStage::AfterAttention,
+            Some(1),
+            ExecutionPhase::Prefill,
+        ));
+        assert!(!experiment.uses_activation_site(
+            ActivationStage::AfterAttention,
+            Some(0),
+            ExecutionPhase::Decode,
+        ));
+        assert!(experiment.uses_activation_site(
+            ActivationStage::AfterMlp,
+            Some(1),
+            ExecutionPhase::Prefill,
+        ));
+        assert!(!experiment.uses_activation_site(
+            ActivationStage::BeforeLogits,
+            None,
+            ExecutionPhase::Prefill,
+        ));
     }
 
     #[test]

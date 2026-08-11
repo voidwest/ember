@@ -3,7 +3,11 @@
 Status: **frozen** for the v0.5.0 release.
 Schema identifiers defined by this contract: `ember.experiment.v1`,
 `ember.bundle.v1`, `ember.hook.v1` (semantic hook sites), reusing
-`v04-plan/1` (execution-plan schema, `PLAN_SCHEMA_VERSION = 1`).
+`v04-plan/1` (execution-plan schema, `PLAN_SCHEMA_VERSION = 1`). Current plans
+add the compatible `kernel_revision = 2` identity field; historical plans omit
+it and decode as revision 1. Offline v0.5 bundle verification preserves their
+original serialization/hash, while the live interpreter only executes the
+current revision.
 
 This document defines the semantics a researcher can rely on when running
 `ember experiment run|validate|inspect|verify|compare|reproduce` in
@@ -202,16 +206,23 @@ token rows); `FullTensor` is explicit and reported as a cost.
 The frozen fusion set is F1-F5 (v0.4). The only fusion that eliminates a
 hook-observable tensor is **F5** (output projection fused with the
 residual add), which eliminates the standalone `attention-output` tensor
-for a layer. At runtime (the v0.4 decode interpreter), the plan is
-requested with mode `Planned`, so the executing plan is always unfused and
-all six sites are materialized; the fused plan exists in the plan builder
-(`execution_plan(mode = PlannedFused, ...)`) and in `ember inspect-plan`.
+for a layer. At runtime the decoder uses the experiment's resolved
+`reference|planned|planned-fused` mode. For planned decode, the bundle plan
+and every runtime decode use the same canonical union of generated-step
+sites (including exact layer suffixes); prompt-only sites stay on generic
+prefill and are not falsely recorded as planned-decode hooks. Thus
+`planned-fused` de-fuses only the affected F5 layers rather than materializing
+all six sites globally.
 
 ## 10. De-fusion policy
 
 When a capture or intervention requires a tensor that a fusion would
 eliminate:
 
+- The recorded and executed plans use identical model/tokenizer hashes,
+  model-context scratch capacity, Rayon thread count, and canonical decode-site
+  union. This makes `execution-plan.json` authoritative rather than an
+  approximate presentation plan.
 - The execution plan is built with the hook stages required by the
   capture/intervention plan. The builder de-fuses F5 for a layer when
   `after-attention` (the `attention-output` site) is requested for that

@@ -381,7 +381,7 @@ pub enum KStrategy {
     EagerF32,
     /// Compressed resident, scalar kernels.
     Scalar,
-    /// Compressed resident, AVX2 kernels (x86 feature set required).
+    /// Compressed resident, AVX2/FMA/F16C/SSSE3 kernels (x86 feature set required).
     X86,
     /// Best available per tensor: compressed when a native kernel exists,
     /// eager-f32 otherwise, with every choice recorded.
@@ -420,7 +420,7 @@ pub enum KExecution {
     EagerF32,
     /// Packed bytes resident, scalar kernels.
     CompressedScalar,
-    /// Packed bytes resident, AVX2 kernels (x86 feature set required).
+    /// Packed bytes resident, AVX2/FMA/F16C/SSSE3 kernels (x86 feature set required).
     CompressedX86,
 }
 
@@ -438,9 +438,9 @@ pub struct KTensorDecision {
 /// A Q4_K or Q6_K weight matrix kept in raw block-compressed form.
 ///
 /// Mirrors `QuantizedWeight` (Q8_0): the loader stores the packed GGUF
-/// bytes (owned or mmap-backed) and kernels dequantize at super-block
-/// granularity during matmul. There is no persistent f32 expansion on
-/// this path.
+/// bytes (owned or mmap-backed). Production matmul packs activations to Q8_K
+/// and consumes the weight bytes with integer dots; there is no persistent f32
+/// expansion on this path.
 ///
 /// Layout: GGUF dims are reversed from `[in, out]` to `[out, in]` so
 /// super-blocks (256 values each) are contiguous per output feature.
@@ -473,6 +473,18 @@ impl KQuantWeight {
         )
     }
 
+    /// Construct owned packed storage with the loader-resolved execution
+    /// decision. This mirrors [`Self::try_from_mmap`] so owned and mapped paths
+    /// cannot diverge after construction.
+    pub(crate) fn try_new_with_execution(
+        data: Vec<u8>,
+        shape: [usize; 2],
+        dtype: KQuantDtype,
+        execution: KExecution,
+    ) -> Result<Self> {
+        Self::try_new_storage(QuantizedData::Owned(data.into()), shape, dtype, execution)
+    }
+
     /// Construct from a shared read-only file mapping (loader path).
     pub(crate) fn try_from_mmap(
         mmap: Arc<Mmap>,
@@ -502,6 +514,13 @@ impl KQuantWeight {
         dtype: KQuantDtype,
         execution: KExecution,
     ) -> Result<Self> {
+        anyhow::ensure!(
+            matches!(
+                execution,
+                KExecution::CompressedScalar | KExecution::CompressedX86
+            ),
+            "KQuantWeight: packed storage cannot record eager-f32 execution"
+        );
         if shape[0] == 0 || shape[1] == 0 {
             bail!("KQuantWeight: dimensions must be non-zero, got {:?}", shape);
         }
@@ -565,9 +584,16 @@ impl KQuantWeight {
         self.execution
     }
 
-    /// Override the recorded execution decision (used by the loader when
-    /// it resolves the requested strategy against CPU features).
-    pub fn with_execution(mut self, execution: KExecution) -> Self {
+    /// Test-only execution-tier override for scalar/x86 parity coverage.
+    #[cfg(test)]
+    pub(crate) fn with_execution(mut self, execution: KExecution) -> Self {
+        assert!(
+            matches!(
+                execution,
+                KExecution::CompressedScalar | KExecution::CompressedX86
+            ),
+            "packed K-quant weight cannot record eager-f32 execution"
+        );
         self.execution = execution;
         self
     }

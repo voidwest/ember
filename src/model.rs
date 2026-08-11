@@ -295,7 +295,7 @@ pub enum WeightKind<B: Backend> {
     /// dequantized column-by-column during `matmul_q8_0`.
     Q8_0(QuantizedWeight),
     /// q4_k/q6_k super-block-compressed weight, never stored as f32.
-    /// dequantized at block granularity during `matmul_k`.
+    /// multiplied by transient Q8_K activation rows during `matmul_k`.
     KQuant(crate::quant_k::KQuantWeight),
 }
 
@@ -343,7 +343,7 @@ impl<B: Backend> Linear<B> {
 
     /// create a linear layer with a q4_k/q6_k compressed weight.
     /// the weight stays in super-block-compressed form; `forward()` calls
-    /// `matmul_k`, dequantizing at block granularity during the matmul.
+    /// `matmul_k`, which packs activations to Q8_K for integer dot products.
     pub fn new_k(qw: crate::quant_k::KQuantWeight, bias: Option<B::Tensor>) -> Self {
         Self {
             weight: WeightKind::KQuant(qw),

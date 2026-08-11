@@ -314,6 +314,7 @@ fn run_export(
     model.set_execution_mode(execution);
     tokenizer.validate_model_vocab(model.config.vocab_size)?;
     let capacity = model.config.max_seq_len.min(cache_capacity);
+    model.set_plan_provenance(model_sha256.clone(), tokenizer_sha256.clone(), capacity);
     let plan = model.execution_plan(
         execution,
         HookMode::Disabled,
@@ -577,6 +578,11 @@ fn run_compare(
         let tokenizer = EmberTokenizer::from_file(tokenizer_path)?;
         tokenizer.validate_model_vocab(model.config.vocab_size)?;
         let actual_capacity = model.config.max_seq_len.min(capacity);
+        model.set_plan_provenance(
+            model_sha256.clone(),
+            tokenizer_sha256.clone(),
+            actual_capacity,
+        );
         anyhow::ensure!(
             actual_capacity >= capacity,
             "diagnostics need {capacity} positions but model context limit is {}",
@@ -827,6 +833,7 @@ fn run_replay(
         timings.insert("tokenizer_load".into(), elapsed_ms(tokenizer_start));
     }
     let capacity = model.config.max_seq_len.min(requested_capacity);
+    model.set_plan_provenance(model_sha256.clone(), tokenizer_sha256.clone(), capacity);
     let plan = model.execution_plan(
         execution,
         HookMode::Disabled,
@@ -1042,6 +1049,7 @@ fn run_trace_native(
     model.set_execution_mode(execution);
     tokenizer.validate_model_vocab(model.config.vocab_size)?;
     let capacity = model.config.max_seq_len.min(requested_capacity);
+    model.set_plan_provenance(model_sha256.clone(), tokenizer_sha256.clone(), capacity);
     let plan = model.execution_plan(
         execution,
         HookMode::Disabled,

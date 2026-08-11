@@ -17,10 +17,23 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Execution-plan schema version (`"v04-plan/1"`).
 pub const PLAN_SCHEMA_VERSION: u32 = 1;
+
+/// Numerical/runtime kernel ABI encoded into plan identity. Revision 2 is the
+/// canonical Q4_K/Q6_K × Q8_K implementation; revision 1 was the superseded
+/// exact-f32 K-quant production path.
+pub const PLAN_KERNEL_REVISION: u32 = 2;
+
+fn legacy_plan_kernel_revision() -> u32 {
+    1
+}
+
+fn is_legacy_plan_kernel_revision(revision: &u32) -> bool {
+    *revision == legacy_plan_kernel_revision()
+}
 
 // ---------------------------------------------------------------------------
 // execution modes
@@ -87,15 +100,23 @@ pub enum HookMode {
 pub enum KernelId {
     /// Dense f32 matmul (eager-f32 oracle / documented fallback).
     EagerF32,
-    /// Q8_0 packed native path (v0.3, unchanged; not planned in v0.4).
+    /// Direct f32 embedding-row copy (not a matrix multiplication).
+    EmbeddingF32Row,
+    /// Q8_0 embedding-row dequantization.
+    EmbeddingQ8Row,
+    /// Q4_K embedding-row dequantization.
+    EmbeddingQ4KRow,
+    /// Q6_K embedding-row dequantization.
+    EmbeddingQ6KRow,
+    /// Q8_0 packed native matmul path (v0.3, unchanged).
     Q8Packed,
     /// Compressed-resident Q4_K scalar kernel.
     KQuantScalarQ4K,
     /// Compressed-resident Q6_K scalar kernel.
     KQuantScalarQ6K,
-    /// Compressed-resident Q4_K AVX2 kernel.
+    /// Compressed-resident Q4_K AVX2/FMA/F16C/SSSE3 kernel.
     KQuantAvx2Q4K,
-    /// Compressed-resident Q6_K AVX2 kernel.
+    /// Compressed-resident Q6_K AVX2/FMA/F16C/SSSE3 kernel.
     KQuantAvx2Q6K,
 }
 
@@ -104,18 +125,38 @@ impl KernelId {
     pub fn name(self) -> &'static str {
         match self {
             Self::EagerF32 => "eager-f32",
+            Self::EmbeddingF32Row => "embedding-f32-row",
+            Self::EmbeddingQ8Row => "embedding-q8-0-row-dequant",
+            Self::EmbeddingQ4KRow => "embedding-q4-k-row-dequant",
+            Self::EmbeddingQ6KRow => "embedding-q6-k-row-dequant",
             Self::Q8Packed => "q8-packed",
-            Self::KQuantScalarQ4K => "scalar-q4k",
-            Self::KQuantScalarQ6K => "scalar-q6k",
-            Self::KQuantAvx2Q4K => "avx2-q4k",
-            Self::KQuantAvx2Q6K => "avx2-q6k",
+            Self::KQuantScalarQ4K => "q4-k-q8-k-scalar",
+            Self::KQuantScalarQ6K => "q6-k-q8-k-scalar",
+            Self::KQuantAvx2Q4K => "q4-k-q8-k-avx2",
+            Self::KQuantAvx2Q6K => "q6-k-q8-k-avx2",
         }
+    }
+
+    /// Revision-aware diagnostic label. Revision-1 plans used the same enum
+    /// variants for the superseded exact-f32/dequant kernels; rendering them
+    /// with revision-2 Q8_K names would rewrite history during offline inspect.
+    pub fn name_for_revision(self, revision: u32) -> &'static str {
+        if revision <= 1 {
+            return match self {
+                Self::KQuantScalarQ4K => "scalar-q4k",
+                Self::KQuantScalarQ6K => "scalar-q6k",
+                Self::KQuantAvx2Q4K => "avx2-q4k",
+                Self::KQuantAvx2Q6K => "avx2-q6k",
+                _ => self.name(),
+            };
+        }
+        self.name()
     }
 
     /// CPU feature requirement, if any.
     pub fn cpu_feature(self) -> Option<&'static str> {
         match self {
-            Self::KQuantAvx2Q4K | Self::KQuantAvx2Q6K => Some("avx2+fma+f16c"),
+            Self::KQuantAvx2Q4K | Self::KQuantAvx2Q6K => Some("avx2+fma+f16c+ssse3"),
             _ => None,
         }
     }
@@ -133,6 +174,20 @@ pub fn resolve_kernel(gguf_dtype: &str, execution: &str) -> KernelId {
         ("q6_k", "compressed_scalar") => KernelId::KQuantScalarQ6K,
         ("q8_0", _) => KernelId::Q8Packed,
         _ => KernelId::EagerF32,
+    }
+}
+
+/// Resolve an embedding lookup kernel. Embeddings dequantize one stored row;
+/// they do not execute the projection matmul selected by [`resolve_kernel`].
+pub fn resolve_embedding_kernel(gguf_dtype: &str, execution: &str) -> Option<KernelId> {
+    if execution == "eager_f32" {
+        return Some(KernelId::EmbeddingF32Row);
+    }
+    match (gguf_dtype, execution) {
+        ("q8_0", "compressed") => Some(KernelId::EmbeddingQ8Row),
+        ("q4_k", "compressed_scalar" | "compressed_x86") => Some(KernelId::EmbeddingQ4KRow),
+        ("q6_k", "compressed_scalar" | "compressed_x86") => Some(KernelId::EmbeddingQ6KRow),
+        _ => None,
     }
 }
 
@@ -586,19 +641,6 @@ pub struct LayerPlan {
     pub fusion_reason: Option<String>,
 }
 
-impl PlannedOp {
-    /// Whether this op is one of the frozen fusion set's composite ops.
-    fn is_fused(&self) -> bool {
-        matches!(
-            self,
-            PlannedOp::Fused { .. }
-                | PlannedOp::FusedQkv { .. }
-                | PlannedOp::FusedOProjResidual { .. }
-                | PlannedOp::FusedResidualNorm { .. }
-        )
-    }
-}
-
 // ---------------------------------------------------------------------------
 // model/architecture summaries
 // ---------------------------------------------------------------------------
@@ -642,7 +684,7 @@ pub struct KvLayout {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CpuSummary {
-    /// Detected features (`avx2`, `fma`, `f16c`).
+    /// Detected features (`avx2`, `fma`, `f16c`, `ssse3`).
     pub features: Vec<String>,
     pub threads: usize,
     /// Features the plan requires for its selected kernels.
@@ -670,6 +712,15 @@ pub struct PlanProvenance {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionPlan {
     pub schema_version: u32,
+    /// Changes whenever a named kernel's numerical/runtime semantics change,
+    /// even when the surrounding plan schema remains structurally compatible.
+    /// Missing in historical v04-plan/1 payloads and therefore decoded as the
+    /// legacy revision 1; the live interpreter rejects that revision.
+    #[serde(
+        default = "legacy_plan_kernel_revision",
+        skip_serializing_if = "is_legacy_plan_kernel_revision"
+    )]
+    pub kernel_revision: u32,
     pub architecture: String,
     pub model_sha256: String,
     pub tokenizer_sha256: String,
@@ -711,6 +762,11 @@ impl ExecutionPlan {
             self.schema_version
         );
         anyhow::ensure!(
+            self.kernel_revision == PLAN_KERNEL_REVISION,
+            "unexpected kernel revision {}",
+            self.kernel_revision
+        );
+        anyhow::ensure!(
             self.layers.len() == self.gguf.block_count,
             "plan layer count {} does not match gguf block_count {}",
             self.layers.len(),
@@ -723,6 +779,26 @@ impl ExecutionPlan {
                     .all(|prior| prior.id != record.id),
                 "duplicate tensor table id {} at position {index}",
                 record.id
+            );
+            let resolved = if record.name == "token_embd.weight" {
+                resolve_embedding_kernel(&record.gguf_dtype, &record.execution).ok_or_else(
+                    || {
+                        anyhow::anyhow!(
+                            "unsupported embedding dtype '{}' for '{}'",
+                            record.gguf_dtype,
+                            record.name
+                        )
+                    },
+                )?
+            } else {
+                resolve_kernel(&record.gguf_dtype, &record.execution)
+            };
+            anyhow::ensure!(
+                record.kernel == resolved,
+                "tensor-table kernel {} disagrees with dtype/execution-derived kernel {} for '{}'",
+                record.kernel.name(),
+                resolved.name(),
+                record.name
             );
         }
         let check_ref = |r: TensorRef, what: &str| -> anyhow::Result<()> {
@@ -756,11 +832,25 @@ impl ExecutionPlan {
                     weight,
                     input,
                     out,
+                    kernel,
                     fused_rms_norm,
                     bias,
-                    ..
                 } => {
                     check_ref(*weight, "matvec weight")?;
+                    let record = self
+                        .tensor_table
+                        .iter()
+                        .find(|record| record.id == weight.id)
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("matvec weight {} is not resident", weight.id)
+                        })?;
+                    anyhow::ensure!(
+                        *kernel == record.kernel,
+                        "matvec kernel {} disagrees with tensor-table kernel {} for '{}'",
+                        kernel.name(),
+                        record.kernel.name(),
+                        record.name
+                    );
                     check_refs(&[*input, *out], "matvec")?;
                     if let Some(norm) = fused_rms_norm {
                         check_ref(*norm, "fused rmsnorm weight")?;
@@ -855,19 +945,103 @@ impl ExecutionPlan {
         for op in self.preamble.iter().chain(self.final_ops.iter()) {
             check_op(op)?;
         }
-        for layer in &self.layers {
+        for (index, layer) in self.layers.iter().enumerate() {
+            anyhow::ensure!(
+                layer.layer_index == index,
+                "layer record at position {index} claims index {}",
+                layer.layer_index
+            );
             for op in &layer.ops {
                 check_op(op)?;
             }
         }
-        for entry in &self.dispatch.kernel_per_tensor {
+        anyhow::ensure!(
+            self.dispatch.kernel_per_tensor.len() == self.tensor_table.len(),
+            "dispatch has {} entries for {} resident tensors",
+            self.dispatch.kernel_per_tensor.len(),
+            self.tensor_table.len()
+        );
+        for (index, entry) in self.dispatch.kernel_per_tensor.iter().enumerate() {
             anyhow::ensure!(
-                self.tensor_table.iter().any(|t| t.id == entry.tensor),
-                "dispatch entry references unknown tensor {}",
+                self.dispatch.kernel_per_tensor[..index]
+                    .iter()
+                    .all(|prior| prior.tensor != entry.tensor),
+                "duplicate dispatch entry for tensor {}",
                 entry.tensor
             );
+            let record = self
+                .tensor_table
+                .iter()
+                .find(|record| record.id == entry.tensor)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("dispatch entry references unknown tensor {}", entry.tensor)
+                })?;
+            anyhow::ensure!(
+                entry.kernel == record.kernel,
+                "dispatch kernel {} disagrees with tensor-table kernel {} for '{}'",
+                entry.kernel.name(),
+                record.kernel.name(),
+                record.name
+            );
+            anyhow::ensure!(
+                entry.cpu_feature.as_deref() == entry.kernel.cpu_feature(),
+                "dispatch CPU feature {:?} disagrees with kernel requirement {:?} for '{}'",
+                entry.cpu_feature,
+                entry.kernel.cpu_feature(),
+                record.name
+            );
         }
+        let required_from_dispatch: BTreeSet<&str> = self
+            .dispatch
+            .kernel_per_tensor
+            .iter()
+            .filter_map(|entry| entry.kernel.cpu_feature())
+            .collect();
+        let recorded_required: BTreeSet<&str> =
+            self.cpu.required.iter().map(String::as_str).collect();
+        anyhow::ensure!(
+            self.cpu.required.len() == recorded_required.len(),
+            "CPU requirement list contains duplicates"
+        );
+        anyhow::ensure!(
+            recorded_required == required_from_dispatch,
+            "CPU requirements {:?} disagree with dispatch-derived requirements {:?}",
+            self.cpu.required,
+            required_from_dispatch
+        );
+        for requirement in &recorded_required {
+            for feature in requirement.split('+') {
+                anyhow::ensure!(
+                    self.cpu.features.iter().any(|present| present == feature),
+                    "plan requires CPU feature '{feature}' but its detected feature record omits it"
+                );
+            }
+            if *requirement == "avx2+fma+f16c+ssse3" {
+                anyhow::ensure!(
+                    crate::k_quant_matmul::x86_k_supported(),
+                    "plan requires AVX2/FMA/F16C/SSSE3 but the current CPU lacks the tier"
+                );
+            }
+        }
+        let expected_thread_strategy = if self.cpu.threads > 1 {
+            "column-parallel-rayon"
+        } else {
+            "serial"
+        };
+        anyhow::ensure!(
+            self.dispatch.thread_strategy == expected_thread_strategy,
+            "thread strategy '{}' disagrees with recorded Rayon thread count {}",
+            self.dispatch.thread_strategy,
+            self.cpu.threads
+        );
         for site in &self.hook_sites.sites {
+            if let Some(layer) = site.layer {
+                anyhow::ensure!(
+                    layer < self.layers.len(),
+                    "hook site '{}' references out-of-range layer {layer}",
+                    site.stage
+                );
+            }
             if let Some(tensor) = site.tensor {
                 anyhow::ensure!(
                     self.tensor_table.iter().any(|t| t.id == tensor)
@@ -912,8 +1086,15 @@ impl ExecutionPlan {
             .iter()
             .chain(self.final_ops.iter())
             .chain(self.layers.iter().flat_map(|layer| layer.ops.iter()))
-            .filter(|op| op.is_fused())
-            .count()
+            .map(|op| match op {
+                PlannedOp::FusedQkv { .. } => 2,                // F1 + F3
+                PlannedOp::Attention { rope_q: true, .. } => 1, // F4
+                PlannedOp::FusedOProjResidual { .. } => 1,      // F5
+                PlannedOp::FusedResidualNorm { .. } => 1,       // F2
+                PlannedOp::Fused { .. } => 1,
+                _ => 0,
+            })
+            .sum()
     }
 
     /// Layers not fully fused, with reasons.
@@ -934,8 +1115,8 @@ impl ExecutionPlan {
     pub fn to_summary_text(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "execution plan (schema v04-plan/{}) hash {}\n",
-            self.schema_version, self.plan_hash
+            "execution plan (schema v04-plan/{}, kernel revision {}) hash {}\n",
+            self.schema_version, self.kernel_revision, self.plan_hash
         ));
         out.push_str(&format!(
             "architecture: {}  execution: {}  hook mode: {:?}\n",
@@ -994,7 +1175,9 @@ impl ExecutionPlan {
         ));
         let mut kernels: BTreeMap<&'static str, usize> = BTreeMap::new();
         for entry in &self.dispatch.kernel_per_tensor {
-            *kernels.entry(entry.kernel.name()).or_default() += 1;
+            *kernels
+                .entry(entry.kernel.name_for_revision(self.kernel_revision))
+                .or_default() += 1;
         }
         for (kernel, count) in kernels {
             out.push_str(&format!("  kernel {kernel}: {count} tensors\n"));
@@ -1015,9 +1198,9 @@ impl ExecutionPlan {
             out.push_str(&format!("fallbacks: {} entries\n", fallbacks.len()));
             for entry in fallbacks {
                 out.push_str(&format!(
-                    "  tensor {} ({:?}): {}\n",
+                    "  tensor {} ({}): {}\n",
                     entry.tensor,
-                    entry.kernel,
+                    entry.kernel.name_for_revision(self.kernel_revision),
                     entry.fallback.as_deref().unwrap_or("")
                 ));
             }
@@ -1069,6 +1252,7 @@ pub(crate) mod tests {
     pub(crate) fn sample_plan(execution: ExecutionMode, hook: HookMode) -> ExecutionPlan {
         ExecutionPlan {
             schema_version: PLAN_SCHEMA_VERSION,
+            kernel_revision: PLAN_KERNEL_REVISION,
             architecture: "llama".into(),
             model_sha256: "aa".repeat(32),
             tokenizer_sha256: "bb".repeat(32),
@@ -1182,7 +1366,7 @@ pub(crate) mod tests {
                 thread_strategy: "serial".into(),
             },
             cpu: CpuSummary {
-                features: vec!["avx2".into(), "fma".into(), "f16c".into()],
+                features: vec!["avx2".into(), "fma".into(), "f16c".into(), "ssse3".into()],
                 threads: 8,
                 required: vec![],
             },
@@ -1228,6 +1412,34 @@ pub(crate) mod tests {
         a.gguf.embedding_length = 512;
         b.gguf.embedding_length = 256;
         assert_ne!(a.finalize().plan_hash, b.finalize().plan_hash);
+    }
+
+    #[test]
+    fn kernel_revision_is_hashed_and_legacy_serialization_stays_readable() {
+        let current = sample_plan(ExecutionMode::Planned, HookMode::Disabled).finalize();
+        let mut legacy = sample_plan(ExecutionMode::Planned, HookMode::Disabled);
+        legacy.kernel_revision = 1;
+        let legacy = legacy.finalize();
+        assert_ne!(current.plan_hash, legacy.plan_hash);
+        let legacy_json = serde_json::to_string(&legacy).unwrap();
+        assert!(!legacy_json.contains("kernel_revision"));
+        assert!(legacy.to_summary_text().contains("kernel scalar-q6k"));
+        assert!(!legacy.to_summary_text().contains("q6-k-q8-k-scalar"));
+        let decoded: ExecutionPlan = serde_json::from_str(&legacy_json).unwrap();
+        assert_eq!(decoded.kernel_revision, 1);
+        assert_eq!(
+            plan_hash(&decoded),
+            legacy.plan_hash,
+            "omitted legacy field must preserve the historical hash"
+        );
+        assert!(decoded
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("kernel revision"));
+        assert!(serde_json::to_string(&current)
+            .unwrap()
+            .contains("\"kernel_revision\":2"));
     }
 
     #[test]
@@ -1283,7 +1495,7 @@ pub(crate) mod tests {
     fn summary_text_renders() {
         let plan = sample_plan(ExecutionMode::Planned, HookMode::Disabled).finalize();
         let text = plan.to_summary_text();
-        assert!(text.contains("execution plan (schema v04-plan/1)"));
+        assert!(text.contains("execution plan (schema v04-plan/1, kernel revision 2)"));
         assert!(text.contains("operations: 5 total (1 preamble, 1 final)"));
         assert!(text.contains("scratch: 4096 bytes"));
         assert!(text.contains("fallbacks: none"));

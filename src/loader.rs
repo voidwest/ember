@@ -20,10 +20,10 @@ const DEFAULT_ALIGNMENT: u64 = 32;
 pub enum LoadedTensor {
     /// dequantized f32 tensor (for f32, f16, and small/direct-access tensors)
     F32(CpuTensor),
-    /// raw q8_0 block-compressed weight (dequantized on the fly during matmul)
+    /// raw q8_0 block-compressed weight (consumed by packed integer matmul)
     Q8_0(QuantizedWeight),
     /// raw q4_k/q6_k super-block-compressed weight, kept resident under a
-    /// compressed K strategy (dequantized at block granularity during matmul)
+    /// compressed K strategy (multiplied by transient Q8_K activation rows)
     KQuant(crate::quant_k::KQuantWeight),
 }
 
@@ -477,7 +477,9 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                         } else {
                             let mut raw = vec![0u8; byte_len];
                             reader.read_exact(&mut raw)?;
-                            crate::quant_k::KQuantWeight::try_new(raw, shape, native)?
+                            crate::quant_k::KQuantWeight::try_new_with_execution(
+                                raw, shape, native, execution,
+                            )?
                         };
                         LoadedTensor::KQuant(weight)
                     }
@@ -535,7 +537,7 @@ fn resolve_k_execution(
     allow_fallback: bool,
 ) -> Result<(crate::quant_k::KExecution, Option<String>)> {
     use crate::quant_k::{KExecution, KStrategy};
-    let x86_available = crate::k_matmul_x86::avx2_supported();
+    let x86_available = crate::k_quant_matmul::x86_k_supported();
     let no_native_kernel = || {
         format!(
             "dtype {} has no native kernel in v0.3",
@@ -563,10 +565,10 @@ fn resolve_k_execution(
             (Some(_), true) => Ok((KExecution::CompressedX86, None)),
             (Some(_), false) if allow_fallback => Ok((
                 KExecution::CompressedScalar,
-                Some("x86 feature set unavailable (avx2+fma)".to_string()),
+                Some("x86 feature set unavailable (avx2+fma+f16c+ssse3)".to_string()),
             )),
             (Some(_), false) => bail!(
-                "--k-strategy x86 requires the AVX2+FMA feature set (avx2, fma); \
+                "--k-strategy x86 requires the AVX2+FMA+F16C+SSSE3 feature set (avx2, fma, f16c, ssse3); \
                  pass --k-allow-fallback to run the scalar path"
             ),
             (None, _) if allow_fallback => Ok((KExecution::EagerF32, Some(no_native_kernel()))),
@@ -1039,10 +1041,17 @@ mod tests {
         assert_eq!(tensor.gguf_dtype_code, 12);
         assert_eq!(tensor.resident, "compressed");
         assert_eq!(tensor.strategy, "compressed-scalar");
-        assert_eq!(tensor.kernel, "scalar-q4k");
+        assert_eq!(tensor.kernel, "q4-k-q8-k-scalar");
+        assert_eq!(tensor.kernel_revision, crate::plan::PLAN_KERNEL_REVISION);
         assert_eq!(tensor.cpu_features, "none");
+        assert_eq!(tensor.operations.len(), 1);
+        assert_eq!(tensor.operations[0].operation, "linear-matmul");
+        assert_eq!(tensor.operations[0].kernel, tensor.kernel);
         assert!(tensor.fallback_reason.is_none());
-        assert_eq!(tensor.workspace_bytes, crate::quant_k::QK_K * 4);
+        assert_eq!(
+            tensor.workspace_bytes,
+            crate::k_quant_matmul::Q8_K_BLOCK_BYTES
+        );
 
         let summary = &inventory.summary;
         assert_eq!(summary.tensor_count, 1);
@@ -1092,19 +1101,23 @@ mod tests {
         .unwrap();
 
         let decision = &loader.k_decisions["blk.0.attn_q.weight"];
-        if crate::k_matmul_x86::avx2_supported() {
+        if crate::k_quant_matmul::x86_k_supported() {
             assert_eq!(
                 decision.execution,
                 crate::quant_k::KExecution::CompressedX86
             );
             assert!(decision.fallback_reason.is_none());
             let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
-            assert_eq!(inventory.tensors[0].kernel, "avx2-q6k");
+            assert_eq!(inventory.tensors[0].kernel, "q6-k-q8-k-avx2");
+            assert_eq!(
+                inventory.tensors[0].kernel_revision,
+                crate::plan::PLAN_KERNEL_REVISION
+            );
             assert_eq!(inventory.tensors[0].strategy, "compressed-x86");
-            assert_eq!(inventory.tensors[0].cpu_features, "avx2+fma");
+            assert_eq!(inventory.tensors[0].cpu_features, "avx2+fma+f16c+ssse3");
         } else {
             // without the feature set the request hard-fails (no
-            // allow-fallback); this branch only runs on non-AVX2 hosts
+            // allow-fallback); this branch only runs on unsupported x86 hosts
             assert!(decision.fallback_reason.is_some());
         }
     }
@@ -1120,19 +1133,27 @@ mod tests {
         )
         .unwrap();
         let decision = &loader.k_decisions["blk.0.attn_q.weight"];
-        let expected = if crate::k_matmul_x86::avx2_supported() {
+        let expected = if crate::k_quant_matmul::x86_k_supported() {
             crate::quant_k::KExecution::CompressedX86
         } else {
             crate::quant_k::KExecution::CompressedScalar
         };
         assert_eq!(decision.execution, expected);
         assert!(decision.fallback_reason.is_none());
+        let LoadedTensor::KQuant(weight) = &loader.tensors["blk.0.attn_q.weight"] else {
+            panic!("auto strategy must keep Q4_K compressed");
+        };
+        assert_eq!(
+            weight.execution(),
+            expected,
+            "reader load dropped execution policy"
+        );
     }
 
     #[test]
     fn x86_strategy_falls_back_to_scalar_only_with_allow_fallback() {
-        // on hosts without AVX2 the request must hard-fail unless the
-        // user explicitly allows the downgrade; on AVX2 hosts both paths
+        // on hosts without the complete x86 feature set, the request must hard-fail unless the
+        // user explicitly allows the downgrade; on supported x86 hosts both paths
         // still validate the fallback recording machinery
         let bytes = write_minimal_gguf_with_k_tensor(14, 4);
         let mut cursor = std::io::Cursor::new(bytes);
@@ -1141,10 +1162,13 @@ mod tests {
             crate::quant_k::KStrategy::X86,
             false,
         );
-        if crate::k_matmul_x86::avx2_supported() {
-            assert!(result.is_ok(), "avx2 hosts accept the x86 request");
+        if crate::k_quant_matmul::x86_k_supported() {
+            assert!(result.is_ok(), "supported x86 hosts accept the x86 request");
         } else {
-            let message = result.err().expect("hard-fail without AVX2").to_string();
+            let message = result
+                .err()
+                .expect("hard-fail without the x86 feature set")
+                .to_string();
             assert!(message.contains("avx2"), "message: {message}");
         }
 
@@ -1157,7 +1181,7 @@ mod tests {
         )
         .unwrap();
         let decision = &loader.k_decisions["blk.0.attn_q.weight"];
-        if crate::k_matmul_x86::avx2_supported() {
+        if crate::k_quant_matmul::x86_k_supported() {
             assert_eq!(
                 decision.execution,
                 crate::quant_k::KExecution::CompressedX86

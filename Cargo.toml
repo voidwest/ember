@@ -37,7 +37,7 @@ name = "hooks_overhead"
 harness = false
 
 [[bench]]
-name = "k_gemv"
+name = "k_quant_matmul"
 harness = false
 
 # Mirror CI's clippy posture so local `cargo clippy` matches `cargo clippy

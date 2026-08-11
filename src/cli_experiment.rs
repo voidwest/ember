@@ -8,9 +8,10 @@
 use crate::cli_support::{default_tokenizer_for_arch, gguf_metadata_json, resolve_tokenizer};
 use anyhow::Context;
 use clap::{Args as ClapArgs, Subcommand};
+use ember::artifact::ActivationStage;
 use ember::experiments::{
-    ExecutionContext, Experiment, ExperimentError, ExperimentRunner, GenerationContext,
-    LayerContext, ModelContext, ModelFamily, TensorAccess,
+    ExecutionContext, ExecutionPhase, Experiment, ExperimentError, ExperimentRunner,
+    GenerationContext, LayerContext, ModelContext, ModelFamily, TensorAccess,
 };
 use ember::extraction::sha256_file_result;
 use ember::llama::Llama;
@@ -20,6 +21,7 @@ use ember::plan::{ExecutionMode, HookMode};
 use ember::quant_k::KStrategy;
 use ember::tokenizer::EmberTokenizer;
 use ember::v05::compare::compare_bundles;
+use ember::v05::hook::SemanticHookSite;
 use ember::v05::manifest::BundleIdentity;
 use ember::v05::run::{
     write_bundle, BundleMaterials, ModelBundleMeta, RuntimeMetrics, TokenizerBundleMeta,
@@ -30,6 +32,7 @@ use ember::v05::runner::{
 use ember::v05::spec::{RawExperimentSpec, EXPERIMENT_SCHEMA_V1};
 use ember::v05::token_select::{tokenize_for_selection, TextNormalization};
 use ember::v05::verify::{verify_bundle, VerifyOptions};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -176,6 +179,18 @@ impl Experiment for V05Adapter {
 
     fn intervenes(&self) -> bool {
         self.0.lock().expect("v05 experiment lock").intervenes()
+    }
+
+    fn uses_activation_site(
+        &self,
+        stage: ActivationStage,
+        layer: Option<usize>,
+        phase: ExecutionPhase,
+    ) -> bool {
+        self.0
+            .lock()
+            .expect("v05 experiment lock")
+            .uses_activation_site(stage, layer, phase)
     }
 
     fn arguments(&self) -> serde_json::Value {
@@ -450,23 +465,43 @@ pub(crate) fn execute_prepared(
     } else {
         HookMode::Disabled
     };
-    let all_stages: [&str; 6] = [
-        "before-layer",
-        "after-attention",
-        "after-mlp",
-        "after-layer",
-        "before-logits",
-        "after-logits",
-    ];
-    let stages: &[&str] = if hook_mode == HookMode::Disabled {
-        &[]
-    } else {
-        &all_stages
+    // Planned execution is single-token decode. Record the exact union of
+    // generated-step sites used by any input so every runtime decode builds
+    // the same authoritative plan; prompt-only hooks stay on generic prefill.
+    let mut stage_keys = BTreeSet::new();
+    let mut add_site = |site: SemanticHookSite,
+                        layers: &ember::v05::capture::LayerSelector|
+     -> anyhow::Result<()> {
+        if site.is_per_layer() {
+            for layer in layers.resolve(n_layers).map_err(anyhow::Error::msg)? {
+                stage_keys.insert(format!("{}@{layer}", site.stage_id()));
+            }
+        } else {
+            stage_keys.insert(site.stage_id().to_string());
+        }
+        Ok(())
     };
+    for capture in &resolved.captures {
+        if capture.tokens.is_generated() {
+            add_site(capture.site, &capture.layers)?;
+        }
+    }
+    for intervention in &resolved.interventions {
+        if intervention.tokens.is_generated() {
+            add_site(intervention.site, &intervention.layers)?;
+        }
+    }
+    let stage_keys: Vec<String> = stage_keys.into_iter().collect();
+    let stages: Vec<&str> = stage_keys.iter().map(String::as_str).collect();
+    model.set_plan_provenance(
+        model_sha.clone(),
+        tokenizer_sha.clone(),
+        model.config.max_seq_len,
+    );
     let plan = model.execution_plan(
         mode,
         hook_mode,
-        stages,
+        &stages,
         model.config.max_seq_len,
         Some(model_sha),
         Some(tokenizer_sha),

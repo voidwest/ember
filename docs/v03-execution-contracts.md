@@ -26,7 +26,7 @@ Out of scope (hard constraints):
 ## 2. Decisions (2026-08-03)
 
 - D1: `--k-strategy auto` is the default and selects compressed-resident
-  execution for supported Q4_K/Q6_K tensors (x86 when the AVX2+FMA+F16C
+  execution for supported Q4_K/Q6_K tensors (x86 when the AVX2+FMA+F16C+SSSE3
   feature set is present, otherwise scalar). `eager-f32` is an explicit
   reference strategy. Bit-identity across accumulation paths is not
   required; tolerance gates are fixed in section 9.
@@ -131,7 +131,7 @@ gates the hard-fail paths. Resolution is per tensor at load time:
 2. Q4_K / Q6_K:
    - `eager-f32` -> dequant to f32 (reference);
    - `scalar` -> compressed resident, scalar kernel;
-   - `x86` -> compressed resident, AVX2 kernel; without AVX2+FMA+F16C
+   - `x86` -> compressed resident, AVX2 kernel; without AVX2+FMA+F16C+SSSE3
      this is a hard error naming the requirement, unless
      `--k-allow-fallback` -> scalar, reason recorded (model-wide: CPU
      features are process-wide);
@@ -152,12 +152,23 @@ gates the hard-fail paths. Resolution is per tensor at load time:
 
 ## 7. Workspace requirements
 
-- Kernel scratch: one thread-local `[f32; 256]` block-dequant buffer
-  (1 KiB per thread); no allocation in the matmul hot path.
-- Embedding lookup: one row buffer (max 2048 f32 = 8 KiB per thread)
-  for K-quant embedding rows; dequantized per lookup, never resident.
-- Total bounded per-thread workspace for the compressed path: <= 9 KiB.
-- No model-scale persistent f32 buffers on the native path.
+The original v0.3 exact-f32 kernel used a thread-local `[f32; 256]`
+block-dequant buffer (1 KiB). That buffer now belongs only to the slow oracle
+and K-quant embedding-row dequantization; it is not the production matmul
+workspace.
+
+Production Q4_K/Q6_K matmul packs each activation row once into canonical
+Q8_K blocks. One block is 292 bytes (`f32 d + i8[256] + i16[16]`), so a call
+with `R` rows and `K` input features uses exactly
+`R * (K / 256) * 292` logical bytes. The `Vec<Q8KBlock>` is cached on the
+invoking OS thread, grows to the largest call seen there, and retains that peak
+capacity. It is moved out of TLS before Rayon begins: ordinary warmed calls
+allocate zero times on the calling thread, while a nested Rayon invocation may
+allocate independent storage rather than sharing an outstanding `RefCell`
+borrow. The buffer is not part of the v0.4 plan arena and is not replicated per
+Rayon worker (workers read it). `TensorExecution.workspace_bytes` records the
+single-row logical size; benchmark schema 4 records the full call size and
+scope. No model-scale persistent f32 weight buffer exists on the native path.
 
 ## 8. Semantic hook boundaries
 
@@ -245,8 +256,40 @@ scripts/validate_golden_ladder.sh: llama max 1.0 / mean 0.2 / cosine
 0.998; qwen max 2.0 / mean 0.3 / cosine 0.995. Top-1 agreement 100%
 remains the primary functional gate.
 
-Gate D - x86 vs scalar: Gate A numbers at kernel level; Gate B numbers
-at model level.
+Amendment 2026-08-11 — native Q8_K activation semantics: Gate A and the
+original Gate B remain the contract for the explicitly named exact-f32 oracle;
+they no longer define the production K-quant algorithm. Production packs every
+finite activation row to Q8_K and runs Q4_K/Q6_K × Q8_K integer dots;
+non-finite activations fail before the destination is modified. Gate C is not
+relaxed: the per-family max/mean/cosine and 100% top-1 requirements above remain
+the authoritative model-level numerical gate.
+
+Evidence must be attributed rather than inferred from this contract:
+
+- **Continuously verified in-tree:** scalar/x86 packing ABI and bit equality,
+  independent dtype/tier/shape/row-remainder matrices, nonzero-destination
+  accumulation, extrema/zero/non-finite cases, and actual two-thread
+  serial/parallel bit equality (`k_quant_matmul::tests`). The dedicated CI step
+  sets `EMBER_REQUIRE_X86_TESTS=1`, so the x86 body cannot silently skip.
+- **Independent known answer:** `tools/verify_k_quant_llamacpp.sh` pins
+  llama.cpp `47c786924ad1ab7e91da2cdc72fcdb563780c2bd`, checks the relevant
+  source files are clean, regenerates the Q8_K bytes and Q4_K/Q6_K dots, then
+  runs the Rust fixture. This is distinct from Ember's algebraic oracle.
+- **Real-model gate:** `scripts/validate_k_parity.sh` is fail-closed on the
+  pinned Llama-3.2-1B Q4_K_M/Q6_K hashes, requires the full x86 tier and an
+  actually selected Rayon scheduler, runs explicit scalar and x86 strategies,
+  planned/fused routes, hooks, and the warmed allocation gate. A missing model
+  or environment is a failure in that script; ordinary `cargo test` remains
+  model-free and may skip the env-gated integration tests.
+- **Historical evidence:** the 2026-08-03 numbers above describe the original
+  v0.3 implementation. They are context, not proof for this rewrite. A result
+  is current only when its machine-readable artifact names kernel revision 2
+  and records the model hash and actual dispatch.
+
+Gate D — x86 vs scalar: both implement the same Q8_K mathematical primitive,
+but SIMD lane reduction may differ from scalar by the registered tolerance;
+serial versus Rayon scheduling within a fixed tier is bit-identical when the
+caller/workers share the same FP control state.
 
 ## 10. Provenance fields
 
@@ -257,9 +300,12 @@ artifacts compare and patch with the new binary):
 - name; original GGUF tensor type;
 - resident representation (compressed bytes / f32);
 - execution strategy (eager_f32 / compressed_scalar / compressed_x86);
-- selected kernel (scalar-q4k, scalar-q6k, avx2-q4k, avx2-q6k);
-- CPU feature requirement; fallback occurrence and reason;
-- thread workspace bytes; reference/optimized path identity.
+- selected kernel (`q4-k-q8-k-scalar`, `q6-k-q8-k-scalar`,
+  `q4-k-q8-k-avx2`, or `q6-k-q8-k-avx2`) plus numerical/runtime kernel
+  revision (`2` for this rewrite; missing/zero means historical inventory);
+- CPU feature requirement; fallback occurrence and reason (retained from the
+  loader into both the artifact inventory and execution plan);
+- transient Q8_K activation-row workspace bytes; reference/optimized path identity.
 
 Model-level summary: requested strategy, per-dtype counts, fallback
 count, compressed vs expanded bytes per dtype. Existing model/tokenizer
@@ -278,9 +324,13 @@ tracing overhead, capture overhead, patch overhead. Arms: Ember Q8
 native, Q4_K/Q6_K eager-f32, Q4_K/Q6_K compressed scalar, Q4_K/Q6_K
 compressed x86, and pinned llama.cpp (llama-cli / llama-bench) on the
 same fresh ladder artifacts with broadly matched settings (threads,
-context; settings recorded verbatim). Multiple warmups and samples;
-raw measurements preserved; deterministic machine-readable summaries
-including representation and dispatch provenance.
+context; settings recorded verbatim). `benches/k_quant_matmul.rs` schema 4 adds a correctness preflight, pinned model
+and executable hashes, build/CPU provenance, actual (not requested) scheduler,
+full TLS-workspace scope, output checksums, and raw path-interleaved samples.
+`--k-strategy x86|scalar` is fail-closed; `--expected-model-sha256` pins the
+artifact. End-to-end `bench-decode` results remain a separate layer. Multiple
+warmups and samples are required; summaries without raw samples and actual
+dispatch are not release evidence.
 
 ## 12. Commit map and version policy
 

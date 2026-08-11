@@ -12,7 +12,7 @@ the v0.4 Gate E zero-allocation parity tests.
 |---|---|
 | commit | `f8e97a7` + uncommitted profiling instrumentation (all tests green) |
 | CPU | Intel Core i5-1135G7 (Tiger Lake), 4 physical / 8 logical, up to 4.2 GHz |
-| ISA | x86_64, AVX2+FMA+F16C, AVX-512 VNNI/VL/BW (used by Q8 kernels) |
+| ISA | x86_64, AVX2+FMA+F16C+SSSE3, AVX-512 VNNI/VL/BW (used by Q8 kernels) |
 | OS / kernel | Arch Linux, 7.1.5-arch1-2, glibc 2.44 |
 | compiler | rustc 1.92.0 (pinned toolchain), release profile, LTO off |
 | governor | powersave; CPU scaling active → repeated trials, medians reported |

@@ -372,6 +372,22 @@ pub struct DispatchObservation {
     pub dispatch: DispatchPath,
 }
 
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+/// One operation-specific kernel use of a resident tensor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TensorOperationExecution {
+    /// Semantic use such as `embedding-lookup`, `linear-matmul`, or
+    /// `lm-head-matmul`.
+    pub operation: String,
+    pub kernel: String,
+    pub cpu_features: String,
+    /// Transient workspace bytes per activation row for this operation.
+    pub workspace_bytes: usize,
+}
+
 /// One per-tensor K-family execution record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TensorExecution {
@@ -384,14 +400,24 @@ pub struct TensorExecution {
     /// Execution strategy: "eager-f32", "compressed-scalar", or
     /// "compressed-x86".
     pub strategy: String,
-    /// Selected kernel: "eager-f32-dequant", "scalar-q4k", "scalar-q6k",
-    /// "avx2-q4k", "avx2-q6k".
+    /// Selected kernel: "eager-f32-dequant", "q4-k-q8-k-scalar", "q6-k-q8-k-scalar",
+    /// "q4-k-q8-k-avx2", "q6-k-q8-k-avx2".
     pub kernel: String,
+    /// Numerical/runtime kernel ABI revision. Additive for older artifact
+    /// readers; zero means the pre-revision historical inventory.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub kernel_revision: u32,
     /// CPU feature requirement for this kernel ("none" for scalar/eager).
     pub cpu_features: String,
+    /// Operation-specific routing. This disambiguates embedding row lookup
+    /// from tied LM-head matmul when both use the same resident tensor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operations: Vec<TensorOperationExecution>,
     /// Why the requested strategy was not honored, if it was not.
     pub fallback_reason: Option<String>,
-    /// Bounded thread-local workspace bytes (kernel scratch).
+    /// Aggregate thread-local workspace bytes per activation row. Multi-row prefill
+    /// scales this value by its runtime row count, and the reusable vector may
+    /// retain the peak capacity for the life of the worker thread.
     pub workspace_bytes: usize,
 }
 
@@ -436,9 +462,6 @@ impl ExecutionInventory {
         use crate::quant_k::{KExecution, KQuantDtype};
         use std::collections::BTreeMap;
 
-        /// Kernel block scratch: one 256-f32 super-block per thread.
-        const KERNEL_SCRATCH_BYTES: usize = crate::quant_k::QK_K * 4;
-
         let mut tensors = Vec::new();
         let mut per_dtype = BTreeMap::<String, DtypeExecutionSummary>::new();
         let mut fallback_count = 0usize;
@@ -461,6 +484,17 @@ impl ExecutionInventory {
                 crate::loader::gguf_dtype_byte_len(decision.gguf_dtype, count).ok()
             });
 
+            // Per-row transient Q8_K workspace. GGUF linear dims are
+            // [in_features, out_features], with the first dimension contiguous.
+            let q8_k_workspace_bytes = loader
+                .tensor_meta
+                .get(name)
+                .and_then(|meta| meta.dims.first().copied())
+                .map_or(0, |input_features| {
+                    (input_features / crate::quant_k::QK_K)
+                        * crate::k_quant_matmul::Q8_K_BLOCK_BYTES
+                });
+
             let (resident, strategy, kernel, cpu_features, workspace_bytes) = match decision
                 .execution
             {
@@ -469,16 +503,16 @@ impl ExecutionInventory {
                     Some(KQuantDtype::Q4K) => (
                         "compressed",
                         "compressed-scalar",
-                        "scalar-q4k",
+                        "q4-k-q8-k-scalar",
                         "none",
-                        KERNEL_SCRATCH_BYTES,
+                        q8_k_workspace_bytes,
                     ),
                     Some(KQuantDtype::Q6K) => (
                         "compressed",
                         "compressed-scalar",
-                        "scalar-q6k",
+                        "q6-k-q8-k-scalar",
                         "none",
-                        KERNEL_SCRATCH_BYTES,
+                        q8_k_workspace_bytes,
                     ),
                     None => ("f32", "eager-f32", "eager-f32-dequant", "none", 0),
                 },
@@ -486,20 +520,75 @@ impl ExecutionInventory {
                     Some(KQuantDtype::Q4K) => (
                         "compressed",
                         "compressed-x86",
-                        "avx2-q4k",
-                        "avx2+fma",
-                        KERNEL_SCRATCH_BYTES,
+                        "q4-k-q8-k-avx2",
+                        "avx2+fma+f16c+ssse3",
+                        q8_k_workspace_bytes,
                     ),
                     Some(KQuantDtype::Q6K) => (
                         "compressed",
                         "compressed-x86",
-                        "avx2-q6k",
-                        "avx2+fma",
-                        KERNEL_SCRATCH_BYTES,
+                        "q6-k-q8-k-avx2",
+                        "avx2+fma+f16c+ssse3",
+                        q8_k_workspace_bytes,
                     ),
                     None => ("f32", "eager-f32", "eager-f32-dequant", "none", 0),
                 },
             };
+
+            let matmul = TensorOperationExecution {
+                operation: if name.as_str() == "output.weight" {
+                    "lm-head-matmul"
+                } else {
+                    "linear-matmul"
+                }
+                .to_string(),
+                kernel: kernel.to_string(),
+                cpu_features: cpu_features.to_string(),
+                workspace_bytes,
+            };
+            let (kernel, cpu_features, workspace_bytes, operations) =
+                if name.as_str() == "token_embd.weight" {
+                    let row_kernel = match decision.execution {
+                        KExecution::EagerF32 => "embedding-f32-row",
+                        KExecution::CompressedScalar | KExecution::CompressedX86 => {
+                            match KQuantDtype::from_gguf(decision.gguf_dtype) {
+                                Some(KQuantDtype::Q4K) => "embedding-q4-k-row-dequant",
+                                Some(KQuantDtype::Q6K) => "embedding-q6-k-row-dequant",
+                                None => "embedding-f32-row",
+                            }
+                        }
+                    };
+                    let embedding = TensorOperationExecution {
+                        operation: "embedding-lookup".to_string(),
+                        kernel: row_kernel.to_string(),
+                        cpu_features: "none".to_string(),
+                        workspace_bytes: 0,
+                    };
+                    if loader.tensors.contains_key("output.weight") {
+                        (
+                            row_kernel.to_string(),
+                            "none".to_string(),
+                            0,
+                            vec![embedding],
+                        )
+                    } else {
+                        let mut tied_matmul = matmul;
+                        tied_matmul.operation = "lm-head-matmul".to_string();
+                        (
+                            "multiple-see-operations".to_string(),
+                            tied_matmul.cpu_features.clone(),
+                            tied_matmul.workspace_bytes,
+                            vec![embedding, tied_matmul],
+                        )
+                    }
+                } else {
+                    (
+                        matmul.kernel.clone(),
+                        matmul.cpu_features.clone(),
+                        matmul.workspace_bytes,
+                        vec![matmul],
+                    )
+                };
 
             if decision.fallback_reason.is_some() {
                 fallback_count += 1;
@@ -541,8 +630,10 @@ impl ExecutionInventory {
                 gguf_dtype_code: decision.gguf_dtype,
                 resident: resident.to_string(),
                 strategy: strategy.to_string(),
-                kernel: kernel.to_string(),
-                cpu_features: cpu_features.to_string(),
+                kernel,
+                kernel_revision: crate::plan::PLAN_KERNEL_REVISION,
+                cpu_features,
+                operations,
                 fallback_reason: decision.fallback_reason.clone(),
                 workspace_bytes,
             });

@@ -274,6 +274,23 @@ impl Experiment for ActivationPatch {
         true
     }
 
+    fn uses_activation_stage(&self, stage: ActivationStage) -> bool {
+        self.patches.iter().any(|patch| patch.target.stage == stage)
+    }
+
+    fn uses_activation_site(
+        &self,
+        stage: ActivationStage,
+        layer: Option<usize>,
+        phase: ExecutionPhase,
+    ) -> bool {
+        self.patches.iter().any(|patch| {
+            patch.target.stage == stage
+                && patch.target.phase == phase
+                && layer.is_none_or(|layer| patch.target.layer == layer)
+        })
+    }
+
     fn arguments(&self) -> serde_json::Value {
         serde_json::json!({
             "source_manifest": self.source_manifest,

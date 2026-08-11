@@ -1,6 +1,7 @@
 use super::{
     Experiment, ExperimentError, GenerationContext, LayerContext, ModelContext, TensorAccess,
 };
+use crate::artifact::ActivationStage;
 use core::str::FromStr;
 
 /// Supported intervention points for the example zero-layer-output experiment.
@@ -138,6 +139,26 @@ impl Experiment for ZeroLayerOutput {
 
     fn intervenes(&self) -> bool {
         true
+    }
+
+    fn uses_activation_stage(&self, stage: ActivationStage) -> bool {
+        matches!(
+            (self.spec.stage, stage),
+            (
+                ZeroLayerOutputStage::Attention,
+                ActivationStage::AfterAttention
+            ) | (ZeroLayerOutputStage::Mlp, ActivationStage::AfterMlp)
+                | (ZeroLayerOutputStage::Layer, ActivationStage::AfterLayer)
+        )
+    }
+
+    fn uses_activation_site(
+        &self,
+        stage: ActivationStage,
+        layer: Option<usize>,
+        _phase: super::ExecutionPhase,
+    ) -> bool {
+        layer == Some(self.spec.layer) && self.uses_activation_stage(stage)
     }
 
     fn arguments(&self) -> serde_json::Value {
