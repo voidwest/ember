@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT / "python"))
 
 from arabic_morph_dataset.exporters import make_probe_records, make_sft_examples
 from arabic_morph_dataset.filters import apply_filters

@@ -50,7 +50,7 @@ pub(crate) struct KvExportCommand {
     model: String,
     #[arg(long)]
     tokenizer: String,
-    #[arg(long, value_parser = ["llama", "qwen3"])]
+    #[arg(long, default_value = "auto", value_parser = ["auto", "llama", "qwen3"])]
     arch: String,
     #[arg(long)]
     prompt: String,
@@ -114,7 +114,7 @@ pub(crate) struct KvCompareCommand {
     model: Option<String>,
     #[arg(long)]
     tokenizer: Option<String>,
-    #[arg(long, value_parser = ["llama", "qwen3"])]
+    #[arg(long, value_parser = ["auto", "llama", "qwen3"])]
     arch: Option<String>,
     /// Greedy sequence horizon including the fixed initial resume token (2..=64).
     #[arg(long)]
@@ -156,7 +156,7 @@ pub(crate) struct KvReplayCommand {
     model: String,
     #[arg(long)]
     tokenizer: String,
-    #[arg(long, value_parser = ["llama", "qwen3"])]
+    #[arg(long, default_value = "auto", value_parser = ["auto", "llama", "qwen3"])]
     arch: String,
     /// Number of continuation tokens, including the stored/overridden first
     /// token selected from the prefix logits.
@@ -189,7 +189,7 @@ pub(crate) struct KvTraceNativeCommand {
     model: String,
     #[arg(long)]
     tokenizer: String,
-    #[arg(long, value_parser = ["llama", "qwen3"])]
+    #[arg(long, default_value = "auto", value_parser = ["auto", "llama", "qwen3"])]
     arch: String,
     #[arg(long)]
     prompt: String,
@@ -302,7 +302,8 @@ fn run_export(
 
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
-    validate_loader_architecture(&loader, &command.arch)?;
+    let architecture = crate::cli_support::resolve_generation_architecture(&command.arch, &loader)?;
+    validate_loader_architecture(&loader, &architecture)?;
     let model = ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(cache_capacity))?;
     timings.insert("model_load".into(), elapsed_ms(model_start));
     anyhow::ensure!(
@@ -572,7 +573,9 @@ fn run_compare(
         let tokenizer_sha256 = sha256_file_result(tokenizer_path)
             .with_context(|| format!("failed to hash tokenizer '{tokenizer_path}'"))?;
         let loader = load_gguf_with_k_strategy(model_path, k_strategy, allow_fallback)?;
-        validate_loader_architecture(&loader, architecture)?;
+        let architecture =
+            crate::cli_support::resolve_generation_architecture(architecture, &loader)?;
+        validate_loader_architecture(&loader, &architecture)?;
         let model = ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(capacity))?;
         model.set_execution_mode(execution);
         let tokenizer = EmberTokenizer::from_file(tokenizer_path)?;
@@ -626,7 +629,7 @@ fn run_compare(
             tokenizer.contains_token_id(initial_token_id),
             "diagnostic token {initial_token_id} is absent from the tokenizer vocabulary"
         );
-        let family = match architecture {
+        let family = match architecture.as_str() {
             "llama" => ModelFamily::Llama,
             "qwen3" => ModelFamily::Qwen3,
             _ => unreachable!("architecture constrained by clap"),
@@ -814,7 +817,8 @@ fn run_replay(
 
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
-    validate_loader_architecture(&loader, &command.arch)?;
+    let architecture = crate::cli_support::resolve_generation_architecture(&command.arch, &loader)?;
+    validate_loader_architecture(&loader, &architecture)?;
     let model =
         ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(requested_capacity))?;
     if trace_enabled {
@@ -1037,7 +1041,8 @@ fn run_trace_native(
 
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
-    validate_loader_architecture(&loader, &command.arch)?;
+    let architecture = crate::cli_support::resolve_generation_architecture(&command.arch, &loader)?;
+    validate_loader_architecture(&loader, &architecture)?;
     let model =
         ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(requested_capacity))?;
     timings.insert("model_load".into(), elapsed_ms(model_start));
@@ -1400,6 +1405,9 @@ fn validate_loader_architecture(
     let matches = match requested {
         "llama" => recorded == "llama",
         "qwen3" => matches!(recorded, "qwen2" | "qwen3"),
+        "gpt2" | "gemma4" => {
+            anyhow::bail!("kv commands support llama/qwen3 models only; the model is '{requested}'")
+        }
         _ => false,
     };
     anyhow::ensure!(

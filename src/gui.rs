@@ -35,7 +35,7 @@ use ember::v05::verify::VerificationReport;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// `ember web-gui` CLI arguments.
 #[derive(ClapArgs)]
@@ -822,9 +822,12 @@ pub(crate) fn run_gui_command(
     if !gui.no_open {
         open_browser(&url);
     }
+    let limiter = Arc::new(SlotLimiter::new());
     for request in server.incoming_requests() {
         let session = Arc::clone(&session);
+        let limiter = Arc::clone(&limiter);
         std::thread::spawn(move || {
+            let _slot = limiter.acquire();
             if let Err(error) = handle_request(request, &session) {
                 log::error!("gui request failed: {error:#}");
             }
@@ -850,52 +853,74 @@ fn handle_request(
 ) -> anyhow::Result<()> {
     let url = request.url().to_string();
     let path = url.split('?').next().unwrap_or(&url);
-    match (request.method(), path) {
-        (tiny_http::Method::Get, "/") => {
-            let response = tiny_http::Response::from_string(PAGE.to_string())
-                .with_header(header("Content-Type", "text/html; charset=utf-8"))
-                .with_header(header("Cache-Control", "no-store"));
-            request.respond(response)?;
+    let method = request.method().clone();
+    let is_root = method == tiny_http::Method::Get && path == "/";
+    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        build_response(is_root, &method, path, &mut request, session)
+    }));
+    let response = match built {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => {
+            log::error!("gui request failed: {error:#}");
+            json_response(&ApiEnvelope::err(format!("internal error: {error}")))?
         }
-        (tiny_http::Method::Get, "/api/state") => {
-            respond_json(request, &state_payload(session))?;
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            log::error!("gui request panicked: {message}");
+            json_response(&ApiEnvelope::err(
+                "internal error: request handler panicked",
+            ))?
         }
-        (tiny_http::Method::Post, "/api/prepare") => {
-            let payload = match read_json::<PrepareRequest>(&mut request) {
-                Ok(req) => {
-                    let mut session = session.lock().expect("gui session lock");
-                    match session.ensure_prepared(&req.model_path) {
-                        Ok(()) => {
-                            let info = session_info_payload(&session);
-                            ApiEnvelope::ok(info.unwrap_or_else(|| serde_json::json!({})))
-                        }
-                        Err(error) => {
-                            session.load_error = Some(error.clone());
-                            ApiEnvelope::err(error)
-                        }
+    };
+    request.respond(response)?;
+    Ok(())
+}
+
+fn build_response(
+    is_root: bool,
+    method: &tiny_http::Method,
+    path: &str,
+    request: &mut tiny_http::Request,
+    session: &Arc<Mutex<GuiSession>>,
+) -> anyhow::Result<tiny_http::Response<std::io::Cursor<Vec<u8>>>> {
+    if is_root {
+        return Ok(tiny_http::Response::from_string(PAGE.to_string())
+            .with_header(header("Content-Type", "text/html; charset=utf-8"))
+            .with_header(header("Cache-Control", "no-store")));
+    }
+    let envelope = match (method, path) {
+        (tiny_http::Method::Get, "/api/state") => state_payload(session),
+        (tiny_http::Method::Post, "/api/prepare") => match read_json::<PrepareRequest>(request) {
+            Ok(req) => {
+                let mut session = lock_session(session);
+                match session.ensure_prepared(&req.model_path) {
+                    Ok(()) => {
+                        let info = session_info_payload(&session);
+                        ApiEnvelope::ok(info.unwrap_or_else(|| serde_json::json!({})))
+                    }
+                    Err(error) => {
+                        session.load_error = Some(error.clone());
+                        ApiEnvelope::err(error)
                     }
                 }
-                Err(error) => ApiEnvelope::err(format!("malformed request: {error}")),
-            };
-            respond_json(request, &payload)?;
-        }
-        (tiny_http::Method::Post, "/api/run") => {
-            let payload = match read_json::<RunRequest>(&mut request) {
-                Ok(req) => run_experiment(session, req),
-                Err(error) => ApiEnvelope::err(format!("malformed request: {error}")),
-            };
-            respond_json(request, &payload)?;
-        }
-        (tiny_http::Method::Post, "/api/restore") => {
-            let payload = match read_json::<RestoreRequest>(&mut request) {
-                Ok(req) => run_restore(session, req),
-                Err(error) => ApiEnvelope::err(format!("malformed request: {error}")),
-            };
-            respond_json(request, &payload)?;
-        }
-        _ => respond_json(request, &ApiEnvelope::err("not found"))?,
-    }
-    Ok(())
+            }
+            Err(error) => ApiEnvelope::err(format!("malformed request: {error}")),
+        },
+        (tiny_http::Method::Post, "/api/run") => match read_json::<RunRequest>(request) {
+            Ok(req) => run_experiment(session, req),
+            Err(error) => ApiEnvelope::err(format!("malformed request: {error}")),
+        },
+        (tiny_http::Method::Post, "/api/restore") => match read_json::<RestoreRequest>(request) {
+            Ok(req) => run_restore(session, req),
+            Err(error) => ApiEnvelope::err(format!("malformed request: {error}")),
+        },
+        _ => ApiEnvelope::err("not found"),
+    };
+    json_response(&envelope)
 }
 
 fn header(name: &str, value: &str) -> tiny_http::Header {
@@ -912,13 +937,72 @@ fn read_json<T: for<'de> Deserialize<'de>>(request: &mut tiny_http::Request) -> 
     serde_json::from_slice(&body).context("malformed JSON request body")
 }
 
-fn respond_json(request: tiny_http::Request, value: &ApiEnvelope) -> anyhow::Result<()> {
+fn json_response(
+    value: &ApiEnvelope,
+) -> anyhow::Result<tiny_http::Response<std::io::Cursor<Vec<u8>>>> {
     let body = serde_json::to_vec(value).context("cannot serialize JSON response")?;
-    let response = tiny_http::Response::from_data(body)
+    Ok(tiny_http::Response::from_data(body)
         .with_header(header("Content-Type", "application/json; charset=utf-8"))
-        .with_header(header("Cache-Control", "no-store"));
-    request.respond(response)?;
-    Ok(())
+        .with_header(header("Cache-Control", "no-store")))
+}
+
+/// Lock the GUI session, recovering from poisoning so a single panicking
+/// request cannot permanently brick the console.
+fn lock_session(session: &Arc<Mutex<GuiSession>>) -> std::sync::MutexGuard<'_, GuiSession> {
+    session.lock().unwrap_or_else(|poisoned| {
+        log::warn!("gui session mutex was poisoned; recovering guarded state");
+        poisoned.into_inner()
+    })
+}
+
+/// Bounds concurrent request-handler threads so a slow or malicious client
+/// cannot exhaust the process with unbounded thread-per-request spawning.
+struct SlotLimiter {
+    active: Mutex<usize>,
+    released: Condvar,
+}
+
+impl SlotLimiter {
+    fn new() -> Self {
+        Self {
+            active: Mutex::new(0),
+            released: Condvar::new(),
+        }
+    }
+
+    fn acquire(self: &Arc<Self>) -> SlotGuard {
+        const MAX_HANDLER_THREADS: usize = 8;
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while *active >= MAX_HANDLER_THREADS {
+            active = self
+                .released
+                .wait(active)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        *active += 1;
+        SlotGuard {
+            limiter: Arc::clone(self),
+        }
+    }
+}
+
+struct SlotGuard {
+    limiter: Arc<SlotLimiter>,
+}
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        let mut active = self
+            .limiter
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *active = active.saturating_sub(1);
+        self.limiter.released.notify_one();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -926,7 +1010,7 @@ fn respond_json(request: tiny_http::Request, value: &ApiEnvelope) -> anyhow::Res
 // ---------------------------------------------------------------------------
 
 fn state_payload(session: &Arc<Mutex<GuiSession>>) -> ApiEnvelope {
-    let session = session.lock().expect("gui session lock");
+    let session = lock_session(session);
     ApiEnvelope::ok(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
         "commit": ember::extraction::git_commit().unwrap_or_else(|| "unknown".to_string()),
@@ -975,7 +1059,7 @@ fn run_experiment(session: &Arc<Mutex<GuiSession>>, req: RunRequest) -> ApiEnvel
         Ok(cfg) => cfg,
         Err(error) => return ApiEnvelope::err(error),
     };
-    let mut session = session.lock().expect("gui session lock");
+    let mut session = lock_session(session);
     match session.run_baseline_intervention(&cfg) {
         Ok(bundle) => ApiEnvelope::ok(serde_json::json!({
             "baseline": bundle.baseline,
@@ -1017,7 +1101,7 @@ fn run_restore(session: &Arc<Mutex<GuiSession>>, req: RestoreRequest) -> ApiEnve
         Ok(cfg) => cfg,
         Err(error) => return ApiEnvelope::err(error),
     };
-    let mut session = session.lock().expect("gui session lock");
+    let mut session = lock_session(session);
     match session.run_restore_leg(&cfg) {
         Ok(bundle) => ApiEnvelope::ok(serde_json::json!({
             "restore": bundle.output,

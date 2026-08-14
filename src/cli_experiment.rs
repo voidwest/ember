@@ -977,11 +977,16 @@ pub(crate) fn run_reproduce_command(
     let manifest = bundle.semantic_manifest;
     let spec_text = std::fs::read_to_string(command.bundle.join("experiment.toml"))
         .context("bundle lacks experiment.toml")?;
-    let raw = RawExperimentSpec::from_toml_str(&spec_text)
-        .map_err(|error| anyhow::anyhow!("{}", error))?;
-    let mut resolved = raw
-        .resolve()
-        .map_err(|error| anyhow::anyhow!("{}", error))?;
+    // The verbatim spec is only re-parsed as a corruption check. The
+    // resolved spec is NOT re-derived: a reproduction must re-run what the
+    // original bundle actually recorded, even if resolve() semantics changed
+    // in a newer ember build.
+    let _ = RawExperimentSpec::from_toml_str(&spec_text)
+        .map_err(|error| anyhow::anyhow!("bundle experiment.toml is malformed: {error}"))?;
+    let resolved_text = std::fs::read_to_string(command.bundle.join("resolved-experiment.json"))
+        .context("bundle lacks resolved-experiment.json")?;
+    let mut resolved: ember::v05::spec::ExperimentSpecV1 = serde_json::from_str(&resolved_text)
+        .context("bundle resolved-experiment.json is malformed")?;
 
     // Validate the supplied model against the bundle's recorded hash.
     let model_sha = sha256_file_result(&command.model)
@@ -1019,31 +1024,39 @@ pub(crate) fn run_reproduce_command(
         .outputs
         .iter()
         .all(|output| output.generated_tokens_equal);
-    let captures_exact = comparison
-        .captures
-        .iter()
-        .all(|capture| capture.metrics.as_ref().map(|m| m.exact).unwrap_or(false));
-    let captures_within_envelope = comparison.captures.iter().all(|capture| {
-        capture
-            .metrics
-            .as_ref()
-            .map(|m| {
-                m.maximum_absolute_difference
-                    .map(|diff| diff <= 1e-4)
-                    .unwrap_or(false)
-            })
-            .unwrap_or(true)
-    });
+    let captures_declared = !comparison.captures.is_empty();
+    let captures_aligned = captures_declared
+        && comparison
+            .captures
+            .iter()
+            .all(|capture| capture.present_in_a && capture.present_in_b);
+    let captures_exact = captures_aligned
+        && comparison
+            .captures
+            .iter()
+            .all(|capture| capture.metrics.as_ref().map(|m| m.exact).unwrap_or(false));
+    let captures_within_envelope = captures_aligned
+        && comparison.captures.iter().all(|capture| {
+            capture
+                .metrics
+                .as_ref()
+                .and_then(|m| m.maximum_absolute_difference)
+                .map(|diff| diff <= 1e-4)
+                .unwrap_or(false)
+        });
+    let captures_misaligned = captures_declared && !captures_aligned;
     let top1_equal = comparison
         .outputs
         .iter()
         .all(|output| output.final_top1_equal);
     let verdict = if comparison.identity.semantic_hash_equal {
         "exact-semantic"
-    } else if tokens_equal && captures_exact {
+    } else if tokens_equal && (captures_exact || !captures_declared) {
         "exact"
-    } else if tokens_equal && captures_within_envelope {
+    } else if tokens_equal && (!captures_declared || captures_within_envelope) {
         "output-equivalent"
+    } else if captures_misaligned {
+        "captures-misaligned"
     } else if top1_equal {
         "top1-equivalent"
     } else {
@@ -1058,6 +1071,8 @@ pub(crate) fn run_reproduce_command(
                 "reproduction": path.display().to_string(),
                 "semantic_hash": identity.semantic_hash,
                 "tokens_equal": tokens_equal,
+                "captures_declared": captures_declared,
+                "captures_aligned": captures_aligned,
                 "captures_exact": captures_exact,
                 "captures_within_envelope": captures_within_envelope,
                 "top1_equal": top1_equal,
@@ -1067,14 +1082,15 @@ pub(crate) fn run_reproduce_command(
         println!("reproduction written to {}", path.display());
         println!("  verdict: {verdict}");
         println!(
-            "  tokens equal: {}; captures exact: {}; top1 equal: {}",
+            "  tokens equal: {}; captures exact: {}; captures aligned: {}; top1 equal: {}",
             yesno(tokens_equal),
             yesno(captures_exact),
+            yesno(captures_aligned),
             yesno(top1_equal)
         );
         println!("  semantic hash: {}", identity.semantic_hash);
     }
-    if verdict == "failed" {
+    if verdict == "failed" || verdict == "captures-misaligned" {
         std::process::exit(2);
     }
     Ok(())

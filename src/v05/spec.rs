@@ -247,7 +247,12 @@ fn check_schema_version(schema: &str) -> Result<(), SpecError> {
     // exist yet).
     let major_ok = schema
         .strip_prefix("ember.experiment.")
-        .map(|version| version.starts_with('v') && version[1..].starts_with('1'))
+        .map(|version| {
+            version
+                .strip_prefix("v1")
+                .map(|rest| !rest.starts_with(|c: char| c.is_ascii_digit()))
+                .unwrap_or(false)
+        })
         .unwrap_or(false);
     if major_ok {
         return Err(SpecError::at(
@@ -601,6 +606,14 @@ impl ExperimentSpecV1 {
                             ),
                         ));
                     }
+                }
+            }
+            if let TokenSelector::GeneratedStep { .. } = &capture.tokens {
+                if self.generation.max_new_tokens == 0 {
+                    return Err(SpecError::at(
+                        format!("{path}.tokens"),
+                        "generated-step token selection requires generation.max_new_tokens > 0",
+                    ));
                 }
             }
         }

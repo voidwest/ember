@@ -14,6 +14,7 @@ use crate::quant::QuantizedData;
 use crate::tensor::CpuTensor;
 use anyhow::{bail, Result};
 use memmap2::Mmap;
+use rayon::prelude::*;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -307,18 +308,34 @@ pub fn dequant_tensor(dtype: u32, bytes: &[u8], out: &mut [f32]) -> Result<(), S
             out.len()
         ));
     }
-    for (i, block) in bytes.chunks_exact(block_bytes).enumerate() {
-        let out_block = &mut out[i * QK_K..(i + 1) * QK_K];
-        match dtype {
-            DTYPE_Q2_K => dequant_q2_k(block, out_block),
-            DTYPE_Q3_K => dequant_q3_k(block, out_block),
-            DTYPE_Q4_K => dequant_q4_k(block, out_block),
-            DTYPE_Q5_K => dequant_q5_k(block, out_block),
-            DTYPE_Q6_K => dequant_q6_k(block, out_block),
-            _ => unreachable!("validated above"),
+    // Parallel across super-blocks: each block writes a disjoint 256-value
+    // output slice, so serial/parallel results are bit-identical. Small
+    // tensors stay serial to avoid Rayon scheduling overhead.
+    const DEQUANT_PAR_MIN_BLOCKS: usize = 1024;
+    if block_count >= DEQUANT_PAR_MIN_BLOCKS {
+        bytes
+            .par_chunks_exact(block_bytes)
+            .zip(out.par_chunks_exact_mut(QK_K))
+            .for_each(|(block, out_block)| dequant_block(dtype, block, out_block));
+    } else {
+        for (i, block) in bytes.chunks_exact(block_bytes).enumerate() {
+            let out_block = &mut out[i * QK_K..(i + 1) * QK_K];
+            dequant_block(dtype, block, out_block);
         }
     }
     Ok(())
+}
+
+#[inline]
+fn dequant_block(dtype: u32, block: &[u8], out_block: &mut [f32]) {
+    match dtype {
+        DTYPE_Q2_K => dequant_q2_k(block, out_block),
+        DTYPE_Q3_K => dequant_q3_k(block, out_block),
+        DTYPE_Q4_K => dequant_q4_k(block, out_block),
+        DTYPE_Q5_K => dequant_q5_k(block, out_block),
+        DTYPE_Q6_K => dequant_q6_k(block, out_block),
+        _ => unreachable!("validated above"),
+    }
 }
 
 /// K-family dtypes with a native compressed-resident path in v0.3.

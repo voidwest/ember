@@ -177,8 +177,10 @@ pub(crate) fn run_validate_backends_command(
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
-    let _ = (&command.model, &command.prompts, &command.layers);
-    anyhow::bail!("validate-backends requires --native-run and --external-run for Milestone 3")
+    anyhow::bail!(
+        "validate-backends requires both --native-run and --external-run \
+         (two recorded extraction runs to compare)"
+    )
 }
 
 pub(crate) fn run_compare_artifacts_command(

@@ -17,4 +17,4 @@ dev = ["pytest>=8.0", "PyYAML>=6.0"]
 arabic-morph-dataset = "arabic_morph_dataset.cli:entrypoint"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["python"]

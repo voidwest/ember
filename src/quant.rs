@@ -2,6 +2,7 @@ use crate::tensor::CpuTensor;
 use anyhow::{bail, Result};
 use half::f16;
 use memmap2::Mmap;
+use rayon::prelude::*;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -314,9 +315,17 @@ impl QuantizedWeight {
         let in_features = self.shape[1];
         let out_features = self.shape[0];
 
-        for i in 0..out_features {
-            let row_start = i * in_features;
-            self.dequantize_row(i, &mut data[row_start..row_start + in_features]);
+        // Parallel across rows: each row writes a disjoint slice, so results
+        // are bit-identical to the serial loop. Small tensors stay serial.
+        if in_features > 0 && out_features >= 16 {
+            data.par_chunks_exact_mut(in_features)
+                .enumerate()
+                .for_each(|(i, row_dst)| self.dequantize_row(i, row_dst));
+        } else {
+            for i in 0..out_features {
+                let row_start = i * in_features;
+                self.dequantize_row(i, &mut data[row_start..row_start + in_features]);
+            }
         }
         CpuTensor::from_data(self.shape.clone(), data)
     }

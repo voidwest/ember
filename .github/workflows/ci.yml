@@ -71,7 +71,7 @@ jobs:
 
       - name: python smoke
         run: |
-          python -m compileall -q src probes stimuli scripts tests
+          python -m compileall -q python probes stimuli scripts tests
           python probes/run_probe_matrix.py --model smoke:dummy.gguf --generate-tokens 1 --dry-run
           bash -n bench_compare.sh probes/run_all_5k.sh scripts/research_example_capture_patch.sh scripts/conference_demo.sh scripts/validate_k_parity.sh tools/crossover_sweep.sh tools/verify_k_quant_llamacpp.sh
 

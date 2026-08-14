@@ -315,8 +315,8 @@ pub(crate) struct BenchDecodeCommand {
     #[arg(short, long)]
     model: String,
 
-    /// model architecture
-    #[arg(long, value_parser = ["gpt2", "llama", "qwen3", "gemma4"])]
+    /// model architecture override; auto reads general.architecture from GGUF
+    #[arg(long, default_value = "auto", value_parser = ["auto", "gpt2", "llama", "qwen3", "gemma4"])]
     arch: String,
 
     /// number of timed single-token evaluations per repetition
@@ -360,8 +360,8 @@ pub(crate) struct InspectPlanCommand {
     #[arg(short, long)]
     model: String,
 
-    /// model architecture
-    #[arg(long, value_parser = ["gpt2", "llama", "qwen3", "gemma4"])]
+    /// model architecture override; auto reads general.architecture from GGUF
+    #[arg(long, default_value = "auto", value_parser = ["auto", "gpt2", "llama", "qwen3", "gemma4"])]
     arch: String,
 
     /// path to tokenizer.json (optional; recorded in provenance when present)
@@ -526,18 +526,6 @@ pub(crate) struct ExtractCommand {
 
 #[derive(ClapArgs)]
 pub(crate) struct ValidateBackendsCommand {
-    /// path to GGUF model file
-    #[arg(long)]
-    model: Option<String>,
-
-    /// path to prompt JSONL/text fixture
-    #[arg(long)]
-    prompts: Option<String>,
-
-    /// comma-separated layers to compare
-    #[arg(long)]
-    layers: Option<String>,
-
     /// existing native Ember artifact run directory
     #[arg(long)]
     native_run: Option<String>,

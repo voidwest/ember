@@ -827,26 +827,35 @@ fn validate(src: &[f32], rows: usize, w: &KQuantWeight, dst: &[f32]) -> Result<(
 fn serial_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f32]) {
     let blocks_per_row = w.blocks_per_row();
     let out_features = w.out_features();
-    // Column-major traversal is important for prefill: all activation rows
-    // consume one weight row while it is hot instead of streaming the entire
-    // weight matrix once per token.
-    for column in 0..out_features {
-        let mut row = 0;
-        while row + 4 <= rows {
-            let packed_rows = &input[row * blocks_per_row..(row + 4) * blocks_per_row];
-            let Some(values) = dot_four_rows(w, column, packed_rows) else {
-                break;
-            };
-            for (lane, value) in values.into_iter().enumerate() {
-                dst[(row + lane) * out_features + column] += value;
+    // Row-tile-major traversal: a four-row activation tile is loaded once and
+    // reused across every output column, keeping it L1-resident. For multi-token
+    // prefill the activation is the operand that would otherwise be re-read once
+    // per column (the dominant traffic), so this order streams the weight once
+    // per row tile instead of re-streaming the activation per column.
+    let mut row = 0;
+    while row + 4 <= rows {
+        let packed_rows = &input[row * blocks_per_row..(row + 4) * blocks_per_row];
+        for column in 0..out_features {
+            if let Some(values) = dot_four_rows(w, column, packed_rows) {
+                for (lane, value) in values.into_iter().enumerate() {
+                    dst[(row + lane) * out_features + column] += value;
+                }
+            } else {
+                for lane in 0..4 {
+                    let packed_row =
+                        &input[(row + lane) * blocks_per_row..(row + lane + 1) * blocks_per_row];
+                    dst[(row + lane) * out_features + column] += dot_column(w, column, packed_row);
+                }
             }
-            row += 4;
         }
-        while row < rows {
-            let packed_row = &input[row * blocks_per_row..(row + 1) * blocks_per_row];
+        row += 4;
+    }
+    while row < rows {
+        let packed_row = &input[row * blocks_per_row..(row + 1) * blocks_per_row];
+        for column in 0..out_features {
             dst[row * out_features + column] += dot_column(w, column, packed_row);
-            row += 1;
         }
+        row += 1;
     }
 }
 
@@ -860,30 +869,46 @@ fn parallel_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f
             #[cfg(test)]
             route_probe::record_worker(w);
             let blocks_per_row = w.blocks_per_row();
-            for column in dst.first..dst.first + dst.count {
-                let mut row = 0;
-                while row + 4 <= rows {
-                    let packed_rows = &input[row * blocks_per_row..(row + 4) * blocks_per_row];
-                    let Some(values) = dot_four_rows(w, column, packed_rows) else {
-                        break;
-                    };
-                    for (lane, value) in values.into_iter().enumerate() {
-                        // SAFETY: this leaf owns `column`; sibling tasks own
-                        // disjoint column intervals created by `split`.
-                        unsafe {
-                            dst.add_assign(row + lane, column, value);
+            // Row-tile-major: keep the four-row activation tile L1-resident
+            // across this leaf's column interval (see `serial_body`).
+            let mut row = 0;
+            while row + 4 <= rows {
+                let packed_rows = &input[row * blocks_per_row..(row + 4) * blocks_per_row];
+                for column in dst.first..dst.first + dst.count {
+                    if let Some(values) = dot_four_rows(w, column, packed_rows) {
+                        for (lane, value) in values.into_iter().enumerate() {
+                            // SAFETY: this leaf owns `column`; sibling tasks own
+                            // disjoint column intervals created by `split`.
+                            unsafe {
+                                dst.add_assign(row + lane, column, value);
+                            }
+                        }
+                    } else {
+                        for lane in 0..4 {
+                            let packed_row = &input
+                                [(row + lane) * blocks_per_row..(row + lane + 1) * blocks_per_row];
+                            // SAFETY: as above; construction validated the full matrix.
+                            unsafe {
+                                dst.add_assign(
+                                    row + lane,
+                                    column,
+                                    dot_column(w, column, packed_row),
+                                );
+                            }
                         }
                     }
-                    row += 4;
                 }
-                while row < rows {
-                    let packed_row = &input[row * blocks_per_row..(row + 1) * blocks_per_row];
+                row += 4;
+            }
+            while row < rows {
+                let packed_row = &input[row * blocks_per_row..(row + 1) * blocks_per_row];
+                for column in dst.first..dst.first + dst.count {
                     // SAFETY: as above; construction validated the full matrix.
                     unsafe {
                         dst.add_assign(row, column, dot_column(w, column, packed_row));
                     }
-                    row += 1;
                 }
+                row += 1;
             }
             return;
         }
