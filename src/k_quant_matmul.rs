@@ -902,8 +902,8 @@ fn dot_column(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> f32 {
 }
 
 #[inline]
+#[cfg(target_arch = "x86_64")]
 fn dot_four_rows(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> Option<[f32; 4]> {
-    #[cfg(target_arch = "x86_64")]
     if matches!(w.execution(), KExecution::CompressedX86) {
         #[cfg(test)]
         if route_probe::is_target(w) {
@@ -936,6 +936,11 @@ fn dot_four_rows(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> Option<
             }
         });
     }
+    None
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn dot_four_rows(_w: &KQuantWeight, _column: usize, _input: &[Q8KBlock]) -> Option<[f32; 4]> {
     None
 }
 

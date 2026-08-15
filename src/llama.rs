@@ -2211,27 +2211,28 @@ impl Llama<CpuBackend> {
                 take_optional_llama_norm(&mut loader, &format!("blk.{}.attn_k_norm.weight", i));
 
             let attn = LlamaAttention::new_shared(
-                take_llama_linear_with_bias(
+                take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.attn_q.weight", i),
-                    &format!("blk.{}.attn_q.bias", i),
+                    Some(&format!("blk.{}.attn_q.bias", i)),
                     packed_decode_enabled,
                 )?,
-                take_llama_linear_with_bias(
+                take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.attn_k.weight", i),
-                    &format!("blk.{}.attn_k.bias", i),
+                    Some(&format!("blk.{}.attn_k.bias", i)),
                     packed_decode_enabled,
                 )?,
-                take_llama_linear_with_bias(
+                take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.attn_v.weight", i),
-                    &format!("blk.{}.attn_v.bias", i),
+                    Some(&format!("blk.{}.attn_v.bias", i)),
                     packed_decode_enabled,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.attn_output.weight", i),
+                    None,
                     packed_decode_enabled,
                 )?,
                 Arc::clone(&rope_cos),
@@ -2249,16 +2250,19 @@ impl Llama<CpuBackend> {
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.ffn_gate.weight", i),
+                    None,
                     packed_decode_enabled,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.ffn_up.weight", i),
+                    None,
                     packed_decode_enabled,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.ffn_down.weight", i),
+                    None,
                     packed_decode_enabled,
                 )?,
             );
@@ -2541,40 +2545,20 @@ impl Llama<CpuBackend> {
     }
 }
 
-fn take_llama_linear(
-    loader: &mut crate::loader::GgufLoader,
-    name: &str,
-    prepare_packed: bool,
-) -> anyhow::Result<Linear<CpuBackend>> {
-    use crate::loader::LoadedTensor;
-
-    let mut linear = match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => {
-            Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
-        }
-        LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
-        LoadedTensor::KQuant(weight) => Linear::new_k(weight, None),
-    };
-    if prepare_packed {
-        linear.prepare_packed_decode();
-    }
-    Ok(linear)
-}
-
-/// like `take_llama_linear`, but also loads an optional f32 bias tensor.
+/// Take a linear projection tensor, optionally with a fused f32 bias.
 ///
 /// qwen2/qwen2.5 attention projections carry `blk.{i}.attn_q.bias` /
 /// `attn_k.bias` / `attn_v.bias`; llama and qwen3 GGUFs do not, and pass
 /// through with no bias.
-fn take_llama_linear_with_bias(
+fn take_llama_linear(
     loader: &mut crate::loader::GgufLoader,
     name: &str,
-    bias_name: &str,
+    bias_name: Option<&str>,
     prepare_packed: bool,
 ) -> anyhow::Result<Linear<CpuBackend>> {
     use crate::loader::LoadedTensor;
 
-    let bias = loader.take_optional_f32(&[bias_name.to_string()]);
+    let bias = bias_name.and_then(|bias_name| loader.take_optional_f32(&[bias_name.to_string()]));
     let mut linear = match loader.take_tensor(name)? {
         LoadedTensor::F32(tensor) => {
             Linear::new(crate::loader::gguf_to_row_major_f32(tensor), bias)
@@ -4184,7 +4168,10 @@ fn plan_linear(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experiments::test_support::{HookRecord, RecordingExperiment};
+    use crate::experiments::test_support::RecordingExperiment;
+    // HookRecord backs the x86-only parity envelopes (gated tests above).
+    #[cfg(target_arch = "x86_64")]
+    use crate::experiments::test_support::HookRecord;
     use crate::experiments::{
         ExecutionPhase, ExperimentHook, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
         ZeroLayerOutputSpec, ZeroLayerOutputStage,

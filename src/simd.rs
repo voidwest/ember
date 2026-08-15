@@ -1456,7 +1456,7 @@ mod aarch64 {
             let q1 = vld1q_s8(quants_ptr.add(16));
 
             let out_offset = b * Q8_0_BLOCK_SIZE;
-            let out_ptr = dst.as_mut_ptr().add(out_offset) as *mut f32;
+            let out_ptr = dst.as_mut_ptr().add(out_offset);
 
             // helper: dequantize 16 i8 values → 4 × float32x4_t
             #[inline(always)]
@@ -1490,69 +1490,6 @@ mod aarch64 {
     ///
     /// # Safety
     ///
-    /// Caller must ensure NEON is supported.
-    #[target_feature(enable = "neon")]
-    pub unsafe fn matmul_q8_0_decode_neon(
-        x: &[f32],
-        data: &[u8],
-        _out_features: usize,
-        blocks_per_row: usize,
-        out: &mut [f32],
-    ) {
-        for (row, out_val) in out.iter_mut().enumerate() {
-            let row_start = row * blocks_per_row;
-            let mut acc = vdupq_n_f32(0.0);
-
-            for b in 0..blocks_per_row {
-                let byte_offset = (row_start + b) * Q8_0_TYPE_SIZE;
-                let base_ptr = data.as_ptr().add(byte_offset);
-
-                let d_bits = u16::from_le_bytes(*(base_ptr as *const [u8; 2]));
-                let d = f16::from_bits(d_bits).to_f32();
-                let d_vec = vdupq_n_f32(d);
-
-                let quants_ptr = base_ptr.add(2) as *const i8;
-                let q0 = vld1q_s8(quants_ptr);
-                let q1 = vld1q_s8(quants_ptr.add(16));
-
-                let x_offset = b * Q8_0_BLOCK_SIZE;
-                let x_ptr = x.as_ptr().add(x_offset) as *const f32;
-
-                // helper: process 16 i8 → 4 × f32, fma with x, accumulate
-                unsafe fn fma16(
-                    src: int8x16_t,
-                    scale: float32x4_t,
-                    xp: *const f32,
-                    acc: &mut float32x4_t,
-                ) {
-                    // Safety: Internal helper; only callable from other `unsafe fn`s in this module that already guarantee the required CPU features.
-                    let i16_lo = vmovl_s8(vget_low_s8(src));
-                    let i16_hi = vmovl_s8(vget_high_s8(src));
-
-                    let f0 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(i16_lo))), scale);
-                    *acc = vfmaq_f32(*acc, f0, vld1q_f32(xp));
-
-                    let f1 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(i16_lo))), scale);
-                    *acc = vfmaq_f32(*acc, f1, vld1q_f32(xp.add(4)));
-
-                    let f2 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(i16_hi))), scale);
-                    *acc = vfmaq_f32(*acc, f2, vld1q_f32(xp.add(8)));
-
-                    let f3 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(i16_hi))), scale);
-                    *acc = vfmaq_f32(*acc, f3, vld1q_f32(xp.add(12)));
-                }
-
-                fma16(q0, d_vec, x_ptr, &mut acc);
-                fma16(q1, d_vec, x_ptr.add(16), &mut acc);
-            }
-
-            *out_val = vgetq_lane_f32::<0>(acc)
-                + vgetq_lane_f32::<1>(acc)
-                + vgetq_lane_f32::<2>(acc)
-                + vgetq_lane_f32::<3>(acc);
-        }
-    }
-
     /// SIMD sum of squares using NEON FMA.
     ///
     /// # Safety
@@ -1983,6 +1920,7 @@ fn q8_batch_tile_rows(rows: usize) -> usize {
     }
 }
 
+#[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
 fn matmul_q8_0_batch_dispatch_tile(
     x: &[u8],
     rows: usize,
@@ -2114,9 +2052,9 @@ pub(crate) fn matmul_q8_0_decode_packed16_parallel(
         .div_ceil(threads)
         .next_multiple_of(VNNI_OUT_TILE)
         .max(64);
-    out.par_chunks_mut(chunk_rows)
-        .enumerate()
-        .for_each(|(chunk_index, out_chunk)| {
+    out.par_chunks_mut(chunk_rows).enumerate().for_each(
+        #[cfg_attr(not(target_arch = "x86_64"), allow(unused_variables))]
+        |(chunk_index, out_chunk)| {
             let global_row_offset = chunk_index * chunk_rows;
             #[cfg(target_arch = "x86_64")]
             unsafe {
@@ -2131,7 +2069,8 @@ pub(crate) fn matmul_q8_0_decode_packed16_parallel(
                     global_row_offset,
                 );
             }
-        });
+        },
+    );
 }
 
 /// Matrix multiply using interleaved Q8_0 weight layout.
@@ -2882,6 +2821,7 @@ mod tests {
         }
     }
 
+    #[cfg_attr(not(target_arch = "x86_64"), allow(unused_mut, unused_variables))]
     #[test]
     fn explicit_avx2_call_matches_scalar() {
         let blocks = 4;
