@@ -19,9 +19,10 @@ env_logger = "0.11"
 rand = "0.8"
 rayon = "1"
 tiny_http = "0.12"
-# v0.6 native console: software-rendered iced app (no GPU/webview dependency).
-# Embedded Noto fonts (src/gui_fonts/) provide Latin + Arabic coverage offline.
-iced = { version = "0.14", default-features = false, features = ["tiny-skia", "highlighter", "x11", "wayland", "tokio", "web-colors", "crisp", "thread-pool"] }
+# v0.6 native console: gpui (Zed's GPU-accelerated framework, blade/Vulkan on
+# Linux). Embedded Noto fonts (src/gui_fonts/) provide Latin + Arabic coverage
+# offline.
+gpui = { version = "0.2.2", default-features = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

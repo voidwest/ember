@@ -32,7 +32,10 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
 /// Canonical JSON bytes of a serializable value: sorted keys, stable
 /// arrays, documented float formatting.
 pub fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(value).map_err(|error| format!("canonical serialization failed: {error}"))
+    let mut value = serde_json::to_value(value)
+        .map_err(|error| format!("canonical serialization failed: {error}"))?;
+    crate::plan::sort_value_keys(&mut value);
+    serde_json::to_vec(&value).map_err(|error| format!("canonical serialization failed: {error}"))
 }
 
 /// SHA-256 over the canonical JSON of `value`.

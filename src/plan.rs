@@ -1222,11 +1222,37 @@ impl ExecutionPlan {
 /// Deterministic SHA-256 over the plan's canonical hash-input JSON
 /// (`ExecutionPlan::hash_input_json`, private by design).
 pub fn plan_hash(plan: &ExecutionPlan) -> String {
-    let input = plan.hash_input_json();
+    let mut input = plan.hash_input_json();
+    sort_value_keys(&mut input);
     let bytes = serde_json::to_vec(&input).expect("plan hash input serializes");
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     hex(&hasher.finalize())
+}
+
+/// Recursively sort every object key in a JSON value so serialization is
+/// deterministic regardless of serde_json's `preserve_order` feature. That
+/// feature swaps serde_json's default sorted `Map` for an insertion-ordered
+/// one and is enabled transitively by some dependencies (gpui); the v0.5
+/// canonical-JSON contract requires sorted keys, so sort explicitly here.
+pub(crate) fn sort_value_keys(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(String, serde_json::Value)> =
+                std::mem::take(map).into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            for (_, child) in entries.iter_mut() {
+                sort_value_keys(child);
+            }
+            *map = entries.into_iter().collect();
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                sort_value_keys(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn short_sha(sha: &str) -> String {

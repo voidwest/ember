@@ -43,6 +43,7 @@ pub fn fixture_plan_hash(plan_json: &mut serde_json::Value) -> String {
             provenance.insert("plan_build_time".into(), json!(""));
         }
     }
+    crate::plan::sort_value_keys(plan_json);
     let bytes = serde_json::to_vec(plan_json).expect("fixture plan serializes");
     let hash = sha256_hex(&bytes);
     // write the computed hash back so the stored plan is self-consistent

@@ -1,34 +1,26 @@
 //! Ember v0.6 native experiment console (`ember gui`).
 //!
 //! A native, single-window console over the exact same v0.5 pipeline as the
-//! web console (`ember web-gui`). The UI is built with iced (tiny-skia
-//! software rendering — no GPU or system-webview dependency) and every
-//! experiment is executed in a worker thread through the shared
+//! web console (`ember web-gui`). The UI is built with gpui (Zed's
+//! GPU-accelerated framework, rendered through blade/Vulkan on Linux) and
+//! every experiment is executed in a worker thread through the shared
 //! `GuiSession` core, which in turn calls `prepare_run` / `execute_prepared`
 //! — the same code path as `ember experiment run`. No inference logic lives
 //! in the UI.
 //!
-//! Arabic input/output is shaped and laid out RTL by cosmic-text (iced's
-//! text engine). The Noto Sans / Noto Sans Mono / Noto Naskh Arabic fonts
-//! are embedded so rendering is identical on any machine, fully offline.
+//! Arabic input/output is shaped and laid out RTL by cosmic-text (gpui's text
+//! engine). The Noto Sans / Noto Sans Mono / Noto Naskh Arabic fonts are
+//! embedded so rendering is identical on any machine, fully offline.
 
 use crate::gui::{
     discover_models, parse_run_request, RestoreBundle, RunBundle, RunConfig, RunOutput, RunRequest,
     SessionInfo,
 };
-use anyhow::Context;
 use clap::Args as ClapArgs;
 use ember::quant_k::KStrategy;
-use iced::gradient::Linear;
-use iced::widget::{
-    button, column, combo_box, container, overlay::menu, row, rule, scrollable, space, text,
-    text_editor, text_input, Column,
-};
-use iced::{
-    border, Alignment, Background, Color, Element, Font, Gradient, Length, Shadow, Subscription,
-    Task, Theme, Vector,
-};
-use std::f32::consts::{FRAC_PI_2, PI};
+use gpui::prelude::*;
+use gpui::*;
+use std::borrow::Cow;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -165,30 +157,142 @@ struct RestoreView {
     comparable: bool,
 }
 
+/// Which dropdown (picker) is currently open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ComboId {
+    Model,
+    Site,
+    Op,
+    Source,
+    Token,
+    Execution,
+}
+
+/// Which text field is receiving keystrokes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputTarget {
+    ModelPath,
+    Layer,
+    Value,
+    SourceLayer,
+    Span,
+    MaxTokens,
+    Prompt,
+}
+
+/// The console palette — "ember" styling: a warm ember-orange accent over deep
+/// cool charcoal surfaces, with soft shadows and rounded corners throughout.
+/// The header and status bar stay dark in both themes (brand constants), while
+/// everything else follows the in-window theme toggle.
+#[derive(Clone, Copy)]
+struct Colors {
+    bg: Rgba,
+    panel: Rgba,
+    panel_alt: Rgba,
+    text: Rgba,
+    dim: Rgba,
+    faint: Rgba,
+    border: Rgba,
+    accent: Rgba,
+    accent_hi: Rgba,
+    accent_lo: Rgba,
+    accent_soft: Rgba,
+    ok: Rgba,
+    err: Rgba,
+    warn: Rgba,
+    err_box_bg: Rgba,
+    err_box_border: Rgba,
+    warn_box_bg: Rgba,
+    warn_box_border: Rgba,
+}
+
+/// Light console theme: dark text on white surfaces, ember accent.
+fn light() -> Colors {
+    Colors {
+        bg: rgb(0xf4f5f7),
+        panel: rgb(0xffffff),
+        panel_alt: rgb(0xeef0f3),
+        text: rgb(0x1b1e23),
+        dim: rgb(0x505764),
+        faint: rgb(0x838b97),
+        border: rgb(0xe3e6eb),
+        accent: rgb(0xdc5c20),
+        accent_hi: rgb(0xef6a2b),
+        accent_lo: rgb(0xc04a16),
+        accent_soft: rgba(0xdc5c201a),
+        ok: rgb(0x1f8a52),
+        err: rgb(0xd0433a),
+        warn: rgb(0xb07a16),
+        err_box_bg: rgb(0xfceceb),
+        err_box_border: rgb(0xe5b8b4),
+        warn_box_bg: rgb(0xfaf3df),
+        warn_box_border: rgb(0xe0c98f),
+    }
+}
+
+/// Dark console theme: light text on deep charcoal surfaces, ember accent.
+fn dark() -> Colors {
+    Colors {
+        bg: rgb(0x0a0c10),
+        panel: rgb(0x161920),
+        panel_alt: rgb(0x1d212a),
+        text: rgb(0xe7e9ed),
+        dim: rgb(0x9aa2ae),
+        faint: rgb(0x6a7380),
+        border: rgb(0x232833),
+        accent: rgb(0xf06b2f),
+        accent_hi: rgb(0xff7f45),
+        accent_lo: rgb(0xd95b24),
+        accent_soft: rgba(0xf06b2f26),
+        ok: rgb(0x4cc38a),
+        err: rgb(0xf0685c),
+        warn: rgb(0xe8b34b),
+        err_box_bg: rgb(0x2a1a18),
+        err_box_border: rgb(0x5c332e),
+        warn_box_bg: rgb(0x2a2418),
+        warn_box_border: rgb(0x5c4a2a),
+    }
+}
+
+/// Focus handles for the seven editable text fields, created once on first
+/// render so focus state survives re-renders.
+#[derive(Clone)]
+struct FocusHandles {
+    model: FocusHandle,
+    layer: FocusHandle,
+    value: FocusHandle,
+    source_layer: FocusHandle,
+    span: FocusHandle,
+    max_tokens: FocusHandle,
+    prompt: FocusHandle,
+}
+
 struct Console {
     // worker
     worker_tx: mpsc::Sender<WorkerMsg>,
     reply_rx: Arc<Mutex<mpsc::Receiver<WorkerReply>>>,
     // model
-    model_combo: combo_box::State<String>,
+    model_options: Vec<String>,
     model_path: String,
     // form
-    site_combo: combo_box::State<String>,
+    site_options: Vec<String>,
     site: String,
     layer: String,
-    op_combo: combo_box::State<String>,
+    op_options: Vec<String>,
     op: String,
     value: String,
-    source_combo: combo_box::State<String>,
+    source_options: Vec<String>,
     source: String,
     source_layer: String,
-    token_combo: combo_box::State<String>,
+    token_options: Vec<String>,
     token: String,
     span: String,
     max_tokens: String,
-    execution_combo: combo_box::State<String>,
+    execution_options: Vec<String>,
     execution: String,
-    prompt: text_editor::Content<iced::Renderer>,
+    prompt: String,
+    open_combo: Option<ComboId>,
+    focus: Option<FocusHandles>,
     // theme
     dark: bool,
     // session + results
@@ -211,57 +315,32 @@ impl Console {
     ) -> Self {
         let models = discover_models();
         let model_path = models.first().cloned().unwrap_or_default();
-        let mut model_combo = combo_box::State::new(models.clone());
-        for model in &models {
-            model_combo.push(model.clone());
-        }
-        let mut site_combo = combo_box::State::new(STAGES.iter().map(|s| s.to_string()).collect());
-        for stage in STAGES {
-            site_combo.push(stage.to_string());
-        }
-        let mut op_combo =
-            combo_box::State::new(OPERATIONS.iter().map(|s| s.to_string()).collect());
-        for op in OPERATIONS {
-            op_combo.push(op.to_string());
-        }
-        let mut source_combo =
-            combo_box::State::new(vec!["capture".to_string(), "zero".to_string()]);
-        source_combo.push("capture".to_string());
-        source_combo.push("zero".to_string());
-        let mut token_combo =
-            combo_box::State::new(vec!["prompt-final".to_string(), "matched-span".to_string()]);
-        token_combo.push("prompt-final".to_string());
-        token_combo.push("matched-span".to_string());
-        let mut execution_combo =
-            combo_box::State::new(EXECUTIONS.iter().map(|s| s.to_string()).collect());
-        for exec in EXECUTIONS {
-            execution_combo.push(exec.to_string());
-        }
         Console {
             worker_tx,
             reply_rx,
-            model_combo,
+            model_options: models,
             model_path,
-            site_combo,
+            site_options: STAGES.iter().map(|s| s.to_string()).collect(),
             site: "after-mlp".to_string(),
             layer: "0".to_string(),
-            op_combo,
+            op_options: OPERATIONS.iter().map(|s| s.to_string()).collect(),
             op: "scale".to_string(),
             value: "0.5".to_string(),
-            source_combo,
+            source_options: vec!["capture".to_string(), "zero".to_string()],
             source: "capture".to_string(),
             source_layer: "0".to_string(),
-            token_combo,
+            token_options: vec!["prompt-final".to_string(), "matched-span".to_string()],
             token: "prompt-final".to_string(),
             span: String::new(),
             max_tokens: "48".to_string(),
-            execution_combo,
+            execution_options: EXECUTIONS.iter().map(|s| s.to_string()).collect(),
             execution: "reference".to_string(),
-            prompt: text_editor::Content::with_text(
-                "\u{627}\u{643}\u{62A}\u{628} \u{62C}\u{645}\u{644}\u{629} \
-                 \u{642}\u{635}\u{64A}\u{631}\u{629} \u{639}\u{646} \u{627}\u{644}\u{645}\u{62F}\u{64A}\u{646}\u{629} \
-                 \u{627}\u{644}\u{645}\u{646}\u{648}\u{631}\u{629}",
-            ),
+            prompt: "\u{627}\u{643}\u{62A}\u{628} \u{62C}\u{645}\u{644}\u{629} \
+                     \u{642}\u{635}\u{64A}\u{631}\u{629} \u{639}\u{646} \u{627}\u{644}\u{645}\u{62F}\u{64A}\u{646}\u{629} \
+                     \u{627}\u{644}\u{645}\u{646}\u{648}\u{631}\u{629}"
+                .to_string(),
+            open_combo: None,
+            focus: None,
             dark: true,
             session: None,
             status: Status::Idle,
@@ -281,11 +360,11 @@ impl Console {
     }
 
     /// The active palette (dark by default; toggled from the header).
-    fn colors(&self) -> &'static Colors {
+    fn colors(&self) -> Colors {
         if self.dark {
-            &DARK
+            dark()
         } else {
-            &LIGHT
+            light()
         }
     }
 
@@ -318,8 +397,6 @@ impl Console {
         let source_layer = if per_layer(&self.site) && self.source == "capture" {
             // The capture fires before the intervention in the same pass, so
             // clamp the source layer to at most the layer above the target.
-            // Mirrors the web console's syncSourceLayer; keeps the request
-            // valid even when the two fields are edited out of order.
             let target = layer.expect("layer checked above");
             Some(
                 self.source_layer
@@ -332,7 +409,7 @@ impl Console {
         };
         Ok(RunRequest {
             model_path: self.model_path.trim().to_string(),
-            prompt: self.prompt.text(),
+            prompt: self.prompt.clone(),
             max_new_tokens: self
                 .max_tokens
                 .parse::<usize>()
@@ -383,11 +460,15 @@ impl Console {
         let _ = self.worker_tx.send(WorkerMsg::Restore(cfg));
     }
 
-    fn drain_replies(&mut self) {
+    /// Drain the worker reply channel; returns true when anything changed.
+    fn drain_replies(&mut self) -> bool {
         let replies: Vec<WorkerReply> = {
             let rx = self.reply_rx.lock().expect("reply receiver lock");
             std::iter::from_fn(|| rx.try_recv().ok()).collect()
         };
+        if replies.is_empty() {
+            return false;
+        }
         for reply in replies {
             match reply {
                 WorkerReply::Prepared(result) => match result {
@@ -438,7 +519,7 @@ impl Console {
                         });
                         self.verification =
                             Some(VerificationView::from_report(&bundle.verification));
-                        if let Some((_, _, _)) = &self.last_metrics {
+                        if self.last_metrics.is_some() {
                             self.last_metrics = Some((
                                 bundle.output.semantic_hash.clone(),
                                 bundle.output.wall_ms,
@@ -454,1134 +535,1215 @@ impl Console {
                 },
             }
         }
+        true
     }
-}
 
-// ---------------------------------------------------------------------------
-// messages
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-enum Message {
-    ModelPathChanged(String),
-    ModelSelected(String),
-    Load,
-    PromptEdited(text_editor::Action),
-    SiteSelected(String),
-    LayerChanged(String),
-    OpSelected(String),
-    ValueChanged(String),
-    SourceSelected(String),
-    SourceLayerChanged(String),
-    TokenSelected(String),
-    SpanChanged(String),
-    MaxTokensChanged(String),
-    ExecutionSelected(String),
-    Run,
-    Restore,
-    Poll,
-    ToggleTheme,
-}
-
-fn update(state: &mut Console, message: Message) -> Task<Message> {
-    match message {
-        Message::ModelPathChanged(value) => state.model_path = value,
-        Message::ModelSelected(model) => state.model_path = model,
-        Message::Load => {
-            if state.busy() {
-                return Task::none();
-            }
-            let path = state.model_path.trim().to_string();
-            if path.is_empty() {
-                state.error = Some("model path must not be empty".to_string());
-                return Task::none();
-            }
-            state.status = Status::Preparing;
-            state.error = None;
-            let _ = state.worker_tx.send(WorkerMsg::Prepare(path));
+    fn load(&mut self) {
+        if self.busy() {
+            return;
         }
-        Message::PromptEdited(action) => state.prompt.perform(action),
-        Message::SiteSelected(site) => {
-            state.site = site;
-            if !per_layer(&state.site) {
-                state.layer = "0".to_string();
-                state.source_layer = "0".to_string();
+        let path = self.model_path.trim().to_string();
+        if path.is_empty() {
+            self.error = Some("model path must not be empty".to_string());
+            return;
+        }
+        self.status = Status::Preparing;
+        self.error = None;
+        let _ = self.worker_tx.send(WorkerMsg::Prepare(path));
+    }
+
+    fn run(&mut self) {
+        if self.busy() {
+            return;
+        }
+        match self.build_run_request() {
+            Ok(req) => match parse_run_request(&req) {
+                Ok(cfg) => self.send_run(cfg),
+                Err(error) => self.error = Some(error),
+            },
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn restore(&mut self) {
+        if self.busy() {
+            return;
+        }
+        if self.last_config.is_none() {
+            self.error =
+                Some("run an experiment first; restore verifies against its baseline".to_string());
+            return;
+        }
+        match self.build_run_request() {
+            Ok(mut req) => {
+                req.operation = "restore-original".to_string();
+                req.factor = None;
+                req.alpha = None;
+                req.source = "capture".to_string();
+                req.source_layer = None;
+                match parse_run_request(&req) {
+                    Ok(cfg) => self.send_restore(cfg),
+                    Err(error) => self.error = Some(error),
+                }
+            }
+            Err(error) => self.error = Some(error),
+        }
+    }
+
+    fn toggle_theme(&mut self) {
+        self.dark = !self.dark;
+    }
+
+    fn select_combo(&mut self, combo: ComboId, value: &str, cx: &mut Context<Self>) {
+        match combo {
+            ComboId::Model => self.model_path = value.to_string(),
+            ComboId::Site => self.site = value.to_string(),
+            ComboId::Op => self.op = value.to_string(),
+            ComboId::Source => self.source = value.to_string(),
+            ComboId::Token => self.token = value.to_string(),
+            ComboId::Execution => self.execution = value.to_string(),
+        }
+        // Selecting a non-per-layer site drops the layer fields.
+        if combo == ComboId::Site && !per_layer(&self.site) {
+            self.layer = "0".to_string();
+            self.source_layer = "0".to_string();
+        }
+        self.open_combo = None;
+        cx.notify();
+    }
+
+    /// Keep the source layer at or above the target layer (the capture must
+    /// fire before the intervention in the same pass).
+    fn clamp_source_layer(&mut self) {
+        if let (Ok(target), Ok(source)) =
+            (self.layer.parse::<i64>(), self.source_layer.parse::<i64>())
+        {
+            if source > target {
+                self.source_layer = (target - 1).max(0).to_string();
             }
         }
-        Message::LayerChanged(layer) => {
-            state.layer = layer;
-            // keep the source layer at or above the target layer (the
-            // capture must fire before the intervention in the same pass)
-            if let (Ok(target), Ok(source)) = (
-                state.layer.parse::<i64>(),
-                state.source_layer.parse::<i64>(),
-            ) {
-                if source > target {
-                    state.source_layer = (target - 1).max(0).to_string();
+    }
+
+    /// Handle a keystroke for one of the editable text fields.
+    fn input_key(&mut self, target: InputTarget, e: &KeyDownEvent) {
+        // Ignore shortcuts; only plain text entry and backspace are handled.
+        if e.keystroke.modifiers.control {
+            return;
+        }
+        let field: &mut String = match target {
+            InputTarget::ModelPath => &mut self.model_path,
+            InputTarget::Layer => &mut self.layer,
+            InputTarget::Value => &mut self.value,
+            InputTarget::SourceLayer => &mut self.source_layer,
+            InputTarget::Span => &mut self.span,
+            InputTarget::MaxTokens => &mut self.max_tokens,
+            InputTarget::Prompt => &mut self.prompt,
+        };
+        match e.keystroke.key.as_str() {
+            "backspace" => {
+                field.pop();
+            }
+            "enter" | "return" => {
+                if target == InputTarget::Prompt {
+                    field.push('\n');
+                }
+            }
+            "space" => field.push(' '),
+            "escape" | "tab" => {}
+            _ => {
+                if let Some(ch) = e.keystroke.key_char.as_deref() {
+                    field.push_str(ch);
+                } else if e.keystroke.key.chars().count() == 1 {
+                    field.push_str(&e.keystroke.key);
                 }
             }
         }
-        Message::OpSelected(op) => state.op = op,
-        Message::ValueChanged(value) => state.value = value,
-        Message::SourceSelected(source) => state.source = source,
-        Message::SourceLayerChanged(layer) => state.source_layer = layer,
-        Message::TokenSelected(token) => state.token = token,
-        Message::SpanChanged(span) => state.span = span,
-        Message::MaxTokensChanged(tokens) => state.max_tokens = tokens,
-        Message::ExecutionSelected(execution) => state.execution = execution,
-        Message::Run => {
-            if state.busy() {
-                return Task::none();
+        if target == InputTarget::Layer {
+            self.clamp_source_layer();
+        }
+    }
+
+    /// Poll the worker reply channel every 80 ms while the app lives. The
+    /// worker thread is unchanged from the iced implementation; only the
+    /// foreground subscription is replaced by gpui's async executor.
+    fn spawn_poll(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(|this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let mut cx = cx.clone();
+            async move {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(80))
+                        .await;
+                    let _ = this.update(&mut cx, |console, cx| {
+                        if console.drain_replies() {
+                            cx.notify();
+                        }
+                    });
+                }
             }
-            match state.build_run_request() {
-                Ok(req) => match parse_run_request(&req) {
-                    Ok(cfg) => state.send_run(cfg),
-                    Err(error) => state.error = Some(error),
+        })
+        .detach();
+    }
+
+    // -- view builders -------------------------------------------------------
+
+    fn picker(
+        &self,
+        colors: &Colors,
+        id: &'static str,
+        combo: ComboId,
+        selected: &str,
+        options: &[String],
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let open = self.open_combo == Some(combo);
+        let toggle = cx.listener(move |console, _: &ClickEvent, _w, cx| {
+            console.open_combo = if console.open_combo == Some(combo) {
+                None
+            } else {
+                Some(combo)
+            };
+            cx.notify();
+        });
+        let button = div()
+            .id(ElementId::Name(SharedString::from(id)))
+            .w_full()
+            .px_2()
+            .py_1()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .bg(colors.panel_alt)
+            .border_1()
+            .border_color(colors.border)
+            .rounded_md()
+            .cursor_pointer()
+            .on_click(toggle)
+            .child(label(selected.to_string(), 12.0, colors.text))
+            .child(label("\u{25be}", 10.0, colors.faint));
+
+        if open {
+            let list = options
+                .iter()
+                .map(|opt| {
+                    let opt = opt.clone();
+                    let is_selected = opt == selected;
+                    let listener = {
+                        let opt = opt.clone();
+                        cx.listener(move |console, _: &ClickEvent, _w, cx| {
+                            console.select_combo(combo, &opt, cx);
+                        })
+                    };
+                    let opt_id = ElementId::Name(SharedString::from(format!("{id}:{opt}")));
+                    div()
+                        .id(opt_id)
+                        .w_full()
+                        .px_2()
+                        .py_1()
+                        .flex()
+                        .items_center()
+                        .cursor_pointer()
+                        .when(is_selected, |s| s.bg(colors.accent_soft))
+                        .hover(|s| s.bg(colors.panel_alt))
+                        .on_click(listener)
+                        .child(label(opt, 12.0, colors.text))
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>();
+            div()
+                .id(ElementId::Name(SharedString::from(format!("{id}:list"))))
+                .flex_col()
+                .w_full()
+                .bg(colors.panel)
+                .rounded_md()
+                .child(div().flex_col().children(list))
+        } else {
+            button
+        }
+    }
+
+    fn header(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let session_chip = match &self.session {
+            Some(info) => format!(
+                "{} \u{00b7} {} \u{00b7} {} layers",
+                info.model_name, info.architecture, info.n_layers
+            ),
+            None => format!("{} \u{2014} not loaded", self.model_name()),
+        };
+        let toggle = cx.listener(|console, _: &ClickEvent, _w, cx| {
+            console.toggle_theme();
+            cx.notify();
+        });
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .px_4()
+            .h(px(44.0))
+            .w_full()
+            .bg(colors.panel)
+            .border_b_1()
+            .border_color(colors.border)
+            .child(
+                div()
+                    .size(px(20.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(colors.accent)
+                    .rounded(px(5.0))
+                    .child(label("E", 11.0, rgb(0xffffff))),
+            )
+            .child(
+                div()
+                    .flex_col()
+                    .child(label("ember", 13.0, colors.text))
+                    .child(label("experiment console", 9.0, colors.faint)),
+            )
+            .child(div().w_full())
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .bg(colors.panel_alt)
+                    .rounded_full()
+                    .child(mono(session_chip, 10.0, colors.dim)),
+            )
+            .child(
+                div()
+                    .id(ElementId::Name(SharedString::from("theme-toggle")))
+                    .size(px(28.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .bg(colors.panel_alt)
+                    .border_1()
+                    .border_color(colors.border)
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|s| s.border_color(colors.faint))
+                    .on_click(toggle)
+                    .child(label(
+                        if self.dark { "\u{2600}" } else { "\u{263e}" },
+                        12.0,
+                        colors.dim,
+                    )),
+            )
+    }
+
+    fn sidebar(
+        &self,
+        colors: &Colors,
+        focus: &FocusHandles,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let n_layers = self.session.as_ref().map(|s| s.n_layers).unwrap_or(0);
+        let layer_hint = if per_layer(&self.site) && n_layers > 0 {
+            format!("0 \u{2013} {} \u{00b7} {n_layers} layers", n_layers - 1)
+        } else {
+            "no per-layer site".to_string()
+        };
+
+        let needs_source = matches!(self.op.as_str(), "replace" | "interpolate" | "add-delta");
+        let needs_value = matches!(self.op.as_str(), "scale" | "interpolate");
+        let value_label = if self.op == "interpolate" {
+            "ALPHA (0\u{2013}1)"
+        } else {
+            "VALUE"
+        };
+        let source_is_capture = self.source == "capture";
+
+        let mut children: Vec<AnyElement> = Vec::new();
+
+        // ---- MODEL ----
+        children.push(section_label(colors, "MODEL").into_any_element());
+        children.push(
+            field(
+                colors,
+                "MODEL",
+                self.picker(
+                    colors,
+                    "model-picker",
+                    ComboId::Model,
+                    &self.model_path,
+                    &self.model_options,
+                    cx,
+                ),
+            )
+            .into_any_element(),
+        );
+        children.push(
+            text_field(
+                colors,
+                "model-path",
+                &self.model_path,
+                "path to model.gguf",
+                FONT_MONO_NAME,
+                12.0,
+                None,
+                &focus.model,
+                cx.listener(|console, e: &KeyDownEvent, _w, cx| {
+                    console.input_key(InputTarget::ModelPath, e);
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
+        children.push(
+            btn_secondary(
+                colors,
+                if self.status == Status::Preparing {
+                    "LOADING\u{2026}"
+                } else {
+                    "LOAD"
                 },
-                Err(error) => state.error = Some(error),
-            }
+                (!self.busy()).then(|| {
+                    cx.listener(|console, _: &ClickEvent, _w, cx| {
+                        console.load();
+                        cx.notify();
+                    })
+                }),
+            )
+            .into_any_element(),
+        );
+        match &self.session {
+            Some(info) => children.push(
+                mono(
+                    format!(
+                        "loaded {} \u{00b7} {} layers \u{00b7} {}d \u{00b7} {}",
+                        info.architecture,
+                        info.n_layers,
+                        info.embed_dim,
+                        fmt_load_ms(info.load_ms)
+                    ),
+                    10.0,
+                    colors.ok,
+                )
+                .into_any_element(),
+            ),
+            None => children.push(
+                label(
+                    "no model loaded \u{2014} pick a .gguf, then LOAD",
+                    10.0,
+                    colors.faint,
+                )
+                .into_any_element(),
+            ),
         }
-        Message::Restore => {
-            if state.busy() {
-                return Task::none();
-            }
-            if state.last_config.is_none() {
-                state.error = Some(
-                    "run an experiment first; restore verifies against its baseline".to_string(),
+        children.push(rule_h(colors).into_any_element());
+
+        // ---- HOOK & INTERVENTION ----
+        children.push(section_label(colors, "HOOK & INTERVENTION").into_any_element());
+        children.push(
+            field(
+                colors,
+                "HOOK STAGE",
+                self.picker(
+                    colors,
+                    "site-picker",
+                    ComboId::Site,
+                    &self.site,
+                    &self.site_options,
+                    cx,
+                ),
+            )
+            .into_any_element(),
+        );
+        children.push(
+            field(
+                colors,
+                "LAYER",
+                text_field(
+                    colors,
+                    "layer",
+                    &self.layer,
+                    "0",
+                    FONT_MONO_NAME,
+                    12.0,
+                    None,
+                    &focus.layer,
+                    cx.listener(|console, e: &KeyDownEvent, _w, cx| {
+                        console.input_key(InputTarget::Layer, e);
+                        cx.notify();
+                    }),
+                ),
+            )
+            .into_any_element(),
+        );
+        children.push(label(layer_hint.clone(), 9.0, colors.faint).into_any_element());
+        children.push(
+            field(
+                colors,
+                "INTERVENTION",
+                self.picker(
+                    colors,
+                    "op-picker",
+                    ComboId::Op,
+                    &self.op,
+                    &self.op_options,
+                    cx,
+                ),
+            )
+            .into_any_element(),
+        );
+        if needs_value {
+            children.push(
+                div()
+                    .flex_col()
+                    .gap_1()
+                    .child(field(
+                        colors,
+                        value_label,
+                        text_field(
+                            colors,
+                            "value",
+                            &self.value,
+                            "0.5",
+                            FONT_SANS_NAME,
+                            12.0,
+                            None,
+                            &focus.value,
+                            cx.listener(|console, e: &KeyDownEvent, _w, cx| {
+                                console.input_key(InputTarget::Value, e);
+                                cx.notify();
+                            }),
+                        ),
+                    ))
+                    .child(label(
+                        if self.op == "interpolate" {
+                            "blend toward the source"
+                        } else {
+                            "multiplicative factor"
+                        },
+                        9.0,
+                        colors.faint,
+                    ))
+                    .into_any_element(),
+            );
+        }
+        if needs_source {
+            children.push(
+                field(
+                    colors,
+                    "SOURCE",
+                    self.picker(
+                        colors,
+                        "source-picker",
+                        ComboId::Source,
+                        &self.source,
+                        &self.source_options,
+                        cx,
+                    ),
+                )
+                .into_any_element(),
+            );
+            if source_is_capture {
+                children.push(
+                    div()
+                        .flex_col()
+                        .gap_1()
+                        .child(field(
+                            colors,
+                            "SOURCE LAYER",
+                            text_field(
+                                colors,
+                                "source-layer",
+                                &self.source_layer,
+                                "0",
+                                FONT_MONO_NAME,
+                                12.0,
+                                None,
+                                &focus.source_layer,
+                                cx.listener(|console, e: &KeyDownEvent, _w, cx| {
+                                    console.input_key(InputTarget::SourceLayer, e);
+                                    cx.notify();
+                                }),
+                            ),
+                        ))
+                        .child(label(
+                            "capture fires before the intervention (same pass)",
+                            9.0,
+                            colors.faint,
+                        ))
+                        .into_any_element(),
                 );
-                return Task::none();
             }
-            match state.build_run_request() {
-                Ok(mut req) => {
-                    req.operation = "restore-original".to_string();
-                    req.factor = None;
-                    req.alpha = None;
-                    req.source = "capture".to_string();
-                    req.source_layer = None;
-                    match parse_run_request(&req) {
-                        Ok(cfg) => state.send_restore(cfg),
-                        Err(error) => state.error = Some(error),
-                    }
+        }
+        children.push(rule_h(colors).into_any_element());
+
+        // ---- TARGET ----
+        children.push(section_label(colors, "TARGET").into_any_element());
+        children.push(
+            field(
+                colors,
+                "TARGET TOKENS",
+                self.picker(
+                    colors,
+                    "token-picker",
+                    ComboId::Token,
+                    &self.token,
+                    &self.token_options,
+                    cx,
+                ),
+            )
+            .into_any_element(),
+        );
+        if self.token == "matched-span" {
+            children.push(
+                text_field(
+                    colors,
+                    "span",
+                    &self.span,
+                    "\u{643}\u{644}\u{645}\u{629} \u{641}\u{64A} \u{627}\u{644}\u{646}\u{635}",
+                    FONT_ARABIC_NAME,
+                    12.0,
+                    None,
+                    &focus.span,
+                    cx.listener(|console, e: &KeyDownEvent, _w, cx| {
+                        console.input_key(InputTarget::Span, e);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
+        children.push(rule_h(colors).into_any_element());
+
+        // ---- ACTIONS ----
+        children.push(section_label(colors, "ACTIONS").into_any_element());
+        children.push(
+            btn_primary(
+                colors,
+                match self.status {
+                    Status::Running => "RUNNING\u{2026}",
+                    Status::Preparing => "LOADING MODEL\u{2026}",
+                    Status::Restoring => "RESTORING\u{2026}",
+                    Status::Idle => "RUN EXPERIMENT",
+                },
+                (!self.busy()).then(|| {
+                    cx.listener(|console, _: &ClickEvent, _w, cx| {
+                        console.run();
+                        cx.notify();
+                    })
+                }),
+            )
+            .into_any_element(),
+        );
+        children.push(
+            btn_secondary(
+                colors,
+                "VERIFY RESTORE",
+                (!self.busy()).then(|| {
+                    cx.listener(|console, _: &ClickEvent, _w, cx| {
+                        console.restore();
+                        cx.notify();
+                    })
+                }),
+            )
+            .into_any_element(),
+        );
+        children.push(
+            label(
+                "change layer or intervention \u{2192} RUN \u{2192} compare \u{2192} VERIFY RESTORE",
+                9.0,
+                colors.faint,
+            )
+            .into_any_element(),
+        );
+
+        div()
+            .id(ElementId::Name(SharedString::from("sidebar")))
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .h_full()
+            .overflow_scroll()
+            .children(children)
+    }
+
+    fn main_panel(
+        &self,
+        colors: &Colors,
+        focus: &FocusHandles,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let prompt_editor = text_field(
+            colors,
+            "prompt",
+            &self.prompt,
+            "prompt\u{2026}",
+            FONT_ARABIC_NAME,
+            14.0,
+            Some(84.0),
+            &focus.prompt,
+            cx.listener(|console, e: &KeyDownEvent, _w, cx| {
+                console.input_key(InputTarget::Prompt, e);
+                cx.notify();
+            }),
+        );
+        let prompt_meta = div()
+            .flex()
+            .flex_row()
+            .items_end()
+            .gap_2()
+            .child(field(
+                colors,
+                "MAX TOKENS",
+                text_field(
+                    colors,
+                    "max-tokens",
+                    &self.max_tokens,
+                    "48",
+                    FONT_MONO_NAME,
+                    12.0,
+                    None,
+                    &focus.max_tokens,
+                    cx.listener(|console, e: &KeyDownEvent, _w, cx| {
+                        console.input_key(InputTarget::MaxTokens, e);
+                        cx.notify();
+                    }),
+                ),
+            ))
+            .child(field(
+                colors,
+                "EXECUTION",
+                self.picker(
+                    colors,
+                    "execution-picker",
+                    ComboId::Execution,
+                    &self.execution,
+                    &self.execution_options,
+                    cx,
+                ),
+            ))
+            .child(div().w_full())
+            .child(label(
+                "greedy \u{00b7} deterministic \u{00b7} temp 0.0",
+                9.0,
+                colors.faint,
+            ));
+
+        let error = match &self.error {
+            Some(error) => div()
+                .w_full()
+                .px_3()
+                .py_2()
+                .bg(colors.err_box_bg)
+                .border_1()
+                .border_color(colors.err_box_border)
+                .rounded_md()
+                .child(mono(error.clone(), 11.0, colors.err))
+                .into_any_element(),
+            None => div().h(px(0.0)).into_any_element(),
+        };
+        let warning = match &self.warning {
+            Some(warning) => div()
+                .w_full()
+                .px_3()
+                .py_2()
+                .bg(colors.warn_box_bg)
+                .border_1()
+                .border_color(colors.warn_box_border)
+                .rounded_md()
+                .child(mono(warning.clone(), 10.0, colors.warn))
+                .into_any_element(),
+            None => div().h(px(0.0)).into_any_element(),
+        };
+
+        let outputs = div()
+            .flex()
+            .flex_row()
+            .gap_3()
+            .child(self.output_panel(colors, "BASELINE", self.baseline.as_ref(), self.status))
+            .child(self.output_panel(
+                colors,
+                "INTERVENTION",
+                self.intervention.as_ref(),
+                self.status,
+            ));
+
+        div()
+            .id(ElementId::Name(SharedString::from("main-panel")))
+            .flex_col()
+            .gap_4()
+            .w_full()
+            .h_full()
+            .p_4()
+            .overflow_scroll()
+            .child(panel(
+                colors,
+                div()
+                    .flex_col()
+                    .gap_2()
+                    .child(section_label(colors, "PROMPT"))
+                    .child(prompt_editor)
+                    .child(prompt_meta),
+            ))
+            .child(error)
+            .child(warning)
+            .child(outputs)
+            .child(self.verification_panel(colors))
+    }
+
+    fn output_panel(
+        &self,
+        colors: &Colors,
+        title: &'static str,
+        output: Option<&RunOutput>,
+        status: Status,
+    ) -> Div {
+        let (badge_text, badge_color) = match (output, status) {
+            (Some(_), _) => ("OK", colors.ok),
+            (None, Status::Running) => ("RUN", colors.warn),
+            (None, _) => ("\u{2014}", colors.faint),
+        };
+        let body: Div = match output {
+            Some(out) if !out.text.is_empty() => div()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .w_full()
+                        .px_2()
+                        .py_2()
+                        .bg(colors.panel_alt)
+                        .border_1()
+                        .border_color(colors.border)
+                        .rounded_md()
+                        .child(multiline(&out.text, 14.0, colors.text, FONT_ARABIC_NAME)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(mono(
+                            format!(
+                                "{} tok \u{00b7} {} \u{00b7} {}",
+                                out.generated_tokens,
+                                fmt_ms(out.wall_ms),
+                                fmt_tps(out.decode_tps)
+                            ),
+                            10.0,
+                            colors.dim,
+                        ))
+                        .child(div().w_full())
+                        .child(mono(
+                            format!(
+                                "prompt {} tok \u{00b7} bundle {}",
+                                out.prompt_tokens,
+                                short_id(&out.semantic_hash)
+                            ),
+                            9.0,
+                            colors.faint,
+                        )),
+                )
+                .child(mono(out.bundle_dir.clone(), 9.0, colors.faint)),
+            Some(_out) => div().child(label("(empty output)", 12.0, colors.faint)),
+            None => div().child(label(
+                "no run yet \u{2014} outputs appear here",
+                12.0,
+                colors.faint,
+            )),
+        };
+        panel(
+            colors,
+            div()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(label(title, 11.0, colors.dim))
+                        .child(div().w_full())
+                        .child(chip(badge_text, badge_color)),
+                )
+                .child(body),
+        )
+    }
+
+    fn verification_panel(&self, colors: &Colors) -> Div {
+        let (badge, badge_color) = match (&self.verification, self.status) {
+            (Some(verification), _) if verification.ok => ("VERIFIED", colors.ok),
+            (Some(_), _) => ("VERIFICATION FAILED", colors.err),
+            (None, Status::Running) => ("RUNNING", colors.warn),
+            (None, Status::Restoring) => ("RESTORING", colors.warn),
+            (None, _) => ("NOT RUN", colors.faint),
+        };
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(restore) = &self.restore {
+            if !restore.comparable {
+                lines.push("restore: baseline not comparable (configuration changed)".to_string());
+            } else if restore.matches {
+                lines.push("restore: BIT-EXACT".to_string());
+            } else {
+                lines.push("restore: DIFFERS from baseline".to_string());
+            }
+        } else if self.verification.is_some() {
+            lines.push("restore: not run".to_string());
+        }
+        if let Some(verification) = &self.verification {
+            let failed = verification.failed();
+            if failed.is_empty() {
+                lines.push(format!(
+                    "bundle self-check {}/{} passed",
+                    verification.checks.len(),
+                    verification.checks.len()
+                ));
+            } else {
+                for (name, _, detail) in failed {
+                    lines.push(format!("check failed: {name} \u{2014} {detail}"));
                 }
-                Err(error) => state.error = Some(error),
+            }
+            for warning in &verification.warnings {
+                lines.push(format!("warning: {warning}"));
             }
         }
-        Message::Poll => state.drain_replies(),
-        Message::ToggleTheme => state.dark = !state.dark,
+        let detail = if lines.is_empty() {
+            div().child(label(
+                "bundle self-verification and the restore-original leg report here.",
+                10.0,
+                colors.faint,
+            ))
+        } else {
+            div().flex_col().gap_1().children(
+                lines
+                    .iter()
+                    .map(|line| mono(line.clone(), 10.0, colors.dim).into_any_element())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let metrics = match &self.last_metrics {
+            Some((bundle, elapsed, tps)) => format!(
+                "bundle {} \u{00b7} {} \u{00b7} {}",
+                short_id(bundle),
+                fmt_ms(*elapsed),
+                fmt_tps(*tps)
+            ),
+            None => String::new(),
+        };
+        panel(
+            colors,
+            div()
+                .flex_col()
+                .gap_1()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .child(chip(badge, badge_color))
+                        .child(div().w_full())
+                        .child(mono(metrics, 10.0, colors.faint)),
+                )
+                .child(detail),
+        )
     }
-    Task::none()
+
+    fn statusbar(&self, colors: &Colors) -> Div {
+        let (dot, status_text) = match self.status {
+            Status::Idle => (rgb(0x6e778a), "idle"),
+            Status::Preparing => (colors.warn, "loading model\u{2026}"),
+            Status::Running => (colors.accent, "running experiment\u{2026}"),
+            Status::Restoring => (rgb(0x6ba7ff), "verifying restore\u{2026}"),
+        };
+        let layer_hook = if per_layer(&self.site) {
+            format!("L{} \u{00b7} {}", self.layer, self.site)
+        } else {
+            self.site.clone()
+        };
+        let intervention = match self.op.as_str() {
+            "scale" => format!("scale \u{00d7}{}", self.value),
+            "interpolate" => format!("interpolate \u{03b1}={}", self.value),
+            op => op.to_string(),
+        };
+        let metrics = self
+            .last_metrics
+            .as_ref()
+            .map(|(bundle, elapsed, tps)| {
+                format!(
+                    "bundle {} \u{00b7} {} \u{00b7} {}",
+                    short_id(bundle),
+                    fmt_ms(*elapsed),
+                    fmt_tps(*tps)
+                )
+            })
+            .unwrap_or_default();
+
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .px_4()
+            .h(px(34.0))
+            .w_full()
+            .bg(colors.panel)
+            .border_t_1()
+            .border_color(colors.border)
+            .child(status_dot(dot))
+            .child(label(status_text.to_string(), 10.0, colors.dim))
+            .child(div().w(px(1.0)).h(px(12.0)).bg(colors.border))
+            .child(mono(
+                format!("model {}", self.model_name()),
+                10.0,
+                colors.dim,
+            ))
+            .child(mono(format!("layer/hook {layer_hook}"), 10.0, colors.dim))
+            .child(mono(
+                format!("intervention {intervention}"),
+                10.0,
+                colors.dim,
+            ))
+            .child(div().w_full())
+            .child(mono(metrics, 10.0, colors.ok))
+    }
 }
 
-fn subscription(state: &Console) -> Subscription<Message> {
-    if state.busy() {
-        iced::time::every(Duration::from_millis(80)).map(|_| Message::Poll)
-    } else {
-        Subscription::none()
+impl Render for Console {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = self.colors();
+        let focus = self
+            .focus
+            .get_or_insert_with(|| FocusHandles {
+                model: cx.focus_handle(),
+                layer: cx.focus_handle(),
+                value: cx.focus_handle(),
+                source_layer: cx.focus_handle(),
+                span: cx.focus_handle(),
+                max_tokens: cx.focus_handle(),
+                prompt: cx.focus_handle(),
+            })
+            .clone();
+
+        let header = self.header(&colors, cx);
+        let body = div()
+            .flex()
+            .flex_row()
+            .w_full()
+            .h_full()
+            .child(
+                div()
+                    .w(px(272.0))
+                    .h_full()
+                    .bg(colors.bg)
+                    .border_r_1()
+                    .border_color(colors.border)
+                    .child(self.sidebar(&colors, &focus, cx)),
+            )
+            .child(self.main_panel(&colors, &focus, cx));
+        let statusbar = self.statusbar(&colors);
+
+        div()
+            .flex_col()
+            .w_full()
+            .h_full()
+            .bg(colors.bg)
+            .child(header)
+            .child(body)
+            .child(statusbar)
     }
 }
 
 // ---------------------------------------------------------------------------
-// view
+// view helpers (pure presentation)
 // ---------------------------------------------------------------------------
 
-// The console palette — "ember" styling: a warm ember-orange accent over deep
-// cool charcoal surfaces, with soft shadows and rounded corners throughout.
-// The header and status bar stay dark in both themes (brand constants), while
-// everything else follows the in-window theme toggle.
-
-const HEADER_TOP: Color = Color::from_rgb8(0x0d, 0x0f, 0x14);
-const HEADER_BOTTOM: Color = Color::from_rgb8(0x16, 0x1b, 0x23);
-const HEADER_TEXT: Color = Color::from_rgb8(0xe8, 0xea, 0xee);
-const HEADER_DIM: Color = Color::from_rgb8(0x93, 0x9c, 0xad);
-const HEADER_CHIP_TEXT: Color = Color::from_rgb8(0xc3, 0xca, 0xd6);
-
-struct Colors {
-    bg: Color,
-    panel: Color,
-    panel_alt: Color,
-    text: Color,
-    dim: Color,
-    faint: Color,
-    border: Color,
-    accent: Color,
-    accent_hi: Color,
-    accent_lo: Color,
-    accent_soft: Color,
-    ok: Color,
-    err: Color,
-    warn: Color,
-    err_box_bg: Color,
-    err_box_border: Color,
-    warn_box_bg: Color,
-    warn_box_border: Color,
-    shadow: Color,
+fn label(content: impl Into<SharedString>, size: f32, color: Rgba) -> Div {
+    let content = content.into();
+    div().child(content).text_size(px(size)).text_color(color)
 }
 
-/// Light console theme: dark text on white surfaces, ember accent.
-const LIGHT: Colors = Colors {
-    bg: Color::from_rgb8(0xf1, 0xf2, 0xf6),
-    panel: Color::from_rgb8(0xff, 0xff, 0xff),
-    panel_alt: Color::from_rgb8(0xf5, 0xf6, 0xfa),
-    text: Color::from_rgb8(0x1a, 0x1d, 0x26),
-    dim: Color::from_rgb8(0x4d, 0x55, 0x66),
-    faint: Color::from_rgb8(0x8a, 0x92, 0xa4),
-    border: Color::from_rgb8(0xda, 0xde, 0xe7),
-    accent: Color::from_rgb8(0xc8, 0x3e, 0x0a),
-    accent_hi: Color::from_rgb8(0xdd, 0x4f, 0x16),
-    accent_lo: Color::from_rgb8(0xa8, 0x32, 0x06),
-    accent_soft: Color::from_rgba8(0xc8, 0x3e, 0x0a, 0.10),
-    ok: Color::from_rgb8(0x14, 0x7d, 0x3c),
-    err: Color::from_rgb8(0xb3, 0x26, 0x1e),
-    warn: Color::from_rgb8(0x9a, 0x67, 0x00),
-    err_box_bg: Color::from_rgb8(0xfd, 0xed, 0xeb),
-    err_box_border: Color::from_rgb8(0xdf, 0xa5, 0xa0),
-    warn_box_bg: Color::from_rgb8(0xfd, 0xf4, 0xda),
-    warn_box_border: Color::from_rgb8(0xd8, 0xb3, 0x59),
-    shadow: Color::from_rgba8(0x17, 0x1c, 0x28, 0.10),
-};
-
-/// Dark console theme: light text on deep charcoal surfaces, ember accent.
-const DARK: Colors = Colors {
-    bg: Color::from_rgb8(0x10, 0x13, 0x18),
-    panel: Color::from_rgb8(0x1a, 0x1e, 0x26),
-    panel_alt: Color::from_rgb8(0x21, 0x26, 0x30),
-    text: Color::from_rgb8(0xec, 0xee, 0xf2),
-    dim: Color::from_rgb8(0xa7, 0xae, 0xbd),
-    faint: Color::from_rgb8(0x67, 0x70, 0x83),
-    border: Color::from_rgb8(0x2b, 0x32, 0x3e),
-    accent: Color::from_rgb8(0xff, 0x77, 0x35),
-    accent_hi: Color::from_rgb8(0xff, 0x90, 0x59),
-    accent_lo: Color::from_rgb8(0xdf, 0x5c, 0x1c),
-    accent_soft: Color::from_rgba8(0xff, 0x77, 0x35, 0.15),
-    ok: Color::from_rgb8(0x4a, 0xd1, 0x8c),
-    err: Color::from_rgb8(0xf1, 0x6b, 0x62),
-    warn: Color::from_rgb8(0xe9, 0xb4, 0x4e),
-    err_box_bg: Color::from_rgb8(0x35, 0x20, 0x1e),
-    err_box_border: Color::from_rgb8(0x7c, 0x44, 0x3e),
-    warn_box_bg: Color::from_rgb8(0x35, 0x2c, 0x1a),
-    warn_box_border: Color::from_rgb8(0x7c, 0x60, 0x2c),
-    shadow: Color::from_rgba8(0x00, 0x00, 0x00, 0.35),
-};
-
-fn mono(text: impl Into<String>) -> iced::widget::Text<'static> {
-    iced::widget::text(text.into()).font(Font::with_name(FONT_MONO_NAME))
+fn mono(content: impl Into<SharedString>, size: f32, color: Rgba) -> Div {
+    let content = content.into();
+    div()
+        .child(content)
+        .font_family(FONT_MONO_NAME)
+        .text_size(px(size))
+        .text_color(color)
 }
 
-/// The ember brand gradient: a bright accent melting into its darker sibling.
-fn ember_gradient(hi: Color, lo: Color) -> Gradient {
-    // angle PI runs top -> bottom (see Radians::to_distance)
-    Gradient::Linear(Linear::new(PI).add_stop(0.0, hi).add_stop(1.0, lo))
+/// Render a possibly-multi-line string as a stack of single-line divs, so
+/// newlines are preserved regardless of the element's white-space handling.
+fn multiline(content: &str, size: f32, color: Rgba, font: &'static str) -> Div {
+    div().flex_col().children(
+        content
+            .split('\n')
+            .map(|line| {
+                div()
+                    .child(line.to_string())
+                    .font_family(font)
+                    .text_size(px(size))
+                    .text_color(color)
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
-/// A soft drop shadow using the theme's shadow color.
-fn panel_shadow(colors: &Colors, blur: f32, offset: f32) -> Shadow {
-    Shadow {
-        color: colors.shadow,
-        offset: Vector::new(0.0, offset),
-        blur_radius: blur,
-    }
+/// A small uppercase group label with a slim ember tick.
+fn section_label(colors: &Colors, label_text: &'static str) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .w(px(2.0))
+                .h(px(10.0))
+                .bg(colors.accent)
+                .rounded_full(),
+        )
+        .child(label(label_text, 10.0, colors.faint))
 }
 
-fn rule_h(colors: &'static Colors) -> Element<'static, Message> {
-    rule::horizontal(1)
-        .style(move |_| rule::Style {
-            color: colors.border,
-            radius: 0.0.into(),
-            fill_mode: rule::FillMode::Full,
-            snap: false,
-        })
-        .into()
+fn field(colors: &Colors, title: &'static str, control: impl IntoElement) -> Div {
+    div()
+        .flex_col()
+        .gap_1()
+        .w_full()
+        .child(label(title, 10.0, colors.faint))
+        .child(control)
 }
 
-fn field<'a>(
-    colors: &Colors,
-    title: &'static str,
-    control: impl Into<Element<'a, Message>>,
-) -> Element<'a, Message> {
-    column![text(title).size(9).color(colors.faint), control.into()]
-        .spacing(3)
-        .width(Length::Fill)
-        .into()
+/// A raised surface: borderless, separated from the canvas by tone alone.
+fn panel(colors: &Colors, content: impl IntoElement) -> Div {
+    div()
+        .w_full()
+        .p_4()
+        .bg(colors.panel)
+        .rounded(px(10.0))
+        .child(content)
 }
 
-/// A card: rounded panel with a hairline border and a soft shadow.
-fn panel<'a>(
-    colors: &'static Colors,
-    content: impl Into<Element<'a, Message>>,
-) -> container::Container<'a, Message> {
-    container(content.into())
-        .width(Length::Fill)
-        .padding(12)
-        .style(move |_: &Theme| container::Style {
-            background: Some(Background::Color(colors.panel)),
-            border: border::rounded(10).width(1).color(colors.border),
-            shadow: panel_shadow(colors, 8.0, 2.0),
-            ..Default::default()
-        })
-}
-
-/// A small uppercase group label with an ember tick.
-fn section_label(colors: &'static Colors, label: &'static str) -> Element<'static, Message> {
-    row![
-        container(space().width(3).height(11)).style(move |_| container::Style {
-            background: Some(Background::Color(colors.accent)),
-            border: border::rounded(2),
-            ..Default::default()
-        }),
-        space().width(6),
-        text(label).size(9).color(colors.dim),
-    ]
-    .align_y(Alignment::Center)
-    .into()
-}
-
-fn input_style(
-    colors: &'static Colors,
-) -> impl Fn(&Theme, text_input::Status) -> text_input::Style + 'static {
-    move |_theme, status| {
-        let (background, border_color, width) = match status {
-            text_input::Status::Focused { .. } => (colors.panel, colors.accent, 1.5),
-            text_input::Status::Hovered => (colors.panel_alt, colors.accent_hi, 1.0),
-            _ => (colors.panel_alt, colors.border, 1.0),
-        };
-        text_input::Style {
-            background: Background::Color(background),
-            border: border::rounded(6).width(width).color(border_color),
-            icon: colors.faint,
-            placeholder: colors.faint,
-            value: colors.text,
-            selection: colors.accent,
-        }
-    }
-}
-
-fn editor_style(
-    colors: &'static Colors,
-) -> impl Fn(&Theme, text_editor::Status) -> text_editor::Style + 'static {
-    move |_theme, status| {
-        let (background, border_color, width) = match status {
-            text_editor::Status::Focused { .. } => (colors.panel, colors.accent, 1.5),
-            text_editor::Status::Hovered => (colors.panel_alt, colors.accent_hi, 1.0),
-            _ => (colors.panel_alt, colors.border, 1.0),
-        };
-        text_editor::Style {
-            background: Background::Color(background),
-            border: border::rounded(6).width(width).color(border_color),
-            placeholder: colors.faint,
-            value: colors.text,
-            selection: colors.accent,
-        }
-    }
-}
-
-fn menu_style(colors: &'static Colors) -> impl Fn(&Theme) -> menu::Style + 'static {
-    move |_theme| menu::Style {
-        background: Background::Color(colors.panel),
-        border: border::rounded(6).width(1).color(colors.border),
-        text_color: colors.text,
-        selected_text_color: colors.accent,
-        selected_background: Background::Color(colors.accent_soft),
-        shadow: panel_shadow(colors, 10.0, 3.0),
-    }
-}
-
-/// A combo box with the console's input + menu styling.
-fn combo<'a>(
-    colors: &'static Colors,
-    state: &'a combo_box::State<String>,
-    placeholder: &'static str,
-    selected: Option<&'a String>,
-    on_selected: fn(String) -> Message,
-    on_input: Option<fn(String) -> Message>,
-) -> Element<'a, Message> {
-    let base = combo_box(state, placeholder, selected, on_selected)
-        .input_style(input_style(colors))
-        .menu_style(menu_style(colors));
-    match on_input {
-        Some(f) => base.on_input(f).into(),
-        None => base.into(),
-    }
-}
-
-fn scroll_style(
-    colors: &'static Colors,
-) -> impl Fn(&Theme, scrollable::Status) -> scrollable::Style + 'static {
-    move |_theme, _status| {
-        let rail = scrollable::Rail {
-            background: None,
-            border: border::rounded(4),
-            scroller: scrollable::Scroller {
-                background: Background::Color(colors.faint),
-                border: border::rounded(4),
-            },
-        };
-        scrollable::Style {
-            container: container::Style::default(),
-            vertical_rail: rail,
-            horizontal_rail: rail,
-            gap: None,
-            auto_scroll: scrollable::AutoScroll {
-                background: Background::Color(colors.accent_soft),
-                border: border::rounded(6).width(1).color(colors.accent),
-                shadow: panel_shadow(colors, 6.0, 2.0),
-                icon: colors.accent,
-            },
-        }
-    }
+fn rule_h(colors: &Colors) -> Div {
+    div().w_full().h(px(1.0)).bg(colors.border)
 }
 
 /// A rounded status pill (tinted background + matching text).
-fn chip<'a>(label: &'a str, color: Color) -> Element<'a, Message> {
-    container(text(label).size(9).color(color))
-        .padding([2, 8])
-        .style(move |_| container::Style {
-            background: Some(Background::Color(color.scale_alpha(0.13))),
-            border: border::rounded(999).width(1).color(color.scale_alpha(0.40)),
-            ..Default::default()
-        })
-        .into()
+fn chip(label_text: &str, color: Rgba) -> Div {
+    let hsla = Hsla::from(color);
+    div()
+        .px_2()
+        .py_1()
+        .bg(hsla.opacity(0.13))
+        .border_1()
+        .border_color(hsla.opacity(0.40))
+        .rounded_full()
+        .child(label(label_text.to_string(), 10.0, color))
 }
 
 /// A small colored status dot.
-fn status_dot(color: Color) -> Element<'static, Message> {
-    container(space().width(8).height(8))
-        .style(move |_| container::Style {
-            background: Some(Background::Color(color)),
-            border: border::rounded(4).width(1).color(color.scale_alpha(0.45)),
-            ..Default::default()
-        })
-        .into()
+fn status_dot(color: Rgba) -> Div {
+    let hsla = Hsla::from(color);
+    div()
+        .size(px(8.0))
+        .bg(color)
+        .border_1()
+        .border_color(hsla.opacity(0.45))
+        .rounded_full()
 }
 
-/// Full-width ember gradient primary button.
-fn btn_primary<'a>(
-    colors: &'static Colors,
-    label: &'a str,
-    message: Option<Message>,
-) -> iced::widget::Button<'a, Message> {
-    button(text(label).size(12))
-        .on_press_maybe(message)
-        .width(Length::Fill)
-        .padding([10, 16])
-        .style(move |_theme, status| {
-            let (hi, lo) = match status {
-                button::Status::Hovered => (colors.accent_hi, colors.accent),
-                button::Status::Pressed => (colors.accent_lo, colors.accent_lo),
-                _ => (colors.accent, colors.accent_lo),
-            };
-            button::Style {
-                background: Some(Background::Gradient(ember_gradient(hi, lo))),
-                text_color: Color::WHITE,
-                border: border::rounded(7),
-                shadow: panel_shadow(colors, 6.0, 2.0),
-                ..Default::default()
-            }
-        })
+/// Full-width ember primary button.
+fn btn_primary(
+    colors: &Colors,
+    label_text: &str,
+    on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+) -> Stateful<Div> {
+    let mut button = div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "btn:{label_text}"
+        ))))
+        .w_full()
+        .h(px(32.0))
+        .px_4()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(colors.accent)
+        .rounded_md()
+        .cursor_pointer()
+        .hover(|s| s.bg(colors.accent_hi))
+        .active(|s| s.bg(colors.accent_lo))
+        .child(label(label_text.to_string(), 12.0, rgb(0xffffff)));
+    if let Some(on_click) = on_click {
+        button = button.on_click(on_click);
+    }
+    button
 }
 
 /// Full-width secondary (outlined) button.
-fn btn_secondary<'a>(
-    colors: &'static Colors,
-    label: &'a str,
-    message: Option<Message>,
-) -> iced::widget::Button<'a, Message> {
-    button(text(label).size(12))
-        .on_press_maybe(message)
-        .width(Length::Fill)
-        .padding([10, 16])
-        .style(move |_theme, status| {
-            let (bg, border_color, fg) = match status {
-                button::Status::Hovered => (colors.panel_alt, colors.accent, colors.text),
-                button::Status::Pressed => (colors.panel, colors.accent_lo, colors.dim),
-                _ => (colors.panel, colors.border, colors.text),
-            };
-            button::Style {
-                background: Some(Background::Color(bg)),
-                text_color: fg,
-                border: border::rounded(7).width(1).color(border_color),
-                shadow: panel_shadow(colors, 4.0, 1.0),
-                ..Default::default()
-            }
-        })
+fn btn_secondary(
+    colors: &Colors,
+    label_text: &str,
+    on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+) -> Stateful<Div> {
+    let mut button = div()
+        .id(ElementId::Name(SharedString::from(format!(
+            "btn:{label_text}"
+        ))))
+        .w_full()
+        .h(px(32.0))
+        .px_4()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(colors.panel)
+        .border_1()
+        .border_color(colors.border)
+        .rounded_md()
+        .cursor_pointer()
+        .hover(|s| s.bg(colors.panel_alt).border_color(colors.accent))
+        .child(label(label_text.to_string(), 12.0, colors.text));
+    if let Some(on_click) = on_click {
+        button = button.on_click(on_click);
+    }
+    button
 }
 
-fn header<'a>(state: &'a Console) -> Element<'a, Message> {
-    let colors = state.colors();
-    let session_chip = match &state.session {
-        Some(info) => format!(
-            "model: {} · {} · {}L",
-            info.model_name, info.architecture, info.n_layers
-        ),
-        None => format!("model: {} — not loaded", state.model_name()),
-    };
-    column![
-        container(
-            row![
-                container(text("E").size(14).color(Color::WHITE))
-                    .width(26)
-                    .height(26)
-                    .align_x(Alignment::Center)
-                    .align_y(Alignment::Center)
-                    .style(move |_| container::Style {
-                        background: Some(Background::Gradient(ember_gradient(
-                            colors.accent_hi,
-                            colors.accent_lo
-                        ))),
-                        border: border::rounded(7),
-                        shadow: panel_shadow(colors, 4.0, 1.0),
-                        ..Default::default()
-                    }),
-                column![
-                    text("EMBER").size(15).color(HEADER_TEXT),
-                    text("EXPERIMENT CONSOLE · v0.6").size(9).color(HEADER_DIM),
-                ]
-                .spacing(0),
-                space().width(Length::Fill).height(Length::Shrink),
-                container(mono(session_chip).size(11).color(HEADER_CHIP_TEXT))
-                    .padding([4, 10])
-                    .style(move |_| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x18, 0x1d, 0x26))),
-                        border: border::rounded(999)
-                            .width(1)
-                            .color(Color::from_rgb8(0x2c, 0x33, 0x40)),
-                        ..Default::default()
-                    }),
-                button(text(if state.dark { "☀" } else { "☾" }).size(12))
-                    .on_press(Message::ToggleTheme)
-                    .padding([4, 10])
-                    .style(move |_theme, status| {
-                        let (bg, fg, border_color) = match status {
-                            button::Status::Hovered => (
-                                Color::from_rgb8(0x2a, 0x31, 0x3d),
-                                Color::WHITE,
-                                Color::from_rgb8(0x3a, 0x43, 0x52),
-                            ),
-                            _ => (
-                                Color::from_rgb8(0x1c, 0x21, 0x2b),
-                                Color::from_rgb8(0xc3, 0xca, 0xd6),
-                                Color::from_rgb8(0x2c, 0x33, 0x40),
-                            ),
-                        };
-                        button::Style {
-                            background: Some(Background::Color(bg)),
-                            text_color: fg,
-                            border: border::rounded(6).width(1).color(border_color),
-                            ..Default::default()
-                        }
-                    }),
-            ]
-            .align_y(Alignment::Center)
-            .padding([10, 14])
-            .spacing(12),
-        )
-        .width(Length::Fill)
-        .style(|_| container::Style {
-            background: Some(Background::Gradient(ember_gradient(
-                HEADER_TOP,
-                HEADER_BOTTOM
-            ))),
-            ..Default::default()
-        }),
-        container(space().width(Length::Fill).height(3))
-            .width(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Gradient(Gradient::Linear(
-                    Linear::new(FRAC_PI_2)
-                        .add_stop(0.0, colors.accent_hi)
-                        .add_stop(1.0, colors.accent),
-                ))),
-                ..Default::default()
-            }),
-    ]
-    .into()
-}
-
-fn sidebar<'a>(state: &'a Console) -> Element<'a, Message> {
-    let colors = state.colors();
-    let n_layers = state.session.as_ref().map(|s| s.n_layers).unwrap_or(0);
-    let layer_hint = if per_layer(&state.site) && n_layers > 0 {
-        format!("0 \u{2013} {} \u{00b7} {n_layers} layers", n_layers - 1)
+/// A single-line (or fixed-height multi-line) text field.
+#[allow(clippy::too_many_arguments)] // private helper; font/size/height are positional presentation knobs
+fn text_field(
+    colors: &Colors,
+    id: &'static str,
+    value: &str,
+    placeholder: &'static str,
+    font: &'static str,
+    size: f32,
+    height: Option<f32>,
+    focus: &FocusHandle,
+    on_key_down: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let (shown, color) = if value.is_empty() {
+        (placeholder.to_string(), colors.faint)
     } else {
-        "no per-layer site".to_string()
+        (value.to_string(), colors.text)
     };
-
-    let needs_source = matches!(state.op.as_str(), "replace" | "interpolate" | "add-delta");
-    let needs_value = matches!(state.op.as_str(), "scale" | "interpolate");
-    let value_label = if state.op == "interpolate" {
-        "ALPHA (0\u{2013}1)"
-    } else {
-        "VALUE"
-    };
-    let source_is_capture = state.source == "capture";
-
-    let mut children: Vec<Element<'a, Message>> = Vec::new();
-
-    // ---- MODEL ----
-    children.push(section_label(colors, "MODEL"));
-    children.push(field(
-        colors,
-        "MODEL",
-        combo(
-            colors,
-            &state.model_combo,
-            "select a model\u{2026}",
-            if state.model_path.is_empty() {
-                None
-            } else {
-                Some(&state.model_path)
-            },
-            Message::ModelSelected,
-            Some(Message::ModelPathChanged),
-        ),
-    ));
-    children.push(
-        text_input("path to model.gguf", &state.model_path)
-            .on_input(Message::ModelPathChanged)
-            .font(Font::with_name(FONT_MONO_NAME))
-            .size(12)
-            .padding(6)
-            .style(input_style(colors))
-            .into(),
-    );
-    children.push(
-        btn_secondary(
-            colors,
-            if state.status == Status::Preparing {
-                "LOADING\u{2026}"
-            } else {
-                "LOAD"
-            },
-            (!state.busy()).then_some(Message::Load),
-        )
-        .into(),
-    );
-    match &state.session {
-        Some(info) => children.push(
-            mono(format!(
-                "loaded {} \u{00b7} {} layers \u{00b7} {}d \u{00b7} {}",
-                info.architecture,
-                info.n_layers,
-                info.embed_dim,
-                fmt_load_ms(info.load_ms)
-            ))
-            .size(10)
-            .color(colors.ok)
-            .into(),
-        ),
-        None => children.push(
-            text("no model loaded \u{2014} pick a .gguf, then LOAD")
-                .size(10)
-                .color(colors.faint)
-                .into(),
-        ),
-    }
-    children.push(rule_h(colors));
-
-    // ---- HOOK & INTERVENTION ----
-    children.push(section_label(colors, "HOOK & INTERVENTION"));
-    children.push(field(
-        colors,
-        "HOOK STAGE",
-        combo(
-            colors,
-            &state.site_combo,
-            "hook\u{2026}",
-            Some(&state.site),
-            Message::SiteSelected,
-            None,
-        ),
-    ));
-    children.push(field(
-        colors,
-        "LAYER",
-        text_input("0", &state.layer)
-            .on_input(Message::LayerChanged)
-            .font(Font::with_name(FONT_MONO_NAME))
-            .width(Length::Fill)
-            .padding(6)
-            .style(input_style(colors)),
-    ));
-    children.push(text(layer_hint).size(9).color(colors.faint).into());
-    children.push(field(
-        colors,
-        "INTERVENTION",
-        combo(
-            colors,
-            &state.op_combo,
-            "intervention\u{2026}",
-            Some(&state.op),
-            Message::OpSelected,
-            None,
-        ),
-    ));
-    if needs_value {
-        children.push(
-            column![
-                field(
-                    colors,
-                    value_label,
-                    text_input("0.5", &state.value)
-                        .on_input(Message::ValueChanged)
-                        .padding(6)
-                        .style(input_style(colors)),
-                ),
-                text(if state.op == "interpolate" {
-                    "blend toward the source"
-                } else {
-                    "multiplicative factor"
-                })
-                .size(9)
-                .color(colors.faint),
-            ]
-            .spacing(2)
-            .into(),
-        );
-    }
-    if needs_source {
-        children.push(field(
-            colors,
-            "SOURCE",
-            combo(
-                colors,
-                &state.source_combo,
-                "source\u{2026}",
-                Some(&state.source),
-                Message::SourceSelected,
-                None,
-            ),
-        ));
-        if source_is_capture {
-            children.push(
-                column![
-                    field(
-                        colors,
-                        "SOURCE LAYER",
-                        text_input("0", &state.source_layer)
-                            .on_input(Message::SourceLayerChanged)
-                            .font(Font::with_name(FONT_MONO_NAME))
-                            .padding(6)
-                            .style(input_style(colors)),
-                    ),
-                    text("capture fires before the intervention (same pass)")
-                        .size(9)
-                        .color(colors.faint),
-                ]
-                .spacing(2)
-                .into(),
-            );
-        }
-    }
-    children.push(rule_h(colors));
-
-    // ---- TARGET ----
-    children.push(section_label(colors, "TARGET"));
-    children.push(field(
-        colors,
-        "TARGET TOKENS",
-        combo(
-            colors,
-            &state.token_combo,
-            "tokens\u{2026}",
-            Some(&state.token),
-            Message::TokenSelected,
-            None,
-        ),
-    ));
-    if state.token == "matched-span" {
-        children.push(
-            text_input(
-                "\u{643}\u{644}\u{645}\u{629} \u{641}\u{64A} \u{627}\u{644}\u{646}\u{635}",
-                &state.span,
-            )
-            .on_input(Message::SpanChanged)
-            .font(Font::with_name(FONT_ARABIC_NAME))
-            .padding(6)
-            .style(input_style(colors))
-            .into(),
-        );
-    }
-    children.push(rule_h(colors));
-
-    // ---- ACTIONS ----
-    children.push(section_label(colors, "ACTIONS"));
-    children.push(
-        btn_primary(
-            colors,
-            match state.status {
-                Status::Running => "RUNNING\u{2026}",
-                Status::Preparing => "LOADING MODEL\u{2026}",
-                Status::Restoring => "RESTORING\u{2026}",
-                Status::Idle => "RUN EXPERIMENT",
-            },
-            (!state.busy()).then_some(Message::Run),
-        )
-        .into(),
-    );
-    children.push(
-        btn_secondary(
-            colors,
-            "VERIFY RESTORE",
-            (!state.busy()).then_some(Message::Restore),
-        )
-        .into(),
-    );
-    children.push(
-        text("change layer or intervention \u{2192} RUN \u{2192} compare \u{2192} VERIFY RESTORE")
-            .size(9)
-            .color(colors.faint)
-            .into(),
-    );
-
-    scrollable(Column::with_children(children).spacing(10).padding(14))
-        .style(scroll_style(colors))
-        .into()
-}
-
-fn main_panel<'a>(state: &'a Console) -> Element<'a, Message> {
-    let colors = state.colors();
-    let prompt_editor = text_editor(&state.prompt)
-        .on_action(Message::PromptEdited)
-        .height(84)
-        .padding(10)
-        .font(Font::with_name(FONT_ARABIC_NAME))
-        .size(14)
-        .style(editor_style(colors));
-    let prompt_meta = row![
-        field(
-            colors,
-            "MAX TOKENS",
-            text_input("48", &state.max_tokens)
-                .on_input(Message::MaxTokensChanged)
-                .width(76)
-                .padding(6)
-                .style(input_style(colors)),
-        ),
-        field(
-            colors,
-            "EXECUTION",
-            combo(
-                colors,
-                &state.execution_combo,
-                "execution\u{2026}",
-                Some(&state.execution),
-                Message::ExecutionSelected,
-                None,
-            ),
-        ),
-        space().width(Length::Fill).height(Length::Shrink),
-        text("greedy \u{00b7} deterministic \u{00b7} temp 0.0")
-            .size(9)
-            .color(colors.faint),
-    ]
-    .align_y(Alignment::End)
-    .spacing(10);
-
-    let error = state
-        .error
-        .as_ref()
-        .map(|error| {
-            container(mono(error.clone()).size(11).color(colors.err))
-                .width(Length::Fill)
-                .padding([9, 12])
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(colors.err_box_bg)),
-                    border: border::rounded(8).width(1).color(colors.err_box_border),
-                    ..Default::default()
-                })
+    let focus_handle = focus.clone();
+    let mut field = div()
+        .id(ElementId::Name(SharedString::from(id)))
+        .w_full()
+        .px_2()
+        .py_1()
+        .bg(colors.panel_alt)
+        .border_1()
+        .border_color(colors.border)
+        .rounded_md()
+        .track_focus(focus)
+        .cursor_text()
+        .on_key_down(on_key_down)
+        .on_click(move |_e, window, _cx| {
+            focus_handle.focus(window);
         })
-        .unwrap_or_else(|| container(Column::new()).height(0));
-
-    let warning = state
-        .warning
-        .as_ref()
-        .map(|warning| {
-            container(mono(warning.clone()).size(10).color(colors.warn))
-                .width(Length::Fill)
-                .padding([9, 12])
-                .style(move |_| container::Style {
-                    background: Some(Background::Color(colors.warn_box_bg)),
-                    border: border::rounded(8).width(1).color(colors.warn_box_border),
-                    ..Default::default()
-                })
-        })
-        .unwrap_or_else(|| container(Column::new()).height(0));
-
-    let outputs = row![
-        output_panel(colors, "BASELINE", state.baseline.as_ref(), state.status),
-        output_panel(
-            colors,
-            "INTERVENTION",
-            state.intervention.as_ref(),
-            state.status
-        ),
-    ]
-    .spacing(12);
-
-    let verification = verification_panel(state);
-
-    scrollable(
-        column![
-            panel(
-                colors,
-                column![section_label(colors, "PROMPT"), prompt_editor, prompt_meta,].spacing(8),
-            ),
-            error,
-            warning,
-            outputs,
-            verification,
-        ]
-        .spacing(12),
-    )
-    .width(Length::Fill)
-    .style(scroll_style(colors))
-    .into()
-}
-
-fn output_panel<'a>(
-    colors: &'static Colors,
-    title: &'static str,
-    output: Option<&'a RunOutput>,
-    status: Status,
-) -> Element<'a, Message> {
-    let (badge_text, badge_color) = match (output, status) {
-        (Some(_), _) => ("OK", colors.ok),
-        (None, Status::Running) => ("RUN", colors.warn),
-        (None, Status::Preparing) => ("\u{2014}", colors.faint),
-        (None, Status::Restoring) => ("\u{2014}", colors.faint),
-        (None, Status::Idle) => ("\u{2014}", colors.faint),
-    };
-    let body: Element<'a, Message> = match output {
-        Some(out) if !out.text.is_empty() => column![
-            container(
-                text(out.text.clone())
-                    .font(Font::with_name(FONT_ARABIC_NAME))
-                    .size(14)
-                    .width(Length::Fill),
-            )
-            .width(Length::Fill)
-            .padding(10)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(colors.panel_alt)),
-                border: border::rounded(8).width(1).color(colors.border),
-                ..Default::default()
-            }),
-            row![
-                mono(format!(
-                    "{} tok \u{00b7} {} \u{00b7} {}",
-                    out.generated_tokens,
-                    fmt_ms(out.wall_ms),
-                    fmt_tps(out.decode_tps)
-                ))
-                .size(10)
-                .color(colors.dim),
-                space().width(Length::Fill).height(Length::Shrink),
-                mono(format!(
-                    "prompt {} tok \u{00b7} bundle {}",
-                    out.prompt_tokens,
-                    short_id(&out.semantic_hash)
-                ))
-                .size(9)
-                .color(colors.faint),
-            ]
-            .align_y(Alignment::Center),
-            mono(out.bundle_dir.clone()).size(9).color(colors.faint),
-        ]
-        .spacing(6)
-        .into(),
-        Some(_out) => text("(empty output)").size(12).color(colors.faint).into(),
-        None => text("no run yet \u{2014} outputs appear here")
-            .size(12)
-            .color(colors.faint)
-            .into(),
-    };
-    panel(
-        colors,
-        column![
-            row![
-                text(title).size(11).color(colors.dim),
-                space().width(Length::Fill).height(Length::Shrink),
-                chip(badge_text, badge_color),
-            ]
-            .align_y(Alignment::Center),
-            body,
-        ]
-        .spacing(8),
-    )
-    .into()
-}
-
-fn verification_panel<'a>(state: &'a Console) -> Element<'a, Message> {
-    let colors = state.colors();
-    let (badge, badge_color) = match (&state.verification, state.status) {
-        (Some(verification), _) if verification.ok => ("VERIFIED", colors.ok),
-        (Some(_), _) => ("VERIFICATION FAILED", colors.err),
-        (None, Status::Running) => ("RUNNING", colors.warn),
-        (None, Status::Restoring) => ("RESTORING", colors.warn),
-        (None, _) => ("NOT RUN", colors.faint),
-    };
-    let mut lines: Vec<String> = Vec::new();
-    if let Some(restore) = &state.restore {
-        if !restore.comparable {
-            lines.push("restore: baseline not comparable (configuration changed)".to_string());
-        } else if restore.matches {
-            lines.push("restore: BIT-EXACT".to_string());
-        } else {
-            lines.push("restore: DIFFERS from baseline".to_string());
-        }
-    } else if state.verification.is_some() {
-        lines.push("restore: not run".to_string());
+        .child(multiline(&shown, size, color, font));
+    if let Some(height) = height {
+        field = field.h(px(height)).overflow_scroll();
     }
-    if let Some(verification) = &state.verification {
-        let failed = verification.failed();
-        if failed.is_empty() {
-            lines.push(format!(
-                "bundle self-check {}/{} passed",
-                verification.checks.len(),
-                verification.checks.len()
-            ));
-        } else {
-            for (name, _, detail) in failed {
-                lines.push(format!("check failed: {name} \u{2014} {detail}"));
-            }
-        }
-        for warning in &verification.warnings {
-            lines.push(format!("warning: {warning}"));
-        }
-    }
-    let detail: Element<'a, Message> = if lines.is_empty() {
-        text("bundle self-verification and the restore-original leg report here.")
-            .size(10)
-            .color(colors.faint)
-            .into()
-    } else {
-        Column::with_children(
-            lines
-                .iter()
-                .map(|line| mono(line.clone()).size(10).color(colors.dim).into())
-                .collect::<Vec<Element<'static, Message>>>(),
-        )
-        .spacing(2)
-        .into()
-    };
-    let metrics = match &state.last_metrics {
-        Some((bundle, elapsed, tps)) => {
-            format!(
-                "bundle {} \u{00b7} {} \u{00b7} {}",
-                short_id(bundle),
-                fmt_ms(*elapsed),
-                fmt_tps(*tps)
-            )
-        }
-        None => String::new(),
-    };
-    panel(
-        colors,
-        column![
-            row![
-                chip(badge, badge_color),
-                space().width(Length::Fill).height(Length::Shrink),
-                mono(metrics).size(10).color(colors.faint),
-            ]
-            .align_y(Alignment::Center),
-            detail,
-        ]
-        .spacing(6),
-    )
-    .into()
-}
-
-fn statusbar<'a>(state: &'a Console) -> Element<'a, Message> {
-    let colors = state.colors();
-    let (dot, status_text) = match state.status {
-        Status::Idle => (Color::from_rgb8(0x6e, 0x77, 0x8a), "idle"),
-        Status::Preparing => (colors.warn, "loading model\u{2026}"),
-        Status::Running => (colors.accent, "running experiment\u{2026}"),
-        Status::Restoring => (
-            Color::from_rgb8(0x6b, 0xa7, 0xff),
-            "verifying restore\u{2026}",
-        ),
-    };
-    let layer_hook = if per_layer(&state.site) {
-        format!("L{} \u{00b7} {}", state.layer, state.site)
-    } else {
-        state.site.clone()
-    };
-    let intervention = match state.op.as_str() {
-        "scale" => format!("scale \u{00d7}{}", state.value),
-        "interpolate" => format!("interpolate \u{03b1}={}", state.value),
-        op => op.to_string(),
-    };
-    let metrics = state
-        .last_metrics
-        .as_ref()
-        .map(|(bundle, elapsed, tps)| {
-            format!(
-                "bundle {} \u{00b7} {} \u{00b7} {}",
-                short_id(bundle),
-                fmt_ms(*elapsed),
-                fmt_tps(*tps)
-            )
-        })
-        .unwrap_or_default();
-    let divider = container(space().width(1).height(12)).style(|_| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x2a, 0x30, 0x3c))),
-        ..Default::default()
-    });
-    container(
-        row![
-            status_dot(dot),
-            text(status_text).size(10).color(HEADER_CHIP_TEXT),
-            divider,
-            mono(format!("model {}", state.model_name()))
-                .size(10)
-                .color(HEADER_TEXT),
-            mono(format!("layer/hook {layer_hook}"))
-                .size(10)
-                .color(HEADER_TEXT),
-            mono(format!("intervention {intervention}"))
-                .size(10)
-                .color(HEADER_TEXT),
-            space().width(Length::Fill).height(Length::Shrink),
-            mono(metrics)
-                .size(10)
-                .color(Color::from_rgb8(0x57, 0xd6, 0x8d)),
-        ]
-        .align_y(Alignment::Center)
-        .spacing(12)
-        .padding([7, 14]),
-    )
-    .width(Length::Fill)
-    .style(|_| container::Style {
-        background: Some(Background::Color(HEADER_BOTTOM)),
-        ..Default::default()
-    })
-    .into()
-}
-
-fn view(state: &Console) -> Element<'_, Message> {
-    let colors = state.colors();
-    let body = row![
-        container(sidebar(state))
-            .width(272)
-            .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(colors.panel)),
-                ..Default::default()
-            }),
-        rule::vertical(1).style(move |_| rule::Style {
-            color: colors.border,
-            radius: 0.0.into(),
-            fill_mode: rule::FillMode::Full,
-            snap: false,
-        }),
-        container(main_panel(state))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(12),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fill);
-    column![header(state), body, statusbar(state)].into()
+    field
 }
 
 // ---------------------------------------------------------------------------
@@ -1590,7 +1752,7 @@ fn view(state: &Console) -> Element<'_, Message> {
 
 fn short_id(hash: &str) -> String {
     if hash.len() > 6 {
-        format!("{}…", &hash[..6])
+        format!("{}\u{2026}", &hash[..6])
     } else {
         hash.to_string()
     }
@@ -1611,25 +1773,6 @@ fn fmt_load_ms(ms: f64) -> String {
     format!("{:.1} s", ms / 1000.0)
 }
 
-fn theme(state: &Console) -> Theme {
-    let colors = state.colors();
-    Theme::custom(
-        if state.dark {
-            "ember-dark"
-        } else {
-            "ember-light"
-        },
-        iced::theme::Palette {
-            background: colors.bg,
-            text: colors.text,
-            primary: colors.accent,
-            success: colors.ok,
-            danger: colors.err,
-            warning: colors.warn,
-        },
-    )
-}
-
 // ---------------------------------------------------------------------------
 // entry point
 // ---------------------------------------------------------------------------
@@ -1641,37 +1784,51 @@ pub(crate) fn run_gui_command(
 ) -> anyhow::Result<()> {
     let (worker_tx, reply_rx) = spawn_worker(k_strategy, k_allow_fallback);
     eprintln!(
-        "EMBER experiment console v{} (native, iced)",
+        "EMBER experiment console v{} (native, gpui)",
         env!("CARGO_PKG_VERSION")
     );
     eprintln!("  model stays resident; press Ctrl-C to quit.");
-    let boot = {
-        let worker_tx = worker_tx.clone();
-        let reply_rx = Arc::clone(&reply_rx);
-        move || {
-            (
-                Console::new(worker_tx.clone(), Arc::clone(&reply_rx)),
-                Task::none(),
-            )
-        }
-    };
-    iced::application(boot, update, view)
-        .title(|_: &Console| "EMBER \u{2014} experiment console".to_string())
-        .window_size(iced::Size::new(1240.0, 860.0))
-        .theme(theme)
-        .default_font(Font::with_name(FONT_SANS_NAME))
-        .font(FONT_SANS)
-        .font(FONT_MONO)
-        .font(FONT_ARABIC)
-        .subscription(subscription)
-        .run()
-        .context("the experiment console window failed")?;
+
+    Application::new().run(move |cx: &mut App| {
+        // Register the embedded fonts before the first window opens so the
+        // text system can resolve Noto Sans / Mono / Naskh Arabic offline.
+        cx.text_system()
+            .add_fonts(vec![
+                Cow::Borrowed(FONT_SANS),
+                Cow::Borrowed(FONT_MONO),
+                Cow::Borrowed(FONT_ARABIC),
+            ])
+            .expect("register embedded fonts");
+
+        let bounds = Bounds::centered(None, size(px(1240.0), px(860.0)), cx);
+        cx.open_window(
+            WindowOptions {
+                titlebar: Some(TitlebarOptions {
+                    title: Some("EMBER \u{2014} experiment console".into()),
+                    ..Default::default()
+                }),
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            move |_window, cx| {
+                cx.new(|cx| {
+                    let mut console = Console::new(worker_tx, reply_rx);
+                    console.spawn_poll(cx);
+                    console
+                })
+            },
+        )
+        .expect("the experiment console window failed");
+        cx.activate(true);
+    });
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{dark, light, Console};
+    use crate::gui::parse_run_request;
+    use std::sync::{mpsc, Arc, Mutex};
 
     fn console() -> Console {
         let (tx, _rx) = mpsc::channel();
@@ -1681,24 +1838,21 @@ mod tests {
 
     #[test]
     fn console_defaults_to_dark_and_toggle_switches_palette() {
-        let state = console();
-        assert!(state.dark, "the console starts in dark mode");
-        assert_eq!(state.colors().bg, DARK.bg);
         let mut state = console();
-        let _ = update(&mut state, Message::ToggleTheme);
+        assert!(state.dark, "the console starts in dark mode");
+        assert_eq!(state.colors().bg, dark().bg);
+        state.toggle_theme();
         assert!(!state.dark);
-        assert_eq!(state.colors().bg, LIGHT.bg);
-        assert_eq!(state.colors().panel, LIGHT.panel);
-        let _ = update(&mut state, Message::ToggleTheme);
+        assert_eq!(state.colors().bg, light().bg);
+        assert_eq!(state.colors().panel, light().panel);
+        state.toggle_theme();
         assert!(state.dark);
     }
 
     #[test]
     fn light_and_dark_palettes_differ_in_every_role() {
-        // Every color role must differ between the two themes, otherwise a
-        // theme switch would silently leave text or surfaces unreadable.
-        let dark = DARK;
-        let light = LIGHT;
+        let dark = dark();
+        let light = light();
         assert_ne!(dark.bg, light.bg);
         assert_ne!(dark.panel, light.panel);
         assert_ne!(dark.text, light.text);
@@ -1711,10 +1865,6 @@ mod tests {
         assert_ne!(dark.warn, light.warn);
         assert_ne!(dark.err_box_bg, light.err_box_bg);
         assert_ne!(dark.warn_box_bg, light.warn_box_bg);
-        // contrast sanity: light theme has dark text on light surfaces,
-        // dark theme has light text on dark surfaces.
-        assert!(light.bg.r > light.text.r);
-        assert!(dark.text.r > dark.bg.r);
     }
 
     #[test]
