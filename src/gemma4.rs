@@ -982,26 +982,35 @@ impl Gemma4<CpuBackend> {
                 _ => anyhow::bail!("GGUF general.architecture must be a string"),
             }
         }
-        let config = Gemma4Config::from_gguf_metadata(&loader)?;
+        let mut config = Gemma4Config::from_gguf_metadata(&loader)?;
         log::debug!("gemma4 config: {:?}", config);
 
-        let embed_tokens = match loader.take_tensor("token_embd.weight")? {
-            LoadedTensor::F32(tensor) => {
-                // GGUF stores the embedding with the vocab dim contiguous,
-                // i.e. already row-major [vocab, embed]; swap dims only so
-                // assign_row_from_table / tied_embedding_logits see the
-                // orientation they expect.
-                let shape = tensor.shape();
-                anyhow::ensure!(shape.len() == 2, "token_embd.weight must be 2D");
-                Gemma4Embedding::F32(Arc::new(crate::tensor::CpuTensor::from_data(
-                    vec![shape[1], shape[0]],
-                    tensor.data().to_vec(),
-                )))
-            }
-            LoadedTensor::Q8_0(weight) => Gemma4Embedding::Q8_0(Arc::new(weight)),
-            LoadedTensor::KQuant(_) => {
-                anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
-            }
+        let embed_tokens: Gemma4Embedding<CpuBackend> =
+            match loader.take_tensor("token_embd.weight")? {
+                LoadedTensor::F32(tensor) => {
+                    // GGUF stores the embedding with the vocab dim contiguous,
+                    // i.e. already row-major [vocab, embed]; swap dims only so
+                    // assign_row_from_table / tied_embedding_logits see the
+                    // orientation they expect.
+                    let shape = tensor.shape();
+                    anyhow::ensure!(shape.len() == 2, "token_embd.weight must be 2D");
+                    Gemma4Embedding::F32(Arc::new(crate::tensor::CpuTensor::from_data(
+                        vec![shape[1], shape[0]],
+                        tensor.data().to_vec(),
+                    )))
+                }
+                LoadedTensor::Q8_0(weight) => Gemma4Embedding::Q8_0(Arc::new(weight)),
+                LoadedTensor::KQuant(_) => {
+                    anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+                }
+            };
+
+        // The GGUF does not reliably carry a vocab_size metadata key; derive it
+        // from the actual token embedding so 262144-vocab variants (e.g. E2B)
+        // load instead of failing the 256000 fallback.
+        config.vocab_size = match &embed_tokens {
+            Gemma4Embedding::F32(table) => table.shape()[0],
+            Gemma4Embedding::Q8_0(table) => table.out_features(),
         };
 
         // Load rope_freqs for partial RoPE application (global layers)
