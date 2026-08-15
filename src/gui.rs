@@ -79,7 +79,8 @@ struct BaselineRecord {
 }
 
 /// Typed summary of the resident model session (shared by the web and the
-/// native console).
+/// native console). Only constructed when the native console feature is on.
+#[cfg(feature = "gui")]
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SessionInfo {
     pub model_path: String,
@@ -147,6 +148,7 @@ impl GuiSession {
     }
 
     /// Typed summary of the prepared session, if any.
+    #[cfg(feature = "gui")]
     pub(crate) fn info(&self) -> Option<SessionInfo> {
         let prepared = self.prepared.as_ref()?;
         Some(SessionInfo {

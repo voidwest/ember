@@ -20,14 +20,19 @@ rand = "0.8"
 rayon = "1"
 tiny_http = "0.12"
 # v0.6 native console: gpui (Zed's GPU-accelerated framework, blade/Vulkan on
-# Linux). Embedded Noto fonts (src/gui_fonts/) provide Latin + Arabic coverage
-# offline.
-gpui = { version = "0.2.2", default-features = true }
+# Linux). Optional (feature "gui", on by default): headless research builds
+# use --no-default-features and skip the blade/ash/wayland stack. Embedded
+# Noto fonts (src/gui_fonts/) provide Latin + Arabic coverage offline.
+gpui = { version = "0.2.2", default-features = true, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 sha2 = "0.10"
 unicode-normalization = "0.1"
+
+[features]
+default = ["gui"]
+gui = ["dep:gpui"]
 
 [[bench]]
 name = "q8_matmul"
