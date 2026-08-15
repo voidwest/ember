@@ -652,6 +652,78 @@ mod x86 {
         ]
     }
 
+    /// Four-row Q4_K × Q8_K tile reading pre-split nibbles (opt-in, prefill-only).
+    #[target_feature(enable = "avx2,fma,f16c,ssse3")]
+    #[allow(clippy::needless_range_loop)]
+    pub(super) unsafe fn q4_k_dot_q8_k_x4_presplit(
+        data: &[u8],
+        presplit: &[u8],
+        blocks_per_row: usize,
+        column: usize,
+        input: &[Q8KBlock],
+    ) -> [f32; 4] {
+        debug_assert_eq!(input.len(), 4 * blocks_per_row);
+        let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
+        let presplit_start = column * blocks_per_row * 256;
+        let mut acc = [_mm256_setzero_ps(); 4];
+        let mut min_acc = [_mm_setzero_ps(); 4];
+        for block_index in 0..blocks_per_row {
+            let start = row_start + block_index * Q4_K_BLOCK_BYTES;
+            let block = &data[start..start + Q4_K_BLOCK_BYTES];
+            let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+            let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+            let (scales, mins) = unpack_k4_scales(&block[4..16]);
+            let qstart = presplit_start + block_index * 256;
+            let mut integer_sum = [_mm256_setzero_si256(); 4];
+            for group in 0..4 {
+                let low = _mm256_loadu_si256(presplit.as_ptr().add(qstart + group * 64).cast());
+                let high =
+                    _mm256_loadu_si256(presplit.as_ptr().add(qstart + group * 64 + 32).cast());
+                let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
+                let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
+                for row in 0..4 {
+                    let activation = &input[row * blocks_per_row + block_index];
+                    let q8_low = _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
+                    let q8_high =
+                        _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
+                    integer_sum[row] = _mm256_add_epi32(
+                        integer_sum[row],
+                        _mm256_madd_epi16(low_scale, _mm256_maddubs_epi16(low, q8_low)),
+                    );
+                    integer_sum[row] = _mm256_add_epi32(
+                        integer_sum[row],
+                        _mm256_madd_epi16(high_scale, _mm256_maddubs_epi16(high, q8_high)),
+                    );
+                }
+            }
+            for row in 0..4 {
+                let activation = &input[row * blocks_per_row + block_index];
+                acc[row] = _mm256_fmadd_ps(
+                    _mm256_set1_ps(activation.d * d),
+                    _mm256_cvtepi32_ps(integer_sum[row]),
+                    acc[row],
+                );
+                let mins8 = _mm_loadl_epi64(mins.as_ptr().cast());
+                let mins16 = _mm_unpacklo_epi8(mins8, _mm_setzero_si128());
+                let sums_low = _mm_loadu_si128(activation.bsums.as_ptr().cast());
+                let sums_high = _mm_loadu_si128(activation.bsums.as_ptr().add(8).cast());
+                let paired_sums = _mm_hadd_epi16(sums_low, sums_high);
+                let min_product = _mm_madd_epi16(mins16, paired_sums);
+                min_acc[row] = _mm_fmadd_ps(
+                    _mm_set1_ps(-activation.d * dmin),
+                    _mm_cvtepi32_ps(min_product),
+                    min_acc[row],
+                );
+            }
+        }
+        [
+            hsum_f32x8(acc[0]) + hsum_f32x4(min_acc[0]),
+            hsum_f32x8(acc[1]) + hsum_f32x4(min_acc[1]),
+            hsum_f32x8(acc[2]) + hsum_f32x4(min_acc[2]),
+            hsum_f32x8(acc[3]) + hsum_f32x4(min_acc[3]),
+        ]
+    }
+
     /// Four-row Q6_K × Q8_K tile; see [`q4_k_dot_q8_k_x4`].
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
     #[allow(clippy::needless_range_loop)]
@@ -736,6 +808,74 @@ mod x86 {
             hsum_f32x8(acc[3]),
         ]
     }
+
+    /// Four-row Q6_K × Q8_K tile reading pre-expanded quants (opt-in, prefill-only).
+    #[target_feature(enable = "avx2,fma,f16c,ssse3")]
+    #[allow(clippy::needless_range_loop)]
+    pub(super) unsafe fn q6_k_dot_q8_k_x4_presplit(
+        data: &[u8],
+        presplit: &[u8],
+        blocks_per_row: usize,
+        column: usize,
+        input: &[Q8KBlock],
+    ) -> [f32; 4] {
+        debug_assert_eq!(input.len(), 4 * blocks_per_row);
+        let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
+        let presplit_start = column * blocks_per_row * 256;
+        let mut acc = [_mm256_setzero_ps(); 4];
+        for block_index in 0..blocks_per_row {
+            let start = row_start + block_index * Q6_K_BLOCK_BYTES;
+            let block = &data[start..start + Q6_K_BLOCK_BYTES];
+            let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
+            let scales = &block[192..208];
+            let qstart = presplit_start + block_index * 256;
+            let mut integer_sum = [_mm256_setzero_si256(); 4];
+            for half in 0..2 {
+                for segment in 0..4 {
+                    let scale_base = half * 8 + segment * 2;
+                    let scale_vector = scales_for_32(
+                        i8::from_le_bytes([scales[scale_base]]),
+                        i8::from_le_bytes([scales[scale_base + 1]]),
+                    );
+                    let raw = _mm256_loadu_si256(
+                        presplit
+                            .as_ptr()
+                            .add(qstart + half * 128 + segment * 32)
+                            .cast(),
+                    );
+                    for row in 0..4 {
+                        let activation = &input[row * blocks_per_row + block_index];
+                        let q8 = activation.qs.as_ptr().add(half * 128 + segment * 32);
+                        let pairs = _mm256_maddubs_epi16(raw, _mm256_loadu_si256(q8.cast()));
+                        integer_sum[row] = _mm256_add_epi32(
+                            integer_sum[row],
+                            _mm256_madd_epi16(scale_vector, pairs),
+                        );
+                    }
+                }
+            }
+            for row in 0..4 {
+                let activation = &input[row * blocks_per_row + block_index];
+                let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
+                let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
+                let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
+                let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
+                integer_sum[row] = _mm256_sub_epi32(integer_sum[row], offset);
+                let combined_scale = activation.d * d;
+                acc[row] = _mm256_fmadd_ps(
+                    _mm256_set1_ps(combined_scale),
+                    _mm256_cvtepi32_ps(integer_sum[row]),
+                    acc[row],
+                );
+            }
+        }
+        [
+            hsum_f32x8(acc[0]),
+            hsum_f32x8(acc[1]),
+            hsum_f32x8(acc[2]),
+            hsum_f32x8(acc[3]),
+        ]
+    }
 }
 
 #[inline]
@@ -773,12 +913,26 @@ fn dot_four_rows(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> Option<
         // `input` contains exactly four packed rows.
         return Some(unsafe {
             match w.dtype() {
-                KQuantDtype::Q4K => {
-                    x86::q4_k_dot_q8_k_x4(w.data(), w.blocks_per_row(), column, input)
-                }
-                KQuantDtype::Q6K => {
-                    x86::q6_k_dot_q8_k_x4(w.data(), w.blocks_per_row(), column, input)
-                }
+                KQuantDtype::Q4K => match w.presplit() {
+                    Some(presplit) => x86::q4_k_dot_q8_k_x4_presplit(
+                        w.data(),
+                        presplit,
+                        w.blocks_per_row(),
+                        column,
+                        input,
+                    ),
+                    None => x86::q4_k_dot_q8_k_x4(w.data(), w.blocks_per_row(), column, input),
+                },
+                KQuantDtype::Q6K => match w.presplit() {
+                    Some(presplit) => x86::q6_k_dot_q8_k_x4_presplit(
+                        w.data(),
+                        presplit,
+                        w.blocks_per_row(),
+                        column,
+                        input,
+                    ),
+                    None => x86::q6_k_dot_q8_k_x4(w.data(), w.blocks_per_row(), column, input),
+                },
             }
         });
     }
@@ -1611,6 +1765,54 @@ mod tests {
                         "{dtype:?} column {column} row {row}"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn q4_presplit_dot_four_rows_matches_packed() {
+        if !x86_k_supported() {
+            return;
+        }
+        let w_packed =
+            weight(KQuantDtype::Q4K, 5, 512, 0x5a).with_execution(KExecution::CompressedX86);
+        let w_presplit = w_packed.clone().with_presplit();
+        let src = seeded_activations(4 * 512, 0x5b);
+        let mut packed = Vec::new();
+        quantize_q8_k_into_scalar(&src, &mut packed).unwrap();
+        for column in 0..w_packed.out_features() {
+            let expected = dot_four_rows(&w_packed, column, &packed).unwrap();
+            let actual = dot_four_rows(&w_presplit, column, &packed).unwrap();
+            for row in 0..4 {
+                assert_eq!(
+                    expected[row].to_bits(),
+                    actual[row].to_bits(),
+                    "column {column} row {row}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn q6_presplit_dot_four_rows_matches_packed() {
+        if !x86_k_supported() {
+            return;
+        }
+        let w_packed =
+            weight(KQuantDtype::Q6K, 5, 512, 0x6a).with_execution(KExecution::CompressedX86);
+        let w_presplit = w_packed.clone().with_presplit();
+        let src = seeded_activations(4 * 512, 0x6b);
+        let mut packed = Vec::new();
+        quantize_q8_k_into_scalar(&src, &mut packed).unwrap();
+        for column in 0..w_packed.out_features() {
+            let expected = dot_four_rows(&w_packed, column, &packed).unwrap();
+            let actual = dot_four_rows(&w_presplit, column, &packed).unwrap();
+            for row in 0..4 {
+                assert_eq!(
+                    expected[row].to_bits(),
+                    actual[row].to_bits(),
+                    "column {column} row {row}"
+                );
             }
         }
     }

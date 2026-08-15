@@ -471,6 +471,71 @@ pub struct KQuantWeight {
     /// Per-tensor execution decision recorded at load; the matmul
     /// dispatch executes this decision and never silently downgrades.
     execution: KExecution,
+    /// Opt-in pre-split quant bytes (Q4_K low/high nibbles, or Q6_K 6-bit
+    /// values in full byte lanes; 256 bytes/block either way) for the
+    /// prefill-only four-row tile. Built only when `EMBER_PRESPLIT` is set at
+    /// load; `None` otherwise.
+    presplit: Option<Vec<u8>>,
+}
+
+/// Whether the opt-in quant pre-split is requested (prefill-only lever).
+fn presplit_enabled() -> bool {
+    matches!(
+        std::env::var("EMBER_PRESPLIT").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
+
+/// Split each Q4_K block's packed quant bytes into low/high nibble lanes:
+/// 128 packed bytes/block become 256 bytes/block, laid out as four
+/// `[low(32) | high(32)]` group pairs mirroring the kernel's q8 access order.
+fn build_q4_presplit(data: &[u8], blocks: usize) -> Vec<u8> {
+    let mut out = vec![0u8; blocks * 256];
+    for (block_index, chunk) in out.chunks_mut(256).enumerate() {
+        let block_start = block_index * Q4_K_BLOCK_BYTES;
+        for group in 0..4 {
+            let src = &data[block_start + 16 + group * 32..block_start + 16 + group * 32 + 32];
+            for i in 0..32 {
+                chunk[group * 64 + i] = src[i] & 0x0f;
+                chunk[group * 64 + 32 + i] = src[i] >> 4;
+            }
+        }
+    }
+    out
+}
+
+/// Dispatch the pre-split build to the dtype-specific layout.
+fn build_presplit(data: &[u8], blocks: usize, dtype: KQuantDtype) -> Vec<u8> {
+    match dtype {
+        KQuantDtype::Q4K => build_q4_presplit(data, blocks),
+        KQuantDtype::Q6K => build_q6_presplit(data, blocks),
+    }
+}
+
+/// Expand each Q6_K block's 6-bit quants into full byte lanes (0..63), laid out
+/// as two halves of four 32-byte segments mirroring the kernel's q8 access
+/// order (192 packed quant bytes -> 256 bytes/block).
+fn build_q6_presplit(data: &[u8], blocks: usize) -> Vec<u8> {
+    let mut out = vec![0u8; blocks * 256];
+    for (block_index, chunk) in out.chunks_mut(256).enumerate() {
+        let block_start = block_index * Q6_K_BLOCK_BYTES;
+        let ql = &data[block_start..block_start + 128];
+        let qh = &data[block_start + 128..block_start + 192];
+        for half in 0..2 {
+            let q = half * 64;
+            let h = half * 32;
+            let y = half * 128;
+            for index in 0..32 {
+                chunk[y + index] = (ql[q + index] & 0x0f) | ((qh[h + index] & 3) << 4);
+                chunk[y + 32 + index] =
+                    (ql[q + index + 32] & 0x0f) | (((qh[h + index] >> 2) & 3) << 4);
+                chunk[y + 64 + index] = (ql[q + index] >> 4) | (((qh[h + index] >> 4) & 3) << 4);
+                chunk[y + 96 + index] =
+                    (ql[q + index + 32] >> 4) | (((qh[h + index] >> 6) & 3) << 4);
+            }
+        }
+    }
+    out
 }
 
 impl KQuantWeight {
@@ -563,11 +628,20 @@ impl KQuantWeight {
                 dtype.name()
             );
         }
+        let presplit = if matches!(dtype, KQuantDtype::Q4K | KQuantDtype::Q6K)
+            && matches!(execution, KExecution::CompressedX86)
+            && presplit_enabled()
+        {
+            Some(build_presplit(data.as_slice(), expected_blocks, dtype))
+        } else {
+            None
+        };
         Ok(Self {
             data,
             shape,
             dtype,
             execution,
+            presplit,
         })
     }
 
@@ -575,6 +649,12 @@ impl KQuantWeight {
     #[inline]
     pub fn data(&self) -> &[u8] {
         self.data.as_slice()
+    }
+
+    /// Pre-split quant bytes for the prefill-only four-row tile, if built.
+    #[inline]
+    pub fn presplit(&self) -> Option<&[u8]> {
+        self.presplit.as_deref()
     }
 
     /// Compressed byte size of this weight.
@@ -612,6 +692,18 @@ impl KQuantWeight {
             "packed K-quant weight cannot record eager-f32 execution"
         );
         self.execution = execution;
+        self
+    }
+
+    /// Test-only builder that forces the quant pre-split so the
+    /// presplit/packed matmul paths can be compared bit-for-bit without
+    /// touching process-global env state.
+    #[cfg(test)]
+    pub(crate) fn with_presplit(mut self) -> Self {
+        if matches!(self.dtype, KQuantDtype::Q4K | KQuantDtype::Q6K) {
+            let blocks = self.shape[0] * self.shape[1] / QK_K;
+            self.presplit = Some(build_presplit(self.data.as_slice(), blocks, self.dtype));
+        }
         self
     }
 
