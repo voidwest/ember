@@ -14,11 +14,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # rustsec/audit-check@v2 runs a prebuilt cargo-audit binary from the
-      # rustsec release pipeline instead of compiling it from source per run
-      - uses: rustsec/audit-check@v2
+      # Prebuilt pinned cargo-audit binary (rustsec publishes release
+      # binaries). Source-compiling current cargo-audit breaks: its newest
+      # dependencies require Rust 1.96 while this repo pins 1.92.
+      - uses: taiki-e/install-action@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit@0.22.2
+      - name: audit
+        run: cargo audit
 
   build-and-test:
     runs-on: ubuntu-latest
