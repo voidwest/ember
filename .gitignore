@@ -118,3 +118,11 @@ runs/
 # giant per-op trace dumps (regeneration data, kept local; dossier is the citable summary)
 artifacts/performance-baseline/2026-08-10/analysis-summary.json
 artifacts/performance-baseline/2026-08-10/raw/*.trace.json
+
+# local research artifacts (EmberSEC comparative eval, pilots, fuzz corpora).
+# The security harness is injected into worktrees by
+# research/embersec/comparative/run_eval.py and is intentionally not committed.
+/research/
+/fuzz/
+/tests/_embersec_harness.rs
+/docs/road-to-1.0-plan.html
