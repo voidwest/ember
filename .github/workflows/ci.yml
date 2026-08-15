@@ -14,10 +14,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: install cargo-audit
-        run: cargo install cargo-audit --locked
-      - name: audit
-        run: cargo audit
+      # rustsec/audit-check@v2 runs a prebuilt cargo-audit binary from the
+      # rustsec release pipeline instead of compiling it from source per run
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
   build-and-test:
     runs-on: ubuntu-latest
@@ -59,6 +60,9 @@ jobs:
           RAYON_NUM_THREADS: "2"
         run: cargo test --locked --release --lib k_quant_matmul::tests -- --nocapture
 
+      - name: headless check (no gui feature)
+        run: cargo check --locked --no-default-features --all-targets
+
       - name: clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
@@ -85,3 +89,32 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pytest tests probes/test_probe_workflows.py -q
           python scripts/check_docs.py
+
+  build-and-test-arm64:
+    # aarch64 tier: validates the NEON kernels and the headless (no-gui)
+    # build surface. Headless because the gpui/X11 stack is only exercised
+    # on x86_64 above; the K-quant x86 dot kernels are cfg'd out here.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: select Rust toolchain
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal --component clippy,rustfmt
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: build (headless)
+        run: cargo build --locked --no-default-features --all-targets
+
+      - name: test (headless)
+        run: cargo test --locked --no-default-features --all-targets
+
+      - name: clippy (headless)
+        run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
