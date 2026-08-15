@@ -822,16 +822,37 @@ fn now_iso8601() -> String {
 mod tests {
     use super::*;
     use crate::v05::testutil;
+    use crate::v05::testutil::temp_root;
 
-    fn temp_root(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "ember-verify-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+    /// Write the standard test bundle into a fresh temp dir, run `mutate`,
+    /// verify, and require exactly the named checks to fail.
+    fn assert_verification_failure(
+        tag: &str,
+        mutate: impl FnOnce(&std::path::Path),
+        expect_failed: &[&str],
+    ) {
+        let root = temp_root(tag);
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        mutate(&root);
+        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+        assert!(!report.ok);
+        let names: Vec<&str> = report
+            .checks
+            .iter()
+            .filter(|check| !check.ok)
+            .map(|check| check.name.as_str())
+            .collect();
+        for expected in expect_failed {
+            assert!(
+                names.contains(expected),
+                "missing {expected:?} among {names:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -852,118 +873,78 @@ mod tests {
 
     #[test]
     fn one_byte_payload_corruption_fails() {
-        let root = temp_root("corrupt");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
+        assert_verification_failure(
+            "corrupt",
+            |root| {
+                let payload = root.join("captures/tensors.safetensors");
+                let mut bytes = std::fs::read(&payload).unwrap();
+                let last = bytes.len() - 1;
+                bytes[last] ^= 0xFF;
+                std::fs::write(&payload, bytes).unwrap();
+            },
+            &["checksums", "tensor payload"],
         );
-        let payload = root.join("captures/tensors.safetensors");
-        let mut bytes = std::fs::read(&payload).unwrap();
-        let last = bytes.len() - 1;
-        bytes[last] ^= 0xFF;
-        std::fs::write(&payload, bytes).unwrap();
-        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
-        assert!(!report.ok);
-        let names: Vec<&str> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
-        assert!(names.contains(&"checksums"), "{names:?}");
-        assert!(names.contains(&"tensor payload"), "{names:?}");
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn removed_file_fails() {
-        let root = temp_root("removed");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
+        assert_verification_failure(
+            "removed",
+            |root| {
+                std::fs::remove_file(root.join("captures/index.jsonl")).unwrap();
+            },
+            &["required files"],
         );
-        std::fs::remove_file(root.join("captures/index.jsonl")).unwrap();
-        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
-        assert!(!report.ok);
-        let names: Vec<&str> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
-        assert!(names.contains(&"required files"), "{names:?}");
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn altered_manifest_value_fails() {
-        let root = temp_root("altered");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
+        assert_verification_failure(
+            "altered",
+            |root| {
+                let path = root.join("semantic-manifest.json");
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                value["experiment"]["name"] = serde_json::json!("tampered");
+                std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            },
+            &["semantic hash"],
         );
-        let path = root.join("semantic-manifest.json");
-        let mut value: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        value["experiment"]["name"] = serde_json::json!("tampered");
-        std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
-        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
-        assert!(!report.ok);
-        let names: Vec<&str> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
-        assert!(names.contains(&"semantic hash"), "{names:?}");
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
     fn extra_unindexed_tensor_fails() {
-        let root = temp_root("extra");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
+        assert_verification_failure(
+            "extra",
+            |root| {
+                // Append a second tensor to the payload and fix
+                // checksums.sha256 so only the unindexed-tensor check can
+                // catch it.
+                let payload_path = root.join("captures/tensors.safetensors");
+                let original = std::fs::read(&payload_path).unwrap();
+                let tensors = crate::v05::safetensors::deserialize(&original).unwrap();
+                let extra = crate::v05::safetensors::serialize(&[
+                    crate::v05::safetensors::TensorData {
+                        name: "cap-1/i1/residual-post-mlp/0",
+                        dtype: crate::v05::safetensors::TensorDType::F32,
+                        shape: &[1, 4],
+                        bytes: &[0u8; 16],
+                    },
+                    crate::v05::safetensors::TensorData {
+                        name: "rogue/i1/residual-post-mlp/0",
+                        dtype: crate::v05::safetensors::TensorDType::F32,
+                        shape: &[1, 4],
+                        bytes: &[0u8; 16],
+                    },
+                ])
+                .unwrap();
+                let _ = tensors;
+                std::fs::write(&payload_path, extra).unwrap();
+                // refresh checksums.sha256 to isolate the payload check
+                fix_checksums(root);
+            },
+            &["tensor payload"],
         );
-        // Append a second tensor to the payload and fix checksums.sha256
-        // so only the unindexed-tensor check can catch it.
-        let payload_path = root.join("captures/tensors.safetensors");
-        let original = std::fs::read(&payload_path).unwrap();
-        let tensors = crate::v05::safetensors::deserialize(&original).unwrap();
-        let mut extra = crate::v05::safetensors::serialize(&[
-            crate::v05::safetensors::TensorData {
-                name: "cap-1/i1/residual-post-mlp/0",
-                dtype: crate::v05::safetensors::TensorDType::F32,
-                shape: &[1, 4],
-                bytes: &[0u8; 16],
-            },
-            crate::v05::safetensors::TensorData {
-                name: "rogue/i1/residual-post-mlp/0",
-                dtype: crate::v05::safetensors::TensorDType::F32,
-                shape: &[1, 4],
-                bytes: &[0u8; 16],
-            },
-        ])
-        .unwrap();
-        let _ = tensors;
-        std::fs::write(&payload_path, &mut extra).unwrap();
-        // refresh checksums.sha256 to isolate the payload check
-        fix_checksums(&root);
-        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
-        assert!(!report.ok);
-        let names: Vec<&str> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
-        assert!(names.contains(&"tensor payload"), "{names:?}");
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1009,26 +990,16 @@ mod tests {
 
     #[test]
     fn traversal_in_checksums_is_rejected() {
-        let root = temp_root("traversal");
-        testutil::write_test_bundle(
-            &root,
-            &testutil::sample_rows(),
-            &testutil::sample_positions(),
+        assert_verification_failure(
+            "traversal",
+            |root| {
+                let path = root.join("checksums.sha256");
+                let mut text = std::fs::read_to_string(&path).unwrap();
+                text.push_str(&format!("{}\n", "00".repeat(32) + "  ../escape.bin"));
+                std::fs::write(&path, text).unwrap();
+            },
+            &["checksums"],
         );
-        let path = root.join("checksums.sha256");
-        let mut text = std::fs::read_to_string(&path).unwrap();
-        text.push_str(&format!("{}\n", "00".repeat(32) + "  ../escape.bin"));
-        std::fs::write(&path, text).unwrap();
-        let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
-        assert!(!report.ok);
-        let names: Vec<&str> = report
-            .checks
-            .iter()
-            .filter(|check| !check.ok)
-            .map(|check| check.name.as_str())
-            .collect();
-        assert!(names.contains(&"checksums"), "{names:?}");
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

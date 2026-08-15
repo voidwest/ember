@@ -878,44 +878,21 @@ pub fn validate_artifact_contract(
     if let Some(sha256) = &manifest.model.sha256 {
         validate_sha256(sha256, "manifest model.sha256")?;
     }
-    let model_path = Path::new(&manifest.model.path);
-    if model_path.is_file() {
-        if let Some(expected_size) = manifest.model.file_size_bytes {
-            let actual_size = fs::metadata(model_path)
-                .with_context(|| format!("failed to stat model: {}", model_path.display()))?
-                .len();
-            if actual_size != expected_size {
-                anyhow::bail!(
-                    "model file size mismatch: manifest {expected_size}, actual {actual_size}"
-                );
-            }
-        }
-        if let Some(expected_sha256) = &manifest.model.sha256 {
-            let actual_sha256 = sha256_file_result(model_path)?;
-            if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
-                anyhow::bail!("model SHA-256 does not match the manifest");
-            }
-        }
-    }
+    verify_file_identity(
+        Path::new(&manifest.model.path),
+        manifest.model.file_size_bytes,
+        manifest.model.sha256.as_ref(),
+        "model",
+    )?;
     if let Some(tokenizer) = &manifest.tokenizer {
         require_non_empty(&tokenizer.path, "manifest tokenizer.path")?;
         validate_sha256(&tokenizer.sha256, "manifest tokenizer.sha256")?;
-        let tokenizer_path = Path::new(&tokenizer.path);
-        if tokenizer_path.is_file() {
-            let actual_size = fs::metadata(tokenizer_path)
-                .with_context(|| format!("failed to stat tokenizer: {}", tokenizer_path.display()))?
-                .len();
-            if actual_size != tokenizer.file_size_bytes {
-                anyhow::bail!(
-                    "tokenizer file size mismatch: manifest {}, actual {actual_size}",
-                    tokenizer.file_size_bytes
-                );
-            }
-            let actual_sha256 = sha256_file_result(tokenizer_path)?;
-            if !actual_sha256.eq_ignore_ascii_case(&tokenizer.sha256) {
-                anyhow::bail!("tokenizer SHA-256 does not match the manifest");
-            }
-        }
+        verify_file_identity(
+            Path::new(&tokenizer.path),
+            Some(tokenizer.file_size_bytes),
+            Some(&tokenizer.sha256),
+            "tokenizer",
+        )?;
     }
     if manifest.tensor_contract.storage != "layer-sharded-npy"
         || manifest.tensor_contract.dtype != "f32"
@@ -938,36 +915,24 @@ pub fn validate_artifact_contract(
         anyhow::bail!("manifest has no layer shards");
     }
 
-    let config_path = resolve_artifact_path(
-        &canonical_run_dir,
-        &manifest.config_path,
-        "manifest config_path",
-    )?;
-    let samples_path = resolve_artifact_path(
-        &canonical_run_dir,
-        &manifest.samples_path,
-        "manifest samples_path",
-    )?;
-    let tokenization_path = resolve_artifact_path(
-        &canonical_run_dir,
-        &manifest.tokenization_path,
-        "manifest tokenization_path",
-    )?;
-    let positions_path = resolve_artifact_path(
-        &canonical_run_dir,
-        &manifest.positions_path,
-        "manifest positions_path",
-    )?;
-    let report_path = resolve_artifact_path(
-        &canonical_run_dir,
-        &manifest.report_path,
-        "manifest report_path",
-    )?;
-    let checksums_path = resolve_artifact_path(
-        &canonical_run_dir,
-        &manifest.checksums_path,
-        "manifest checksums_path",
-    )?;
+    let core_entries = [
+        (&manifest.config_path, "config_path"),
+        (&manifest.samples_path, "samples_path"),
+        (&manifest.tokenization_path, "tokenization_path"),
+        (&manifest.positions_path, "positions_path"),
+        (&manifest.report_path, "report_path"),
+        (&manifest.checksums_path, "checksums_path"),
+    ];
+    let mut core_paths = Vec::with_capacity(core_entries.len());
+    for (value, field) in core_entries {
+        core_paths.push(resolve_artifact_path(
+            &canonical_run_dir,
+            value,
+            &format!("manifest {field}"),
+        )?);
+    }
+    let [config_path, samples_path, tokenization_path, positions_path, report_path, checksums_path] =
+        core_paths.try_into().expect("six core paths");
     let declared_core_paths = [
         manifest.config_path.as_str(),
         MANIFEST_FILENAME,
@@ -1412,6 +1377,36 @@ fn validate_stable_hash(value: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
+/// When the file exists, verify its recorded size and SHA-256 against the
+/// manifest (skipping absent optional fields).
+fn verify_file_identity(
+    path: &Path,
+    expected_size: Option<u64>,
+    expected_sha256: Option<&String>,
+    label: &str,
+) -> Result<()> {
+    if !path.is_file() {
+        return Ok(());
+    }
+    if let Some(expected_size) = expected_size {
+        let actual_size = fs::metadata(path)
+            .with_context(|| format!("failed to stat {label}: {}", path.display()))?
+            .len();
+        if actual_size != expected_size {
+            anyhow::bail!(
+                "{label} file size mismatch: manifest {expected_size}, actual {actual_size}"
+            );
+        }
+    }
+    if let Some(expected_sha256) = expected_sha256 {
+        let actual_sha256 = sha256_file_result(path)?;
+        if !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+            anyhow::bail!("{label} SHA-256 does not match the manifest");
+        }
+    }
+    Ok(())
+}
+
 fn validate_sha256(value: &str, field: &str) -> Result<()> {
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         anyhow::bail!("{field} must contain exactly 64 hexadecimal digits");
@@ -1656,7 +1651,11 @@ pub fn git_commit() -> Option<String> {
     Some(commit.trim().to_string())
 }
 
-fn token_indices_for_offsets(offsets: &[(usize, usize)], start: usize, end: usize) -> Vec<usize> {
+pub fn token_indices_for_offsets(
+    offsets: &[(usize, usize)],
+    start: usize,
+    end: usize,
+) -> Vec<usize> {
     offsets
         .iter()
         .enumerate()

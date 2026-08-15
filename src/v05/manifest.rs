@@ -18,6 +18,16 @@ pub const BUNDLE_SCHEMA_V1: &str = "ember.bundle.v1";
 /// Bundle kind marker.
 pub const BUNDLE_KIND: &str = "ember-experiment-bundle";
 
+/// Bytes as lowercase hex (no separator).
+pub fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    out
+}
+
 /// SHA-256 digest as lowercase hex.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();

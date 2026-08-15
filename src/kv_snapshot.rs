@@ -6,6 +6,7 @@
 
 use crate::kv_cache::KVCache;
 use crate::plan::ExecutionPlan;
+use crate::v05::manifest::{hex, sha256_hex};
 use anyhow::Context;
 use half::f16;
 use serde::{Deserialize, Serialize};
@@ -1218,21 +1219,6 @@ fn f16_from_le_bytes(bytes: &[u8]) -> anyhow::Result<Vec<f16>> {
         values.push(f16::from_bits(u16::from_le_bytes([pair[0], pair[1]])));
     }
     Ok(values)
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hex(&hasher.finalize())
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write as _;
-        write!(&mut out, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    out
 }
 
 fn validate_sha256(name: &str, value: &str) -> anyhow::Result<()> {

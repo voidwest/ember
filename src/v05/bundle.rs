@@ -285,13 +285,8 @@ mod tests {
     };
 
     fn temp_root() -> PathBuf {
-        // Unique parent per test so parallel tests never scan each
-        // other's staging directories.
-        let parent = std::env::temp_dir().join(format!(
-            "ember-bundle-tests-{}-{}",
-            std::process::id(),
-            STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
+        let parent = crate::v05::testutil::temp_root("bundle");
+        std::fs::create_dir_all(&parent).unwrap();
         std::fs::create_dir_all(&parent).unwrap();
         parent.join("bundle")
     }

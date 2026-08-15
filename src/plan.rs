@@ -15,6 +15,7 @@
 //!
 //! Contract: `docs/v04-execution-contract.md` (frozen 2026-08-04), section 10.
 
+use crate::v05::manifest::hex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1261,14 +1262,6 @@ fn short_sha(sha: &str) -> String {
     } else {
         sha.to_string()
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 #[cfg(test)]

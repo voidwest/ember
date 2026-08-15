@@ -1,4 +1,7 @@
 use crate::artifact::DispatchPath;
+/// Shared rejection message: gemma4's K-quant path is not implemented.
+const NO_K_QUANT: &str = "gemma4 does not support compressed K-quant tensors in v0.3";
+
 use crate::backend::{Backend, CpuBackend, CpuError};
 use crate::experiments::{
     ActiveHooks, DisabledHooks, ExecutionContext, ExperimentRunner, ExperimentalForwardModel,
@@ -1001,7 +1004,7 @@ impl Gemma4<CpuBackend> {
                 }
                 LoadedTensor::Q8_0(weight) => Gemma4Embedding::Q8_0(Arc::new(weight)),
                 LoadedTensor::KQuant(_) => {
-                    anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+                    anyhow::bail!(NO_K_QUANT)
                 }
             };
 
@@ -1256,7 +1259,7 @@ impl Gemma4<CpuBackend> {
             )),
             Some(LoadedTensor::Q8_0(weight)) => Gemma4Head::Linear(Linear::new_q8_0(weight, None)),
             Some(LoadedTensor::KQuant(_)) => {
-                anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+                anyhow::bail!(NO_K_QUANT)
             }
             None => Gemma4Head::TiedEmbedding(embed_tokens.clone()),
         };
@@ -1269,7 +1272,7 @@ impl Gemma4<CpuBackend> {
                     LoadedTensor::F32(tensor) => Linear::new(tensor, None),
                     LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
                     LoadedTensor::KQuant(_) => {
-                        anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+                        anyhow::bail!(NO_K_QUANT)
                     }
                 };
                 let norm = loader.take_f32("per_layer_proj_norm.weight")?;
@@ -2217,7 +2220,7 @@ fn take_gemma4_linear(loader: &mut GgufLoader, name: &str) -> anyhow::Result<Lin
         )),
         LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, None)),
         LoadedTensor::KQuant(_) => {
-            anyhow::bail!("gemma4 does not support compressed K-quant tensors in v0.3")
+            anyhow::bail!(NO_K_QUANT)
         }
     }
 }

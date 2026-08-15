@@ -16,7 +16,7 @@ use crate::experiments::{
     ExecutionContext, ExecutionPhase, Experiment, ExperimentError, GenerationContext, LayerContext,
     ModelContext, TensorAccess,
 };
-use crate::v05::capture::CaptureStorage;
+use crate::v05::capture::{CaptureStorage, InputSelector, LayerSelector};
 use crate::v05::hook::SemanticHookSite;
 use crate::v05::intervention::{InterventionOperation, InterventionSource, InterventionSpec};
 use crate::v05::spec::{ExperimentSpecV1, InputSpec};
@@ -212,30 +212,17 @@ impl V05Experiment {
 
         let mut captures: Vec<CaptureTarget> = Vec::new();
         for capture in &self.spec.captures {
-            let inputs = capture
-                .inputs
-                .resolve(&all_input_ids)
-                .map_err(ExperimentError::new)?;
-            if !inputs.contains(&input.id) {
+            let Some((layers, static_record, generated_steps)) = resolve_target_addressing(
+                &capture.inputs,
+                &capture.layers,
+                &capture.tokens,
+                &all_input_ids,
+                &input.id,
+                self.facts.n_layers,
+                &self.tokenizations,
+            )?
+            else {
                 continue;
-            }
-            let layers = capture
-                .layers
-                .resolve(self.facts.n_layers)
-                .map_err(ExperimentError::new)?;
-            let (static_record, generated_steps) = if capture.tokens.is_generated() {
-                (None, vec![generated_step_of(&capture.tokens)?])
-            } else {
-                let info = self
-                    .tokenizations
-                    .get(&TextNormalization::None)
-                    .cloned()
-                    .ok_or_else(|| {
-                        ExperimentError::new("tokenization not injected before prefill")
-                    })?;
-                let record = resolve_static_selector(&capture.tokens, &info)
-                    .map_err(ExperimentError::new)?;
-                (Some(record), Vec::new())
             };
             captures.push(CaptureTarget {
                 capture_id: capture.id.clone(),
@@ -251,30 +238,17 @@ impl V05Experiment {
 
         let mut interventions: Vec<InterventionTarget> = Vec::new();
         for intervention in &self.spec.interventions {
-            let inputs = intervention
-                .inputs
-                .resolve(&all_input_ids)
-                .map_err(ExperimentError::new)?;
-            if !inputs.contains(&input.id) {
+            let Some((layers, static_record, generated_steps)) = resolve_target_addressing(
+                &intervention.inputs,
+                &intervention.layers,
+                &intervention.tokens,
+                &all_input_ids,
+                &input.id,
+                self.facts.n_layers,
+                &self.tokenizations,
+            )?
+            else {
                 continue;
-            }
-            let layers = intervention
-                .layers
-                .resolve(self.facts.n_layers)
-                .map_err(ExperimentError::new)?;
-            let (static_record, generated_steps) = if intervention.tokens.is_generated() {
-                (None, vec![generated_step_of(&intervention.tokens)?])
-            } else {
-                let info = self
-                    .tokenizations
-                    .get(&TextNormalization::None)
-                    .cloned()
-                    .ok_or_else(|| {
-                        ExperimentError::new("tokenization not injected before prefill")
-                    })?;
-                let record = resolve_static_selector(&intervention.tokens, &info)
-                    .map_err(ExperimentError::new)?;
-                (Some(record), Vec::new())
             };
             interventions.push(InterventionTarget {
                 intervention_id: intervention.id.clone(),
@@ -726,6 +700,45 @@ impl V05Experiment {
         }
         Ok(())
     }
+}
+
+/// Resolved addressing for one capture/intervention target: layer list,
+/// optional static token-selection record, and generated steps.
+type ResolvedAddressing = (Vec<usize>, Option<TokenSelectionRecord>, Vec<usize>);
+
+/// Resolve the shared capture/intervention addressing pipeline: input
+/// membership, layer list, and per-step token selection. Returns `None`
+/// when the input is not addressed by the selector.
+fn resolve_target_addressing(
+    inputs_selector: &InputSelector,
+    layers_selector: &LayerSelector,
+    tokens_selector: &TokenSelector,
+    all_input_ids: &[String],
+    input_id: &str,
+    n_layers: usize,
+    tokenizations: &HashMap<TextNormalization, TokenizationInfo>,
+) -> Result<Option<ResolvedAddressing>, ExperimentError> {
+    let inputs = inputs_selector
+        .resolve(all_input_ids)
+        .map_err(ExperimentError::new)?;
+    if !inputs.iter().any(|id| id == input_id) {
+        return Ok(None);
+    }
+    let layers = layers_selector
+        .resolve(n_layers)
+        .map_err(ExperimentError::new)?;
+    let (static_record, generated_steps) = if tokens_selector.is_generated() {
+        (None, vec![generated_step_of(tokens_selector)?])
+    } else {
+        let info = tokenizations
+            .get(&TextNormalization::None)
+            .cloned()
+            .ok_or_else(|| ExperimentError::new("tokenization not injected before prefill"))?;
+        let record =
+            resolve_static_selector(tokens_selector, &info).map_err(ExperimentError::new)?;
+        (Some(record), Vec::new())
+    };
+    Ok(Some((layers, static_record, generated_steps)))
 }
 
 fn generated_step_of(selector: &TokenSelector) -> Result<usize, ExperimentError> {

@@ -82,6 +82,51 @@ pub struct ModelSpec {
     pub arch: String,
 }
 
+/// Resolve one optional spec field: record its default (as the display
+/// string given by `record`) when the field is absent and return the value.
+/// Validate one id list: every id must be a safe path identifier, must be
+/// unique within the list, and must not collide with `other` (intervention
+/// ids vs capture ids).
+fn validate_unique_ids(kind: &str, ids: &[&str], other: &[&str]) -> Result<(), SpecError> {
+    for (index, id) in ids.iter().enumerate() {
+        if !is_safe_id(id) {
+            return Err(SpecError::at(
+                format!("{kind}s[{index}].id"),
+                format!("{kind} id {id:?} is not a safe identifier"),
+            ));
+        }
+        if ids[..index].iter().any(|prior| prior == id) {
+            return Err(SpecError::at(
+                format!("{kind}s[{index}].id"),
+                format!("duplicate {kind} id {id:?}"),
+            ));
+        }
+        if other.iter().any(|other_id| other_id == id) {
+            return Err(SpecError::at(
+                format!("{kind}s[{index}].id"),
+                format!("{kind} id {id:?} collides with a capture id"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn take_default<T: Clone>(
+    opt: Option<T>,
+    field: &str,
+    default: T,
+    record: impl Into<String>,
+    defaults: &mut Vec<DefaultRecord>,
+) -> T {
+    if opt.is_none() {
+        defaults.push(DefaultRecord {
+            field: field.into(),
+            value: record.into(),
+        });
+    }
+    opt.unwrap_or(default)
+}
+
 fn default_arch() -> String {
     "auto".to_string()
 }
@@ -296,110 +341,83 @@ impl RawExperimentSpec {
         check_schema_version(&self.schema)?;
         let mut defaults = Vec::new();
 
-        if self.experiment.description.is_none() {
-            defaults.push(DefaultRecord {
-                field: "experiment.description".into(),
-                value: String::new(),
-            });
-        }
-        let description = self.experiment.description.unwrap_or_default();
-        if self.experiment.seed.is_none() {
-            defaults.push(DefaultRecord {
-                field: "experiment.seed".into(),
-                value: "0".into(),
-            });
-        }
-        let seed = self.experiment.seed.unwrap_or(0);
-
-        if self.model.expected_sha256.is_none() {
-            defaults.push(DefaultRecord {
-                field: "model.expected_sha256".into(),
-                value: String::new(),
-            });
-        }
-        let expected_sha256 = self.model.expected_sha256.unwrap_or_default();
-        if self.model.tokenizer_expected_sha256.is_none() {
-            defaults.push(DefaultRecord {
-                field: "model.tokenizer_expected_sha256".into(),
-                value: String::new(),
-            });
-        }
-        let tokenizer_expected_sha256 = self.model.tokenizer_expected_sha256.unwrap_or_default();
-        if self.model.arch.is_none() {
-            defaults.push(DefaultRecord {
-                field: "model.arch".into(),
-                value: default_arch(),
-            });
-        }
-        let arch = self.model.arch.unwrap_or_else(default_arch);
+        let description = take_default(
+            self.experiment.description,
+            "experiment.description",
+            String::new(),
+            "",
+            &mut defaults,
+        );
+        let seed = take_default(
+            self.experiment.seed,
+            "experiment.seed",
+            0,
+            "0",
+            &mut defaults,
+        );
+        let expected_sha256 = take_default(
+            self.model.expected_sha256,
+            "model.expected_sha256",
+            String::new(),
+            "",
+            &mut defaults,
+        );
+        let tokenizer_expected_sha256 = take_default(
+            self.model.tokenizer_expected_sha256,
+            "model.tokenizer_expected_sha256",
+            String::new(),
+            "",
+            &mut defaults,
+        );
+        let arch_default = default_arch();
+        let arch = take_default(
+            self.model.arch,
+            "model.arch",
+            arch_default.clone(),
+            arch_default,
+            &mut defaults,
+        );
 
         let mode = match self.execution.as_ref().and_then(|e| e.mode.as_deref()) {
             Some(value) => ExecutionMode::from_cli(value)
                 .map_err(|error| SpecError::at("execution.mode", error.to_string()))?,
-            None => {
-                defaults.push(DefaultRecord {
-                    field: "execution.mode".into(),
-                    value: "reference".into(),
-                });
-                ExecutionMode::Reference
-            }
+            None => take_default(
+                None,
+                "execution.mode",
+                ExecutionMode::Reference,
+                "reference",
+                &mut defaults,
+            ),
         };
-        let threads = self.execution.as_ref().and_then(|e| e.threads).unwrap_or(0);
-        if self.execution.as_ref().and_then(|e| e.threads).is_none() {
-            defaults.push(DefaultRecord {
-                field: "execution.threads".into(),
-                value: "0 (auto)".into(),
-            });
-        }
-        let deterministic = self
-            .execution
-            .as_ref()
-            .and_then(|e| e.deterministic)
-            .unwrap_or(true);
-        if self
-            .execution
-            .as_ref()
-            .and_then(|e| e.deterministic)
-            .is_none()
-        {
-            defaults.push(DefaultRecord {
-                field: "execution.deterministic".into(),
-                value: "true".into(),
-            });
-        }
+        let threads = take_default(
+            self.execution.as_ref().and_then(|e| e.threads),
+            "execution.threads",
+            0,
+            "0 (auto)",
+            &mut defaults,
+        );
+        let deterministic = take_default(
+            self.execution.as_ref().and_then(|e| e.deterministic),
+            "execution.deterministic",
+            true,
+            "true",
+            &mut defaults,
+        );
 
-        let max_new_tokens = self
-            .generation
-            .as_ref()
-            .and_then(|g| g.max_new_tokens)
-            .unwrap_or(0);
-        if self
-            .generation
-            .as_ref()
-            .and_then(|g| g.max_new_tokens)
-            .is_none()
-        {
-            defaults.push(DefaultRecord {
-                field: "generation.max_new_tokens".into(),
-                value: "0".into(),
-            });
-        }
-        let temperature = self
-            .generation
-            .as_ref()
-            .and_then(|g| g.temperature)
-            .unwrap_or(0.0);
-        if self
-            .generation
-            .as_ref()
-            .and_then(|g| g.temperature)
-            .is_none()
-        {
-            defaults.push(DefaultRecord {
-                field: "generation.temperature".into(),
-                value: "0.0".into(),
-            });
-        }
+        let max_new_tokens = take_default(
+            self.generation.as_ref().and_then(|g| g.max_new_tokens),
+            "generation.max_new_tokens",
+            0,
+            "0",
+            &mut defaults,
+        );
+        let temperature = take_default(
+            self.generation.as_ref().and_then(|g| g.temperature),
+            "generation.temperature",
+            0.0,
+            "0.0",
+            &mut defaults,
+        );
         if !temperature.is_finite() {
             return Err(SpecError::at(
                 "generation.temperature",
@@ -414,17 +432,14 @@ impl RawExperimentSpec {
             ));
         }
 
-        let tensor_format = self
-            .output
-            .tensor_format
-            .clone()
-            .unwrap_or_else(default_tensor_format);
-        if self.output.tensor_format.is_none() {
-            defaults.push(DefaultRecord {
-                field: "output.tensor_format".into(),
-                value: tensor_format.clone(),
-            });
-        }
+        let format_default = default_tensor_format();
+        let tensor_format = take_default(
+            self.output.tensor_format.clone(),
+            "output.tensor_format",
+            format_default.clone(),
+            format_default,
+            &mut defaults,
+        );
         if tensor_format != "safetensors" {
             return Err(SpecError::at(
                 "output.tensor_format",
@@ -434,13 +449,13 @@ impl RawExperimentSpec {
                 ),
             ));
         }
-        let overwrite = self.output.overwrite.unwrap_or(false);
-        if self.output.overwrite.is_none() {
-            defaults.push(DefaultRecord {
-                field: "output.overwrite".into(),
-                value: "false".into(),
-            });
-        }
+        let overwrite = take_default(
+            self.output.overwrite,
+            "output.overwrite",
+            false,
+            "false",
+            &mut defaults,
+        );
 
         if self.inputs.is_empty() {
             return Err(SpecError::at(
@@ -517,59 +532,12 @@ impl ExperimentSpecV1 {
         }
 
         let input_ids: Vec<&str> = self.inputs.iter().map(|input| input.id.as_str()).collect();
-        for (index, id) in input_ids.iter().enumerate() {
-            if !is_safe_id(id) {
-                return Err(SpecError::at(
-                    format!("inputs[{index}].id"),
-                    format!("input id {id:?} is not a safe identifier"),
-                ));
-            }
-            if input_ids[..index].iter().any(|prior| prior == id) {
-                return Err(SpecError::at(
-                    format!("inputs[{index}].id"),
-                    format!("duplicate input id {id:?}"),
-                ));
-            }
-        }
-
         let capture_ids: Vec<&str> = self.captures.iter().map(|c| c.id.as_str()).collect();
-        for (index, id) in capture_ids.iter().enumerate() {
-            if !is_safe_id(id) {
-                return Err(SpecError::at(
-                    format!("captures[{index}].id"),
-                    format!("capture id {id:?} is not a safe identifier"),
-                ));
-            }
-            if capture_ids[..index].iter().any(|prior| prior == id) {
-                return Err(SpecError::at(
-                    format!("captures[{index}].id"),
-                    format!("duplicate capture id {id:?}"),
-                ));
-            }
-        }
-
         let intervention_ids: Vec<&str> =
             self.interventions.iter().map(|i| i.id.as_str()).collect();
-        for (index, id) in intervention_ids.iter().enumerate() {
-            if !is_safe_id(id) {
-                return Err(SpecError::at(
-                    format!("interventions[{index}].id"),
-                    format!("intervention id {id:?} is not a safe identifier"),
-                ));
-            }
-            if intervention_ids[..index].iter().any(|prior| prior == id) {
-                return Err(SpecError::at(
-                    format!("interventions[{index}].id"),
-                    format!("duplicate intervention id {id:?}"),
-                ));
-            }
-            if capture_ids.iter().any(|capture| capture == id) {
-                return Err(SpecError::at(
-                    format!("interventions[{index}].id"),
-                    format!("intervention id {id:?} collides with a capture id"),
-                ));
-            }
-        }
+        validate_unique_ids("input", &input_ids, &[])?;
+        validate_unique_ids("capture", &capture_ids, &[])?;
+        validate_unique_ids("intervention", &intervention_ids, &capture_ids)?;
 
         let input_ids: Vec<String> = input_ids.iter().map(|s| s.to_string()).collect();
         for (index, capture) in self.captures.iter().enumerate() {

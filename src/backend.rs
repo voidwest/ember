@@ -360,14 +360,27 @@ fn assert_q8_projection_layout(
 }
 
 impl CpuBackend {
-    /// Quantize flat f32 activations `src` (shape `[rows, in_features]`) and
-    /// compute `dst = src × w` using packed Q8_0 integer dots. Writes into the
-    /// pre-allocated `dst` slice, which must have length `rows * w.out_features()`.
-    ///
-    /// This is the zero-alloc variant of `matmul_q8_0` — it reuses the
-    /// thread-local quantized-activation buffer and writes directly into the
-    /// caller's output slice instead of wrapping a new `Vec`.
-    pub fn matmul_q8_0_into(&self, src: &[f32], rows: usize, w: &QuantizedWeight, dst: &mut [f32]) {
+    /// Zero-cost per-kernel timing: when `TIMED` is false the `Instant` path is
+    /// eliminated at compile time and the kernel runs untouched.
+    #[inline(always)]
+    fn time_kernel<const TIMED: bool>(f: impl FnOnce()) -> std::time::Duration {
+        if TIMED {
+            let started = std::time::Instant::now();
+            f();
+            started.elapsed()
+        } else {
+            f();
+            std::time::Duration::ZERO
+        }
+    }
+
+    fn matmul_q8_0_into_impl<const TIMED: bool>(
+        &self,
+        src: &[f32],
+        rows: usize,
+        w: &QuantizedWeight,
+        dst: &mut [f32],
+    ) -> std::time::Duration {
         assert_q8_projection_layout(
             src,
             rows,
@@ -380,11 +393,23 @@ impl CpuBackend {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
             if rows == 1 {
-                crate::simd::matmul_q8_0_decode(&input, w, dst);
+                Self::time_kernel::<TIMED>(|| crate::simd::matmul_q8_0_decode(&input, w, dst))
             } else {
                 crate::simd::matmul_q8_0_batch(&input, rows, w, dst);
+                std::time::Duration::ZERO
             }
-        });
+        })
+    }
+
+    /// Quantize flat f32 activations `src` (shape `[rows, in_features]`) and
+    /// compute `dst = src × w` using packed Q8_0 integer dots. Writes into the
+    /// pre-allocated `dst` slice, which must have length `rows * w.out_features()`.
+    ///
+    /// This is the zero-alloc variant of `matmul_q8_0` — it reuses the
+    /// thread-local quantized-activation buffer and writes directly into the
+    /// caller's output slice instead of wrapping a new `Vec`.
+    pub fn matmul_q8_0_into(&self, src: &[f32], rows: usize, w: &QuantizedWeight, dst: &mut [f32]) {
+        self.matmul_q8_0_into_impl::<false>(src, rows, w, dst);
     }
 
     /// Instrumented single-row projection used only by operator profiling.
@@ -397,20 +422,24 @@ impl CpuBackend {
         w: &QuantizedWeight,
         dst: &mut [f32],
     ) -> std::time::Duration {
-        assert_q8_projection_layout(
-            src,
-            1,
-            w.in_features(),
-            w.out_features(),
-            dst,
-            "matmul_q8_0_into_timed",
-        );
+        self.matmul_q8_0_into_impl::<true>(src, 1, w, dst)
+    }
+
+    fn matmul_q8_0_interleaved_into_impl<const TIMED: bool>(
+        &self,
+        src: &[f32],
+        w: &crate::quant::QuantizedWeightInterleaved,
+        dst: &mut [f32],
+    ) -> std::time::Duration {
+        assert!(crate::simd::interleaved_q8_0_supported());
+        assert_eq!(src.len(), w.in_features());
+        assert_eq!(dst.len(), w.out_features());
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
-            let start = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode(&input, w, dst);
-            start.elapsed()
+            Self::time_kernel::<TIMED>(|| {
+                crate::simd::matmul_q8_0_decode_interleaved_parallel(&input, w, dst)
+            })
         })
     }
 
@@ -424,14 +453,7 @@ impl CpuBackend {
         w: &crate::quant::QuantizedWeightInterleaved,
         dst: &mut [f32],
     ) {
-        assert!(crate::simd::interleaved_q8_0_supported());
-        assert_eq!(src.len(), w.in_features());
-        assert_eq!(dst.len(), w.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            crate::simd::matmul_q8_0_decode_interleaved_parallel(&input, w, dst);
-        });
+        self.matmul_q8_0_interleaved_into_impl::<false>(src, w, dst);
     }
 
     /// Instrumented interleaved projection used only by operator profiling.
@@ -441,25 +463,15 @@ impl CpuBackend {
         w: &crate::quant::QuantizedWeightInterleaved,
         dst: &mut [f32],
     ) -> std::time::Duration {
-        assert!(crate::simd::interleaved_q8_0_supported());
-        assert_eq!(src.len(), w.in_features());
-        assert_eq!(dst.len(), w.out_features());
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            let start = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode_interleaved_parallel(&input, w, dst);
-            start.elapsed()
-        })
+        self.matmul_q8_0_interleaved_into_impl::<true>(src, w, dst)
     }
 
-    /// Batch-1 projection over a 16-output packed Q8_0 weight.
-    pub fn matmul_q8_0_packed_into(
+    fn matmul_q8_0_packed_into_impl<const TIMED: bool>(
         &self,
         src: &[f32],
         weight: &QuantizedWeightVnni,
         dst: &mut [f32],
-    ) {
+    ) -> std::time::Duration {
         assert_q8_projection_layout(
             src,
             1,
@@ -471,8 +483,20 @@ impl CpuBackend {
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, weight, dst);
-        });
+            Self::time_kernel::<TIMED>(|| {
+                crate::simd::matmul_q8_0_decode_packed16_parallel(&input, weight, dst)
+            })
+        })
+    }
+
+    /// Batch-1 projection over a 16-output packed Q8_0 weight.
+    pub fn matmul_q8_0_packed_into(
+        &self,
+        src: &[f32],
+        weight: &QuantizedWeightVnni,
+        dst: &mut [f32],
+    ) {
+        self.matmul_q8_0_packed_into_impl::<false>(src, weight, dst);
     }
 
     /// Instrumented packed projection used by the optional operator profiler.
@@ -482,20 +506,42 @@ impl CpuBackend {
         weight: &QuantizedWeightVnni,
         dst: &mut [f32],
     ) -> std::time::Duration {
-        assert_q8_projection_layout(
-            src,
-            1,
-            weight.in_features(),
-            weight.out_features(),
-            dst,
-            "matmul_q8_0_packed_into_timed",
-        );
+        self.matmul_q8_0_packed_into_impl::<true>(src, weight, dst)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn matmul_q8_0_packed_pair_into_impl<const TIMED: bool>(
+        &self,
+        src: &[f32],
+        first: &QuantizedWeightVnni,
+        second: &QuantizedWeightVnni,
+        first_dst: &mut [f32],
+        second_dst: &mut [f32],
+    ) -> [std::time::Duration; 2] {
+        for (weight, dst, operation) in [
+            (first, &*first_dst, "matmul_q8_0_packed_pair_into(first)"),
+            (second, &*second_dst, "matmul_q8_0_packed_pair_into(second)"),
+        ] {
+            assert_q8_projection_layout(
+                src,
+                1,
+                weight.in_features(),
+                weight.out_features(),
+                dst,
+                operation,
+            );
+        }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
-            let started = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, weight, dst);
-            started.elapsed()
+            let mut timings = [std::time::Duration::ZERO; 2];
+            timings[0] = Self::time_kernel::<TIMED>(|| {
+                crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst)
+            });
+            timings[1] = Self::time_kernel::<TIMED>(|| {
+                crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst)
+            });
+            timings
         })
     }
 
@@ -509,28 +555,7 @@ impl CpuBackend {
         first_dst: &mut [f32],
         second_dst: &mut [f32],
     ) {
-        assert_q8_projection_layout(
-            src,
-            1,
-            first.in_features(),
-            first.out_features(),
-            first_dst,
-            "matmul_q8_0_packed_pair_into(first)",
-        );
-        assert_q8_projection_layout(
-            src,
-            1,
-            second.in_features(),
-            second.out_features(),
-            second_dst,
-            "matmul_q8_0_packed_pair_into(second)",
-        );
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
-        });
+        self.matmul_q8_0_packed_pair_into_impl::<false>(src, first, second, first_dst, second_dst);
     }
 
     /// Instrumented packed pair sharing one activation quantization.
@@ -543,37 +568,11 @@ impl CpuBackend {
         first_dst: &mut [f32],
         second_dst: &mut [f32],
     ) -> [std::time::Duration; 2] {
-        assert_q8_projection_layout(
-            src,
-            1,
-            first.in_features(),
-            first.out_features(),
-            first_dst,
-            "matmul_q8_0_packed_pair_into_timed(first)",
-        );
-        assert_q8_projection_layout(
-            src,
-            1,
-            second.in_features(),
-            second.out_features(),
-            second_dst,
-            "matmul_q8_0_packed_pair_into_timed(second)",
-        );
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            let first_started = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
-            let first_elapsed = first_started.elapsed();
-            let second_started = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
-            [first_elapsed, second_started.elapsed()]
-        })
+        self.matmul_q8_0_packed_pair_into_impl::<true>(src, first, second, first_dst, second_dst)
     }
 
-    /// Three packed projections sharing one activation quantization.
     #[allow(clippy::too_many_arguments)]
-    pub fn matmul_q8_0_packed_triple_into(
+    fn matmul_q8_0_packed_triple_into_impl<const TIMED: bool>(
         &self,
         src: &[f32],
         first: &QuantizedWeightVnni,
@@ -582,7 +581,7 @@ impl CpuBackend {
         first_dst: &mut [f32],
         second_dst: &mut [f32],
         third_dst: &mut [f32],
-    ) {
+    ) -> [std::time::Duration; 3] {
         for (weight, dst, operation) in [
             (first, &*first_dst, "matmul_q8_0_packed_triple_into(first)"),
             (
@@ -604,10 +603,35 @@ impl CpuBackend {
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, third, third_dst);
-        });
+            let mut timings = [std::time::Duration::ZERO; 3];
+            timings[0] = Self::time_kernel::<TIMED>(|| {
+                crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst)
+            });
+            timings[1] = Self::time_kernel::<TIMED>(|| {
+                crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst)
+            });
+            timings[2] = Self::time_kernel::<TIMED>(|| {
+                crate::simd::matmul_q8_0_decode_packed16_parallel(&input, third, third_dst)
+            });
+            timings
+        })
+    }
+
+    /// Three packed projections sharing one activation quantization.
+    #[allow(clippy::too_many_arguments)]
+    pub fn matmul_q8_0_packed_triple_into(
+        &self,
+        src: &[f32],
+        first: &QuantizedWeightVnni,
+        second: &QuantizedWeightVnni,
+        third: &QuantizedWeightVnni,
+        first_dst: &mut [f32],
+        second_dst: &mut [f32],
+        third_dst: &mut [f32],
+    ) {
+        self.matmul_q8_0_packed_triple_into_impl::<false>(
+            src, first, second, third, first_dst, second_dst, third_dst,
+        );
     }
 
     /// Instrumented packed triple sharing one activation quantization.
@@ -622,26 +646,28 @@ impl CpuBackend {
         second_dst: &mut [f32],
         third_dst: &mut [f32],
     ) -> [std::time::Duration; 3] {
+        self.matmul_q8_0_packed_triple_into_impl::<true>(
+            src, first, second, third, first_dst, second_dst, third_dst,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn matmul_q8_0_pair_into_impl<const TIMED: bool>(
+        &self,
+        src: &[f32],
+        rows: usize,
+        w_a: &QuantizedWeight,
+        w_b: &QuantizedWeight,
+        dst_a: &mut [f32],
+        dst_b: &mut [f32],
+    ) -> [std::time::Duration; 2] {
         for (weight, dst, operation) in [
-            (
-                first,
-                &*first_dst,
-                "matmul_q8_0_packed_triple_into_timed(first)",
-            ),
-            (
-                second,
-                &*second_dst,
-                "matmul_q8_0_packed_triple_into_timed(second)",
-            ),
-            (
-                third,
-                &*third_dst,
-                "matmul_q8_0_packed_triple_into_timed(third)",
-            ),
+            (w_a, &*dst_a, "matmul_q8_0_pair_into(first)"),
+            (w_b, &*dst_b, "matmul_q8_0_pair_into(second)"),
         ] {
             assert_q8_projection_layout(
                 src,
-                1,
+                rows,
                 weight.in_features(),
                 weight.out_features(),
                 dst,
@@ -651,20 +677,25 @@ impl CpuBackend {
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
-            let first_started = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, first, first_dst);
-            let first_elapsed = first_started.elapsed();
-            let second_started = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, second, second_dst);
-            let second_elapsed = second_started.elapsed();
-            let third_started = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode_packed16_parallel(&input, third, third_dst);
-            [first_elapsed, second_elapsed, third_started.elapsed()]
+            let mut timings = [std::time::Duration::ZERO; 2];
+            if rows == 1 {
+                timings[0] = Self::time_kernel::<TIMED>(|| {
+                    crate::simd::matmul_q8_0_decode(&input, w_a, dst_a)
+                });
+                timings[1] = Self::time_kernel::<TIMED>(|| {
+                    crate::simd::matmul_q8_0_decode(&input, w_b, dst_b)
+                });
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, rows, w_a, dst_a);
+                crate::simd::matmul_q8_0_batch(&input, rows, w_b, dst_b);
+            }
+            timings
         })
     }
 
     /// Fused dual Q8_0 projection (gate + up): quantize `src` once, compute
     /// both projections in one pass.
+    #[allow(clippy::too_many_arguments)]
     pub fn matmul_q8_0_pair_into(
         &self,
         src: &[f32],
@@ -674,33 +705,7 @@ impl CpuBackend {
         dst_a: &mut [f32],
         dst_b: &mut [f32],
     ) {
-        assert_q8_projection_layout(
-            src,
-            rows,
-            w_a.in_features(),
-            w_a.out_features(),
-            dst_a,
-            "matmul_q8_0_pair_into(first)",
-        );
-        assert_q8_projection_layout(
-            src,
-            rows,
-            w_b.in_features(),
-            w_b.out_features(),
-            dst_b,
-            "matmul_q8_0_pair_into(second)",
-        );
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            if rows == 1 {
-                crate::simd::matmul_q8_0_decode(&input, w_a, dst_a);
-                crate::simd::matmul_q8_0_decode(&input, w_b, dst_b);
-            } else {
-                crate::simd::matmul_q8_0_batch(&input, rows, w_a, dst_a);
-                crate::simd::matmul_q8_0_batch(&input, rows, w_b, dst_b);
-            }
-        });
+        self.matmul_q8_0_pair_into_impl::<false>(src, rows, w_a, w_b, dst_a, dst_b);
     }
 
     /// Instrumented fused-input pair projection used only by operator profiling.
@@ -712,31 +717,55 @@ impl CpuBackend {
         dst_a: &mut [f32],
         dst_b: &mut [f32],
     ) -> [std::time::Duration; 2] {
-        assert_q8_projection_layout(
-            src,
-            1,
-            w_a.in_features(),
-            w_a.out_features(),
-            dst_a,
-            "matmul_q8_0_pair_into_timed(first)",
-        );
-        assert_q8_projection_layout(
-            src,
-            1,
-            w_b.in_features(),
-            w_b.out_features(),
-            dst_b,
-            "matmul_q8_0_pair_into_timed(second)",
-        );
+        self.matmul_q8_0_pair_into_impl::<true>(src, 1, w_a, w_b, dst_a, dst_b)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn matmul_q8_0_triple_into_impl<const TIMED: bool>(
+        &self,
+        src: &[f32],
+        rows: usize,
+        w_q: &QuantizedWeight,
+        w_k: &QuantizedWeight,
+        w_v: &QuantizedWeight,
+        dst_q: &mut [f32],
+        dst_k: &mut [f32],
+        dst_v: &mut [f32],
+    ) -> [std::time::Duration; 3] {
+        for (weight, dst, operation) in [
+            (w_q, &*dst_q, "matmul_q8_0_triple_into(q)"),
+            (w_k, &*dst_k, "matmul_q8_0_triple_into(k)"),
+            (w_v, &*dst_v, "matmul_q8_0_triple_into(v)"),
+        ] {
+            assert_q8_projection_layout(
+                src,
+                rows,
+                weight.in_features(),
+                weight.out_features(),
+                dst,
+                operation,
+            );
+        }
         Q8_0_DECODE_INPUT.with(|input| {
             let mut input = input.borrow_mut();
             crate::quant::quantize_q8_0_into(src, &mut input);
-            let start_a = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode(&input, w_a, dst_a);
-            let elapsed_a = start_a.elapsed();
-            let start_b = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode(&input, w_b, dst_b);
-            [elapsed_a, start_b.elapsed()]
+            let mut timings = [std::time::Duration::ZERO; 3];
+            if rows == 1 {
+                timings[0] = Self::time_kernel::<TIMED>(|| {
+                    crate::simd::matmul_q8_0_decode(&input, w_q, dst_q)
+                });
+                timings[1] = Self::time_kernel::<TIMED>(|| {
+                    crate::simd::matmul_q8_0_decode(&input, w_k, dst_k)
+                });
+                timings[2] = Self::time_kernel::<TIMED>(|| {
+                    crate::simd::matmul_q8_0_decode(&input, w_v, dst_v)
+                });
+            } else {
+                crate::simd::matmul_q8_0_batch(&input, rows, w_q, dst_q);
+                crate::simd::matmul_q8_0_batch(&input, rows, w_k, dst_k);
+                crate::simd::matmul_q8_0_batch(&input, rows, w_v, dst_v);
+            }
+            timings
         })
     }
 
@@ -755,37 +784,9 @@ impl CpuBackend {
         dst_k: &mut [f32],
         dst_v: &mut [f32],
     ) {
-        for (weight, dst, operation) in [
-            (w_q, &*dst_q, "matmul_q8_0_triple_into(q)"),
-            (w_k, &*dst_k, "matmul_q8_0_triple_into(k)"),
-            (w_v, &*dst_v, "matmul_q8_0_triple_into(v)"),
-        ] {
-            assert_q8_projection_layout(
-                src,
-                rows,
-                weight.in_features(),
-                weight.out_features(),
-                dst,
-                operation,
-            );
-        }
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            if rows == 1 {
-                crate::simd::matmul_q8_0_decode(&input, w_q, dst_q);
-                crate::simd::matmul_q8_0_decode(&input, w_k, dst_k);
-                crate::simd::matmul_q8_0_decode(&input, w_v, dst_v);
-            } else {
-                crate::simd::matmul_q8_0_batch(&input, rows, w_q, dst_q);
-                crate::simd::matmul_q8_0_batch(&input, rows, w_k, dst_k);
-                crate::simd::matmul_q8_0_batch(&input, rows, w_v, dst_v);
-            }
-        });
+        self.matmul_q8_0_triple_into_impl::<false>(src, rows, w_q, w_k, w_v, dst_q, dst_k, dst_v);
     }
 
-    /// Explicit serial Q/K/V projection with one shared activation packing.
-    #[allow(clippy::too_many_arguments)]
     /// Instrumented fused-input triple projection used only by operator
     /// profiling.
     #[allow(clippy::too_many_arguments)]
@@ -799,33 +800,7 @@ impl CpuBackend {
         dst_k: &mut [f32],
         dst_v: &mut [f32],
     ) -> [std::time::Duration; 3] {
-        for (weight, dst, operation) in [
-            (w_q, &*dst_q, "matmul_q8_0_triple_into_timed(q)"),
-            (w_k, &*dst_k, "matmul_q8_0_triple_into_timed(k)"),
-            (w_v, &*dst_v, "matmul_q8_0_triple_into_timed(v)"),
-        ] {
-            assert_q8_projection_layout(
-                src,
-                1,
-                weight.in_features(),
-                weight.out_features(),
-                dst,
-                operation,
-            );
-        }
-        Q8_0_DECODE_INPUT.with(|input| {
-            let mut input = input.borrow_mut();
-            crate::quant::quantize_q8_0_into(src, &mut input);
-            let start_q = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode(&input, w_q, dst_q);
-            let elapsed_q = start_q.elapsed();
-            let start_k = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode(&input, w_k, dst_k);
-            let elapsed_k = start_k.elapsed();
-            let start_v = std::time::Instant::now();
-            crate::simd::matmul_q8_0_decode(&input, w_v, dst_v);
-            [elapsed_q, elapsed_k, start_v.elapsed()]
-        })
+        self.matmul_q8_0_triple_into_impl::<true>(src, 1, w_q, w_k, w_v, dst_q, dst_k, dst_v)
     }
 
     /// Cached causal attention into caller-owned storage.
@@ -1109,7 +1084,13 @@ impl Backend for CpuBackend {
         table: &CpuTensor,
         table_index: usize,
     ) -> Result<(), Self::Error> {
-        assign_row_from_table_cpu(dst, dst_index, table, table_index)
+        let cols =
+            validate_row_copy_shapes("assign_row_from_table", dst, dst_index, table, table_index)?;
+        let dst_start = dst_index * cols;
+        let table_start = table_index * cols;
+        dst.data_mut()[dst_start..dst_start + cols]
+            .copy_from_slice(&table.data()[table_start..table_start + cols]);
+        Ok(())
     }
     fn assign_row_from_q8_0(
         &self,
@@ -1118,20 +1099,14 @@ impl Backend for CpuBackend {
         table: &QuantizedWeight,
         table_index: usize,
     ) -> Result<(), Self::Error> {
-        if dst.ndim() != 2
-            || dst_index >= dst.shape()[0]
-            || table_index >= table.out_features()
-            || dst.shape()[1] != table.in_features()
-        {
-            return Err(CpuError::ShapeMismatch(format!(
-                "assign_row_from_q8_0: dst={:?}, dst_index={}, table=[{}, {}], table_index={}",
-                dst.shape(),
-                dst_index,
-                table.out_features(),
-                table.in_features(),
-                table_index
-            )));
-        }
+        validate_quant_row_shapes(
+            "assign_row_from_q8_0",
+            dst,
+            dst_index,
+            table.out_features(),
+            table.in_features(),
+            table_index,
+        )?;
         let cols = table.in_features();
         let start = dst_index * cols;
         table.dequantize_row(table_index, &mut dst.data_mut()[start..start + cols]);
@@ -1144,20 +1119,14 @@ impl Backend for CpuBackend {
         table: &crate::quant_k::KQuantWeight,
         table_index: usize,
     ) -> Result<(), Self::Error> {
-        if dst.ndim() != 2
-            || dst_index >= dst.shape()[0]
-            || table_index >= table.out_features()
-            || dst.shape()[1] != table.in_features()
-        {
-            return Err(CpuError::ShapeMismatch(format!(
-                "assign_row_from_k: dst={:?}, dst_index={}, table=[{}, {}], table_index={}",
-                dst.shape(),
-                dst_index,
-                table.out_features(),
-                table.in_features(),
-                table_index
-            )));
-        }
+        validate_quant_row_shapes(
+            "assign_row_from_k",
+            dst,
+            dst_index,
+            table.out_features(),
+            table.in_features(),
+            table_index,
+        )?;
         let cols = table.in_features();
         let start = dst_index * cols;
         table.dequantize_row(table_index, &mut dst.data_mut()[start..start + cols]);
@@ -1172,7 +1141,28 @@ impl Backend for CpuBackend {
         rhs_table: &CpuTensor,
         rhs_index: usize,
     ) -> Result<(), Self::Error> {
-        assign_row_sum_from_tables_cpu(dst, dst_index, lhs_table, lhs_index, rhs_table, rhs_index)
+        let cols = validate_row_copy_shapes(
+            "assign_row_sum_from_tables",
+            dst,
+            dst_index,
+            lhs_table,
+            lhs_index,
+        )?;
+        validate_row_copy_shapes(
+            "assign_row_sum_from_tables",
+            dst,
+            dst_index,
+            rhs_table,
+            rhs_index,
+        )?;
+        let dst_start = dst_index * cols;
+        let lhs_start = lhs_index * cols;
+        let rhs_start = rhs_index * cols;
+        let dst_row = &mut dst.data_mut()[dst_start..dst_start + cols];
+        let lhs_row = &lhs_table.data()[lhs_start..lhs_start + cols];
+        let rhs_row = &rhs_table.data()[rhs_start..rhs_start + cols];
+        crate::simd::add(lhs_row, rhs_row, dst_row);
+        Ok(())
     }
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor {
         x.slice_cols(start, end)
@@ -1431,6 +1421,29 @@ impl Backend for CpuBackend {
     }
 }
 
+fn validate_quant_row_shapes(
+    operation: &str,
+    dst: &CpuTensor,
+    dst_index: usize,
+    table_out: usize,
+    table_in: usize,
+    table_index: usize,
+) -> Result<(), CpuError> {
+    if dst.ndim() != 2
+        || dst_index >= dst.shape()[0]
+        || table_index >= table_out
+        || dst.shape()[1] != table_in
+    {
+        return Err(CpuError::ShapeMismatch(format!(
+            "{operation}: dst={:?}, dst_index={}, table=[{table_out}, {table_in}], table_index={}",
+            dst.shape(),
+            dst_index,
+            table_index
+        )));
+    }
+    Ok(())
+}
+
 fn validate_row_copy_shapes(
     op: &str,
     dst: &CpuTensor,
@@ -1463,53 +1476,6 @@ fn validate_row_copy_shapes(
         )));
     }
     Ok(cols)
-}
-
-fn assign_row_from_table_cpu(
-    dst: &mut CpuTensor,
-    dst_index: usize,
-    table: &CpuTensor,
-    table_index: usize,
-) -> Result<(), CpuError> {
-    let cols =
-        validate_row_copy_shapes("assign_row_from_table", dst, dst_index, table, table_index)?;
-    let dst_start = dst_index * cols;
-    let table_start = table_index * cols;
-    dst.data_mut()[dst_start..dst_start + cols]
-        .copy_from_slice(&table.data()[table_start..table_start + cols]);
-    Ok(())
-}
-
-fn assign_row_sum_from_tables_cpu(
-    dst: &mut CpuTensor,
-    dst_index: usize,
-    lhs_table: &CpuTensor,
-    lhs_index: usize,
-    rhs_table: &CpuTensor,
-    rhs_index: usize,
-) -> Result<(), CpuError> {
-    let cols = validate_row_copy_shapes(
-        "assign_row_sum_from_tables",
-        dst,
-        dst_index,
-        lhs_table,
-        lhs_index,
-    )?;
-    validate_row_copy_shapes(
-        "assign_row_sum_from_tables",
-        dst,
-        dst_index,
-        rhs_table,
-        rhs_index,
-    )?;
-    let dst_start = dst_index * cols;
-    let lhs_start = lhs_index * cols;
-    let rhs_start = rhs_index * cols;
-    let dst_row = &mut dst.data_mut()[dst_start..dst_start + cols];
-    let lhs_row = &lhs_table.data()[lhs_start..lhs_start + cols];
-    let rhs_row = &rhs_table.data()[rhs_start..rhs_start + cols];
-    crate::simd::add(lhs_row, rhs_row, dst_row);
-    Ok(())
 }
 
 fn validate_attention_inputs(

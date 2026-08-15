@@ -20,13 +20,20 @@ fn test_matrix_multiplication_accuracy() {
     }
 }
 
+fn assert_softmax_sums_to_1(values: &[f32], context: &str) {
+    let sum: f32 = values.iter().sum();
+    assert!(
+        (sum - 1.0).abs() < 1e-5,
+        "{context}: softmax output must sum to 1.0"
+    );
+}
+
 #[test]
 fn test_softmax_logic() {
     let t = CpuTensor::from_data(vec![1, 3], vec![1.0, 2.0, 3.0]);
     let s = t.softmax();
 
-    let sum: f32 = s.data().iter().sum();
-    assert!((sum - 1.0).abs() < 1e-5, "softmax rows must sum to 1.0");
+    assert_softmax_sums_to_1(s.data(), "softmax rows must sum to 1.0");
 
     // values should be in increasing order because inputs were [1, 2, 3]
     assert!(s.data()[0] < s.data()[1]);
@@ -112,11 +119,7 @@ fn test_zero_tensor() {
 fn test_extreme_values() {
     let t = CpuTensor::from_data(vec![1, 3], vec![1e10, -1e10, 0.0]);
     let s = t.softmax();
-    let sum: f32 = s.data().iter().sum();
-    assert!(
-        (sum - 1.0).abs() < 1e-5,
-        "softmax should handle extreme values"
-    );
+    assert_softmax_sums_to_1(s.data(), "softmax should handle extreme values");
 }
 
 #[test]
@@ -131,8 +134,7 @@ fn test_all_masked() {
         ],
     );
     let s = t.softmax();
-    let sum: f32 = s.data().iter().sum();
-    assert!((sum - 1.0).abs() < 1e-5, "all masked should sum to 1");
+    assert_softmax_sums_to_1(s.data(), "all masked should sum to 1");
     for v in s.data().iter() {
         assert!(
             (v - 0.25).abs() < 1e-5,
@@ -217,11 +219,7 @@ fn test_softmax_random_values() {
             vec![rand_f32(), rand_f32(), rand_f32(), rand_f32()],
         );
         let s = t.softmax();
-        let sum: f32 = s.data().iter().sum();
-        assert!(
-            (sum - 1.0).abs() < 1e-5,
-            "softmax should sum to 1 for random values"
-        );
+        assert_softmax_sums_to_1(s.data(), "softmax should sum to 1 for random values");
         assert!(s.data()[0] >= 0.0 && s.data()[3] <= 1.0);
     }
 }
@@ -431,54 +429,22 @@ fn test_tokenizer_offsets_match_encode_bos_policy() {
 /// build a minimal valid GGUF v3 file in memory, suitable for testing the parser.
 /// contains one metadata key-value and one f32 tensor.
 fn build_minimal_gguf() -> Vec<u8> {
-    let mut buf = Vec::new();
-
-    // magic "GGUF" as little-endian u32: 0x46554747
-    buf.extend_from_slice(&0x46554747u32.to_le_bytes());
-    // version 3
-    buf.extend_from_slice(&3u32.to_le_bytes());
-    // tensor count = 1
-    buf.extend_from_slice(&1u64.to_le_bytes());
-    // metadata kv count = 1
-    buf.extend_from_slice(&1u64.to_le_bytes());
-
-    // metadata: key = "general.name", value type = 8 (string), value = "test"
-    let key = b"general.name";
-    buf.extend_from_slice(&(key.len() as u64).to_le_bytes());
-    buf.extend_from_slice(key);
-    buf.extend_from_slice(&8u32.to_le_bytes()); // string type
-    let val = b"test";
-    buf.extend_from_slice(&(val.len() as u64).to_le_bytes());
-    buf.extend_from_slice(val);
-
-    // tensor info: name = "test.weight", 2 dims [2, 4], dtype f32 (0), offset 0
-    let tname = b"test.weight";
-    buf.extend_from_slice(&(tname.len() as u64).to_le_bytes());
-    buf.extend_from_slice(tname);
-    buf.extend_from_slice(&2u32.to_le_bytes()); // n_dims
-    buf.extend_from_slice(&2u64.to_le_bytes()); // dim 0
-    buf.extend_from_slice(&4u64.to_le_bytes()); // dim 1
-    buf.extend_from_slice(&0u32.to_le_bytes()); // dtype: f32
-    buf.extend_from_slice(&0u64.to_le_bytes()); // offset
-
-    // compute padding to 32-byte alignment
-    let current_pos = buf.len() as u64;
-    let alignment = 32u64;
-    let data_start = (current_pos + alignment - 1) & !(alignment - 1);
-    let padding = (data_start - current_pos) as usize;
-    buf.resize(buf.len() + padding, 0);
-
-    // tensor data: 8 f32 values (2 * 4), all 1.0
+    // magic "GGUF" as little-endian u32: 0x46554747; 8 f32 values (2 * 4)
+    let mut data = Vec::with_capacity(8 * 4);
     for _ in 0..8 {
-        buf.extend_from_slice(&1.0f32.to_le_bytes());
+        data.extend_from_slice(&1.0f32.to_le_bytes());
     }
-
-    buf
+    build_single_tensor_gguf("test", 0, &[2, 4], &data)
 }
 
 /// build a minimal GGUF v3 file containing one tensor with caller-provided
 /// dtype, dims, and raw tensor payload bytes.
-fn build_single_tensor_gguf(dtype: u32, dims: &[u64], tensor_bytes: &[u8]) -> Vec<u8> {
+fn build_single_tensor_gguf(
+    model_name: &str,
+    dtype: u32,
+    dims: &[u64],
+    tensor_bytes: &[u8],
+) -> Vec<u8> {
     let mut buf = Vec::new();
 
     buf.extend_from_slice(&0x46554747u32.to_le_bytes());
@@ -490,7 +456,7 @@ fn build_single_tensor_gguf(dtype: u32, dims: &[u64], tensor_bytes: &[u8]) -> Ve
     buf.extend_from_slice(&(key.len() as u64).to_le_bytes());
     buf.extend_from_slice(key);
     buf.extend_from_slice(&8u32.to_le_bytes());
-    let val = b"layout-test";
+    let val = model_name.as_bytes();
     buf.extend_from_slice(&(val.len() as u64).to_le_bytes());
     buf.extend_from_slice(val);
 
@@ -557,7 +523,7 @@ fn test_load_f16_keeps_logical_shape() {
     for value in 0..8 {
         tensor_bytes.extend_from_slice(&f16::from_f32(value as f32).to_bits().to_le_bytes());
     }
-    let gguf_bytes = build_single_tensor_gguf(1, &[2, 4], &tensor_bytes);
+    let gguf_bytes = build_single_tensor_gguf("layout-test", 1, &[2, 4], &tensor_bytes);
     let mut cursor = Cursor::new(&gguf_bytes);
     let loader = load_gguf_from_reader(&mut cursor).expect("should parse f16 gguf");
 
@@ -580,7 +546,7 @@ fn test_load_q8_0_reverses_to_quantized_matmul_shape() {
     use std::io::Cursor;
 
     let tensor_bytes = vec![0u8; 2 * Q8_0_TYPE_SIZE];
-    let gguf_bytes = build_single_tensor_gguf(8, &[32, 2], &tensor_bytes);
+    let gguf_bytes = build_single_tensor_gguf("layout-test", 8, &[32, 2], &tensor_bytes);
     let mut cursor = Cursor::new(&gguf_bytes);
     let loader = load_gguf_from_reader(&mut cursor).expect("should parse q8_0 gguf");
 
@@ -606,7 +572,7 @@ fn test_file_loader_keeps_q8_0_in_shared_mapping() {
     use ember::quant::Q8_0_TYPE_SIZE;
 
     let tensor_bytes = vec![0u8; 2 * Q8_0_TYPE_SIZE];
-    let gguf_bytes = build_single_tensor_gguf(8, &[32, 2], &tensor_bytes);
+    let gguf_bytes = build_single_tensor_gguf("layout-test", 8, &[32, 2], &tensor_bytes);
     let path = std::env::temp_dir().join(format!("ember-mmap-test-{}.gguf", std::process::id()));
     std::fs::write(&path, gguf_bytes).expect("write temporary GGUF");
     let loader = load_gguf(&path).expect("load mmap-backed GGUF");
@@ -626,7 +592,7 @@ fn test_file_loader_rejects_truncated_mapped_q8_0() {
     use ember::quant::Q8_0_TYPE_SIZE;
 
     let tensor_bytes = vec![0u8; 2 * Q8_0_TYPE_SIZE - 1];
-    let gguf_bytes = build_single_tensor_gguf(8, &[32, 2], &tensor_bytes);
+    let gguf_bytes = build_single_tensor_gguf("layout-test", 8, &[32, 2], &tensor_bytes);
     let path = std::env::temp_dir().join(format!(
         "ember-mmap-truncated-test-{}.gguf",
         std::process::id()
@@ -882,8 +848,7 @@ fn test_softmax_1d_all_masked() {
     use ember::sampler::softmax_1d;
     let logits = vec![f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY];
     let probs = softmax_1d(&logits);
-    let sum: f32 = probs.iter().sum();
-    assert!((sum - 1.0).abs() < 1e-5);
+    assert_softmax_sums_to_1(&probs, "softmax_1d all-masked");
     for &p in &probs {
         assert!((p - 1.0 / 3.0).abs() < 1e-5);
     }
@@ -894,8 +859,7 @@ fn test_softmax_1d_normal() {
     use ember::sampler::softmax_1d;
     let logits = vec![1.0, 2.0, 3.0];
     let probs = softmax_1d(&logits);
-    let sum: f32 = probs.iter().sum();
-    assert!((sum - 1.0).abs() < 1e-5);
+    assert_softmax_sums_to_1(&probs, "softmax_1d normal");
     assert!(probs[0] < probs[1]);
     assert!(probs[1] < probs[2]);
 }

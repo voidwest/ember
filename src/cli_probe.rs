@@ -7,8 +7,8 @@ use crate::{Args, RunMetadata};
 use anyhow::Context;
 use ember::backend::Backend;
 use ember::extraction::{
-    byte_span_to_character_span, git_commit, sha256_file_result, unique_substring_byte_span,
-    unix_timestamp,
+    byte_span_to_character_span, git_commit, non_special_token_indices, sha256_file_result,
+    token_indices_for_offsets, unique_substring_byte_span, unix_timestamp,
 };
 use ember::model::ForwardModel;
 use ember::npy::NpyStreamWriter;
@@ -275,40 +275,6 @@ where
         )?;
     }
     Ok(())
-}
-
-pub(crate) fn token_indices_for_offsets(
-    offsets: &[(usize, usize)],
-    start: usize,
-    end: usize,
-) -> Vec<usize> {
-    offsets
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &(tok_start, tok_end))| {
-            if tok_start != tok_end && tok_start < end && tok_end > start {
-                Some(i)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-pub(crate) fn non_special_token_indices(
-    offsets: &[(usize, usize)],
-    token_count: usize,
-) -> Vec<usize> {
-    let indices: Vec<usize> = offsets
-        .iter()
-        .enumerate()
-        .filter_map(|(i, &(start, end))| if start != end { Some(i) } else { None })
-        .collect();
-    if indices.is_empty() {
-        (0..token_count).collect()
-    } else {
-        indices
-    }
 }
 
 pub(crate) fn stimulus_text_field(

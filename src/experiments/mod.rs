@@ -276,6 +276,99 @@ pub trait Experiment: Send {
 }
 
 /// Owns the single experiment active for a generation run.
+/// Generate the layer-scoped forwarding methods on `ExperimentRunner`.
+/// Each generated method forwards to the active experiment (via a
+/// `LayerContext`) and the capture sink (with the current dispatch path),
+/// wrapping failures in `ExperimentFailure` for both.
+macro_rules! forward_layer_hook {
+    ($method:ident, $hook:path) => {
+        pub(crate) fn $method(
+            &mut self,
+            execution: ExecutionContext<'_>,
+            layer_index: usize,
+            tensor: &mut TensorAccess<'_>,
+        ) -> Result<(), ExperimentFailure> {
+            let name = self.name();
+            let ctx = LayerContext::new(execution, layer_index);
+            if let Some(experiment) = self.experiment.as_mut() {
+                experiment.$method(&ctx, tensor).map_err(|source| {
+                    ExperimentFailure::new(
+                        name,
+                        $hook,
+                        Some(execution.phase),
+                        Some(layer_index),
+                        source,
+                    )
+                })?;
+            }
+            if let Some(capture) = self.capture.as_mut() {
+                let dispatch = self.current_dispatch;
+                capture
+                    .$method(&execution, layer_index, tensor, dispatch)
+                    .map_err(|source| {
+                        ExperimentFailure::new(
+                            "capture-activations",
+                            $hook,
+                            Some(execution.phase),
+                            Some(layer_index),
+                            source,
+                        )
+                    })?;
+            }
+            Ok(())
+        }
+    };
+}
+
+/// Generate the logits-scoped forwarding methods on `ExperimentRunner`
+/// (same shape as `forward_layer_hook!` minus the layer index).
+macro_rules! forward_logits_hook {
+    ($method:ident, $hook:path) => {
+        pub(crate) fn $method(
+            &mut self,
+            execution: &ExecutionContext<'_>,
+            tensor: &mut TensorAccess<'_>,
+        ) -> Result<(), ExperimentFailure> {
+            let name = self.name();
+            if let Some(experiment) = self.experiment.as_mut() {
+                experiment.$method(execution, tensor).map_err(|source| {
+                    ExperimentFailure::new(name, $hook, Some(execution.phase), None, source)
+                })?;
+            }
+            if let Some(capture) = self.capture.as_mut() {
+                let dispatch = self.current_dispatch;
+                capture
+                    .$method(execution, tensor, dispatch)
+                    .map_err(|source| {
+                        ExperimentFailure::new(
+                            "capture-activations",
+                            $hook,
+                            Some(execution.phase),
+                            None,
+                            source,
+                        )
+                    })?;
+            }
+            Ok(())
+        }
+    };
+}
+
+/// Generate the no-op `LayerHooks` impl for `DisabledHooks`: four
+/// layer-scoped methods and two logits-scoped methods, all `Ok(())`.
+macro_rules! impl_disabled_hooks {
+    ($(fn $method:ident(&mut self, $($args:tt)*) -> Result<(), E> { Ok(()) })*) => {
+        impl<T, E> LayerHooks<T, E> for DisabledHooks {
+            $(
+                #[inline(always)]
+                fn $method(&mut self, $($args)*) -> Result<(), E> {
+                    Ok(())
+                }
+            )*
+        }
+    };
+}
+
 pub struct ExperimentRunner {
     experiment: Option<Box<dyn Experiment>>,
     capture: Option<CaptureSink>,
@@ -492,221 +585,12 @@ impl ExperimentRunner {
         Ok(())
     }
 
-    pub(crate) fn before_layer(
-        &mut self,
-        execution: ExecutionContext<'_>,
-        layer_index: usize,
-        tensor: &mut TensorAccess<'_>,
-    ) -> Result<(), ExperimentFailure> {
-        let name = self.name();
-        let ctx = LayerContext::new(execution, layer_index);
-        if let Some(experiment) = self.experiment.as_mut() {
-            experiment.before_layer(&ctx, tensor).map_err(|source| {
-                ExperimentFailure::new(
-                    name,
-                    ExperimentHook::BeforeLayer,
-                    Some(execution.phase),
-                    Some(layer_index),
-                    source,
-                )
-            })?;
-        }
-        if let Some(capture) = self.capture.as_mut() {
-            let dispatch = self.current_dispatch;
-            capture
-                .before_layer(&execution, layer_index, tensor, dispatch)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        "capture-activations",
-                        ExperimentHook::BeforeLayer,
-                        Some(execution.phase),
-                        Some(layer_index),
-                        source,
-                    )
-                })?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn after_attention(
-        &mut self,
-        execution: ExecutionContext<'_>,
-        layer_index: usize,
-        tensor: &mut TensorAccess<'_>,
-    ) -> Result<(), ExperimentFailure> {
-        let name = self.name();
-        let ctx = LayerContext::new(execution, layer_index);
-        if let Some(experiment) = self.experiment.as_mut() {
-            experiment.after_attention(&ctx, tensor).map_err(|source| {
-                ExperimentFailure::new(
-                    name,
-                    ExperimentHook::AfterAttention,
-                    Some(execution.phase),
-                    Some(layer_index),
-                    source,
-                )
-            })?;
-        }
-        if let Some(capture) = self.capture.as_mut() {
-            let dispatch = self.current_dispatch;
-            capture
-                .after_attention(&execution, layer_index, tensor, dispatch)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        "capture-activations",
-                        ExperimentHook::AfterAttention,
-                        Some(execution.phase),
-                        Some(layer_index),
-                        source,
-                    )
-                })?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn after_mlp(
-        &mut self,
-        execution: ExecutionContext<'_>,
-        layer_index: usize,
-        tensor: &mut TensorAccess<'_>,
-    ) -> Result<(), ExperimentFailure> {
-        let name = self.name();
-        let ctx = LayerContext::new(execution, layer_index);
-        if let Some(experiment) = self.experiment.as_mut() {
-            experiment.after_mlp(&ctx, tensor).map_err(|source| {
-                ExperimentFailure::new(
-                    name,
-                    ExperimentHook::AfterMlp,
-                    Some(execution.phase),
-                    Some(layer_index),
-                    source,
-                )
-            })?;
-        }
-        if let Some(capture) = self.capture.as_mut() {
-            let dispatch = self.current_dispatch;
-            capture
-                .after_mlp(&execution, layer_index, tensor, dispatch)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        "capture-activations",
-                        ExperimentHook::AfterMlp,
-                        Some(execution.phase),
-                        Some(layer_index),
-                        source,
-                    )
-                })?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn after_layer(
-        &mut self,
-        execution: ExecutionContext<'_>,
-        layer_index: usize,
-        tensor: &mut TensorAccess<'_>,
-    ) -> Result<(), ExperimentFailure> {
-        let name = self.name();
-        let ctx = LayerContext::new(execution, layer_index);
-        if let Some(experiment) = self.experiment.as_mut() {
-            experiment.after_layer(&ctx, tensor).map_err(|source| {
-                ExperimentFailure::new(
-                    name,
-                    ExperimentHook::AfterLayer,
-                    Some(execution.phase),
-                    Some(layer_index),
-                    source,
-                )
-            })?;
-        }
-        if let Some(capture) = self.capture.as_mut() {
-            let dispatch = self.current_dispatch;
-            capture
-                .after_layer(&execution, layer_index, tensor, dispatch)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        "capture-activations",
-                        ExperimentHook::AfterLayer,
-                        Some(execution.phase),
-                        Some(layer_index),
-                        source,
-                    )
-                })?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn before_logits(
-        &mut self,
-        execution: &ExecutionContext<'_>,
-        tensor: &mut TensorAccess<'_>,
-    ) -> Result<(), ExperimentFailure> {
-        let name = self.name();
-        if let Some(experiment) = self.experiment.as_mut() {
-            experiment
-                .before_logits(execution, tensor)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        name,
-                        ExperimentHook::BeforeLogits,
-                        Some(execution.phase),
-                        None,
-                        source,
-                    )
-                })?;
-        }
-        if let Some(capture) = self.capture.as_mut() {
-            let dispatch = self.current_dispatch;
-            capture
-                .before_logits(execution, tensor, dispatch)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        "capture-activations",
-                        ExperimentHook::BeforeLogits,
-                        Some(execution.phase),
-                        None,
-                        source,
-                    )
-                })?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn after_logits(
-        &mut self,
-        execution: &ExecutionContext<'_>,
-        tensor: &mut TensorAccess<'_>,
-    ) -> Result<(), ExperimentFailure> {
-        let name = self.name();
-        if let Some(experiment) = self.experiment.as_mut() {
-            experiment
-                .after_logits(execution, tensor)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        name,
-                        ExperimentHook::AfterLogits,
-                        Some(execution.phase),
-                        None,
-                        source,
-                    )
-                })?;
-        }
-        if let Some(capture) = self.capture.as_mut() {
-            let dispatch = self.current_dispatch;
-            capture
-                .after_logits(execution, tensor, dispatch)
-                .map_err(|source| {
-                    ExperimentFailure::new(
-                        "capture-activations",
-                        ExperimentHook::AfterLogits,
-                        Some(execution.phase),
-                        None,
-                        source,
-                    )
-                })?;
-        }
-        Ok(())
-    }
+    forward_layer_hook!(before_layer, ExperimentHook::BeforeLayer);
+    forward_layer_hook!(after_attention, ExperimentHook::AfterAttention);
+    forward_layer_hook!(after_mlp, ExperimentHook::AfterMlp);
+    forward_layer_hook!(after_layer, ExperimentHook::AfterLayer);
+    forward_logits_hook!(before_logits, ExperimentHook::BeforeLogits);
+    forward_logits_hook!(after_logits, ExperimentHook::AfterLogits);
 }
 
 impl core::fmt::Debug for ExperimentRunner {
@@ -749,36 +633,13 @@ pub(crate) trait LayerHooks<T, E> {
 
 pub(crate) struct DisabledHooks;
 
-impl<T, E> LayerHooks<T, E> for DisabledHooks {
-    #[inline(always)]
-    fn before_layer(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> {
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn after_attention(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> {
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn after_mlp(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> {
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn after_layer(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> {
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn before_logits(&mut self, _tensor: &mut T) -> Result<(), E> {
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn after_logits(&mut self, _tensor: &mut T) -> Result<(), E> {
-        Ok(())
-    }
+impl_disabled_hooks! {
+    fn before_layer(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
+    fn after_attention(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
+    fn after_mlp(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
+    fn after_layer(&mut self, _layer_index: usize, _tensor: &mut T) -> Result<(), E> { Ok(()) }
+    fn before_logits(&mut self, _tensor: &mut T) -> Result<(), E> { Ok(()) }
+    fn after_logits(&mut self, _tensor: &mut T) -> Result<(), E> { Ok(()) }
 }
 
 pub(crate) struct ActiveHooks<'runner, 'model> {

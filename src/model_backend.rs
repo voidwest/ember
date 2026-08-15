@@ -1062,7 +1062,7 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
     })
 }
 
-fn checksum_insert(
+pub fn checksum_insert(
     checksums: &mut BTreeMap<String, String>,
     absolute_path: &Path,
     relative_path: &str,
@@ -1112,7 +1112,7 @@ fn validate_input_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn path_to_string(path: &Path) -> Result<String> {
+pub fn path_to_string(path: &Path) -> Result<String> {
     path.to_str()
         .map(str::to_string)
         .with_context(|| format!("path is not valid UTF-8: {}", path.display()))

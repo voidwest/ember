@@ -31,13 +31,13 @@ use ember::model_backend::compare_backend_artifacts;
 use ember::model_backend::run_extraction_with_backend;
 use ember::model_backend::run_llama_cpp_external_backend;
 use ember::model_backend::NativeModelBackend;
+use ember::model_backend::{checksum_insert, path_to_string};
 use ember::npy::NpyStreamWriter;
 use ember::sampler::argmax_token;
 use ember::trace;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
 use std::time::Instant;
 
 struct DecodeProfileSession {
@@ -523,22 +523,6 @@ where
         "logits: {}",
         published_run_dir.join(LOGITS_FILENAME).display()
     );
-    Ok(())
-}
-
-pub(crate) fn path_to_string(path: &Path) -> anyhow::Result<String> {
-    path.to_str()
-        .map(str::to_string)
-        .with_context(|| format!("path is not valid UTF-8: {}", path.display()))
-}
-
-pub(crate) fn checksum_insert(
-    checksums: &mut BTreeMap<String, String>,
-    absolute_path: &Path,
-    relative: &str,
-) -> anyhow::Result<()> {
-    let sum = sha256_file_result(absolute_path)?;
-    checksums.insert(relative.to_string(), sum);
     Ok(())
 }
 

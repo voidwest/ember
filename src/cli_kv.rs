@@ -278,12 +278,8 @@ fn run_export(
     let execution = ExecutionMode::from_cli(&command.execution).map_err(anyhow::Error::msg)?;
     let mut timings = BTreeMap::new();
 
-    let hash_start = Instant::now();
-    let model_sha256 = sha256_file_result(&command.model)
-        .with_context(|| format!("failed to hash model '{}'", command.model))?;
-    let tokenizer_sha256 = sha256_file_result(&command.tokenizer)
-        .with_context(|| format!("failed to hash tokenizer '{}'", command.tokenizer))?;
-    timings.insert("hash_inputs".into(), elapsed_ms(hash_start));
+    let (model_sha256, tokenizer_sha256) =
+        hash_inputs(&command.model, &command.tokenizer, &mut timings)?;
 
     let tokenizer_start = Instant::now();
     let tokenizer = EmberTokenizer::from_file(&command.tokenizer)?;
@@ -795,14 +791,8 @@ fn run_replay(
         "KV replay does not yet expose planned-fused mode"
     );
 
-    let hash_start = Instant::now();
-    let model_sha256 = sha256_file_result(&command.model)
-        .with_context(|| format!("failed to hash model '{}'", command.model))?;
-    let tokenizer_sha256 = sha256_file_result(&command.tokenizer)
-        .with_context(|| format!("failed to hash tokenizer '{}'", command.tokenizer))?;
-    if trace_enabled {
-        timings.insert("hash_inputs".into(), elapsed_ms(hash_start));
-    }
+    let (model_sha256, tokenizer_sha256) =
+        hash_inputs(&command.model, &command.tokenizer, &mut timings)?;
     let minimum_capacity = snapshot
         .manifest()
         .sequence_length
@@ -1014,12 +1004,8 @@ fn run_trace_native(
     let execution = ExecutionMode::from_cli(&command.execution).map_err(anyhow::Error::msg)?;
     let mut timings = BTreeMap::new();
 
-    let hash_start = Instant::now();
-    let model_sha256 = sha256_file_result(&command.model)
-        .with_context(|| format!("failed to hash model '{}'", command.model))?;
-    let tokenizer_sha256 = sha256_file_result(&command.tokenizer)
-        .with_context(|| format!("failed to hash tokenizer '{}'", command.tokenizer))?;
-    timings.insert("hash_inputs".into(), elapsed_ms(hash_start));
+    let (model_sha256, tokenizer_sha256) =
+        hash_inputs(&command.model, &command.tokenizer, &mut timings)?;
 
     let tokenizer_start = Instant::now();
     let tokenizer = EmberTokenizer::from_file(&command.tokenizer)?;
@@ -1198,6 +1184,22 @@ fn checked_trace_argmax(
         "greedy token {token} is absent from the tokenizer vocabulary"
     );
     Ok(token)
+}
+
+/// Hash the model and tokenizer files, recording wall time under
+/// "hash_inputs" in the shared timing map.
+fn hash_inputs(
+    model: &str,
+    tokenizer: &str,
+    timings: &mut BTreeMap<String, f64>,
+) -> anyhow::Result<(String, String)> {
+    let hash_start = Instant::now();
+    let model_sha256 =
+        sha256_file_result(model).with_context(|| format!("failed to hash model '{model}'"))?;
+    let tokenizer_sha256 = sha256_file_result(tokenizer)
+        .with_context(|| format!("failed to hash tokenizer '{tokenizer}'"))?;
+    timings.insert("hash_inputs".into(), elapsed_ms(hash_start));
+    Ok((model_sha256, tokenizer_sha256))
 }
 
 fn elapsed_ms(start: Instant) -> f64 {

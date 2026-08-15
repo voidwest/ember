@@ -220,12 +220,25 @@ impl GuiSession {
 /// A minimal resolved spec carrying just the model path; `prepare_run`
 /// reads everything it needs from it (tokenizer resolution and provenance
 /// hashes come from defaults, exactly like a user-authored spec).
-fn dummy_model_spec(model_path: &str) -> Result<ember::v05::spec::ExperimentSpecV1, String> {
-    let raw = RawExperimentSpec {
+/// Shared raw-spec skeleton for the console: same model/execution/generation
+/// boilerplate with per-run name, prompt, payloads, and output directory.
+#[allow(clippy::too_many_arguments)]
+fn raw_spec(
+    name: &str,
+    model_path: &str,
+    execution_mode: &str,
+    max_new_tokens: usize,
+    prompt: &str,
+    captures: Vec<CaptureSpec>,
+    interventions: Vec<InterventionSpec>,
+    output_dir: PathBuf,
+    overwrite: bool,
+) -> RawExperimentSpec {
+    RawExperimentSpec {
         schema: EXPERIMENT_SCHEMA_V1.to_string(),
         experiment: RawExperimentMetadata {
-            name: "gui-model-load".to_string(),
-            description: Some("model preload for the experiment console".to_string()),
+            name: name.to_string(),
+            description: Some("run from the ember experiment console".to_string()),
             seed: Some(0),
         },
         model: RawModelSpec {
@@ -236,27 +249,42 @@ fn dummy_model_spec(model_path: &str) -> Result<ember::v05::spec::ExperimentSpec
             arch: Some("auto".to_string()),
         },
         execution: Some(RawExecutionSpec {
-            mode: Some("reference".to_string()),
+            mode: Some(execution_mode.to_string()),
             threads: Some(0),
             deterministic: Some(true),
         }),
         generation: Some(RawGenerationSpec {
-            max_new_tokens: Some(1),
+            max_new_tokens: Some(max_new_tokens),
             temperature: Some(0.0),
         }),
         inputs: vec![RawInputSpec {
             id: "prompt-1".to_string(),
-            text: "model load".to_string(),
+            text: prompt.to_string(),
         }],
-        captures: Vec::new(),
-        interventions: Vec::new(),
+        captures,
+        interventions,
         output: RawOutputSpec {
-            directory: PathBuf::from("runs/gui/_preload"),
+            directory: output_dir,
             tensor_format: Some("safetensors".to_string()),
-            overwrite: Some(true),
+            overwrite: Some(overwrite),
         },
-    };
-    raw.resolve().map_err(|error| error.to_string())
+    }
+}
+
+fn dummy_model_spec(model_path: &str) -> Result<ember::v05::spec::ExperimentSpecV1, String> {
+    raw_spec(
+        "gui-model-load",
+        model_path,
+        "reference",
+        1,
+        "model load",
+        Vec::new(),
+        Vec::new(),
+        PathBuf::from("runs/gui/_preload"),
+        true,
+    )
+    .resolve()
+    .map_err(|error| error.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -653,41 +681,17 @@ fn build_and_resolve_spec(
         RunKind::Restore => ("gui-restore", Vec::new(), vec![restore]),
     };
 
-    let raw = RawExperimentSpec {
-        schema: EXPERIMENT_SCHEMA_V1.to_string(),
-        experiment: RawExperimentMetadata {
-            name: name.to_string(),
-            description: Some("run from the ember experiment console".to_string()),
-            seed: Some(0),
-        },
-        model: RawModelSpec {
-            path: PathBuf::from(&cfg.model_path),
-            expected_sha256: None,
-            tokenizer: None,
-            tokenizer_expected_sha256: None,
-            arch: Some("auto".to_string()),
-        },
-        execution: Some(RawExecutionSpec {
-            mode: Some(cfg.execution.name().to_string()),
-            threads: Some(0),
-            deterministic: Some(true),
-        }),
-        generation: Some(RawGenerationSpec {
-            max_new_tokens: Some(cfg.max_new_tokens),
-            temperature: Some(0.0),
-        }),
-        inputs: vec![RawInputSpec {
-            id: "prompt-1".to_string(),
-            text: cfg.prompt.clone(),
-        }],
+    let raw = raw_spec(
+        name,
+        &cfg.model_path,
+        cfg.execution.name(),
+        cfg.max_new_tokens,
+        &cfg.prompt,
         captures,
         interventions,
-        output: RawOutputSpec {
-            directory: PathBuf::from(output_dir),
-            tensor_format: Some("safetensors".to_string()),
-            overwrite: Some(false),
-        },
-    };
+        PathBuf::from(output_dir),
+        false,
+    );
     let spec_text = toml::to_string_pretty(&raw)
         .map_err(|error| format!("cannot serialize the experiment specification: {error}"))?;
     let resolved = raw.resolve().map_err(|error| error.to_string())?;

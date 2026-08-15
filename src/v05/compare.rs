@@ -518,17 +518,7 @@ fn plan_fusion_summary(root: &Path) -> Result<Vec<String>, String> {
 mod tests {
     use super::*;
     use crate::v05::testutil;
-
-    fn temp_root(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "ember-compare-{tag}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
-    }
+    use crate::v05::testutil::temp_root;
 
     #[test]
     fn identical_bundles_report_semantic_identity() {

@@ -23,6 +23,20 @@ use crate::v05::token_select::{
     TokenSelector,
 };
 use crate::v05::verify::{CaptureIndexEntry, SummaryEntry};
+use std::path::PathBuf;
+
+/// Unique per-test temp dir (time + pid based; collisions across parallel
+/// tests are practically impossible).
+pub(crate) fn temp_root(tag: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ember-{tag}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::path::Path;
