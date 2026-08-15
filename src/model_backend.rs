@@ -782,11 +782,10 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
         )?;
         let prompt_hash = stable_prompt_hash(&sample.prompt);
         let selected_token_positions = select_token_positions(
-            &sample.prompt,
             &tokenized.token_ids,
             &tokenized.offsets,
             config,
-            sample.word_value.as_deref(),
+            sample.word_byte_span,
         )
         .with_context(|| {
             format!(
@@ -941,11 +940,7 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
             selected_token_positions,
             source_field: source_field_for_position(config),
             source_value: source_value_for_position(config, sample.word_value.as_deref()),
-            source_byte_span: source_span_for_position(
-                &sample.prompt,
-                config,
-                sample.word_value.as_deref(),
-            )?,
+            source_byte_span: source_span_for_position(config, sample.word_byte_span)?,
         };
         serde_json::to_writer(&mut positions_writer, &position_record)?;
         positions_writer.write_all(b"\n")?;

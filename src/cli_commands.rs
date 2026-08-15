@@ -312,13 +312,8 @@ where
         )?;
         let token_count = token_ids.len();
         ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
-        let selected_token_positions = select_token_positions(
-            &sample.prompt,
-            &token_ids,
-            &offsets,
-            config,
-            sample.word_value.as_deref(),
-        )?;
+        let selected_token_positions =
+            select_token_positions(&token_ids, &offsets, config, sample.word_byte_span)?;
         if selected_token_positions != vec![token_ids.len() - 1] {
             anyhow::bail!(
                 "native logits reference only supports final-token logits; sample '{}' selected {:?}",
@@ -386,11 +381,7 @@ where
                 selected_token_positions,
                 source_field: source_field_for_position(config),
                 source_value: source_value_for_position(config, sample.word_value.as_deref()),
-                source_byte_span: source_span_for_position(
-                    &sample.prompt,
-                    config,
-                    sample.word_value.as_deref(),
-                )?,
+                source_byte_span: source_span_for_position(config, sample.word_byte_span)?,
             },
         )?;
         positions_writer.write_all(b"\n")?;

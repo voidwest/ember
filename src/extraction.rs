@@ -241,6 +241,9 @@ pub struct ExtractionInputSample {
     pub sample_id: String,
     pub prompt: String,
     pub word_value: Option<String>,
+    /// Byte span of `word_value` in `prompt`, tracked at render time so it is
+    /// unambiguous even when the value appears in more than one field.
+    pub word_byte_span: Option<[usize; 2]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -476,8 +479,22 @@ pub fn load_input_samples(config: &ExtractionConfig) -> Result<Vec<ExtractionInp
                 line_index + 1
             );
         }
-        let prompt = render_prompt(&config.prompt_template, object)
-            .with_context(|| format!("failed to render prompt for record {}", line_index + 1))?;
+        let (prompt, word_byte_span) = if matches!(
+            config.token_position,
+            TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean
+        ) {
+            let (prompt, span) =
+                render_prompt_with_span(&config.prompt_template, object, &config.word_field)
+                    .with_context(|| {
+                        format!("failed to render prompt for record {}", line_index + 1)
+                    })?;
+            (prompt, Some(span))
+        } else {
+            let prompt = render_prompt(&config.prompt_template, object).with_context(|| {
+                format!("failed to render prompt for record {}", line_index + 1)
+            })?;
+            (prompt, None)
+        };
         if prompt.trim().is_empty() {
             anyhow::bail!(
                 "rendered prompt for JSONL record {} is empty",
@@ -501,6 +518,7 @@ pub fn load_input_samples(config: &ExtractionConfig) -> Result<Vec<ExtractionInp
             sample_id,
             prompt,
             word_value,
+            word_byte_span,
         });
     }
     if samples.is_empty() {
@@ -524,6 +542,38 @@ pub fn render_prompt(template: &str, object: &Map<String, Value>) -> Result<Stri
         rendered = rendered.replace(&format!("{{{key}}}"), &text);
     }
     Ok(rendered)
+}
+
+/// Render a prompt template and record the byte span of the first occurrence
+/// of `tracked_field`'s rendered value. Fields are substituted in template
+/// order, so the recorded span is the placeholder's position in the final
+/// string — unlike substring search, this stays correct when the same value
+/// appears in more than one field (e.g. surface repeated in Surface:/Token:).
+pub fn render_prompt_with_span(
+    template: &str,
+    object: &Map<String, Value>,
+    tracked_field: &str,
+) -> Result<(String, [usize; 2])> {
+    let fields = prompt_template_fields(template)?;
+    let mut rendered = template.to_string();
+    let mut tracked: Option<[usize; 2]> = None;
+    for key in fields {
+        let text = object
+            .get(&key)
+            .and_then(value_to_string)
+            .with_context(|| format!("prompt template field '{key}' is missing or not scalar"))?;
+        for needle in [format!("{{{{{key}}}}}"), format!("{{{key}}}")] {
+            if let Some(pos) = rendered.find(&needle) {
+                rendered.replace_range(pos..pos + needle.len(), &text);
+                if key == tracked_field && tracked.is_none() {
+                    tracked = Some([pos, pos + text.len()]);
+                }
+            }
+        }
+    }
+    let span = tracked
+        .with_context(|| format!("prompt template has no '{{{tracked_field}}}' placeholder"))?;
+    Ok((rendered, span))
 }
 
 fn prompt_template_fields(template: &str) -> Result<Vec<String>> {
@@ -680,17 +730,11 @@ pub fn pooling_for_mode(mode: TokenPositionMode) -> &'static str {
 }
 
 pub fn source_span_for_position(
-    prompt: &str,
     config: &ExtractionConfig,
-    word_value: Option<&str>,
+    word_byte_span: Option<[usize; 2]>,
 ) -> Result<Option<[usize; 2]>> {
     match config.token_position {
-        TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean => {
-            let Some(value) = word_value else {
-                return Ok(None);
-            };
-            Ok(Some(unique_substring_byte_span(prompt, value)?))
-        }
+        TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean => Ok(word_byte_span),
         TokenPositionMode::PromptFinal | TokenPositionMode::FullPromptMean => Ok(None),
     }
 }
@@ -1170,9 +1214,12 @@ pub fn validate_artifact_contract(
             sample.prompt.as_deref(),
             position_row.source_value.as_deref(),
         ) {
-            let expected_span = unique_substring_byte_span(prompt, source_value)?;
-            if position_row.source_byte_span != Some(expected_span) {
-                anyhow::bail!("source_byte_span mismatch at sample_index {index}");
+            if let Some([start, end]) = position_row.source_byte_span {
+                if prompt.get(start..end) != Some(source_value) {
+                    anyhow::bail!(
+                        "source_byte_span [{start}, {end}] does not slice to source_value at sample_index {index}"
+                    );
+                }
             }
         }
         if !matches!(
@@ -1184,13 +1231,12 @@ pub fn validate_artifact_contract(
                 "prompt-wide position unexpectedly declares source value/span at sample_index {index}"
             );
         }
-        if let Some(prompt) = sample.prompt.as_deref() {
+        if sample.prompt.is_some() {
             let recomputed = select_token_positions(
-                prompt,
                 &token_row.token_ids,
                 &token_row.offsets,
                 &manifest.extraction_config,
-                position_row.source_value.as_deref(),
+                position_row.source_byte_span,
             )?;
             if recomputed != position_row.selected_token_positions {
                 anyhow::bail!(
@@ -1510,11 +1556,10 @@ pub fn canonical_config_toml(config: &ExtractionConfig) -> Result<String> {
 }
 
 pub fn select_token_positions(
-    prompt: &str,
     token_ids: &[u32],
     offsets: &[(usize, usize)],
     config: &ExtractionConfig,
-    word_value: Option<&str>,
+    word_byte_span: Option<[usize; 2]>,
 ) -> Result<Vec<usize>> {
     if token_ids.is_empty() {
         anyhow::bail!("cannot select token positions from an empty prompt");
@@ -1532,23 +1577,18 @@ pub fn select_token_positions(
             Ok(non_special_token_indices(offsets, token_ids.len()))
         }
         TokenPositionMode::WordFinalSubtoken | TokenPositionMode::WordMean => {
-            let needle = word_value.with_context(|| {
+            let [start, end] = word_byte_span.with_context(|| {
                 format!(
                     "token_position '{}' requires input JSONL field '{}'",
                     config.token_position.as_str(),
                     config.word_field
                 )
             })?;
-            let byte_span = unique_substring_byte_span(prompt, needle).with_context(|| {
-                format!("word_field '{}' could not be selected", config.word_field)
-            })?;
-            let [start, end] = byte_span_to_character_span(prompt, byte_span)?;
             let mut indices = token_indices_for_offsets(offsets, start, end);
             if indices.is_empty() {
                 anyhow::bail!(
-                    "could not map word_field '{}' value '{}' to tokenizer offsets",
-                    config.word_field,
-                    needle
+                    "could not map word_field '{}' byte span [{start}, {end}] to tokenizer offsets",
+                    config.word_field
                 );
             }
             if config.token_position == TokenPositionMode::WordFinalSubtoken {
@@ -1846,8 +1886,7 @@ mod tests {
         config.prompt_template = "x".to_string();
         config.layers.clear();
         let selected =
-            select_token_positions("abc", &[1, 2, 3], &[(0, 0), (0, 1), (1, 3)], &config, None)
-                .unwrap();
+            select_token_positions(&[1, 2, 3], &[(0, 0), (0, 1), (1, 3)], &config, None).unwrap();
         assert_eq!(selected, vec![2]);
     }
 }
