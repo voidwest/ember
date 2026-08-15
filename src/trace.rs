@@ -336,9 +336,18 @@ pub fn collect_run_metadata(thread_count: usize) -> RunMetadata {
     }
     .to_string();
 
-    let commit_hash = option_env!("EMBER_GIT_COMMIT")
-        .unwrap_or("unknown")
-        .to_string();
+    let commit_hash = {
+        let mut hash = option_env!("EMBER_GIT_COMMIT")
+            .unwrap_or("unknown")
+            .to_string();
+        if option_env!("EMBER_GIT_DIRTY") == Some("true") {
+            // The binary was built from a dirty tree, so the baked commit does
+            // not identify the exact code under test. Flag it rather than
+            // silently reporting a stale SHA.
+            hash.push_str("-dirty");
+        }
+        hash
+    };
 
     let rust_version = option_env!("EMBER_RUST_VERSION")
         .map(str::to_string)
