@@ -69,14 +69,16 @@ baseline / intervention / restore runs. Bundles are written and
 self-verified exactly as `ember experiment run`.
 
 ```bash
-target/release/ember gui          # native single-window console (iced,
-                                  # dark theme by default, light/dark toggle
-                                  # in the header)
+target/release/ember gui          # native single-window console (gpui,
+                                  # Vulkan-accelerated; dark theme by
+                                  # default, light/dark toggle in the header)
 target/release/ember web-gui      # browser console on http://127.0.0.1:8337/
                                   # (light/dark toggle, defaults to the
                                   # system preference)
 ```
 
+The native console needs a Vulkan-capable GPU and an X11/Wayland session
+(no software-rendering fallback); the browser console only needs a browser.
 Arabic input/output renders correctly in both: the native console shapes
 RTL text with its embedded Noto fonts (offline, identical on any machine);
 the browser console uses `dir="auto"` per field. Details:
@@ -145,11 +147,11 @@ Validated on the qwen3/llama rows with completed golden checks; see
   producing `ember.bundle.v1` bundles with semantic/payload identity and
   offline verification (introduced in v0.5.0; current patch release v0.5.1).
   Gates A-I: [docs/v05-research-contract.md](docs/v05-research-contract.md).
-- **v0.6**: experiment consoles — `ember gui` (native iced window, dark
-  theme with light/dark toggle) and `ember web-gui` (single-page browser
-  console with a light/dark toggle); the v0.5 run path was split into
-  `prepare_run` / `execute_prepared` so one resident model serves repeated
-  runs. [docs/v06-gui.md](docs/v06-gui.md).
+- **v0.6**: experiment consoles — `ember gui` (native gpui/Vulkan window,
+  dark theme with light/dark toggle) and `ember web-gui` (single-page
+  browser console with a light/dark toggle); the v0.5 run path was split
+  into `prepare_run` / `execute_prepared` so one resident model serves
+  repeated runs. [docs/v06-gui.md](docs/v06-gui.md).
 
 ## validation status
 
