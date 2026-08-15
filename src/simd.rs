@@ -14,11 +14,11 @@
 //!
 //! One Q8_0 block = 34 bytes (2-byte f16 scale + 32 i8 quants) → 32 f32 values.
 
-#[cfg(target_arch = "aarch64")]
-use std::arch::is_aarch64_feature_detected;
 use crate::quant::{Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
 use half::f16;
 use rayon::prelude::*;
+#[cfg(target_arch = "aarch64")]
+use std::arch::is_aarch64_feature_detected;
 
 // Four-way row splitting becomes beneficial well below the old 8M-MAC gate
 // now that decode uses cheaper Q8 × Q8 dots. This includes Gemma's Q/O

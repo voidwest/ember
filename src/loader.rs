@@ -1089,6 +1089,8 @@ mod tests {
         assert_eq!(inventory.summary.expanded_bytes, (8 * 256 * 4) as u64);
     }
 
+    // x86-only: asserts the AVX2+FMA+F16C+SSSE3 feature set.
+    #[cfg(target_arch = "x86_64")]
     #[test]
     fn x86_strategy_records_compressed_x86_when_avx2_available() {
         let bytes = write_minimal_gguf_with_k_tensor(14, 4); // q6_k
