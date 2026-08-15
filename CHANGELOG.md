@@ -7,45 +7,52 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
-## [0.6.1] - 2026-08-09
+## [0.6.3] - 2026-08-16
+
+### Changed
+
+- Native experiment console migrated from iced to gpui 0.2 (Zed's
+  GPU-accelerated framework, blade/Vulkan on Linux); CI installs the X11
+  system libraries and the README documents the Vulkan requirement. gpui is
+  now an optional dependency behind the default `gui` cargo feature —
+  headless research builds use `--no-default-features` and skip the
+  blade/ash/wayland stack.
+- `ember experiment reproduce` reuses the bundle's recorded
+  `resolved-experiment.json` instead of re-resolving, and its verdict gained
+  capture-alignment gating (`captures-misaligned` outcome).
+- `--arch auto` (read from GGUF metadata) is accepted across `bench-decode`,
+  `inspect-plan`, and the `kv` subcommands; conflicting explicit `--arch`
+  values fail closed.
+- `validate-backends` dropped its dead `--model`/`--prompts`/`--layers` flags;
+  the web-GUI server is bounded and panic-safe.
+- The `arabic_morph_dataset` Python package moved from `src/` to `python/`.
 
 ### Added
 
-- `ember gui` (native console): light/dark theme toggle in the header
-  (defaults to dark). Every color role in the console switches with the
-  palette, including iced widgets (inputs, combo boxes, editor, buttons)
-  which follow the iced `Theme`.
+- Opt-in Q4_K/Q6_K quant pre-split (`EMBER_PRESPLIT`): prefill four-row tiles
+  read the pre-split lanes directly (bit-identical; speed measured on a cool
+  machine).
+- Eager K-quant/Q8_0 dequant is rayon-parallel over blocks/rows and prefill
+  is row-tile-major (measured ~8.5% prefill, ~6% eager-load, bit-identical).
+- CI: aarch64 headless tier (build + test + clippy on `ubuntu-24.04-arm`),
+  a no-default-features check on x86_64, and a prebuilt cargo-audit action.
 
-## [0.6.0] - 2026-08-06
+### Fixed
 
-### Added
+- gemma4 vocab size is derived from the token embedding instead of the
+  256000 default, so 262144-vocab models load.
+- Extraction locates the target word by placeholder position rather than
+  unique substring, and tokenizer byte offsets are validated against byte
+  length instead of char count (broke non-ASCII prompts).
+- Dirty-tree builds are flagged in run-metadata commit hashes.
 
-- `ember gui` — a native, single-window experiment console for live demos
-  (v0.6): an iced app on the tiny-skia software renderer (no GPU or
-  webview dependency) with embedded Noto fonts (`src/gui_fonts/`) for
-  offline Latin + Arabic coverage, dark console theme.
-- `ember web-gui` — an offline, single-page browser console for live demos
-  (v0.6). A thin presentation layer over the existing v0.5 pipeline: the
-  page translates every action into an `ember.experiment.v1` specification,
-  validates it through the standard `RawExperimentSpec::resolve()` gate, and
-  executes it with the same `prepare_run` / `execute_prepared` code as
-  `ember experiment run`. One resident model session serves repeated
-  baseline / intervention / restore runs, so the demo loop never reloads the
-  model. Bundles are written and self-verified exactly as in v0.5; the
-  restore-original leg reports a bit-exact match against the baseline.
-  Light/dark theme toggle (defaults to the system preference, persisted in
-  localStorage). See `docs/v06-gui.md`.
-- `src/gui_native.rs`: the native console — same `GuiSession` core and
-  `parse_run_request` gate as the browser console, runs executed in a
-  worker thread so the UI never blocks.
-- `src/gui.rs` + `src/gui_page.html`: tiny embedded HTTP server (tiny_http,
-  localhost only) and a self-contained page (no web framework, no external
-  assets) with Arabic/RTL rendering via the browser (`dir="auto"` per field;
-  the UI itself stays LTR).
-- `cli_experiment::prepare_run` / `execute_prepared`: the v0.5 run path was
-  split into a reusable model-load step and an execute step so a loaded
-  model can be kept resident. `ember experiment run` behavior is unchanged
-  (it calls both in sequence).
+### Removed
+
+- Regenerable artifact payloads untracked on main: per-bundle `model.json`
+  exports in `artifacts/benchmark-v05/` (byte-identical across bundles),
+  golden-v03 raw logits (`*.npy`/`*.bin`, regenerable via
+  `tools/logits_dump.c`), and a stray docs screenshot + cached paper PDF.
+  Summaries, specs, plans, and capture tensors remain tracked.
 
 ## [0.6.2] - 2026-08-12
 
@@ -129,6 +136,46 @@ carries no compatibility guarantee.
 - `// Safety:` comments on the previously undocumented `unsafe` sites: the
   `matrixmultiply::sgemm` call in `tensor.rs` and 29 SIMD kernels in
   `simd.rs`.
+
+## [0.6.1] - 2026-08-09
+
+### Added
+
+- `ember gui` (native console): light/dark theme toggle in the header
+  (defaults to dark). Every color role in the console switches with the
+  palette, including iced widgets (inputs, combo boxes, editor, buttons)
+  which follow the iced `Theme`.
+
+## [0.6.0] - 2026-08-06
+
+### Added
+
+- `ember gui` — a native, single-window experiment console for live demos
+  (v0.6): an iced app on the tiny-skia software renderer (no GPU or
+  webview dependency) with embedded Noto fonts (`src/gui_fonts/`) for
+  offline Latin + Arabic coverage, dark console theme.
+- `ember web-gui` — an offline, single-page browser console for live demos
+  (v0.6). A thin presentation layer over the existing v0.5 pipeline: the
+  page translates every action into an `ember.experiment.v1` specification,
+  validates it through the standard `RawExperimentSpec::resolve()` gate, and
+  executes it with the same `prepare_run` / `execute_prepared` code as
+  `ember experiment run`. One resident model session serves repeated
+  baseline / intervention / restore runs, so the demo loop never reloads the
+  model. Bundles are written and self-verified exactly as in v0.5; the
+  restore-original leg reports a bit-exact match against the baseline.
+  Light/dark theme toggle (defaults to the system preference, persisted in
+  localStorage). See `docs/v06-gui.md`.
+- `src/gui_native.rs`: the native console — same `GuiSession` core and
+  `parse_run_request` gate as the browser console, runs executed in a
+  worker thread so the UI never blocks.
+- `src/gui.rs` + `src/gui_page.html`: tiny embedded HTTP server (tiny_http,
+  localhost only) and a self-contained page (no web framework, no external
+  assets) with Arabic/RTL rendering via the browser (`dir="auto"` per field;
+  the UI itself stays LTR).
+- `cli_experiment::prepare_run` / `execute_prepared`: the v0.5 run path was
+  split into a reusable model-load step and an execute step so a loaded
+  model can be kept resident. `ember experiment run` behavior is unchanged
+  (it calls both in sequence).
 
 ## [0.5.1] - 2026-08-04
 
