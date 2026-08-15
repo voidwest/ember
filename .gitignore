@@ -119,6 +119,17 @@ runs/
 artifacts/performance-baseline/2026-08-10/analysis-summary.json
 artifacts/performance-baseline/2026-08-10/raw/*.trace.json
 
+# v0.5 Gate-H bundles: the per-bundle model.json is a byte-identical GGUF
+# metadata/architecture export; tracked specs/plans/summaries are the citable
+# evidence and the export is regenerable locally.
+/artifacts/benchmark-v05/**/model.json
+# golden raw logits are regenerable via tools/logits_dump.c + llama.cpp
+artifacts/golden-v03/**/*.bin
+/artifacts/golden-v03/bin/
+# stray local screenshot and cached paper under the docs vault
+/docs/f9c1d7cc-*.png
+/docs/vault-*/**/*.pdf
+
 # local research artifacts (EmberSEC comparative eval, pilots, fuzz corpora).
 # The security harness is injected into worktrees by
 # research/embersec/comparative/run_eval.py and is intentionally not committed.
