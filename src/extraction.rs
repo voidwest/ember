@@ -1386,10 +1386,10 @@ pub(crate) fn validate_token_offsets(
             token_ids.len()
         );
     }
-    let character_count = prompt.map(|text| text.chars().count());
+    let byte_length = prompt.map(|text| text.len());
     let mut previous = None;
     for (token_index, &(start, end)) in offsets.iter().enumerate() {
-        if start > end || character_count.is_some_and(|count| end > count) {
+        if start > end || byte_length.is_some_and(|len| end > len) {
             anyhow::bail!(
                 "invalid token offset ({start}, {end}) for token {token_index} at sample_index {sample_index}"
             );
