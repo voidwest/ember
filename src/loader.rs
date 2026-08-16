@@ -1,6 +1,42 @@
 use crate::quant::{QuantizedWeight, Q8_0_TYPE_SIZE};
 use crate::tensor::CpuTensor;
-use anyhow::{bail, Context, Ok, Result};
+/// Structured errors from the GGUF loading boundary. The loader is the
+/// crate's main external-data seam: malformed or unsupported files are
+/// expected inputs, so they get typed errors (Luminal lesson: `Result`
+/// everywhere external data enters; rich errors, not panics).
+#[derive(Debug, thiserror::Error)]
+pub enum LoaderError {
+    /// Structural or semantic problem in the GGUF data itself.
+    #[error("{0}")]
+    Malformed(String),
+    /// A GGUF count/offset does not fit the host address space.
+    #[error("{0}")]
+    Overflow(String),
+    /// Memory reservation failed (counts are validated before reserving,
+    /// so this is a defensive path).
+    #[error("{0}")]
+    Reservation(String),
+    /// Underlying I/O failure.
+    #[error("failed to read GGUF: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+impl LoaderError {
+    fn malformed(message: impl Into<String>) -> Self {
+        Self::Malformed(message.into())
+    }
+    fn overflow(message: impl Into<String>) -> Self {
+        Self::Overflow(message.into())
+    }
+    fn reservation(message: impl Into<String>) -> Self {
+        Self::Reservation(message.into())
+    }
+    fn io(message: impl Into<String>) -> Self {
+        Self::Malformed(message.into())
+    }
+}
+
+type Result<T> = std::result::Result<T, LoaderError>;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -78,7 +114,7 @@ impl GgufLoader {
     pub(crate) fn take_tensor(&mut self, name: &str) -> Result<LoadedTensor> {
         self.tensors
             .remove(name)
-            .with_context(|| format!("Missing tensor: {name}"))
+            .ok_or_else(|| LoaderError::malformed(format!("Missing tensor: {name}")))
     }
 
     pub(crate) fn take_f32(&mut self, name: &str) -> Result<CpuTensor> {
@@ -144,7 +180,12 @@ pub fn load_gguf_with_k_strategy<P: AsRef<Path>>(
     strategy: crate::quant_k::KStrategy,
     allow_fallback: bool,
 ) -> Result<GgufLoader> {
-    let f = File::open(&path).with_context(|| format!("failed to open {:?}", path.as_ref()))?;
+    let f = File::open(&path).map_err(|error| {
+        LoaderError::malformed(format!(
+            "failed to open {}: {error}",
+            path.as_ref().display()
+        ))
+    })?;
     // Safety: the read-only mapping remains alive through every QuantizedWeight
     // that references it. As with all file mappings, callers must not truncate
     // or concurrently mutate the GGUF while it is loaded.
@@ -184,47 +225,67 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     let file_len = reader.seek(SeekFrom::End(0))?;
     reader.seek(SeekFrom::Start(initial_position))?;
     if file_len.saturating_sub(initial_position) < 24 {
-        bail!("GGUF file is too short to contain a complete header");
+        return Err(LoaderError::malformed(
+            "GGUF file is too short to contain a complete header".to_string(),
+        ));
     }
 
     let magic = read_u32(reader)?;
     if magic != GGUF_MAGIC {
-        bail!("not a GGUF file (bad magic: {:#x})", magic);
+        return Err(LoaderError::malformed(format!(
+            "not a GGUF file (bad magic: {:#x})",
+            magic
+        )));
     }
 
     let version = read_u32(reader)?;
     if version != GGUF_VERSION {
-        bail!("unsupported GGUF version: {}", version);
+        return Err(LoaderError::malformed(format!(
+            "unsupported GGUF version: {}",
+            version
+        )));
     }
 
     let tensor_count_raw = read_u64(reader)?;
     let metadata_kv_count_raw = read_u64(reader)?;
     if tensor_count_raw > file_len / 32 {
-        bail!("GGUF tensor count {tensor_count_raw} is impossible for a {file_len}-byte file");
+        return Err(LoaderError::malformed(format!(
+            "GGUF tensor count {tensor_count_raw} is impossible for a {file_len}-byte file"
+        )));
     }
     if metadata_kv_count_raw > file_len / 13 {
-        bail!(
+        return Err(LoaderError::malformed(format!(
             "GGUF metadata count {metadata_kv_count_raw} is impossible for a {file_len}-byte file"
-        );
+        )));
     }
-    let tensor_count = usize::try_from(tensor_count_raw)
-        .context("GGUF tensor count does not fit in memory address space")?;
-    let metadata_kv_count = usize::try_from(metadata_kv_count_raw)
-        .context("GGUF metadata count does not fit in memory address space")?;
+    let tensor_count = usize::try_from(tensor_count_raw).map_err(|error| {
+        LoaderError::overflow(format!(
+            "GGUF tensor count does not fit in memory address space: {error}"
+        ))
+    })?;
+    let metadata_kv_count = usize::try_from(metadata_kv_count_raw).map_err(|error| {
+        LoaderError::overflow(format!(
+            "GGUF metadata count does not fit in memory address space: {error}"
+        ))
+    })?;
 
     let mut metadata = HashMap::new();
-    metadata
-        .try_reserve(metadata_kv_count)
-        .context("failed to reserve GGUF metadata table")?;
+    metadata.try_reserve(metadata_kv_count).map_err(|error| {
+        LoaderError::reservation(format!("failed to reserve GGUF metadata table: {error}"))
+    })?;
     for _ in 0..metadata_kv_count {
         let key = read_gguf_string(reader)?;
         if key.is_empty() {
-            bail!("GGUF metadata keys must not be empty");
+            return Err(LoaderError::malformed(
+                "GGUF metadata keys must not be empty".to_string(),
+            ));
         }
         let val_type = read_u32(reader)?;
         let value = read_gguf_value(reader, val_type)?;
         if metadata.insert(key.clone(), value).is_some() {
-            bail!("duplicate GGUF metadata key '{key}'");
+            return Err(LoaderError::malformed(format!(
+                "duplicate GGUF metadata key '{key}'"
+            )));
         }
     }
 
@@ -232,7 +293,11 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     let mut tensor_meta = HashMap::new();
     tensor_meta
         .try_reserve(tensor_info.len())
-        .context("failed to reserve GGUF tensor-metadata table")?;
+        .map_err(|error| {
+            LoaderError::reservation(format!(
+                "failed to reserve GGUF tensor-metadata table: {error}"
+            ))
+        })?;
     for info in &tensor_info {
         tensor_meta.insert(
             info.name.clone(),
@@ -246,7 +311,9 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     let mut k_decisions = HashMap::new();
     k_decisions
         .try_reserve(tensor_info.len())
-        .context("failed to reserve GGUF K-decision table")?;
+        .map_err(|error| {
+            LoaderError::reservation(format!("failed to reserve GGUF K-decision table: {error}"))
+        })?;
 
     let current_pos = reader.stream_position()?;
     let alignment = match metadata.get("general.alignment") {
@@ -255,30 +322,40 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         _ => DEFAULT_ALIGNMENT,
     };
     if alignment == 0 || !alignment.is_power_of_two() {
-        bail!("invalid GGUF alignment {alignment}: expected a power of two");
+        return Err(LoaderError::malformed(format!(
+            "invalid GGUF alignment {alignment}: expected a power of two"
+        )));
     }
     let data_start = current_pos
         .checked_add(alignment - 1)
-        .context("GGUF aligned data offset overflow")?
+        .ok_or_else(|| LoaderError::overflow("GGUF aligned data offset overflow"))?
         & !(alignment - 1);
 
     let mut ranges = Vec::new();
     ranges
         .try_reserve_exact(tensor_info.len())
-        .context("failed to reserve GGUF tensor range table")?;
+        .map_err(|error| {
+            LoaderError::reservation(format!(
+                "failed to reserve GGUF tensor range table: {error}"
+            ))
+        })?;
     for info in &tensor_info {
         let byte_len = tensor_byte_len(info)?;
-        let start = data_start
-            .checked_add(info.offset)
-            .with_context(|| format!("tensor '{}' file offset overflow", info.name))?;
+        let start = data_start.checked_add(info.offset).ok_or_else(|| {
+            LoaderError::overflow(format!("tensor '{}' file offset overflow", info.name))
+        })?;
         let end = start
-            .checked_add(u64::try_from(byte_len).context("tensor byte length exceeds u64")?)
-            .with_context(|| format!("tensor '{}' file range overflow", info.name))?;
+            .checked_add(u64::try_from(byte_len).map_err(|error| {
+                LoaderError::overflow(format!("tensor byte length exceeds u64: {error}"))
+            })?)
+            .ok_or_else(|| {
+                LoaderError::overflow(format!("tensor '{}' file range overflow", info.name))
+            })?;
         if end > file_len {
-            bail!(
+            return Err(LoaderError::malformed(format!(
                 "tensor '{}' data range {start}..{end} exceeds file length {file_len}",
                 info.name
-            );
+            )));
         }
         ranges.push((start, end, info.name.as_str()));
     }
@@ -287,28 +364,28 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         let (_, previous_end, previous_name) = pair[0];
         let (next_start, _, next_name) = pair[1];
         if next_start < previous_end {
-            bail!(
+            return Err(LoaderError::malformed(format!(
                 "GGUF tensor ranges overlap: '{previous_name}' ends at {previous_end}, \
                  '{next_name}' starts at {next_start}"
-            );
+            )));
         }
     }
 
     let mut tensors = HashMap::new();
-    tensors
-        .try_reserve(tensor_info.len())
-        .context("failed to reserve GGUF tensor table")?;
+    tensors.try_reserve(tensor_info.len()).map_err(|error| {
+        LoaderError::reservation(format!("failed to reserve GGUF tensor table: {error}"))
+    })?;
     for info in tensor_info.drain(..) {
-        let tensor_offset = data_start
-            .checked_add(info.offset)
-            .with_context(|| format!("tensor '{}' file offset overflow", info.name))?;
+        let tensor_offset = data_start.checked_add(info.offset).ok_or_else(|| {
+            LoaderError::overflow(format!("tensor '{}' file offset overflow", info.name))
+        })?;
         reader.seek(SeekFrom::Start(tensor_offset))?;
         let element_count = info.dims.iter().try_fold(1usize, |count, &dim| {
-            count.checked_mul(dim).with_context(|| {
-                format!(
+            count.checked_mul(dim).ok_or_else(|| {
+                LoaderError::overflow(format!(
                     "tensor '{}' shape product overflow for dimensions {:?}",
                     info.name, info.dims
-                )
+                ))
             })
         })?;
         log::debug!(
@@ -321,16 +398,16 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             0 => {
                 // f32: read directly, no dim reversal
                 let mut data = vec![0.0f32; element_count];
-                let byte_len = element_count
-                    .checked_mul(4)
-                    .with_context(|| format!("tensor '{}' f32 byte size overflow", info.name))?;
+                let byte_len = element_count.checked_mul(4).ok_or_else(|| {
+                    LoaderError::overflow(format!("tensor '{}' f32 byte size overflow", info.name))
+                })?;
                 let mut buf = vec![0u8; byte_len];
                 reader.read_exact(&mut buf)?;
                 for (i, dst) in data.iter_mut().enumerate().take(element_count) {
                     let start = i * 4;
-                    let bytes: [u8; 4] = buf[start..start + 4]
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("failed to read f32 at index {}", i))?;
+                    let bytes: [u8; 4] = buf[start..start + 4].try_into().map_err(|_| {
+                        LoaderError::malformed(format!("failed to read f32 at index {i}"))
+                    })?;
                     *dst = f32::from_le_bytes(bytes);
                 }
                 LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
@@ -340,19 +417,18 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 // unchanged; model builders handle any linear-weight transpose
                 // the same way they do for native f32 tensors.
                 use half::f16;
-                let byte_len = element_count
-                    .checked_mul(2)
-                    .with_context(|| format!("tensor '{}' f16 byte size overflow", info.name))?;
+                let byte_len = element_count.checked_mul(2).ok_or_else(|| {
+                    LoaderError::overflow(format!("tensor '{}' f16 byte size overflow", info.name))
+                })?;
                 let mut buf = vec![0u8; byte_len];
                 reader.read_exact(&mut buf)?;
                 let mut data = vec![0.0f32; element_count];
                 for (i, dst) in data.iter_mut().enumerate().take(element_count) {
                     let start = i * 2;
-                    let bits = u16::from_le_bytes(
-                        buf[start..start + 2]
-                            .try_into()
-                            .map_err(|_| anyhow::anyhow!("failed to read f16 at index {}", i))?,
-                    );
+                    let bits =
+                        u16::from_le_bytes(buf[start..start + 2].try_into().map_err(|_| {
+                            LoaderError::malformed(format!("failed to read f16 at index {i}"))
+                        })?);
                     *dst = f16::from_bits(bits).to_f32();
                 }
                 LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
@@ -362,39 +438,46 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 // reverse dims to match the column-major storage convention
                 // (same as the old path did for f16/q8_0 tensors).
                 if !element_count.is_multiple_of(32) {
-                    bail!(
+                    return Err(LoaderError::malformed(format!(
                         "tensor '{}' Q8_0 element count {} is not block-aligned",
-                        info.name,
-                        element_count
-                    );
+                        info.name, element_count
+                    )));
                 }
                 let n_blocks = element_count / 32;
-                let byte_len = n_blocks
-                    .checked_mul(Q8_0_TYPE_SIZE)
-                    .with_context(|| format!("tensor '{}' Q8_0 byte size overflow", info.name))?;
+                let byte_len = n_blocks.checked_mul(Q8_0_TYPE_SIZE).ok_or_else(|| {
+                    LoaderError::overflow(format!("tensor '{}' Q8_0 byte size overflow", info.name))
+                })?;
                 let mut dims = info.dims;
                 dims.reverse();
                 let weight = if let Some(mmap) = mmap.as_ref() {
-                    let start = usize::try_from(tensor_offset).with_context(|| {
-                        format!("tensor '{}' offset exceeds address space", info.name)
+                    let start = usize::try_from(tensor_offset).map_err(|error| {
+                        LoaderError::overflow(format!(
+                            "tensor '{}' offset exceeds address space: {error}",
+                            info.name
+                        ))
                     })?;
-                    let end = start
-                        .checked_add(byte_len)
-                        .with_context(|| format!("tensor '{}' mapped range overflow", info.name))?;
+                    let end = start.checked_add(byte_len).ok_or_else(|| {
+                        LoaderError::overflow(format!(
+                            "tensor '{}' mapped range overflow",
+                            info.name
+                        ))
+                    })?;
                     if end > mmap.len() {
-                        bail!(
+                        return Err(LoaderError::malformed(format!(
                             "tensor '{}' data range {}..{} exceeds file length {}",
                             info.name,
                             start,
                             end,
                             mmap.len()
-                        );
+                        )));
                     }
-                    QuantizedWeight::try_from_mmap(Arc::clone(mmap), start..end, dims)?
+                    QuantizedWeight::try_from_mmap(Arc::clone(mmap), start..end, dims)
+                        .map_err(|error| LoaderError::malformed(format!("{error:#}")))?
                 } else {
                     let mut raw = vec![0u8; byte_len];
                     reader.read_exact(&mut raw)?;
-                    QuantizedWeight::try_new(raw, dims)?
+                    QuantizedWeight::try_new(raw, dims)
+                        .map_err(|error| LoaderError::malformed(format!("{error:#}")))?
                 };
                 LoadedTensor::Q8_0(weight)
             }
@@ -405,18 +488,19 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 // else dequantizes to f32 at load (the eager-f32
                 // reference), with every decision recorded.
                 if !element_count.is_multiple_of(crate::quant_k::QK_K) {
-                    bail!(
+                    return Err(LoaderError::malformed(format!(
                         "tensor '{}' dtype {} element count {} is not 256-block-aligned",
-                        info.name,
-                        info.dtype,
-                        element_count
-                    );
+                        info.name, info.dtype, element_count
+                    )));
                 }
                 let n_blocks = element_count / crate::quant_k::QK_K;
                 let block_bytes = crate::quant_k::k_block_bytes(info.dtype)
-                    .with_context(|| format!("tensor '{}'", info.name))?;
-                let byte_len = n_blocks.checked_mul(block_bytes).with_context(|| {
-                    format!("tensor '{}' K-quant byte size overflow", info.name)
+                    .ok_or_else(|| LoaderError::malformed(format!("tensor '{}'", info.name)))?;
+                let byte_len = n_blocks.checked_mul(block_bytes).ok_or_else(|| {
+                    LoaderError::overflow(format!(
+                        "tensor '{}' K-quant byte size overflow",
+                        info.name
+                    ))
                 })?;
                 let native = crate::quant_k::KQuantDtype::from_gguf(info.dtype);
                 let (execution, fallback_reason) =
@@ -434,8 +518,9 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                         let mut raw = vec![0u8; byte_len];
                         reader.read_exact(&mut raw)?;
                         let mut data = vec![0.0f32; element_count];
-                        crate::quant_k::dequant_tensor(info.dtype, &raw, &mut data)
-                            .map_err(|e| anyhow::anyhow!("tensor '{}': {e}", info.name))?;
+                        crate::quant_k::dequant_tensor(info.dtype, &raw, &mut data).map_err(
+                            |e| LoaderError::malformed(format!("tensor '{}': {e}", info.name)),
+                        )?;
                         LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
                     }
                     crate::quant_k::KExecution::CompressedScalar
@@ -444,28 +529,33 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                         let mut dims = info.dims.clone();
                         dims.reverse();
                         if dims.len() != 2 {
-                            bail!(
+                            return Err(LoaderError::malformed(format!(
                                 "tensor '{}' K-quant must be 2D for compressed residency, got {:?}",
-                                info.name,
-                                info.dims
-                            );
+                                info.name, info.dims
+                            )));
                         }
                         let shape = [dims[0], dims[1]];
                         let weight = if let Some(mmap) = mmap.as_ref() {
-                            let start = usize::try_from(tensor_offset).with_context(|| {
-                                format!("tensor '{}' offset exceeds address space", info.name)
+                            let start = usize::try_from(tensor_offset).map_err(|error| {
+                                LoaderError::overflow(format!(
+                                    "tensor '{}' offset exceeds address space: {error}",
+                                    info.name
+                                ))
                             })?;
-                            let end = start.checked_add(byte_len).with_context(|| {
-                                format!("tensor '{}' mapped range overflow", info.name)
+                            let end = start.checked_add(byte_len).ok_or_else(|| {
+                                LoaderError::overflow(format!(
+                                    "tensor '{}' mapped range overflow",
+                                    info.name
+                                ))
                             })?;
                             if end > mmap.len() {
-                                bail!(
+                                return Err(LoaderError::malformed(format!(
                                     "tensor '{}' data range {}..{} exceeds file length {}",
                                     info.name,
                                     start,
                                     end,
                                     mmap.len()
-                                );
+                                )));
                             }
                             crate::quant_k::KQuantWeight::try_from_mmap(
                                 Arc::clone(mmap),
@@ -473,13 +563,15 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                                 shape,
                                 native,
                                 execution,
-                            )?
+                            )
+                            .map_err(|error| LoaderError::malformed(format!("{error:#}")))?
                         } else {
                             let mut raw = vec![0u8; byte_len];
                             reader.read_exact(&mut raw)?;
                             crate::quant_k::KQuantWeight::try_new_with_execution(
                                 raw, shape, native, execution,
-                            )?
+                            )
+                            .map_err(|error| LoaderError::malformed(format!("{error:#}")))?
                         };
                         LoadedTensor::KQuant(weight)
                     }
@@ -487,33 +579,34 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             }
             30 => {
                 // bf16: brain floating point — upper 16 bits of f32.
-                let byte_len = element_count
-                    .checked_mul(2)
-                    .with_context(|| format!("tensor '{}' bf16 byte size overflow", info.name))?;
+                let byte_len = element_count.checked_mul(2).ok_or_else(|| {
+                    LoaderError::overflow(format!("tensor '{}' bf16 byte size overflow", info.name))
+                })?;
                 let mut buf = vec![0u8; byte_len];
                 reader.read_exact(&mut buf)?;
                 let mut data = vec![0.0f32; element_count];
                 for (i, dst) in data.iter_mut().enumerate().take(element_count) {
                     let start = i * 2;
-                    let bits = u16::from_le_bytes(
-                        buf[start..start + 2]
-                            .try_into()
-                            .map_err(|_| anyhow::anyhow!("failed to read bf16 at index {}", i))?,
-                    );
+                    let bits =
+                        u16::from_le_bytes(buf[start..start + 2].try_into().map_err(|_| {
+                            LoaderError::malformed(format!("failed to read bf16 at index {i}"))
+                        })?);
                     *dst = f32::from_bits((bits as u32) << 16);
                 }
                 LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             _ => {
-                bail!(
+                return Err(LoaderError::malformed(format!(
                     "tensor '{}' uses unsupported GGML dtype {}",
-                    info.name,
-                    info.dtype
-                );
+                    info.name, info.dtype
+                )));
             }
         };
         if tensors.insert(info.name.clone(), loaded).is_some() {
-            bail!("duplicate GGUF tensor name '{}'", info.name);
+            return Err(LoaderError::malformed(format!(
+                "duplicate GGUF tensor name '{}'",
+                info.name
+            )));
         }
     }
     Ok(GgufLoader {
@@ -554,12 +647,12 @@ fn resolve_k_execution(
         KStrategy::Scalar => match native {
             Some(_) => Ok((KExecution::CompressedScalar, None)),
             None if allow_fallback => Ok((KExecution::EagerF32, Some(no_native_kernel()))),
-            None => bail!(
+            None => Err(LoaderError::malformed(format!(
                 "tensor '{}' uses GGUF dtype {} which has no native kernel in v0.3; \
                  pass --k-allow-fallback to run it through the eager-f32 path",
                 info.name,
                 ggml_dtype_name(info.dtype).unwrap_or("unknown")
-            ),
+            ))),
         },
         KStrategy::X86 => match (native, x86_available) {
             (Some(_), true) => Ok((KExecution::CompressedX86, None)),
@@ -567,17 +660,15 @@ fn resolve_k_execution(
                 KExecution::CompressedScalar,
                 Some("x86 feature set unavailable (avx2+fma+f16c+ssse3)".to_string()),
             )),
-            (Some(_), false) => bail!(
-                "--k-strategy x86 requires the AVX2+FMA+F16C+SSSE3 feature set (avx2, fma, f16c, ssse3); \
-                 pass --k-allow-fallback to run the scalar path"
-            ),
+            (Some(_), false) => Err(LoaderError::malformed("--k-strategy x86 requires the AVX2+FMA+F16C+SSSE3 feature set (avx2, fma, f16c, ssse3); \
+                 pass --k-allow-fallback to run the scalar path".to_string())),
             (None, _) if allow_fallback => Ok((KExecution::EagerF32, Some(no_native_kernel()))),
-            (None, _) => bail!(
+            (None, _) => Err(LoaderError::malformed(format!(
                 "tensor '{}' uses GGUF dtype {} which has no native kernel in v0.3; \
                  pass --k-allow-fallback to run it through the eager-f32 path",
                 info.name,
                 ggml_dtype_name(info.dtype).unwrap_or("unknown")
-            ),
+            ))),
         },
     }
 }
@@ -591,30 +682,42 @@ struct TensorInfo {
 
 fn read_tensor_info<R: Read + Seek>(reader: &mut R, count: usize) -> Result<Vec<TensorInfo>> {
     let mut info = Vec::new();
-    info.try_reserve_exact(count)
-        .context("failed to reserve GGUF tensor-info table")?;
+    info.try_reserve_exact(count).map_err(|error| {
+        LoaderError::reservation(format!("failed to reserve GGUF tensor-info table: {error}"))
+    })?;
     let mut names = HashSet::new();
-    names
-        .try_reserve(count)
-        .context("failed to reserve GGUF tensor-name table")?;
+    names.try_reserve(count).map_err(|error| {
+        LoaderError::reservation(format!("failed to reserve GGUF tensor-name table: {error}"))
+    })?;
     for _ in 0..count {
         let name = read_gguf_string(reader)?;
         if name.is_empty() {
-            bail!("GGUF tensor names must not be empty");
+            return Err(LoaderError::malformed(
+                "GGUF tensor names must not be empty".to_string(),
+            ));
         }
         if !names.insert(name.clone()) {
-            bail!("duplicate GGUF tensor name '{name}'");
+            return Err(LoaderError::malformed(format!(
+                "duplicate GGUF tensor name '{name}'"
+            )));
         }
         let n_dims = read_u32(reader)?;
         if !(1..=4).contains(&n_dims) {
-            bail!("tensor '{name}' has invalid dimension count {n_dims}; expected 1..=4");
+            return Err(LoaderError::malformed(format!(
+                "tensor '{name}' has invalid dimension count {n_dims}; expected 1..=4"
+            )));
         }
         let mut dims = Vec::with_capacity(n_dims as usize);
         for _ in 0..n_dims {
-            let dim = usize::try_from(read_u64(reader)?)
-                .with_context(|| format!("tensor '{}' dimension exceeds address space", name))?;
+            let dim = usize::try_from(read_u64(reader)?).map_err(|error| {
+                LoaderError::overflow(format!(
+                    "tensor '{name}' dimension exceeds address space: {error}"
+                ))
+            })?;
             if dim == 0 {
-                bail!("tensor '{name}' has a zero-sized dimension");
+                return Err(LoaderError::malformed(format!(
+                    "tensor '{name}' has a zero-sized dimension"
+                )));
             }
             dims.push(dim);
         }
@@ -632,15 +735,15 @@ fn read_tensor_info<R: Read + Seek>(reader: &mut R, count: usize) -> Result<Vec<
 
 fn tensor_byte_len(info: &TensorInfo) -> Result<usize> {
     let element_count = info.dims.iter().try_fold(1usize, |count, dim| {
-        count.checked_mul(*dim).with_context(|| {
-            format!(
+        count.checked_mul(*dim).ok_or_else(|| {
+            LoaderError::overflow(format!(
                 "tensor '{}' shape product overflow for dimensions {:?}",
                 info.name, info.dims
-            )
+            ))
         })
     })?;
     gguf_dtype_byte_len(info.dtype, element_count)
-        .with_context(|| format!("tensor '{}'", info.name))
+        .map_err(|error| LoaderError::malformed(format!("tensor '{}': {error}", info.name)))
 }
 
 /// Encoded byte length of `element_count` values of a GGUF dtype.
@@ -650,29 +753,35 @@ pub fn gguf_dtype_byte_len(dtype: u32, element_count: usize) -> Result<usize> {
     match dtype {
         0 => element_count
             .checked_mul(4)
-            .with_context(|| "f32 byte size overflow".to_string()),
+            .ok_or_else(|| LoaderError::overflow("f32 byte size overflow".to_string())),
         1 | 30 => element_count
             .checked_mul(2)
-            .with_context(|| "16-bit byte size overflow".to_string()),
+            .ok_or_else(|| LoaderError::overflow("16-bit byte size overflow".to_string())),
         8 => {
             if !element_count.is_multiple_of(crate::quant::Q8_0_BLOCK_SIZE) {
-                bail!("Q8_0 element count is not block-aligned");
+                return Err(LoaderError::malformed(
+                    "Q8_0 element count is not block-aligned".to_string(),
+                ));
             }
             (element_count / crate::quant::Q8_0_BLOCK_SIZE)
                 .checked_mul(Q8_0_TYPE_SIZE)
-                .with_context(|| "Q8_0 byte size overflow".to_string())
+                .ok_or_else(|| LoaderError::overflow("Q8_0 byte size overflow".to_string()))
         }
         10..=14 => {
             if !element_count.is_multiple_of(crate::quant_k::QK_K) {
-                bail!("dtype {dtype} element count is not K-block-aligned");
+                return Err(LoaderError::malformed(format!(
+                    "dtype {dtype} element count is not K-block-aligned"
+                )));
             }
-            let block_bytes =
-                crate::quant_k::k_block_bytes(dtype).with_context(|| format!("dtype {dtype}"))?;
+            let block_bytes = crate::quant_k::k_block_bytes(dtype)
+                .ok_or_else(|| LoaderError::malformed(format!("dtype {dtype}")))?;
             (element_count / crate::quant_k::QK_K)
                 .checked_mul(block_bytes)
-                .with_context(|| "K-quant byte size overflow".to_string())
+                .ok_or_else(|| LoaderError::overflow("K-quant byte size overflow".to_string()))
         }
-        dtype => bail!("unsupported GGML dtype {dtype}"),
+        dtype => Err(LoaderError::malformed(format!(
+            "unsupported GGML dtype {dtype}"
+        ))),
     }
 }
 
@@ -722,13 +831,15 @@ fn read_i16<R: Read>(f: &mut R) -> Result<i16> {
 
 fn read_u32<R: Read>(f: &mut R) -> Result<u32> {
     let mut buf = [0u8; 4];
-    f.read_exact(&mut buf).context("read_u32 failed")?;
+    f.read_exact(&mut buf)
+        .map_err(|error| LoaderError::io(format!("read_u32 failed: {error}")))?;
     Ok(u32::from_le_bytes(buf))
 }
 
 fn read_u64<R: Read>(f: &mut R) -> Result<u64> {
     let mut buf = [0u8; 8];
-    f.read_exact(&mut buf).context("read_u64 failed")?;
+    f.read_exact(&mut buf)
+        .map_err(|error| LoaderError::io(format!("read_u64 failed: {error}")))?;
     Ok(u64::from_le_bytes(buf))
 }
 
@@ -761,21 +872,31 @@ fn remaining_bytes<R: Seek>(reader: &mut R) -> Result<u64> {
     let end = reader.seek(SeekFrom::End(0))?;
     reader.seek(SeekFrom::Start(position))?;
     end.checked_sub(position)
-        .context("reader position exceeds its end")
+        .ok_or_else(|| LoaderError::malformed("reader position exceeds its end"))
 }
 
 fn read_gguf_string<R: Read + Seek>(f: &mut R) -> Result<String> {
-    let len = usize::try_from(read_u64(f)?).context("GGUF string length exceeds address space")?;
+    let len = usize::try_from(read_u64(f)?).map_err(|error| {
+        LoaderError::overflow(format!("GGUF string length exceeds address space: {error}"))
+    })?;
     let remaining = remaining_bytes(f)?;
-    if u64::try_from(len).context("GGUF string length exceeds u64")? > remaining {
-        bail!("GGUF string length {len} exceeds the {remaining} bytes remaining in the file");
+    if u64::try_from(len).map_err(|error| {
+        LoaderError::overflow(format!("GGUF string length exceeds u64: {error}"))
+    })? > remaining
+    {
+        return Err(LoaderError::malformed(format!(
+            "GGUF string length {len} exceeds the {remaining} bytes remaining in the file"
+        )));
     }
     let mut buf = Vec::new();
-    buf.try_reserve_exact(len)
-        .context("failed to reserve GGUF string buffer")?;
+    buf.try_reserve_exact(len).map_err(|error| {
+        LoaderError::reservation(format!("failed to reserve GGUF string buffer: {error}"))
+    })?;
     buf.resize(len, 0);
-    f.read_exact(&mut buf).context("read string failed")?;
-    String::from_utf8(buf).context("invalid utf8 in string")
+    f.read_exact(&mut buf)
+        .map_err(|error| LoaderError::io(format!("read string failed: {error}")))?;
+    String::from_utf8(buf)
+        .map_err(|error| LoaderError::malformed(format!("invalid utf8 in string: {error}")))
 }
 
 fn minimum_value_size(val_type: u32) -> Result<u64> {
@@ -786,7 +907,9 @@ fn minimum_value_size(val_type: u32) -> Result<u64> {
         8 => Ok(8),
         9 => Ok(12),
         10..=12 => Ok(8),
-        _ => bail!("unsupported GGUF value type: {val_type}"),
+        _ => Err(LoaderError::malformed(format!(
+            "unsupported GGUF value type: {val_type}"
+        ))),
     }
 }
 
@@ -800,7 +923,9 @@ fn read_gguf_value_inner<R: Read + Seek>(
     depth: usize,
 ) -> Result<GgufValue> {
     if depth > 16 {
-        bail!("GGUF metadata arrays are nested more than 16 levels deep");
+        return Err(LoaderError::malformed(
+            "GGUF metadata arrays are nested more than 16 levels deep".to_string(),
+        ));
     }
     match val_type {
         0 => Ok(GgufValue::U8(read_u8(f)?)),
@@ -813,7 +938,9 @@ fn read_gguf_value_inner<R: Read + Seek>(
         7 => {
             let value = read_u8(f)?;
             if value > 1 {
-                bail!("invalid GGUF boolean value {value}; expected 0 or 1");
+                return Err(LoaderError::malformed(format!(
+                    "invalid GGUF boolean value {value}; expected 0 or 1"
+                )));
             }
             Ok(GgufValue::Bool(value == 1))
         }
@@ -823,28 +950,34 @@ fn read_gguf_value_inner<R: Read + Seek>(
         12 => Ok(GgufValue::F64(read_f64(f)?)),
         9 => {
             let element_type = read_u32(f)?;
-            let count =
-                usize::try_from(read_u64(f)?).context("GGUF array length exceeds address space")?;
+            let count = usize::try_from(read_u64(f)?).map_err(|error| {
+                LoaderError::overflow(format!("GGUF array length exceeds address space: {error}"))
+            })?;
             let minimum_bytes = minimum_value_size(element_type)?
-                .checked_mul(u64::try_from(count).context("GGUF array length exceeds u64")?)
-                .context("GGUF array minimum byte size overflow")?;
+                .checked_mul(u64::try_from(count).map_err(|error| {
+                    LoaderError::overflow(format!("GGUF array length exceeds u64: {error}"))
+                })?)
+                .ok_or_else(|| LoaderError::overflow("GGUF array minimum byte size overflow"))?;
             let remaining = remaining_bytes(f)?;
             if minimum_bytes > remaining {
-                bail!(
+                return Err(LoaderError::malformed(format!(
                     "GGUF array of {count} type-{element_type} values requires at least \
                      {minimum_bytes} bytes but only {remaining} remain"
-                );
+                )));
             }
             let mut elements = Vec::new();
-            elements
-                .try_reserve_exact(count)
-                .context("failed to reserve GGUF metadata array")?;
+            elements.try_reserve_exact(count).map_err(|error| {
+                LoaderError::reservation(format!("failed to reserve GGUF metadata array: {error}"))
+            })?;
             for _ in 0..count {
                 elements.push(read_gguf_value_inner(f, element_type, depth + 1)?);
             }
             Ok(GgufValue::Array(elements))
         }
-        _ => bail!("unsupported GGUF value type: {}", val_type),
+        _ => Err(LoaderError::malformed(format!(
+            "unsupported GGUF value type: {}",
+            val_type
+        ))),
     }
 }
 
