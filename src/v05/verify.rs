@@ -173,6 +173,7 @@ pub struct VerifyOptions {
 
 /// Verify a bundle fully offline (unless deep verification is requested).
 pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<VerificationReport, String> {
+    // ---- phase 1: manifest load + schema/basic identity checks ----
     let manifest_path = root.join("manifest.json");
     let bytes = std::fs::read(&manifest_path)
         .map_err(|error| format!("cannot read '{}': {error}", manifest_path.display()))?;
@@ -196,6 +197,7 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         format!("status '{}'", manifest.status),
     );
 
+    // ---- phase 2: required files + checksum scan ----
     // required files exist
     let required = [
         "semantic-manifest.json",
@@ -521,6 +523,7 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     report.semantic_hash = semantic_hash;
     report.payload_hash = payload_hash;
 
+    // ---- phase 3: deep verification (model/tokenizer/plan) ----
     // deep verification
     if let Some(model_path) = &options.model_path {
         deep_model_check(model_path, &semantic_manifest, &mut report);

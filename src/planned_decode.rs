@@ -226,6 +226,7 @@ pub(crate) struct PlannedDecodeState {
 /// Resolve a plan into region indices and role discriminants. Runs once per
 /// session; the decode loop then walks [`ResolvedOps`] with no lookups.
 fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuError> {
+    // ---- phase 1: plan integrity (structural validation + hash) ----
     plan.validate()
         .map_err(|error| CpuError::Kernel(format!("invalid execution plan: {error}")))?;
     let recomputed_hash = crate::plan::plan_hash(plan);
@@ -235,6 +236,7 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
             plan.plan_hash
         )));
     }
+    // ---- phase 2: scratch arena + tensor-region resolution ----
     let arena = DecodeArena::new(&plan.scratch);
     let region_of = |tensor: TensorRef| -> Result<usize, CpuError> {
         let name = plan.scratch.tensor_regions.get(&tensor.id).ok_or_else(|| {

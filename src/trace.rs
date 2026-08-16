@@ -1059,6 +1059,78 @@ mod value_tests {
     }
 
     #[test]
+    fn summary_formats_phases_layers_and_hot_ops() {
+        let q_proj = OpTrace {
+            name: "q_proj".to_string(),
+            layer: 0,
+            op_kind: OpKind::MatMulQ8_0,
+            phase: "decode".to_string(),
+            token_index: 0,
+            input_shape: vec![1, 2048],
+            output_shape: vec![1, 2048],
+            input_bytes: 2048 * 4,
+            output_bytes: 2048 * 4,
+            duration_ns: 1_000_000,
+            estimated_flops: 8_000_000,
+            output_l2_norm: None,
+            output_abs_max: None,
+            output_fingerprint: None,
+        };
+        let report = TraceReport {
+            phase: "decode".to_string(),
+            token_index: 0,
+            events: vec![
+                q_proj,
+                OpTrace {
+                    name: "rms_norm".to_string(),
+                    layer: usize::MAX,
+                    op_kind: OpKind::RmsNorm,
+                    phase: "decode".to_string(),
+                    token_index: 0,
+                    input_shape: vec![1, 2048],
+                    output_shape: vec![1, 2048],
+                    input_bytes: 2048 * 4,
+                    output_bytes: 2048 * 4,
+                    duration_ns: 2_000_000,
+                    estimated_flops: 0,
+                    output_l2_norm: Some(3.5),
+                    output_abs_max: Some(0.25),
+                    output_fingerprint: Some(0xDEAD_BEEF_CAFE_F00D),
+                },
+            ],
+            total_duration_ns: 3_000_000,
+            run_metadata: None,
+        };
+        let summary = report.summary();
+        assert!(summary.contains("decode summary"), "{summary}");
+        assert!(summary.contains("Total duration: 3.00 ms"), "{summary}");
+        assert!(summary.contains("layer  0"), "{summary}");
+        assert!(summary.contains("global"), "{summary}");
+        assert!(summary.contains("q_proj"), "{summary}");
+        assert!(summary.contains("[q8_0:"), "{summary}");
+        assert!(summary.contains("|L2|=3.50"), "{summary}");
+        assert!(summary.contains("fp=deadbeefcafef00d"), "{summary}");
+        assert!(summary.contains("Hot operations"), "{summary}");
+    }
+
+    #[test]
+    fn bytes_helpers_are_consistent_with_shapes() {
+        assert_eq!(bytes_from_shape(&[2, 4]), 8 * 4);
+        assert_eq!(bytes_matmul_output(2, 4), 2 * 4 * 4);
+        assert_eq!(flops_matmul(2, 4, 8), 2 * 2 * 4 * 8);
+        assert_eq!(flops_rms_norm(2, 4), 4 * 2 * 4);
+        assert_eq!(flops_rope(2, 4), 4 * 2 * 4);
+        assert_eq!(
+            flops_attention(2, 4, 8, 2),
+            2 * 2 * 4 * 8 * 2 + 5 * 2 * 4 * 2 + 2 * 2 * 4 * 2 * 8
+        );
+        assert_eq!(flops_silu(8), 4 * 8);
+        assert_eq!(flops_elemul(8), 8);
+        assert_eq!(flops_residual_add(8), 8);
+        assert_eq!(flops_embedding(), 0);
+    }
+
+    #[test]
     fn values_level_gates_value_collection() {
         set_values_level(TraceValuesLevel::None);
         assert!(!values_enabled());

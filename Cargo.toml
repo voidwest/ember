@@ -17,6 +17,9 @@ clap = { version = "4", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
 rand = "0.8"
+# NOTE: do not chase a single rand version: gpui's transitive tree pulls
+# rand 0.9/0.10 (ashpd/oo7), and num-bigint-dig (also via gpui) needs 0.8,
+# so 0.8 here costs nothing extra and matches the sampling API.
 rayon = "1"
 tiny_http = "0.12"
 # v0.6 native console: gpui (Zed's GPU-accelerated framework, blade/Vulkan on
@@ -33,6 +36,12 @@ unicode-normalization = "0.1"
 [features]
 default = ["gui"]
 gui = ["dep:gpui"]
+
+# Cross-crate inlining for the CLI binary without full fat-LTO build cost.
+# (codegen-units stays at the default; measure 1-unit builds on a cool
+# machine before committing to them.)
+[profile.release]
+lto = "thin"
 
 [[bench]]
 name = "q8_matmul"

@@ -360,3 +360,77 @@ fn k_block_bytes_agree_with_constants() {
     assert_eq!(k_block_bytes(DTYPE_Q4_K), Some(Q4_K_BLOCK_BYTES));
     assert_eq!(k_block_bytes(DTYPE_Q6_K), Some(Q6_K_BLOCK_BYTES));
 }
+
+// ---------------------------------------------------------------------------
+// sampler determinism + RoPE round-trip (added 2026-08-16)
+// ---------------------------------------------------------------------------
+
+proptest! {
+    /// Two identically-seeded samplers produce the same token stream, and
+    /// temperature 0.0 always returns the argmax.
+    #[test]
+    fn seeded_sampling_is_deterministic(
+        logits in prop::collection::vec(-10.0f32..10.0f32, 1..64),
+        temperature in 0.01f32..2.0f32,
+    ) {
+        prop_assume!(logits.iter().all(|value| value.is_finite()));
+        use ember::sampler::sample_token;
+        use rand::{rngs::StdRng, SeedableRng};
+        let mut a = StdRng::seed_from_u64(42);
+        let mut b = StdRng::seed_from_u64(42);
+        for _ in 0..8 {
+            assert_eq!(
+                sample_token(&logits, temperature, Some(4), None, &mut a),
+                sample_token(&logits, temperature, Some(4), None, &mut b),
+            );
+        }
+        // greedy bypasses the RNG entirely
+        assert_eq!(
+            sample_token(&logits, 0.0, None, None, &mut a),
+            ember::sampler::argmax_token(&logits),
+        );
+    }
+
+    /// Forward RoPE followed by inverse RoPE restores the original row up to
+    /// f32 rounding (the rotation is applied with real cos/sin pairs, so the
+    /// round-trip error is bounded by ~1e-4 relative).
+    #[test]
+    fn rope_forward_then_inverse_round_trips(
+        n_heads in 1usize..4,
+        head_dim in (2usize..64).prop_map(|d| d * 2),
+        seed in prop::array::uniform32(0u32..u32::MAX),
+    ) {
+        use ember::kv_snapshot::KvRopeLayout;
+        use ember::kv_transfer::rope::{rotate_key_row_in_place, RopeDirection};
+        use rand::{rngs::StdRng, Rng, SeedableRng};
+        let mut rng = StdRng::seed_from_u64(seed[0] as u64);
+        let mut values: Vec<f32> = (0..n_heads * head_dim)
+            .map(|_| rng.gen_range(-10.0f32..10.0f32))
+            .collect();
+        let half = head_dim / 2;
+        let angles: Vec<f32> = (0..half)
+            .map(|_| rng.gen_range(0.0f32..core::f32::consts::TAU))
+            .collect();
+        let cos: Vec<f32> = angles.iter().map(|a| a.cos()).collect();
+        let sin: Vec<f32> = angles.iter().map(|a| a.sin()).collect();
+        let original = values.clone();
+        for layout in [KvRopeLayout::AdjacentPair, KvRopeLayout::SplitHalf] {
+            values.copy_from_slice(&original);
+            rotate_key_row_in_place(
+                &mut values, n_heads, head_dim, &cos, &sin, layout, RopeDirection::Forward,
+            )
+            .unwrap();
+            rotate_key_row_in_place(
+                &mut values, n_heads, head_dim, &cos, &sin, layout, RopeDirection::Inverse,
+            )
+            .unwrap();
+            for (restored, original_value) in values.iter().zip(original.iter()) {
+                let tolerance = 1e-4f32 * original_value.abs().max(1.0);
+                assert!(
+                    (restored - original_value).abs() <= tolerance,
+                    "rope round-trip drift {restored} vs {original_value} ({layout:?})"
+                );
+            }
+        }
+    }
+}
