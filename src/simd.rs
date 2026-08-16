@@ -1494,47 +1494,51 @@ mod aarch64 {
         blocks_per_row: usize,
         dst: &mut [f32],
     ) {
-        for b in 0..blocks_per_row {
-            let byte_offset = (block_start + b) * Q8_0_TYPE_SIZE;
-            let base_ptr = unsafe { data.as_ptr().add(byte_offset) };
+        unsafe {
+            for b in 0..blocks_per_row {
+                let byte_offset = (block_start + b) * Q8_0_TYPE_SIZE;
+                let base_ptr = unsafe { data.as_ptr().add(byte_offset) };
 
-            // -- scale: load 2-byte f16, convert to f32, broadcast ---------
-            let d_bits = u16::from_le_bytes(unsafe { *(base_ptr as *const [u8; 2]) });
-            let d = f16::from_bits(d_bits).to_f32();
-            let d_vec = vdupq_n_f32(d);
+                // -- scale: load 2-byte f16, convert to f32, broadcast ---------
+                let d_bits = u16::from_le_bytes(unsafe { *(base_ptr as *const [u8; 2]) });
+                let d = f16::from_bits(d_bits).to_f32();
+                let d_vec = vdupq_n_f32(d);
 
-            // -- quants: load two 128-bit vectors of 16 i8 values each ----
-            let quants_ptr = unsafe { base_ptr.add(2) as *const i8 };
-            let q0 = unsafe { vld1q_s8(quants_ptr) };
-            let q1 = unsafe { vld1q_s8(quants_ptr.add(16)) };
+                // -- quants: load two 128-bit vectors of 16 i8 values each ----
+                let quants_ptr = unsafe { base_ptr.add(2) as *const i8 };
+                let q0 = unsafe { vld1q_s8(quants_ptr) };
+                let q1 = unsafe { vld1q_s8(quants_ptr.add(16)) };
 
-            let out_offset = b * Q8_0_BLOCK_SIZE;
-            let out_ptr = unsafe { dst.as_mut_ptr().add(out_offset) };
+                let out_offset = b * Q8_0_BLOCK_SIZE;
+                let out_ptr = unsafe { dst.as_mut_ptr().add(out_offset) };
 
-            // helper: dequantize 16 i8 values → 4 × float32x4_t
-            #[inline(always)]
-            unsafe fn process16(src: int8x16_t, scale: float32x4_t, out: *mut f32) {
-                // Safety: Internal helper; only callable from other `unsafe fn`s in this module that already guarantee the required CPU features.
-                // low 8 i8 → i16
-                let i16_lo = vmovl_s8(vget_low_s8(src));
-                // high 8 i8 → i16
-                let i16_hi = vmovl_s8(vget_high_s8(src));
+                // helper: dequantize 16 i8 values → 4 × float32x4_t
+                #[inline(always)]
+                unsafe fn process16(src: int8x16_t, scale: float32x4_t, out: *mut f32) {
+                    unsafe {
+                        // Safety: Internal helper; only callable from other `unsafe fn`s in this module that already guarantee the required CPU features.
+                        // low 8 i8 → i16
+                        let i16_lo = vmovl_s8(vget_low_s8(src));
+                        // high 8 i8 → i16
+                        let i16_hi = vmovl_s8(vget_high_s8(src));
 
-                // i16 → i32 → f32 → mul → store (4 lanes each)
-                let f0 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(i16_lo))), scale);
-                let f1 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(i16_lo))), scale);
-                let f2 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(i16_hi))), scale);
-                let f3 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(i16_hi))), scale);
+                        // i16 → i32 → f32 → mul → store (4 lanes each)
+                        let f0 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(i16_lo))), scale);
+                        let f1 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(i16_lo))), scale);
+                        let f2 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(i16_hi))), scale);
+                        let f3 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(i16_hi))), scale);
 
-                unsafe { vst1q_f32(out, f0) };
-                unsafe { vst1q_f32(out.add(4), f1) };
-                unsafe { vst1q_f32(out.add(8), f2) };
-                unsafe { vst1q_f32(out.add(12), f3) };
+                        unsafe { vst1q_f32(out, f0) };
+                        unsafe { vst1q_f32(out.add(4), f1) };
+                        unsafe { vst1q_f32(out.add(8), f2) };
+                        unsafe { vst1q_f32(out.add(12), f3) };
+                    }
+                }
+
+                // 16 quants → bytes 0..15, 16 quants → bytes 16..31
+                unsafe { process16(q0, d_vec, out_ptr) };
+                unsafe { process16(q1, d_vec, out_ptr.add(16)) };
             }
-
-            // 16 quants → bytes 0..15, 16 quants → bytes 16..31
-            unsafe { process16(q0, d_vec, out_ptr) };
-            unsafe { process16(q1, d_vec, out_ptr.add(16)) };
         }
     }
 
@@ -1550,26 +1554,28 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn sum_squares_neon(x: &[f32]) -> f32 {
-        let n = x.len();
-        let mut acc = vdupq_n_f32(0.0);
-        let mut i = 0;
+        unsafe {
+            let n = x.len();
+            let mut acc = vdupq_n_f32(0.0);
+            let mut i = 0;
 
-        while i + 4 <= n {
-            let v = unsafe { vld1q_f32(x.as_ptr().add(i)) };
-            acc = vfmaq_f32(acc, v, v);
-            i += 4;
+            while i + 4 <= n {
+                let v = unsafe { vld1q_f32(x.as_ptr().add(i)) };
+                acc = vfmaq_f32(acc, v, v);
+                i += 4;
+            }
+
+            let mut sum = vgetq_lane_f32::<0>(acc)
+                + vgetq_lane_f32::<1>(acc)
+                + vgetq_lane_f32::<2>(acc)
+                + vgetq_lane_f32::<3>(acc);
+
+            while i < n {
+                sum += x[i] * x[i];
+                i += 1;
+            }
+            sum
         }
-
-        let mut sum = vgetq_lane_f32::<0>(acc)
-            + vgetq_lane_f32::<1>(acc)
-            + vgetq_lane_f32::<2>(acc)
-            + vgetq_lane_f32::<3>(acc);
-
-        while i < n {
-            sum += x[i] * x[i];
-            i += 1;
-        }
-        sum
     }
 
     /// SIMD `out[i] = x[i] * scale * weight[i]` using NEON.
@@ -1584,20 +1590,22 @@ mod aarch64 {
         weight: &[f32],
         out: &mut [f32],
     ) {
-        let n = x.len();
-        let s = vdupq_n_f32(scale);
-        let mut i = 0;
+        unsafe {
+            let n = x.len();
+            let s = vdupq_n_f32(scale);
+            let mut i = 0;
 
-        while i + 4 <= n {
-            let xv = unsafe { vld1q_f32(x.as_ptr().add(i)) };
-            let wv = unsafe { vld1q_f32(weight.as_ptr().add(i)) };
-            let r = vmulq_f32(vmulq_f32(xv, s), wv);
-            unsafe { vst1q_f32(out.as_mut_ptr().add(i), r) };
-            i += 4;
-        }
-        while i < n {
-            out[i] = x[i] * scale * weight[i];
-            i += 1;
+            while i + 4 <= n {
+                let xv = unsafe { vld1q_f32(x.as_ptr().add(i)) };
+                let wv = unsafe { vld1q_f32(weight.as_ptr().add(i)) };
+                let r = vmulq_f32(vmulq_f32(xv, s), wv);
+                unsafe { vst1q_f32(out.as_mut_ptr().add(i), r) };
+                i += 4;
+            }
+            while i < n {
+                out[i] = x[i] * scale * weight[i];
+                i += 1;
+            }
         }
     }
 
@@ -1608,17 +1616,19 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn elemul_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
-        let n = a.len();
-        let mut i = 0;
-        while i + 4 <= n {
-            let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-            let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
-            unsafe { vst1q_f32(out.as_mut_ptr().add(i), vmulq_f32(av, bv)) };
-            i += 4;
-        }
-        while i < n {
-            out[i] = a[i] * b[i];
-            i += 1;
+        unsafe {
+            let n = a.len();
+            let mut i = 0;
+            while i + 4 <= n {
+                let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
+                let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
+                unsafe { vst1q_f32(out.as_mut_ptr().add(i), vmulq_f32(av, bv)) };
+                i += 4;
+            }
+            while i < n {
+                out[i] = a[i] * b[i];
+                i += 1;
+            }
         }
     }
 
@@ -1629,27 +1639,29 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
-        let n = a.len();
-        let mut acc = vdupq_n_f32(0.0);
-        let mut i = 0;
+        unsafe {
+            let n = a.len();
+            let mut acc = vdupq_n_f32(0.0);
+            let mut i = 0;
 
-        while i + 4 <= n {
-            let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-            let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
-            acc = vfmaq_f32(acc, av, bv);
-            i += 4;
+            while i + 4 <= n {
+                let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
+                let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
+                acc = vfmaq_f32(acc, av, bv);
+                i += 4;
+            }
+
+            let mut sum = vgetq_lane_f32::<0>(acc)
+                + vgetq_lane_f32::<1>(acc)
+                + vgetq_lane_f32::<2>(acc)
+                + vgetq_lane_f32::<3>(acc);
+
+            while i < n {
+                sum += a[i] * b[i];
+                i += 1;
+            }
+            sum
         }
-
-        let mut sum = vgetq_lane_f32::<0>(acc)
-            + vgetq_lane_f32::<1>(acc)
-            + vgetq_lane_f32::<2>(acc)
-            + vgetq_lane_f32::<3>(acc);
-
-        while i < n {
-            sum += a[i] * b[i];
-            i += 1;
-        }
-        sum
     }
 
     /// SIMD element-wise add using NEON.
@@ -1659,17 +1671,19 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn add_neon(a: &[f32], b: &[f32], out: &mut [f32]) {
-        let n = a.len();
-        let mut i = 0;
-        while i + 4 <= n {
-            let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-            let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
-            unsafe { vst1q_f32(out.as_mut_ptr().add(i), vaddq_f32(av, bv)) };
-            i += 4;
-        }
-        while i < n {
-            out[i] = a[i] + b[i];
-            i += 1;
+        unsafe {
+            let n = a.len();
+            let mut i = 0;
+            while i + 4 <= n {
+                let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
+                let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
+                unsafe { vst1q_f32(out.as_mut_ptr().add(i), vaddq_f32(av, bv)) };
+                i += 4;
+            }
+            while i < n {
+                out[i] = a[i] + b[i];
+                i += 1;
+            }
         }
     }
 
@@ -1680,19 +1694,21 @@ mod aarch64 {
     /// Caller must ensure the required aarch64 feature set (`neon`) is supported at runtime (dispatched via `is_aarch64_feature_detected!`) before calling this function.
     #[target_feature(enable = "neon")]
     pub(crate) unsafe fn weighted_add_neon(acc: &mut [f32], src: &[f32], weight: f32) {
-        let n = acc.len();
-        let w = vdupq_n_f32(weight);
-        let mut i = 0;
+        unsafe {
+            let n = acc.len();
+            let w = vdupq_n_f32(weight);
+            let mut i = 0;
 
-        while i + 4 <= n {
-            let sv = unsafe { vld1q_f32(src.as_ptr().add(i)) };
-            let av = unsafe { vld1q_f32(acc.as_ptr().add(i)) };
-            unsafe { vst1q_f32(acc.as_mut_ptr().add(i), vfmaq_f32(av, sv, w)) };
-            i += 4;
-        }
-        while i < n {
-            acc[i] += weight * src[i];
-            i += 1;
+            while i + 4 <= n {
+                let sv = unsafe { vld1q_f32(src.as_ptr().add(i)) };
+                let av = unsafe { vld1q_f32(acc.as_ptr().add(i)) };
+                unsafe { vst1q_f32(acc.as_mut_ptr().add(i), vfmaq_f32(av, sv, w)) };
+                i += 4;
+            }
+            while i < n {
+                acc[i] += weight * src[i];
+                i += 1;
+            }
         }
     }
 }
