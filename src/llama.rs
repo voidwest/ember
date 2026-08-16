@@ -217,6 +217,29 @@ impl LlamaConfig {
             "context_length must be greater than zero"
         );
         anyhow::ensure!(self.vocab_size > 0, "vocab_size must be greater than zero");
+        // llama.cpp-style sanity caps: reject absurd GGUF metadata before it
+        // can drive multi-TB rope-table/KV-cache allocations (DoS via crafted
+        // header). Generous headroom over every real model.
+        anyhow::ensure!(
+            self.max_seq_len <= 2_000_000,
+            "context_length {} exceeds the 2,000,000 sanity cap",
+            self.max_seq_len
+        );
+        anyhow::ensure!(
+            self.n_heads <= 8192,
+            "attention head_count {} exceeds the 8192 sanity cap",
+            self.n_heads
+        );
+        anyhow::ensure!(
+            self.head_dim <= 512,
+            "attention key_length {} exceeds the 512 sanity cap",
+            self.head_dim
+        );
+        anyhow::ensure!(
+            self.vocab_size <= 16_000_000,
+            "vocab_size {} exceeds the 16,000,000 sanity cap",
+            self.vocab_size
+        );
         anyhow::ensure!(
             self.rope_theta.is_finite() && self.rope_theta > 0.0,
             "rope.freq_base must be finite and greater than zero"

@@ -1,6 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <meta charset="utf-8">
+  <meta name="ember-token" content="__EMBER_TOKEN__">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>EMBER — experiment console</title>
@@ -438,9 +440,10 @@ function esc(s) {
     .replace(/"/g, "&quot;");
 }
 async function api(path, body) {
-  const opts = body === undefined ? {} : {
+  const TOKEN = document.querySelector('meta[name="ember-token"]').content;
+  const opts = body === undefined ? { headers: { "X-Ember-Token": TOKEN } } : {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Ember-Token": TOKEN },
     body: JSON.stringify(body)
   };
   const res = await fetch(path, opts);

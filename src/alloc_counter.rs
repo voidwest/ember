@@ -35,8 +35,10 @@ fn count_one(layout_size: usize) {
     TRACK_ALLOCATIONS
         .try_with(|tracking| {
             if tracking.get() {
-                ALLOCATION_COUNT.with(|count| count.set(count.get() + 1));
-                ALLOCATED_BYTES.with(|bytes| bytes.set(bytes.get() + layout_size));
+                // saturating: a debug-build usize overflow would panic inside
+                // the global allocator, which is catastrophic
+                ALLOCATION_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+                ALLOCATED_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(layout_size)));
             }
         })
         .ok();
@@ -64,8 +66,10 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // Event counter increments once; live bytes change by exactly the
+        // delta (count_one adds new_size, then the old layout is retired).
         count_one(new_size);
-        TOTAL_ALLOCATED_BYTES.fetch_add(new_size.saturating_sub(layout.size()), Ordering::Relaxed);
+        TOTAL_ALLOCATED_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
         // SAFETY: delegated to the system allocator with the original ptr/layout.
         unsafe { System.realloc(ptr, layout, new_size) }
     }
@@ -84,8 +88,16 @@ pub fn count_allocations_with_bytes<T>(run: impl FnOnce() -> T) -> (T, usize, us
     ALLOCATION_COUNT.with(|count| count.set(0));
     ALLOCATED_BYTES.with(|bytes| bytes.set(0));
     TRACK_ALLOCATIONS.with(|tracking| tracking.set(true));
+    // The guard clears the flag even if `run` panics, so a panicking
+    // measurement cannot silently poison the next one.
+    struct ClearOnDrop;
+    impl Drop for ClearOnDrop {
+        fn drop(&mut self) {
+            TRACK_ALLOCATIONS.with(|tracking| tracking.set(false));
+        }
+    }
+    let _guard = ClearOnDrop;
     let result = run();
-    TRACK_ALLOCATIONS.with(|tracking| tracking.set(false));
     let allocations = ALLOCATION_COUNT.with(Cell::get);
     let bytes = ALLOCATED_BYTES.with(Cell::get);
     (result, allocations, bytes)

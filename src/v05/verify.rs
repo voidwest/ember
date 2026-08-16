@@ -250,19 +250,26 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         String::new(),
     );
 
-    // checksums: every file covered by checksums.sha256 must match
+    // checksums: every file covered by checksums.sha256 must match. Keys
+    // come from the untrusted bundle and are path-validated before use:
+    // an absolute or `..`-bearing key must fail verification, never escape
+    // the bundle root (traversal → arbitrary-file hash oracle / read).
     let checksums = read_checksums(root)?;
     let mut checksum_mismatches: Vec<String> = Vec::new();
     for (relative, expected) in &checksums {
+        let Ok(relative) = crate::v05::bundle::validate_relative_path(relative) else {
+            checksum_mismatches.push(format!("{relative}: unsafe path in checksums"));
+            continue;
+        };
         let path = root.join(relative);
         if !path.is_file() {
             checksum_mismatches.push(format!("{relative}: missing file"));
             continue;
         }
-        let actual = sha256_hex(
-            &std::fs::read(&path)
-                .map_err(|error| format!("cannot read '{}': {error}", path.display()))?,
-        );
+        // stream-hash so a large file inside the bundle cannot force a
+        // full-buffer read during verification
+        let actual = crate::extraction::sha256_file_result(&path)
+            .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
         if actual != *expected {
             checksum_mismatches.push(format!("{relative}: checksum mismatch"));
         }
@@ -492,18 +499,22 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         ),
     );
 
-    // payload checksums in the semantic manifest must match the files
+    // payload checksums in the semantic manifest must match the files.
+    // Same path-validation rule as the checksums pass: untrusted keys can
+    // never escape the bundle root.
     let mut payload_errors: Vec<String> = Vec::new();
     for (relative, expected) in &semantic_manifest.payloads {
+        let Ok(relative) = crate::v05::bundle::validate_relative_path(relative) else {
+            payload_errors.push(format!("{relative}: unsafe path in semantic manifest"));
+            continue;
+        };
         let path = root.join(relative);
         if !path.is_file() {
             payload_errors.push(format!("{relative}: missing"));
             continue;
         }
-        let actual = sha256_hex(
-            &std::fs::read(&path)
-                .map_err(|error| format!("cannot read '{}': {error}", path.display()))?,
-        );
+        let actual = crate::extraction::sha256_file_result(&path)
+            .map_err(|error| format!("cannot read '{}': {error}", path.display()))?;
         if actual != *expected {
             payload_errors.push(format!("{relative}: checksum mismatch"));
         }
@@ -687,8 +698,16 @@ fn read_gguf_summary(path: &Path) -> Result<(String, usize), String> {
 }
 
 fn read_gguf_string<R: Read>(reader: &mut R) -> Result<String, String> {
-    let len = read_u64(reader)? as usize;
-    let mut bytes = vec![0u8; len];
+    let len = read_u64(reader)?;
+    // Bound the declared length before allocating: a hostile header can
+    // claim u64::MAX and a pre-bound vec! panics with capacity overflow.
+    const MAX_GGUF_STRING_BYTES: u64 = 1 << 20;
+    if len > MAX_GGUF_STRING_BYTES {
+        return Err(format!(
+            "GGUF string length {len} exceeds the {MAX_GGUF_STRING_BYTES}-byte limit"
+        ));
+    }
+    let mut bytes = vec![0u8; len as usize];
     reader
         .read_exact(&mut bytes)
         .map_err(|error| format!("truncated GGUF string: {error}"))?;
@@ -997,6 +1016,28 @@ mod tests {
                 let path = root.join("checksums.sha256");
                 let mut text = std::fs::read_to_string(&path).unwrap();
                 text.push_str(&format!("{}\n", "00".repeat(32) + "  ../escape.bin"));
+                std::fs::write(&path, text).unwrap();
+            },
+            &["checksums"],
+        );
+    }
+
+    #[test]
+    fn traversal_checksum_fails_even_with_the_correct_hash() {
+        // A hostile bundle that lists `../victim` with the victim's real
+        // hash must still fail: the path itself is rejected, so the check
+        // can never become an arbitrary-file hash oracle.
+        assert_verification_failure(
+            "traversal-oracle",
+            |root| {
+                let parent = root.parent().unwrap();
+                let victim = parent.join("ember-victim.txt");
+                std::fs::write(&victim, b"secret").unwrap();
+                let victim_hash = crate::v05::manifest::sha256_hex(b"secret");
+                let path = root.join("checksums.sha256");
+                let mut text = std::fs::read_to_string(&path).unwrap();
+                // the victim lives one level above the bundle root
+                text.push_str(&format!("{}\n", victim_hash + "  ../ember-victim.txt"));
                 std::fs::write(&path, text).unwrap();
             },
             &["checksums"],

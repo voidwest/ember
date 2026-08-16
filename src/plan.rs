@@ -352,7 +352,10 @@ impl DecodeArena {
     /// deterministic and aligned; this adds base-pointer alignment.
     pub fn new(scratch: &ScratchPlan) -> Self {
         let alignment = scratch.alignment.max(4);
-        let capacity = scratch.total_bytes + alignment;
+        let capacity = scratch
+            .total_bytes
+            .checked_add(alignment)
+            .expect("scratch arena capacity overflow (metadata sanity caps)");
         let storage = vec![0u8; capacity];
         let base = storage.as_ptr() as usize;
         let aligned = base.div_ceil(alignment) * alignment;

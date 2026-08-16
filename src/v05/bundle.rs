@@ -241,7 +241,7 @@ fn write_staged(staging: &Path, relative: &str, bytes: &[u8]) -> Result<(), Stri
 }
 
 /// Reject absolute paths, traversal components, and empty segments.
-fn validate_relative_path(relative: &str) -> Result<&str, String> {
+pub(crate) fn validate_relative_path(relative: &str) -> Result<&str, String> {
     if relative.is_empty() {
         return Err("bundle file path must not be empty".into());
     }

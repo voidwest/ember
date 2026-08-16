@@ -89,8 +89,8 @@ impl Gemma4Config {
             32,
         )? as usize;
         anyhow::ensure!(
-            n_heads > 0,
-            "Gemma attention head_count must be greater than zero"
+            n_heads > 0 && n_heads <= 8192,
+            "Gemma attention head_count {n_heads} must be in 1..=8192"
         );
         let embed_dim = get_u32_any(
             loader,
@@ -147,6 +147,10 @@ impl Gemma4Config {
             &["gemma4.context_length", "gemma3.context_length"],
             4096,
         )? as usize;
+        anyhow::ensure!(
+            max_seq_len <= 2_000_000,
+            "Gemma context_length {max_seq_len} exceeds the 2,000,000 sanity cap"
+        );
         let rope_theta = get_f32_any(
             loader,
             &["gemma4.rope.freq_base", "gemma3.rope.freq_base"],

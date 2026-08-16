@@ -820,10 +820,24 @@ pub(crate) fn run_gui_command(
         )
     })?;
     let url = format!("http://{}/", server.server_addr());
+    // Per-session bearer token: the browser page carries it in a meta tag
+    // and sends it on every API request. This blocks cross-site request
+    // forgery from arbitrary websites (which cannot read the token), and
+    // the Host-header allowlist below blocks DNS rebinding (which could
+    // otherwise read the token from the served page).
+    let token = console_token();
+    let strict_origin = gui.host == "127.0.0.1" || gui.host == "localhost" || gui.host == "::1";
+    if !strict_origin {
+        eprintln!(
+            "  WARNING: binding to {} exposes the console to the network; \n  cross-origin protections are disabled in this mode.",
+            gui.host
+        );
+    }
     eprintln!(
         "EMBER experiment console v{} — {url}",
         env!("CARGO_PKG_VERSION")
     );
+    eprintln!("  console token: {token}");
     eprintln!("  press Ctrl-C to stop; the GUI is fully offline.");
     if !gui.no_open {
         open_browser(&url);
@@ -832,14 +846,56 @@ pub(crate) fn run_gui_command(
     for request in server.incoming_requests() {
         let session = Arc::clone(&session);
         let limiter = Arc::clone(&limiter);
+        let token = token.clone();
         std::thread::spawn(move || {
             let _slot = limiter.acquire();
-            if let Err(error) = handle_request(request, &session) {
+            if let Err(error) = handle_request(request, &session, &token, strict_origin) {
                 log::error!("gui request failed: {error:#}");
             }
         });
     }
     Ok(())
+}
+
+/// Fresh 128-bit bearer token per server run.
+fn console_token() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    (0..32)
+        .map(|_| format!("{:x}", rng.gen_range(0u8..16)))
+        .collect()
+}
+
+/// Loopback hosts accepted in the Host header (defeats DNS rebinding, which
+/// would otherwise let a remote origin read the console page and its token).
+fn host_is_loopback(host: &str) -> bool {
+    let host = host.trim();
+    let host = if let Some(bracketed) = host.strip_prefix('[') {
+        bracketed.split(']').next().unwrap_or("")
+    } else if host.matches(':').count() == 1 {
+        host.split(':').next().unwrap_or(host)
+    } else {
+        host
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
+}
+
+/// Origin header hostname is loopback (or absent — allow header-less
+/// clients like curl; browsers always send Origin on cross-site POSTs).
+fn origin_is_loopback_or_absent(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    let authority = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))
+        .unwrap_or(origin);
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        bracketed.split(']').next().unwrap_or("")
+    } else {
+        authority.split(['/', ':']).next().unwrap_or(authority)
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
 fn open_browser(url: &str) {
@@ -856,13 +912,48 @@ fn open_browser(url: &str) {
 fn handle_request(
     mut request: tiny_http::Request,
     session: &Arc<Mutex<GuiSession>>,
+    token: &str,
+    strict_origin: bool,
 ) -> anyhow::Result<()> {
     let url = request.url().to_string();
     let path = url.split('?').next().unwrap_or(&url);
     let method = request.method().clone();
     let is_root = method == tiny_http::Method::Get && path == "/";
+
+    // Security gate: Host allowlist (anti-DNS-rebinding) applies to every
+    // request; the bearer token and Origin check apply to the JSON API.
+    if strict_origin {
+        let host_ok = request
+            .headers()
+            .iter()
+            .any(|h| h.field.equiv("Host") && host_is_loopback(h.value.as_str()));
+        if !host_ok {
+            let response = plain_response(403, "forbidden: bad Host header");
+            return Ok(request.respond(response)?);
+        }
+        if !is_root {
+            let token_ok = request
+                .headers()
+                .iter()
+                .any(|h| h.field.equiv("X-Ember-Token") && h.value.as_str() == token);
+            if !token_ok {
+                let response = plain_response(403, "forbidden: missing or invalid token");
+                return Ok(request.respond(response)?);
+            }
+            let origin = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("Origin"))
+                .map(|h| h.value.as_str());
+            if method == tiny_http::Method::Post && !origin_is_loopback_or_absent(origin) {
+                let response = plain_response(403, "forbidden: cross-origin request");
+                return Ok(request.respond(response)?);
+            }
+        }
+    }
+
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        build_response(is_root, &method, path, &mut request, session)
+        build_response(is_root, &method, path, &mut request, session, token)
     }));
     let response = match built {
         Ok(Ok(response)) => response,
@@ -892,11 +983,15 @@ fn build_response(
     path: &str,
     request: &mut tiny_http::Request,
     session: &Arc<Mutex<GuiSession>>,
+    token: &str,
 ) -> anyhow::Result<tiny_http::Response<std::io::Cursor<Vec<u8>>>> {
     if is_root {
-        return Ok(tiny_http::Response::from_string(PAGE.to_string())
+        // inject the session token into the served page
+        let page = PAGE.replace("__EMBER_TOKEN__", token);
+        return Ok(tiny_http::Response::from_string(page)
             .with_header(header("Content-Type", "text/html; charset=utf-8"))
-            .with_header(header("Cache-Control", "no-store")));
+            .with_header(header("Cache-Control", "no-store"))
+            .with_header(header("X-Content-Type-Options", "nosniff")));
     }
     let envelope = match (method, path) {
         (tiny_http::Method::Get, "/api/state") => state_payload(session),
@@ -924,9 +1019,21 @@ fn build_response(
             Ok(req) => run_restore(session, req),
             Err(error) => ApiEnvelope::err(format!("malformed request: {error}")),
         },
-        _ => ApiEnvelope::err("not found"),
+        _ => {
+            let response = plain_response(404, "not found");
+            return Ok(response);
+        }
     };
     json_response(&envelope)
+}
+
+/// Simple non-JSON status response (errors, auth failures).
+fn plain_response(status: u16, message: &str) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
+    tiny_http::Response::from_string(message.to_string())
+        .with_status_code(status)
+        .with_header(header("Content-Type", "text/plain; charset=utf-8"))
+        .with_header(header("Cache-Control", "no-store"))
+        .with_header(header("X-Content-Type-Options", "nosniff"))
 }
 
 fn header(name: &str, value: &str) -> tiny_http::Header {
@@ -934,12 +1041,29 @@ fn header(name: &str, value: &str) -> tiny_http::Header {
         .expect("static header bytes are valid")
 }
 
+/// Request bodies are bounded: the console serves localhost only, but an
+/// unbounded read lets any local process exhaust memory through the server.
+const MAX_REQUEST_BODY_BYTES: u64 = 1 << 20;
+
 fn read_json<T: for<'de> Deserialize<'de>>(request: &mut tiny_http::Request) -> anyhow::Result<T> {
     let mut body = Vec::new();
-    request
-        .as_reader()
-        .read_to_end(&mut body)
-        .context("cannot read request body")?;
+    let mut chunk = [0u8; 8192];
+    let mut total: u64 = 0;
+    loop {
+        let n = request
+            .as_reader()
+            .read(&mut chunk)
+            .context("cannot read request body")?;
+        if n == 0 {
+            break;
+        }
+        total += n as u64;
+        anyhow::ensure!(
+            total <= MAX_REQUEST_BODY_BYTES,
+            "request body exceeds the {MAX_REQUEST_BODY_BYTES}-byte limit"
+        );
+        body.extend_from_slice(&chunk[..n]);
+    }
     serde_json::from_slice(&body).context("malformed JSON request body")
 }
 
@@ -949,7 +1073,8 @@ fn json_response(
     let body = serde_json::to_vec(value).context("cannot serialize JSON response")?;
     Ok(tiny_http::Response::from_data(body)
         .with_header(header("Content-Type", "application/json; charset=utf-8"))
-        .with_header(header("Cache-Control", "no-store")))
+        .with_header(header("Cache-Control", "no-store"))
+        .with_header(header("X-Content-Type-Options", "nosniff")))
 }
 
 /// Lock the GUI session, recovering from poisoning so a single panicking
@@ -1176,6 +1301,47 @@ pub(crate) fn discover_models() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_allowlist_accepts_loopback_forms_only() {
+        for ok in [
+            "localhost",
+            "localhost:8337",
+            "127.0.0.1",
+            "127.0.0.1:8337",
+            "[::1]:8337",
+            "::1",
+        ] {
+            assert!(host_is_loopback(ok), "should accept {ok:?}");
+        }
+        for bad in [
+            "evil.example",
+            "evil.example:8337",
+            "192.168.1.10:8337",
+            "127.0.0.1.evil.example",
+        ] {
+            assert!(!host_is_loopback(bad), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn cross_origin_posts_are_identified() {
+        assert!(origin_is_loopback_or_absent(None), "no Origin is allowed");
+        for ok in [
+            "http://localhost:8337",
+            "http://127.0.0.1:8337",
+            "http://[::1]:8337",
+        ] {
+            assert!(origin_is_loopback_or_absent(Some(ok)), "accept {ok:?}");
+        }
+        for bad in [
+            "https://evil.example",
+            "http://evil.example:8337",
+            "http://127.0.0.1.evil.example",
+        ] {
+            assert!(!origin_is_loopback_or_absent(Some(bad)), "reject {bad:?}");
+        }
+    }
 
     fn base_request() -> RunRequest {
         RunRequest {

@@ -70,10 +70,15 @@ impl PlanBuilder {
     fn add_activation(&mut self, region: &str, elements: usize) -> TensorRef {
         let id = self.next_id;
         self.next_id += 1;
+        // checked: an adversarial metadata blow-up must fail with a clean
+        // error, never wrap into a smaller (aliasing) arena region
+        let size = elements
+            .checked_mul(4)
+            .expect("activation region byte size overflow (metadata sanity caps)");
         self.regions.push(ScratchRegion {
             name: region.to_string(),
             offset: 0,
-            size: elements * 4,
+            size,
             alignment: PLAN_REGION_ALIGN,
             first_op: usize::MAX,
             last_op: 0,
@@ -230,7 +235,9 @@ impl PlanBuilder {
         for region in &mut self.regions {
             cursor = align_up(cursor, region.alignment);
             region.offset = cursor;
-            cursor += region.size;
+            cursor = cursor
+                .checked_add(region.size)
+                .expect("scratch region layout overflow (metadata sanity caps)");
         }
     }
 
