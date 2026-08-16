@@ -152,21 +152,21 @@ fn default_inputs() -> InputSelector {
 impl InterventionSpec {
     /// Validate the operation/source combination and finite parameters.
     pub fn validate_self(&self) -> Result<(), String> {
-        if let InterventionOperation::Scale { factor } = self.operation {
-            if !factor.is_finite() {
-                return Err(format!(
-                    "intervention '{}': scale factor must be finite",
-                    self.id
-                ));
-            }
+        if let InterventionOperation::Scale { factor } = self.operation
+            && !factor.is_finite()
+        {
+            return Err(format!(
+                "intervention '{}': scale factor must be finite",
+                self.id
+            ));
         }
-        if let InterventionOperation::Interpolate { alpha } = self.operation {
-            if !alpha.is_finite() {
-                return Err(format!(
-                    "intervention '{}': interpolate alpha must be finite",
-                    self.id
-                ));
-            }
+        if let InterventionOperation::Interpolate { alpha } = self.operation
+            && !alpha.is_finite()
+        {
+            return Err(format!(
+                "intervention '{}': interpolate alpha must be finite",
+                self.id
+            ));
         }
         if self.operation.requires_source() {
             let Some(source) = &self.source else {
@@ -183,13 +183,13 @@ impl InterventionSpec {
                 ));
             }
         }
-        if let Some(InterventionSource::InlineVector { values }) = &self.source {
-            if values.is_empty() {
-                return Err(format!(
-                    "intervention '{}': inline vector must not be empty",
-                    self.id
-                ));
-            }
+        if let Some(InterventionSource::InlineVector { values }) = &self.source
+            && values.is_empty()
+        {
+            return Err(format!(
+                "intervention '{}': inline vector must not be empty",
+                self.id
+            ));
         }
         Ok(())
     }

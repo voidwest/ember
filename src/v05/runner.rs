@@ -288,10 +288,10 @@ impl V05Experiment {
             if target.site != site || !target.layers.contains(&layer) {
                 return false;
             }
-            if let Some(record) = &target.static_record {
-                if record.selected_indices.contains(&absolute) {
-                    return true;
-                }
+            if let Some(record) = &target.static_record
+                && record.selected_indices.contains(&absolute)
+            {
+                return true;
             }
             if !target.generated_steps.is_empty() {
                 let step = absolute.saturating_sub(self.prompt_len) + 1;

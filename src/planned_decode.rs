@@ -1088,10 +1088,8 @@ pub(crate) fn forward_last_logits_planned(
                     // across tokens, so the destination must be cleared here.
                     dst.fill(0.0);
                     planned_linear_into(linear, src, dst, parallel_matvec, false)?;
-                    if *has_bias {
-                        if let Some(bias) = linear.bias() {
-                            add_bias_into(dst, bias.data());
-                        }
+                    if *has_bias && let Some(bias) = linear.bias() {
+                        add_bias_into(dst, bias.data());
                     }
                     // after_attention / after_mlp fire on the pre-residual
                     // projection outputs (contract section 4/12), through the

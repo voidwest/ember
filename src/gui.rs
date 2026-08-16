@@ -130,10 +130,10 @@ impl GuiSession {
 
     /// Load (or reuse) the model for `model_path`.
     pub(crate) fn ensure_prepared(&mut self, model_path: &str) -> Result<(), String> {
-        if let Some(prepared) = &self.prepared {
-            if prepared.model_path.to_string_lossy() == model_path {
-                return Ok(());
-            }
+        if let Some(prepared) = &self.prepared
+            && prepared.model_path.to_string_lossy() == model_path
+        {
+            return Ok(());
         }
         let started = std::time::Instant::now();
         // Reuse the CLI's own model-loading path (same loader, strategy,

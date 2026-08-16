@@ -973,10 +973,8 @@ where
             )?;
             validate_last_logits(backend, &logits, model_vocab_size)?;
             decode_evaluations += 1;
-            if trace_ops {
-                if let Some(report) = trace::disable_tracing() {
-                    decode_traces.push(report);
-                }
+            if trace_ops && let Some(report) = trace::disable_tracing() {
+                decode_traces.push(report);
             }
         }
     }

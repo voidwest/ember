@@ -496,10 +496,9 @@ pub fn compare_backend_artifacts(
     if let (Some(native_sha), Some(external_sha)) = (
         native_manifest.model.sha256.as_deref(),
         external_manifest.model.sha256.as_deref(),
-    ) {
-        if !native_sha.eq_ignore_ascii_case(external_sha) {
-            anyhow::bail!("backend comparison model SHA-256 values differ");
-        }
+    ) && !native_sha.eq_ignore_ascii_case(external_sha)
+    {
+        anyhow::bail!("backend comparison model SHA-256 values differ");
     }
     let mut provenance_warnings = Vec::new();
     if native_manifest.model.sha256.is_none() || external_manifest.model.sha256.is_none() {
@@ -875,14 +874,14 @@ pub fn run_extraction_with_backend<B: ModelBackend>(
                     "backend logits contain non-finite value {value} at vocabulary index {index}"
                 );
             }
-            if let Some(existing_shape) = &logits_shape {
-                if existing_shape[1] != vocab_size {
-                    anyhow::bail!(
-                        "backend logits vocabulary changed from {} to {vocab_size} at sample '{}'",
-                        existing_shape[1],
-                        sample.sample_id
-                    );
-                }
+            if let Some(existing_shape) = &logits_shape
+                && existing_shape[1] != vocab_size
+            {
+                anyhow::bail!(
+                    "backend logits vocabulary changed from {} to {vocab_size} at sample '{}'",
+                    existing_shape[1],
+                    sample.sample_id
+                );
             }
             if logits_writer.is_none() {
                 logits_writer = Some(NpyStreamWriter::create(

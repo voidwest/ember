@@ -303,14 +303,14 @@ fn runtime_git_state() -> (String, String) {
 
 fn cpu_model() -> String {
     #[cfg(target_os = "linux")]
-    if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo") {
-        if let Some(model) = cpuinfo.lines().find_map(|line| {
+    if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo")
+        && let Some(model) = cpuinfo.lines().find_map(|line| {
             line.strip_prefix("model name")
                 .and_then(|value| value.split_once(':'))
                 .map(|(_, value)| value.trim())
-        }) {
-            return model.to_string();
-        }
+        })
+    {
+        return model.to_string();
     }
     "unknown".to_string()
 }
@@ -354,16 +354,16 @@ fn main() -> anyhow::Result<()> {
             "model is {model_bytes} bytes; this benchmark's audited 1B/1.5B ladder caps files at {MAX_MODEL_BYTES} bytes"
         );
     }
-    if let Some(expected) = args.expected_model_sha256.as_ref() {
-        if expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            bail!("--expected-model-sha256 must be exactly 64 hexadecimal characters");
-        }
+    if let Some(expected) = args.expected_model_sha256.as_ref()
+        && (expected.len() != 64 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        bail!("--expected-model-sha256 must be exactly 64 hexadecimal characters");
     }
     let model_sha256 = sha256_file(model)?;
-    if let Some(expected) = args.expected_model_sha256.as_ref() {
-        if !model_sha256.eq_ignore_ascii_case(expected) {
-            bail!("model SHA-256 {model_sha256} != expected {expected}");
-        }
+    if let Some(expected) = args.expected_model_sha256.as_ref()
+        && !model_sha256.eq_ignore_ascii_case(expected)
+    {
+        bail!("model SHA-256 {model_sha256} != expected {expected}");
     }
     let executable = std::env::current_exe()?;
     let (runtime_git_commit, runtime_git_dirty) = runtime_git_state();

@@ -378,7 +378,7 @@ pub fn ensure_snapshots_aligned(
     let right = candidate.manifest();
     let mut reasons = Vec::new();
     macro_rules! same {
-        ($left:expr, $right:expr, $label:literal) => {
+        ($left:expr_2021, $right:expr_2021, $label:literal) => {
             if $left != $right {
                 reasons.push($label);
             }

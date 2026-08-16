@@ -162,13 +162,13 @@ impl ExtractionConfig {
                 anyhow::bail!("run_id must be a single path component");
             }
         }
-        if let Some(architecture) = &self.architecture {
-            if !matches!(
+        if let Some(architecture) = &self.architecture
+            && !matches!(
                 architecture.as_str(),
                 "gpt2" | "llama" | "qwen2" | "qwen3" | "gemma3" | "gemma4"
-            ) {
-                anyhow::bail!("unsupported architecture '{architecture}'");
-            }
+            )
+        {
+            anyhow::bail!("unsupported architecture '{architecture}'");
         }
         if self.batch_size != 1 {
             anyhow::bail!(
@@ -179,10 +179,10 @@ impl ExtractionConfig {
         if self.resume {
             anyhow::bail!("resume=true is unsupported; extraction currently creates a new run");
         }
-        if let Some(max_seq_len) = self.max_seq_len {
-            if max_seq_len == 0 {
-                anyhow::bail!("max_seq_len must be greater than 0 when set");
-            }
+        if let Some(max_seq_len) = self.max_seq_len
+            && max_seq_len == 0
+        {
+            anyhow::bail!("max_seq_len must be greater than 0 when set");
         }
         if matches!(
             self.token_position,
@@ -976,10 +976,10 @@ pub fn validate_artifact_contract(
             anyhow::bail!("layer path '{}' collides with another artifact", layer.path);
         }
     }
-    if let Some(path) = &manifest.logits_path {
-        if !expected_checksum_paths.insert(path.clone()) {
-            anyhow::bail!("logits path '{path}' collides with another artifact");
-        }
+    if let Some(path) = &manifest.logits_path
+        && !expected_checksum_paths.insert(path.clone())
+    {
+        anyhow::bail!("logits path '{path}' collides with another artifact");
     }
 
     let checksums_text = fs::read_to_string(&checksums_path)
@@ -1178,14 +1178,12 @@ pub fn validate_artifact_contract(
         if let (Some(prompt), Some(source_value)) = (
             sample.prompt.as_deref(),
             position_row.source_value.as_deref(),
-        ) {
-            if let Some([start, end]) = position_row.source_byte_span {
-                if prompt.get(start..end) != Some(source_value) {
-                    anyhow::bail!(
+        ) && let Some([start, end]) = position_row.source_byte_span
+            && prompt.get(start..end) != Some(source_value)
+        {
+            anyhow::bail!(
                         "source_byte_span [{start}, {end}] does not slice to source_value at sample_index {index}"
                     );
-                }
-            }
         }
         if !matches!(
             manifest.extraction_config.token_position,

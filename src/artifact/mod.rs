@@ -857,10 +857,10 @@ pub fn validate_manifest(path: &str, manifest: &ActivationManifest) -> Result<()
         ("model", manifest.model.sha256.as_deref()),
         ("tokenizer", manifest.model.tokenizer_sha256.as_deref()),
     ] {
-        if let Some(hash) = hash {
-            if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                return Err(format!("artifact {name} SHA-256 is invalid"));
-            }
+        if let Some(hash) = hash
+            && (hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        {
+            return Err(format!("artifact {name} SHA-256 is invalid"));
         }
     }
     if manifest.run.prompt_hash.trim().is_empty() {

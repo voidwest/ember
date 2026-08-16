@@ -415,16 +415,14 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         if let Some(crate::v05::intervention::InterventionSource::CaptureFromCurrentRun {
             capture_id,
         }) = &intervention.source
-        {
-            if !semantic_manifest
+            && !semantic_manifest
                 .captures
                 .iter()
                 .any(|capture| capture.id == *capture_id)
-            {
-                intervention_errors.push(format!(
-                    "intervention {index}: source capture '{capture_id}' not declared"
-                ));
-            }
+        {
+            intervention_errors.push(format!(
+                "intervention {index}: source capture '{capture_id}' not declared"
+            ));
         }
     }
     report.record(

@@ -188,7 +188,7 @@ fn nucleus_cutoff(sorted_probs: &[f32], p: f32) -> f32 {
 /// and returns the index where the random value first falls below the running sum.
 /// falls back to argmax if floating-point rounding causes the cdf to not reach 1.0.
 fn categorical_sample(dist: &[f32], rng: &mut impl Rng) -> usize {
-    let r: f32 = rng.gen();
+    let r: f32 = rng.r#gen();
     let mut cum = 0.0;
     for (i, &p) in dist.iter().enumerate() {
         cum += p;

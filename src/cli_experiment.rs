@@ -511,13 +511,13 @@ pub(crate) fn execute_prepared(
     // -- cross-bundle sources --
     let mut bundle_sources: Vec<BundleSource> = Vec::new();
     for intervention in &resolved.interventions {
-        if let Some(source) = &intervention.source {
-            if let ember::v05::intervention::InterventionSource::CaptureFromBundle { .. } = source {
-                let loaded =
-                    load_bundle_source(intervention, source, model_sha, tokenizer_sha, n_layers)
-                        .map_err(anyhow::Error::msg)?;
-                bundle_sources.push(loaded);
-            }
+        if let Some(source) = &intervention.source
+            && let ember::v05::intervention::InterventionSource::CaptureFromBundle { .. } = source
+        {
+            let loaded =
+                load_bundle_source(intervention, source, model_sha, tokenizer_sha, n_layers)
+                    .map_err(anyhow::Error::msg)?;
+            bundle_sources.push(loaded);
         }
     }
 

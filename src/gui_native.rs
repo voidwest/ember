@@ -617,10 +617,9 @@ impl Console {
     fn clamp_source_layer(&mut self) {
         if let (Ok(target), Ok(source)) =
             (self.layer.parse::<i64>(), self.source_layer.parse::<i64>())
+            && source > target
         {
-            if source > target {
-                self.source_layer = (target - 1).max(0).to_string();
-            }
+            self.source_layer = (target - 1).max(0).to_string();
         }
     }
 

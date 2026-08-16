@@ -1,0 +1,4 @@
+# Keep the pre-2024 rustfmt style: the language edition moved to 2024
+# (Cargo.toml) but the formatting style intentionally stays 2021 so the
+# migration did not reformat the whole repository.
+style_edition = "2021"

@@ -559,17 +559,17 @@ fn apply_rope_and_qk_norm<B: Backend>(
     let sin_data = backend.data(rope_sin);
     let mut data = backend.data(x).to_vec();
 
-    if spec.qk_norm_order == QkNormOrder::BeforeRope {
-        if let Some(norm) = norm {
-            apply_headwise_rms_norm(
-                &mut data,
-                seq_len,
-                spec.n_heads,
-                spec.head_dim,
-                backend.data(norm),
-                1e-6,
-            );
-        }
+    if spec.qk_norm_order == QkNormOrder::BeforeRope
+        && let Some(norm) = norm
+    {
+        apply_headwise_rms_norm(
+            &mut data,
+            seq_len,
+            spec.n_heads,
+            spec.head_dim,
+            backend.data(norm),
+            1e-6,
+        );
     }
 
     let mut block_start = 0;
@@ -605,17 +605,17 @@ fn apply_rope_and_qk_norm<B: Backend>(
         }
     }
 
-    if spec.qk_norm_order == QkNormOrder::AfterRope {
-        if let Some(norm) = norm {
-            apply_headwise_rms_norm(
-                &mut data,
-                seq_len,
-                spec.n_heads,
-                spec.head_dim,
-                backend.data(norm),
-                1e-6,
-            );
-        }
+    if spec.qk_norm_order == QkNormOrder::AfterRope
+        && let Some(norm) = norm
+    {
+        apply_headwise_rms_norm(
+            &mut data,
+            seq_len,
+            spec.n_heads,
+            spec.head_dim,
+            backend.data(norm),
+            1e-6,
+        );
     }
 
     backend.load_from_cpu(data, &[seq_len, width])
@@ -634,10 +634,10 @@ impl LlamaAttention<CpuBackend> {
         let width = n_heads * self.head_dim;
         debug_assert_eq!(data.len(), width);
 
-        if self.qk_norm_order == QkNormOrder::BeforeRope {
-            if let Some(norm) = norm {
-                apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
-            }
+        if self.qk_norm_order == QkNormOrder::BeforeRope
+            && let Some(norm) = norm
+        {
+            apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
         }
 
         let half = self.head_dim / 2;
@@ -663,10 +663,10 @@ impl LlamaAttention<CpuBackend> {
             }
         }
 
-        if self.qk_norm_order == QkNormOrder::AfterRope {
-            if let Some(norm) = norm {
-                apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
-            }
+        if self.qk_norm_order == QkNormOrder::AfterRope
+            && let Some(norm) = norm
+        {
+            apply_headwise_rms_norm(data, 1, n_heads, self.head_dim, norm.data(), 1e-6);
         }
     }
 }
@@ -1457,12 +1457,11 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
 
         // Q8_0's native hooked fast path retains precedence over v0.4 plans.
         // It records `Fast` only if the concrete route succeeds.
-        if fast_eligible {
-            if let Some(result) =
+        if fast_eligible
+            && let Some(result) =
                 self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
-            {
-                return result;
-            }
+        {
+            return result;
         }
 
         // K-quant models are fast-path ineligible and reach the v0.4 plan.
@@ -1724,7 +1723,7 @@ impl Llama<CpuBackend> {
         // `profile_operators` flag as the matmul timings, so the normal
         // path pays nothing extra.
         macro_rules! profile_op {
-            ($layer:expr, $name:expr, $in_dim:expr, $out_dim:expr, $body:block) => {{
+            ($layer:expr_2021, $name:expr_2021, $in_dim:expr_2021, $out_dim:expr_2021, $body:block) => {{
                 let start = if profile_operators {
                     Some(std::time::Instant::now())
                 } else {
@@ -2144,15 +2143,14 @@ impl Llama<CpuBackend> {
         if vocab_key_missing {
             // GGUF token_embd dims are [n_embd, n_vocab] (first dim
             // contiguous); the vocab dimension is the second.
-            if let Some(meta) = loader.tensor_meta.get("token_embd.weight") {
-                if let Some(&rows) = meta.dims.get(1) {
-                    if config.vocab_size != rows {
-                        log::warn!(
+            if let Some(meta) = loader.tensor_meta.get("token_embd.weight")
+                && let Some(&rows) = meta.dims.get(1)
+                && config.vocab_size != rows
+            {
+                log::warn!(
                             "qwen2.vocab_size metadata missing; using token_embd rows ({rows}) for vocab_size"
                         );
-                        config.vocab_size = rows;
-                    }
-                }
+                config.vocab_size = rows;
             }
         }
         config.validate()?;

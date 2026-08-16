@@ -409,12 +409,11 @@ impl<B: Backend> Linear<B> {
         x: &B::Tensor,
         other: &Self,
     ) -> Result<(B::Tensor, B::Tensor), B::Error> {
-        if !crate::trace::is_tracing() {
-            if let (Some(first), Some(second)) = (&self.packed_decode, &other.packed_decode) {
-                if let Some(result) = backend.matmul_q8_0_packed_pair(x, first, second)? {
-                    return Ok(result);
-                }
-            }
+        if !crate::trace::is_tracing()
+            && let (Some(first), Some(second)) = (&self.packed_decode, &other.packed_decode)
+            && let Some(result) = backend.matmul_q8_0_packed_pair(x, first, second)?
+        {
+            return Ok(result);
         }
         self.forward_pair(backend, x, other)
     }
@@ -590,10 +589,10 @@ impl Linear<CpuBackend> {
         if self.interleaved.is_some() || !crate::simd::interleaved_q8_0_supported() {
             return;
         }
-        if let WeightKind::Q8_0(weight) = &self.weight {
-            if weight.out_features() >= min_out_features {
-                self.interleaved = Some(QuantizedWeightInterleaved::from_quantized(weight));
-            }
+        if let WeightKind::Q8_0(weight) = &self.weight
+            && weight.out_features() >= min_out_features
+        {
+            self.interleaved = Some(QuantizedWeightInterleaved::from_quantized(weight));
         }
     }
 }

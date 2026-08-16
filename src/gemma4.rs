@@ -1267,18 +1267,19 @@ impl Gemma4<CpuBackend> {
         // Global PLE projection (llama.cpp pathway): combines hidden state
         // with per-layer token embeddings before the per-layer gate.
         let (per_layer_model_proj, per_layer_proj_norm) =
-            if let Some(t) = loader.tensors.remove("per_layer_model_proj.weight") {
-                let proj = match t {
-                    LoadedTensor::F32(tensor) => Linear::new(tensor, None),
-                    LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
-                    LoadedTensor::KQuant(_) => {
-                        anyhow::bail!(NO_K_QUANT)
-                    }
-                };
-                let norm = loader.take_f32("per_layer_proj_norm.weight")?;
-                (Some(proj), Some(norm))
-            } else {
-                (None, None)
+            match loader.tensors.remove("per_layer_model_proj.weight") {
+                Some(t) => {
+                    let proj = match t {
+                        LoadedTensor::F32(tensor) => Linear::new(tensor, None),
+                        LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
+                        LoadedTensor::KQuant(_) => {
+                            anyhow::bail!(NO_K_QUANT)
+                        }
+                    };
+                    let norm = loader.take_f32("per_layer_proj_norm.weight")?;
+                    (Some(proj), Some(norm))
+                }
+                _ => (None, None),
             };
 
         let model = Self {

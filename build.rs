@@ -23,10 +23,10 @@ fn main() {
     if let Some(head_path) = command_stdout("git", &["rev-parse", "--git-path", "HEAD"]) {
         println!("cargo:rerun-if-changed={head_path}");
     }
-    if let Some(head_ref) = command_stdout("git", &["symbolic-ref", "-q", "HEAD"]) {
-        if let Some(ref_path) = command_stdout("git", &["rev-parse", "--git-path", &head_ref]) {
-            println!("cargo:rerun-if-changed={ref_path}");
-        }
+    if let Some(head_ref) = command_stdout("git", &["symbolic-ref", "-q", "HEAD"])
+        && let Some(ref_path) = command_stdout("git", &["rev-parse", "--git-path", &head_ref])
+    {
+        println!("cargo:rerun-if-changed={ref_path}");
     }
     if let Some(packed_refs) = command_stdout("git", &["rev-parse", "--git-path", "packed-refs"]) {
         println!("cargo:rerun-if-changed={packed_refs}");

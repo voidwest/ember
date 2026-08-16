@@ -576,13 +576,13 @@ impl ExperimentSpecV1 {
                     }
                 }
             }
-            if let TokenSelector::GeneratedStep { .. } = &capture.tokens {
-                if self.generation.max_new_tokens == 0 {
-                    return Err(SpecError::at(
-                        format!("{path}.tokens"),
-                        "generated-step token selection requires generation.max_new_tokens > 0",
-                    ));
-                }
+            if let TokenSelector::GeneratedStep { .. } = &capture.tokens
+                && self.generation.max_new_tokens == 0
+            {
+                return Err(SpecError::at(
+                    format!("{path}.tokens"),
+                    "generated-step token selection requires generation.max_new_tokens > 0",
+                ));
             }
         }
 
@@ -613,34 +613,32 @@ impl ExperimentSpecV1 {
             }
             if let Some(InterventionSource::CaptureFromCurrentRun { capture_id }) =
                 &intervention.source
+                && !capture_ids.iter().any(|known| known == capture_id)
             {
-                if !capture_ids.iter().any(|known| known == capture_id) {
-                    return Err(SpecError::at(
-                        format!("{path}.source"),
-                        format!(
-                            "source capture id {capture_id:?} does not exist among captures \
+                return Err(SpecError::at(
+                    format!("{path}.source"),
+                    format!(
+                        "source capture id {capture_id:?} does not exist among captures \
                              (known: {capture_ids:?})"
-                        ),
-                    ));
-                }
+                    ),
+                ));
             }
             if let Some(InterventionSource::CaptureFromBundle { bundle_path, .. }) =
                 &intervention.source
+                && bundle_path.as_os_str().is_empty()
             {
-                if bundle_path.as_os_str().is_empty() {
-                    return Err(SpecError::at(
-                        format!("{path}.source"),
-                        "source bundle path must not be empty",
-                    ));
-                }
+                return Err(SpecError::at(
+                    format!("{path}.source"),
+                    "source bundle path must not be empty",
+                ));
             }
-            if let TokenSelector::GeneratedStep { .. } = &intervention.tokens {
-                if self.generation.max_new_tokens == 0 {
-                    return Err(SpecError::at(
-                        format!("{path}.tokens"),
-                        "generated-step token selection requires generation.max_new_tokens > 0",
-                    ));
-                }
+            if let TokenSelector::GeneratedStep { .. } = &intervention.tokens
+                && self.generation.max_new_tokens == 0
+            {
+                return Err(SpecError::at(
+                    format!("{path}.tokens"),
+                    "generated-step token selection requires generation.max_new_tokens > 0",
+                ));
             }
         }
 

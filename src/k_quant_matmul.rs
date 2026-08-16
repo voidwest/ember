@@ -62,10 +62,10 @@ mod route_probe {
         if leaf < 2 {
             barrier.expect("route probe barrier installed").wait();
         }
-        if let Some(index) = rayon::current_thread_index() {
-            if index < u64::BITS as usize {
-                PARALLEL_WORKERS.fetch_or(1u64 << index, Ordering::Relaxed);
-            }
+        if let Some(index) = rayon::current_thread_index()
+            && index < u64::BITS as usize
+        {
+            PARALLEL_WORKERS.fetch_or(1u64 << index, Ordering::Relaxed);
         }
     }
 }

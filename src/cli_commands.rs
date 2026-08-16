@@ -587,23 +587,22 @@ pub(crate) fn validate_report_fields(
     if let Some(schema_version) = report
         .get("schema_version")
         .and_then(serde_json::Value::as_u64)
+        && schema_version != u64::from(manifest.schema_version)
     {
-        if schema_version != u64::from(manifest.schema_version) {
-            anyhow::bail!(
-                "report schema_version {} does not match manifest schema_version {}",
-                schema_version,
-                manifest.schema_version
-            );
-        }
+        anyhow::bail!(
+            "report schema_version {} does not match manifest schema_version {}",
+            schema_version,
+            manifest.schema_version
+        );
     }
-    if let Some(layout) = report.get("layout").and_then(serde_json::Value::as_str) {
-        if layout != manifest.layout {
-            anyhow::bail!(
-                "report layout '{}' does not match manifest layout '{}'",
-                layout,
-                manifest.layout
-            );
-        }
+    if let Some(layout) = report.get("layout").and_then(serde_json::Value::as_str)
+        && layout != manifest.layout
+    {
+        anyhow::bail!(
+            "report layout '{}' does not match manifest layout '{}'",
+            layout,
+            manifest.layout
+        );
     }
     Ok(())
 }
@@ -652,10 +651,10 @@ pub(crate) fn collect_marker_values(
 ) {
     match value {
         serde_json::Value::Object(map) => {
-            if let Some(marker) = map.get(name) {
-                if let Some(bool_value) = marker.as_bool() {
-                    observed.push(bool_value);
-                }
+            if let Some(marker) = map.get(name)
+                && let Some(bool_value) = marker.as_bool()
+            {
+                observed.push(bool_value);
             }
             for key in [
                 "provenance",
@@ -992,14 +991,13 @@ fn validate_logits_tensor<B: Backend>(
             values.len()
         );
     }
-    if require_finite {
-        if let Some((index, value)) = values
+    if require_finite
+        && let Some((index, value)) = values
             .iter()
             .enumerate()
             .find(|(_, value)| !value.is_finite())
-        {
-            anyhow::bail!("logits contain non-finite value {value} at flat index {index}");
-        }
+    {
+        anyhow::bail!("logits contain non-finite value {value} at flat index {index}");
     }
     Ok(())
 }

@@ -230,11 +230,11 @@ impl BundleWriter {
 fn write_staged(staging: &Path, relative: &str, bytes: &[u8]) -> Result<(), String> {
     let relative = validate_relative_path(relative)?;
     let path = staging.join(relative);
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot create '{}': {error}", parent.display()))?;
-        }
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create '{}': {error}", parent.display()))?;
     }
     crate::atomic_file::atomic_write(&path, bytes)
         .map_err(|error| format!("cannot write '{}': {error}", path.display()))
