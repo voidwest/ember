@@ -99,10 +99,78 @@ pub(crate) struct SessionInfo {
 pub(crate) struct RunBundle {
     pub baseline: RunOutput,
     pub intervention: RunOutput,
+    /// Compact chart-ready metrics derived from the two verified bundles.
+    /// Raw activation tensors remain bundle-owned and are never cloned into
+    /// the presentation layer.
+    pub comparison: ExperimentComparison,
     pub verification: VerificationReport,
     pub elapsed_ms_total: f64,
     pub elapsed_ms_baseline: f64,
     pub baseline_key: String,
+}
+
+/// UI-facing comparison of one deterministic baseline/intervention pair.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct ExperimentComparison {
+    pub layers: Vec<LayerMetric>,
+    pub tokens: Vec<TokenMetric>,
+    pub first_token_divergence: Option<usize>,
+    pub generated_tokens_equal: bool,
+    pub generated_text_equal: bool,
+    /// High-value landmarks derived once on the worker so the overview can
+    /// answer where divergence begins and whether token IDs later re-align.
+    pub landmarks: DivergenceLandmarks,
+    /// Reserved row-major layer × token metrics. Phase 1 deliberately leaves
+    /// this absent until a capture configuration records a defensible matrix.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer_token_grid: Option<LayerTokenGrid>,
+}
+
+/// Compact experiment landmarks for the overview. A stable token tail means
+/// the remaining emitted token IDs are exactly equal; it deliberately does
+/// not claim that two autoregressive trajectories semantically reconverged.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct DivergenceLandmarks {
+    pub first_layer_divergence: Option<usize>,
+    pub peak_layer: Option<usize>,
+    pub peak_relative_l2: Option<f64>,
+    /// One-based decode step at which a non-empty equal suffix begins.
+    pub stable_token_tail_step: Option<usize>,
+}
+
+/// Compact, renderer-independent groundwork for a future native heatmap.
+/// `values` is row-major over `layers × token_positions`; missing cells stay
+/// `None` so sparse captures are represented without fabricated zeros.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct LayerTokenGrid {
+    pub metric_name: String,
+    pub layers: Vec<usize>,
+    pub token_positions: Vec<usize>,
+    pub values: Vec<Option<f64>>,
+}
+
+/// One sparse point in the residual-stream divergence trace.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct LayerMetric {
+    pub layer: usize,
+    /// Relative L2 distance, using the baseline activation as the reference.
+    pub relative_l2_difference: Option<f64>,
+    pub cosine_distance: Option<f64>,
+    pub maximum_absolute_difference: Option<f64>,
+    pub exact: bool,
+}
+
+/// Token-id pairing for the generated continuation. Text stays in
+/// `RunOutput`; this compact sequence supports exact divergence markers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct TokenMetric {
+    /// One-based decode step.
+    pub position: usize,
+    pub baseline_token_id: Option<u32>,
+    pub intervention_token_id: Option<u32>,
+    pub baseline_text: Option<String>,
+    pub intervention_text: Option<String>,
+    pub differs: bool,
 }
 
 /// Typed outcome of the restore-original leg (shared by both GUIs).
@@ -178,6 +246,18 @@ impl GuiSession {
         let elapsed_ms_baseline = started.elapsed().as_secs_f64() * 1000.0;
         let (intervention, intervention_report) = run_one(self, cfg, RunKind::Intervention)
             .map_err(|error| format!("intervention run failed: {error}"))?;
+        let raw_comparison = ember::v05::compare::compare_bundles(
+            Path::new(&baseline.bundle_dir),
+            Path::new(&intervention.bundle_dir),
+        )
+        .map_err(|error| format!("baseline/intervention comparison failed: {error}"))?;
+        let comparison = derive_experiment_comparison(
+            &raw_comparison,
+            &baseline.generated_token_ids,
+            &baseline.generated_token_texts,
+            &intervention.generated_token_ids,
+            &intervention.generated_token_texts,
+        );
         let elapsed_ms_total = started.elapsed().as_secs_f64() * 1000.0;
         let baseline_key = cfg.comparison_key();
         self.last_baseline = Some(BaselineRecord {
@@ -187,6 +267,7 @@ impl GuiSession {
         Ok(RunBundle {
             baseline,
             intervention,
+            comparison,
             verification: intervention_report,
             elapsed_ms_total,
             elapsed_ms_baseline,
@@ -363,6 +444,8 @@ impl ApiEnvelope {
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct RunOutput {
     pub text: String,
+    pub generated_token_ids: Vec<u32>,
+    pub generated_token_texts: Vec<String>,
     pub prompt_tokens: usize,
     pub generated_tokens: usize,
     pub bundle_dir: String,
@@ -371,6 +454,109 @@ pub(crate) struct RunOutput {
     pub wall_ms: f64,
     pub decode_tps: Option<f64>,
     pub events: Vec<serde_json::Value>,
+}
+
+const GUI_LAYER_TRACE_CAPTURE_ID: &str = "gui-layer-trace";
+
+fn finite(value: Option<f64>) -> Option<f64> {
+    value.filter(|value| value.is_finite())
+}
+
+fn derive_divergence_landmarks(
+    layers: &[LayerMetric],
+    baseline_tokens: &[u32],
+    intervention_tokens: &[u32],
+) -> DivergenceLandmarks {
+    let divergent_layers = layers.iter().filter_map(|metric| {
+        metric
+            .relative_l2_difference
+            .filter(|value| !metric.exact && *value > 0.0)
+            .map(|value| (metric.layer, value))
+    });
+    let first_layer_divergence = divergent_layers.clone().map(|(layer, _)| layer).next();
+    let peak = divergent_layers.max_by(|(_, left), (_, right)| left.total_cmp(right));
+
+    let stable_token_tail_step = if baseline_tokens.len() == intervention_tokens.len() {
+        baseline_tokens
+            .iter()
+            .zip(intervention_tokens)
+            .position(|(baseline, intervention)| baseline != intervention)
+            .and_then(|first_difference| {
+                ((first_difference + 1)..baseline_tokens.len())
+                    .find(|start| baseline_tokens[*start..] == intervention_tokens[*start..])
+                    .map(|start| start + 1)
+            })
+    } else {
+        None
+    };
+
+    DivergenceLandmarks {
+        first_layer_divergence,
+        peak_layer: peak.map(|(layer, _)| layer),
+        peak_relative_l2: peak.map(|(_, value)| value),
+        stable_token_tail_step,
+    }
+}
+
+fn derive_experiment_comparison(
+    comparison: &ember::v05::compare::CompareResult,
+    baseline_tokens: &[u32],
+    baseline_token_texts: &[String],
+    intervention_tokens: &[u32],
+    intervention_token_texts: &[String],
+) -> ExperimentComparison {
+    let mut layers: Vec<LayerMetric> = comparison
+        .captures
+        .iter()
+        .filter(|capture| capture.capture_id == GUI_LAYER_TRACE_CAPTURE_ID)
+        .map(|capture| {
+            let metrics = capture.metrics.as_ref();
+            let exact = metrics.is_some_and(|metrics| metrics.exact);
+            let relative_l2_difference = metrics
+                .and_then(|metrics| finite(metrics.relative_l2_difference))
+                .or(exact.then_some(0.0));
+            let cosine_distance = metrics
+                .and_then(|metrics| finite(metrics.cosine_similarity))
+                .map(|similarity| 1.0 - similarity.clamp(-1.0, 1.0))
+                .or(exact.then_some(0.0));
+            LayerMetric {
+                layer: capture.layer,
+                relative_l2_difference,
+                cosine_distance,
+                maximum_absolute_difference: metrics
+                    .and_then(|metrics| finite(metrics.maximum_absolute_difference)),
+                exact,
+            }
+        })
+        .collect();
+    layers.sort_by_key(|metric| metric.layer);
+
+    let token_count = baseline_tokens.len().max(intervention_tokens.len());
+    let tokens = (0..token_count)
+        .map(|index| {
+            let baseline_token_id = baseline_tokens.get(index).copied();
+            let intervention_token_id = intervention_tokens.get(index).copied();
+            TokenMetric {
+                position: index + 1,
+                baseline_token_id,
+                intervention_token_id,
+                baseline_text: baseline_token_texts.get(index).cloned(),
+                intervention_text: intervention_token_texts.get(index).cloned(),
+                differs: baseline_token_id != intervention_token_id,
+            }
+        })
+        .collect();
+    let output = comparison.outputs.first();
+    let landmarks = derive_divergence_landmarks(&layers, baseline_tokens, intervention_tokens);
+    ExperimentComparison {
+        layers,
+        tokens,
+        first_token_divergence: output.and_then(|output| output.first_divergence_step),
+        generated_tokens_equal: output.is_some_and(|output| output.generated_tokens_equal),
+        generated_text_equal: output.is_some_and(|output| output.generated_text_equal),
+        landmarks,
+        layer_token_grid: None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -636,6 +822,19 @@ fn build_and_resolve_spec(
         storage: CaptureStorage::SelectedRows,
         dtype: CaptureDType::F32,
     };
+    // One selected activation row per layer gives the native workbench a
+    // scientifically meaningful residual-stream trace without retaining a
+    // second in-memory copy. The verified bundle owns the tensors; after the
+    // pair completes, `compare_bundles` reduces them to compact metrics.
+    let layer_trace = CaptureSpec {
+        id: GUI_LAYER_TRACE_CAPTURE_ID.to_string(),
+        site: SemanticHookSite::ResidualPostMlp,
+        layers: LayerSelector::All("all".to_string()),
+        tokens: tokens.clone(),
+        inputs: InputSelector::All("all".to_string()),
+        storage: CaptureStorage::SelectedRows,
+        dtype: CaptureDType::F32,
+    };
 
     let operation = match cfg.operation {
         GuiOperation::Replace => InterventionOperation::Replace,
@@ -676,8 +875,12 @@ fn build_and_resolve_spec(
     };
 
     let (name, captures, interventions) = match kind {
-        RunKind::Baseline => ("gui-baseline", vec![capture], Vec::new()),
-        RunKind::Intervention => ("gui-intervention", vec![capture], vec![intervention]),
+        RunKind::Baseline => ("gui-baseline", vec![capture, layer_trace], Vec::new()),
+        RunKind::Intervention => (
+            "gui-intervention",
+            vec![capture, layer_trace],
+            vec![intervention],
+        ),
         RunKind::Restore => ("gui-restore", Vec::new(), vec![restore]),
     };
 
@@ -749,6 +952,16 @@ fn run_one(
         .first()
         .ok_or_else(|| "the run produced no input results".to_string())?;
     let (wall_ms, decode_tps) = read_runtime_metrics(&path);
+    let generated_token_texts: Vec<String> = result
+        .generated_token_ids
+        .iter()
+        .map(|token_id| {
+            prepared
+                .tokenizer
+                .decode(&[*token_id])
+                .unwrap_or_else(|_| format!("<{token_id}>"))
+        })
+        .collect();
     let events: Vec<serde_json::Value> = result
         .events
         .iter()
@@ -768,6 +981,8 @@ fn run_one(
     Ok((
         RunOutput {
             text: result.generated_text.clone(),
+            generated_token_ids: result.generated_token_ids.clone(),
+            generated_token_texts,
             prompt_tokens: result.tokenization.token_ids.len(),
             generated_tokens: result.generated_token_ids.len(),
             bundle_dir: path.display().to_string(),
@@ -1396,7 +1611,15 @@ mod tests {
                     usize::from(kind == RunKind::Intervention || kind == RunKind::Restore)
                 );
                 if kind == RunKind::Intervention {
-                    assert_eq!(resolved.captures.len(), 1);
+                    assert_eq!(resolved.captures.len(), 2);
+                    let trace = resolved
+                        .captures
+                        .iter()
+                        .find(|capture| capture.id == GUI_LAYER_TRACE_CAPTURE_ID)
+                        .expect("native workbench layer trace");
+                    assert_eq!(trace.site, SemanticHookSite::ResidualPostMlp);
+                    assert!(matches!(trace.layers, LayerSelector::All(_)));
+                    assert_eq!(trace.storage, CaptureStorage::SelectedRows);
                 }
             }
         }
@@ -1509,5 +1732,222 @@ mod tests {
             cfg_of(&a).comparison_key(),
             cfg_of(&other_tokens).comparison_key()
         );
+    }
+
+    fn comparison_fixture(
+        captures: Vec<ember::v05::compare::CaptureComparison>,
+        output: Option<ember::v05::compare::OutputComparison>,
+    ) -> ember::v05::compare::CompareResult {
+        use ember::v05::compare::{CompareResult, IdentityComparison, RuntimeComparison};
+        CompareResult {
+            bundle_a: "baseline".to_string(),
+            bundle_b: "intervention".to_string(),
+            identity: IdentityComparison {
+                schema_compatible: true,
+                semantic_hash_equal: false,
+                model_hash_equal: true,
+                tokenizer_hash_equal: true,
+                execution_mode_equal: true,
+                plan_hash_equal: true,
+                input_ids_equal: true,
+                prompts_equal: true,
+                tokenization_equal: true,
+            },
+            outputs: output.into_iter().collect(),
+            captures,
+            interventions: Vec::new(),
+            runtime: RuntimeComparison {
+                decode_throughput_tps_a: None,
+                decode_throughput_tps_b: None,
+                prefill_throughput_tps_a: None,
+                prefill_throughput_tps_b: None,
+                first_token_latency_ms_a: None,
+                first_token_latency_ms_b: None,
+                peak_rss_kb_a: None,
+                peak_rss_kb_b: None,
+                scratch_bytes_a: None,
+                scratch_bytes_b: None,
+            },
+        }
+    }
+
+    fn output_fixture(
+        equal: bool,
+        first_divergence_step: Option<usize>,
+    ) -> ember::v05::compare::OutputComparison {
+        ember::v05::compare::OutputComparison {
+            input_id: "i1".to_string(),
+            generated_tokens_equal: equal,
+            generated_text_equal: equal,
+            final_top1_equal: equal,
+            first_divergence_step,
+            generated_count_a: 3,
+            generated_count_b: 3,
+        }
+    }
+
+    fn capture_fixture(
+        layer: usize,
+        metrics: Option<ember::v05::compare::TensorMetrics>,
+    ) -> ember::v05::compare::CaptureComparison {
+        ember::v05::compare::CaptureComparison {
+            capture_id: GUI_LAYER_TRACE_CAPTURE_ID.to_string(),
+            input_id: "i1".to_string(),
+            site: SemanticHookSite::ResidualPostMlp,
+            layer,
+            present_in_a: true,
+            present_in_b: metrics.is_some(),
+            metrics,
+        }
+    }
+
+    #[test]
+    fn result_metrics_handle_empty_aborted_comparison() {
+        let raw = comparison_fixture(Vec::new(), None);
+        let result = derive_experiment_comparison(&raw, &[], &[], &[], &[]);
+        assert!(result.layers.is_empty());
+        assert!(result.tokens.is_empty());
+        assert_eq!(result.first_token_divergence, None);
+        assert!(!result.generated_text_equal);
+        assert_eq!(result.landmarks.first_layer_divergence, None);
+        assert_eq!(result.landmarks.peak_layer, None);
+        assert_eq!(result.landmarks.stable_token_tail_step, None);
+        assert!(result.layer_token_grid.is_none());
+    }
+
+    #[test]
+    fn result_metrics_preserve_sparse_layers_and_reject_non_finite_values() {
+        use ember::v05::compare::TensorMetrics;
+        let captures = vec![
+            capture_fixture(
+                9,
+                Some(TensorMetrics {
+                    shape_equal: true,
+                    dtype_equal: true,
+                    exact: true,
+                    ..TensorMetrics::default()
+                }),
+            ),
+            capture_fixture(4, None),
+            capture_fixture(
+                1,
+                Some(TensorMetrics {
+                    shape_equal: true,
+                    dtype_equal: true,
+                    exact: false,
+                    relative_l2_difference: Some(f64::NAN),
+                    cosine_similarity: Some(f64::INFINITY),
+                    maximum_absolute_difference: Some(f64::NEG_INFINITY),
+                    ..TensorMetrics::default()
+                }),
+            ),
+        ];
+        let raw = comparison_fixture(captures, Some(output_fixture(true, None)));
+        let result = derive_experiment_comparison(&raw, &[], &[], &[], &[]);
+        assert_eq!(
+            result
+                .layers
+                .iter()
+                .map(|metric| metric.layer)
+                .collect::<Vec<_>>(),
+            vec![1, 4, 9]
+        );
+        assert_eq!(result.layers[0].relative_l2_difference, None);
+        assert_eq!(result.layers[0].cosine_distance, None);
+        assert_eq!(result.layers[0].maximum_absolute_difference, None);
+        assert_eq!(result.layers[1].relative_l2_difference, None);
+        assert_eq!(result.layers[2].relative_l2_difference, Some(0.0));
+        assert_eq!(result.layers[2].cosine_distance, Some(0.0));
+        assert_eq!(result.landmarks.first_layer_divergence, None);
+        assert_eq!(result.landmarks.peak_relative_l2, None);
+    }
+
+    #[test]
+    fn identical_single_layer_pair_has_zero_divergence() {
+        let metrics = ember::v05::compare::TensorMetrics {
+            shape_equal: true,
+            dtype_equal: true,
+            exact: true,
+            relative_l2_difference: Some(0.0),
+            cosine_similarity: Some(1.0),
+            maximum_absolute_difference: Some(0.0),
+            ..Default::default()
+        };
+        let raw = comparison_fixture(
+            vec![capture_fixture(0, Some(metrics))],
+            Some(output_fixture(true, None)),
+        );
+        let texts = vec![" المدينة".to_string()];
+        let result = derive_experiment_comparison(&raw, &[42], &texts, &[42], &texts);
+        assert_eq!(result.layers.len(), 1);
+        assert_eq!(result.layers[0].relative_l2_difference, Some(0.0));
+        assert_eq!(result.tokens[0].baseline_text.as_deref(), Some(" المدينة"));
+        assert!(!result.tokens[0].differs);
+        assert!(result.generated_text_equal);
+        assert_eq!(result.landmarks.first_layer_divergence, None);
+        assert_eq!(result.landmarks.peak_relative_l2, None);
+        assert_eq!(result.landmarks.stable_token_tail_step, None);
+    }
+
+    #[test]
+    fn token_pairing_handles_long_and_unequal_traces() {
+        let baseline: Vec<u32> = (0..5_000).collect();
+        let mut intervention = baseline.clone();
+        intervention[4_321] = 99_999;
+        intervention.push(5_001);
+        let baseline_text: Vec<String> = baseline.iter().map(ToString::to_string).collect();
+        let intervention_text: Vec<String> = intervention.iter().map(ToString::to_string).collect();
+        let raw = comparison_fixture(Vec::new(), Some(output_fixture(false, Some(4_322))));
+        let result = derive_experiment_comparison(
+            &raw,
+            &baseline,
+            &baseline_text,
+            &intervention,
+            &intervention_text,
+        );
+        assert_eq!(result.tokens.len(), 5_001);
+        assert!(result.tokens[4_321].differs);
+        assert!(result.tokens[5_000].differs);
+        assert_eq!(result.first_token_divergence, Some(4_322));
+        assert_eq!(result.landmarks.stable_token_tail_step, None);
+    }
+
+    #[test]
+    fn result_landmarks_find_first_layer_peak_and_stable_token_tail() {
+        use ember::v05::compare::TensorMetrics;
+        let metric = |relative_l2_difference: f64| TensorMetrics {
+            shape_equal: true,
+            dtype_equal: true,
+            exact: false,
+            relative_l2_difference: Some(relative_l2_difference),
+            cosine_similarity: Some(0.9),
+            maximum_absolute_difference: Some(relative_l2_difference),
+            ..TensorMetrics::default()
+        };
+        let raw = comparison_fixture(
+            vec![
+                capture_fixture(2, Some(metric(0.0))),
+                capture_fixture(5, Some(metric(0.125))),
+                capture_fixture(9, Some(metric(0.75))),
+            ],
+            Some(output_fixture(false, Some(2))),
+        );
+        let result =
+            derive_experiment_comparison(&raw, &[10, 20, 30, 40], &[], &[10, 99, 30, 40], &[]);
+        assert_eq!(result.landmarks.first_layer_divergence, Some(5));
+        assert_eq!(result.landmarks.peak_layer, Some(9));
+        assert_eq!(result.landmarks.peak_relative_l2, Some(0.75));
+        assert_eq!(result.landmarks.stable_token_tail_step, Some(3));
+    }
+
+    #[test]
+    fn stable_token_tail_requires_equal_lengths_and_nonempty_suffix() {
+        let raw = comparison_fixture(Vec::new(), Some(output_fixture(false, Some(2))));
+        let unequal = derive_experiment_comparison(&raw, &[1, 2], &[], &[1, 9, 2], &[]);
+        assert_eq!(unequal.landmarks.stable_token_tail_step, None);
+
+        let final_step_differs =
+            derive_experiment_comparison(&raw, &[1, 2, 3], &[], &[1, 2, 9], &[]);
+        assert_eq!(final_step_differs.landmarks.stable_token_tail_step, None);
     }
 }

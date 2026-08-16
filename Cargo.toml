@@ -27,6 +27,7 @@ tiny_http = "0.12"
 # use --no-default-features and skip the blade/ash/wayland stack. Embedded
 # Noto fonts (src/gui_fonts/) provide Latin + Arabic coverage offline.
 gpui = { version = "0.2.2", default-features = true, optional = true }
+unicode-segmentation = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -35,7 +36,7 @@ unicode-normalization = "0.1"
 
 [features]
 default = ["gui"]
-gui = ["dep:gpui"]
+gui = ["dep:gpui", "dep:unicode-segmentation"]
 
 # Cross-crate inlining for the CLI binary without full fat-LTO build cost.
 # (codegen-units stays at the default; measure 1-unit builds on a cool

@@ -1,16 +1,16 @@
 # Ember v0.6 experiment consoles (`ember gui`, `ember web-gui`)
 
 The v0.6 GUI is a thin, offline presentation layer over the existing v0.5
-experiment pipeline, built for one use case: a live conference demo on a
-single laptop. It is **not** a desktop product, a web application, or a
-parallel research API. It adds no new experiment semantics, no inference
-logic, and no weaker validation. Two consoles share one core: the same
+experiment pipeline, built as a native research workbench. It is **not** a
+chat client, analytics dashboard, web application, or parallel research API.
+It adds no new experiment semantics, no inference logic, and no weaker
+validation. Two consoles share one core: the same
 `GuiSession` (resident model + baseline/intervention/restore state), the
 same `parse_run_request` gate, and the same `prepare_run` /
 `execute_prepared` run path.
 
-- `ember gui` — native single-window console (iced, tiny-skia software
-  rendering; no GPU or webview dependency). See "Native console".
+- `ember gui` — native single-window workbench (gpui, GPU accelerated,
+  requiring a Vulkan-capable display). See "Native console".
 - `ember web-gui` — browser console: a tiny localhost HTTP server serving
   one self-contained page. Documented below.
 
@@ -74,7 +74,7 @@ captures, interventions, bundle assembly, bundle writing, and verification
 
 ```bash
 cargo build --release
-./target/release/ember gui                # native console (iced window)
+./target/release/ember gui                # native console (gpui window)
 ./target/release/ember web-gui            # browser console; prints http://127.0.0.1:8337/ and opens a browser
 ./target/release/ember web-gui --port 9000    # custom port
 ./target/release/ember web-gui --no-open      # just print the URL
@@ -89,49 +89,74 @@ prefer Q8_0 models: K-quant decode is intentionally much slower.
 ## Native console (`ember gui`)
 
 `ember gui` is a native, single-window console over the exact same v0.5
-pipeline. The UI is built with iced on the tiny-skia software renderer (no
-GPU, no system-webview dependency), and the embedded Noto fonts in
+pipeline. The UI is built with gpui (GPU accelerated; no system-webview
+dependency), and the embedded Noto fonts in
 `src/gui_fonts/` (Noto Sans, Noto Sans Mono, Noto Naskh Arabic — SIL OFL
 1.1, see `src/gui_fonts/LICENSE.txt`) provide Latin + Arabic coverage
 offline, so rendering is identical on any machine. Arabic input/output is
-shaped and laid out RTL by cosmic-text (iced's text engine).
+shaped and laid out RTL by gpui's cosmic-text integration. Text fields use
+the platform input-method seam and support selection, clipboard operations,
+undo/redo, and Arabic grapheme-aware cursor movement.
 
-The window has a left sidebar (model picker + path, hook stage, layer,
-intervention, source, target tokens), a main panel (prompt, baseline and
-intervention outputs side by side, verification panel), and a status bar
-(model · layer/hook · intervention · bundle · elapsed · throughput). Every
+The window is a guided experiment workbench: a narrow workflow rail (Prompt →
+Intervention → Review), a dominant scrollable central workspace, a contextual
+experiment inspector, and a persistent action dock. A compact two-track
+pipeline makes the experiment the persistent visual object: one input forks
+into an untouched baseline and an accented internal intervention, then rejoins
+at comparison. Research presets configure valid starting points, exact
+hook/execution controls remain available under Advanced, and paired results,
+layer metrics, token differences, verification evidence, and session-local run
+history stay attached to the configuration that produced them. Every
 experiment runs in a worker thread through the shared `GuiSession` core —
 the same code the browser console uses — so model residency, bundle
 writing, and verification semantics are identical. Runs are serialized;
 the model stays resident across baseline / intervention / restore.
 
-Requires a display (X11 or Wayland); it is a local window, not a server.
+Requires a Vulkan-capable display (X11 or Wayland); it is a local window, not
+a server. It opens maximized with a 1180×720 restore size and a 980×620
+minimum; the workflow rail, workspace, and inspector scroll independently.
 
 ## Page workflow
 
-One screen: left sidebar (experiment configuration), main area (prompt,
-baseline/intervention outputs, verification panel), bottom status bar.
+The native workbench uses progressive disclosure rather than presenting the
+entire raw specification at once.
 
-1. **Model** — pick a discovered `*.gguf` or type a path, click **Load**.
-   The model stays resident for the whole session.
-2. **Prompt** — free text, Arabic works (`dir="auto"`).
-3. **Hook stage** — one of the six v0.5 semantic sites, labelled with their
+1. **Prompt** — pick a discovered `*.gguf` (or enter a raw path under
+   Advanced), write the prompt, and choose a friendly Short/Medium/Long
+   response length. Arabic and mixed-direction input are supported. Loading
+   is optional: **Run experiment** automatically prepares an unloaded model,
+   which then stays resident for the session.
+2. **Intervention** — choose a plain-language research operation card, its
+   location and layer, and the target tokens. Presets provide useful causal
+   starting points, including an Arabic matched-span experiment.
+3. **Review & results** — run the controlled baseline/intervention pair, then
+   switch among Overview, Layers, Tokens, and Raw trace. Overview keeps paired
+   outputs and the highest-value layer plot together. A compact landmark band
+   reports the first internally divergent layer, peak relative-L2 location,
+   and any exact stable token-ID tail; Tokens reports the exact one-based decode
+   step at which token ids diverge. Recent run outcomes stay visible in the
+   workflow rail.
+4. **Advanced controls** — exposes the exact execution engine, numeric token
+   limit, raw model path, stage id, operation id, and token-selection id.
+5. **Hook stage** — one of the six v0.5 semantic sites, labelled with their
    v0.4 stage ids: `before-layer`, `after-attention`, `after-mlp`,
    `after-layer`, `before-logits`, `after-logits`. The list comes from
    `SemanticHookSite::ALL` (`stage_id()`), not a duplicated table.
-4. **Layer** — 0..n-1 for per-layer sites; hidden for the two head-boundary
+6. **Layer** — 0..n-1 for per-layer sites; hidden for the two head-boundary
    sites.
-5. **Intervention** — `replace`, `zero`, `scale`, `interpolate`, `add-delta`
+7. **Intervention semantics** — `replace`, `zero`, `scale`, `interpolate`, `add-delta`
    with the same semantics as v0.5: `scale` takes a factor, `interpolate`
    takes an alpha, `replace`/`interpolate`/`add-delta` take a source.
    Sources are either `capture (previous layer)` — a v0.5
    `capture-from-current-run` at a configurable source layer (the capture
    fires before the intervention in the same pass, so the source layer must
    not be deeper than the intervention layer) — or `zero`.
-6. **Run experiment** — executes two real experiments: a capture-only
+8. **Run experiment** — executes two real experiments: a capture-only
    baseline run and a capture+intervention run. Both write v0.5 bundles;
-   both self-verify. Baseline and intervened text appear side by side.
-7. **Verify restore** — runs the `restore-original` leg at the same
+   both self-verify. Baseline and intervened text appear side by side. The
+   primary action is progressive: Continue to Intervention, Continue to
+   Review, then Run Experiment; two equally strong actions are never shown.
+9. **Verify restore** — runs the `restore-original` leg at the same
    site/layer/selection and reports **restore: BIT-EXACT** when the output
    equals the stored baseline (it always does — that is the point of the
    check), or a mismatch otherwise. The comparison is only made when the
@@ -141,6 +166,37 @@ baseline/intervention outputs, verification panel), bottom status bar.
 Errors are surfaced in a red panel and never hidden: invalid specs, missing
 spans, out-of-range layers, load failures, and bundle self-verification
 failures all appear as readable messages.
+
+## Native result data and charts
+
+Each GUI run adds a `gui-layer-trace` capture at the residual stream leaving
+every transformer block (`residual-post-mlp`). It records only the selected
+prompt row(s), not full sequence tensors. The baseline and intervention
+bundles therefore retain the research source of truth while the worker thread
+reduces matching captures through the existing v0.5 `compare_bundles` path.
+The UI receives only compact `LayerMetric` values (relative L2 difference,
+cosine distance, maximum absolute difference, and exactness), paired generated
+token ids/text, and the exact first divergent decode step. No activation tensor
+is cloned into GPUI state.
+
+The Phase 1 native plot is **Representation divergence by layer**. It uses the
+already-defined relative L2 metric with the baseline capture as reference;
+missing/non-finite sparse captures remain absent rather than becoming zero.
+The plot includes subtle numeric Y-axis ticks and a hover readout for layer,
+relative L2, and cosine distance. Hover is synchronized with the experiment
+inspector, clicking pins the point there, the target layer is a dashed marker,
+and Copy CSV exports the plotted numeric data. Output cards size to short
+continuations while retaining a bounded scroll region for longer traces and
+annotate the shared prefix / first changed token directly beneath the text.
+GPUI's own `canvas` / `PathBuilder` / `paint_path` primitives render the chart;
+there is no plotting dependency, webview, JavaScript runtime, or Python path.
+
+`ExperimentComparison` also carries an optional renderer-independent
+`LayerTokenGrid` (row-major values plus explicit layer and token axes). Phase 1
+leaves it absent: no heatmap is rendered until a future experiment captures a
+defensible layer × token metric efficiently. Activation magnitude and sweep
+plots are likewise deferred until their data are retained directly and can be
+labelled without implicit normalization.
 
 ## HTTP API (local only)
 
@@ -167,6 +223,8 @@ requests return a readable error envelope, never a silent failure.
 - `ember::v05::run::write_bundle` + `ember::v05::verify::verify_bundle` —
   bundle writing and self-verification (unchanged schemas)
 - `ember::v05::runner::InputResult` — generated text, token counts, events
+- `ember::v05::compare::compare_bundles` — established tensor metrics for the
+  baseline/intervention layer trace
 - `ember::loader` / `ember::llama` / `ember::plan` / `ember::quant_k` —
   model loading and execution (via the shared path)
 - bundle `runtime.json` — honest wall-clock / throughput for the status bar
@@ -184,6 +242,9 @@ were Deserialize-only). No behavior or schema change.
 - Sampling is fixed at greedy (temperature 0.0) to keep runs deterministic;
   there is no temperature control.
 - One run is serialized at a time; the page disables controls while running.
+- The Phase 1 native result workspace implements layer divergence and exact
+  token-id divergence. Activation-magnitude, parameter-sweep, logits/top-k,
+  and heatmap views are intentionally not synthesized from unavailable data.
 - The restore comparison is text-level: the output of the restore leg must
   equal the baseline text. Activation-level bit-exactness is guaranteed by
   the v0.5 snapshot mechanism and visible via the snapshot checksum in the

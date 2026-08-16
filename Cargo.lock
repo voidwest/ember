@@ -1652,6 +1652,7 @@ dependencies = [
  "tokenizers",
  "toml 0.8.23",
  "unicode-normalization",
+ "unicode-segmentation",
 ]
 
 [[package]]
