@@ -328,6 +328,15 @@ fn q6_k_dot_q8_k_scalar(
 
 #[cfg(target_arch = "x86_64")]
 mod x86 {
+    //! x86_64 AVX2 kernel internals.
+    //!
+    //! # Safety blanket
+    //! Every `unsafe fn` in this module requires the `#[target_feature]` set
+    //! on the function to be runtime-checked by the caller: dispatch happens
+    //! via `is_x86_feature_detected!` in `x86_k_supported`/the public entry
+    //! points, never from safe code. Internal helpers (`f16_to_f32`,
+    //! `hsum_*`, `quantize_eight`, `scales_for_32`) are only callable from
+    //! the gated unsafe kernels in this module.
     use super::*;
     use core::arch::x86_64::*;
 
@@ -352,72 +361,81 @@ mod x86 {
     #[inline]
     #[target_feature(enable = "avx2")]
     unsafe fn quantize_eight(values: *const f32, inverse_scale: __m256, dst: *mut i8) -> __m256i {
-        let scaled = _mm256_mul_ps(_mm256_loadu_ps(values), inverse_scale);
-        let rounded = _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
-        let clipped = _mm256_min_ps(
-            _mm256_set1_ps(127.0),
-            _mm256_max_ps(_mm256_set1_ps(-127.0), rounded),
-        );
-        // Rust's saturating float-to-int cast maps NaN to zero. `cvttps2dq`
-        // maps it to i32::MIN, so mask unordered lanes before narrowing.
-        let ordered = _mm256_cmp_ps::<_CMP_ORD_Q>(scaled, scaled);
-        let quantized =
-            _mm256_and_si256(_mm256_cvttps_epi32(clipped), _mm256_castps_si256(ordered));
-        let low = _mm256_castsi256_si128(quantized);
-        let high = _mm256_extracti128_si256::<1>(quantized);
-        let packed_i16 = _mm_packs_epi32(low, high);
-        let packed_i8 = _mm_packs_epi16(packed_i16, _mm_setzero_si128());
-        _mm_storel_epi64(dst.cast(), packed_i8);
-        quantized
+        unsafe {
+            let scaled = _mm256_mul_ps(_mm256_loadu_ps(values), inverse_scale);
+            let rounded =
+                _mm256_round_ps::<{ _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC }>(scaled);
+            let clipped = _mm256_min_ps(
+                _mm256_set1_ps(127.0),
+                _mm256_max_ps(_mm256_set1_ps(-127.0), rounded),
+            );
+            // Rust's saturating float-to-int cast maps NaN to zero. `cvttps2dq`
+            // maps it to i32::MIN, so mask unordered lanes before narrowing.
+            let ordered = _mm256_cmp_ps::<_CMP_ORD_Q>(scaled, scaled);
+            let quantized =
+                _mm256_and_si256(_mm256_cvttps_epi32(clipped), _mm256_castps_si256(ordered));
+            let low = _mm256_castsi256_si128(quantized);
+            let high = _mm256_extracti128_si256::<1>(quantized);
+            let packed_i16 = _mm_packs_epi32(low, high);
+            let packed_i8 = _mm_packs_epi16(packed_i16, _mm_setzero_si128());
+            _mm_storel_epi64(dst.cast(), packed_i8);
+            quantized
+        }
     }
 
     /// Bit-identical finite-input Q8_K packing for the recorded x86 tier.
     #[target_feature(enable = "avx2,ssse3")]
+    /// # Safety
+    ///
+    /// Caller must ensure the AVX2+SSSE3 feature set is runtime-checked and
+    /// `dst` has capacity for `len` Q8_K blocks.
     pub(super) unsafe fn quantize_q8_k_into(
         src: &[f32],
         dst: &mut Vec<Q8KBlock>,
     ) -> Result<(), &'static str> {
-        debug_assert!(src.len().is_multiple_of(QK_K));
-        let blocks = src.len() / QK_K;
-        dst.resize_with(blocks, Q8KBlock::default);
+        unsafe {
+            debug_assert!(src.len().is_multiple_of(QK_K));
+            let blocks = src.len() / QK_K;
+            dst.resize_with(blocks, Q8KBlock::default);
 
-        for (values, block) in src.chunks_exact(QK_K).zip(dst.iter_mut()) {
-            let mut max = 0.0f32;
-            let mut amax = 0.0f32;
-            for &value in values {
-                if !value.is_finite() {
-                    return Err("K-quant matmul requires finite activations");
+            for (values, block) in src.chunks_exact(QK_K).zip(dst.iter_mut()) {
+                let mut max = 0.0f32;
+                let mut amax = 0.0f32;
+                for &value in values {
+                    if !value.is_finite() {
+                        return Err("K-quant matmul requires finite activations");
+                    }
+                    let abs = value.abs();
+                    if abs > amax {
+                        amax = abs;
+                        max = value;
+                    }
                 }
-                let abs = value.abs();
-                if abs > amax {
-                    amax = abs;
-                    max = value;
+                if amax == 0.0 {
+                    *block = Q8KBlock::default();
+                    continue;
                 }
-            }
-            if amax == 0.0 {
-                *block = Q8KBlock::default();
-                continue;
-            }
 
-            let inverse_scale_scalar = -127.0 / max;
-            let inverse_scale = _mm256_set1_ps(inverse_scale_scalar);
-            for group in 0..QK_K / 16 {
-                let offset = group * 16;
-                let first = quantize_eight(
-                    values.as_ptr().add(offset),
-                    inverse_scale,
-                    block.qs.as_mut_ptr().add(offset),
-                );
-                let second = quantize_eight(
-                    values.as_ptr().add(offset + 8),
-                    inverse_scale,
-                    block.qs.as_mut_ptr().add(offset + 8),
-                );
-                block.bsums[group] = (hsum_i32x8(first) + hsum_i32x8(second)) as i16;
+                let inverse_scale_scalar = -127.0 / max;
+                let inverse_scale = _mm256_set1_ps(inverse_scale_scalar);
+                for group in 0..QK_K / 16 {
+                    let offset = group * 16;
+                    let first = quantize_eight(
+                        values.as_ptr().add(offset),
+                        inverse_scale,
+                        block.qs.as_mut_ptr().add(offset),
+                    );
+                    let second = quantize_eight(
+                        values.as_ptr().add(offset + 8),
+                        inverse_scale,
+                        block.qs.as_mut_ptr().add(offset + 8),
+                    );
+                    block.bsums[group] = (hsum_i32x8(first) + hsum_i32x8(second)) as i16;
+                }
+                block.d = inverse_scale_scalar.recip();
             }
-            block.d = inverse_scale_scalar.recip();
+            Ok(())
         }
-        Ok(())
     }
 
     #[inline]
@@ -433,9 +451,11 @@ mod x86 {
 
     #[inline]
     unsafe fn hsum_f32x4(value: __m128) -> f32 {
-        let sum = _mm_add_ps(value, _mm_movehl_ps(value, value));
-        let sum = _mm_add_ss(sum, _mm_shuffle_ps::<0x55>(sum, sum));
-        _mm_cvtss_f32(sum)
+        unsafe {
+            let sum = _mm_add_ps(value, _mm_movehl_ps(value, value));
+            let sum = _mm_add_ss(sum, _mm_shuffle_ps::<0x55>(sum, sum));
+            _mm_cvtss_f32(sum)
+        }
     }
 
     #[inline]
@@ -462,199 +482,231 @@ mod x86 {
     }
 
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
+    /// # Safety
+    ///
+    /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
+    /// runtime-checked, `data` is a valid Q4_K weight block row for
+    /// `blocks_per_row` blocks, `column` is in range, and `input` holds
+    /// exactly `blocks_per_row` Q8_K blocks.
     pub(super) unsafe fn q4_k_dot_q8_k(
         data: &[u8],
         blocks_per_row: usize,
         column: usize,
         input: &[Q8KBlock],
     ) -> f32 {
-        let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
-        let nibble_mask = _mm256_set1_epi8(0x0f);
-        let mut acc = _mm256_setzero_ps();
-        let mut min_acc = _mm_setzero_ps();
-        for (block_index, activation) in input.iter().enumerate() {
-            let start = row_start + block_index * Q4_K_BLOCK_BYTES;
-            let block = &data[start..start + Q4_K_BLOCK_BYTES];
-            let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
-            let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
-            let (scales, mins) = unpack_k4_scales(&block[4..16]);
-            let mut integer_sum = _mm256_setzero_si256();
-            for group in 0..4 {
-                let packed = _mm256_loadu_si256(block.as_ptr().add(16 + group * 32).cast());
-                let low = _mm256_and_si256(packed, nibble_mask);
-                let high = _mm256_and_si256(_mm256_srli_epi16(packed, 4), nibble_mask);
-                let q8_low = _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
-                let q8_high =
-                    _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
-                let low_pairs = _mm256_maddubs_epi16(low, q8_low);
-                let high_pairs = _mm256_maddubs_epi16(high, q8_high);
-                let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
-                let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
-                integer_sum =
-                    _mm256_add_epi32(integer_sum, _mm256_madd_epi16(low_scale, low_pairs));
-                integer_sum =
-                    _mm256_add_epi32(integer_sum, _mm256_madd_epi16(high_scale, high_pairs));
-            }
-            let scale = _mm256_set1_ps(activation.d * d);
-            acc = _mm256_fmadd_ps(scale, _mm256_cvtepi32_ps(integer_sum), acc);
-            let mins8 = _mm_loadl_epi64(mins.as_ptr().cast());
-            let mins16 = _mm_unpacklo_epi8(mins8, _mm_setzero_si128());
-            let sums_low = _mm_loadu_si128(activation.bsums.as_ptr().cast());
-            let sums_high = _mm_loadu_si128(activation.bsums.as_ptr().add(8).cast());
-            let paired_sums = _mm_hadd_epi16(sums_low, sums_high);
-            let min_product = _mm_madd_epi16(mins16, paired_sums);
-            min_acc = _mm_fmadd_ps(
-                _mm_set1_ps(-activation.d * dmin),
-                _mm_cvtepi32_ps(min_product),
-                min_acc,
-            );
-        }
-        hsum_f32x8(acc) + hsum_f32x4(min_acc)
-    }
-
-    #[target_feature(enable = "avx2,fma,f16c,ssse3")]
-    pub(super) unsafe fn q6_k_dot_q8_k(
-        data: &[u8],
-        blocks_per_row: usize,
-        column: usize,
-        input: &[Q8KBlock],
-    ) -> f32 {
-        let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
-        let mask3 = _mm256_set1_epi8(3);
-        let mask15 = _mm256_set1_epi8(15);
-        let mut acc = _mm256_setzero_ps();
-        for (block_index, activation) in input.iter().enumerate() {
-            let start = row_start + block_index * Q6_K_BLOCK_BYTES;
-            let block = &data[start..start + Q6_K_BLOCK_BYTES];
-            let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
-            let scales = &block[192..208];
-            let mut integer_sum = _mm256_setzero_si256();
-            for half in 0..2 {
-                let ql = block.as_ptr().add(half * 64);
-                let qh = block.as_ptr().add(128 + half * 32);
-                let q8 = activation.qs.as_ptr().add(half * 128);
-                let low_a = _mm256_loadu_si256(ql.cast());
-                let low_b = _mm256_loadu_si256(ql.add(32).cast());
-                let high_bits = _mm256_loadu_si256(qh.cast());
-                let raw = [
-                    _mm256_or_si256(
-                        _mm256_and_si256(low_a, mask15),
-                        _mm256_slli_epi16(_mm256_and_si256(high_bits, mask3), 4),
-                    ),
-                    _mm256_or_si256(
-                        _mm256_and_si256(low_b, mask15),
-                        _mm256_slli_epi16(_mm256_and_si256(high_bits, _mm256_set1_epi8(12)), 2),
-                    ),
-                    _mm256_or_si256(
-                        _mm256_and_si256(_mm256_srli_epi16(low_a, 4), mask15),
-                        _mm256_and_si256(high_bits, _mm256_set1_epi8(48)),
-                    ),
-                    _mm256_or_si256(
-                        _mm256_and_si256(_mm256_srli_epi16(low_b, 4), mask15),
-                        _mm256_srli_epi16(_mm256_and_si256(high_bits, _mm256_set1_epi8(-64)), 2),
-                    ),
-                ];
-                for (segment, &raw_values) in raw.iter().enumerate() {
-                    let q8_values = _mm256_loadu_si256(q8.add(segment * 32).cast());
-                    let pairs = _mm256_maddubs_epi16(raw_values, q8_values);
-                    let scale_base = half * 8 + segment * 2;
-                    let scale_vector = scales_for_32(
-                        i8::from_le_bytes([scales[scale_base]]),
-                        i8::from_le_bytes([scales[scale_base + 1]]),
-                    );
-                    integer_sum =
-                        _mm256_add_epi32(integer_sum, _mm256_madd_epi16(scale_vector, pairs));
-                }
-            }
-            let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
-            let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
-            let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
-            let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
-            integer_sum = _mm256_sub_epi32(integer_sum, offset);
-            let combined_scale = activation.d * d;
-            acc = _mm256_fmadd_ps(
-                _mm256_set1_ps(combined_scale),
-                _mm256_cvtepi32_ps(integer_sum),
-                acc,
-            );
-        }
-        hsum_f32x8(acc)
-    }
-
-    /// Four-row Q4_K × Q8_K tile. Weight headers/quants are loaded and
-    /// unpacked once, then consumed by four activation rows.
-    #[target_feature(enable = "avx2,fma,f16c,ssse3")]
-    #[allow(clippy::needless_range_loop)]
-    pub(super) unsafe fn q4_k_dot_q8_k_x4(
-        data: &[u8],
-        blocks_per_row: usize,
-        column: usize,
-        input: &[Q8KBlock],
-    ) -> [f32; 4] {
-        debug_assert_eq!(input.len(), 4 * blocks_per_row);
-        let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
-        let nibble_mask = _mm256_set1_epi8(0x0f);
-        let mut acc = [_mm256_setzero_ps(); 4];
-        let mut min_acc = [_mm_setzero_ps(); 4];
-        for block_index in 0..blocks_per_row {
-            let start = row_start + block_index * Q4_K_BLOCK_BYTES;
-            let block = &data[start..start + Q4_K_BLOCK_BYTES];
-            let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
-            let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
-            let (scales, mins) = unpack_k4_scales(&block[4..16]);
-            let mut integer_sum = [_mm256_setzero_si256(); 4];
-            for group in 0..4 {
-                let packed = _mm256_loadu_si256(block.as_ptr().add(16 + group * 32).cast());
-                let low = _mm256_and_si256(packed, nibble_mask);
-                let high = _mm256_and_si256(_mm256_srli_epi16(packed, 4), nibble_mask);
-                let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
-                let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
-                for row in 0..4 {
-                    let activation = &input[row * blocks_per_row + block_index];
+        unsafe {
+            let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
+            let nibble_mask = _mm256_set1_epi8(0x0f);
+            let mut acc = _mm256_setzero_ps();
+            let mut min_acc = _mm_setzero_ps();
+            for (block_index, activation) in input.iter().enumerate() {
+                let start = row_start + block_index * Q4_K_BLOCK_BYTES;
+                let block = &data[start..start + Q4_K_BLOCK_BYTES];
+                let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+                let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+                let (scales, mins) = unpack_k4_scales(&block[4..16]);
+                let mut integer_sum = _mm256_setzero_si256();
+                for group in 0..4 {
+                    let packed = _mm256_loadu_si256(block.as_ptr().add(16 + group * 32).cast());
+                    let low = _mm256_and_si256(packed, nibble_mask);
+                    let high = _mm256_and_si256(_mm256_srli_epi16(packed, 4), nibble_mask);
                     let q8_low = _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
                     let q8_high =
                         _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
-                    integer_sum[row] = _mm256_add_epi32(
-                        integer_sum[row],
-                        _mm256_madd_epi16(low_scale, _mm256_maddubs_epi16(low, q8_low)),
-                    );
-                    integer_sum[row] = _mm256_add_epi32(
-                        integer_sum[row],
-                        _mm256_madd_epi16(high_scale, _mm256_maddubs_epi16(high, q8_high)),
-                    );
+                    let low_pairs = _mm256_maddubs_epi16(low, q8_low);
+                    let high_pairs = _mm256_maddubs_epi16(high, q8_high);
+                    let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
+                    let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
+                    integer_sum =
+                        _mm256_add_epi32(integer_sum, _mm256_madd_epi16(low_scale, low_pairs));
+                    integer_sum =
+                        _mm256_add_epi32(integer_sum, _mm256_madd_epi16(high_scale, high_pairs));
                 }
-            }
-            for row in 0..4 {
-                let activation = &input[row * blocks_per_row + block_index];
-                acc[row] = _mm256_fmadd_ps(
-                    _mm256_set1_ps(activation.d * d),
-                    _mm256_cvtepi32_ps(integer_sum[row]),
-                    acc[row],
-                );
+                let scale = _mm256_set1_ps(activation.d * d);
+                acc = _mm256_fmadd_ps(scale, _mm256_cvtepi32_ps(integer_sum), acc);
                 let mins8 = _mm_loadl_epi64(mins.as_ptr().cast());
                 let mins16 = _mm_unpacklo_epi8(mins8, _mm_setzero_si128());
                 let sums_low = _mm_loadu_si128(activation.bsums.as_ptr().cast());
                 let sums_high = _mm_loadu_si128(activation.bsums.as_ptr().add(8).cast());
                 let paired_sums = _mm_hadd_epi16(sums_low, sums_high);
                 let min_product = _mm_madd_epi16(mins16, paired_sums);
-                min_acc[row] = _mm_fmadd_ps(
+                min_acc = _mm_fmadd_ps(
                     _mm_set1_ps(-activation.d * dmin),
                     _mm_cvtepi32_ps(min_product),
-                    min_acc[row],
+                    min_acc,
                 );
             }
+            hsum_f32x8(acc) + hsum_f32x4(min_acc)
         }
-        [
-            hsum_f32x8(acc[0]) + hsum_f32x4(min_acc[0]),
-            hsum_f32x8(acc[1]) + hsum_f32x4(min_acc[1]),
-            hsum_f32x8(acc[2]) + hsum_f32x4(min_acc[2]),
-            hsum_f32x8(acc[3]) + hsum_f32x4(min_acc[3]),
-        ]
+    }
+
+    #[target_feature(enable = "avx2,fma,f16c,ssse3")]
+    /// # Safety
+    ///
+    /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
+    /// runtime-checked, `data` is a valid Q6_K weight block row for
+    /// `blocks_per_row` blocks, `column` is in range, and `input` holds
+    /// exactly `blocks_per_row` Q8_K blocks.
+    pub(super) unsafe fn q6_k_dot_q8_k(
+        data: &[u8],
+        blocks_per_row: usize,
+        column: usize,
+        input: &[Q8KBlock],
+    ) -> f32 {
+        unsafe {
+            let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
+            let mask3 = _mm256_set1_epi8(3);
+            let mask15 = _mm256_set1_epi8(15);
+            let mut acc = _mm256_setzero_ps();
+            for (block_index, activation) in input.iter().enumerate() {
+                let start = row_start + block_index * Q6_K_BLOCK_BYTES;
+                let block = &data[start..start + Q6_K_BLOCK_BYTES];
+                let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
+                let scales = &block[192..208];
+                let mut integer_sum = _mm256_setzero_si256();
+                for half in 0..2 {
+                    let ql = block.as_ptr().add(half * 64);
+                    let qh = block.as_ptr().add(128 + half * 32);
+                    let q8 = activation.qs.as_ptr().add(half * 128);
+                    let low_a = _mm256_loadu_si256(ql.cast());
+                    let low_b = _mm256_loadu_si256(ql.add(32).cast());
+                    let high_bits = _mm256_loadu_si256(qh.cast());
+                    let raw = [
+                        _mm256_or_si256(
+                            _mm256_and_si256(low_a, mask15),
+                            _mm256_slli_epi16(_mm256_and_si256(high_bits, mask3), 4),
+                        ),
+                        _mm256_or_si256(
+                            _mm256_and_si256(low_b, mask15),
+                            _mm256_slli_epi16(_mm256_and_si256(high_bits, _mm256_set1_epi8(12)), 2),
+                        ),
+                        _mm256_or_si256(
+                            _mm256_and_si256(_mm256_srli_epi16(low_a, 4), mask15),
+                            _mm256_and_si256(high_bits, _mm256_set1_epi8(48)),
+                        ),
+                        _mm256_or_si256(
+                            _mm256_and_si256(_mm256_srli_epi16(low_b, 4), mask15),
+                            _mm256_srli_epi16(
+                                _mm256_and_si256(high_bits, _mm256_set1_epi8(-64)),
+                                2,
+                            ),
+                        ),
+                    ];
+                    for (segment, &raw_values) in raw.iter().enumerate() {
+                        let q8_values = _mm256_loadu_si256(q8.add(segment * 32).cast());
+                        let pairs = _mm256_maddubs_epi16(raw_values, q8_values);
+                        let scale_base = half * 8 + segment * 2;
+                        let scale_vector = scales_for_32(
+                            i8::from_le_bytes([scales[scale_base]]),
+                            i8::from_le_bytes([scales[scale_base + 1]]),
+                        );
+                        integer_sum =
+                            _mm256_add_epi32(integer_sum, _mm256_madd_epi16(scale_vector, pairs));
+                    }
+                }
+                let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
+                let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
+                let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
+                let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
+                integer_sum = _mm256_sub_epi32(integer_sum, offset);
+                let combined_scale = activation.d * d;
+                acc = _mm256_fmadd_ps(
+                    _mm256_set1_ps(combined_scale),
+                    _mm256_cvtepi32_ps(integer_sum),
+                    acc,
+                );
+            }
+            hsum_f32x8(acc)
+        }
+    }
+
+    /// Four-row Q4_K × Q8_K tile. Weight headers/quants are loaded and
+    /// unpacked once, then consumed by four activation rows.
+    #[target_feature(enable = "avx2,fma,f16c,ssse3")]
+    #[allow(clippy::needless_range_loop)]
+    /// # Safety
+    ///
+    /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
+    /// runtime-checked and `input` holds exactly four packed Q8_K rows for
+    /// `blocks_per_row` blocks.
+    pub(super) unsafe fn q4_k_dot_q8_k_x4(
+        data: &[u8],
+        blocks_per_row: usize,
+        column: usize,
+        input: &[Q8KBlock],
+    ) -> [f32; 4] {
+        unsafe {
+            debug_assert_eq!(input.len(), 4 * blocks_per_row);
+            let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
+            let nibble_mask = _mm256_set1_epi8(0x0f);
+            let mut acc = [_mm256_setzero_ps(); 4];
+            let mut min_acc = [_mm_setzero_ps(); 4];
+            for block_index in 0..blocks_per_row {
+                let start = row_start + block_index * Q4_K_BLOCK_BYTES;
+                let block = &data[start..start + Q4_K_BLOCK_BYTES];
+                let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+                let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+                let (scales, mins) = unpack_k4_scales(&block[4..16]);
+                let mut integer_sum = [_mm256_setzero_si256(); 4];
+                for group in 0..4 {
+                    let packed = _mm256_loadu_si256(block.as_ptr().add(16 + group * 32).cast());
+                    let low = _mm256_and_si256(packed, nibble_mask);
+                    let high = _mm256_and_si256(_mm256_srli_epi16(packed, 4), nibble_mask);
+                    let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
+                    let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
+                    for row in 0..4 {
+                        let activation = &input[row * blocks_per_row + block_index];
+                        let q8_low =
+                            _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
+                        let q8_high =
+                            _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
+                        integer_sum[row] = _mm256_add_epi32(
+                            integer_sum[row],
+                            _mm256_madd_epi16(low_scale, _mm256_maddubs_epi16(low, q8_low)),
+                        );
+                        integer_sum[row] = _mm256_add_epi32(
+                            integer_sum[row],
+                            _mm256_madd_epi16(high_scale, _mm256_maddubs_epi16(high, q8_high)),
+                        );
+                    }
+                }
+                for row in 0..4 {
+                    let activation = &input[row * blocks_per_row + block_index];
+                    acc[row] = _mm256_fmadd_ps(
+                        _mm256_set1_ps(activation.d * d),
+                        _mm256_cvtepi32_ps(integer_sum[row]),
+                        acc[row],
+                    );
+                    let mins8 = _mm_loadl_epi64(mins.as_ptr().cast());
+                    let mins16 = _mm_unpacklo_epi8(mins8, _mm_setzero_si128());
+                    let sums_low = _mm_loadu_si128(activation.bsums.as_ptr().cast());
+                    let sums_high = _mm_loadu_si128(activation.bsums.as_ptr().add(8).cast());
+                    let paired_sums = _mm_hadd_epi16(sums_low, sums_high);
+                    let min_product = _mm_madd_epi16(mins16, paired_sums);
+                    min_acc[row] = _mm_fmadd_ps(
+                        _mm_set1_ps(-activation.d * dmin),
+                        _mm_cvtepi32_ps(min_product),
+                        min_acc[row],
+                    );
+                }
+            }
+            [
+                hsum_f32x8(acc[0]) + hsum_f32x4(min_acc[0]),
+                hsum_f32x8(acc[1]) + hsum_f32x4(min_acc[1]),
+                hsum_f32x8(acc[2]) + hsum_f32x4(min_acc[2]),
+                hsum_f32x8(acc[3]) + hsum_f32x4(min_acc[3]),
+            ]
+        }
     }
 
     /// Four-row Q4_K × Q8_K tile reading pre-split nibbles (opt-in, prefill-only).
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
     #[allow(clippy::needless_range_loop)]
+    /// # Safety
+    ///
+    /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
+    /// runtime-checked, `presplit` was built for this weight, and `input`
+    /// holds exactly four packed Q8_K rows.
     pub(super) unsafe fn q4_k_dot_q8_k_x4_presplit(
         data: &[u8],
         presplit: &[u8],
@@ -662,156 +714,174 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> [f32; 4] {
-        debug_assert_eq!(input.len(), 4 * blocks_per_row);
-        let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
-        let presplit_start = column * blocks_per_row * 256;
-        let mut acc = [_mm256_setzero_ps(); 4];
-        let mut min_acc = [_mm_setzero_ps(); 4];
-        for block_index in 0..blocks_per_row {
-            let start = row_start + block_index * Q4_K_BLOCK_BYTES;
-            let block = &data[start..start + Q4_K_BLOCK_BYTES];
-            let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
-            let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
-            let (scales, mins) = unpack_k4_scales(&block[4..16]);
-            let qstart = presplit_start + block_index * 256;
-            let mut integer_sum = [_mm256_setzero_si256(); 4];
-            for group in 0..4 {
-                let low = _mm256_loadu_si256(presplit.as_ptr().add(qstart + group * 64).cast());
-                let high =
-                    _mm256_loadu_si256(presplit.as_ptr().add(qstart + group * 64 + 32).cast());
-                let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
-                let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
+        unsafe {
+            debug_assert_eq!(input.len(), 4 * blocks_per_row);
+            let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
+            let presplit_start = column * blocks_per_row * 256;
+            let mut acc = [_mm256_setzero_ps(); 4];
+            let mut min_acc = [_mm_setzero_ps(); 4];
+            for block_index in 0..blocks_per_row {
+                let start = row_start + block_index * Q4_K_BLOCK_BYTES;
+                let block = &data[start..start + Q4_K_BLOCK_BYTES];
+                let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
+                let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
+                let (scales, mins) = unpack_k4_scales(&block[4..16]);
+                let qstart = presplit_start + block_index * 256;
+                let mut integer_sum = [_mm256_setzero_si256(); 4];
+                for group in 0..4 {
+                    let low = _mm256_loadu_si256(presplit.as_ptr().add(qstart + group * 64).cast());
+                    let high =
+                        _mm256_loadu_si256(presplit.as_ptr().add(qstart + group * 64 + 32).cast());
+                    let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
+                    let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
+                    for row in 0..4 {
+                        let activation = &input[row * blocks_per_row + block_index];
+                        let q8_low =
+                            _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
+                        let q8_high =
+                            _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
+                        integer_sum[row] = _mm256_add_epi32(
+                            integer_sum[row],
+                            _mm256_madd_epi16(low_scale, _mm256_maddubs_epi16(low, q8_low)),
+                        );
+                        integer_sum[row] = _mm256_add_epi32(
+                            integer_sum[row],
+                            _mm256_madd_epi16(high_scale, _mm256_maddubs_epi16(high, q8_high)),
+                        );
+                    }
+                }
                 for row in 0..4 {
                     let activation = &input[row * blocks_per_row + block_index];
-                    let q8_low = _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
-                    let q8_high =
-                        _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
-                    integer_sum[row] = _mm256_add_epi32(
-                        integer_sum[row],
-                        _mm256_madd_epi16(low_scale, _mm256_maddubs_epi16(low, q8_low)),
+                    acc[row] = _mm256_fmadd_ps(
+                        _mm256_set1_ps(activation.d * d),
+                        _mm256_cvtepi32_ps(integer_sum[row]),
+                        acc[row],
                     );
-                    integer_sum[row] = _mm256_add_epi32(
-                        integer_sum[row],
-                        _mm256_madd_epi16(high_scale, _mm256_maddubs_epi16(high, q8_high)),
+                    let mins8 = _mm_loadl_epi64(mins.as_ptr().cast());
+                    let mins16 = _mm_unpacklo_epi8(mins8, _mm_setzero_si128());
+                    let sums_low = _mm_loadu_si128(activation.bsums.as_ptr().cast());
+                    let sums_high = _mm_loadu_si128(activation.bsums.as_ptr().add(8).cast());
+                    let paired_sums = _mm_hadd_epi16(sums_low, sums_high);
+                    let min_product = _mm_madd_epi16(mins16, paired_sums);
+                    min_acc[row] = _mm_fmadd_ps(
+                        _mm_set1_ps(-activation.d * dmin),
+                        _mm_cvtepi32_ps(min_product),
+                        min_acc[row],
                     );
                 }
             }
-            for row in 0..4 {
-                let activation = &input[row * blocks_per_row + block_index];
-                acc[row] = _mm256_fmadd_ps(
-                    _mm256_set1_ps(activation.d * d),
-                    _mm256_cvtepi32_ps(integer_sum[row]),
-                    acc[row],
-                );
-                let mins8 = _mm_loadl_epi64(mins.as_ptr().cast());
-                let mins16 = _mm_unpacklo_epi8(mins8, _mm_setzero_si128());
-                let sums_low = _mm_loadu_si128(activation.bsums.as_ptr().cast());
-                let sums_high = _mm_loadu_si128(activation.bsums.as_ptr().add(8).cast());
-                let paired_sums = _mm_hadd_epi16(sums_low, sums_high);
-                let min_product = _mm_madd_epi16(mins16, paired_sums);
-                min_acc[row] = _mm_fmadd_ps(
-                    _mm_set1_ps(-activation.d * dmin),
-                    _mm_cvtepi32_ps(min_product),
-                    min_acc[row],
-                );
-            }
+            [
+                hsum_f32x8(acc[0]) + hsum_f32x4(min_acc[0]),
+                hsum_f32x8(acc[1]) + hsum_f32x4(min_acc[1]),
+                hsum_f32x8(acc[2]) + hsum_f32x4(min_acc[2]),
+                hsum_f32x8(acc[3]) + hsum_f32x4(min_acc[3]),
+            ]
         }
-        [
-            hsum_f32x8(acc[0]) + hsum_f32x4(min_acc[0]),
-            hsum_f32x8(acc[1]) + hsum_f32x4(min_acc[1]),
-            hsum_f32x8(acc[2]) + hsum_f32x4(min_acc[2]),
-            hsum_f32x8(acc[3]) + hsum_f32x4(min_acc[3]),
-        ]
     }
 
     /// Four-row Q6_K × Q8_K tile; see [`q4_k_dot_q8_k_x4`].
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
     #[allow(clippy::needless_range_loop)]
+    /// # Safety
+    ///
+    /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
+    /// runtime-checked and `input` holds exactly four packed Q8_K rows for
+    /// `blocks_per_row` blocks.
     pub(super) unsafe fn q6_k_dot_q8_k_x4(
         data: &[u8],
         blocks_per_row: usize,
         column: usize,
         input: &[Q8KBlock],
     ) -> [f32; 4] {
-        debug_assert_eq!(input.len(), 4 * blocks_per_row);
-        let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
-        let mask3 = _mm256_set1_epi8(3);
-        let mask15 = _mm256_set1_epi8(15);
-        let mut acc = [_mm256_setzero_ps(); 4];
-        for block_index in 0..blocks_per_row {
-            let start = row_start + block_index * Q6_K_BLOCK_BYTES;
-            let block = &data[start..start + Q6_K_BLOCK_BYTES];
-            let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
-            let scales = &block[192..208];
-            let mut integer_sum = [_mm256_setzero_si256(); 4];
-            for half in 0..2 {
-                let ql = block.as_ptr().add(half * 64);
-                let qh = block.as_ptr().add(128 + half * 32);
-                let low_a = _mm256_loadu_si256(ql.cast());
-                let low_b = _mm256_loadu_si256(ql.add(32).cast());
-                let high_bits = _mm256_loadu_si256(qh.cast());
-                let raw = [
-                    _mm256_or_si256(
-                        _mm256_and_si256(low_a, mask15),
-                        _mm256_slli_epi16(_mm256_and_si256(high_bits, mask3), 4),
-                    ),
-                    _mm256_or_si256(
-                        _mm256_and_si256(low_b, mask15),
-                        _mm256_slli_epi16(_mm256_and_si256(high_bits, _mm256_set1_epi8(12)), 2),
-                    ),
-                    _mm256_or_si256(
-                        _mm256_and_si256(_mm256_srli_epi16(low_a, 4), mask15),
-                        _mm256_and_si256(high_bits, _mm256_set1_epi8(48)),
-                    ),
-                    _mm256_or_si256(
-                        _mm256_and_si256(_mm256_srli_epi16(low_b, 4), mask15),
-                        _mm256_srli_epi16(_mm256_and_si256(high_bits, _mm256_set1_epi8(-64)), 2),
-                    ),
-                ];
-                for segment in 0..4 {
-                    let scale_base = half * 8 + segment * 2;
-                    let scale_vector = scales_for_32(
-                        i8::from_le_bytes([scales[scale_base]]),
-                        i8::from_le_bytes([scales[scale_base + 1]]),
-                    );
-                    for row in 0..4 {
-                        let activation = &input[row * blocks_per_row + block_index];
-                        let q8 = activation.qs.as_ptr().add(half * 128 + segment * 32);
-                        let pairs =
-                            _mm256_maddubs_epi16(raw[segment], _mm256_loadu_si256(q8.cast()));
-                        integer_sum[row] = _mm256_add_epi32(
-                            integer_sum[row],
-                            _mm256_madd_epi16(scale_vector, pairs),
+        unsafe {
+            debug_assert_eq!(input.len(), 4 * blocks_per_row);
+            let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
+            let mask3 = _mm256_set1_epi8(3);
+            let mask15 = _mm256_set1_epi8(15);
+            let mut acc = [_mm256_setzero_ps(); 4];
+            for block_index in 0..blocks_per_row {
+                let start = row_start + block_index * Q6_K_BLOCK_BYTES;
+                let block = &data[start..start + Q6_K_BLOCK_BYTES];
+                let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
+                let scales = &block[192..208];
+                let mut integer_sum = [_mm256_setzero_si256(); 4];
+                for half in 0..2 {
+                    let ql = block.as_ptr().add(half * 64);
+                    let qh = block.as_ptr().add(128 + half * 32);
+                    let low_a = _mm256_loadu_si256(ql.cast());
+                    let low_b = _mm256_loadu_si256(ql.add(32).cast());
+                    let high_bits = _mm256_loadu_si256(qh.cast());
+                    let raw = [
+                        _mm256_or_si256(
+                            _mm256_and_si256(low_a, mask15),
+                            _mm256_slli_epi16(_mm256_and_si256(high_bits, mask3), 4),
+                        ),
+                        _mm256_or_si256(
+                            _mm256_and_si256(low_b, mask15),
+                            _mm256_slli_epi16(_mm256_and_si256(high_bits, _mm256_set1_epi8(12)), 2),
+                        ),
+                        _mm256_or_si256(
+                            _mm256_and_si256(_mm256_srli_epi16(low_a, 4), mask15),
+                            _mm256_and_si256(high_bits, _mm256_set1_epi8(48)),
+                        ),
+                        _mm256_or_si256(
+                            _mm256_and_si256(_mm256_srli_epi16(low_b, 4), mask15),
+                            _mm256_srli_epi16(
+                                _mm256_and_si256(high_bits, _mm256_set1_epi8(-64)),
+                                2,
+                            ),
+                        ),
+                    ];
+                    for segment in 0..4 {
+                        let scale_base = half * 8 + segment * 2;
+                        let scale_vector = scales_for_32(
+                            i8::from_le_bytes([scales[scale_base]]),
+                            i8::from_le_bytes([scales[scale_base + 1]]),
                         );
+                        for row in 0..4 {
+                            let activation = &input[row * blocks_per_row + block_index];
+                            let q8 = activation.qs.as_ptr().add(half * 128 + segment * 32);
+                            let pairs =
+                                _mm256_maddubs_epi16(raw[segment], _mm256_loadu_si256(q8.cast()));
+                            integer_sum[row] = _mm256_add_epi32(
+                                integer_sum[row],
+                                _mm256_madd_epi16(scale_vector, pairs),
+                            );
+                        }
                     }
                 }
+                for row in 0..4 {
+                    let activation = &input[row * blocks_per_row + block_index];
+                    let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
+                    let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
+                    let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
+                    let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
+                    integer_sum[row] = _mm256_sub_epi32(integer_sum[row], offset);
+                    let combined_scale = activation.d * d;
+                    acc[row] = _mm256_fmadd_ps(
+                        _mm256_set1_ps(combined_scale),
+                        _mm256_cvtepi32_ps(integer_sum[row]),
+                        acc[row],
+                    );
+                }
             }
-            for row in 0..4 {
-                let activation = &input[row * blocks_per_row + block_index];
-                let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
-                let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
-                let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
-                let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
-                integer_sum[row] = _mm256_sub_epi32(integer_sum[row], offset);
-                let combined_scale = activation.d * d;
-                acc[row] = _mm256_fmadd_ps(
-                    _mm256_set1_ps(combined_scale),
-                    _mm256_cvtepi32_ps(integer_sum[row]),
-                    acc[row],
-                );
-            }
+            [
+                hsum_f32x8(acc[0]),
+                hsum_f32x8(acc[1]),
+                hsum_f32x8(acc[2]),
+                hsum_f32x8(acc[3]),
+            ]
         }
-        [
-            hsum_f32x8(acc[0]),
-            hsum_f32x8(acc[1]),
-            hsum_f32x8(acc[2]),
-            hsum_f32x8(acc[3]),
-        ]
     }
 
     /// Four-row Q6_K × Q8_K tile reading pre-expanded quants (opt-in, prefill-only).
     #[target_feature(enable = "avx2,fma,f16c,ssse3")]
     #[allow(clippy::needless_range_loop)]
+    /// # Safety
+    ///
+    /// Caller must ensure the AVX2+FMA+F16C+SSSE3 feature set is
+    /// runtime-checked, `presplit` was built for this weight, and `input`
+    /// holds exactly four packed Q8_K rows.
     pub(super) unsafe fn q6_k_dot_q8_k_x4_presplit(
         data: &[u8],
         presplit: &[u8],
@@ -819,62 +889,64 @@ mod x86 {
         column: usize,
         input: &[Q8KBlock],
     ) -> [f32; 4] {
-        debug_assert_eq!(input.len(), 4 * blocks_per_row);
-        let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
-        let presplit_start = column * blocks_per_row * 256;
-        let mut acc = [_mm256_setzero_ps(); 4];
-        for block_index in 0..blocks_per_row {
-            let start = row_start + block_index * Q6_K_BLOCK_BYTES;
-            let block = &data[start..start + Q6_K_BLOCK_BYTES];
-            let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
-            let scales = &block[192..208];
-            let qstart = presplit_start + block_index * 256;
-            let mut integer_sum = [_mm256_setzero_si256(); 4];
-            for half in 0..2 {
-                for segment in 0..4 {
-                    let scale_base = half * 8 + segment * 2;
-                    let scale_vector = scales_for_32(
-                        i8::from_le_bytes([scales[scale_base]]),
-                        i8::from_le_bytes([scales[scale_base + 1]]),
-                    );
-                    let raw = _mm256_loadu_si256(
-                        presplit
-                            .as_ptr()
-                            .add(qstart + half * 128 + segment * 32)
-                            .cast(),
-                    );
-                    for row in 0..4 {
-                        let activation = &input[row * blocks_per_row + block_index];
-                        let q8 = activation.qs.as_ptr().add(half * 128 + segment * 32);
-                        let pairs = _mm256_maddubs_epi16(raw, _mm256_loadu_si256(q8.cast()));
-                        integer_sum[row] = _mm256_add_epi32(
-                            integer_sum[row],
-                            _mm256_madd_epi16(scale_vector, pairs),
+        unsafe {
+            debug_assert_eq!(input.len(), 4 * blocks_per_row);
+            let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
+            let presplit_start = column * blocks_per_row * 256;
+            let mut acc = [_mm256_setzero_ps(); 4];
+            for block_index in 0..blocks_per_row {
+                let start = row_start + block_index * Q6_K_BLOCK_BYTES;
+                let block = &data[start..start + Q6_K_BLOCK_BYTES];
+                let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
+                let scales = &block[192..208];
+                let qstart = presplit_start + block_index * 256;
+                let mut integer_sum = [_mm256_setzero_si256(); 4];
+                for half in 0..2 {
+                    for segment in 0..4 {
+                        let scale_base = half * 8 + segment * 2;
+                        let scale_vector = scales_for_32(
+                            i8::from_le_bytes([scales[scale_base]]),
+                            i8::from_le_bytes([scales[scale_base + 1]]),
                         );
+                        let raw = _mm256_loadu_si256(
+                            presplit
+                                .as_ptr()
+                                .add(qstart + half * 128 + segment * 32)
+                                .cast(),
+                        );
+                        for row in 0..4 {
+                            let activation = &input[row * blocks_per_row + block_index];
+                            let q8 = activation.qs.as_ptr().add(half * 128 + segment * 32);
+                            let pairs = _mm256_maddubs_epi16(raw, _mm256_loadu_si256(q8.cast()));
+                            integer_sum[row] = _mm256_add_epi32(
+                                integer_sum[row],
+                                _mm256_madd_epi16(scale_vector, pairs),
+                            );
+                        }
                     }
                 }
+                for row in 0..4 {
+                    let activation = &input[row * blocks_per_row + block_index];
+                    let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
+                    let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
+                    let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
+                    let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
+                    integer_sum[row] = _mm256_sub_epi32(integer_sum[row], offset);
+                    let combined_scale = activation.d * d;
+                    acc[row] = _mm256_fmadd_ps(
+                        _mm256_set1_ps(combined_scale),
+                        _mm256_cvtepi32_ps(integer_sum[row]),
+                        acc[row],
+                    );
+                }
             }
-            for row in 0..4 {
-                let activation = &input[row * blocks_per_row + block_index];
-                let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
-                let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
-                let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
-                let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
-                integer_sum[row] = _mm256_sub_epi32(integer_sum[row], offset);
-                let combined_scale = activation.d * d;
-                acc[row] = _mm256_fmadd_ps(
-                    _mm256_set1_ps(combined_scale),
-                    _mm256_cvtepi32_ps(integer_sum[row]),
-                    acc[row],
-                );
-            }
+            [
+                hsum_f32x8(acc[0]),
+                hsum_f32x8(acc[1]),
+                hsum_f32x8(acc[2]),
+                hsum_f32x8(acc[3]),
+            ]
         }
-        [
-            hsum_f32x8(acc[0]),
-            hsum_f32x8(acc[1]),
-            hsum_f32x8(acc[2]),
-            hsum_f32x8(acc[3]),
-        ]
     }
 }
 

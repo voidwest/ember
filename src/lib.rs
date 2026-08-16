@@ -1,6 +1,12 @@
 // Keep rustdoc links honest: broken links and public-doc links to private
 // items fail the docs job in CI (see .github/workflows/ci.yml).
 #![warn(rustdoc::broken_intra_doc_links, rustdoc::private_intra_doc_links)]
+// Unsafe-hygiene contract: every unsafe operation inside an `unsafe fn`
+// must sit in its own explicit `unsafe { .. }` block (edition-2024 lint,
+// enforced early). The reference path is 100% safe Rust; all unsafe is
+// contained in the kernel modules (simd.rs, k_quant_matmul.rs) and the
+// counting allocator, each with `// SAFETY:` annotations.
+#![deny(unsafe_op_in_unsafe_fn)]
 
 extern crate alloc;
 
