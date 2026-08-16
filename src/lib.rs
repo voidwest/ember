@@ -44,6 +44,7 @@ pub mod model;
 pub mod model_backend;
 pub mod npy;
 pub mod plan;
+mod plan_build;
 pub mod planned_decode;
 pub mod quant;
 pub mod quant_k;
