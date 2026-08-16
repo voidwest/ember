@@ -57,6 +57,7 @@ docs/plots/root_probe_scale_comparison.png
 !/KV_ARCHITECTURE_AUDIT.md
 !/KV_FIRST_CLASS_PLAN.md
 !/CODE_CHANGES_KV_SNAPSHOT.md
+!/SECURITY_AUDIT.md
 # pilot 001 artifacts live on the pilot-001 branch and stay out of main
 research/pilots/arabic_quantization_001/
 /REPRODUCIBILITY.md
