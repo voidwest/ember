@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="ملف النموذج أكبر من مجرد أوزان" />
+        <meta property="og:description" content="إيش علّمني fuzzing عن التعامل مع بنية GGUF كمدخل تحكم مو موثوق، وكيف خلّى Ember الانتقال من bytes حللناها إلى حالة نقدر نشغّلها واضح في الكود." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/a-model-file-is-more-than-weights.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>ملف النموذج أكبر من مجرد أوزان · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/a-model-file-is-more-than-weights.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>ملف النموذج أكبر من مجرد أوزان</h1>
+
+        <div class="meta">
+            كيف حصّنت المسار في <bdi>Ember</bdi> من <bdi>GGUF bytes</bdi> مو موثوقة إلى النوى العددية<br>
+            محمد الثبيتي · 2026-08-16<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">Rust</span>
+            <span class="tag key">fuzzing</span>
+            <span class="tag key">systems security</span>
+        </div>
+
+        <p>
+            يوم بدأت أراجع تحميل <bdi>GGUF</bdi> في <bdi>Ember</bdi> كحد أمني،
+            اكتشفت إن عبارة «ملف نموذج» مضللة شوي. الملف يتحكم في أشياء أكثر
+            بكثير من قيم الأوزان.
+        </p>
+
+        <p>
+            أبعاد الـ<bdi>tensor</bdi> تحدد حسابات الأشكال وقد إيش ذاكرة
+            بنخصص. والـ<bdi>offsets</bdi> تحدد أي أجزاء من الملف تتحول إلى
+            نوافذ ذاكرة. والـ<bdi>metadata</bdi> تختار هندسة
+            النموذج، وعدد الطبقات، وطول السياق، وهندسة الرؤوس، وجداول
+            <bdi>RoPE</bdi>. وأنواع التكميم تختار تنسيق الـ<bdi>bytes</bdi>
+            والنوى العددية. حتى إعدادات الـ<bdi>tokenizer</bdi> توصل إلى محلل
+            مستقل ومحرك تعبيرات منتظمة وعقد مفردات. كل هذا يصير قبل ما المحرك
+            يولّد أول <bdi>token</bdi>.
+        </p>
+
+        <p>
+            لو جا ملف <bdi>GGUF</bdi> من تنزيل مو موثوق، أو
+            <bdi>cache</bdi> مشترك، أو ملف أحد عبث فيه، فكل هذي الحقول تصير
+            مدخلات تحكم مو موثوقة. قيم الأوزان نفسها ممكن تكون معتمة بطبيعتها،
+            بس البنية اللي حولها فعلياً سياسة تنفيذ للمحمّل.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">التصور المفيد</div>
+            <p>
+                ملف <bdi>GGUF</bdi> مو مجرد كيس أرقام. هو برنامج يشرح للمحرك
+                كيف يبني الحالة اللي بيشغّلها. عشان كذا، بنية الملف تستاهل نفس
+                الحذر اللي نعطيه لأي صيغة ثنائية معقدة ومو موثوقة.
+            </p>
+        </div>
+
+        <h2>الحد القديم كان أحسن مما يبان، بس مو قوي كفاية</h2>
+
+        <p>
+            المشكلة من البداية ما كانت محلل متهور مليان كود
+            <code>unsafe</code>. محلل <bdi>GGUF</bdi> في <bdi>Ember</bdi>
+            مكتوب بـ<bdi>Rust</bdi> الآمن، وكان من أول يرفض أغلب المدخلات
+            المشوهة. كان يتأكد من نهاية الملف، ويقيد طول النص بالـ<bdi>bytes</bdi>
+            الباقية، ويرفض الأسماء والمفاتيح المكررة، ويقيد رتبة
+            الـ<bdi>tensor</bdi>، ويحسب جداء الأبعاد والأطوال بطريقة آمنة،
+            ويفحص نطاقات الملف وتداخلها والمحاذاة وأنواع البيانات المدعومة.
+            وما كان داخل مسار التحليل نفسه أي كود <code>unsafe</code>.
+        </p>
+
+        <p>
+            الفرق هذا مهم. الشغل الأساسي ما كان إننا نرمي فوق الكود كومة شروط
+            حدود زيادة.
+        </p>
+
+        <p>
+            الفجوة المعمارية كانت إن <code>TensorInfo</code> الخام يمر على
+            فحوص إجرائية وبعدها يوصل لبناء نوافذ الذاكرة. الفحوص موجودة
+            وصحيحة، بس البرنامج ما كان عنده تمثيل مستقل يقول: «هذا الوصف عدى كل
+            الشروط اللي تحتاجها الذاكرة والتنفيذ». أي تعديل بعدين يقدر بالغلط
+            يغير ترتيب فحص أو يتخطاه، ونظام الأنواع ما حيوقفه.
+        </p>
+
+        <div class="pipeline-block" role="img" aria-label="حد الثقة في EmberSEC من bytes إلى kernels">
+<pre>GGUF bytes
+    │
+    ▼
+parser ───────────────► untrusted descriptors
+                              │
+                              │ semantic validation
+                              ▼
+                      validated descriptors
+                              │
+                              ▼
+                  tensor / model construction
+                              │
+                              ▼
+               validated execution-facing objects
+                              │
+                              ▼
+                           kernels
+
+metadata ──► validated config ──► allocation / model construction
+
+tokenizer.json ──► size / UTF-8 / JSON gates ──► tokenizer library</pre>
+        </div>
+
+        <p>
+            شغل <bdi>EmberSEC</bdi> خلّى الانتقالات هذي واضحة. التحليل يقول
+            إيش الملف يدّعي. والتحقق يقرر: هل <bdi>Ember</bdi> مستعد يبني من
+            الادعاء هذا حالة يشغّلها؟ هذي وظيفتين مختلفتين.
+        </p>
+
+        <h2>خلّي للحالة الموثوقة نوع مستقل</h2>
+
+        <p>فكرة التغيير في <bdi>Rust</bdi> بسيطة:</p>
+
+<pre><code class="language-rust">struct TensorInfo {
+    // جاي من المحلل ولسه مو موثوق
+}
+
+pub struct ValidatedTensorInfo {
+    // حقول خاصة، وبدون باني عام
+}
+
+impl TensorInfo {
+    fn validate(&amp;self, data_start: u64, file_len: u64)
+        -&gt; Result&lt;ValidatedTensorInfo&gt;;
+}</code></pre>
+
+        <p>
+            النوع المتحقق منه في الكود الفعلي يحتفظ بعدد العناصر المحسوب
+            بأمان، وطول البيانات المشفرة، ونطاقها الكامل داخل الملف، مع الاسم
+            والأبعاد والنوع والإزاحة. حقوله خاصة. بناء نافذة الذاكرة ياخذ النوع
+            هذا، مو وصف المحلل الخام. وما فيه باني عام يخلي كود ثاني يدّعي إن
+            وصفاً ما صالح.
+        </p>
+
+        <p>
+            البوابة تفحص الرتبة، والأبعاد اللي مو صفر، وتجاوز جداء الأبعاد،
+            وأنواع البيانات المدعومة، وحساب طول البيانات، وتجاوز الإزاحة
+            والنطاق، وحدود الملف، وتداخل النطاقات. وفي التكميم الكتلي تفحص البعد
+            المتصل نفسه، مو بس العدد الإجمالي للعناصر. النقطة هذي قفلت خطأ
+            سلوكي: مسار <bdi>K-quant</bdi> المتعجل كان يقدر يقبل شكلاً مشوهاً
+            حجمه الإجمالي متوافق مع حجم الكتلة، مع إن المحور الفعلي للكتل مو
+            متوافق، وبعدها يفسر البيانات بترتيب مختلف عن محرك ملتزم بالصيغة.
+        </p>
+
+        <p>
+            الحدود المسماة أخذت مكان الافتراضات المبهمة عن القيم «المعقولة».
+            أعداد الـ<bdi>tensors</bdi> والـ<bdi>metadata</bdi>، وأحجام النصوص
+            والمصفوفات، والرتبة، وعمق التداخل، كلها تتقيد عند حد الملف. وأبعاد
+            النموذج مثل طول السياق وعدد الطبقات وحجم المفردات وعدد الرؤوس وبعد
+            الرأس وعرض التضمين، وكذلك الجداء المستخدم لحجم جداول
+            <bdi>RoPE</bdi>، صار لها حدود مستقلة عند بوابة الإعدادات.
+        </p>
+
+        <p>
+            الحد الأعلى مو معناته إن القيمة صحيحة دلالياً. هو عقد موارد: المحرك
+            ما يسمح لحقل واحد يطلب ذاكرة عبثية قبل ما بناء النموذج أصلاً يوصل
+            لسبب ثاني يرفض الملف عشانه.
+        </p>
+
+        <h2>التحليل كان أول حد، مو آخر واحد</h2>
+
+        <p>
+            أول هدف <bdi>fuzzing</bdi> وقف بعد التحليل والتحقق من الأوصاف.
+            كان مفيد، بس في الغالب أكد إن المحلل الموجود من أول صعب يتلخبط.
+            تعديلات الـ<bdi>bytes</bdi> الخام عادة تخرب الملف من بدري، ونادراً
+            تعيش كفاية عشان توصل لدلالة النموذج.
+        </p>
+
+        <p>
+            عشان كذا، الهدف الثاني حمّل نماذج صغيرة بس مكتملة بنيوياً، وبعدها
+            شغّل بناء النموذج. هنا طلعت افتراضات من طبقة مختلفة: بعد الرأس لازم
+            يكون زوجي لمسار <bdi>RoPE</bdi>، والوزن الخطي لازم يكون ثنائي
+            الأبعاد فعلاً، والنموذج يحتاج عدد موجب ومقيد من الطبقات، وكل
+            الـ<bdi>tensors</bdi> المطلوبة للهندسة المختارة لازم تكون موجودة قبل
+            ما تبدأ التخصيصات اللي تحددها الـ<bdi>metadata</bdi>.
+        </p>
+
+        <p>
+            ومن هنا صار عندنا مسار مستقل من <bdi>metadata</bdi> إلى
+            إعدادات متحقق منها، وبعدها التخصيص. وبناة <bdi>Llama</bdi>
+            و<bdi>GPT-2</bdi> أخذوا كمان بوابة جرد تفحص كل الأوزان المطلوبة قبل
+            بداية البناء. أما فحوص الأشكال الخاصة بكل طبقة فتبقى جنب الباني،
+            في المكان اللي يكون فيه عقد الهندسة معروف.
+        </p>
+
+        <p>
+            والـ<bdi>tokenizer</bdi> احتاج حد لحاله. دحين <bdi>Ember</bdi>
+            يفحص حداً مسمى لحجم الملف قبل ما يقرأه، ويتأكد من
+            <bdi>UTF-8</bdi> وبنية <bdi>JSON</bdi> قبل استدعاء مكتبة
+            <code>tokenizers</code>، ويحتوي أي <bdi>panic</bdi> باقي من محلل
+            المكتبة في بناءات <bdi>unwind</bdi>. هذا احتواء، مو معناته إن كل
+            سلوك للـ<bdi>tokenizer</bdi> آمن. لسه أنماط <bdi>regex</bdi>
+            المصممة بعناية تقدر نظرياً تستهلك CPU زيادة وقت الترميز، وهذا خطر
+            نظري موثق ولسه ما أثبتنا مدخلاً يفعّله.
+        </p>
+
+        <p>
+            ونفس الفكرة توصل للجانب العددي. دالة فك التكميم القديمة كانت تستقبل
+            شريحة <bdi>bytes</bdi> خام مع عدد كتل. الآن تستقبل
+            <code>Q8WeightView</code> ما تقدر تطلعه إلا من
+            <code>QuantizedWeight</code> متحقق منه. المفروض كود
+            <bdi>SIMD</bdi> يستقبل تمثيل ثبتت شروط تخطيطه من قبل، مو زوج
+            <code>(data, count)</code> فضفاض وتعليق يقول لكل واحد يستدعيه: انتبه.
+        </p>
+
+        <h2>إيش علّمني الـ<bdi>fuzzing</bdi> فعلياً؟</h2>
+
+        <p>
+            التجربة استخدمت <code>cargo-fuzz</code> مع بذور صغيرة ومنظمة. فيه
+            هدف يمر من المحلل إلى بوابة التحقق، وهدف يشغل ملفات
+            <bdi>GGUF</bdi> صغيرة ومكتملة حتى بناء النموذج، وهدف ثالث يمرر
+            <code>tokenizer.json</code> عبر حد الـ<bdi>tokenizer</bdi>.
+            كل فشل صغّرته، وصنفته، وحولته لاختبار انحدار. وبعد كل إصلاح شغلت
+            الأهداف مرة ثانية لمدة ثابتة.
+        </p>
+
+        <p>الأشياء المفيدة اللي طلعها الاختبار كانت موزعة على أكثر من طبقة:</p>
+
+        <ul>
+            <li>
+                بعد فردي مشتق من <bdi>metadata</bdi> وصل إلى
+                <bdi>assertion</bdi> في <bdi>RoPE</bdi>. هذا
+                <bdi>panic</bdi> داخل <bdi>Ember</bdi>، وانصلح بتحقق دلالي من
+                إعدادات النموذج.
+            </li>
+            <li>
+                وزن خطي أحادي البعد وصل إلى كود يفترض مصفوفة. هذا
+                <bdi>panic</bdi> ثاني وقت البناء، وانصلح بفحص الرتبة في دوال
+                أخذ الأوزان الخاصة بالهندسة.
+            </li>
+            <li>
+                قيم عدائية لطول السياق وأبعاد <bdi>RoPE</bdi> كانت قادرة على
+                تدفع تخصيصات مرضية أو تنهي العملية قبل الرفض. هذي فجوات استنزاف
+                موارد، واتقفلت بحدود فردية وحد مباشر للجداء قبل التخصيص.
+            </li>
+            <li>
+                <bdi>tokenizer JSON</bdi> مشوه وصل إلى <bdi>panic</bdi> في
+                <code>tokenizers</code> 0.20.4. هذا انكشاف لـ<bdi>panic</bdi>
+                من مكتبة خارجية، واحتواه <bdi>Ember</bdi> عند حد المكتبة.
+            </li>
+            <li>
+                <bdi>K-quant tensor</bdi> ببعد كتلي متصل غير صالح كان يُقبل
+                في مسار متعجل. هذا خطأ صحة سلوكي، مو انهيار ولا نتيجة عن سلامة
+                الذاكرة.
+            </li>
+        </ul>
+
+        <p>
+            لو سمينا كل هذي الأشياء «ثغرات» بنضيع فروق مهمة. الأدلة تشمل
+            <bdi>panics</bdi>، وتفسير تخطيط صامتاً بشكل خاطئ، ومسارات تضخيم
+            موارد، وانكشافاً لـ<bdi>panic</bdi> في مكتبة، ونقاط ضعف بنيوية من
+            بدون ما نثبت خطأ في الذاكرة. التصنيف خلّى الحل الهندسي مربوط بالشيء
+            اللي شفناه فعلاً.
+        </p>
+
+        <h2>المقارنة اللي جمّدناها</h2>
+
+        <p>
+            بعد ما صارت عندي أداة الاختبار، كان السؤال الطبيعي: هل هذي
+            الافتراضات خاصة بـ<bdi>Ember</bdi>؟ التجربة المجمّدة قارنت
+            <bdi>Ember</bdi> قبل التحصين وبعده، و<bdi>llama.cpp b7999</bdi>
+            عبر مسار التحميل وبناء النموذج، و<bdi>Candle 0.11.0</bdi> عند
+            واجهة محلل <bdi>GGUF</bdi> بس.
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>الحملة المجمّدة</th>
+                        <th><bdi>Ember</bdi> القديم</th>
+                        <th><bdi>EmberSEC</bdi></th>
+                        <th><bdi>llama.cpp b7999</bdi></th>
+                        <th><bdi>Candle 0.11</bdi></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>مجموعة 62 حالة</td>
+                        <td>5 حالات <bdi>panic</bdi>، انهيار، ومهلة منتهية</td>
+                        <td>صفر <bdi>panic</bdi> أو انهيار أو مهلة منتهية</td>
+                        <td>انهياران للعملية</td>
+                        <td><bdi>panic</bdi> واحد في المحلل</td>
+                    </tr>
+                    <tr>
+                        <td>10,000 تعديل على طبقة التحليل</td>
+                        <td>صفر فشل</td>
+                        <td>صفر فشل</td>
+                        <td>197 انهياراً و4 مهل منتهية</td>
+                        <td>6 حالات <bdi>panic</bdi></td>
+                    </tr>
+                    <tr>
+                        <td>2,000 تعديل على طبقة البناء</td>
+                        <td>194 فشلاً (9.7%)</td>
+                        <td>صفر فشل</td>
+                        <td>32 انهياراً و3 مهل منتهية</td>
+                        <td>محلل فقط</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p class="caption">
+            البيانات مجمّدة بتاريخ 2026-08-12. «الفشل» هنا يعني
+            <bdi>panic</bdi> أو انهيار عملية أو انتهاء المهلة، مو رفض منظم
+            عادي. مجموعة الحالات العدائية تثبت فئات فشل، بس ما تقدر تقول لنا
+            قد إيش هي منتشرة في الملفات الموجودة فعلياً.
+        </p>
+
+        <p>
+            لازم نفصل بين الطبقات. نسختين <bdi>Ember</bdi> سجلوا صفر فشل في
+            حملة تعديلات المحلل. مشاكل النسخة القديمة طلعت يوم وصلت بنية صالحة
+            كفاية إلى الإعدادات والتخصيص وبناء النموذج والـ<bdi>tokenizer</bdi>.
+            ومقارنة <bdi>Candle</bdi> كانت على المحلل بس. كلمة «قبل» عند
+            <bdi>Candle</bdi> تعني إن المحلل قبل البنية، مو معناته إن باني نموذج
+            بعده في <bdi>Candle</bdi> حيقبلها أو يشغلها.
+        </p>
+
+        <p>
+            تعاملت مع النتائج الخارجية بهدوء. بعض سلوكيات
+            <bdi>llama.cpp</bdi> كانت إعادة اكتشاف. وقت ما أعدت بناء التقرير على
+            <bdi>master</bdi> الحالي، كان رفض مفاتيح الـ<bdi>metadata</bdi>
+            الفارغة والنصوص ذات الطول المعلن الضخم انصلح من قبل، وصارت حالة
+            صفر طبقات تنتهي بـ<bdi>assert</bdi> أوضح. اقترحت إصلاح البعد الصفري
+            الباقي في
+            <a href="https://github.com/ggml-org/llama.cpp/pull/26946"><bdi>llama.cpp PR #26946</bdi></a>؛
+            اتقفل الـ<bdi>PR</bdi> بعد ما أشار المشرفون إلى مشاكل وإصلاحات
+            موجودة من قبل. ما اندمج. أما إصلاح المحاذاة الصفرية في
+            <bdi>Candle</bdi> فهو
+            <a href="https://github.com/huggingface/candle/pull/3876"><bdi>PR #3876</bdi></a>،
+            ولسه مفتوح وقت كتابة هذي الملاحظة.
+        </p>
+
+        <p>
+            إعادة الاكتشاف لسه مفيدة. تثبت إن أداة الاختبار توصل إلى فئات فشل
+            معروفة ولها معنى، وتعطي مرجع انحدار للتصميم المحلي. بس هي مو اكتشاف
+            جديد، والـ<bdi>PR</bdi> المقفول مو معناته إن الإصلاح اتقبل أو اندمج.
+        </p>
+
+        <h2>الفشل المبكر كان أرخص</h2>
+
+        <p>
+            بوابة الوصف أخذت تقريباً 69 نانوثانية لكل وصف
+            <bdi>tensor</bdi> في التجربة المجمّدة. على مقياس تحميل نموذج،
+            الكلفة هذي تختفي وسط القراءة وفك التكميم. نموذج
+            <bdi>Llama Q8_0</bdi> صالح بحجم 1.3 GB تحمّل في 1.77 ثانية على
+            النسخة المحصنة مقابل 2.03 ثانية على النسخة القديمة في قياس من ثلاث
+            مرات وعلى جهاز حرارته مو مستقرة. الفرق مو ادعاء تسريع.
+        </p>
+
+        <p>
+            الرقم الأهم هنا هو كلفة الرفض. حالة بطول سياق عدائي أخذت 30.8 ثانية
+            على النسخة القديمة وهي تتخبط في مسار تخصيص مرضي. النسخة المحصنة
+            رفضتها خلال 10.4 مللي ثانية، تقريباً نفس زمن تحميل النموذج الصغير
+            الصالح: 10.5 مللي ثانية. التحقق الدلالي مو بس رخيص. في الحالة
+            العدائية منع المحرك من تنفيذ العمل الخطأ والمكلف.
+        </p>
+
+        <h2>إيش اللي مو معناته هذا الشغل؟</h2>
+
+        <p><bdi>Ember</bdi> مو:</p>
+
+        <ul>
+            <li>«مضاد للهجمات» أو معتمد أمنياً،</li>
+            <li>محصن من أخطاء الذاكرة في الكود أو المكتبات،</li>
+            <li>مقاوم للقنوات الجانبية،</li>
+            <li>محمي من دلالات خبيثة مشفرة داخل قيم الأوزان،</li>
+            <li>أو آمن بس عشان إنه مكتوب بـ<bdi>Rust</bdi>.</li>
+        </ul>
+
+        <p>
+            <bdi>Rust</bdi> سهّل علينا نعبّر عن الحد: الحقول الخاصة، والبناة
+            اللي يقدروا يفشلوا، والشرائح، والحساب المتحقق، والأنواع التعدادية
+            تعطينا أشياء مفيدة يفرضها المترجم. بس هو ما يعرف إن بعد الرأس لازم
+            يكون زوجي، أو إن كتلة التكميم تمشي على <code>dims[0]</code>، أو إن
+            حدين مقبولين كل واحد لحاله يقدروا يطلعوا جداء مو مقبول. هذي عقود
+            دلالية، ولازم المحرك يصرح عنها ويختبرها.
+        </p>
+
+        <h2>الدرس الأوسع</h2>
+
+        <p>
+            المفروض نتعامل مع صيغ نماذج التعلم الآلي الثنائية زي أي صيغة معقدة
+            ومو موثوقة: نحللها إلى تمثيل مو موثوق، وبعدها نتحقق من دلالتها
+            العامة وتأثيرها على الموارد، وبعد كذا بس نبني الحالة اللي حيشوفها
+            التنفيذ.
+        </p>
+
+        <p>
+            وحدة التحصين المفيدة ما كانت شرط <code>if</code> لحاله. كانت إننا
+            نخلّي الانتقال من «<bdi>bytes</bdi> فهمناها» إلى «حالة راضين
+            نشغّلها» واضح في البرنامج.
+        </p>
+
+        <p>
+            هذا أنظف درس أخذته من <bdi>EmberSEC</bdi>. المحمّل ما يخلص شغله
+            أول ما يفهم الملف. يخلص لما كل جزء بعده يقدر يعرف، من الكائن اللي
+            في يده، إيش الوعود اللي ثبتناها فعلاً.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

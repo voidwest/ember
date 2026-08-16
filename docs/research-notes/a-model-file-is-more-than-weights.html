@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="A Model File Is More Than Weights" />
+        <meta property="og:description" content="What fuzzing taught me about treating GGUF structure as untrusted control input, and how Ember made the transition from parsed bytes to executable state explicit." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/a-model-file-is-more-than-weights.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>A Model File Is More Than Weights · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/a-model-file-is-more-than-weights.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>A Model File Is More Than Weights</h1>
+
+        <div class="meta">
+            hardening Ember's path from hostile GGUF bytes to numerical kernels<br>
+            mohammed al-thobaiti · 2026-08-16<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">GGUF</span>
+            <span class="tag key">Rust</span>
+            <span class="tag key">fuzzing</span>
+            <span class="tag key">systems security</span>
+        </div>
+
+        <p>
+            I started looking at GGUF loading in Ember as a security boundary
+            and realized that “model file” is a slightly misleading phrase. A
+            model file controls far more than model weights.
+        </p>
+
+        <p>
+            Tensor dimensions decide shape arithmetic and allocations. Offsets
+            decide which bytes become memory views. Metadata selects the
+            architecture, layer count, context length, head geometry, and RoPE
+            tables. Quantization types select byte layouts and numerical
+            kernels. Tokenizer configuration reaches a separate parser, regex
+            engine, and vocabulary contract. All of this happens before the
+            runtime generates one token.
+        </p>
+
+        <p>
+            Once a GGUF comes from an untrusted download, cache, or shared
+            artifact, those fields are untrusted control inputs. The weight
+            values may be opaque by design, but the structure around them is
+            executable policy for the loader.
+        </p>
+
+        <div class="callout observation">
+            <div class="label">the useful mental model</div>
+            <p>
+                A GGUF is not merely a bag of numbers. It is a program for
+                constructing the state that an inference engine will execute.
+                Treat its structure with the same suspicion as any other
+                complex binary format.
+            </p>
+        </div>
+
+        <h2>the original boundary was better than it looked, and weaker than it should be</h2>
+
+        <p>
+            The starting point was not a reckless unsafe parser. Ember's GGUF
+            parser was safe Rust and already rejected most malformed input. It
+            checked reads against EOF, bounded strings by remaining bytes,
+            rejected duplicate names and keys, restricted tensor rank, used
+            checked shape products and byte extents, checked file ranges,
+            rejected overlaps, validated alignment, and rejected unsupported
+            dtypes. The parser itself contained no <code>unsafe</code> parsing.
+        </p>
+
+        <p>
+            That distinction matters. Adding another pile of bounds checks was
+            not the core job.
+        </p>
+
+        <p>
+            The architectural gap was that a raw parsed <code>TensorInfo</code>
+            could flow through procedural checks and then into view
+            construction. The checks were real, but the program did not have a
+            distinct representation for “this descriptor has passed every
+            invariant required by allocation and execution.” A later refactor
+            could accidentally reorder or bypass a check without fighting the
+            type system.
+        </p>
+
+        <div class="pipeline-block" role="img" aria-label="EmberSEC trust boundary from bytes through validation to kernels">
+<pre>GGUF bytes
+    │
+    ▼
+parser ───────────────► untrusted descriptors
+                              │
+                              │ semantic validation
+                              ▼
+                      validated descriptors
+                              │
+                              ▼
+                  tensor / model construction
+                              │
+                              ▼
+               validated execution-facing objects
+                              │
+                              ▼
+                           kernels
+
+metadata ──► validated config ──► allocation / model construction
+
+tokenizer.json ──► size / UTF-8 / JSON gates ──► tokenizer library</pre>
+        </div>
+
+        <p>
+            The hardening work made those transitions explicit. Parsing tells
+            us what the file says. Validation decides whether Ember is willing
+            to construct executable state from it. Those are different jobs.
+        </p>
+
+        <h2>give trusted state a type</h2>
+
+        <p>The Rust shape of the change is simple:</p>
+
+<pre><code class="language-rust">struct TensorInfo {
+    // parser-derived and untrusted
+}
+
+pub struct ValidatedTensorInfo {
+    // private fields; no public constructor
+}
+
+impl TensorInfo {
+    fn validate(&amp;self, data_start: u64, file_len: u64)
+        -&gt; Result&lt;ValidatedTensorInfo&gt;;
+}</code></pre>
+
+        <p>
+            In production the validated type stores the checked element count,
+            encoded byte length, and absolute file range alongside the name,
+            dimensions, dtype, and offset. Its fields are private. View
+            construction consumes this type, not the raw parser descriptor.
+            There is no public constructor that lets unrelated code claim a
+            descriptor is valid.
+        </p>
+
+        <p>
+            The gate checks rank and non-zero dimensions, shape-product
+            overflow, supported dtypes, encoded byte arithmetic, offset and
+            extent overflow, file bounds, and overlapping ranges. For block
+            quantization it also validates the contiguous dimension, not only
+            the total element count. That last detail closed a correctness bug:
+            the eager K-quant path could accept a malformed shape whose total
+            size was block-aligned while its actual block axis was not, then
+            interpret the data in a different order from a compliant runtime.
+        </p>
+
+        <p>
+            Named limits replace vague assumptions about “reasonable” counts.
+            Tensor and metadata-table sizes, string and array sizes, rank, and
+            nesting depth are bounded at the file boundary. Model dimensions
+            such as context length, layer count, vocabulary size, head count,
+            head dimension, embedding width, and the product used to size RoPE
+            tables have their own limits at the configuration boundary.
+        </p>
+
+        <p>
+            A cap is not a proof that a value is semantically correct. It is a
+            resource contract: this runtime refuses to let one field demand an
+            absurd amount of host memory before model construction can reject
+            the file for some later reason.
+        </p>
+
+        <h2>parsing was only the first boundary</h2>
+
+        <p>
+            The first fuzz target stopped after parsing and descriptor
+            validation. It was useful, but it mostly confirmed that the
+            existing parser was already hard to upset. Raw byte mutations tend
+            to damage the file early. They rarely survive long enough to reach
+            model semantics.
+        </p>
+
+        <p>
+            So the next target loaded tiny but structurally complete models and
+            called model construction. That reached a different class of
+            assumptions: head dimensions must be even for the RoPE path;
+            linear weights must actually be two-dimensional; a model needs a
+            bounded, non-zero layer inventory; and all tensors required by the
+            selected architecture should be present before metadata-sized
+            allocations begin.
+        </p>
+
+        <p>
+            This produced a separate flow from metadata to validated config to
+            allocation. Llama and GPT-2 builders also gained an inventory gate
+            that checks all required tensors before construction starts.
+            Per-layer shape checks remain close to the builder, where the
+            architecture-specific contract is known.
+        </p>
+
+        <p>
+            The tokenizer needed its own boundary. Ember now checks a named
+            file-size limit before reading, verifies UTF-8 and JSON structure
+            before calling the third-party <code>tokenizers</code> crate, and
+            catches remaining deserializer panics in unwind builds. This is
+            containment, not a claim that arbitrary tokenizer behavior is safe:
+            crafted regex patterns may still consume excessive CPU during
+            encoding, and that remains a documented theoretical concern.
+        </p>
+
+        <p>
+            The same idea reaches the numerical side. The old public row
+            dequantization primitive accepted a raw byte slice plus a block
+            count. It now accepts a <code>Q8WeightView</code> that can only be
+            obtained from a validated <code>QuantizedWeight</code>. SIMD code
+            should receive a representation whose layout invariant is already
+            established, not a loose <code>(data, count)</code> pair and a
+            comment asking every caller to be careful.
+        </p>
+
+        <h2>what fuzzing actually taught me</h2>
+
+        <p>
+            The setup used <code>cargo-fuzz</code> with tiny structured seeds.
+            One target exercised parser → validator, another exercised complete
+            tiny GGUFs through model construction, and a third drove
+            <code>tokenizer.json</code> through the tokenizer boundary. Failures
+            were minimized, classified, and turned into regression tests. The
+            targets then received additional fixed-duration runs after each
+            repair.
+        </p>
+
+        <p>The useful findings were spread across layers:</p>
+
+        <ul>
+            <li>
+                An odd metadata-derived RoPE/head dimension reached an
+                assertion. That was an Ember panic, fixed with semantic config
+                validation.
+            </li>
+            <li>
+                A one-dimensional linear weight reached code that assumed a
+                matrix. That was another construction panic, fixed by checking
+                rank at the architecture's tensor-taking helpers.
+            </li>
+            <li>
+                Hostile context and RoPE dimensions could drive pathological
+                allocation or process failure before rejection. Those were
+                resource-exhaustion gaps, fixed with individual and product
+                limits before allocation.
+            </li>
+            <li>
+                Malformed tokenizer JSON reached a panic in
+                <code>tokenizers</code> 0.20.4. That was third-party panic
+                exposure, contained at Ember's dependency boundary.
+            </li>
+            <li>
+                A K-quant tensor with an invalid contiguous block dimension
+                could be accepted by an eager path. That was a behavioral
+                correctness bug, not a crash or memory-safety result.
+            </li>
+        </ul>
+
+        <p>
+            Calling all of these “vulnerabilities” would flatten useful
+            distinctions. The evidence contains panics, a silent layout
+            misinterpretation, resource-amplification paths, dependency panic
+            exposure, and structural weaknesses where no memory error was
+            demonstrated. Classification kept the engineering response tied to
+            what was actually observed.
+        </p>
+
+        <h2>the frozen comparison</h2>
+
+        <p>
+            Once the harness existed, the obvious question was whether these
+            assumptions were peculiar to Ember. A frozen experiment compared
+            pre-hardening Ember, hardened Ember, llama.cpp b7999 through a
+            loader-and-construction harness, and Candle 0.11.0 at its GGUF
+            parser API.
+        </p>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>frozen campaign</th>
+                        <th>baseline Ember</th>
+                        <th>hardened Ember</th>
+                        <th>llama.cpp b7999</th>
+                        <th>Candle 0.11</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>62-case corpus</td>
+                        <td>5 panics, 1 crash, 1 timeout</td>
+                        <td>0 panic / crash / timeout</td>
+                        <td>2 process crashes</td>
+                        <td>1 parser panic</td>
+                    </tr>
+                    <tr>
+                        <td>10,000 parser mutations</td>
+                        <td>0 failures</td>
+                        <td>0 failures</td>
+                        <td>197 crashes, 4 timeouts</td>
+                        <td>6 panics</td>
+                    </tr>
+                    <tr>
+                        <td>2,000 construction mutations</td>
+                        <td>194 failures (9.7%)</td>
+                        <td>0 failures</td>
+                        <td>32 crashes, 3 timeouts</td>
+                        <td>parser only</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p class="caption">
+            frozen 2026-08-12. “failure” here means panic, process crash, or
+            timeout, not ordinary structured rejection. The deterministic
+            corpus is an adversarial fixture set, not a prevalence estimate.
+        </p>
+
+        <p>
+            The layers must stay separate. Both Ember versions showed zero
+            failures in the parser-mutation campaign; the baseline problems
+            appeared when valid-enough structure reached configuration,
+            allocation, model construction, and tokenizer code. Candle's
+            comparison was parser-level only. A Candle <em>accept</em> means
+            its parser accepted the structure; it says nothing about whether a
+            downstream Candle model builder would accept or execute it.
+        </p>
+
+        <p>
+            The external findings were handled conservatively. Several
+            llama.cpp behaviors were rediscoveries: by the time the report was
+            rebased onto current master, empty metadata keys and oversized
+            declared strings were already fixed upstream, while a zero-layer
+            case had a clearer assert. The remaining zero-dimension fix was
+            proposed in
+            <a href="https://github.com/ggml-org/llama.cpp/pull/26946">llama.cpp PR #26946</a>;
+            that PR was closed after maintainers pointed to existing upstream
+            issues and fixes. It was not merged. The Candle alignment-zero fix
+            is
+            <a href="https://github.com/huggingface/candle/pull/3876">PR #3876</a>,
+            which remained open when this note was written.
+        </p>
+
+        <p>
+            Rediscovery is still useful. It shows that a harness reaches known,
+            meaningful failure classes and gives a regression oracle for the
+            local design. But rediscovery is not novelty, and a closed pull
+            request is not an accepted fix.
+        </p>
+
+        <h2>failing early was cheaper</h2>
+
+        <p>
+            The descriptor gate measured about 69 ns per tensor descriptor in
+            the frozen experiment. At model-load scale that disappeared into
+            I/O and dequantization. A valid 1.3 GB Llama Q8_0 model loaded in
+            1.77 s on the hardened build versus 2.03 s on the baseline in this
+            three-run, thermally noisy measurement; that difference should not
+            be read as a speedup claim.
+        </p>
+
+        <p>
+            The more useful number is rejection cost. A hostile context-length
+            fixture took 30.8 seconds on the baseline while thrashing through a
+            pathological allocation path. The hardened loader rejected it in
+            10.4 ms, roughly the same as loading the valid tiny control at 10.5
+            ms. Semantic validation was not merely cheap. In the hostile case,
+            it avoided doing the expensive wrong work.
+        </p>
+
+        <h2>what this does not mean</h2>
+
+        <p>Ember is not:</p>
+
+        <ul>
+            <li>“cyberattack proof” or certified secure,</li>
+            <li>immune to memory bugs in this code or its dependencies,</li>
+            <li>side-channel resistant,</li>
+            <li>protected from malicious semantics encoded in weight values,</li>
+            <li>or safe merely because it is written in Rust.</li>
+        </ul>
+
+        <p>
+            Rust made the boundary easier to express: private fields, fallible
+            constructors, slices, checked arithmetic, and enums give the
+            compiler something useful to enforce. It did not know that a head
+            dimension must be even, that a quantization block runs along
+            <code>dims[0]</code>, or that two individually acceptable limits
+            can have an unacceptable product. Those are semantic contracts,
+            and the runtime still has to state and test them.
+        </p>
+
+        <h2>the broader lesson</h2>
+
+        <p>
+            Binary ML model formats should be treated like other complex
+            untrusted formats: parse them into an untrusted representation,
+            validate their global semantics and resource implications, and
+            only then construct execution-visible state.
+        </p>
+
+        <p>
+            The useful unit of hardening was not an individual <code>if</code>
+            statement. It was making the transition from “bytes we parsed” to
+            “state we're willing to execute” explicit in the program.
+        </p>
+
+        <p>
+            That is the cleanest lesson I took from EmberSEC. The loader is not
+            finished when it understands the file. It is finished when every
+            downstream consumer can tell, from the object in its hands, which
+            promises have already been proved.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
