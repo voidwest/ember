@@ -1497,20 +1497,20 @@ mod aarch64 {
         unsafe {
             for b in 0..blocks_per_row {
                 let byte_offset = (block_start + b) * Q8_0_TYPE_SIZE;
-                let base_ptr = unsafe { data.as_ptr().add(byte_offset) };
+                let base_ptr = data.as_ptr().add(byte_offset);
 
                 // -- scale: load 2-byte f16, convert to f32, broadcast ---------
-                let d_bits = u16::from_le_bytes(unsafe { *(base_ptr as *const [u8; 2]) });
+                let d_bits = u16::from_le_bytes(*(base_ptr as *const [u8; 2]));
                 let d = f16::from_bits(d_bits).to_f32();
                 let d_vec = vdupq_n_f32(d);
 
                 // -- quants: load two 128-bit vectors of 16 i8 values each ----
-                let quants_ptr = unsafe { base_ptr.add(2) as *const i8 };
-                let q0 = unsafe { vld1q_s8(quants_ptr) };
-                let q1 = unsafe { vld1q_s8(quants_ptr.add(16)) };
+                let quants_ptr = base_ptr.add(2) as *const i8;
+                let q0 = vld1q_s8(quants_ptr);
+                let q1 = vld1q_s8(quants_ptr.add(16));
 
                 let out_offset = b * Q8_0_BLOCK_SIZE;
-                let out_ptr = unsafe { dst.as_mut_ptr().add(out_offset) };
+                let out_ptr = dst.as_mut_ptr().add(out_offset);
 
                 // helper: dequantize 16 i8 values → 4 × float32x4_t
                 #[inline(always)]
@@ -1528,16 +1528,16 @@ mod aarch64 {
                         let f2 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_low_s16(i16_hi))), scale);
                         let f3 = vmulq_f32(vcvtq_f32_s32(vmovl_s16(vget_high_s16(i16_hi))), scale);
 
-                        unsafe { vst1q_f32(out, f0) };
-                        unsafe { vst1q_f32(out.add(4), f1) };
-                        unsafe { vst1q_f32(out.add(8), f2) };
-                        unsafe { vst1q_f32(out.add(12), f3) };
+                        vst1q_f32(out, f0);
+                        vst1q_f32(out.add(4), f1);
+                        vst1q_f32(out.add(8), f2);
+                        vst1q_f32(out.add(12), f3);
                     }
                 }
 
                 // 16 quants → bytes 0..15, 16 quants → bytes 16..31
-                unsafe { process16(q0, d_vec, out_ptr) };
-                unsafe { process16(q1, d_vec, out_ptr.add(16)) };
+                process16(q0, d_vec, out_ptr);
+                process16(q1, d_vec, out_ptr.add(16));
             }
         }
     }
@@ -1560,7 +1560,7 @@ mod aarch64 {
             let mut i = 0;
 
             while i + 4 <= n {
-                let v = unsafe { vld1q_f32(x.as_ptr().add(i)) };
+                let v = vld1q_f32(x.as_ptr().add(i));
                 acc = vfmaq_f32(acc, v, v);
                 i += 4;
             }
@@ -1596,10 +1596,10 @@ mod aarch64 {
             let mut i = 0;
 
             while i + 4 <= n {
-                let xv = unsafe { vld1q_f32(x.as_ptr().add(i)) };
-                let wv = unsafe { vld1q_f32(weight.as_ptr().add(i)) };
+                let xv = vld1q_f32(x.as_ptr().add(i));
+                let wv = vld1q_f32(weight.as_ptr().add(i));
                 let r = vmulq_f32(vmulq_f32(xv, s), wv);
-                unsafe { vst1q_f32(out.as_mut_ptr().add(i), r) };
+                vst1q_f32(out.as_mut_ptr().add(i), r);
                 i += 4;
             }
             while i < n {
@@ -1620,9 +1620,9 @@ mod aarch64 {
             let n = a.len();
             let mut i = 0;
             while i + 4 <= n {
-                let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-                let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
-                unsafe { vst1q_f32(out.as_mut_ptr().add(i), vmulq_f32(av, bv)) };
+                let av = vld1q_f32(a.as_ptr().add(i));
+                let bv = vld1q_f32(b.as_ptr().add(i));
+                vst1q_f32(out.as_mut_ptr().add(i), vmulq_f32(av, bv));
                 i += 4;
             }
             while i < n {
@@ -1645,8 +1645,8 @@ mod aarch64 {
             let mut i = 0;
 
             while i + 4 <= n {
-                let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-                let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
+                let av = vld1q_f32(a.as_ptr().add(i));
+                let bv = vld1q_f32(b.as_ptr().add(i));
                 acc = vfmaq_f32(acc, av, bv);
                 i += 4;
             }
@@ -1675,9 +1675,9 @@ mod aarch64 {
             let n = a.len();
             let mut i = 0;
             while i + 4 <= n {
-                let av = unsafe { vld1q_f32(a.as_ptr().add(i)) };
-                let bv = unsafe { vld1q_f32(b.as_ptr().add(i)) };
-                unsafe { vst1q_f32(out.as_mut_ptr().add(i), vaddq_f32(av, bv)) };
+                let av = vld1q_f32(a.as_ptr().add(i));
+                let bv = vld1q_f32(b.as_ptr().add(i));
+                vst1q_f32(out.as_mut_ptr().add(i), vaddq_f32(av, bv));
                 i += 4;
             }
             while i < n {
@@ -1700,9 +1700,9 @@ mod aarch64 {
             let mut i = 0;
 
             while i + 4 <= n {
-                let sv = unsafe { vld1q_f32(src.as_ptr().add(i)) };
-                let av = unsafe { vld1q_f32(acc.as_ptr().add(i)) };
-                unsafe { vst1q_f32(acc.as_mut_ptr().add(i), vfmaq_f32(av, sv, w)) };
+                let sv = vld1q_f32(src.as_ptr().add(i));
+                let av = vld1q_f32(acc.as_ptr().add(i));
+                vst1q_f32(acc.as_mut_ptr().add(i), vfmaq_f32(av, sv, w));
                 i += 4;
             }
             while i < n {
