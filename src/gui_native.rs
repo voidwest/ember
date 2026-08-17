@@ -306,9 +306,9 @@ impl WorkspaceStep {
 
     fn hint(self) -> &'static str {
         match self {
-            Self::Prompt => "Choose a model and write the input",
-            Self::Intervention => "Describe the internal change",
-            Self::Review => "Check the setup and compare outputs",
+            Self::Prompt => "Model and prompt",
+            Self::Intervention => "Internal change",
+            Self::Review => "Evidence and results",
         }
     }
 }
@@ -1659,6 +1659,7 @@ impl Console {
                         step.number()
                     ))))
                     .w_full()
+                    .min_h(px(48.0))
                     .px_3()
                     .py_2()
                     .flex()
@@ -1676,14 +1677,21 @@ impl Console {
                     .child(
                         div()
                             .size(px(24.0))
+                            .flex_none()
                             .flex()
                             .items_center()
                             .justify_center()
                             .rounded_full()
+                            .border_1()
+                            .border_color(if selected {
+                                colors.accent
+                            } else {
+                                colors.border_strong
+                            })
                             .bg(if selected {
                                 colors.accent
                             } else {
-                                colors.surface_raised
+                                colors.surface
                             })
                             .child(label(
                                 step.number(),
@@ -1697,6 +1705,9 @@ impl Console {
                     )
                     .child(
                         div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
                             .flex_col()
                             .gap_1()
                             .child(label(step.label(), 11.0, colors.text))
@@ -1780,8 +1791,13 @@ impl Console {
         div()
             .id(ElementId::Name(SharedString::from("workflow-rail")))
             .flex_col()
+            .w(px(216.0))
+            .flex_none()
             .h_full()
             .overflow_y_scroll()
+            .bg(colors.sidebar)
+            .border_r_1()
+            .border_color(colors.border)
             .p_3()
             .gap_4()
             .child(
@@ -3428,16 +3444,7 @@ impl Render for Console {
             .w_full()
             .flex_1()
             .min_h(px(0.0))
-            .child(
-                div()
-                    .w(px(196.0))
-                    .flex_none()
-                    .h_full()
-                    .bg(colors.sidebar)
-                    .border_r_1()
-                    .border_color(colors.border)
-                    .child(self.sidebar(&colors, cx)),
-            )
+            .child(self.sidebar(&colors, cx))
             .child(self.main_panel(&colors, cx));
         let statusbar = self.statusbar(&colors, cx);
 
