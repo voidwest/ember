@@ -1,8 +1,9 @@
 //! Minimal, strict safetensors codec for v0.5 bundle payloads.
 //!
 //! Implements the published safetensors file format exactly (8-byte
-//! little-endian header length, JSON header, data aligned to 8 bytes) so
-//! payloads are byte-compatible with the Python `safetensors` library.
+//! little-endian header length, JSON header padded to an 8-byte boundary
+//! *inside* the length field, data immediately after) so payloads are
+//! byte-compatible with the Python `safetensors` library.
 //! Serialization is deterministic (BTreeMap key order); deserialization
 //! validates every offset, size, and alignment before any slice is taken.
 
@@ -101,24 +102,28 @@ pub fn serialize(tensors: &[TensorData<'_>]) -> Result<Vec<u8>, String> {
         header.insert(name.to_string(), serde_json::Value::Object(entry));
         data_offset = end;
     }
-    let header_json = serde_json::to_vec(&serde_json::Value::Object(header))
+    let mut header_json = serde_json::to_vec(&serde_json::Value::Object(header))
         .map_err(|error| format!("safetensors header serialization failed: {error}"))?;
     if header_json.len() > u64::MAX as usize {
         return Err("safetensors header exceeds u64 length".into());
     }
-    let header_len = header_json.len() as u64;
-    // Data must start at an 8-byte boundary relative to the header length
-    // field: 8 (length) + header + padding.
-    let padding = (8 + header_json.len())
+    // The published format pads the header *string itself* (ASCII spaces)
+    // so that 8 + header_len is 8-byte aligned and header_len includes the
+    // padding; readers then derive data_start = 8 + header_len directly.
+    // (Padding the data start instead breaks spec-compliant readers such as
+    // the Python `safetensors` library whenever the unpadded header length
+    // is not 8-aligned.)
+    let header_padding = (8 + header_json.len())
         .checked_rem(8)
         .map(|r| (8 - r) % 8)
         .unwrap_or(0);
-    let mut out = Vec::with_capacity(8 + header_json.len() + padding + data_offset);
+    header_json.extend(std::iter::repeat_n(b' ', header_padding));
+    let header_len = header_json.len() as u64;
+    let data_start = 8 + header_json.len();
+    debug_assert_eq!(data_start % 8, 0, "safetensors data must be 8-byte aligned");
+    let mut out = Vec::with_capacity(data_start + data_offset);
     out.extend_from_slice(&header_len.to_le_bytes());
     out.extend_from_slice(&header_json);
-    out.extend(std::iter::repeat_n(0u8, padding));
-    let data_start = 8 + header_json.len() + padding;
-    debug_assert_eq!(data_start % 8, 0, "safetensors data must be 8-byte aligned");
     for tensor in by_name.values() {
         out.extend_from_slice(tensor.bytes);
     }
@@ -155,6 +160,9 @@ pub fn deserialize(bytes: &[u8]) -> Result<Vec<(String, TensorView)>, String> {
             bytes.len()
         ));
     }
+    // Tolerant of both the published form (header_len already includes
+    // padding, so `padded == 8 + header_len`) and the legacy pre-0.6.4
+    // form (padding emitted after the header instead of inside it).
     let padded = 8usize
         .checked_add(header_len)
         .and_then(|v| v.checked_add(7))
@@ -376,6 +384,69 @@ mod tests {
             bytes: &[0u8; 4],
         }];
         assert!(serialize(&tensors).is_err());
+    }
+
+    #[test]
+    fn header_is_spec_padded_for_any_header_length() {
+        // Published format: 8 + header_len must be 8-aligned with
+        // header_len *including* the padding, so external readers compute
+        // data_start = 8 + header_len directly. Vary the header length
+        // (via tensor-name length) to force both aligned and unaligned
+        // unpadded headers.
+        for name_len in 1..40usize {
+            let name = format!("t{:0width$}", name_len, width = 3);
+            let payload = vec![0u8; 8];
+            let tensors = vec![TensorData {
+                name: &name,
+                dtype: TensorDType::F32,
+                shape: &[2],
+                bytes: &payload,
+            }];
+            let bytes = serialize(&tensors).unwrap();
+            let header_len = u64::from_le_bytes(bytes[..8].try_into().expect("8 bytes")) as usize;
+            assert_eq!(
+                (8 + header_len) % 8,
+                0,
+                "name_len {name_len}: 8 + header_len must be 8-aligned"
+            );
+            // The recorded length is the full header: JSON + padding.
+            let header: serde_json::Value =
+                serde_json::from_slice(&bytes[8..8 + header_len]).expect("header parses");
+            assert!(header.is_object());
+            // Data begins immediately after the header.
+            let entry = header.as_object().unwrap().get(&name).unwrap();
+            assert_eq!(entry["data_offsets"][0].as_u64(), Some(0));
+            assert_eq!(entry["data_offsets"][1].as_u64(), Some(8));
+            // Ember's own reader still round-trips.
+            let views = deserialize(&bytes).unwrap();
+            assert_eq!(views.len(), 1);
+            assert_eq!(tensor_f32(&bytes, &views[0].1).unwrap(), vec![0.0; 2]);
+        }
+    }
+
+    #[test]
+    fn legacy_unaligned_header_still_reads() {
+        // Pre-fix bundles (header padding emitted *after* the header and
+        // excluded from header_len) must keep loading. Build one by hand:
+        // an unpadded header whose 8 + len is deliberately not 8-aligned.
+        let mut header = br#"{"x":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#.to_vec();
+        while (8 + header.len()).is_multiple_of(8) {
+            header.push(b' ');
+        }
+        let header_len = header.len() as u64; // excludes the following padding
+        let data_start = (8 + header.len() + 7) & !7; // legacy: padding after header
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&header_len.to_le_bytes());
+        bytes.extend_from_slice(&header);
+        bytes.resize(data_start, 0); // legacy zero padding
+        bytes.extend_from_slice(&1.5f32.to_le_bytes()); // one f32 (shape [1])
+        while bytes.len() % 8 != 0 {
+            bytes.push(0);
+        }
+        let views = deserialize(&bytes).unwrap();
+        assert_eq!(views.len(), 1);
+        assert_eq!(views[0].0, "x");
+        assert_eq!(tensor_f32(&bytes, &views[0].1).unwrap(), vec![1.5]);
     }
 
     #[test]
