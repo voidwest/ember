@@ -7,6 +7,7 @@ mod gui_native;
 mod cli_commands;
 mod cli_generation;
 mod cli_kv;
+mod cli_multimodal;
 mod cli_probe;
 
 use cli_commands::{
@@ -299,6 +300,9 @@ pub(crate) enum Commands {
     InspectPlan(InspectPlanCommand),
     /// export, inspect, verify, replay, and trace first-class KV snapshots
     Kv(cli_kv::KvCommand),
+
+    /// image-conditioned generation + validation dumps (multimodal foundation)
+    Multimodal(cli_multimodal::MultimodalCommand),
 
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
@@ -688,6 +692,7 @@ fn main() -> anyhow::Result<()> {
             Commands::Kv(command) => {
                 cli_kv::run_kv_command(command, k_strategy, args.k_allow_fallback)
             }
+            Commands::Multimodal(command) => cli_multimodal::run_multimodal_command(command, &args),
             Commands::Experiment(command) => match &command.command {
                 cli_experiment::ExperimentSubcommand::Validate(command) => {
                     cli_experiment::run_validate_command(command)

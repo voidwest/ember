@@ -133,6 +133,10 @@ pub trait Backend {
     fn add(&self, a: &Self::Tensor, b: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
     fn softmax(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
     fn gelu(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
+
+    /// GELU with the tanh approximation (`gelu_pytorch_tanh`) used by
+    /// CLIP/SigLIP-family vision towers.
+    fn gelu_tanh(&self, x: &Self::Tensor) -> Result<Self::Tensor, Self::Error>;
     fn layer_norm(
         &self,
         x: &Self::Tensor,
@@ -1057,6 +1061,10 @@ impl Backend for CpuBackend {
     }
     fn gelu(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.gelu())
+    }
+
+    fn gelu_tanh(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
+        Ok(x.gelu_tanh())
     }
 
     fn layer_norm(

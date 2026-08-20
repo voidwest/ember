@@ -107,6 +107,12 @@ impl EmberTokenizer {
         self.inner.id_to_token(id)
     }
 
+    /// The token ID for a vocabulary piece (including added tokens), when
+    /// known. Used by multimodal assemblers to resolve image/special tokens.
+    pub fn token_to_id(&self, token: &str) -> Option<u32> {
+        self.inner.token_to_id(token)
+    }
+
     /// Validate that every ID this tokenizer can emit is addressable by the
     /// model embedding table.
     pub fn validate_model_vocab(&self, model_vocab_size: usize) -> Result<()> {

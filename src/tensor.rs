@@ -278,6 +278,23 @@ impl CpuTensor {
         Self::from_data(self.shape.clone(), data)
     }
 
+    /// GELU with the tanh approximation used by CLIP/SigLIP-family vision
+    /// towers (`gelu_pytorch_tanh` in HuggingFace): `0.5x(1+tanh(sqrt(2/pi)
+    /// (x + 0.044715 x^3)))`. Kept separate from the erf-based
+    /// [`CpuTensor::gelu`] because vision towers were trained with this
+    /// variant and the two differ by up to ~3e-4.
+    #[must_use]
+    #[inline]
+    pub fn gelu_tanh(&self) -> Self {
+        let c = (2.0f32 / std::f32::consts::PI).sqrt();
+        let data: Vec<f32> = self
+            .data
+            .iter()
+            .map(|&x| 0.5 * x * (1.0 + (c * (x + 0.044_715 * x * x * x)).tanh()))
+            .collect();
+        Self::from_data(self.shape.clone(), data)
+    }
+
     /// rms normalization over the last dimension of a 2d `[batch, features]`
     /// tensor. normalizes each row independently: `x * weight / sqrt(mean(x^2) + eps)`.
     /// lLaMA-family models use this instead of layer_norm - no mean subtraction, no bias.

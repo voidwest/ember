@@ -1637,6 +1637,7 @@ dependencies = [
  "env_logger",
  "gpui",
  "half",
+ "image",
  "libm",
  "log",
  "matrixmultiply",
