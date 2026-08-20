@@ -220,6 +220,12 @@ impl SmolVlm {
             let best = u32::try_from(best)
                 .map_err(|_| anyhow::anyhow!("model vocabulary exceeds u32 token-ID space"))?;
             generated.push(best);
+            if generated.len() == 1 {
+                // time to first token: everything from request start through
+                // the prefill logits that selected this token
+                let ttft = wall_start.elapsed();
+                timings.ttft_ms = ttft.as_secs_f64() * 1e3;
+            }
             if eos_ids.contains(&best) {
                 break;
             }
@@ -232,12 +238,14 @@ impl SmolVlm {
                 )?;
             }
         }
-        let ttft = wall_start.elapsed();
-        timings.ttft_ms = ttft.as_secs_f64() * 1e3;
         timings.n_decode_tokens = generated.len();
-        if !generated.is_empty() {
-            let decode_ms = ttft.as_secs_f64() * 1e3 - timings.llm_prefill_ms;
-            timings.decode_tok_s = generated.len() as f64 / (decode_ms / 1e3);
+        // decode rate covers only the token loop after the first token
+        let total_ms = wall_start.elapsed().as_secs_f64() * 1e3;
+        let decode_ms = total_ms - timings.ttft_ms;
+        if generated.len() > 1 && decode_ms > 0.0 {
+            timings.decode_tok_s = (generated.len() - 1) as f64 / (decode_ms / 1e3);
+        } else if generated.len() == 1 && decode_ms > 0.0 {
+            timings.decode_tok_s = 1.0 / (decode_ms / 1e3);
         }
         let text = tokenizer.decode(&generated)?;
         Ok((generated, text, timings))
