@@ -31,6 +31,58 @@ pub trait ForwardModel<B: Backend> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error>;
 
+    /// Run the transformer body directly on precomputed input embeddings.
+    ///
+    /// `embeddings` is a `[seq_len, embed_dim]` tensor of *fully formed*
+    /// model input embeddings: for RoPE models (Llama) these are the
+    /// token-embedding rows (or encoder/projector output rows); for GPT-2
+    /// they must already include the learned position-embedding rows. The
+    /// transformer consumes the same internal path as token-based prefill
+    /// and never needs to know where the embeddings came from.
+    ///
+    /// The default implementation panics because a generic model cannot
+    /// construct its own backend error type; models that support
+    /// precomputed-embedding prefill override it (Llama, Gpt2).
+    fn forward_embeddings_with_cache(
+        &self,
+        _backend: &B,
+        _embeddings: &B::Tensor,
+        _cache: &mut crate::kv_cache::KVCache,
+        _start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        panic!(
+            "this model does not support precomputed-embedding prefill              (forward_embeddings_with_cache is not implemented)"
+        )
+    }
+
+    /// Prefill a token sequence at the current cache cursor.
+    ///
+    /// This is the causal prefill entry point: `start_pos` is taken from the
+    /// cache cursor, so a fresh cache starts at position 0 and subsequent
+    /// turns continue contiguously.
+    fn prefill_tokens_with_cache(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+    ) -> Result<B::Tensor, B::Error> {
+        self.forward_with_cache(backend, token_ids, cache, cache.cursor())
+    }
+
+    /// Prefill a precomputed embedding sequence at the current cache cursor.
+    ///
+    /// The embeddings enter the exact same internal prefill path as
+    /// [`Self::prefill_tokens_with_cache`]; positions are contiguous from the
+    /// cursor and attention is causal.
+    fn prefill_embeddings_with_cache(
+        &self,
+        backend: &B,
+        embeddings: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+    ) -> Result<B::Tensor, B::Error> {
+        self.forward_embeddings_with_cache(backend, embeddings, cache, cache.cursor())
+    }
+
     /// Greedy (argmax) next-token inference: returns the top token id and
     /// its logit. Defaults to the full-logits path plus an in-place argmax;
     /// models with a fused fast path (e.g. LLaMA's Q8_0 workspace decode)
@@ -1080,6 +1132,15 @@ impl<B: Backend> ForwardModel<B> for Gpt2<B> {
     ) -> Result<B::Tensor, B::Error> {
         Gpt2::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
     }
+    fn forward_embeddings_with_cache(
+        &self,
+        backend: &B,
+        embeddings: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        Gpt2::forward_embeddings_with_cache(self, backend, embeddings, cache, start_pos)
+    }
     fn n_layers(&self) -> usize {
         self.blocks.len()
     }
@@ -1198,8 +1259,26 @@ impl<B: Backend> Gpt2<B> {
             !token_ids.is_empty(),
             "GPT-2 forward requires at least one token"
         );
-        let seq_len = token_ids.len();
-        let mut x = self.embed_with_offset(backend, token_ids, start_pos)?;
+        let x = self.embed_with_offset(backend, token_ids, start_pos)?;
+        self.forward_embeddings_with_cache(backend, &x, cache, start_pos)
+    }
+
+    /// forward the transformer body on precomputed embeddings.
+    ///
+    /// contract: `embeddings` must be *fully formed* model input embeddings —
+    /// for GPT-2 that means the caller has already added the learned position
+    /// embeddings (`wte + wpe` rows at the correct absolute positions).
+    pub fn forward_embeddings_with_cache(
+        &self,
+        backend: &B,
+        embeddings: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        cache.validate_start_pos(start_pos);
+        let seq_len = backend.shape(embeddings)[0];
+        assert!(seq_len > 0, "GPT-2 forward requires at least one embedding");
+        let mut x = embeddings.clone();
         for (layer, block) in self.blocks.iter().enumerate() {
             x = block.forward_with_cache(backend, &x, cache, layer)?;
         }

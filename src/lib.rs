@@ -28,6 +28,7 @@ pub mod atomic_file;
 pub mod backend;
 pub mod compare;
 pub mod decode_profile;
+pub mod embedding;
 pub mod experiments;
 pub mod extraction;
 pub mod gemma4;

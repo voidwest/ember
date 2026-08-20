@@ -1373,6 +1373,15 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
     ) -> Result<CpuTensor, CpuError> {
         self.forward_last_logits_with_cache_cpu(backend, token_ids, cache, start_pos)
     }
+    fn forward_embeddings_with_cache(
+        &self,
+        backend: &CpuBackend,
+        embeddings: &CpuTensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<CpuTensor, CpuError> {
+        Llama::forward_embeddings_with_cache(self, backend, embeddings, cache, start_pos)
+    }
     fn greedy_next_token_with_cache(
         &self,
         backend: &CpuBackend,
@@ -2742,9 +2751,33 @@ impl<B: Backend> Llama<B> {
             !token_ids.is_empty(),
             "Llama forward requires at least one token"
         );
-        let seq_len = token_ids.len();
         let embed_dim = self.config.embed_dim;
-        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
+        let x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
+        self.forward_embeddings_with_cache(backend, &x, cache, start_pos)
+    }
+
+    /// forward pass with incremental kv caching over precomputed embeddings.
+    ///
+    /// `embeddings` is a `[seq_len, embed_dim]` tensor of *fully formed*
+    /// model input embeddings (for a RoPE model these are the token-embedding
+    /// rows — or, for multimodal input, the assembled text + visual embedding
+    /// rows). This is the same internal path token prefill uses; the
+    /// transformer never needs to know where the embeddings came from.
+    ///
+    /// positions are contiguous from `start_pos` (RoPE tables and the KV
+    /// cache are addressed the same way as in `forward_with_cache`), and
+    /// attention is causal over `cache.cursor() .. cache.cursor() + seq_len`.
+    pub fn forward_embeddings_with_cache(
+        &self,
+        backend: &B,
+        embeddings: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        cache.validate_start_pos(start_pos);
+        let seq_len = backend.shape(embeddings)[0];
+        assert!(seq_len > 0, "Llama forward requires at least one embedding");
+        let mut x = embeddings.clone();
 
         for (layer, block) in self.blocks.iter().enumerate() {
             x = block.forward_with_cache(backend, &x, cache, layer, start_pos)?;
@@ -2766,6 +2799,23 @@ impl<B: Backend> Llama<B> {
     ) -> Result<B::Tensor, B::Error> {
         let mut hooks = DisabledHooks;
         self.forward_last_logits_with_cache_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+    }
+
+    /// last-logits forward over precomputed embeddings (no hooks).
+    ///
+    /// See [`Llama::forward_embeddings_with_cache`] for the embeddings
+    /// contract; this variant only materializes the final token's logits.
+    pub fn forward_last_logits_embeddings_with_cache(
+        &self,
+        backend: &B,
+        embeddings: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+    ) -> Result<B::Tensor, B::Error> {
+        let mut hooks = DisabledHooks;
+        self.forward_last_logits_embeddings_with_cache_hooked(
+            backend, embeddings, cache, start_pos, &mut hooks,
+        )
     }
 
     fn forward_last_logits_with_cache_hooked<H>(
@@ -2798,13 +2848,39 @@ impl<B: Backend> Llama<B> {
             trace::bytes_from_shape(&[seq_len, embed_dim]),
             trace::flops_embedding(),
         );
-        let mut x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
+        let x = llama_embed_tokens(backend, &self.embed_tokens, token_ids, embed_dim)?;
         if let Some(s) = _span_emb {
             s.end(
                 vec![seq_len, embed_dim],
                 trace::bytes_from_shape(&[seq_len, embed_dim]),
             );
         }
+
+        self.forward_last_logits_embeddings_with_cache_hooked(backend, &x, cache, start_pos, hooks)
+    }
+
+    /// last-logits forward over precomputed embeddings (hooked).
+    ///
+    /// See [`Llama::forward_embeddings_with_cache`] for the embeddings
+    /// contract; this variant only materializes the final token's logits.
+    pub(crate) fn forward_last_logits_embeddings_with_cache_hooked<H>(
+        &self,
+        backend: &B,
+        embeddings: &B::Tensor,
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        hooks: &mut H,
+    ) -> Result<B::Tensor, B::Error>
+    where
+        H: LayerHooks<B::Tensor, B::Error>,
+    {
+        use crate::trace::{self, OpKind};
+
+        cache.validate_start_pos(start_pos);
+        let seq_len = backend.shape(embeddings)[0];
+        let embed_dim = self.config.embed_dim;
+        assert!(seq_len > 0, "Llama forward requires at least one embedding");
+        let mut x = embeddings.clone();
 
         for (layer, block) in self.blocks.iter().enumerate() {
             hooks.before_layer(layer, &mut x)?;
