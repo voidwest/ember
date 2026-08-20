@@ -9,6 +9,7 @@ mod cli_generation;
 mod cli_kv;
 mod cli_multimodal;
 mod cli_probe;
+mod cli_score_batch;
 
 use cli_commands::{
     effective_context_limit, run_bench_decode_command, run_bench_lifecycle_command,
@@ -303,6 +304,9 @@ pub(crate) enum Commands {
 
     /// image-conditioned generation + validation dumps (multimodal foundation)
     Multimodal(cli_multimodal::MultimodalCommand),
+
+    /// batch greedy generation / next-token logprob scoring (one resident model)
+    ScoreBatch(cli_score_batch::ScoreBatchCommand),
 
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
@@ -693,6 +697,9 @@ fn main() -> anyhow::Result<()> {
                 cli_kv::run_kv_command(command, k_strategy, args.k_allow_fallback)
             }
             Commands::Multimodal(command) => cli_multimodal::run_multimodal_command(command, &args),
+            Commands::ScoreBatch(command) => {
+                cli_score_batch::run_score_batch_command(command, k_strategy, args.k_allow_fallback)
+            }
             Commands::Experiment(command) => match &command.command {
                 cli_experiment::ExperimentSubcommand::Validate(command) => {
                     cli_experiment::run_validate_command(command)
