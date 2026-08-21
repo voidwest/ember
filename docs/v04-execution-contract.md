@@ -392,6 +392,11 @@ provenance and run artifacts.
   per-run allocation events. Gate E separately asserts zero warmed K-matmul
   workspace allocations and the documented logits/all-scheduler envelope for
   a full decode; it does not label output materialization as arena scratch.
+  The all-scheduler envelope is 3 logits allocations plus up to 2 rayon job
+  allocations per token (main-thread `join` injections fall back to a heap
+  allocation when the pool's job cache is empty; the second allowance was
+  added 2026-08-21 when the K/V projections joined the column-parallel
+  matvec set and doubled the per-token injection count).
 - Diagnostic mode reports: total scratch bytes, region names, offsets,
   alignments, maximum live interval, and whether any decode-time
   allocation occurred.

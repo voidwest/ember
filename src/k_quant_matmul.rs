@@ -13,7 +13,7 @@ use rayon::join;
 use std::cell::RefCell;
 
 const PARALLEL_LEAF_OUTPUTS: usize = 256;
-const PARALLEL_MIN_MACS: usize = 2_000_000;
+const PARALLEL_MIN_MACS: usize = 512_000;
 
 #[cfg(test)]
 mod route_probe {
@@ -340,6 +340,62 @@ mod x86 {
     use super::*;
     use core::arch::x86_64::*;
 
+    /// vpshufb masks for the Q4_K scale broadcast. `k4_shuffle(i)` broadcasts
+    /// scale word `i` (i = 2g for the low-nibble scale of group g, 2g + 1 for
+    /// the high-nibble scale) across all 16 i16 lanes of the scale register;
+    /// both 128-bit lanes of the source hold the same eight scale words.
+    const K4_SCALE_SHUFFLES: [u8; 256] = [
+        0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1,
+        0, 1, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3,
+        2, 3, 2, 3, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5, 4, 5,
+        4, 5, 4, 5, 4, 5, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7, 6, 7,
+        6, 7, 6, 7, 6, 7, 6, 7, 8, 9, 8, 9, 8, 9, 8, 9, 8, 9, 8, 9, 8, 9, 8, 9, 8, 9, 8, 9, 8, 9,
+        8, 9, 8, 9, 8, 9, 8, 9, 8, 9, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 10,
+        11, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 10, 11, 12, 13, 12, 13, 12, 13,
+        12, 13, 12, 13, 12, 13, 12, 13, 12, 13, 12, 13, 12, 13, 12, 13, 12, 13, 12, 13, 12, 13, 12,
+        13, 12, 13, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15,
+        14, 15, 14, 15, 14, 15, 14, 15, 14, 15, 14, 15,
+    ];
+
+    /// vpshufb masks for the Q6_K scale broadcast. `q6_shuffle(s)` broadcasts
+    /// scale pair (2s, 2s + 1) across the 16 bytes: lanes 0..7 carry scale
+    /// 2s, lanes 8..15 carry scale 2s + 1, matching the 32-weight segment
+    /// layout of the dot product.
+    const Q6_SCALE_SHUFFLES: [u8; 128] = [
+        0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3,
+        3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 7, 7, 7,
+        7, 7, 7, 7, 8, 8, 8, 8, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 10, 10, 10, 10, 10, 10,
+        11, 11, 11, 11, 11, 11, 11, 11, 12, 12, 12, 12, 12, 12, 12, 12, 13, 13, 13, 13, 13, 13, 13,
+        13, 14, 14, 14, 14, 14, 14, 14, 14, 15, 15, 15, 15, 15, 15, 15, 15,
+    ];
+
+    #[inline]
+    unsafe fn k4_shuffle(index: usize) -> __m256i {
+        debug_assert!(index < 8);
+        unsafe { _mm256_loadu_si256(K4_SCALE_SHUFFLES.as_ptr().add(32 * index).cast()) }
+    }
+
+    #[inline]
+    unsafe fn q6_shuffle(index: usize) -> __m128i {
+        debug_assert!(index < 8);
+        unsafe { _mm_loadu_si128(Q6_SCALE_SHUFFLES.as_ptr().add(16 * index).cast()) }
+    }
+
+    /// Experimental AVX-512 gate (see `q4_k_dot_q8_k_avx512`): opt-in via
+    /// `EMBER_K_AVX512=1`, runtime-checked, read once per process.
+    #[inline]
+    pub(super) fn k_avx512_enabled() -> bool {
+        use std::sync::OnceLock;
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| {
+            std::env::var_os("EMBER_K_AVX512").is_some_and(|v| v == "1")
+                && is_x86_feature_detected!("avx512f")
+                && is_x86_feature_detected!("avx512bw")
+                && is_x86_feature_detected!("avx512dq")
+                && is_x86_feature_detected!("avx512vl")
+        })
+    }
+
     #[inline]
     #[target_feature(enable = "f16c")]
     unsafe fn f16_to_f32(bits: u16) -> f32 {
@@ -495,19 +551,39 @@ mod x86 {
         input: &[Q8KBlock],
     ) -> f32 {
         unsafe {
-            let row_start = column * blocks_per_row * Q4_K_BLOCK_BYTES;
+            let row = data
+                .as_ptr()
+                .add(column * blocks_per_row * Q4_K_BLOCK_BYTES);
             let nibble_mask = _mm256_set1_epi8(0x0f);
             let mut acc = _mm256_setzero_ps();
             let mut min_acc = _mm_setzero_ps();
             for (block_index, activation) in input.iter().enumerate() {
-                let start = row_start + block_index * Q4_K_BLOCK_BYTES;
-                let block = &data[start..start + Q4_K_BLOCK_BYTES];
-                let d = f16_to_f32(u16::from_le_bytes([block[0], block[1]]));
-                let dmin = f16_to_f32(u16::from_le_bytes([block[2], block[3]]));
-                let (scales, mins) = unpack_k4_scales(&block[4..16]);
+                let block = row.add(block_index * Q4_K_BLOCK_BYTES);
+                let d = f16_to_f32(*block.cast::<u16>());
+                let dmin = f16_to_f32(*block.add(2).cast::<u16>());
+                // Unpack the 12 scale/min bytes into one 16-byte vector
+                // (8 scales + 8 mins) with the four-scalar shuffle (same
+                // dataflow as ggml's q4_K dot): a handful of scalar ops
+                // instead of a per-byte unpack with stack spills, and the
+                // scale register then feeds shuffle-based broadcasts.
+                let s0 = *block.add(4).cast::<u32>();
+                let s1 = *block.add(8).cast::<u32>();
+                let s2 = *block.add(12).cast::<u32>();
+                let utmp0 = s0 & 0x3f3f_3f3f;
+                let utmp1 = (s2 & 0x0f0f_0f0f) | (((s0 >> 6) & 0x0303_0303) << 4);
+                let utmp2 = s1 & 0x3f3f_3f3f;
+                let utmp3 = ((s2 >> 4) & 0x0f0f_0f0f) | (((s1 >> 6) & 0x0303_0303) << 4);
+                let mins_and_scales = _mm256_cvtepu8_epi16(_mm_set_epi32(
+                    utmp3 as i32,
+                    utmp2 as i32,
+                    utmp1 as i32,
+                    utmp0 as i32,
+                ));
+                let sc128 = _mm256_extracti128_si256::<0>(mins_and_scales);
+                let scales = _mm256_set_m128i(sc128, sc128);
                 let mut integer_sum = _mm256_setzero_si256();
                 for group in 0..4 {
-                    let packed = _mm256_loadu_si256(block.as_ptr().add(16 + group * 32).cast());
+                    let packed = _mm256_loadu_si256(block.add(16 + group * 32).cast());
                     let low = _mm256_and_si256(packed, nibble_mask);
                     let high = _mm256_and_si256(_mm256_srli_epi16(packed, 4), nibble_mask);
                     let q8_low = _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
@@ -515,8 +591,8 @@ mod x86 {
                         _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
                     let low_pairs = _mm256_maddubs_epi16(low, q8_low);
                     let high_pairs = _mm256_maddubs_epi16(high, q8_high);
-                    let low_scale = _mm256_set1_epi16(i16::from(scales[2 * group]));
-                    let high_scale = _mm256_set1_epi16(i16::from(scales[2 * group + 1]));
+                    let low_scale = _mm256_shuffle_epi8(scales, k4_shuffle(2 * group));
+                    let high_scale = _mm256_shuffle_epi8(scales, k4_shuffle(2 * group + 1));
                     integer_sum =
                         _mm256_add_epi32(integer_sum, _mm256_madd_epi16(low_scale, low_pairs));
                     integer_sum =
@@ -524,11 +600,12 @@ mod x86 {
                 }
                 let scale = _mm256_set1_ps(activation.d * d);
                 acc = _mm256_fmadd_ps(scale, _mm256_cvtepi32_ps(integer_sum), acc);
-                let mins8 = _mm_loadl_epi64(mins.as_ptr().cast());
-                let mins16 = _mm_unpacklo_epi8(mins8, _mm_setzero_si128());
-                let sums_low = _mm_loadu_si128(activation.bsums.as_ptr().cast());
-                let sums_high = _mm_loadu_si128(activation.bsums.as_ptr().add(8).cast());
-                let paired_sums = _mm_hadd_epi16(sums_low, sums_high);
+                let q8sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
+                let paired_sums = _mm_hadd_epi16(
+                    _mm256_extracti128_si256::<0>(q8sums),
+                    _mm256_extracti128_si256::<1>(q8sums),
+                );
+                let mins16 = _mm256_extracti128_si256::<1>(mins_and_scales);
                 let min_product = _mm_madd_epi16(mins16, paired_sums);
                 min_acc = _mm_fmadd_ps(
                     _mm_set1_ps(-activation.d * dmin),
@@ -554,19 +631,28 @@ mod x86 {
         input: &[Q8KBlock],
     ) -> f32 {
         unsafe {
-            let row_start = column * blocks_per_row * Q6_K_BLOCK_BYTES;
+            let row = data
+                .as_ptr()
+                .add(column * blocks_per_row * Q6_K_BLOCK_BYTES);
             let mask3 = _mm256_set1_epi8(3);
+            let mask12 = _mm256_set1_epi8(12);
             let mask15 = _mm256_set1_epi8(15);
+            let mask48 = _mm256_set1_epi8(48);
+            let mask_signed = _mm256_set1_epi8(-64);
             let mut acc = _mm256_setzero_ps();
             for (block_index, activation) in input.iter().enumerate() {
-                let start = row_start + block_index * Q6_K_BLOCK_BYTES;
-                let block = &data[start..start + Q6_K_BLOCK_BYTES];
-                let d = f16_to_f32(u16::from_le_bytes([block[208], block[209]]));
-                let scales = &block[192..208];
+                let block = row.add(block_index * Q6_K_BLOCK_BYTES);
+                let d = f16_to_f32(*block.add(208).cast::<u16>());
+                // Unpack the 16 scale bytes once per block: they feed the
+                // eight segment broadcasts and the bsums offset correction.
+                let scale_bytes = _mm_loadu_si128(block.add(192).cast());
+                let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
+                let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
+                let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
                 let mut integer_sum = _mm256_setzero_si256();
                 for half in 0..2 {
-                    let ql = block.as_ptr().add(half * 64);
-                    let qh = block.as_ptr().add(128 + half * 32);
+                    let ql = block.add(half * 64);
+                    let qh = block.add(128 + half * 32);
                     let q8 = activation.qs.as_ptr().add(half * 128);
                     let low_a = _mm256_loadu_si256(ql.cast());
                     let low_b = _mm256_loadu_si256(ql.add(32).cast());
@@ -578,36 +664,207 @@ mod x86 {
                         ),
                         _mm256_or_si256(
                             _mm256_and_si256(low_b, mask15),
-                            _mm256_slli_epi16(_mm256_and_si256(high_bits, _mm256_set1_epi8(12)), 2),
+                            _mm256_slli_epi16(_mm256_and_si256(high_bits, mask12), 2),
                         ),
                         _mm256_or_si256(
                             _mm256_and_si256(_mm256_srli_epi16(low_a, 4), mask15),
-                            _mm256_and_si256(high_bits, _mm256_set1_epi8(48)),
+                            _mm256_and_si256(high_bits, mask48),
                         ),
                         _mm256_or_si256(
                             _mm256_and_si256(_mm256_srli_epi16(low_b, 4), mask15),
-                            _mm256_srli_epi16(
-                                _mm256_and_si256(high_bits, _mm256_set1_epi8(-64)),
-                                2,
-                            ),
+                            _mm256_srli_epi16(_mm256_and_si256(high_bits, mask_signed), 2),
                         ),
                     ];
                     for (segment, &raw_values) in raw.iter().enumerate() {
                         let q8_values = _mm256_loadu_si256(q8.add(segment * 32).cast());
                         let pairs = _mm256_maddubs_epi16(raw_values, q8_values);
-                        let scale_base = half * 8 + segment * 2;
-                        let scale_vector = scales_for_32(
-                            i8::from_le_bytes([scales[scale_base]]),
-                            i8::from_le_bytes([scales[scale_base + 1]]),
-                        );
+                        // Segment (half, s) uses scale pair (half * 8 + 2s,
+                        // half * 8 + 2s + 1): one pshufb + one sign-extend
+                        // replaces a two-scalar broadcast build per segment.
+                        let scale_shuffled =
+                            _mm_shuffle_epi8(scale_bytes, q6_shuffle(half * 4 + segment));
+                        let scale_vector = _mm256_cvtepi8_epi16(scale_shuffled);
                         integer_sum =
                             _mm256_add_epi32(integer_sum, _mm256_madd_epi16(scale_vector, pairs));
                     }
                 }
-                let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
-                let scale_bytes = _mm_loadu_si128(scales.as_ptr().cast());
+                integer_sum = _mm256_sub_epi32(integer_sum, offset);
+                let combined_scale = activation.d * d;
+                acc = _mm256_fmadd_ps(
+                    _mm256_set1_ps(combined_scale),
+                    _mm256_cvtepi32_ps(integer_sum),
+                    acc,
+                );
+            }
+            hsum_f32x8(acc)
+        }
+    }
+
+    /// Experimental AVX-512 Q4_K dot (EVEX-encoded, 32 vector registers).
+    /// Same integer math as [`q4_k_dot_q8_k`]: bit-identical results, but the
+    /// extra register file lets the eight scale-shuffle constants stay live.
+    /// Gated behind `EMBER_K_AVX512=1` until measured on healthy hosts.
+    #[target_feature(enable = "avx2,fma,f16c,ssse3,avx512f,avx512bw,avx512dq,avx512vl")]
+    /// # Safety
+    ///
+    /// Caller must ensure the full feature set is runtime-checked and the
+    /// data/input layout contract of [`q4_k_dot_q8_k`] holds.
+    pub(super) unsafe fn q4_k_dot_q8_k_avx512(
+        data: &[u8],
+        blocks_per_row: usize,
+        column: usize,
+        input: &[Q8KBlock],
+    ) -> f32 {
+        unsafe {
+            let row = data
+                .as_ptr()
+                .add(column * blocks_per_row * Q4_K_BLOCK_BYTES);
+            let nibble_mask = _mm256_set1_epi8(0x0f);
+            let mut acc = _mm256_setzero_ps();
+            let mut min_acc = _mm_setzero_ps();
+            let shuffles = [
+                k4_shuffle(0),
+                k4_shuffle(1),
+                k4_shuffle(2),
+                k4_shuffle(3),
+                k4_shuffle(4),
+                k4_shuffle(5),
+                k4_shuffle(6),
+                k4_shuffle(7),
+            ];
+            for (block_index, activation) in input.iter().enumerate() {
+                let block = row.add(block_index * Q4_K_BLOCK_BYTES);
+                let d = f16_to_f32(*block.cast::<u16>());
+                let dmin = f16_to_f32(*block.add(2).cast::<u16>());
+                let s0 = *block.add(4).cast::<u32>();
+                let s1 = *block.add(8).cast::<u32>();
+                let s2 = *block.add(12).cast::<u32>();
+                let utmp0 = s0 & 0x3f3f_3f3f;
+                let utmp1 = (s2 & 0x0f0f_0f0f) | (((s0 >> 6) & 0x0303_0303) << 4);
+                let utmp2 = s1 & 0x3f3f_3f3f;
+                let utmp3 = ((s2 >> 4) & 0x0f0f_0f0f) | (((s1 >> 6) & 0x0303_0303) << 4);
+                let mins_and_scales = _mm256_cvtepu8_epi16(_mm_set_epi32(
+                    utmp3 as i32,
+                    utmp2 as i32,
+                    utmp1 as i32,
+                    utmp0 as i32,
+                ));
+                let sc128 = _mm256_extracti128_si256::<0>(mins_and_scales);
+                let scales = _mm256_set_m128i(sc128, sc128);
+                let mut integer_sum = _mm256_setzero_si256();
+                for group in 0..4 {
+                    let packed = _mm256_loadu_si256(block.add(16 + group * 32).cast());
+                    let low = _mm256_and_si256(packed, nibble_mask);
+                    let high = _mm256_and_si256(_mm256_srli_epi16(packed, 4), nibble_mask);
+                    let q8_low = _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64).cast());
+                    let q8_high =
+                        _mm256_loadu_si256(activation.qs.as_ptr().add(group * 64 + 32).cast());
+                    let low_pairs = _mm256_maddubs_epi16(low, q8_low);
+                    let high_pairs = _mm256_maddubs_epi16(high, q8_high);
+                    let low_scale = _mm256_shuffle_epi8(scales, shuffles[2 * group]);
+                    let high_scale = _mm256_shuffle_epi8(scales, shuffles[2 * group + 1]);
+                    integer_sum =
+                        _mm256_add_epi32(integer_sum, _mm256_madd_epi16(low_scale, low_pairs));
+                    integer_sum =
+                        _mm256_add_epi32(integer_sum, _mm256_madd_epi16(high_scale, high_pairs));
+                }
+                let scale = _mm256_set1_ps(activation.d * d);
+                acc = _mm256_fmadd_ps(scale, _mm256_cvtepi32_ps(integer_sum), acc);
+                let q8sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
+                let paired_sums = _mm_hadd_epi16(
+                    _mm256_extracti128_si256::<0>(q8sums),
+                    _mm256_extracti128_si256::<1>(q8sums),
+                );
+                let mins16 = _mm256_extracti128_si256::<1>(mins_and_scales);
+                let min_product = _mm_madd_epi16(mins16, paired_sums);
+                min_acc = _mm_fmadd_ps(
+                    _mm_set1_ps(-activation.d * dmin),
+                    _mm_cvtepi32_ps(min_product),
+                    min_acc,
+                );
+            }
+            hsum_f32x8(acc) + hsum_f32x4(min_acc)
+        }
+    }
+
+    /// Experimental AVX-512 Q6_K dot: EVEX encoding plus `vpternlogq` to fuse
+    /// the nibble/high-bit assembly (four two-operand and/or ops become one
+    /// three-input boolean op per segment). Bit-identical to
+    /// [`q6_k_dot_q8_k`]. Gated behind `EMBER_K_AVX512=1` (see above).
+    #[target_feature(enable = "avx2,fma,f16c,ssse3,avx512f,avx512bw,avx512dq,avx512vl")]
+    /// # Safety
+    ///
+    /// Caller must ensure the full feature set is runtime-checked and the
+    /// data/input layout contract of [`q6_k_dot_q8_k`] holds.
+    pub(super) unsafe fn q6_k_dot_q8_k_avx512(
+        data: &[u8],
+        blocks_per_row: usize,
+        column: usize,
+        input: &[Q8KBlock],
+    ) -> f32 {
+        unsafe {
+            let row = data
+                .as_ptr()
+                .add(column * blocks_per_row * Q6_K_BLOCK_BYTES);
+            let mask3 = _mm256_set1_epi8(3);
+            let mask12 = _mm256_set1_epi8(12);
+            let mask48 = _mm256_set1_epi8(48);
+            let mask_signed = _mm256_set1_epi8(-64);
+            // Byte-uniform selectors for `vpternlogq`: imm 0xD2 = (a & ~c) |
+            // (b & c), imm 0xE4 = (a & c) | (b & ~c).
+            let select_high = _mm256_set1_epi8(0x30);
+            let select_low = _mm256_set1_epi8(0x0f);
+            let mut acc = _mm256_setzero_ps();
+            for (block_index, activation) in input.iter().enumerate() {
+                let block = row.add(block_index * Q6_K_BLOCK_BYTES);
+                let d = f16_to_f32(*block.add(208).cast::<u16>());
+                let scale_bytes = _mm_loadu_si128(block.add(192).cast());
                 let scale_words = _mm256_cvtepi8_epi16(scale_bytes);
+                let sums = _mm256_loadu_si256(activation.bsums.as_ptr().cast());
                 let offset = _mm256_slli_epi32(_mm256_madd_epi16(sums, scale_words), 5);
+                let mut integer_sum = _mm256_setzero_si256();
+                for half in 0..2 {
+                    let ql = block.add(half * 64);
+                    let qh = block.add(128 + half * 32);
+                    let q8 = activation.qs.as_ptr().add(half * 128);
+                    let low_a = _mm256_loadu_si256(ql.cast());
+                    let low_b = _mm256_loadu_si256(ql.add(32).cast());
+                    let high_bits = _mm256_loadu_si256(qh.cast());
+                    let high_shifted = [
+                        _mm256_slli_epi16(_mm256_and_si256(high_bits, mask3), 4),
+                        _mm256_slli_epi16(_mm256_and_si256(high_bits, mask12), 2),
+                        high_bits,
+                        high_bits,
+                    ];
+                    // imm 0xD2 = (a & ~c) | (b & c): low nibble from `a`,
+                    // high nibble from the shifted `b`. imm 0xE4 = (a & c) |
+                    // (b & ~c): the inverse selection.
+                    let raw = [
+                        _mm256_ternarylogic_epi32(low_a, high_shifted[0], select_high, 0xD2),
+                        _mm256_ternarylogic_epi32(low_b, high_shifted[1], select_high, 0xD2),
+                        _mm256_ternarylogic_epi32(
+                            _mm256_srli_epi16(low_a, 4),
+                            _mm256_and_si256(high_shifted[2], mask48),
+                            select_low,
+                            0xE4,
+                        ),
+                        _mm256_ternarylogic_epi32(
+                            _mm256_srli_epi16(low_b, 4),
+                            _mm256_srli_epi16(_mm256_and_si256(high_shifted[3], mask_signed), 2),
+                            select_low,
+                            0xE4,
+                        ),
+                    ];
+                    for (segment, &raw_values) in raw.iter().enumerate() {
+                        let q8_values = _mm256_loadu_si256(q8.add(segment * 32).cast());
+                        let pairs = _mm256_maddubs_epi16(raw_values, q8_values);
+                        let scale_shuffled =
+                            _mm_shuffle_epi8(scale_bytes, q6_shuffle(half * 4 + segment));
+                        let scale_vector = _mm256_cvtepi8_epi16(scale_shuffled);
+                        integer_sum =
+                            _mm256_add_epi32(integer_sum, _mm256_madd_epi16(scale_vector, pairs));
+                    }
+                }
                 integer_sum = _mm256_sub_epi32(integer_sum, offset);
                 let combined_scale = activation.d * d;
                 acc = _mm256_fmadd_ps(
@@ -958,6 +1215,20 @@ fn dot_column(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> f32 {
         if route_probe::is_target(w) {
             route_probe::X86_DOTS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
+        if x86::k_avx512_enabled() {
+            // SAFETY: the flag gate runtime-checks the AVX-512 feature set;
+            // weight layout is validated at construction.
+            return unsafe {
+                match w.dtype() {
+                    KQuantDtype::Q4K => {
+                        x86::q4_k_dot_q8_k_avx512(w.data(), w.blocks_per_row(), column, input)
+                    }
+                    KQuantDtype::Q6K => {
+                        x86::q6_k_dot_q8_k_avx512(w.data(), w.blocks_per_row(), column, input)
+                    }
+                }
+            };
+        }
         // SAFETY: `validate` rejects a recorded x86 strategy when AVX2/FMA/F16C/SSSE3 is
         // unavailable. Weight layout is validated at construction.
         return unsafe {
@@ -1095,8 +1366,24 @@ fn parallel_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f
     if route_probe::is_target(w) {
         route_probe::PARALLEL_BODIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
-    fn recurse(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, mut dst: DstColumns) {
-        if dst.count <= PARALLEL_LEAF_OUTPUTS {
+    // Split into ~two leaves per worker so work-stealing can smooth the tail
+    // (low-column projections such as K/V otherwise leave most workers idle).
+    // Floor at 128 columns per leaf: below that, per-leaf dispatch and
+    // crossbeam steal overhead dominate the dots themselves.
+    let leaf_outputs = PARALLEL_LEAF_OUTPUTS
+        .min(
+            w.out_features()
+                .div_ceil(2 * rayon::current_num_threads().max(1)),
+        )
+        .max(128);
+    fn recurse(
+        input: &[Q8KBlock],
+        rows: usize,
+        w: &KQuantWeight,
+        mut dst: DstColumns,
+        leaf_outputs: usize,
+    ) {
+        if dst.count <= leaf_outputs {
             #[cfg(test)]
             route_probe::record_worker(w);
             let blocks_per_row = w.blocks_per_row();
@@ -1145,11 +1432,17 @@ fn parallel_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f
         }
         let (low_dst, high_dst) = dst.split();
         join(
-            move || recurse(input, rows, w, low_dst),
-            move || recurse(input, rows, w, high_dst),
+            move || recurse(input, rows, w, low_dst, leaf_outputs),
+            move || recurse(input, rows, w, high_dst, leaf_outputs),
         );
     }
-    recurse(input, rows, w, DstColumns::new(dst, rows, w.out_features()));
+    recurse(
+        input,
+        rows,
+        w,
+        DstColumns::new(dst, rows, w.out_features()),
+        leaf_outputs,
+    );
 }
 
 #[inline]

@@ -721,12 +721,17 @@ fn v04_planned_zero_steady_state_allocation_real_model() {
     eprintln!("gate-e allocation counts: {counts:?}");
     let allocations = counts[0];
     // Accounted steady-state allocations: 3 for the logits CpuTensor
-    // (shape + strides + data) plus 1 for rayon's per-iterator job
-    // structure of the column-parallel matvec when the shared pool is busy
-    // (measured 0 on a quiet pool, 0 with serial matvecs). Anything beyond
-    // this documented constant is a leak.
+    // (shape + strides + data) plus up to 2 for rayon's per-iterator job
+    // structure of the column-parallel matvecs when the shared pool is busy
+    // (measured 0 on a quiet pool, 0 with serial matvecs). The second job
+    // allocation was added when the K/V projections joined the
+    // column-parallel set (decode optimization, 2026-08-21): each
+    // main-thread `join` injects jobs that fall back to a heap allocation
+    // when the pool's job cache is empty, and the K/V dispatches double the
+    // per-token injection count. Anything beyond this documented constant
+    // is a leak.
     assert!(
-        allocations <= 4,
-        "planned decode allocated {allocations} times per token on the real model; expected at most 4 (3 logits + 1 rayon job under pool contention)"
+        allocations <= 5,
+        "planned decode allocated {allocations} times per token on the real model; expected at most 5 (3 logits + up to 2 rayon jobs under pool contention)"
     );
 }
