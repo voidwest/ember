@@ -23,9 +23,10 @@ pub(crate) struct MultimodalCommand {
     #[arg(long)]
     tokenizer: String,
 
-    /// image file (PNG/JPEG)
-    #[arg(long)]
-    image: String,
+    /// image file(s) (PNG/JPEG); repeat the flag for multiple images. Each
+    /// image binds to one `<image>` placeholder in the prompt, in order.
+    #[arg(long = "image", value_name = "FILE")]
+    image: Vec<String>,
 
     /// user prompt; use <image> as the image placeholder (image-first)
     #[arg(long, default_value = "What is shown in this image?")]
@@ -38,9 +39,17 @@ pub(crate) struct MultimodalCommand {
     /// write progressive-validation artifacts to this directory
     #[arg(long)]
     dump_dir: Option<PathBuf>,
+
+    /// run the traced pipeline once and print per-op stage timings
+    #[arg(long)]
+    profile: bool,
 }
 
 pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) -> Result<()> {
+    anyhow::ensure!(
+        !command.image.is_empty(),
+        "--image is required (repeat the flag for multiple images)"
+    );
     let backend = CpuBackend;
     let model = SmolVlm::from_ggufs(
         std::path::Path::new(&command.model),
@@ -49,28 +58,110 @@ pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) 
     let tokenizer = EmberTokenizer::from_file(&command.tokenizer)
         .with_context(|| format!("failed to load tokenizer {}", command.tokenizer))?;
 
-    // Reference message structure: content = [image, text], so the prompt
-    // is image-first. Prepend the placeholder when the user did not include
-    // one (the assembler itself fails closed without it).
-    let prompt = if command.prompt.contains("<image>") {
-        command.prompt.clone()
-    } else {
-        format!("<image>{}", command.prompt)
-    };
-    let (generated, text, timings) = model.generate_with_image(
-        &backend,
-        &tokenizer,
-        std::path::Path::new(&command.image),
-        &prompt,
-        command.max_tokens,
-    )?;
+    // Bind images to <image> placeholders in order. With exactly one image
+    // and no explicit placeholder, prepend one (the historical behavior:
+    // reference messages are image-first). With multiple images the prompt
+    // must carry every placeholder explicitly.
+    let mut placeholders = command.prompt.matches("<image>").count();
+    let mut prompt = command.prompt.clone();
+    if command.image.len() == 1 && placeholders == 0 {
+        prompt = format!("<image>{prompt}");
+        placeholders = 1;
+    }
+    anyhow::ensure!(
+        placeholders == command.image.len(),
+        "prompt has {placeholders} <image> placeholders but {} --image flags were given",
+        command.image.len()
+    );
+    let parts: Vec<ember::multimodal::InputPart> =
+        std::iter::once(ember::multimodal::InputPart::Text(prompt.to_string()))
+            .chain(
+                command
+                    .image
+                    .iter()
+                    .map(|p| ember::multimodal::InputPart::Image(std::path::PathBuf::from(p))),
+            )
+            .collect();
+    let (generated, text, timings) =
+        model.generate_with_parts(&backend, &tokenizer, &parts, command.max_tokens)?;
 
     println!("generated ({} tokens): {}", generated.len(), text);
     print_timings(&timings);
 
+    if command.profile {
+        print_op_profile(
+            &model,
+            &backend,
+            &tokenizer,
+            &prompt,
+            std::path::Path::new(&command.image[0]),
+        )?;
+    }
+
     if let Some(dir) = &command.dump_dir {
         dump_validation_artifacts(&model, &backend, &tokenizer, command, &prompt, dir)?;
     }
+    Ok(())
+}
+
+/// One traced pass over the whole multimodal input pipeline, printing
+/// per-op vision timings and preprocess sub-stage timings.
+fn print_op_profile(
+    model: &SmolVlm,
+    backend: &CpuBackend,
+    tokenizer: &EmberTokenizer,
+    prompt: &str,
+    image: &std::path::Path,
+) -> Result<()> {
+    let t0 = std::time::Instant::now();
+    let decoded = ember::multimodal::image::decode_rgb(image)?;
+    let processed = ember::multimodal::image::preprocess(&decoded, &model.preprocess_config)?;
+    let decode_ms = t0.elapsed().as_secs_f64() * 1e3;
+    drop(processed);
+
+    let (trace, _seq) = model.build_inputs_with_tokenizer(backend, tokenizer, image, prompt, 0)?;
+
+    println!("op profile (one traced pass):");
+    println!("  image decode            : {:8.1} ms", decode_ms);
+    println!(
+        "  preprocess resize       : {:8.1} ms",
+        trace
+            .images
+            .first()
+            .map(|p| p.timings.resize_ms)
+            .unwrap_or(0.0)
+    );
+    println!(
+        "  preprocess tile         : {:8.1} ms",
+        trace
+            .images
+            .first()
+            .map(|p| p.timings.tile_ms)
+            .unwrap_or(0.0)
+    );
+    println!(
+        "  preprocess normalize    : {:8.1} ms",
+        trace
+            .images
+            .first()
+            .map(|p| p.timings.normalize_ms)
+            .unwrap_or(0.0)
+    );
+    let t = &trace.vision.op_timings;
+    println!("  patch embed (im2col+mm) : {:8.1} ms", t.patch_embed_ms);
+    println!("  position embed add      : {:8.1} ms", t.pos_embed_ms);
+    println!("  layernorms (2/layer)    : {:8.1} ms", t.ln_ms);
+    println!("  q/k/v projections       : {:8.1} ms", t.qkv_proj_ms);
+    println!("  attn scores (qk^T)      : {:8.1} ms", t.attn_scores_ms);
+    println!("  attn softmax            : {:8.1} ms", t.softmax_ms);
+    println!("  attn values (pv)        : {:8.1} ms", t.attn_values_ms);
+    println!("  out projection          : {:8.1} ms", t.out_proj_ms);
+    println!("  residual adds + slicing : {:8.1} ms", t.residual_add_ms);
+    println!("  mlp fc1                 : {:8.1} ms", t.fc1_ms);
+    println!("  gelu (tanh)             : {:8.1} ms", t.gelu_ms);
+    println!("  mlp fc2                 : {:8.1} ms", t.fc2_ms);
+    println!("  post layernorm          : {:8.1} ms", t.post_ln_ms);
+    println!("  vision total (accounted): {:8.1} ms", t.total_ms());
     Ok(())
 }
 
@@ -103,18 +194,38 @@ fn dump_validation_artifacts(
     use ember::model::ForwardModel;
     std::fs::create_dir_all(dir)?;
 
-    let (trace, sequence) = model.build_inputs_with_tokenizer(
-        backend,
-        tokenizer,
-        std::path::Path::new(&command.image),
-        prompt,
-        0,
-    )?;
+    let (trace, sequence) = {
+        let parts: Vec<ember::multimodal::InputPart> =
+            std::iter::once(ember::multimodal::InputPart::Text(prompt.to_string()))
+                .chain(
+                    command
+                        .image
+                        .iter()
+                        .map(|p| ember::multimodal::InputPart::Image(std::path::PathBuf::from(p))),
+                )
+                .collect();
+        model.build_inputs_parts(backend, tokenizer, &parts, 0)?
+    };
 
     let mut shapes: Vec<(String, Vec<usize>)> = Vec::new();
 
-    // 1. processed pixel tensor [n, 3, 512, 512]
-    write_bin(dir, "1_pixels", &trace.processed.tiles, &mut shapes)?;
+    // 1. processed pixel tensor: all tiles of all images concatenated
+    //    ([total_tiles, 3, 512, 512]; matches the reference pixel_values)
+    if !trace.images.is_empty() {
+        let first = &trace.images[0].tiles;
+        let (channels, height, width) = (first.shape()[1], first.shape()[2], first.shape()[3]);
+        let tile_len = channels * height * width;
+        let total_tiles: usize = trace.images.iter().map(|p| p.tiles.shape()[0]).sum();
+        let mut pixels = vec![0.0f32; total_tiles * tile_len];
+        let mut off = 0usize;
+        for p in &trace.images {
+            pixels[off..off + p.tiles.len()].copy_from_slice(p.tiles.data());
+            off += p.tiles.len();
+        }
+        let tiles =
+            ember::tensor::CpuTensor::from_data(vec![total_tiles, channels, height, width], pixels);
+        write_bin(dir, "1_pixels", &tiles, &mut shapes)?;
+    }
 
     // 2. patch embeddings [n*1024, 768]
     if let Some(p) = &trace.vision.patch_embeddings {
@@ -162,13 +273,17 @@ fn dump_validation_artifacts(
     write_bin(dir, "7_first_logits", &logits, &mut shapes)?;
 
     // 8. greedy generation ids + per-step logits (for near-tie analysis)
-    let (generated, text, timings) = model.generate_with_image(
-        backend,
-        tokenizer,
-        std::path::Path::new(&command.image),
-        prompt,
-        command.max_tokens,
-    )?;
+    let parts: Vec<ember::multimodal::InputPart> =
+        std::iter::once(ember::multimodal::InputPart::Text(prompt.to_string()))
+            .chain(
+                command
+                    .image
+                    .iter()
+                    .map(|p| ember::multimodal::InputPart::Image(std::path::PathBuf::from(p))),
+            )
+            .collect();
+    let (generated, text, timings) =
+        model.generate_with_parts(backend, tokenizer, &parts, command.max_tokens)?;
     {
         // replay the decode loop on a fresh cache to capture step logits.
         // Step 0 is the prefill's last-position logits; subsequent steps
@@ -221,9 +336,21 @@ fn dump_validation_artifacts(
         "input_ids_len": trace.input_ids.len(),
         "generation_ids": generated,
         "generated_text": text,
-        "tile_grid": [trace.processed.tile_grid.0, trace.processed.tile_grid.1],
-        "original_dims": [trace.processed.original_dims.0, trace.processed.original_dims.1],
-        "resized_dims": [trace.processed.resized_dims.0, trace.processed.resized_dims.1],
+        "tile_grids": trace
+            .images
+            .iter()
+            .map(|p| serde_json::json!([p.tile_grid.0, p.tile_grid.1]))
+            .collect::<Vec<_>>(),
+        "original_dims": trace
+            .images
+            .iter()
+            .map(|p| serde_json::json!([p.original_dims.0, p.original_dims.1]))
+            .collect::<Vec<_>>(),
+        "resized_dims": trace
+            .images
+            .iter()
+            .map(|p| serde_json::json!([p.resized_dims.0, p.resized_dims.1]))
+            .collect::<Vec<_>>(),
         "timings_ms": serde_json::to_value(&timings)?,
         "shapes": shapes
             .into_iter()

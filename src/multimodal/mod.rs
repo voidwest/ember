@@ -23,6 +23,8 @@
 //! requires today. Audio/video/agents/graph execution are out of scope.
 
 pub mod assembler;
+pub mod audio;
+pub mod audio_encoder;
 pub mod image;
 pub mod vision;
 

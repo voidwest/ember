@@ -1,5 +1,18 @@
 use alloc::string::String;
 use alloc::vec::Vec;
+use rayon::prelude::*;
+
+/// minimum multiply-accumulate work before [`CpuTensor::par_matmul`] splits
+/// across the rayon pool (~128 MFLOP).
+const PAR_MATMUL_MIN_MACS: usize = 64 * 1024 * 1024;
+/// minimum lhs rows for [`CpuTensor::par_matmul`] to consider splitting.
+const PAR_MATMUL_MIN_ROWS: usize = 64;
+/// minimum rows per parallel chunk (amortizes per-task scheduling).
+const PAR_MATMUL_MIN_CHUNK_ROWS: usize = 32;
+/// minimum element count before elementwise ops split across threads.
+const PAR_ELEMENTWISE_MIN_LEN: usize = 1 << 20;
+/// elements per task for parallel elementwise ops.
+const PAR_ELEMENTWISE_CHUNK: usize = 64 * 1024;
 
 /// a row-major f32 tensor backed by a flat vec.
 ///
@@ -202,6 +215,72 @@ impl CpuTensor {
         Self::from_data(vec![m, n], out)
     }
 
+    /// Multi-threaded [`Self::matmul`]: the output is computed by splitting
+    /// rows of `self` into disjoint blocks across the rayon pool.
+    ///
+    /// Bit-identical to [`Self::matmul`]: every output element is one dot
+    /// product over `k` whose accumulation order depends only on the operand
+    /// layouts (identical here), never on how rows are partitioned across
+    /// workers. Small shapes fall back to the serial path.
+    ///
+    /// # Panics
+    ///
+    /// Same conditions as [`Self::matmul`].
+    #[must_use]
+    pub fn par_matmul(&self, other: &Self) -> Self {
+        assert_eq!(self.ndim(), 2, "par_matmul: lhs must be 2d");
+        assert_eq!(other.ndim(), 2, "par_matmul: rhs must be 2d");
+        let (m, k1) = (self.shape[0], self.shape[1]);
+        let (k2, n) = (other.shape[0], other.shape[1]);
+        assert_eq!(k1, k2, "par_matmul: inner dims must match");
+
+        let macs = m.checked_mul(k1).and_then(|v| v.checked_mul(n));
+        let threads = rayon::current_num_threads();
+        let worth_parallel = macs.is_some_and(|macs| {
+            macs >= PAR_MATMUL_MIN_MACS && m >= PAR_MATMUL_MIN_ROWS && threads > 1
+        });
+        if !worth_parallel {
+            return self.matmul(other);
+        }
+        let n_chunks = (threads * 2)
+            .min(m.div_ceil(PAR_MATMUL_MIN_CHUNK_ROWS))
+            .max(1);
+        let chunk_rows = m.div_ceil(n_chunks);
+
+        let output_len = m.checked_mul(n).expect("par_matmul: output shape overflow");
+        let mut out = vec![0.0f32; output_len];
+        out.par_chunks_mut(chunk_rows * n)
+            .enumerate()
+            .for_each(|(ci, c_chunk)| {
+                let row_start = ci * chunk_rows;
+                let rows = c_chunk.len() / n;
+                // Safety: `c_chunk` is a disjoint row block of `out` with exactly
+                // `rows * n` elements; `a_slice` borrows a disjoint row block of
+                // `self.data` with `rows * k1` elements; both are distinct from
+                // `other.data`. Row-major unit strides match sgemm's expectations.
+                let a_slice = &self.data[row_start * k1..(row_start + rows) * k1];
+                unsafe {
+                    matrixmultiply::sgemm(
+                        rows,
+                        k1,
+                        n,
+                        1.0,
+                        a_slice.as_ptr(),
+                        k1 as isize,
+                        1,
+                        other.data.as_ptr(),
+                        n as isize,
+                        1,
+                        0.0,
+                        c_chunk.as_mut_ptr(),
+                        n as isize,
+                        1,
+                    );
+                }
+            });
+        Self::from_data(vec![m, n], out)
+    }
+
     /// softmax along the last dimension, numerically stable with max
     /// subtraction. if every logit in a row is -infinity (fully masked),
     /// returns a uniform distribution over that row.
@@ -293,6 +372,77 @@ impl CpuTensor {
             .map(|&x| 0.5 * x * (1.0 + (c * (x + 0.044_715 * x * x * x)).tanh()))
             .collect();
         Self::from_data(self.shape.clone(), data)
+    }
+
+    /// Multi-threaded [`Self::gelu_tanh`] for large tensors. Bit-identical:
+    /// every output element depends on exactly one input element, so any
+    /// partitioning produces the same bits.
+    #[must_use]
+    pub fn par_gelu_tanh(&self) -> Self {
+        if self.len() < PAR_ELEMENTWISE_MIN_LEN || rayon::current_num_threads() <= 1 {
+            return self.gelu_tanh();
+        }
+        let c = (2.0f32 / std::f32::consts::PI).sqrt();
+        let mut data = self.data.clone();
+        data.par_chunks_mut(PAR_ELEMENTWISE_CHUNK)
+            .for_each(|chunk| {
+                for x in chunk.iter_mut() {
+                    *x = 0.5 * *x * (1.0 + (c * (*x + 0.044_715 * *x * *x * *x)).tanh());
+                }
+            });
+        Self::from_data(self.shape.clone(), data)
+    }
+
+    /// Multi-threaded [`Self::softmax`]: rows are independent, so splitting
+    /// rows across the rayon pool is bit-identical to the serial path
+    /// (including its +inf / all-negative-infinity special cases and its
+    /// reciprocal-multiply normalization).
+    #[must_use]
+    pub fn par_softmax(&self) -> Self {
+        if self.len() < PAR_ELEMENTWISE_MIN_LEN || rayon::current_num_threads() <= 1 {
+            return self.softmax();
+        }
+        assert!(!self.shape.is_empty(), "softmax needs 1 dim min");
+        let last_dim = self.shape[self.shape.len() - 1];
+        assert!(last_dim > 0, "softmax requires a non-empty final dimension");
+        let mut out_data = vec![0.0f32; self.len()];
+        out_data
+            .par_chunks_mut(last_dim)
+            .zip(self.data.par_chunks(last_dim))
+            .for_each(|(out_row, in_row)| {
+                let positive_infinities = in_row
+                    .iter()
+                    .filter(|value| **value == f32::INFINITY)
+                    .count();
+                if positive_infinities > 0 {
+                    let probability = 1.0 / positive_infinities as f32;
+                    for (o, value) in out_row.iter_mut().zip(in_row.iter()) {
+                        *o = if *value == f32::INFINITY {
+                            probability
+                        } else {
+                            0.0
+                        };
+                    }
+                    return;
+                }
+                let max = in_row.iter().fold(f32::NEG_INFINITY, |a: f32, &b| a.max(b));
+                if max == f32::NEG_INFINITY {
+                    let uniform = 1.0 / last_dim as f32;
+                    out_row.fill(uniform);
+                    return;
+                }
+                let mut sum = 0.0f32;
+                for (o, &v) in out_row.iter_mut().zip(in_row.iter()) {
+                    let e = (v - max).exp();
+                    *o = e;
+                    sum += e;
+                }
+                let inv_sum = sum.recip();
+                for o in out_row.iter_mut() {
+                    *o *= inv_sum;
+                }
+            });
+        Self::from_data(self.shape.clone(), out_data)
     }
 
     /// rms normalization over the last dimension of a 2d `[batch, features]`

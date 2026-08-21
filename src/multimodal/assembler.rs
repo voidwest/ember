@@ -31,19 +31,29 @@ pub struct AssembledSequence {
 pub trait EmbeddingAssembler {
     /// Assemble one multimodal request into an [`AssembledSequence`].
     ///
-    /// `text` is the user prompt (may contain one `<image>` placeholder),
-    /// `image_features` is `[n_image_tokens, llm_width]` from the vision
-    /// encoder + connector, `tile_grid` is the processed tile layout
+    /// `text` is the user prompt; every `<image>` placeholder in it is bound
+    /// to the corresponding entry of `images` **in order of appearance**.
+    /// Each entry's `features` are `[n_tokens_i, llm_width]` from the vision
+    /// encoder + connector for that image alone (its own tiles followed by
+    /// its global tile), and `tile_grid` is that image's processed layout
     /// `(rows, cols)` (0,0 = no splitting).
     fn assemble(
         &self,
         backend: &CpuBackend,
         tokenizer: &EmberTokenizer,
         text: &str,
-        image_features: &CpuTensor,
-        tile_grid: (usize, usize),
+        images: &[ImageFeatures],
         embed_table: &LlamaEmbedding<CpuBackend>,
     ) -> Result<AssembledSequence>;
+}
+
+/// One image's encoder output plus the geometry the expansion needs.
+#[derive(Debug)]
+pub struct ImageFeatures {
+    /// `[n_image_tokens, llm_width]` visual embedding rows for this image.
+    pub features: CpuTensor,
+    /// Tile grid `(rows, cols)` of the split image (0,0 = no splitting).
+    pub tile_grid: (usize, usize),
 }
 
 /// SmolVLM/Idefics3 assembler (chat template + tile expansion + scatter).
@@ -152,24 +162,30 @@ impl EmbeddingAssembler for SmolVlmAssembler {
         backend: &CpuBackend,
         tokenizer: &EmberTokenizer,
         text: &str,
-        image_features: &CpuTensor,
-        tile_grid: (usize, usize),
+        images: &[ImageFeatures],
         embed_table: &LlamaEmbedding<CpuBackend>,
     ) -> Result<AssembledSequence> {
         let ids = self.token_ids(tokenizer)?;
 
-        // 1. render template with the placeholder expanded
+        // 1. bind every <image> placeholder to its image, in order
         let placeholder_count = text.matches(&self.image_token).count();
         ensure!(
-            placeholder_count <= 1,
-            "SmolVLM assembler supports at most one <image> placeholder per request"
+            placeholder_count == images.len(),
+            "prompt has {placeholder_count} <image> placeholders but {} images were provided",
+            images.len()
         );
-        ensure!(
-            placeholder_count > 0 || image_features.shape()[0] == 0,
-            "image provided but prompt has no <image> placeholder              (the reference processor rejects this too)"
-        );
-        let content = text.replace(&self.image_token, &self.expand_image_placeholder(tile_grid));
         let image_first = text.trim_start().starts_with(&self.image_token);
+        let mut content = String::with_capacity(text.len());
+        let mut rest = text;
+        for image in images {
+            let pos = rest
+                .find(&self.image_token)
+                .ok_or_else(|| anyhow!("internal: placeholder count verified but none found"))?;
+            content.push_str(&rest[..pos]);
+            content.push_str(&self.expand_image_placeholder(image.tile_grid));
+            rest = &rest[pos + self.image_token.len()..];
+        }
+        content.push_str(rest);
         let rendered = self.render_chat_template(&content, image_first);
 
         // 2. tokenize (no BOS for SmolLM2: bos_token_id() is None)
@@ -197,30 +213,74 @@ impl EmbeddingAssembler for SmolVlmAssembler {
             }
         }
 
-        // 4. scatter vision features over <image> positions, in order
+        // 4. scatter vision features over <image> positions, in order.
+        //    Feature rows are consumed image by image: expansion order is
+        //    placeholder order, so the first n_0 <image> tokens belong to
+        //    images[0], the next n_1 to images[1], and so on. Leftover or
+        //    missing rows fail closed below.
         let n_image_tokens = input_ids.iter().filter(|&&t| t == ids.image).count();
+        let total_features: usize = images.iter().map(|i| i.features.shape()[0]).sum();
         ensure!(
-            n_image_tokens == image_features.shape()[0],
-            "assembler found {n_image_tokens} <image> tokens but vision encoder produced {} rows",
-            image_features.shape()[0]
+            n_image_tokens == total_features,
+            "assembler found {n_image_tokens} <image> tokens but vision encoder produced {total_features} rows"
         );
         let mut feat_row = 0usize;
         for (row, &token) in input_ids.iter().enumerate() {
-            if token == ids.image {
-                let dst = &mut embeddings.data_mut()[row * embed_dim..(row + 1) * embed_dim];
-                let src = &image_features.data()[feat_row * embed_dim..(feat_row + 1) * embed_dim];
-                dst.copy_from_slice(src);
-                feat_row += 1;
+            if token != ids.image {
+                continue;
             }
+            // advance to the image this position belongs to
+            let mut image_idx = 0usize;
+            let mut consumed = 0usize;
+            while image_idx + 1 < images.len()
+                && feat_row >= consumed + images[image_idx].features.shape()[0]
+            {
+                consumed += images[image_idx].features.shape()[0];
+                image_idx += 1;
+            }
+            let local = feat_row - consumed;
+            let features = &images[image_idx].features;
+            ensure!(
+                local < features.shape()[0],
+                "feature row {feat_row} out of range for image {image_idx}"
+            );
+            let dst = &mut embeddings.data_mut()[row * embed_dim..(row + 1) * embed_dim];
+            let src = &features.data()[local * embed_dim..(local + 1) * embed_dim];
+            dst.copy_from_slice(src);
+            feat_row += 1;
         }
         ensure!(
-            feat_row == image_features.shape()[0],
-            "scatter count mismatch"
+            feat_row == total_features,
+            "scatter count mismatch: placed {feat_row} of {total_features} rows"
         );
 
         Ok(AssembledSequence {
             input_ids,
             embeddings,
         })
+    }
+}
+
+impl SmolVlmAssembler {
+    /// Convenience wrapper for the single-image case.
+    pub fn assemble_single(
+        &self,
+        backend: &CpuBackend,
+        tokenizer: &EmberTokenizer,
+        text: &str,
+        image_features: &CpuTensor,
+        tile_grid: (usize, usize),
+        embed_table: &LlamaEmbedding<CpuBackend>,
+    ) -> Result<AssembledSequence> {
+        self.assemble(
+            backend,
+            tokenizer,
+            text,
+            &[ImageFeatures {
+                features: image_features.clone(),
+                tile_grid,
+            }],
+            embed_table,
+        )
     }
 }

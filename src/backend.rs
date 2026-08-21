@@ -891,7 +891,10 @@ impl Backend for CpuBackend {
     }
 
     fn matmul(&self, a: &CpuTensor, b: &CpuTensor) -> Result<CpuTensor, CpuError> {
-        Ok(a.matmul(b))
+        // Large shapes split across the rayon pool (bit-identical to the
+        // serial path; see `CpuTensor::par_matmul`). This is what makes
+        // multimodal encoder prefill and long-prompt LLM prefill scale.
+        Ok(a.par_matmul(b))
     }
 
     fn matmul_q8_0(&self, x: &CpuTensor, w: &QuantizedWeight) -> Result<CpuTensor, CpuError> {
@@ -1057,14 +1060,14 @@ impl Backend for CpuBackend {
     }
 
     fn softmax(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
-        Ok(x.softmax())
+        Ok(x.par_softmax())
     }
     fn gelu(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.gelu())
     }
 
     fn gelu_tanh(&self, x: &CpuTensor) -> Result<CpuTensor, CpuError> {
-        Ok(x.gelu_tanh())
+        Ok(x.par_gelu_tanh())
     }
 
     fn layer_norm(

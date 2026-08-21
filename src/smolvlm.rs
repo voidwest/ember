@@ -26,9 +26,10 @@ use crate::embedding::EmbeddingSequence;
 use crate::llama::Llama;
 use crate::loader::load_gguf;
 use crate::model::ForwardModel;
-use crate::multimodal::assembler::{EmbeddingAssembler, SmolVlmAssembler};
+use crate::multimodal::assembler::{EmbeddingAssembler, ImageFeatures, SmolVlmAssembler};
 use crate::multimodal::image::{decode_rgb, preprocess, ImagePreprocessConfig, PreprocessedImage};
 use crate::multimodal::vision::{VisionModel, VisionTrace};
+use crate::multimodal::InputPart;
 use crate::tensor::CpuTensor;
 use crate::tokenizer::EmberTokenizer;
 use anyhow::{Context, Result};
@@ -66,9 +67,11 @@ pub struct SmolVlm {
 
 /// All progressive-validation intermediates of one multimodal prefill.
 pub struct MultimodalTrace {
-    pub processed: PreprocessedImage,
+    /// One processed image per `InputPart::Image`, in request order.
+    pub images: Vec<PreprocessedImage>,
+    /// Concatenated vision trace (all tiles of all images in one batch).
     pub vision: VisionTrace,
-    /// Connector output `[n_image_tokens, llm_width]`.
+    /// Connector output `[total_image_tokens, llm_width]`.
     pub projector_output: CpuTensor,
     /// Merged LLM input embeddings `[seq, llm_width]`.
     pub assembled_embeddings: CpuTensor,
@@ -108,7 +111,8 @@ impl SmolVlm {
         })
     }
 
-    /// Preprocess + encode + assemble with an explicit tokenizer.
+    /// Preprocess + encode + assemble with an explicit tokenizer
+    /// (single-image convenience wrapper).
     pub fn build_inputs_with_tokenizer(
         &self,
         backend: &CpuBackend,
@@ -117,47 +121,128 @@ impl SmolVlm {
         prompt: &str,
         start_pos: usize,
     ) -> Result<(MultimodalTrace, EmbeddingSequence<CpuBackend>)> {
+        let parts = vec![
+            InputPart::Image(image.to_path_buf()),
+            InputPart::Text(prompt.to_string()),
+        ];
+        let (trace, sequence) = self.build_inputs_parts(backend, tokenizer, &parts, start_pos)?;
+        Ok((trace, sequence))
+    }
+
+    /// Preprocess, encode and assemble a full multi-part request.
+    ///
+    /// Every [`InputPart::Image`] must be bound to one `<image>` placeholder
+    /// in the concatenated text (placeholders bind in order of appearance).
+    /// All tiles from all images are encoded in one batched pass — the
+    /// vision tower already treats dim 0 as independent images (attention
+    /// never mixes them) — and the connector output is split back per image
+    /// before assembly.
+    pub fn build_inputs_parts(
+        &self,
+        backend: &CpuBackend,
+        tokenizer: &EmberTokenizer,
+        parts: &[InputPart],
+        start_pos: usize,
+    ) -> Result<(MultimodalTrace, EmbeddingSequence<CpuBackend>)> {
+        // 1. preprocess every image part
         let t0 = Instant::now();
-        let decoded = decode_rgb(image)?;
-        let processed = preprocess(&decoded, &self.preprocess_config)?;
-        let preprocess_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let mut processed_images = Vec::new();
+        for part in parts {
+            if let InputPart::Image(path) = part {
+                let decoded = decode_rgb(path)?;
+                processed_images.push(preprocess(&decoded, &self.preprocess_config)?);
+            }
+        }
+        let _preprocess_ms = t0.elapsed().as_secs_f64() * 1e3;
 
+        // 2. one batched encode over all tiles (empty when text-only)
+        let total_tiles: usize = processed_images.iter().map(|p| p.tiles.shape()[0]).sum();
         let t1 = Instant::now();
-        let (encoder_out, vtrace) = self
-            .vision
-            .transformer
-            .encode_traced(backend, &processed.tiles)?;
-        let vision_ms = t1.elapsed().as_secs_f64() * 1e3;
+        let (encoder_out, vtrace) = if total_tiles > 0 {
+            let first = &processed_images[0].tiles;
+            anyhow::ensure!(
+                processed_images
+                    .iter()
+                    .all(|p| p.tiles.shape()[1..] == first.shape()[1..]),
+                "all images must share tile geometry"
+            );
+            let mut all_pixels =
+                vec![0.0f32; total_tiles * first.shape()[1] * first.shape()[2] * first.shape()[3]];
+            let mut offset = 0usize;
+            for p in &processed_images {
+                all_pixels[offset..offset + p.tiles.len()].copy_from_slice(p.tiles.data());
+                offset += p.tiles.len();
+            }
+            let pixels = CpuTensor::from_data(
+                vec![
+                    total_tiles,
+                    first.shape()[1],
+                    first.shape()[2],
+                    first.shape()[3],
+                ],
+                all_pixels,
+            );
+            self.vision.transformer.encode_traced(backend, &pixels)?
+        } else {
+            return Err(anyhow::anyhow!(
+                "multimodal request contains no image parts"
+            ));
+        };
+        let _vision_ms = t1.elapsed().as_secs_f64() * 1e3;
 
+        // 3. connector over the whole batch
         let t2 = Instant::now();
         let num_patches = self.vision.transformer.config.num_patches();
-        let features = self
+        let features_all = self
             .vision
             .connector
             .forward(backend, &encoder_out, num_patches)?;
-        let projector_ms = t2.elapsed().as_secs_f64() * 1e3;
+        let _projector_ms = t2.elapsed().as_secs_f64() * 1e3;
 
+        // 4. split features per image and assemble with ordered binding
+        let tokens_per_tile =
+            num_patches / (self.vision.connector.scale_factor * self.vision.connector.scale_factor);
+        let embed_dim = features_all.shape()[1];
+        let mut images_features = Vec::with_capacity(processed_images.len());
+        let mut row = 0usize;
+        for p in &processed_images {
+            let rows = p.tiles.shape()[0] * tokens_per_tile;
+            images_features.push(ImageFeatures {
+                features: CpuTensor::from_data(
+                    vec![rows, embed_dim],
+                    features_all.data()[row * embed_dim..(row + rows) * embed_dim].to_vec(),
+                ),
+                tile_grid: p.tile_grid,
+            });
+            row += rows;
+        }
+        let text: String = parts
+            .iter()
+            .map(|p| match p {
+                InputPart::Text(t) => t.clone(),
+                InputPart::Image(_) => String::new(),
+            })
+            .collect();
         let assembled = self.assembler.assemble(
             backend,
             tokenizer,
-            prompt,
-            &features,
-            processed.tile_grid,
+            &text,
+            &images_features,
             &self.llm.embed_tokens,
         )?;
         let trace = MultimodalTrace {
-            processed,
+            images: processed_images,
             vision: vtrace,
-            projector_output: features,
+            projector_output: features_all,
             assembled_embeddings: assembled.embeddings.clone(),
             input_ids: assembled.input_ids.clone(),
         };
         let sequence = EmbeddingSequence::causal(assembled.embeddings, start_pos);
-        let _ = (preprocess_ms, vision_ms, projector_ms);
         Ok((trace, sequence))
     }
 
-    /// Full image-conditioned greedy generation with separate stage timings.
+    /// Full image-conditioned greedy generation with separate stage timings
+    /// (single-image convenience wrapper).
     pub fn generate_with_image(
         &self,
         backend: &CpuBackend,
@@ -166,32 +251,104 @@ impl SmolVlm {
         prompt: &str,
         max_tokens: usize,
     ) -> Result<(Vec<u32>, String, MultimodalTimings)> {
+        let parts = vec![
+            InputPart::Image(image.to_path_buf()),
+            InputPart::Text(prompt.to_string()),
+        ];
+        self.generate_with_parts(backend, tokenizer, &parts, max_tokens)
+    }
+
+    /// Greedy generation over a full multi-part request (text + images),
+    /// with separate stage timings.
+    pub fn generate_with_parts(
+        &self,
+        backend: &CpuBackend,
+        tokenizer: &EmberTokenizer,
+        parts: &[InputPart],
+        max_tokens: usize,
+    ) -> Result<(Vec<u32>, String, MultimodalTimings)> {
         let wall_start = Instant::now();
         let mut timings = MultimodalTimings::default();
 
         let t0 = Instant::now();
-        let decoded = decode_rgb(image)?;
-        let processed = preprocess(&decoded, &self.preprocess_config)?;
+        let mut processed_images = Vec::new();
+        for part in parts {
+            if let InputPart::Image(path) = part {
+                let decoded = decode_rgb(path)?;
+                processed_images.push(preprocess(&decoded, &self.preprocess_config)?);
+            }
+        }
+        anyhow::ensure!(
+            !processed_images.is_empty(),
+            "generate_with_parts requires at least one image part"
+        );
         timings.preprocess_ms = t0.elapsed().as_secs_f64() * 1e3;
 
+        // batch all tiles of all images into one encode pass
+        let total_tiles: usize = processed_images.iter().map(|p| p.tiles.shape()[0]).sum();
+        let first = &processed_images[0].tiles;
+        anyhow::ensure!(
+            processed_images
+                .iter()
+                .all(|p| p.tiles.shape()[1..] == first.shape()[1..]),
+            "all images must share tile geometry"
+        );
+        let (_, channels, height, width) = (
+            first.shape()[0],
+            first.shape()[1],
+            first.shape()[2],
+            first.shape()[3],
+        );
+        let tile_len = channels * height * width;
+        let mut all_pixels = vec![0.0f32; total_tiles * tile_len];
+        let mut offset = 0usize;
+        for p in &processed_images {
+            all_pixels[offset..offset + p.tiles.len()].copy_from_slice(p.tiles.data());
+            offset += p.tiles.len();
+        }
+        let pixels = CpuTensor::from_data(vec![total_tiles, channels, height, width], all_pixels);
+
         let t1 = Instant::now();
-        let encoder_out = self.vision.transformer.encode(backend, &processed.tiles)?;
+        let encoder_out = self.vision.transformer.encode(backend, &pixels)?;
         timings.vision_ms = t1.elapsed().as_secs_f64() * 1e3;
 
         let t2 = Instant::now();
         let num_patches = self.vision.transformer.config.num_patches();
-        let features = self
+        let features_all = self
             .vision
             .connector
             .forward(backend, &encoder_out, num_patches)?;
         timings.projector_ms = t2.elapsed().as_secs_f64() * 1e3;
 
+        // split features per image and assemble with ordered placeholder binding
+        let tokens_per_tile =
+            num_patches / (self.vision.connector.scale_factor * self.vision.connector.scale_factor);
+        let embed_dim = features_all.shape()[1];
+        let mut images_features = Vec::with_capacity(processed_images.len());
+        let mut row = 0usize;
+        for p in &processed_images {
+            let rows = p.tiles.shape()[0] * tokens_per_tile;
+            images_features.push(ImageFeatures {
+                features: CpuTensor::from_data(
+                    vec![rows, embed_dim],
+                    features_all.data()[row * embed_dim..(row + rows) * embed_dim].to_vec(),
+                ),
+                tile_grid: p.tile_grid,
+            });
+            row += rows;
+        }
+        let text: String = parts
+            .iter()
+            .map(|p| match p {
+                InputPart::Text(t) => t.clone(),
+                InputPart::Image(_) => String::new(),
+            })
+            .collect();
         let assembled = self.assembler.assemble(
             backend,
             tokenizer,
-            prompt,
-            &features,
-            processed.tile_grid,
+            &text,
+            &images_features,
             &self.llm.embed_tokens,
         )?;
 

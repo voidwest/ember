@@ -2199,9 +2199,31 @@ impl Llama<CpuBackend> {
             && config.rope_layout == RopeLayout::AdjacentPair
             && std::env::var_os("EMBER_LLAMA_PACKED_Q8").is_none_or(|value| value != "0");
 
-        // precompute rope tables once, shared across all attention layers
-        let (rope_cos, rope_sin) =
-            compute_rope_freqs(config.max_seq_len, config.head_dim, config.rope_theta, None);
+        // precompute rope tables once, shared across all attention layers.
+        // Llama-3.x models converted with llama3-style rope scaling carry a
+        // `rope_freqs.weight` tensor of per-frequency-pair factors (ggml
+        // semantics: effective freq = base_freq / factor); load and apply
+        // it when present so scaled models match the HF reference exactly.
+        let rope_factors = loader.take_optional_f32(&["rope_freqs.weight".to_string()]);
+        let rope_factors = match rope_factors {
+            Some(t) => {
+                anyhow::ensure!(
+                    t.len() == config.head_dim / 2,
+                    "rope_freqs.weight has {} elements but head_dim/2 is {}",
+                    t.len(),
+                    config.head_dim / 2
+                );
+                log::info!("llama: applying rope_freqs.weight factors (llama3-style rope scaling)");
+                Some(t.data().to_vec())
+            }
+            None => None,
+        };
+        let (rope_cos, rope_sin) = compute_rope_freqs(
+            config.max_seq_len,
+            config.head_dim,
+            config.rope_theta,
+            rope_factors.as_deref(),
+        );
         log::debug!(
             "rope_cos shape: {:?}, rope_sin shape: {:?}",
             rope_cos.shape(),

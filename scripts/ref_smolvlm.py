@@ -32,16 +32,29 @@ MODEL = "HuggingFaceTB/SmolVLM-256M-Instruct"
 def main() -> None:
     image_path, prompt, out_dir = sys.argv[1], sys.argv[2], sys.argv[3]
     max_new = int(sys.argv[4]) if len(sys.argv) > 4 else 16
+    # optional extra images (argv[5:]) enable multi-image validation: each
+    # binds to one <image> placeholder in the prompt, in order
+    extra_images = sys.argv[5:]
     os.makedirs(out_dir, exist_ok=True)
 
     proc = AutoProcessor.from_pretrained(MODEL)
     model = AutoModelForImageTextToText.from_pretrained(MODEL, torch_dtype=torch.float32)
     model.eval()
 
-    img = Image.open(image_path).convert("RGB")
-    messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
+    all_images = [image_path] + extra_images
+    content = []
+    for i in range(len(all_images)):
+        content.append({"type": "image"})
+        if i == 0:
+            content.append({"type": "text", "text": prompt})
+        elif i == len(all_images) - 1:
+            pass  # trailing image; nothing after it
+    if len(all_images) == 1:
+        content = [{"type": "image"}, {"type": "text", "text": prompt}]
+    messages = [{"role": "user", "content": content}]
     text = proc.apply_chat_template(messages, add_generation_prompt=True)
-    inputs = proc(text=[text], images=[img], return_tensors="pt")
+    imgs = [Image.open(p).convert("RGB") for p in all_images]
+    inputs = proc(text=[text], images=imgs, return_tensors="pt")
 
     input_ids = inputs["input_ids"]
     pixel_values = inputs["pixel_values"]

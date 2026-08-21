@@ -2,7 +2,7 @@
 
 use ember::backend::CpuBackend;
 use ember::model::Linear;
-use ember::multimodal::assembler::{EmbeddingAssembler, SmolVlmAssembler};
+use ember::multimodal::assembler::{EmbeddingAssembler, ImageFeatures, SmolVlmAssembler};
 use ember::multimodal::image::{decode_rgb, preprocess, resize, ImagePreprocessConfig, Resample};
 use ember::multimodal::vision::{bidirectional_attention, PixelShuffleConnector};
 use ember::tensor::CpuTensor;
@@ -381,8 +381,10 @@ fn smolvlm_assembler_scatters_features() {
         &backend,
         &tokenizer,
         "<image>What",
-        &features,
-        (1, 2),
+        &[ImageFeatures {
+            features,
+            tile_grid: (1, 2),
+        }],
         &table,
     );
     assert!(
@@ -403,8 +405,10 @@ fn smolvlm_assembler_scatters_features() {
             &backend,
             &tokenizer,
             "<image>What",
-            &features3,
-            (1, 2),
+            &[ImageFeatures {
+                features: features3,
+                tile_grid: (1, 2),
+            }],
             &table,
         )
         .unwrap();
@@ -422,7 +426,7 @@ fn smolvlm_assembler_scatters_features() {
         .collect();
     for (k, &pos) in img_positions.iter().enumerate() {
         for e in 0..embed_dim {
-            let expect = features3.data()[k * embed_dim + e];
+            let expect = [100.0, 200.0, 300.0][k] + e as f32;
             let got = emb.data()[pos * embed_dim + e];
             assert!(
                 (got - expect).abs() < 1e-5,
@@ -430,4 +434,142 @@ fn smolvlm_assembler_scatters_features() {
             );
         }
     }
+}
+
+#[test]
+fn smolvlm_assembler_binds_multiple_images_in_order() {
+    // reuse a minimal tokenizer like the scatter test
+    let path = std::env::temp_dir().join("ember_mm_tokenizer_multi.json");
+    let mut added = vec![
+        serde_json::json!({"id": 1, "content": "<|im_start|>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
+        serde_json::json!({"id": 2, "content": "<|im_end|>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
+        serde_json::json!({"id": 3, "content": "<end_of_utterance>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
+        serde_json::json!({"id": 4, "content": "<fake_token_around_image>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
+        serde_json::json!({"id": 5, "content": "<global-img>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
+        serde_json::json!({"id": 6, "content": "<image>", "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}),
+    ];
+    let mut vocab = serde_json::Map::new();
+    for (i, piece) in ["a", "b", "c"].iter().enumerate() {
+        vocab.insert((*piece).to_string(), serde_json::json!(i));
+    }
+    for (id, piece) in [
+        (1usize, "<|im_start|>"),
+        (2, "<|im_end|>"),
+        (3, "<end_of_utterance>"),
+        (4, "<fake_token_around_image>"),
+        (5, "<global-img>"),
+        (6, "<image>"),
+    ] {
+        vocab.insert(piece.into(), serde_json::json!(id));
+    }
+    for i in 0..36 {
+        let (r, c) = (i / 6 + 1, i % 6 + 1);
+        let content = format!("<row_{r}_col_{c}>");
+        added.push(serde_json::json!({"id": 7 + i, "content": content, "special": true, "lstrip": false, "rstrip": false, "single_word": false, "normalized": false}));
+        vocab.insert(content, serde_json::json!(7 + i));
+    }
+    let tok_json = serde_json::json!({
+        "version": "1.0", "truncation": null, "padding": null,
+        "added_tokens": added,
+        "normalizer": {"type": "NFC"},
+        "pre_tokenizer": {"type": "Whitespace"},
+        "model": {"type": "BPE", "vocab": vocab, "merges": []},
+        "post_processor": null
+    });
+    std::fs::write(&path, serde_json::to_string(&tok_json).unwrap()).unwrap();
+    let tokenizer = ember::tokenizer::EmberTokenizer::from_file(&path).unwrap();
+
+    let embed_dim = 4;
+    let vocab_size = 50;
+    let mut table = vec![0.0f32; vocab_size * embed_dim];
+    for v in 0..vocab_size {
+        for e in 0..embed_dim {
+            table[v * embed_dim + e] = (v * 10 + e) as f32;
+        }
+    }
+    let table =
+        ember::llama::LlamaEmbedding::F32(CpuTensor::from_data(vec![vocab_size, embed_dim], table));
+
+    let asm = SmolVlmAssembler {
+        image_seq_len: 1,
+        ..Default::default()
+    };
+    let backend = CpuBackend;
+
+    // two images, one tile each (features = 1 row per image: tiles+global=...
+    // grid (0,0) means no split -> exactly one <image> token per image)
+    let img_a = CpuTensor::from_data(vec![1, embed_dim], vec![111.0, 112.0, 113.0, 114.0]);
+    let img_b = CpuTensor::from_data(vec![1, embed_dim], vec![222.0, 223.0, 224.0, 225.0]);
+    let assembled = asm
+        .assemble(
+            &backend,
+            &tokenizer,
+            "Compare <image> versus <image> ok",
+            &[
+                ImageFeatures {
+                    features: img_a,
+                    tile_grid: (0, 0),
+                },
+                ImageFeatures {
+                    features: img_b,
+                    tile_grid: (0, 0),
+                },
+            ],
+            &table,
+        )
+        .unwrap();
+    let ids = assembled.input_ids;
+    let img_positions: Vec<usize> = ids
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| **t == 6)
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(img_positions.len(), 2);
+    // first placeholder carries image A's rows, second carries B's
+    for (value, pos) in [(111.0f32, img_positions[0]), (222.0, img_positions[1])] {
+        let got = assembled.embeddings.data()[pos * embed_dim];
+        assert!(
+            (got - value).abs() < 1e-5,
+            "image binding out of order at pos {pos}: {got} != {value}"
+        );
+    }
+
+    // mismatch: two placeholders but one image must fail closed
+    let result = asm.assemble(
+        &backend,
+        &tokenizer,
+        "<image> versus <image>",
+        &[ImageFeatures {
+            features: CpuTensor::from_data(vec![1, embed_dim], vec![0.0; 4]),
+            tile_grid: (0, 0),
+        }],
+        &table,
+    );
+    assert!(
+        result.is_err(),
+        "placeholder/image count mismatch must fail"
+    );
+
+    // mismatch: one placeholder but two images must fail closed
+    let result = asm.assemble(
+        &backend,
+        &tokenizer,
+        "<image> alone",
+        &[
+            ImageFeatures {
+                features: CpuTensor::from_data(vec![1, embed_dim], vec![0.0; 4]),
+                tile_grid: (0, 0),
+            },
+            ImageFeatures {
+                features: CpuTensor::from_data(vec![1, embed_dim], vec![0.0; 4]),
+                tile_grid: (0, 0),
+            },
+        ],
+        &table,
+    );
+    assert!(
+        result.is_err(),
+        "placeholder/image count mismatch must fail"
+    );
 }

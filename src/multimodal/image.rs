@@ -81,6 +81,16 @@ pub struct PreprocessedImage {
     pub tile_grid: (usize, usize),
     /// The global (downscaled whole-image) tile is appended last.
     pub has_global_tile: bool,
+    /// Sub-stage timings (recorded by `preprocess`).
+    pub timings: PreprocessTimings,
+}
+
+/// Sub-stage timings of one [`preprocess`] call (milliseconds).
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct PreprocessTimings {
+    pub resize_ms: f64,
+    pub tile_ms: f64,
+    pub normalize_ms: f64,
 }
 
 /// Decode an image file (PNG/JPEG) and return RGB pixels as f32
@@ -111,6 +121,7 @@ pub fn decode_rgb(path: &Path) -> Result<CpuTensor> {
 /// resize longest edge -> split into `tile_size` squares + global tile ->
 /// rescale -> normalize. Returns normalized tiles and geometry.
 pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<PreprocessedImage> {
+    let t0 = std::time::Instant::now();
     anyhow::ensure!(
         image.shape() == [3, image.shape()[1], image.shape()[2]] && image.ndim() == 3,
         "preprocess expects CHW [3, h, w] RGB pixels"
@@ -139,6 +150,11 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
     }
     let resized = resize(image, w, h, config.resample)?;
     let resized_dims = (h, w);
+    let mut timings = PreprocessTimings {
+        resize_ms: t0.elapsed().as_secs_f64() * 1e3,
+        ..Default::default()
+    };
+    let t_tile = std::time::Instant::now();
 
     // 2. split into tiles + global tile
     let mut tiles_uint = Vec::<CpuTensor>::new();
@@ -169,6 +185,8 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
     } else {
         tiles_uint.push(resized.clone());
     }
+    timings.tile_ms = t_tile.elapsed().as_secs_f64() * 1e3;
+    let t_norm = std::time::Instant::now();
 
     // 3. rescale + normalize + pack into [n, 3, tile, tile]
     let n_tiles = tiles_uint.len();
@@ -193,6 +211,7 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
         vec![n_tiles, tile, tile],
         vec![1.0f32; n_tiles * tile * tile],
     );
+    timings.normalize_ms = t_norm.elapsed().as_secs_f64() * 1e3;
 
     Ok(PreprocessedImage {
         tiles,
@@ -201,6 +220,7 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
         resized_dims,
         tile_grid,
         has_global_tile,
+        timings,
     })
 }
 

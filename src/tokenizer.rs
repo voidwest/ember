@@ -38,6 +38,20 @@ impl EmberTokenizer {
         Ok(self.ensure_bos(encoding.get_ids().to_vec()))
     }
 
+    /// Encode without the tokenizer's automatic special tokens (the
+    /// equivalent of HF's `add_special_tokens=False`). Assemblers that
+    /// embed structural special tokens in the rendered text themselves
+    /// (e.g. Llama-3 templates carrying their own `<|begin_of_text|>`)
+    /// must use this so the template is not double-encoded.
+    pub fn encode_no_special(&self, text: &str) -> Result<Vec<u32>> {
+        let encoding = self
+            .inner
+            .encode(text, false)
+            .map_err(anyhow::Error::msg)
+            .context("encode failed")?;
+        Ok(encoding.get_ids().to_vec())
+    }
+
     pub fn bos_token_id(&self) -> Option<u32> {
         self.inner.token_to_id("<bos>")
     }

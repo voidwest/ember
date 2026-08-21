@@ -4,6 +4,7 @@ mod gui;
 #[cfg(feature = "gui")]
 mod gui_native;
 
+mod cli_audio;
 mod cli_commands;
 mod cli_generation;
 mod cli_kv;
@@ -304,6 +305,9 @@ pub(crate) enum Commands {
 
     /// image-conditioned generation + validation dumps (multimodal foundation)
     Multimodal(cli_multimodal::MultimodalCommand),
+
+    /// audio-conditioned generation + validation dumps (voice input)
+    Audio(cli_audio::AudioCommand),
 
     /// batch greedy generation / next-token logprob scoring (one resident model)
     ScoreBatch(cli_score_batch::ScoreBatchCommand),
@@ -697,6 +701,7 @@ fn main() -> anyhow::Result<()> {
                 cli_kv::run_kv_command(command, k_strategy, args.k_allow_fallback)
             }
             Commands::Multimodal(command) => cli_multimodal::run_multimodal_command(command, &args),
+            Commands::Audio(command) => cli_audio::run_audio_command(command, &args),
             Commands::ScoreBatch(command) => {
                 cli_score_batch::run_score_batch_command(command, k_strategy, args.k_allow_fallback)
             }

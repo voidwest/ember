@@ -19,6 +19,8 @@ use crate::loader::GgufLoader;
 use crate::model::{LayerNorm, Linear};
 use crate::tensor::CpuTensor;
 use anyhow::{Context, Result};
+use rayon::prelude::*;
+use std::time::Instant;
 
 /// Vision-tower hyperparameters (mirrors the HF `vision_config`).
 #[derive(Debug, Clone)]
@@ -90,6 +92,11 @@ impl VisionTransformer {
         pixels: &CpuTensor,
         mut trace: Option<&mut VisionTrace>,
     ) -> Result<CpuTensor, CpuError> {
+        // Timings are recorded whenever a trace is requested (the ~40
+        // Instant::now() calls per layer cost microseconds); the plain
+        // `encode` path stays uninstrumented.
+        let profile = trace.is_some();
+        let mut timings = VisionOpTimings::default();
         let (n_images, channels, height, width) = (
             pixels.shape()[0],
             pixels.shape()[1],
@@ -101,6 +108,7 @@ impl VisionTransformer {
         debug_assert_eq!((height, width), (cfg.image_size, cfg.image_size));
 
         // -- patch embedding (conv, stride = patch size) --
+        let t_op = Instant::now();
         let patches_per_side = height / cfg.patch_size;
         let num_patches = patches_per_side * patches_per_side;
         let patch_dim = 3 * cfg.patch_size * cfg.patch_size;
@@ -127,8 +135,12 @@ impl VisionTransformer {
             }
         }
         let patches = CpuTensor::from_data(vec![n_images * num_patches, patch_dim], patch_rows);
+        if profile {
+            timings.patch_embed_ms += t_op.elapsed().as_secs_f64() * 1e3;
+        }
 
         // conv weight [out, in, kh, kw] -> matmul weight [in, out] row-major
+        let t_op = Instant::now();
         let mut w = vec![0.0f32; cfg.embed_dim * patch_dim];
         for o in 0..cfg.embed_dim {
             for i in 0..patch_dim {
@@ -136,15 +148,19 @@ impl VisionTransformer {
             }
         }
         let w = CpuTensor::from_data(vec![patch_dim, cfg.embed_dim], w);
-        let mut x = patches.matmul(&w);
+        let mut x = patches.par_matmul(&w);
         // add bias (broadcast over rows)
         for r in 0..n_images * num_patches {
             for o in 0..cfg.embed_dim {
                 x.data_mut()[r * cfg.embed_dim + o] += self.patch_embed_bias.data()[o];
             }
         }
+        if profile {
+            timings.patch_embed_ms += t_op.elapsed().as_secs_f64() * 1e3;
+        }
 
         // -- learned position embeddings (identity grid for full images) --
+        let t_op = Instant::now();
         for n in 0..n_images {
             for py in 0..patches_per_side {
                 for px in 0..patches_per_side {
@@ -162,47 +178,124 @@ impl VisionTransformer {
         if let Some(trace) = trace.as_mut() {
             trace.patch_embeddings = Some(x.clone());
         }
+        if profile {
+            timings.pos_embed_ms += t_op.elapsed().as_secs_f64() * 1e3;
+        }
 
         // -- transformer layers: linears batched over all images, attention
         //    per image (bidirectional, no cross-image mixing) --
         for layer in &self.layers {
+            let t_op = Instant::now();
             let normed = layer.ln1.forward(backend, &x)?;
+            if profile {
+                timings.ln_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
+            let t_op = Instant::now();
             let q = layer.q_proj.forward(backend, &normed)?;
             let k = layer.k_proj.forward(backend, &normed)?;
             let v = layer.v_proj.forward(backend, &normed)?;
+            if profile {
+                timings.qkv_proj_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
 
+            let t_attn = Instant::now();
+            let head_dim = cfg.embed_dim / cfg.n_heads;
+            if !cfg.embed_dim.is_multiple_of(cfg.n_heads) {
+                return Err(CpuError::ShapeMismatch(format!(
+                    "vision embed dim {} not divisible by {} heads",
+                    cfg.embed_dim, cfg.n_heads
+                )));
+            }
+            let scale = (head_dim as f32).sqrt().recip();
+            // parallelize over images: each worker owns one contiguous
+            // [num_patches, embed_dim] block of attn_rows and loops heads
+            // inside, scattering each head's [seq, head_dim] result into its
+            // interleaved columns (row*embed + h*head_dim).
             let mut attn_rows = vec![0.0f32; x.len()];
-            for n in 0..n_images {
-                let slice = |t: &CpuTensor| -> CpuTensor {
-                    let start = n * num_patches * cfg.embed_dim;
-                    CpuTensor::from_data(
-                        vec![num_patches, cfg.embed_dim],
-                        t.data()[start..start + num_patches * cfg.embed_dim].to_vec(),
-                    )
-                };
-                let attn =
-                    bidirectional_attention(&slice(&q), &slice(&k), &slice(&v), cfg.n_heads)?;
-                let start = n * num_patches * cfg.embed_dim;
-                attn_rows[start..start + num_patches * cfg.embed_dim].copy_from_slice(attn.data());
+            let mut splits = vec![AttentionSplit::default(); n_images];
+            attn_rows
+                .par_chunks_mut(num_patches * cfg.embed_dim)
+                .zip(splits.par_chunks_mut(1))
+                .enumerate()
+                .for_each(|(n, (out_block, slot))| {
+                    let row_base = n * num_patches;
+                    for h in 0..cfg.n_heads {
+                        let cols = h * head_dim..(h + 1) * head_dim;
+                        let qh = slice_rows_cols(&q, row_base, num_patches, cols.clone());
+                        let kh = slice_rows_cols(&k, row_base, num_patches, cols.clone());
+                        let vh = slice_rows_cols(&v, row_base, num_patches, cols);
+                        let split = if profile { Some(&mut slot[0]) } else { None };
+                        let oh = attention_head(&qh, &kh, &vh, scale, split);
+                        for row in 0..num_patches {
+                            let dst = &mut out_block[row * cfg.embed_dim + h * head_dim
+                                ..row * cfg.embed_dim + (h + 1) * head_dim];
+                            dst.copy_from_slice(&oh.data()[row * head_dim..(row + 1) * head_dim]);
+                        }
+                    }
+                });
+            if profile {
+                for s in &splits {
+                    timings.attn_scores_ms += s.scores_ms;
+                    timings.softmax_ms += s.softmax_ms;
+                    timings.attn_values_ms += s.values_ms;
+                }
+                let total = t_attn.elapsed().as_secs_f64() * 1e3;
+                let accounted =
+                    timings.attn_scores_ms + timings.softmax_ms + timings.attn_values_ms;
+                // slicing/copy overhead outside the three matmuls:
+                timings.residual_add_ms += (total - accounted).max(0.0);
             }
             let attn = CpuTensor::from_data(vec![n_images * num_patches, cfg.embed_dim], attn_rows);
+            let t_op = Instant::now();
             let attn = layer.out_proj.forward(backend, &attn)?;
+            if profile {
+                timings.out_proj_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
+            let t_op = Instant::now();
             x = backend.add(&x, &attn)?;
+            if profile {
+                timings.residual_add_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
 
+            let t_op = Instant::now();
             let normed = layer.ln2.forward(backend, &x)?;
+            if profile {
+                timings.ln_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
+            let t_op = Instant::now();
             let hidden = layer.fc1.forward(backend, &normed)?;
+            if profile {
+                timings.fc1_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
+            let t_op = Instant::now();
             let hidden = backend.gelu_tanh(&hidden)?;
+            if profile {
+                timings.gelu_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
+            let t_op = Instant::now();
             let mlp = layer.fc2.forward(backend, &hidden)?;
+            if profile {
+                timings.fc2_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
+            let t_op = Instant::now();
             x = backend.add(&x, &mlp)?;
+            if profile {
+                timings.residual_add_ms += t_op.elapsed().as_secs_f64() * 1e3;
+            }
             if let Some(trace) = trace.as_mut() {
                 trace.layer_outputs.push(x.clone());
             }
         }
 
         // -- post layer-norm --
+        let t_op = Instant::now();
         let out = self.post_ln.forward(backend, &x)?;
+        if profile {
+            timings.post_ln_ms += t_op.elapsed().as_secs_f64() * 1e3;
+        }
         if let Some(trace) = trace.as_mut() {
             trace.encoder_output = Some(out.clone());
+            trace.op_timings = timings;
         }
         Ok(out)
     }
@@ -217,8 +310,55 @@ pub struct VisionTrace {
     pub layer_outputs: Vec<CpuTensor>,
     /// Post-norm encoder output, `[n * num_patches, embed]`.
     pub encoder_output: Option<CpuTensor>,
+    /// Per-operator accumulated timings (ms). Recorded on traced encodes.
+    pub op_timings: VisionOpTimings,
 }
 
+/// Accumulated per-operator milliseconds for one vision encode. Attention is
+/// split into its three matmuls plus softmax; everything else is the obvious
+/// stage. Recorded on traced encodes.
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct VisionOpTimings {
+    pub patch_embed_ms: f64,
+    pub pos_embed_ms: f64,
+    pub ln_ms: f64,
+    pub qkv_proj_ms: f64,
+    pub attn_scores_ms: f64,
+    pub softmax_ms: f64,
+    pub attn_values_ms: f64,
+    pub out_proj_ms: f64,
+    pub residual_add_ms: f64,
+    pub fc1_ms: f64,
+    pub gelu_ms: f64,
+    pub fc2_ms: f64,
+    pub post_ln_ms: f64,
+}
+
+impl VisionOpTimings {
+    pub fn total_ms(&self) -> f64 {
+        self.patch_embed_ms
+            + self.pos_embed_ms
+            + self.ln_ms
+            + self.qkv_proj_ms
+            + self.attn_scores_ms
+            + self.softmax_ms
+            + self.attn_values_ms
+            + self.out_proj_ms
+            + self.residual_add_ms
+            + self.fc1_ms
+            + self.gelu_ms
+            + self.fc2_ms
+            + self.post_ln_ms
+    }
+}
+
+/// Internal attention-op split for profiling.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct AttentionSplit {
+    pub scores_ms: f64,
+    pub softmax_ms: f64,
+    pub values_ms: f64,
+}
 /// Full (bidirectional) multi-head attention over one sequence.
 ///
 /// `q`, `k`, `v` are `[seq, embed_dim]` with heads contiguous per row
@@ -234,6 +374,16 @@ pub fn bidirectional_attention(
     v: &CpuTensor,
     n_heads: usize,
 ) -> Result<CpuTensor, CpuError> {
+    attention_impl(q, k, v, n_heads, None)
+}
+
+fn attention_impl(
+    q: &CpuTensor,
+    k: &CpuTensor,
+    v: &CpuTensor,
+    n_heads: usize,
+    mut split: Option<&mut AttentionSplit>,
+) -> Result<CpuTensor, CpuError> {
     let seq = q.shape()[0];
     let embed = q.shape()[1];
     if !embed.is_multiple_of(n_heads) {
@@ -247,16 +397,10 @@ pub fn bidirectional_attention(
     let mut out = vec![0.0f32; seq * embed];
     for h in 0..n_heads {
         let cols = h * head_dim..(h + 1) * head_dim;
-        let qh = slice_cols(q, cols.clone());
-        let kh = slice_cols(k, cols.clone());
-        let vh = slice_cols(v, cols);
-        // scores [seq, seq] = qh * kh^T * scale
-        let mut scores = qh.matmul(&kh.transpose());
-        for v in scores.data_mut() {
-            *v *= scale;
-        }
-        let probs = scores.softmax();
-        let oh = probs.matmul(&vh); // [seq, head_dim]
+        let qh = slice_rows_cols(q, 0, seq, cols.clone());
+        let kh = slice_rows_cols(k, 0, seq, cols.clone());
+        let vh = slice_rows_cols(v, 0, seq, cols);
+        let oh = attention_head(&qh, &kh, &vh, scale, split.as_deref_mut());
         for row in 0..seq {
             let dst = &mut out[row * embed + h * head_dim..row * embed + (h + 1) * head_dim];
             dst.copy_from_slice(&oh.data()[row * head_dim..(row + 1) * head_dim]);
@@ -265,12 +409,51 @@ pub fn bidirectional_attention(
     Ok(CpuTensor::from_data(vec![seq, embed], out))
 }
 
-fn slice_cols(t: &CpuTensor, cols: std::ops::Range<usize>) -> CpuTensor {
-    let (rows, width) = (t.shape()[0], t.shape()[1]);
+/// One head of full attention: `qh`, `kh`, `vh` are `[seq, head_dim]`.
+/// Returns `[seq, head_dim]`. Optional split records sub-op wall time.
+pub(crate) fn attention_head(
+    qh: &CpuTensor,
+    kh: &CpuTensor,
+    vh: &CpuTensor,
+    scale: f32,
+    mut split: Option<&mut AttentionSplit>,
+) -> CpuTensor {
+    let t_scores = Instant::now();
+    // scores [seq, seq] = qh * kh^T * scale
+    let mut scores = qh.matmul(&kh.transpose());
+    for s in scores.data_mut() {
+        *s *= scale;
+    }
+    if let Some(sp) = split.as_deref_mut() {
+        sp.scores_ms += t_scores.elapsed().as_secs_f64() * 1e3;
+    }
+    let t_soft = Instant::now();
+    let probs = scores.softmax();
+    if let Some(sp) = split.as_deref_mut() {
+        sp.softmax_ms += t_soft.elapsed().as_secs_f64() * 1e3;
+    }
+    let t_val = Instant::now();
+    let oh = probs.matmul(vh); // [seq, head_dim]
+    if let Some(sp) = split {
+        sp.values_ms += t_val.elapsed().as_secs_f64() * 1e3;
+    }
+    oh
+}
+
+/// Copy a `[rows, cols.len()]` block starting at data row `row_start`,
+/// columns `cols`, from a row-major `[total_rows, width]` tensor.
+pub(crate) fn slice_rows_cols(
+    t: &CpuTensor,
+    row_start: usize,
+    rows: usize,
+    cols: std::ops::Range<usize>,
+) -> CpuTensor {
+    let width = t.shape()[1];
     let mut out = vec![0.0f32; rows * cols.len()];
     for r in 0..rows {
+        let src = (row_start + r) * width;
         out[r * cols.len()..(r + 1) * cols.len()]
-            .copy_from_slice(&t.data()[r * width + cols.start..r * width + cols.end]);
+            .copy_from_slice(&t.data()[src + cols.start..src + cols.end]);
     }
     CpuTensor::from_data(vec![rows, cols.len()], out)
 }

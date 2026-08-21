@@ -57,5 +57,6 @@ pub mod smolvlm;
 pub mod tensor;
 pub mod tokenizer;
 pub mod trace;
+pub mod ultravox;
 pub mod v05;
 pub mod workspace;
