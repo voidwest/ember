@@ -72,6 +72,23 @@ pub struct Gemma4Config {
     pub num_kv_shared_layers: usize,
 }
 
+/// Dump a tensor as raw f32 when EMBER_GEMMA_DUMP is set (forensics).
+macro_rules! gemma_dump {
+    ($layer:expr, $stage:expr, $backend:expr, $tensor:expr) => {{
+        if let Some(dir) = std::env::var_os("EMBER_GEMMA_DUMP") {
+            if $layer < 35 {
+                let data = $backend.data(&$tensor);
+                let mut bytes = Vec::with_capacity(data.len() * 4);
+                for v in data.iter() {
+                    bytes.extend_from_slice(&v.to_le_bytes());
+                }
+                let path = std::path::Path::new(&dir).join(format!("L{}_{}.f32", $layer, $stage));
+                let _ = std::fs::write(path, &bytes);
+            }
+        }
+    }};
+}
+
 impl Gemma4Config {
     pub fn from_gguf_metadata(loader: &GgufLoader) -> anyhow::Result<Self> {
         if get_bool(loader, "gemma4.enable_moe_block", false)
@@ -567,6 +584,9 @@ impl<B: Backend> Gemma4Attention<B> {
             // llama.cpp applies a plain per-head RMS norm to V (no learned
             // weights, using f_norm_rms_eps) before storing it in the cache.
             let v = apply_v_rms_norm(backend, &v, self.n_kv_heads, self.head_dim, self.norm_eps)?;
+            gemma_dump!(layer, "q_post", backend, q);
+            gemma_dump!(layer, "k_post", backend, k);
+            gemma_dump!(layer, "v_post", backend, v);
             let k_data = backend.data(&k);
             let v_data = backend.data(&v);
             let kv_store_span = gemma_trace_span!(
@@ -631,6 +651,7 @@ impl<B: Backend> Gemma4Attention<B> {
         )?;
         finish_trace_span(attention_span, backend, &out);
         debug_assert_eq!(backend.shape(&out), &[seq_len, q_dim]);
+        gemma_dump!(layer, "attn_result", backend, out);
         let output_span = gemma_trace_span!(
             "o_proj",
             layer,
@@ -641,6 +662,7 @@ impl<B: Backend> Gemma4Attention<B> {
         );
         let output = self.o_proj.forward(backend, &out)?;
         finish_trace_span(output_span, backend, &output);
+        gemma_dump!(layer, "o_proj", backend, output);
         Ok(output)
     }
 }
@@ -704,6 +726,8 @@ impl<B: Backend> Gemma4Block<B> {
         let hidden_shape = [seq_len, embed_dim];
         let hidden_bytes = trace::bytes_from_shape(&hidden_shape);
 
+        gemma_dump!(layer, "x_in", backend, *x);
+
         // 1. Self-attention
         let residual = x.clone();
         let input_norm_span = gemma_trace_span!(
@@ -716,6 +740,7 @@ impl<B: Backend> Gemma4Block<B> {
         );
         let normed = backend.rms_norm(x, &self.input_norm, self.norm_eps)?;
         finish_trace_span(input_norm_span, backend, &normed);
+        gemma_dump!(layer, "attn_norm", backend, normed);
         let attn_out = self
             .attn
             .forward_with_cache(backend, &normed, cache, layer, start_pos)?;
@@ -740,6 +765,7 @@ impl<B: Backend> Gemma4Block<B> {
         );
         let x = backend.add(&residual, &attn_out)?;
         finish_trace_span(attn_add_span, backend, &x);
+        gemma_dump!(layer, "post_attn_add", backend, x);
 
         // 2. Feed-forward network
         let residual = x.clone();
@@ -754,6 +780,7 @@ impl<B: Backend> Gemma4Block<B> {
         let normed = backend.rms_norm(&x, &self.pre_ffn_norm, self.norm_eps)?;
         finish_trace_span(pre_ffn_norm_span, backend, &normed);
         let mlp_out = self.mlp.forward(backend, &normed)?;
+        gemma_dump!(layer, "ffn", backend, mlp_out);
         let post_ffn_norm_span = gemma_trace_span!(
             "post_ffn_rms_norm",
             layer,
@@ -775,6 +802,7 @@ impl<B: Backend> Gemma4Block<B> {
         );
         let mut x = backend.add(&residual, &mlp_out)?;
         finish_trace_span(ffn_add_span, backend, &x);
+        gemma_dump!(layer, "ffn_add", backend, x);
 
         // 3. Per-layer embedding (PLE)
         if let Some(ple) = ple {
@@ -786,8 +814,9 @@ impl<B: Backend> Gemma4Block<B> {
                 hidden_bytes + trace::bytes_from_shape(backend.shape(ple)),
                 0,
             );
-            x = self.add_ple(backend, &x, ple)?;
+            x = self.add_ple(backend, &x, ple, layer)?;
             finish_trace_span(ple_span, backend, &x);
+            gemma_dump!(layer, "ple_add", backend, x);
         }
 
         // 4. Layer output scaling
@@ -808,7 +837,13 @@ impl<B: Backend> Gemma4Block<B> {
 
     /// Apply per-layer input following HF pathway:
     /// gate(hidden)→gelu→*PLE→proj→rms_norm→+residual
-    fn add_ple(&self, backend: &B, x: &B::Tensor, ple: &B::Tensor) -> Result<B::Tensor, B::Error> {
+    fn add_ple(
+        &self,
+        backend: &B,
+        x: &B::Tensor,
+        ple: &B::Tensor,
+        layer: usize,
+    ) -> Result<B::Tensor, B::Error> {
         let gate = self
             .inp_gate
             .as_ref()
@@ -823,13 +858,20 @@ impl<B: Backend> Gemma4Block<B> {
             .expect("Gemma 4 PLE requires post_ple_norm");
 
         // Gate: hidden (1536) → per_layer_dim (256), then GELU (tanh approx matching llama.cpp)
-        let gated = gelu_tanh(backend, &gate.forward(backend, x)?)?;
+        gemma_dump!(layer, "ple_input", backend, *ple);
+        let gated_in = gate.forward(backend, x)?;
+        gemma_dump!(layer, "ple_gate_in", backend, gated_in);
+        let gated = gelu_tanh(backend, &gated_in)?;
+        gemma_dump!(layer, "ple_gelu", backend, gated);
         // Multiply gated hidden by PLE token embedding (both 256-dim)
         let multiplied = backend.elemul(&gated, ple)?;
+        gemma_dump!(layer, "ple_mul", backend, multiplied);
         // Project back to hidden dim (256 → 1536)
         let projected = proj.forward(backend, &multiplied)?;
+        gemma_dump!(layer, "ple_proj", backend, projected);
         // RMS norm
         let normed = backend.rms_norm(&projected, norm, self.norm_eps)?;
+        gemma_dump!(layer, "ple_norm", backend, normed);
         // Add to residual
         backend.add(x, &normed)
     }
@@ -1053,13 +1095,21 @@ impl Gemma4<CpuBackend> {
         let mut blocks = Vec::with_capacity(config.n_layers);
         let mut last_local_source = None;
         let mut last_global_source = None;
+        // KV sharing starts at n_layers - num_kv_shared_layers regardless of
+        // whether the checkpoint still carries per-layer k/v weights: HF
+        // ignores those tensors for shared layers.
+        let first_shared_layer = if config.num_kv_shared_layers > 0 {
+            config.n_layers - config.num_kv_shared_layers
+        } else {
+            usize::MAX
+        };
         for i in 0..config.n_layers {
             let layer_type = config.layer_type(i);
             let k_name = format!("blk.{}.attn_k.weight", i);
             let v_name = format!("blk.{}.attn_v.weight", i);
             let has_own_kv =
                 loader.tensors.contains_key(&k_name) && loader.tensors.contains_key(&v_name);
-            let is_shared = !has_own_kv;
+            let is_shared = i >= first_shared_layer || !has_own_kv;
             let shared_source_layer = if is_shared {
                 match layer_type {
                     Gemma4AttentionType::Local => last_local_source,
@@ -1274,7 +1324,12 @@ impl Gemma4<CpuBackend> {
             match loader.tensors.remove("per_layer_model_proj.weight") {
                 Some(t) => {
                     let proj = match t {
-                        LoadedTensor::F32(tensor) => Linear::new(tensor, None),
+                        // BF16 arrives as loader F32 with GGUF dims; reorient
+                        // like every other linear or the PLE context
+                        // projection reads transposed bytes
+                        LoadedTensor::F32(tensor) => {
+                            Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
+                        }
                         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
                         LoadedTensor::KQuant(_) => {
                             anyhow::bail!(NO_K_QUANT)
