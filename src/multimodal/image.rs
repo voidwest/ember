@@ -93,6 +93,18 @@ pub struct PreprocessTimings {
     pub normalize_ms: f64,
 }
 
+/// Decode an image from memory (PNG/JPEG bytes) and return RGB pixels as
+/// f32 `[3, height, width]` with values in 0..255 (channels-first).
+pub fn decode_rgb_bytes(bytes: &[u8]) -> Result<CpuTensor> {
+    let img = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| anyhow!("failed to read image bytes: {e}"))?
+        .decode()
+        .map_err(|e| anyhow!("failed to decode image bytes: {e}"))?
+        .to_rgb8();
+    Ok(rgb8_to_tensor(&img))
+}
+
 /// Decode an image file (PNG/JPEG) and return RGB pixels as f32
 /// `[3, height, width]` with values in 0..255 (channels-first).
 pub fn decode_rgb(path: &Path) -> Result<CpuTensor> {
@@ -101,6 +113,10 @@ pub fn decode_rgb(path: &Path) -> Result<CpuTensor> {
         .decode()
         .map_err(|e| anyhow!("failed to decode image {}: {e}", path.display()))?
         .to_rgb8();
+    Ok(rgb8_to_tensor(&img))
+}
+
+fn rgb8_to_tensor(img: &image::RgbImage) -> CpuTensor {
     let (width, height) = img.dimensions();
     let (width, height) = (width as usize, height as usize);
     let mut data = vec![0.0f32; 3 * height * width];
@@ -112,14 +128,17 @@ pub fn decode_rgb(path: &Path) -> Result<CpuTensor> {
             data[2 * height * width + y * width + x] = p[2] as f32;
         }
     }
-    Ok(CpuTensor::from_data(vec![3, height, width], data))
+    CpuTensor::from_data(vec![3, height, width], data)
 }
 
 /// Preprocess a decoded RGB image with the given recipe.
 ///
-/// Pipeline (mirrors the HuggingFace PIL backend):
-/// resize longest edge -> split into `tile_size` squares + global tile ->
-/// rescale -> normalize. Returns normalized tiles and geometry.
+/// Pipeline (mirrors the HuggingFace Idefics3 processor):
+/// resize longest edge -> round both edges up to whole `tile_size` multiples
+/// (re-resize; the reference `resize_for_vision_encoder`) -> split into
+/// `tile_size` squares + global tile -> rescale -> normalize. Returns
+/// normalized tiles and geometry. Any aspect ratio is safe: the rounding
+/// stage guarantees exact tile grids for every geometry.
 pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<PreprocessedImage> {
     let t0 = std::time::Instant::now();
     anyhow::ensure!(
@@ -148,7 +167,37 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
         h = h.max(1);
         w = w.max(1);
     }
-    let resized = resize(image, w, h, config.resample)?;
+    let mut resized = resize(image, w, h, config.resample)?;
+
+    // 1.5 round both edges up to whole tiles when splitting is enabled
+    // (the reference `resize_for_vision_encoder` stage): after this, the
+    // tile grid divides exactly — no partial strips exist to drop. The
+    // float arithmetic replicates the reference's f64 operations in the
+    // same order so output dimensions match bit-for-bit. This is what makes
+    // heterogeneous image geometry safe: every image, whatever its aspect,
+    // ends in exact `tile`-multiple dimensions.
+    if let Some(tile_u) = config.tile_size {
+        let tile = tile_u as usize;
+        let aspect_ratio = w as f64 / h as f64;
+        let rounded = if w >= h {
+            let nw = (w as f64 / tile as f64).ceil() as usize * tile;
+            let mut nh = (nw as f64 / aspect_ratio).trunc() as usize;
+            nh = (nh as f64 / tile as f64).ceil() as usize * tile;
+            (nh, nw)
+        } else {
+            let nh = (h as f64 / tile as f64).ceil() as usize * tile;
+            let mut nw = (nh as f64 * aspect_ratio).trunc() as usize;
+            nw = (nw as f64 / tile as f64).ceil() as usize * tile;
+            (nh, nw)
+        };
+        if rounded != (h, w) {
+            // second resample of the already-resized image, exactly like
+            // the reference's two-stage pipeline
+            resized = resize(&resized, rounded.1, rounded.0, config.resample)?;
+        }
+        h = rounded.0.max(tile);
+        w = rounded.1.max(tile);
+    }
     let resized_dims = (h, w);
     let mut timings = PreprocessTimings {
         resize_ms: t0.elapsed().as_secs_f64() * 1e3,
@@ -156,18 +205,18 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
     };
     let t_tile = std::time::Instant::now();
 
-    // 2. split into tiles + global tile
+    // 2. split into tiles + global tile. After stage 1.5 both edges are
+    // exact tile multiples (when splitting is enabled), so the grid divides
+    // with no dropped strips — same crops the reference `unfold` produces.
     let mut tiles_uint = Vec::<CpuTensor>::new();
     let mut tile_grid = (0usize, 0usize);
     let mut has_global_tile = false;
     if let Some(tile) = config.tile_size {
         let tile = tile as usize;
         if h > tile || w > tile {
-            // Reference (HF PIL backend): num_splits = (size - tile) // tile + 1
-            // (floor division), so every crop is a full tile; a partial
-            // trailing strip is dropped. `tile_grid` is (rows, cols).
-            let rows = (h - tile) / tile + 1;
-            let cols = (w - tile) / tile + 1;
+            // exact because stage 1.5 rounded both edges to tile multiples
+            let rows = h / tile;
+            let cols = w / tile;
             tile_grid = (rows, cols);
             for r in 0..rows {
                 for c in 0..cols {
@@ -180,6 +229,8 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
             tiles_uint.push(resize(&resized, tile, tile, config.resample)?);
             has_global_tile = true;
         } else {
+            // image is exactly tile-sized after rounding: single frame, no
+            // grid (reference reports splits (0, 0) in this case)
             tiles_uint.push(resized.clone());
         }
     } else {
@@ -222,6 +273,53 @@ pub fn preprocess(image: &CpuTensor, config: &ImagePreprocessConfig) -> Result<P
         has_global_tile,
         timings,
     })
+}
+
+/// Tile grid `(rows, cols)` an image of `(h, w)` produces under `config`
+/// after the longest-edge resize and tile rounding — computed without any
+/// pixel work. Used by the feature cache to reconstruct assembler metadata
+/// for cache hits.
+pub fn tile_grid_for(dims: (usize, usize), config: &ImagePreprocessConfig) -> (usize, usize) {
+    let (mut h, mut w) = dims;
+    if let Some(max_edge) = config.resize_longest_edge {
+        let max_edge = max_edge as usize;
+        if w >= h {
+            w = max_edge;
+            h = (w as f64 / aspect(dims)) as usize;
+            if h % 2 != 0 {
+                h += 1;
+            }
+        } else {
+            h = max_edge;
+            w = (h as f64 * aspect(dims)) as usize;
+            if w % 2 != 0 {
+                w += 1;
+            }
+        }
+        h = h.max(1);
+        w = w.max(1);
+    }
+    if let Some(tile_u) = config.tile_size {
+        let tile = tile_u as usize;
+        let aspect_ratio = w as f64 / h as f64;
+        let rounded = if w >= h {
+            let nw = (w as f64 / tile as f64).ceil() as usize * tile;
+            let mut nh = (nw as f64 / aspect_ratio).trunc() as usize;
+            nh = (nh as f64 / tile as f64).ceil() as usize * tile;
+            (nh, nw)
+        } else {
+            let nh = (h as f64 / tile as f64).ceil() as usize * tile;
+            let mut nw = (nh as f64 * aspect_ratio).trunc() as usize;
+            nw = (nw as f64 / tile as f64).ceil() as usize * tile;
+            (nh, nw)
+        };
+        h = rounded.0.max(tile);
+        w = rounded.1.max(tile);
+        if h > tile || w > tile {
+            return (h / tile, w / tile);
+        }
+    }
+    (0, 0)
 }
 
 fn aspect(dims: (usize, usize)) -> f64 {

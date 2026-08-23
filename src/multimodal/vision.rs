@@ -70,7 +70,24 @@ impl VisionTransformer {
     /// pixels) into patch-sequence hidden states `[n_images, num_patches,
     /// embed_dim]` after the post layer-norm.
     pub fn encode(&self, backend: &CpuBackend, pixels: &CpuTensor) -> Result<CpuTensor, CpuError> {
-        self.encode_impl(backend, pixels, None)
+        self.encode_impl(backend, pixels, None, None)
+    }
+
+    /// Encode with per-image patch-validity masks (`[n_images,
+    /// patches_per_side, patches_per_side]`, 1 = valid pixel region).
+    ///
+    /// Used by padded video frames: the reference computes *variable*
+    /// position ids over the valid rectangle (bucketized fractional coords)
+    /// and excludes invalid patches from every layer's attention via an
+    /// additive mask. With all-valid masks this path is bit-identical to
+    /// [`Self::encode`] (the bucketized grid collapses to row-major ids).
+    pub fn encode_with_patch_masks(
+        &self,
+        backend: &CpuBackend,
+        pixels: &CpuTensor,
+        masks: &CpuTensor,
+    ) -> Result<CpuTensor, CpuError> {
+        self.encode_impl(backend, pixels, Some(masks), None)
     }
 
     /// Like [`Self::encode`] but records the progressive-validation
@@ -82,7 +99,7 @@ impl VisionTransformer {
         pixels: &CpuTensor,
     ) -> Result<(CpuTensor, VisionTrace), CpuError> {
         let mut trace = VisionTrace::default();
-        let out = self.encode_impl(backend, pixels, Some(&mut trace))?;
+        let out = self.encode_impl(backend, pixels, None, Some(&mut trace))?;
         Ok((out, trace))
     }
 
@@ -90,6 +107,7 @@ impl VisionTransformer {
         &self,
         backend: &CpuBackend,
         pixels: &CpuTensor,
+        masks: Option<&CpuTensor>,
         mut trace: Option<&mut VisionTrace>,
     ) -> Result<CpuTensor, CpuError> {
         // Timings are recorded whenever a trace is requested (the ~40
@@ -159,18 +177,53 @@ impl VisionTransformer {
             timings.patch_embed_ms += t_op.elapsed().as_secs_f64() * 1e3;
         }
 
-        // -- learned position embeddings (identity grid for full images) --
+        // -- learned position embeddings --
         let t_op = Instant::now();
-        for n in 0..n_images {
-            for py in 0..patches_per_side {
-                for px in 0..patches_per_side {
-                    let row = n * num_patches + py * patches_per_side + px;
-                    let pos = py * patches_per_side + px;
-                    let dst = &mut x.data_mut()[row * cfg.embed_dim..(row + 1) * cfg.embed_dim];
-                    let src =
-                        &self.pos_embed.data()[pos * cfg.embed_dim..(pos + 1) * cfg.embed_dim];
-                    for (d, s) in dst.iter_mut().zip(src.iter()) {
-                        *d += s;
+        if let Some(m) = masks {
+            // Variable positions over the valid rectangle (reference
+            // Idefics3VisionEmbeddings): fractional coords of valid patches
+            // are bucketized into the patch grid; invalid patches keep
+            // position id 0. All arithmetic is f32, matching torch.
+            ensure_mask_shape(m, n_images, patches_per_side)?;
+            let n_side = patches_per_side;
+            for n in 0..n_images {
+                let mask = &m.data()[n * n_side * n_side..(n + 1) * n_side * n_side];
+                let nb_h = (0..n_side).filter(|&r| mask[r * n_side] > 0.0).count();
+                let nb_w = (0..n_side).filter(|&c| mask[c] > 0.0).count();
+                let step_h = 1.0f32 / nb_h as f32;
+                let step_w = 1.0f32 / nb_w as f32;
+                let clamp_max = 1.0f32 - 1e-6f32;
+                for py in 0..n_side {
+                    for px in 0..n_side {
+                        let row = n * num_patches + py * n_side + px;
+                        let pos = if mask[py * n_side + px] > 0.0 {
+                            let fh = (py as f32 * step_h).min(clamp_max);
+                            let fw = (px as f32 * step_w).min(clamp_max);
+                            bucket_right_true(fh, n_side) * n_side + bucket_right_true(fw, n_side)
+                        } else {
+                            0
+                        };
+                        let dst = &mut x.data_mut()[row * cfg.embed_dim..(row + 1) * cfg.embed_dim];
+                        let src =
+                            &self.pos_embed.data()[pos * cfg.embed_dim..(pos + 1) * cfg.embed_dim];
+                        for (d, s) in dst.iter_mut().zip(src.iter()) {
+                            *d += s;
+                        }
+                    }
+                }
+            }
+        } else {
+            for n in 0..n_images {
+                for py in 0..patches_per_side {
+                    for px in 0..patches_per_side {
+                        let row = n * num_patches + py * patches_per_side + px;
+                        let pos = py * patches_per_side + px;
+                        let dst = &mut x.data_mut()[row * cfg.embed_dim..(row + 1) * cfg.embed_dim];
+                        let src =
+                            &self.pos_embed.data()[pos * cfg.embed_dim..(pos + 1) * cfg.embed_dim];
+                        for (d, s) in dst.iter_mut().zip(src.iter()) {
+                            *d += s;
+                        }
                     }
                 }
             }
@@ -207,6 +260,20 @@ impl VisionTransformer {
                 )));
             }
             let scale = (head_dim as f32).sqrt().recip();
+            // per-image additive key bias when masks are present (0 for
+            // valid patches, f32::MIN for padding — the reference's extended
+            // attention mask)
+            let key_biases: Vec<Vec<f32>> = match masks {
+                Some(m) => (0..n_images)
+                    .map(|n| {
+                        let mask = &m.data()[n * num_patches..(n + 1) * num_patches];
+                        mask.iter()
+                            .map(|&v| if v > 0.0 { 0.0 } else { f32::MIN })
+                            .collect()
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
             // parallelize over images: each worker owns one contiguous
             // [num_patches, embed_dim] block of attn_rows and loops heads
             // inside, scattering each head's [seq, head_dim] result into its
@@ -219,13 +286,18 @@ impl VisionTransformer {
                 .enumerate()
                 .for_each(|(n, (out_block, slot))| {
                     let row_base = n * num_patches;
+                    let bias = if key_biases.is_empty() {
+                        None
+                    } else {
+                        Some(&key_biases[n][..])
+                    };
                     for h in 0..cfg.n_heads {
                         let cols = h * head_dim..(h + 1) * head_dim;
                         let qh = slice_rows_cols(&q, row_base, num_patches, cols.clone());
                         let kh = slice_rows_cols(&k, row_base, num_patches, cols.clone());
                         let vh = slice_rows_cols(&v, row_base, num_patches, cols);
                         let split = if profile { Some(&mut slot[0]) } else { None };
-                        let oh = attention_head(&qh, &kh, &vh, scale, split);
+                        let oh = attention_head(&qh, &kh, &vh, scale, split, bias);
                         for row in 0..num_patches {
                             let dst = &mut out_block[row * cfg.embed_dim + h * head_dim
                                 ..row * cfg.embed_dim + (h + 1) * head_dim];
@@ -400,7 +472,7 @@ fn attention_impl(
         let qh = slice_rows_cols(q, 0, seq, cols.clone());
         let kh = slice_rows_cols(k, 0, seq, cols.clone());
         let vh = slice_rows_cols(v, 0, seq, cols);
-        let oh = attention_head(&qh, &kh, &vh, scale, split.as_deref_mut());
+        let oh = attention_head(&qh, &kh, &vh, scale, split.as_deref_mut(), None);
         for row in 0..seq {
             let dst = &mut out[row * embed + h * head_dim..row * embed + (h + 1) * head_dim];
             dst.copy_from_slice(&oh.data()[row * head_dim..(row + 1) * head_dim]);
@@ -409,14 +481,58 @@ fn attention_impl(
     Ok(CpuTensor::from_data(vec![seq, embed], out))
 }
 
+/// Whether the vision softmax uses the fast-exp kernel. Default ON after
+/// the Phase-4 error ladder + benchmarks; set `EMBER_VISION_FAST_EXP=0`
+/// for the exact libm-expf reference path (bit-identical to the
+/// historical behavior).
+fn fast_exp_softmax_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("EMBER_VISION_FAST_EXP").is_none_or(|v| v != "0"))
+}
+
+/// Row-wise in-place softmax using [`crate::simd::fast_exp_into`]. Same
+/// max-subtract / normalize structure as `CpuTensor::softmax`; the exp
+/// itself is the AVX2 polynomial approximation (see simd.rs for the
+/// accuracy contract). Masked rows keep working: the additive f32::MIN
+/// bias clamps to exp(-88) ≈ 6e-39, indistinguishable from zero at f32.
+pub fn softmax_in_place_fast(t: &mut CpuTensor) {
+    assert!(t.shape().len() >= 2, "softmax needs 2 dims min");
+    let cols = t.shape()[t.shape().len() - 1];
+    let rows = t.len() / cols;
+    let data = t.data_mut();
+    for r in 0..rows {
+        let row = &mut data[r * cols..(r + 1) * cols];
+        let max = row.iter().fold(f32::NEG_INFINITY, |a: f32, &b| a.max(b));
+        if max == f32::NEG_INFINITY {
+            let uniform = 1.0 / cols as f32;
+            row.fill(uniform);
+            continue;
+        }
+        for v in row.iter_mut() {
+            *v -= max;
+        }
+        crate::simd::fast_exp_in_place(row);
+        let inv_sum = row.iter().sum::<f32>().recip();
+        for v in row.iter_mut() {
+            *v *= inv_sum;
+        }
+    }
+}
+
 /// One head of full attention: `qh`, `kh`, `vh` are `[seq, head_dim]`.
 /// Returns `[seq, head_dim]`. Optional split records sub-op wall time.
+///
+/// `key_bias`, when given, is an additive per-key bias `[seq_k]` applied to
+/// the scaled scores before softmax (encoder-style padding masks: 0 for
+/// valid keys, a large negative value for padding). The unmasked path is
+/// bit-identical to the historical kernel.
 pub(crate) fn attention_head(
     qh: &CpuTensor,
     kh: &CpuTensor,
     vh: &CpuTensor,
     scale: f32,
     mut split: Option<&mut AttentionSplit>,
+    key_bias: Option<&[f32]>,
 ) -> CpuTensor {
     let t_scores = Instant::now();
     // scores [seq, seq] = qh * kh^T * scale
@@ -424,11 +540,26 @@ pub(crate) fn attention_head(
     for s in scores.data_mut() {
         *s *= scale;
     }
+    if let Some(bias) = key_bias {
+        let klen = bias.len();
+        let seq = scores.shape()[0];
+        for r in 0..seq {
+            let row = &mut scores.data_mut()[r * klen..(r + 1) * klen];
+            for (j, s) in row.iter_mut().enumerate() {
+                *s += bias[j];
+            }
+        }
+    }
     if let Some(sp) = split.as_deref_mut() {
         sp.scores_ms += t_scores.elapsed().as_secs_f64() * 1e3;
     }
     let t_soft = Instant::now();
-    let probs = scores.softmax();
+    let probs = if fast_exp_softmax_enabled() {
+        softmax_in_place_fast(&mut scores);
+        scores
+    } else {
+        scores.softmax()
+    };
     if let Some(sp) = split.as_deref_mut() {
         sp.softmax_ms += t_soft.elapsed().as_secs_f64() * 1e3;
     }
@@ -671,4 +802,48 @@ impl VisionModel {
         let num_patches = self.transformer.config.num_patches();
         self.connector.forward(backend, &hidden, num_patches)
     }
+
+    /// [`Self::encode`] with per-image patch masks (padded video frames).
+    pub fn encode_masked(
+        &self,
+        backend: &CpuBackend,
+        pixels: &CpuTensor,
+        masks: &CpuTensor,
+    ) -> Result<CpuTensor> {
+        let hidden = self
+            .transformer
+            .encode_with_patch_masks(backend, pixels, masks)?;
+        let num_patches = self.transformer.config.num_patches();
+        Ok(self.connector.forward(backend, &hidden, num_patches)?)
+    }
+}
+
+/// torch.bucketize(v, boundaries, right=True) over boundaries
+/// `k/n_side` for k in 1..n_side: the count of boundaries <= v. For the
+/// SmolVLM grid (n_side = 32) every boundary is exactly representable in
+/// f32, so this matches torch bit-for-bit.
+fn bucket_right_true(v: f32, n_side: usize) -> usize {
+    let mut idx = 0usize;
+    for k in 1..n_side {
+        if (k as f32 / n_side as f32) <= v {
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+    idx
+}
+
+fn ensure_mask_shape(
+    m: &CpuTensor,
+    n_images: usize,
+    patches_per_side: usize,
+) -> Result<(), CpuError> {
+    if m.shape() != [n_images, patches_per_side, patches_per_side] {
+        return Err(CpuError::ShapeMismatch(format!(
+            "patch mask shape {:?} != [{n_images}, {patches_per_side}, {patches_per_side}]",
+            m.shape()
+        )));
+    }
+    Ok(())
 }

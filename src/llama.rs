@@ -2717,7 +2717,7 @@ fn record_profiled_packed(
     );
 }
 
-fn llama_embed_tokens<B: Backend>(
+pub(crate) fn llama_embed_tokens<B: Backend>(
     backend: &B,
     table: &LlamaEmbedding<B>,
     token_ids: &[u32],
@@ -2753,6 +2753,27 @@ impl<B: Backend> Llama<B> {
             self.config.head_dim,
             max_seq_len,
         )
+    }
+
+    /// create a kv cache sized for ONE request instead of the model's full
+    /// metadata context.
+    ///
+    /// KV-cache capacity never affects forward results (positions are
+    /// explicit), but eager allocation at metadata context (e.g. 131072 for
+    /// Llama-3.2-1B ≈ 8 GiB here) pushes interactive runs into swap on
+    /// memory-constrained hosts and collapses decode throughput. Request-
+    /// sized caches keep identical numerics with a footprint proportional
+    /// to actual work.
+    pub fn create_request_cache(
+        &self,
+        backend: &B,
+        prompt_tokens: usize,
+        max_new_tokens: usize,
+    ) -> crate::kv_cache::KVCache {
+        let needed = prompt_tokens
+            .saturating_add(max_new_tokens)
+            .min(self.config.max_seq_len);
+        self.create_cache(backend, needed)
     }
 
     /// forward pass with incremental kv caching.
@@ -4929,5 +4950,18 @@ mod tests {
             max_abs <= 1e-4,
             "defused fused logits diverge from hooked reference: {max_abs}"
         );
+    }
+
+    #[test]
+    fn request_cache_is_sized_to_the_request() {
+        // The request-sized cache must never exceed the actual work
+        // (prompt + generated tokens), and never the model's context.
+        let model = test_llama_model_with_layers(2);
+        let backend = CpuBackend;
+        // the test model's metadata context is 8; requests above it clamp
+        let cache = model.create_request_cache(&backend, 102, 16);
+        assert_eq!(cache.max_seq_len(), 8);
+        let cache = model.create_request_cache(&backend, 5, 1);
+        assert_eq!(cache.max_seq_len(), 6);
     }
 }

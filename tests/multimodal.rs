@@ -63,11 +63,11 @@ fn preprocess_splits_into_tiles_with_global() {
         std: [0.5; 3],
     };
     let pp = preprocess(&img, &config).unwrap();
-    // 640x384 -> longest edge 1024: 1024x614 -> tiles (614-256)/256+1 = 2
-    // rows x (1024-256)/256+1 = 4 cols (partial strips dropped, exactly the
-    // reference tiling) + global tile = 9 tiles
-    assert_eq!(pp.tiles.shape(), &[9, 3, 256, 256]);
-    assert_eq!(pp.tile_grid, (2, 4));
+    // 640x384 -> longest edge 1024: 1024x614 -> round both edges up to
+    // whole tiles (reference resize_for_vision_encoder): 1024x768 ->
+    // grid (3, 4) exact + global tile = 13 tiles. No strip is dropped.
+    assert_eq!(pp.tiles.shape(), &[13, 3, 256, 256]);
+    assert_eq!(pp.tile_grid, (3, 4));
     assert!(pp.has_global_tile);
     // normalized range roughly [-1, 1]
     let v = pp.tiles.data();
@@ -88,9 +88,13 @@ fn preprocess_small_image_no_split() {
         std: [0.5; 3],
     };
     let pp = preprocess(&img, &config).unwrap();
+    // 64x48 -> longest edge 128: 128x96 -> round up to whole tiles (256):
+    // 256x256. Exactly tile-sized after rounding => single frame, no grid
+    // (reference reports splits (0,0)); the image is upscaled, matching the
+    // reference processor for any geometry.
     assert_eq!(pp.tile_grid, (0, 0));
     assert!(!pp.has_global_tile);
-    assert_eq!(pp.tiles.shape(), &[1, 3, 128, 128]);
+    assert_eq!(pp.tiles.shape(), &[1, 3, 256, 256]);
 }
 
 #[test]
@@ -572,4 +576,469 @@ fn smolvlm_assembler_binds_multiple_images_in_order() {
         result.is_err(),
         "placeholder/image count mismatch must fail"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Track A: general multimodal request substrate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn content_parts_represent_arbitrary_interleaving() {
+    use ember::multimodal::audio::AudioInput;
+    use ember::multimodal::{ContentPart, ImageInput, VideoFrames, VideoInput};
+
+    // Text/Image/Text/Audio/Video/Text — order preserved, repeats fine
+    let parts = [
+        ContentPart::Text("look:".into()),
+        ContentPart::Image(ImageInput::Bytes(vec![1, 2, 3])),
+        ContentPart::Text("listen:".into()),
+        ContentPart::Audio(AudioInput::Samples {
+            data: vec![0.0; 16],
+            sample_rate: 16_000,
+        }),
+        ContentPart::Video(VideoInput::Frames(VideoFrames {
+            frames: vec![],
+            timestamps_ms: vec![],
+            source_fps: Some(30.0),
+            source_duration_s: None,
+        })),
+        ContentPart::Text("done".into()),
+    ];
+    assert_eq!(parts.len(), 6);
+    assert_eq!(
+        parts[1].media_kind(),
+        Some(ember::multimodal::MediaKind::Image)
+    );
+    assert_eq!(
+        parts[3].media_kind(),
+        Some(ember::multimodal::MediaKind::Audio)
+    );
+    assert_eq!(
+        parts[4].media_kind(),
+        Some(ember::multimodal::MediaKind::Video)
+    );
+    assert_eq!(parts[0].media_kind(), None);
+}
+
+#[test]
+fn image_input_decodes_from_memory_bytes_and_pixels() {
+    use ember::multimodal::{ContentPart, ImageInput};
+
+    // encode a tiny PNG in memory
+    let img = rgb_image(8, 6);
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        use ::image::ImageEncoder;
+        let enc = ::image::codecs::png::PngEncoder::new(&mut buf);
+        let (h, w) = (6usize, 8usize);
+        let mut u8data = vec![0u8; 3 * h * w];
+        for y in 0..h {
+            for x in 0..w {
+                for c in 0..3 {
+                    u8data[(y * w + x) * 3 + c] = img.data()[c * h * w + y * w + x] as u8;
+                }
+            }
+        }
+        enc.write_image(&u8data, 8, 6, ::image::ExtendedColorType::Rgb8)
+            .unwrap();
+    }
+    let bytes: Vec<u8> = buf.into_inner();
+
+    let via_bytes = ImageInput::Bytes(bytes.clone()).decode().unwrap();
+    assert_eq!(via_bytes.shape(), &[3, 6, 8]);
+
+    // decoded pixels equal the source tensor bit-for-bit
+    let via_pixels_again = ember::multimodal::image::decode_rgb_bytes(&bytes).unwrap();
+    assert_eq!(via_pixels_again.data(), via_bytes.data());
+
+    let via_pixels = ImageInput::Pixels { rgb: img.clone() }.decode().unwrap();
+    assert_eq!(via_pixels.data(), img.data(), "Pixels must pass through");
+
+    // malformed bytes fail closed with a clear error
+    assert!(ImageInput::Bytes(vec![0; 10]).decode().is_err());
+
+    let _ = ContentPart::Image(ImageInput::Bytes(bytes)); // representable as a part
+}
+
+#[test]
+fn media_id_is_content_sensitive() {
+    use ember::multimodal::MediaId;
+
+    let a = MediaId::from_bytes(b"hello");
+    let b = MediaId::from_bytes(b"hello");
+    let c = MediaId::from_bytes(b"hell");
+    let d = MediaId::from_bytes(b"o");
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+    assert_ne!(c, d, "length-prefixed hash must not join across splits");
+
+    let t1 = CpuTensor::from_data(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]);
+    let t2 = CpuTensor::from_data(vec![4], vec![1.0, 2.0, 3.0, 4.0]);
+    let t3 = CpuTensor::from_data(vec![2, 2], vec![1.0, 2.0, 3.0, 4.5]);
+    assert_ne!(
+        MediaId::from_tensor(&t1),
+        MediaId::from_tensor(&t2),
+        "shape participates"
+    );
+    assert_ne!(
+        MediaId::from_tensor(&t1),
+        MediaId::from_tensor(&t3),
+        "values participate"
+    );
+}
+
+#[test]
+fn smolvlm_rejects_non_image_media_parts() {
+    use ember::multimodal::audio::AudioInput;
+    use ember::multimodal::ContentPart;
+    use ember::smolvlm::SmolVlm;
+
+    let parts = vec![
+        ContentPart::Audio(AudioInput::Samples {
+            data: vec![0.0; 8],
+            sample_rate: 16_000,
+        }),
+        ContentPart::Text("hi".into()),
+    ];
+    assert!(
+        SmolVlm::split_parts(&parts).is_err(),
+        "audio part must fail closed on the image adapter"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Track E: frame sampling policies
+// ---------------------------------------------------------------------------
+
+fn fake_video(n: usize) -> ember::multimodal::VideoFrames {
+    let frames = (0..n)
+        .map(|t| CpuTensor::from_data(vec![3, 2, 2], vec![t as f32; 12]))
+        .collect();
+    ember::multimodal::VideoFrames {
+        frames,
+        timestamps_ms: (0..n).map(|i| i as f64 * 1000.0 / 8.0).collect(), // 8 fps
+        source_fps: Some(8.0),
+        source_duration_s: Some(n as f64 / 8.0),
+    }
+}
+
+#[test]
+fn uniform_sampling_matches_reference_index_formula() {
+    use ember::multimodal::FrameSampling;
+
+    let vid = fake_video(100);
+    // reference sampler: indices = floor(i * total / k)
+    let s = FrameSampling::Uniform { max_frames: 8 }
+        .sample(&vid)
+        .unwrap();
+    assert_eq!(s.n_frames(), 8);
+    assert_eq!(s.source_indices, vec![0, 12, 25, 37, 50, 62, 75, 87]);
+    assert_eq!(s.total_source_frames, 100);
+    assert_eq!(s.source_fps, Some(8.0));
+    assert_eq!(s.timestamps_ms[3], 37.0 * 125.0);
+
+    // cap larger than total -> every frame
+    let s_all = FrameSampling::Uniform { max_frames: 200 }
+        .sample(&vid)
+        .unwrap();
+    assert_eq!(s_all.n_frames(), 100);
+}
+
+#[test]
+fn sampling_is_deterministic_and_fails_closed() {
+    use ember::multimodal::FrameSampling;
+
+    let vid = fake_video(50);
+    let a = FrameSampling::Uniform { max_frames: 5 }
+        .sample(&vid)
+        .unwrap();
+    let b = FrameSampling::Uniform { max_frames: 5 }
+        .sample(&vid)
+        .unwrap();
+    assert_eq!(a.source_indices, b.source_indices);
+    for (x, y) in a.frames.iter().zip(b.frames.iter()) {
+        assert_eq!(x.data(), y.data());
+    }
+
+    // empty input fails closed
+    let empty = ember::multimodal::VideoFrames {
+        frames: vec![],
+        timestamps_ms: vec![],
+        source_fps: None,
+        source_duration_s: None,
+    };
+    assert!(FrameSampling::Uniform { max_frames: 4 }
+        .sample(&empty)
+        .is_err());
+    // fps=0 fails closed
+    assert!(FrameSampling::FixedFps {
+        fps: 0.0,
+        max_frames: 4
+    }
+    .sample(&fake_video(10))
+    .is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Track G: encoded-media feature cache
+// ---------------------------------------------------------------------------
+
+#[test]
+fn feature_cache_reuses_bit_exact_and_evicts() {
+    use ember::multimodal::cache::{FeatureCacheKey, MediaFeatureCache, PreprocessFingerprint};
+    use ember::multimodal::{MediaId, MediaKind};
+
+    let key = |v: u32| FeatureCacheKey {
+        media_id: MediaId(v as u64),
+        kind: MediaKind::Image,
+        preprocess: PreprocessFingerprint::new("t").value(),
+        tower_identity: 7,
+    };
+
+    let mut cache = MediaFeatureCache::new(1024);
+    let t = CpuTensor::from_data(vec![2, 2], vec![1.0, 2.0, 3.0, 4.0]);
+    cache.insert(key(1), t.clone());
+    assert_eq!(cache.len(), 1);
+    // hit replays bit-exactly
+    let hit = cache.lookup(&key(1)).unwrap().clone();
+    assert_eq!(hit.data(), t.data());
+    let _ = hit;
+    // different content -> miss; different config -> miss
+    assert!(cache.lookup(&key(2)).is_none());
+    let mut fp = PreprocessFingerprint::new("t");
+    fp.mix_u64(1);
+    let other_cfg = FeatureCacheKey {
+        media_id: MediaId(1),
+        kind: MediaKind::Image,
+        preprocess: fp.value(),
+        tower_identity: 7,
+    };
+    assert!(
+        cache.lookup(&other_cfg).is_none(),
+        "config change must invalidate"
+    );
+    // different weights -> miss
+    let other_model = FeatureCacheKey {
+        media_id: MediaId(1),
+        kind: MediaKind::Image,
+        preprocess: PreprocessFingerprint::new("t").value(),
+        tower_identity: 8,
+    };
+    assert!(
+        cache.lookup(&other_model).is_none(),
+        "model change must invalidate"
+    );
+
+    // eviction under byte pressure (each entry 64 bytes here)
+    for i in 0..64u32 {
+        cache.insert(key(i), CpuTensor::from_data(vec![4, 4], vec![i as f32; 16]));
+    }
+    assert!(cache.used_bytes() <= 1024);
+}
+
+#[test]
+fn preprocess_fingerprint_is_field_sensitive() {
+    use ember::multimodal::cache::PreprocessFingerprint;
+    let mut a = PreprocessFingerprint::new("x");
+    a.mix_u64(512);
+    a.mix_f64(0.5);
+    let mut b = PreprocessFingerprint::new("x");
+    b.mix_u64(512);
+    b.mix_f64(0.5000001);
+    assert_ne!(a.value(), b.value());
+    let mut c = PreprocessFingerprint::new("y");
+    c.mix_u64(512);
+    c.mix_f64(0.5);
+    assert_ne!(a.value(), c.value(), "tag participates");
+}
+
+// ---------------------------------------------------------------------------
+// Track F: ownership-aware cross-request vision batching
+// ---------------------------------------------------------------------------
+
+#[test]
+fn batch_encode_splits_features_back_to_owners() {
+    use ember::multimodal::batch::{batch_encode_images, BatchedImageInput};
+    use ember::multimodal::request::SegmentId;
+    use std::cell::RefCell;
+
+    let backend = CpuBackend;
+    // two requests x mixed geometry: req0 has 2 tiles @2x2 patches-per-tile
+    // simulation, req1 has 1 tile of a different shape
+    let mk =
+        |vals: &[f32], h: usize, w: usize| CpuTensor::from_data(vec![1, 3, h, w], vals.to_vec());
+    let inputs = vec![
+        BatchedImageInput {
+            owner: SegmentId::new(7, 0),
+            tiles: mk(&[1.0; 3 * 32 * 32], 32, 32),
+        },
+        BatchedImageInput {
+            owner: SegmentId::new(7, 1),
+            tiles: mk(&[2.0; 3 * 16 * 16], 16, 16),
+        },
+        BatchedImageInput {
+            owner: SegmentId::new(9, 0),
+            tiles: mk(&[3.0; 3 * 32 * 32], 32, 32),
+        },
+    ];
+
+    let seen_groups = RefCell::new(Vec::new());
+    let patch_size = 8usize; // pretend patches for token math
+    let scale = 2usize;
+    let (outputs, traces, all) =
+        batch_encode_images(&backend, &inputs, patch_size, scale, |_be, batch| {
+            // fake tower+projector: one output row per tile, value = marker
+            let n = batch.shape()[0];
+            let (_, c, h, w) = (
+                batch.shape()[0],
+                batch.shape()[1],
+                batch.shape()[2],
+                batch.shape()[3],
+            );
+            let tokens_per_tile = ((h / patch_size) * (w / patch_size)) / (scale * scale);
+            let mut data = Vec::with_capacity(n * tokens_per_tile * 3);
+            for t in 0..n {
+                for k in 0..tokens_per_tile {
+                    data.push(batch.data()[t * c * h * w] + k as f32);
+                    data.extend_from_slice(&[0.0, 0.0]);
+                }
+            }
+            seen_groups.borrow_mut().push((h, w, n));
+            Ok((CpuTensor::from_data(vec![n * tokens_per_tile, 3], data), ()))
+        })
+        .unwrap();
+
+    // two geometry groups executed
+    assert_eq!(seen_groups.borrow().len(), 2);
+    assert_eq!(traces.len(), 2);
+    // owners preserved in request order with correct row counts:
+    // tokens_per_tile(32x32) = (32/8)^2 / 2^2 = 4; tokens_per_tile(16x16) = 1
+    assert_eq!(outputs[0].owner, SegmentId::new(7, 0));
+    assert_eq!(outputs[0].features.shape(), &[4, 3]);
+    assert_eq!(outputs[1].owner, SegmentId::new(7, 1));
+    assert_eq!(outputs[1].features.shape(), &[1, 3]);
+    assert_eq!(outputs[2].owner, SegmentId::new(9, 0));
+    assert_eq!(outputs[2].features.shape(), &[4, 3]);
+    // values routed correctly across the group boundary
+    assert_eq!(outputs[0].features.data()[0], 1.0);
+    assert_eq!(outputs[2].features.data()[0], 3.0);
+    // concatenated projection covers everything exactly once
+    let total_rows: usize = outputs.iter().map(|o| o.features.shape()[0]).sum();
+    assert_eq!(all.shape()[0], total_rows);
+}
+
+#[test]
+fn batch_encode_fails_closed_on_geometry_drift() {
+    use ember::multimodal::batch::{batch_encode_images, BatchedImageInput};
+    use ember::multimodal::request::SegmentId;
+
+    let backend = CpuBackend;
+    // lie about geometry via a project fn that returns fewer rows than the
+    // declared tile math implies -> split must fail closed
+    let inputs = vec![BatchedImageInput {
+        owner: SegmentId::new(1, 0),
+        tiles: CpuTensor::from_data(vec![1, 3, 32, 32], vec![0.0; 3 * 32 * 32]),
+    }];
+    let result = batch_encode_images(&backend, &inputs, 8, 2, |_be, batch| {
+        let n = batch.shape()[0];
+        Ok((CpuTensor::from_data(vec![n, 3], vec![0.0; n * 3]), ()))
+    });
+    assert!(result.is_err(), "row-count mismatch must fail closed");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 Track B: fast-exp softmax error ladder (vision)
+// ---------------------------------------------------------------------------
+
+/// Deterministic pseudo-random f32 in [-1, 1].
+fn lcg_values(n: usize, seed: u64) -> Vec<f32> {
+    let mut state = seed;
+    (0..n)
+        .map(|_| {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((state >> 33) as f32 / u32::MAX as f32) * 2.0 - 1.0
+        })
+        .collect()
+}
+
+/// Ladder level 2: fast softmax vs reference `CpuTensor::softmax` on
+/// random score matrices. Gate: max_abs <= 1e-6 and rows sum to 1.
+#[test]
+fn fast_softmax_matches_reference_within_gate() {
+    for (rows, cols, seed) in [(37usize, 257usize, 1u64), (128, 1024, 2), (731, 731, 3)] {
+        let data: Vec<f32> = lcg_values(rows * cols, seed)
+            .iter()
+            .map(|v| v * 12.0)
+            .collect();
+        let reference = CpuTensor::from_data(vec![rows, cols], data.clone()).softmax();
+        let mut got = CpuTensor::from_data(vec![rows, cols], data);
+        ember::multimodal::vision::softmax_in_place_fast(&mut got);
+        let max_abs: f32 = reference
+            .data()
+            .iter()
+            .zip(got.data())
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_abs <= 1e-6,
+            "{rows}x{cols}: max_abs {max_abs:.3e} > 1e-6"
+        );
+        // probability mass conservation
+        for r in 0..rows {
+            let sum: f32 = got.data()[r * cols..(r + 1) * cols].iter().sum();
+            assert!((sum - 1.0).abs() <= 1e-5, "row {r} sums to {sum}");
+        }
+    }
+}
+
+/// Masked-row semantics: additive f32::MIN bias entries must vanish under
+/// the fast path exactly as under the reference path.
+#[test]
+fn fast_softmax_handles_masked_rows_like_reference() {
+    let cols = 64usize;
+    let mut scores = vec![0.0f32; 4 * cols];
+    let rand = lcg_values(4 * cols, 11);
+    for (i, v) in scores.iter_mut().enumerate() {
+        *v = rand[i] * 8.0;
+    }
+    // mask half of row 1 and all of row 2
+    for j in (0..cols / 2).step_by(2) {
+        scores[cols + j] += f32::MIN;
+    }
+    for j in 0..cols {
+        scores[2 * cols + j] = -3.0 + scores[2 * cols + j] * 0.001 + f32::MIN;
+    }
+    let reference = CpuTensor::from_data(vec![4, cols], scores.clone()).softmax();
+    let mut got = CpuTensor::from_data(vec![4, cols], scores);
+    ember::multimodal::vision::softmax_in_place_fast(&mut got);
+
+    // Half-masked row: masked lanes vanish in both paths; unmasked lanes
+    // agree within the ladder gate.
+    for j in (0..cols / 2).step_by(2) {
+        assert_eq!(reference.data()[cols + j], 0.0);
+        assert!(
+            got.data()[cols + j] < 1e-30,
+            "masked lane {j} = {}",
+            got.data()[cols + j]
+        );
+    }
+    // Fully-masked row: f32::MIN is finite, so every lane sits at
+    // exp(0) = 1 before normalization — BOTH paths produce the uniform
+    // distribution (faithful encoder semantics for fully padded rows),
+    // and the two paths must agree.
+    for j in 0..cols {
+        let expected = 1.0 / cols as f32;
+        assert!((reference.data()[2 * cols + j] - expected).abs() < 1e-6);
+        assert!((got.data()[2 * cols + j] - expected).abs() < 1e-6);
+    }
+    // Unmasked regions agree within the ladder gate.
+    let max_abs: f32 = (0..cols)
+        .filter(|j| j % 2 == 1)
+        .map(|j| (reference.data()[cols + j] - got.data()[cols + j]).abs())
+        .chain((0..cols).map(|j| (reference.data()[3 * cols + j] - got.data()[3 * cols + j]).abs()))
+        .chain((0..cols).map(|j| (reference.data()[j] - got.data()[j]).abs()))
+        .fold(0.0f32, f32::max);
+    assert!(max_abs <= 1e-6, "unmasked drift {max_abs:.3e}");
 }

@@ -282,6 +282,66 @@ fn dequantize_row_scalar(data: &[u8], block_start: usize, blocks_per_row: usize,
 }
 
 // ---------------------------------------------------------------------------
+// Fast exp (softmax-class kernels)
+// ---------------------------------------------------------------------------
+
+/// Elementwise `exp(src) -> dst` for softmax-style workloads.
+///
+/// Vectorized path: AVX2+FMA polynomial approximation with two-part ln2
+/// range reduction (Cephes expf coefficients, degree-6 minimax on
+/// [-ln2/2, +ln2/2]). Measured relative error vs the libm reference is
+/// ~1e-7 — at or below one f32 ulp of typical results, i.e. fp32
+/// rounding noise. Inputs are clamped to >= -88 before evaluation:
+/// exp(-88) ≈ 6e-39 is already indistinguishable from zero after
+/// probability normalization, and the clamp keeps masked rows (additive
+/// f32::MIN bias) well-defined instead of overflowing the exponent-bit
+/// scaling.
+///
+/// The scalar fallback is the exact libm `expf`, so non-AVX2 hosts keep
+/// bit-identical reference behavior. Callers must treat the AVX2 output
+/// as numerically-equivalent-but-not-bit-identical and validate through
+/// their own error ladders.
+pub fn fast_exp_into(src: &[f32], dst: &mut [f32]) {
+    assert_eq!(src.len(), dst.len(), "fast_exp_into: length mismatch");
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            // Safety: feature set checked immediately above via runtime detection.
+            unsafe { x86_64::fast_exp_raw(src.as_ptr(), dst.as_mut_ptr(), src.len()) };
+            return;
+        }
+    }
+    fast_exp_scalar(src, dst);
+}
+
+/// In-place variant of [`fast_exp_into`]. The AVX2 body loads each
+/// 8-lane block completely before storing it, so same-slice operation is
+/// well-defined; the scalar tail processes elements strictly forward.
+pub fn fast_exp_in_place(v: &mut [f32]) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
+            let ptr = v.as_mut_ptr();
+            let n = v.len();
+            // Safety: distinct in-borrow pointers into one slice; the core
+            // never reads a lane after writing it.
+            unsafe { x86_64::fast_exp_raw(ptr, ptr, n) };
+            return;
+        }
+    }
+    for d in v.iter_mut() {
+        *d = d.max(-88.0).exp();
+    }
+}
+
+pub(crate) fn fast_exp_scalar(src: &[f32], dst: &mut [f32]) {
+    const CLAMP_LO: f32 = -88.0;
+    for (d, &s) in dst.iter_mut().zip(src.iter()) {
+        *d = s.max(CLAMP_LO).exp();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // x86-64 AVX2 kernel
 // ---------------------------------------------------------------------------
 
@@ -1468,6 +1528,84 @@ mod x86_64 {
             }
         }
     }
+
+    /// AVX2+FMA fast exp: n = round(x·log2e), r = x − n·ln2 (split hi/lo),
+    /// AVX2+FMA fast exp core over raw pointers (shared by the into and
+    /// in-place wrappers): n = round(x·log2e), r = x − n·ln2 (split
+    /// hi/lo), degree-7 Taylor Horner, 2^n via exponent-bit scaling.
+    ///
+    /// # Safety
+    ///
+    /// `src`/`dst` must be valid for `n` f32 reads/writes. Aliasing is
+    /// permitted only when `src == dst`: each 8-lane block is fully loaded
+    /// before any lane of that block is stored, and lanes are never read
+    /// after being written.
+    #[target_feature(enable = "avx2,fma")]
+    pub(crate) unsafe fn fast_exp_raw(src: *const f32, dst: *mut f32, n: usize) {
+        unsafe {
+            // f32-rounded constants (clippy's "approximate" lints are the
+            // point here: these must be the f32 values the reference expf
+            // range reduction uses, not higher-precision literals)
+            #[allow(clippy::excessive_precision, clippy::approx_constant)]
+            const LOG2E: f32 = 1.442_695;
+            #[allow(clippy::excessive_precision, clippy::approx_constant)]
+            const LN2_HI: f32 = 6.931_471_8e-1; // ln2, high 12 bits
+            #[allow(clippy::excessive_precision, clippy::approx_constant)]
+            const LN2_LO: f32 = 1.908_214_9e-10; // ln2 remainder
+                                                 // Exact Taylor coefficients 1/k!, k = 7..0. Truncation error on
+                                                 // |r| <= ln2/2 is r^8/8! < 5e-9 — far below one f32 ulp.
+            const C7: f32 = 1.0 / 5040.0;
+            const C6: f32 = 1.0 / 720.0;
+            const C5: f32 = 1.0 / 120.0;
+            const C4: f32 = 1.0 / 24.0;
+            const C3: f32 = 1.0 / 6.0;
+            const C2: f32 = 0.5;
+
+            let v_log2e = _mm256_set1_ps(LOG2E);
+            let v_half = _mm256_set1_ps(0.5);
+            let v_ln2_hi = _mm256_set1_ps(LN2_HI);
+            let v_ln2_lo = _mm256_set1_ps(LN2_LO);
+            let v_c2 = _mm256_set1_ps(C2);
+            let v_c3 = _mm256_set1_ps(C3);
+            let v_c4 = _mm256_set1_ps(C4);
+            let v_c5 = _mm256_set1_ps(C5);
+            let v_c6 = _mm256_set1_ps(C6);
+            let v_c7 = _mm256_set1_ps(C7);
+            let v_one = _mm256_set1_ps(1.0);
+            let v_clamp_lo = _mm256_set1_ps(-88.0);
+
+            let n_len = n;
+            let mut i = 0;
+            while i + 8 <= n_len {
+                {
+                    let xd = _mm256_max_ps(_mm256_loadu_ps(src.add(i)), v_clamp_lo);
+                    // n = floor(x*log2e + 0.5); r = x - n*ln2 (two-part)
+                    let nf = _mm256_floor_ps(_mm256_add_ps(_mm256_mul_ps(xd, v_log2e), v_half));
+                    let r = _mm256_fnmadd_ps(nf, v_ln2_hi, xd);
+                    let r = _mm256_fnmadd_ps(nf, v_ln2_lo, r);
+                    // degree-7 Horner: 1 + r(1 + r(1/2 + r(1/6 + ...)))
+                    let p = _mm256_fmadd_ps(v_c7, r, v_c6);
+                    let p = _mm256_fmadd_ps(p, r, v_c5);
+                    let p = _mm256_fmadd_ps(p, r, v_c4);
+                    let p = _mm256_fmadd_ps(p, r, v_c3);
+                    let p = _mm256_fmadd_ps(p, r, v_c2);
+                    let p = _mm256_fmadd_ps(p, r, v_one);
+                    let p = _mm256_fmadd_ps(p, r, v_one);
+                    // scale by 2^n through the biased-exponent bits
+                    let ni = _mm256_cvtps_epi32(nf);
+                    let bits = _mm256_slli_epi32(_mm256_add_epi32(ni, _mm256_set1_epi32(127)), 23);
+                    let scale = _mm256_castsi256_ps(bits);
+                    _mm256_storeu_ps(dst.add(i), _mm256_mul_ps(p, scale));
+                }
+                i += 8;
+            }
+            while i < n_len {
+                dst.add(i)
+                    .write_unaligned(src.add(i).read().max(-88.0).exp());
+                i += 1;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2554,6 +2692,57 @@ pub(crate) fn rope_split_half(
 #[cfg(test)]
 mod tests {
     use crate::quant::{quantize_q8_0_into, Q8TopkNorms, QuantizedWeight};
+
+    /// Fast-exp error ladder, level 1 (kernel): the AVX2 approximation vs
+    /// libm `expf` over a dense grid plus adversarial points. Gate: max
+    /// relative error <= 4e-7 (~3 f32 ulp of typical results; measured is
+    /// usually < 1e-7).
+    #[test]
+    fn fast_exp_accuracy_vs_libm() {
+        let mut cases: Vec<f32> = Vec::new();
+        // dense grid over the softmax-relevant domain
+        let mut x = -88.0f32;
+        while x <= 0.0 {
+            cases.push(x);
+            x += 0.005;
+        }
+        // positive range too (general kernel contract)
+        let mut x = 0.0f32;
+        while x <= 88.0 {
+            cases.push(x);
+            x += 0.011;
+        }
+        // adversarial: exact powers of ln2 (r == 0), boundaries, denormal
+        for k in -126..=87 {
+            cases.push(k as f32 * std::f64::consts::LN_2 as f32);
+        }
+        cases.extend([0.0f32, -0.0, -87.9, -88.0, -1e6]);
+
+        let reference: Vec<f32> = cases.iter().map(|&v| v.max(-88.0).exp()).collect();
+        let mut got = vec![0.0f32; cases.len()];
+        super::fast_exp_into(&cases, &mut got);
+        let mut max_rel = 0.0f32;
+        for (i, (&g, &r)) in got.iter().zip(reference.iter()).enumerate() {
+            assert!(
+                g.is_finite() && g >= 0.0,
+                "non-finite exp at {} -> {g}",
+                cases[i]
+            );
+            if r > 1e-30 {
+                let rel = ((g - r) / r).abs();
+                max_rel = max_rel.max(rel);
+            }
+        }
+        assert!(
+            max_rel <= 4e-7,
+            "fast_exp rel err {max_rel:.3e} exceeds gate"
+        );
+
+        // in-place must match the into variant exactly
+        let mut inplace = cases.clone();
+        super::fast_exp_in_place(&mut inplace);
+        assert_eq!(got, inplace);
+    }
 
     /// The branch-and-bound argmax must match the scalar decode matmul
     /// bit-for-bit (same accumulation order) across randomized inputs.

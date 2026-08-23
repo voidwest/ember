@@ -7,6 +7,12 @@ use half::{f16, slice::HalfFloatSliceExt};
 /// wired into `Attention::forward_with_cache` - during prefill the full
 /// k/v projection is cached; subsequent decode steps read from the cache
 /// instead of recomputing against the full sequence each pass.
+///
+/// `Clone` exists for session-level provisional inference: a scratch copy
+/// lets speculative prefill/decode run without touching the committed
+/// cache. Clones are independent; bytes beyond a rolled-back cursor are
+/// never read (see [`KVCache::truncate_to`]).
+#[derive(Clone)]
 pub struct KVCache {
     /// key cache, flat layout: [layer][head][pos][head_dim]
     k: Vec<f16>,
@@ -322,6 +328,26 @@ impl KVCache {
     }
     pub fn reset(&mut self) {
         self.cursor = 0;
+    }
+
+    /// Roll the write/read cursor back to `pos`, logically discarding every
+    /// position >= `pos`.
+    ///
+    /// Safety contract (session cancellation / provisional rollback):
+    /// attention reads exactly `[0, cursor + seq_len)` (see the
+    /// `total_seq_len` computation in `LlamaBlock::forward_with_cache`), so
+    /// stale bytes beyond the rolled-back cursor are never read and are
+    /// overwritten by subsequent appends. Positions are explicit, so no
+    /// other state needs clearing. Debug-asserted monotonicity keeps the
+    /// API from silently "rewinding" into a shorter-than-requested prefix.
+    pub fn truncate_to(&mut self, pos: usize) {
+        assert!(
+            pos <= self.cursor,
+            "kv cache truncate_to({pos}) cannot exceed cursor {}",
+            self.cursor
+        );
+        debug_assert!(pos <= self.max_seq_len);
+        self.cursor = pos;
     }
 
     /// number of kv heads stored in the cache.

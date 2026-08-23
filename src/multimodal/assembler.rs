@@ -82,6 +82,62 @@ impl Default for SmolVlmAssembler {
     }
 }
 
+/// Token-lookup rows for `rendered` text, then overwrite every position
+/// whose token equals `target_token` with consecutive rows of `features`
+/// (fail-closed on count mismatch). Shared by assemblers whose feature
+/// binding is a plain ordered scatter.
+pub(crate) fn embed_and_scatter(
+    backend: &CpuBackend,
+    tokenizer: &EmberTokenizer,
+    rendered: &str,
+    target_token: &str,
+    features: &CpuTensor,
+    embed_table: &LlamaEmbedding<CpuBackend>,
+) -> Result<(Vec<u32>, CpuTensor)> {
+    let input_ids = tokenizer.encode(rendered)?;
+    let Some(target_id) = tokenizer.token_to_id(target_token) else {
+        anyhow::bail!("tokenizer missing {target_token:?}");
+    };
+    let embed_dim = match embed_table {
+        LlamaEmbedding::F32(t) => t.shape()[1],
+        LlamaEmbedding::Q8_0(w) => w.in_features(),
+        LlamaEmbedding::KQuant(w) => w.in_features(),
+    };
+    let mut embeddings = backend.zeroes(&[input_ids.len(), embed_dim])?;
+    for (row, &token) in input_ids.iter().enumerate() {
+        match embed_table {
+            LlamaEmbedding::F32(table) => {
+                backend.assign_row_from_table(&mut embeddings, row, table, token as usize)?;
+            }
+            LlamaEmbedding::Q8_0(table) => {
+                backend.assign_row_from_q8_0(&mut embeddings, row, table, token as usize)?;
+            }
+            LlamaEmbedding::KQuant(table) => {
+                backend.assign_row_from_k(&mut embeddings, row, table, token as usize)?;
+            }
+        }
+    }
+    let total = input_ids.iter().filter(|&&t| t == target_id).count();
+    ensure!(
+        total == features.shape()[0],
+        "found {total} {target_token} tokens but {} feature rows were produced",
+        features.shape()[0]
+    );
+    if total > 0 {
+        let data = embeddings.data_mut();
+        for (row, &token) in input_ids.iter().enumerate() {
+            if token != target_id {
+                continue;
+            }
+            let local = input_ids[..row].iter().filter(|&&t| t == target_id).count();
+            let dst = &mut data[row * embed_dim..(row + 1) * embed_dim];
+            let src = &features.data()[local * embed_dim..(local + 1) * embed_dim];
+            dst.copy_from_slice(src);
+        }
+    }
+    Ok((input_ids, embeddings))
+}
+
 impl SmolVlmAssembler {
     /// Resolve all special-token IDs from the tokenizer.
     fn token_ids(&self, tokenizer: &EmberTokenizer) -> Result<SmolVlmTokenIds> {

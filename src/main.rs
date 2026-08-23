@@ -11,6 +11,8 @@ mod cli_kv;
 mod cli_multimodal;
 mod cli_probe;
 mod cli_score_batch;
+mod cli_tts;
+mod cli_video;
 
 use cli_commands::{
     effective_context_limit, run_bench_decode_command, run_bench_lifecycle_command,
@@ -308,6 +310,12 @@ pub(crate) enum Commands {
 
     /// audio-conditioned generation + validation dumps (voice input)
     Audio(cli_audio::AudioCommand),
+
+    /// video-conditioned generation + validation dumps (SmolVLM2)
+    Video(cli_video::VideoCommand),
+
+    /// speech output: codec self-test ladder + OuteTTS synthesis
+    Tts(cli_tts::TtsCommand),
 
     /// batch greedy generation / next-token logprob scoring (one resident model)
     ScoreBatch(cli_score_batch::ScoreBatchCommand),
@@ -702,6 +710,8 @@ fn main() -> anyhow::Result<()> {
             }
             Commands::Multimodal(command) => cli_multimodal::run_multimodal_command(command, &args),
             Commands::Audio(command) => cli_audio::run_audio_command(command, &args),
+            Commands::Tts(command) => cli_tts::run_tts_command(command, &args),
+            Commands::Video(command) => cli_video::run_video_command(command, &args),
             Commands::ScoreBatch(command) => {
                 cli_score_batch::run_score_batch_command(command, k_strategy, args.k_allow_fallback)
             }

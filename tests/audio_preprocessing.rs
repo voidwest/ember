@@ -140,3 +140,62 @@ fn debug_print_chirp_mel() {
         &got.data()[64 * got.shape()[1]..64 * got.shape()[1] + 4]
     );
 }
+
+// ---------------------------------------------------------------------------
+// long-form chunking layout (Track D2)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn long_form_windows_boundary_math() {
+    use ember::multimodal::audio::{long_form_windows, MAX_FRAMES};
+
+    // below/at the context: single window
+    assert_eq!(long_form_windows(1, MAX_FRAMES), vec![(0, 1)]);
+    assert_eq!(long_form_windows(2999, MAX_FRAMES), vec![(0, 2999)]);
+    assert_eq!(long_form_windows(3000, MAX_FRAMES), vec![(0, 3000)]);
+    // one frame over: continuation window with a single valid frame
+    assert_eq!(
+        long_form_windows(3001, MAX_FRAMES),
+        vec![(0, 3000), (3000, 1)]
+    );
+    // mid-length
+    assert_eq!(
+        long_form_windows(4500, MAX_FRAMES),
+        vec![(0, 3000), (3000, 1500)]
+    );
+    // exact multiple: no empty trailing window
+    assert_eq!(
+        long_form_windows(6000, MAX_FRAMES),
+        vec![(0, 3000), (3000, 3000)]
+    );
+    // generic invariants
+    for total in [29_00, 30_00, 30_01, 45_12, 60_00, 61_237] {
+        let wins = long_form_windows(total, MAX_FRAMES);
+        assert_eq!(wins.iter().map(|(_, v)| v).sum::<usize>(), total);
+        assert!(wins[0].1 == MAX_FRAMES.min(total));
+        for (i, &(s, v)) in wins.iter().enumerate() {
+            if i > 0 {
+                let (ps, pv) = wins[i - 1];
+                assert_eq!(s, ps + pv, "windows must be contiguous");
+            }
+            assert!(v <= MAX_FRAMES);
+        }
+    }
+}
+
+#[test]
+fn log_mel_full_matches_guarded_variant_for_short_input() {
+    use ember::multimodal::audio::{log_mel_spectrogram, log_mel_spectrogram_full};
+    let n = 16_000; // 1 s
+    let x: Vec<f32> = (0..n)
+        .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16_000.0).sin())
+        .collect();
+    let a = log_mel_spectrogram(&x).unwrap();
+    let b = log_mel_spectrogram_full(&x).unwrap();
+    assert_eq!(a.shape(), b.shape());
+    assert_eq!(
+        a.data(),
+        b.data(),
+        "full variant must be identical below the guard"
+    );
+}

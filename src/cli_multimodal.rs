@@ -43,6 +43,16 @@ pub(crate) struct MultimodalCommand {
     /// run the traced pipeline once and print per-op stage timings
     #[arg(long)]
     profile: bool,
+
+    /// enable the encoded-media feature cache with this byte budget;
+    /// repeated identical images skip preprocessing + tower encode
+    #[arg(long)]
+    feature_cache_bytes: Option<usize>,
+
+    /// run the same request N times in-process (cache benchmarking:
+    /// iteration 0 is always a miss)
+    #[arg(long, default_value_t = 1)]
+    repeat: usize,
 }
 
 pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) -> Result<()> {
@@ -51,10 +61,15 @@ pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) 
         "--image is required (repeat the flag for multiple images)"
     );
     let backend = CpuBackend;
-    let model = SmolVlm::from_ggufs(
+    let mut model = SmolVlm::from_ggufs(
         std::path::Path::new(&command.model),
         std::path::Path::new(&command.mmproj),
     )?;
+    if let Some(bytes) = command.feature_cache_bytes {
+        model.feature_cache = Some(std::sync::Mutex::new(
+            ember::multimodal::cache::MediaFeatureCache::new(bytes),
+        ));
+    }
     let tokenizer = EmberTokenizer::from_file(&command.tokenizer)
         .with_context(|| format!("failed to load tokenizer {}", command.tokenizer))?;
 
@@ -73,20 +88,47 @@ pub(crate) fn run_multimodal_command(command: &MultimodalCommand, _args: &Args) 
         "prompt has {placeholders} <image> placeholders but {} --image flags were given",
         command.image.len()
     );
-    let parts: Vec<ember::multimodal::InputPart> =
-        std::iter::once(ember::multimodal::InputPart::Text(prompt.to_string()))
-            .chain(
-                command
-                    .image
-                    .iter()
-                    .map(|p| ember::multimodal::InputPart::Image(std::path::PathBuf::from(p))),
-            )
+    let parts: Vec<ember::multimodal::ContentPart> =
+        std::iter::once(ember::multimodal::ContentPart::Text(prompt.to_string()))
+            .chain(command.image.iter().map(|p| {
+                ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
+                    std::path::PathBuf::from(p),
+                ))
+            }))
             .collect();
-    let (generated, text, timings) =
-        model.generate_with_parts(&backend, &tokenizer, &parts, command.max_tokens)?;
+    let mut generated = Vec::new();
+    let mut text = String::new();
+    let mut last_timings = MultimodalTimings::default();
+    for iteration in 0..command.repeat.max(1) {
+        let t0 = std::time::Instant::now();
+        let (g, tx, timings) =
+            model.generate_with_parts(&backend, &tokenizer, &parts, command.max_tokens)?;
+        let wall_ms = t0.elapsed().as_secs_f64() * 1e3;
+        if command.repeat > 1 {
+            // NOTE: preprocess_ms covers ALL media work (decode+preprocess,
+            // and on misses the encode as well); vision_ms is the encode alone
+            println!(
+                "iteration {iteration}: wall {wall_ms:.1} ms (media {:.1} ms, encode-only {:.1} ms)",
+                timings.preprocess_ms, timings.vision_ms
+            );
+        }
+        generated = g;
+        text = tx;
+        last_timings = timings;
+    }
+    let timings = last_timings;
 
     println!("generated ({} tokens): {}", generated.len(), text);
     print_timings(&timings);
+    if let Some(cache) = &model.feature_cache {
+        let cache = cache.lock().unwrap();
+        let (hits, misses) = cache.stats();
+        println!(
+            "feature cache: {} entries, {:.1} MiB resident, {hits} hits / {misses} misses",
+            cache.len(),
+            cache.used_bytes() as f64 / (1024.0 * 1024.0)
+        );
+    }
 
     if command.profile {
         print_op_profile(
@@ -119,7 +161,13 @@ fn print_op_profile(
     let decode_ms = t0.elapsed().as_secs_f64() * 1e3;
     drop(processed);
 
-    let (trace, _seq) = model.build_inputs_with_tokenizer(backend, tokenizer, image, prompt, 0)?;
+    let parts = vec![
+        ember::multimodal::ContentPart::Text(prompt.to_string()),
+        ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
+            image.to_path_buf(),
+        )),
+    ];
+    let (trace, _seq) = model.build_inputs_parts(backend, tokenizer, &parts, 0)?;
 
     println!("op profile (one traced pass):");
     println!("  image decode            : {:8.1} ms", decode_ms);
@@ -147,7 +195,7 @@ fn print_op_profile(
             .map(|p| p.timings.normalize_ms)
             .unwrap_or(0.0)
     );
-    let t = &trace.vision.op_timings;
+    let t = &trace.vision[0].op_timings;
     println!("  patch embed (im2col+mm) : {:8.1} ms", t.patch_embed_ms);
     println!("  position embed add      : {:8.1} ms", t.pos_embed_ms);
     println!("  layernorms (2/layer)    : {:8.1} ms", t.ln_ms);
@@ -195,53 +243,69 @@ fn dump_validation_artifacts(
     std::fs::create_dir_all(dir)?;
 
     let (trace, sequence) = {
-        let parts: Vec<ember::multimodal::InputPart> =
-            std::iter::once(ember::multimodal::InputPart::Text(prompt.to_string()))
-                .chain(
-                    command
-                        .image
-                        .iter()
-                        .map(|p| ember::multimodal::InputPart::Image(std::path::PathBuf::from(p))),
-                )
+        let parts: Vec<ember::multimodal::ContentPart> =
+            std::iter::once(ember::multimodal::ContentPart::Text(prompt.to_string()))
+                .chain(command.image.iter().map(|p| {
+                    ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
+                        std::path::PathBuf::from(p),
+                    ))
+                }))
                 .collect();
         model.build_inputs_parts(backend, tokenizer, &parts, 0)?
     };
 
     let mut shapes: Vec<(String, Vec<usize>)> = Vec::new();
 
-    // 1. processed pixel tensor: all tiles of all images concatenated
-    //    ([total_tiles, 3, 512, 512]; matches the reference pixel_values)
+    // 1. processed pixel tensors. Homogeneous requests concatenate into one
+    //    `[total_tiles, 3, h, w]` tensor (the historical ladder shape);
+    //    heterogeneous geometry writes one file per image instead.
     if !trace.images.is_empty() {
         let first = &trace.images[0].tiles;
-        let (channels, height, width) = (first.shape()[1], first.shape()[2], first.shape()[3]);
-        let tile_len = channels * height * width;
-        let total_tiles: usize = trace.images.iter().map(|p| p.tiles.shape()[0]).sum();
-        let mut pixels = vec![0.0f32; total_tiles * tile_len];
-        let mut off = 0usize;
-        for p in &trace.images {
-            pixels[off..off + p.tiles.len()].copy_from_slice(p.tiles.data());
-            off += p.tiles.len();
+        let homogeneous = trace
+            .images
+            .iter()
+            .all(|p| p.tiles.shape()[1..] == first.shape()[1..]);
+        if homogeneous {
+            let (channels, height, width) = (first.shape()[1], first.shape()[2], first.shape()[3]);
+            let tile_len = channels * height * width;
+            let total_tiles: usize = trace.images.iter().map(|p| p.tiles.shape()[0]).sum();
+            let mut pixels = vec![0.0f32; total_tiles * tile_len];
+            let mut off = 0usize;
+            for p in &trace.images {
+                pixels[off..off + p.tiles.len()].copy_from_slice(p.tiles.data());
+                off += p.tiles.len();
+            }
+            let tiles = ember::tensor::CpuTensor::from_data(
+                vec![total_tiles, channels, height, width],
+                pixels,
+            );
+            write_bin(dir, "1_pixels", &tiles, &mut shapes)?;
+        } else {
+            for (i, p) in trace.images.iter().enumerate() {
+                write_bin(dir, &format!("1_pixels_img{i}"), &p.tiles, &mut shapes)?;
+            }
         }
-        let tiles =
-            ember::tensor::CpuTensor::from_data(vec![total_tiles, channels, height, width], pixels);
-        write_bin(dir, "1_pixels", &tiles, &mut shapes)?;
     }
 
-    // 2. patch embeddings [n*1024, 768]
-    if let Some(p) = &trace.vision.patch_embeddings {
-        write_bin(dir, "2_patch_embeddings", p, &mut shapes)?;
-    }
-
-    // 3. selected layer outputs
-    for (i, layer_out) in trace.vision.layer_outputs.iter().enumerate() {
-        if matches!(i, 0 | 1 | 5 | 11) {
-            write_bin(dir, &format!("3_layer_{i}"), layer_out, &mut shapes)?;
+    // 2-4. vision traces: group 0 keeps the canonical ladder names; any
+    //      additional geometry groups get a `_gN` suffix.
+    for (g, vt) in trace.vision.iter().enumerate() {
+        let suffix = if g == 0 {
+            String::new()
+        } else {
+            format!("_g{g}")
+        };
+        if let Some(p) = &vt.patch_embeddings {
+            write_bin(dir, &format!("2_patch_embeddings{suffix}"), p, &mut shapes)?;
         }
-    }
-
-    // 4. encoder output
-    if let Some(e) = &trace.vision.encoder_output {
-        write_bin(dir, "4_encoder_output", e, &mut shapes)?;
+        for (i, layer_out) in vt.layer_outputs.iter().enumerate() {
+            if matches!(i, 0 | 1 | 5 | 11) {
+                write_bin(dir, &format!("3_layer_{i}{suffix}"), layer_out, &mut shapes)?;
+            }
+        }
+        if let Some(e) = &vt.encoder_output {
+            write_bin(dir, &format!("4_encoder_output{suffix}"), e, &mut shapes)?;
+        }
     }
 
     // 5. projector output [n*64, 576]
@@ -263,7 +327,7 @@ fn dump_validation_artifacts(
     // 7. first LLM logits (last position, [1, vocab])
     let mut cache = model
         .llm
-        .create_cache(backend, model.llm.max_seq_len(backend));
+        .create_request_cache(backend, trace.input_ids.len(), 1);
     let logits = model.llm.forward_last_logits_embeddings_with_cache(
         backend,
         &sequence.embeddings,
@@ -273,14 +337,13 @@ fn dump_validation_artifacts(
     write_bin(dir, "7_first_logits", &logits, &mut shapes)?;
 
     // 8. greedy generation ids + per-step logits (for near-tie analysis)
-    let parts: Vec<ember::multimodal::InputPart> =
-        std::iter::once(ember::multimodal::InputPart::Text(prompt.to_string()))
-            .chain(
-                command
-                    .image
-                    .iter()
-                    .map(|p| ember::multimodal::InputPart::Image(std::path::PathBuf::from(p))),
-            )
+    let parts: Vec<ember::multimodal::ContentPart> =
+        std::iter::once(ember::multimodal::ContentPart::Text(prompt.to_string()))
+            .chain(command.image.iter().map(|p| {
+                ember::multimodal::ContentPart::Image(ember::multimodal::ImageInput::File(
+                    std::path::PathBuf::from(p),
+                ))
+            }))
             .collect();
     let (generated, text, timings) =
         model.generate_with_parts(backend, tokenizer, &parts, command.max_tokens)?;
@@ -288,9 +351,10 @@ fn dump_validation_artifacts(
         // replay the decode loop on a fresh cache to capture step logits.
         // Step 0 is the prefill's last-position logits; subsequent steps
         // decode generated tokens (matching the reference generate()).
-        let mut cache = model
-            .llm
-            .create_cache(backend, model.llm.max_seq_len(backend));
+        let mut cache =
+            model
+                .llm
+                .create_request_cache(backend, trace.input_ids.len(), command.max_tokens);
         let eos_ids = tokenizer.eos_token_ids();
         let vocab = model.llm.vocab_size(backend);
         let mut step_logits: Vec<f32> = Vec::new();

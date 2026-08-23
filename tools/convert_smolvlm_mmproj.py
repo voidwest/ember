@@ -50,7 +50,30 @@ def main() -> None:
     vcfg = cfg["vision_config"]
     tcfg = cfg["text_config"]
 
+    # SmolVLM2's vision_config omits fields that have architecture defaults
+    # (model_type smolvlm_vision); infer from tensors where missing.
+    import re
+
     tensors = safetensors.torch.load_file(f"{model_dir}/model.safetensors")
+    layer_ids = sorted(
+        {
+            int(m.group(1))
+            for k in tensors
+            if (m := re.match(r"model\.vision_model\.encoder\.layers\.(\d+)\.", k))
+        }
+    )
+    vcfg = dict(vcfg)
+    # trust the actual tensor count over config metadata (some configs
+    # serialize inherited defaults)
+    vcfg["num_hidden_layers"] = len(layer_ids)
+    # SmolVLM vision defaults (SigLIP-family): eps 1e-6
+    vcfg.setdefault("layer_norm_eps", 1e-6)
+    if "intermediate_size" not in vcfg:
+        vcfg["intermediate_size"] = tensors[
+            "model.vision_model.encoder.layers.0.mlp.fc1.weight"
+        ].shape[0]
+    if "num_attention_heads" not in vcfg:
+        raise SystemExit("vision_config.num_attention_heads required")
     out = gguf.GGUFWriter(out_path, "smolvlm-vision")
 
     out.add_uint32("smolvlm.vision.patch_size", vcfg["patch_size"])

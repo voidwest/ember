@@ -93,6 +93,47 @@ impl AudioEncoder {
         self.encode_impl(backend, mel, None)
     }
 
+    /// Encode with an encoder-style padding mask over output frames:
+    /// positions `>= valid_frames_out` are excluded from attention as keys
+    /// (additive `f32::MIN` bias on scaled scores, exactly the reference's
+    /// extended attention mask). `valid_frames_out = ceil(valid_mel/2)` is
+    /// derived here from the *unpadded* mel length. Used by long-form
+    /// chunking; without it, use [`Self::encode`] (bit-identical path).
+    pub fn encode_with_padding_mask(
+        &self,
+        backend: &CpuBackend,
+        mel_padded: &CpuTensor,
+        valid_mel_frames: usize,
+    ) -> Result<CpuTensor, CpuError> {
+        let t2 = mel_padded.shape()[1].div_ceil(2);
+        let valid_out = valid_mel_frames.div_ceil(2).min(t2);
+        let mut bias = vec![0.0f32; t2];
+        for b in bias.iter_mut().skip(valid_out) {
+            // torch.finfo(f32).min — same constant the reference adds
+            *b = f32::MIN;
+        }
+        self.encode_impl_masked(backend, mel_padded, &bias)
+    }
+
+    /// [`Self::encode_with_padding_mask`] plus progressive-validation
+    /// intermediates of the masked pass.
+    pub fn encode_with_padding_mask_traced(
+        &self,
+        backend: &CpuBackend,
+        mel_padded: &CpuTensor,
+        valid_mel_frames: usize,
+    ) -> Result<(CpuTensor, AudioTrace), CpuError> {
+        let t2 = mel_padded.shape()[1].div_ceil(2);
+        let valid_out = valid_mel_frames.div_ceil(2).min(t2);
+        let mut bias = vec![0.0f32; t2];
+        for b in bias.iter_mut().skip(valid_out) {
+            *b = f32::MIN;
+        }
+        let mut trace = AudioTrace::default();
+        let out = self.encode_inner(backend, mel_padded, Some(&bias), Some(&mut trace))?;
+        Ok((out, trace))
+    }
+
     /// Like [`Self::encode`] but records progressive-validation
     /// intermediates.
     pub fn encode_traced(
@@ -109,6 +150,25 @@ impl AudioEncoder {
         &self,
         backend: &CpuBackend,
         mel: &CpuTensor,
+        trace: Option<&mut AudioTrace>,
+    ) -> Result<CpuTensor, CpuError> {
+        self.encode_inner(backend, mel, None, trace)
+    }
+
+    fn encode_impl_masked(
+        &self,
+        backend: &CpuBackend,
+        mel: &CpuTensor,
+        key_bias: &[f32],
+    ) -> Result<CpuTensor, CpuError> {
+        self.encode_inner(backend, mel, Some(key_bias), None)
+    }
+
+    fn encode_inner(
+        &self,
+        backend: &CpuBackend,
+        mel: &CpuTensor,
+        key_bias: Option<&[f32]>,
         mut trace: Option<&mut AudioTrace>,
     ) -> Result<CpuTensor, CpuError> {
         let cfg = &self.config;
@@ -174,7 +234,7 @@ impl AudioEncoder {
                     let qh = slice_rows_cols(&q, 0, t2, cols.clone());
                     let kh = slice_rows_cols(&k, 0, t2, cols.clone());
                     let vh = slice_rows_cols(&v, 0, t2, cols);
-                    let oh = attention_head(&qh, &kh, &vh, scale, None);
+                    let oh = attention_head(&qh, &kh, &vh, scale, None, key_bias);
                     for row in 0..t2 {
                         let dst = &mut out_block[row * head_dim..(row + 1) * head_dim];
                         dst.copy_from_slice(&oh.data()[row * head_dim..(row + 1) * head_dim]);

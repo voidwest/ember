@@ -23,12 +23,38 @@ use std::path::Path;
 /// Whisper-feature-extractor constants shared by every supported model
 /// (16 kHz mono input).
 pub const TARGET_SAMPLE_RATE: usize = 16_000;
-const N_FFT: usize = 400;
-const HOP_LENGTH: usize = 160;
-const N_MELS: usize = 128;
+pub const N_FFT: usize = 400;
+pub const HOP_LENGTH: usize = 160;
+pub const N_MELS: usize = 128;
+/// One-sided spectrum bins for [`N_FFT`] real samples.
+pub const FREQ_BINS: usize = N_FFT / 2 + 1;
 /// Maximum encoder context: whisper encoders take at most 3000 frames
-/// (30 s); longer inputs must be chunked by the caller.
+/// (30 s); longer inputs are chunked by [`long_form_windows`].
 pub const MAX_FRAMES: usize = 3000;
+
+/// The periodic Hann window (`np.hanning(401)[:-1]`) shared by the static
+/// and streaming frontends.
+pub(crate) fn window_fn() -> Vec<f64> {
+    periodic_hann(N_FFT)
+}
+
+/// Long-form window layout for `total` mel frames: `(start, valid_len)`
+/// per 30 s window. Continuation windows (`start > 0`) shorter than
+/// `context` get zero-padded by the caller before encoding; this function
+/// reports their *valid* length only.
+pub fn long_form_windows(total: usize, context: usize) -> Vec<(usize, usize)> {
+    if total <= context {
+        return vec![(0, total)];
+    }
+    let n = total.div_ceil(context);
+    (0..n)
+        .map(|c| {
+            let start = c * context;
+            let end = (start + context).min(total);
+            (start, end - start)
+        })
+        .collect()
+}
 
 /// Decoded audio samples plus their source sample rate. Samples are mono
 /// f32 in nominal [-1, 1].
@@ -41,7 +67,7 @@ pub struct DecodedAudio {
 /// A raw audio input for a multimodal request: a file path or in-memory
 /// samples (already decoded, any rate). In-memory variants keep agents and
 /// tools from having to touch the filesystem.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AudioInput {
     File(std::path::PathBuf),
     /// In-memory WAV bytes (a complete RIFF file).
@@ -430,6 +456,22 @@ fn dft_power(frames: &[f64]) -> Vec<f64> {
 /// reference pipeline). Frames beyond [`MAX_FRAMES`] indicate audio longer
 /// than 30 s; callers chunk before calling this function.
 pub fn log_mel_spectrogram(samples: &[f32]) -> Result<CpuTensor> {
+    let mel = log_mel_spectrogram_full(samples)?;
+    ensure!(
+        mel.shape()[1] <= MAX_FRAMES,
+        "audio too long: {} frames exceeds the {}-frame (30 s) encoder context; use the chunked long-form path",
+        mel.shape()[1],
+        MAX_FRAMES
+    );
+    Ok(mel)
+}
+
+/// [`log_mel_spectrogram`] without the 30 s guard, for long-form chunking:
+/// the whole signal is featurized with ONE global `max - 8` floor (exactly
+/// like the reference processor, which computes mel over the full audio and
+/// slices chunks afterwards), then the caller splits frames into
+/// encoder-sized windows.
+pub fn log_mel_spectrogram_full(samples: &[f32]) -> Result<CpuTensor> {
     ensure!(!samples.is_empty(), "log_mel_spectrogram: empty waveform");
 
     // 1. center-pad with reflect by n_fft/2 on both sides
@@ -489,10 +531,6 @@ pub fn log_mel_spectrogram(samples: &[f32]) -> Result<CpuTensor> {
         *v = v.max(1e-10).log10();
     }
     let usable = num_frames_raw - 1;
-    ensure!(
-        usable <= MAX_FRAMES,
-        "audio too long: {usable} frames exceeds the {MAX_FRAMES}-frame (30 s) encoder context; chunk it first"
-    );
     let max_log = mel[..usable * N_MELS]
         .iter()
         .cloned()
