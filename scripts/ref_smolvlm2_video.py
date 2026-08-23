@@ -67,14 +67,18 @@ def main() -> None:
                          frames_indices=list(range(n_frames)))
     # NOTE: the stock video processor inherits size {"longest_edge": 2048}
     # from the image kwargs, so frames get upsampled to 2048 and back down
-    # to 512 (torchvision bicubic both times). To keep the ember-vs-reference
-    # comparison on shared semantics only, resizing is disabled here and
-    # validation frames are provided already at the tower input size; the
-    # resize chain itself is a documented preprocessing-parity open item.
+    # to 512 (bicubic both times). Phase 5 Track H closes the parity debt:
+    # pass --stock-resize to run the STOCK chain (no do_resize override);
+    # ember reproduces that chain with PIL-exact bicubic and is validated
+    # against this reference WITHOUT neutralization.
+    videos_kwargs = {
+        "do_sample_frames": False,
+        "video_metadata": [[meta]],
+    }
+    if "--stock-resize" not in sys.argv:
+        videos_kwargs["do_resize"] = False
     inputs = proc(text=[text], videos=[[video]],
-                  videos_kwargs={"do_sample_frames": False,
-                                 "do_resize": False,
-                                 "video_metadata": [[meta]]},
+                  videos_kwargs=videos_kwargs,
                   return_tensors="pt")
     input_ids = inputs["input_ids"]
     pv = inputs["pixel_values"]

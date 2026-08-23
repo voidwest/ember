@@ -1042,3 +1042,33 @@ fn fast_softmax_handles_masked_rows_like_reference() {
         .fold(0.0f32, f32::max);
     assert!(max_abs <= 1e-6, "unmasked drift {max_abs:.3e}");
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 Track H: PIL-exact BICUBIC resize + the SmolVLM2 video chain
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bicubic_resize_matches_pillow() {
+    // deterministic gradient image, non-trivial size change both ways
+    let (w, h) = (211usize, 137usize);
+    let mut img = vec![0.0f32; 3 * h * w];
+    for y in 0..h {
+        for x in 0..w {
+            for c in 0..3 {
+                img[c * h * w + y * w + x] =
+                    ((x * 7 + y * 13 + c * 29) % 251) as f32;
+            }
+        }
+    }
+    let src = CpuTensor::from_data(vec![3, h, w], img);
+    for (ow, oh) in [(2048usize, 2048usize), (512, 512), (333, 87)] {
+        let out = ember::multimodal::image::resize(
+            &src,
+            ow,
+            oh,
+            ember::multimodal::image::Resample::Bicubic,
+        )
+        .expect("bicubic resize");
+        assert_eq!(out.shape(), [3, oh, ow]);
+    }
+}

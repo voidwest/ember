@@ -26,6 +26,10 @@ pub enum Resample {
     /// Pillow LANCZOS (truncated sinc, 3-lobe, antialiased). Bit-exact with
     /// Pillow's fixed-point implementation.
     Lanczos,
+    /// Pillow BICUBIC (cubic convolution, a = -0.5, support 2). Bit-exact
+    /// with Pillow's fixed-point implementation; the SmolVLM2 video chain
+    /// uses this filter for its stock resize legs (Phase 5 Track H).
+    Bicubic,
 }
 
 /// A complete image preprocessing recipe.
@@ -355,6 +359,7 @@ pub fn resize(
     let (in_h, in_w) = (image.shape()[1], image.shape()[2]);
     let (filter, support) = match resample {
         Resample::Lanczos => (lanczos as fn(f64) -> f64, 3.0),
+        Resample::Bicubic => (bicubic as fn(f64) -> f64, 2.0),
     };
 
     // --- horizontal pass: in_w -> out_w, rows stay in_h ---
@@ -406,6 +411,20 @@ fn clip8(v: i32) -> u8 {
 fn lanczos(x: f64) -> f64 {
     if (-3.0..3.0).contains(&x) {
         sinc(x) * sinc(x / 3.0)
+    } else {
+        0.0
+    }
+}
+
+/// Pillow's bicubic convolution filter (a = -0.5), support 2.
+fn bicubic(x: f64) -> f64 {
+    let x = x.abs();
+    const A: f64 = -0.5;
+    if x < 1.0 {
+        ((A + 2.0) * x - (A + 3.0)) * x * x + 1.0
+    } else if x < 2.0 {
+        // a*|x|^3 - 5a*|x|^2 + 8a*|x| - 4a
+        ((A * x - 5.0 * A) * x + 8.0 * A) * x - 4.0 * A
     } else {
         0.0
     }

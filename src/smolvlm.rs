@@ -183,6 +183,7 @@ impl SmolVlm {
         }
         fp.mix_u64(match cfg.resample {
             crate::multimodal::image::Resample::Lanczos => 1,
+            crate::multimodal::image::Resample::Bicubic => 2,
         });
         fp.mix_f64(cfg.rescale_factor as f64);
         for v in cfg.mean {

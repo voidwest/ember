@@ -132,7 +132,23 @@ impl SmolVlmVideo {
                 "frame {i} geometry {:?} differs from frame 0",
                 f.shape()
             );
-            let resized = crate::multimodal::image::resize(f, size, size, Resample::Lanczos)?;
+            // Phase 5 Track H: the STOCK reference video chain upsamples
+            // each frame to `longest_edge` (2048) and back down to the
+            // tower size with PIL bicubic (uint8 domain, fixed point).
+            // Reproduce that chain exactly instead of a single LANCZOS
+            // stretch; for square sources both legs are square stretches.
+            let longest = self
+                .preprocess_config
+                .resize_longest_edge
+                .map(|v| v as usize)
+                .unwrap_or(size * 4);
+            let up = if (h0, w0) == (longest, longest) {
+                f.clone()
+            } else {
+                crate::multimodal::image::resize(f, longest, longest, Resample::Bicubic)?
+            };
+            let resized =
+                crate::multimodal::image::resize(&up, size, size, Resample::Bicubic)?;
             let pp = preprocess(&resized, &self.preprocess_config)?;
             ensure!(
                 pp.tiles.shape() == [1, 3, size, size],
