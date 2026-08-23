@@ -219,6 +219,22 @@ pub struct TtsTimings {
     /// Generated token count / codec tokens.
     pub n_tokens: usize,
     pub n_codes: usize,
+    // -- streaming-drift accounting (Track D); all zero when not streaming --
+    /// max |streamed-concat - final single-pass| over the shared prefix.
+    pub streamed_max_abs: f32,
+    /// rms(diff) / rms(final) over the shared prefix.
+    pub streamed_rms_rel: f64,
+    /// Pearson correlation between streamed concat and final waveform.
+    pub streamed_corr: f64,
+    /// Same metrics AFTER refinement tails are applied by a faithful
+    /// consumer (the achievable fidelity under the documented contract).
+    pub refined_max_abs: f32,
+    pub refined_rms_rel: f64,
+    /// Mean |drift| of already-decoded samples as more tokens arrive,
+    /// bucketed by distance behind the decode frontier in codec tokens:
+    /// [0-4), [4-8), [8-16), [16-32), [32+). Evidence for the stable-window
+    /// margin (values are absolute PCM units).
+    pub drift_by_distance: [f64; 5],
 }
 
 impl TtsTimings {
@@ -236,6 +252,15 @@ impl TtsTimings {
 }
 
 /// One streamed PCM chunk plus its position metadata.
+///
+/// Consumer contract (Track D3): samples at absolute indices below
+/// `stable_up_to` are FINAL — future codec context will not change them.
+/// Samples in `[stable_up_to, end)` are provisional; `revised_tail` (when
+/// non-empty, starting at absolute index `revised_from`) replaces already
+/// delivered audio with the best current estimate. A fidelity-conscious
+/// player keeps a small ring of unplayed audio and applies revisions to
+/// anything not yet played; a naive concatenating player still works and
+/// simply inherits the documented streamed-vs-final deviation.
 pub struct AudioChunkMeta {
     pub pcm: Vec<f32>,
     pub sample_rate: u32,
@@ -243,6 +268,68 @@ pub struct AudioChunkMeta {
     pub first_token: usize,
     /// True after the last token of the utterance.
     pub final_chunk: bool,
+    /// Absolute sample index of `pcm[0]` within the utterance.
+    pub first_sample: usize,
+    /// Samples strictly below this index will never change again. Zero
+    /// until the final chunk: the codec's global attention keeps moving
+    /// earlier samples (drift is measured, see [`TtsTimings`]).
+    pub stable_up_to: usize,
+    /// Latency-tolerant playback hint: audio below this index is far enough
+    /// behind the decode frontier that a player may start playback accepting
+    /// the documented drift; a revision for anything newer arrives with the
+    /// next chunk (`revised_tail`).
+    pub playable_hint: usize,
+    /// Replacement audio for `[revised_from, revised_from + len)`;
+    /// empty when this chunk carries no revision.
+    pub revised_tail: Vec<f32>,
+    pub revised_from: usize,
+}
+
+/// Default playback-hint margin: samples decoded from codes at least this
+/// many tokens behind the newest code may be played by a latency-tolerant
+/// consumer. Larger margins trade startup-of-playback delay for lower
+/// uncorrectable drift (see `drift_by_distance` evidence). Override for
+/// experiments with `EMBER_TTS_STABLE_MARGIN`. 12 tokens = 160 ms.
+pub const STABLE_MARGIN_TOKENS: usize = 12;
+
+fn effective_stable_margin() -> usize {
+    std::env::var("EMBER_TTS_STABLE_MARGIN")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(STABLE_MARGIN_TOKENS)
+}
+
+fn wave_metrics(streamed: &[f32], full: &[f32]) -> (f32, f64, f64) {
+    let n = streamed.len().min(full.len());
+    if n == 0 {
+        return (0.0, 0.0, 1.0);
+    }
+    let mut max_abs = 0.0f32;
+    let mut sq_diff = 0.0f64;
+    let mut sq_ref = 0.0f64;
+    let mut dot = 0.0f64;
+    let mut sum_a = 0.0f64;
+    let mut sum_b = 0.0f64;
+    let mut sq_a = 0.0f64;
+    let mut sq_b = 0.0f64;
+    for i in 0..n {
+        let (a, b) = (f64::from(streamed[i]), f64::from(full[i]));
+        max_abs = max_abs.max((a - b).abs() as f32);
+        sq_diff += (a - b) * (a - b);
+        sq_ref += b * b;
+        dot += a * b;
+        sum_a += a;
+        sum_b += b;
+        sq_a += a * a;
+        sq_b += b * b;
+    }
+    let rms_rel = sq_diff.sqrt() / (sq_ref.sqrt() + 1e-30);
+    let nf = n as f64;
+    let cov = dot / nf - (sum_a / nf) * (sum_b / nf);
+    let va = (sq_a / nf - (sum_a / nf).powi(2)).max(1e-30);
+    let vb = (sq_b / nf - (sum_b / nf).powi(2)).max(1e-30);
+    let corr = (cov / (va * vb).sqrt()).clamp(-1.0, 1.0);
+    (max_abs, rms_rel, corr)
 }
 
 /// OuteTTS speech synthesizer over a loaded qwen2-family GGUF.
@@ -453,6 +540,25 @@ impl OuteTts {
         let mut first_audio = false;
         let mut cancelled = false;
         let sr = self.codec.config.sample_rate;
+        let spt = self.codec.config.hop_length as f64;
+        let stable_margin_codes = effective_stable_margin();
+        // Island-decode policy (Track D2): when > 0, each emission decodes
+        // only `[island_start .. codes_now)` where `island_start` trails the
+        // previously emitted code count by `ISLAND_CONTEXT` tokens. Emitted
+        // audio is IMMUTABLE once delivered (each island is never recomputed)
+        // — genuine streaming stability — at the documented cost of losing
+        // right-context inside the codec for those samples.
+        let island_ctx: usize = std::env::var("EMBER_TTS_ISLAND_CTX")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+        // previous full-prefix decode: drift measurement + revision source
+        let mut prev_fresh: Vec<f32> = Vec::new();
+        // drift-by-distance accumulation: (sum |diff|, count) per token band
+        let mut drift_acc = [(0.0f64, 0u64); 5];
+        // naive concatenation vs revision-applying accumulators (metrics)
+        let mut concat: Vec<f32> = Vec::new();
+        let mut refined: Vec<f32> = Vec::new();
         while ids.len() < max_tokens {
             let best = crate::sampler::argmax_token(backend.data(&logits));
             let best = u32::try_from(best)?;
@@ -469,27 +575,121 @@ impl OuteTts {
                 timings.time_to_first_audio_ms = t_gen.elapsed().as_secs_f64() * 1e3;
             }
             if done || codes_so_far.len() >= last_emitted_code + chunk_tokens {
-                // decode everything decoded so far, emit only the NEW tail
-                // region (left-context decode keeps continuity)
-                let fresh = self.codec.decode(backend, &codes_so_far)?;
-                let prev = emitted_samples.min(fresh.len());
-                let mut chunk: Vec<f32> = fresh[prev..].to_vec();
-                if done {
-                    // final emission includes everything remaining
-                    chunk = fresh[emitted_samples.min(fresh.len())..].to_vec();
+                let (fresh, island_base) = if island_ctx > 0 && last_emitted_code > 0 {
+                    // decode an independent island trailing the last emission
+                    let s = last_emitted_code.saturating_sub(island_ctx);
+                    (self.codec.decode(backend, &codes_so_far[s..])?, s)
+                } else {
+                    (self.codec.decode(backend, &codes_so_far)?, 0usize)
+                };
+
+                let (
+                    mut chunk,
+                    first_sample,
+                    revised_from,
+                    revised_tail,
+                    stable_up_to,
+                    playable_hint,
+                );
+                if island_ctx > 0 && last_emitted_code > 0 {
+                    // -- island mode: emitted audio is immutable --
+                    let boundary_abs = last_emitted_code as f64 * spt;
+                    let idx = (boundary_abs as usize)
+                        .saturating_sub(island_base * self.codec.config.hop_length);
+                    let start = idx.min(fresh.len());
+                    let tail = fresh[start..].to_vec();
+                    first_sample = emitted_samples.min(boundary_abs as usize);
+                    concat.extend_from_slice(&tail);
+                    refined.extend_from_slice(&tail);
+                    chunk = tail;
+                    revised_from = 0;
+                    revised_tail = Vec::new();
+                    emitted_samples += chunk.len();
+                    stable_up_to = emitted_samples;
+                    playable_hint = emitted_samples;
+                } else {
+                    // -- prefix-refresh mode: player-model revisions --
+                    // drift of previously decoded samples, by distance behind
+                    // the CURRENT decode frontier (codec tokens)
+                    if !prev_fresh.is_empty() {
+                        let n_old = prev_fresh.len().min(fresh.len());
+                        for p in 0..n_old {
+                            let d = codes_so_far.len() as f64 - p as f64 / spt;
+                            let band = match d {
+                                x if x < 4.0 => 0,
+                                x if x < 8.0 => 1,
+                                x if x < 16.0 => 2,
+                                x if x < 32.0 => 3,
+                                _ => 4,
+                            };
+                            drift_acc[band].0 += (fresh[p] - prev_fresh[p]).abs() as f64;
+                            drift_acc[band].1 += 1;
+                        }
+                    }
+
+                    // Everything the consumer could have consumed beyond the
+                    // previous hint line is replaced with the freshest
+                    // estimate; below it belongs to earlier hint windows a
+                    // real player has likely already played (uncorrectable —
+                    // measured by refined-vs-final metrics, not hidden).
+                    let rf = (((last_emitted_code.saturating_sub(stable_margin_codes)) as f64)
+                        * spt) as usize;
+                    let ru = fresh.len().min(concat.len());
+                    let rt: Vec<f32> = if ru > rf && last_emitted_code > 0 {
+                        refined.truncate(rf);
+                        refined.extend_from_slice(&fresh[rf..ru]);
+                        fresh[rf..ru].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+
+                    let new_start = emitted_samples.min(fresh.len());
+                    let tail: Vec<f32> = fresh[new_start..].to_vec();
+                    concat.extend_from_slice(&tail);
+                    refined.extend_from_slice(&tail);
+                    first_sample = emitted_samples;
+                    chunk = tail;
+                    revised_from = rf;
+                    revised_tail = rt;
+                    emitted_samples += chunk.len();
+                    // Honest stability: NOTHING is permanent until the final
+                    // decode (global codec attention moves earlier samples).
+                    stable_up_to = if done { emitted_samples } else { 0 };
+                    playable_hint = std::cmp::min(
+                        (codes_so_far.len().saturating_sub(stable_margin_codes) as f64 * spt)
+                            as usize,
+                        emitted_samples,
+                    );
+                }
+                let has_revision = !revised_tail.is_empty();
+                if std::env::var_os("EMBER_TTS_DEBUG").is_some() {
+                    eprintln!(
+                        "[tts-dbg] c={} rev {}..{} concat={} refined={} emitted={}",
+                        codes_so_far.len(),
+                        revised_from,
+                        revised_from + revised_tail.len(),
+                        concat.len(),
+                        refined.len(),
+                        emitted_samples
+                    );
                 }
                 let meta = AudioChunkMeta {
                     first_token: last_emitted_code,
                     final_chunk: done,
                     sample_rate: sr,
                     pcm: std::mem::take(&mut chunk),
+                    first_sample,
+                    stable_up_to,
+                    playable_hint,
+                    revised_from: if has_revision { revised_from } else { 0 },
+                    revised_tail,
                 };
                 last_emitted_code = codes_so_far.len();
-                emitted_samples += meta.pcm.len();
+                prev_fresh = fresh;
                 if !first_audio {
                     first_audio = true;
                 }
-                if !meta.pcm.is_empty() && !on_chunk(meta) {
+                if (!meta.pcm.is_empty() || meta.final_chunk || has_revision) && !on_chunk(meta) {
                     cancelled = true;
                     break;
                 }
@@ -515,6 +715,18 @@ impl OuteTts {
             self.codec.decode(backend, &codes)?
         };
         timings.codec_ms = t_codec.elapsed().as_secs_f64() * 1e3;
+
+        // streamed-vs-final accounting (naive concat vs revision-applying)
+        let (smax, srms, scorr) = wave_metrics(&concat, &pcm_full);
+        timings.streamed_max_abs = smax;
+        timings.streamed_rms_rel = srms;
+        timings.streamed_corr = scorr;
+        let (rmax, rrms, _) = wave_metrics(&refined, &pcm_full);
+        timings.refined_max_abs = rmax;
+        timings.refined_rms_rel = rrms;
+        for (band, (sum, count)) in drift_acc.iter().enumerate() {
+            timings.drift_by_distance[band] = if *count > 0 { sum / *count as f64 } else { 0.0 };
+        }
         let _ = cancelled;
         Ok((pcm_full, ids, timings))
     }

@@ -351,13 +351,52 @@ struct AdaLayerNorm {
     band: usize,
 }
 
+/// A groups=1 Conv1d with its weight pre-arranged for im2col+sgemm
+/// execution (`[C_in*k, C_out]`, row-major) — built once at load time.
+///
+/// The hot codec convs are dominated by gather+dual-loop scalar MACs when
+/// executed as direct convolution; pre-transposing lets every call run as
+/// one packed sgemm over an [T', C_in*k] column matrix. Accumulation order
+/// differs from the direct form (numerically equivalent, ladder-gated).
+#[derive(Debug, Clone)]
+struct DenseConv1d {
+    /// row-major [C_in * k, C_out]; index f = ci * k + tap
+    w_t: CpuTensor,
+    bias: Vec<f32>,
+    k: usize,
+    c_in: usize,
+    c_out: usize,
+}
+
+impl DenseConv1d {
+    fn from_hf_weight(w: &CpuTensor, bias: Vec<f32>) -> Self {
+        assert_eq!(
+            w.shape().len(),
+            3,
+            "DenseConv1d expects HF [C_out, C_in, k]"
+        );
+        let (c_out, c_in, k) = (w.shape()[0], w.shape()[1], w.shape()[2]);
+        let mut w_t = vec![0.0f32; c_in * k * c_out];
+        for o in 0..c_out {
+            for f in 0..c_in * k {
+                w_t[f * c_out + o] = w.data()[o * c_in * k + f];
+            }
+        }
+        Self {
+            w_t: CpuTensor::from_data(vec![c_in * k, c_out], w_t),
+            bias,
+            k,
+            c_in,
+            c_out,
+        }
+    }
+}
+
 struct ResnetBlock {
     norm1: GroupNorm,
-    conv1_weight: CpuTensor, // [C, C, 3]
-    conv1_bias: Vec<f32>,
+    conv1: DenseConv1d,
     norm2: GroupNorm,
-    conv2_weight: CpuTensor,
-    conv2_bias: Vec<f32>,
+    conv2: DenseConv1d,
 }
 
 struct TimeAttention {
@@ -401,9 +440,8 @@ pub struct WavTokenizerTrace {
 
 pub struct WavTokenizerDecoder {
     pub config: WavTokenizerConfig,
-    codebook: CpuTensor,     // [bins, latent]
-    embed_weight: CpuTensor, // [dim, latent, 7]
-    embed_bias: Vec<f32>,
+    codebook: CpuTensor, // [bins, latent]
+    embed: DenseConv1d,  // embed Conv1d(latent -> dim, k7 p3)
     resnets: [ResnetBlock; 4],
     attention: TimeAttention,
     pos_group_norm: GroupNorm,
@@ -420,8 +458,55 @@ pub struct WavTokenizerDecoder {
 // tensor primitives (torch-faithful)
 // ---------------------------------------------------------------------------
 
-/// Conv1d over `[C_in, T]` with HF-layout weight `[C_out, C_in, k]`,
-/// symmetric zero padding, any group count. Output `[C_out, T']`.
+/// Groups=1 Conv1d via im2col + packed sgemm (the codec's hot path).
+/// Output `[C_out, T']`, same layout contract as [`conv1d`].
+fn conv1d_dense(input: &CpuTensor, c: &DenseConv1d, pad: usize) -> CpuTensor {
+    let c_in = input.shape()[0];
+    let t = input.shape()[1];
+    assert_eq!(c_in, c.c_in, "conv1d_dense channel mismatch");
+    let k = c.k;
+    let t_pad = t + 2 * pad;
+    let t_out = t_pad + 1 - k; // stride 1
+    let x = input.data();
+    // padded channel-major scratch so each window is one contiguous gather
+    let mut xp = vec![0.0f32; c_in * t_pad];
+    for ci in 0..c_in {
+        xp[ci * t_pad + pad..ci * t_pad + pad + t].copy_from_slice(&x[ci * t..(ci + 1) * t]);
+    }
+    let feat = c_in * k;
+    let mut cols = vec![0.0f32; t_out * feat];
+    cols.par_chunks_mut(feat)
+        .enumerate()
+        .for_each(|(t_out_i, row)| {
+            for ci in 0..c_in {
+                let base = ci * t_pad + t_out_i;
+                let src = &xp[base..base + k];
+                let dst = &mut row[ci * k..(ci + 1) * k];
+                dst.copy_from_slice(src);
+            }
+        });
+    let cols_t = CpuTensor::from_data(vec![t_out, feat], cols);
+    let mut out = cols_t.par_matmul(&c.w_t); // [T', C_out]
+    {
+        let data = out.data_mut();
+        for t_out_i in 0..t_out {
+            let row = &mut data[t_out_i * c.c_out..(t_out_i + 1) * c.c_out];
+            for (o, slot) in row.iter_mut().enumerate() {
+                *slot += c.bias[o];
+            }
+        }
+    }
+    // return to the module's [C_out, T'] convention
+    let data = out.data().to_vec();
+    let mut ct = vec![0.0f32; c.c_out * t_out];
+    for i in 0..t_out {
+        for o in 0..c.c_out {
+            ct[o * t_out + i] = data[i * c.c_out + o];
+        }
+    }
+    CpuTensor::from_data(vec![c.c_out, t_out], ct)
+}
+
 fn conv1d(
     input: &CpuTensor,
     weight: &CpuTensor,
@@ -662,8 +747,10 @@ impl WavTokenizerDecoder {
         };
 
         let codebook = take_vec(&mut loader, "w.codebook")?;
-        let embed_weight = gguf_to_hf(&take_vec(&mut loader, "w.embed.weight")?);
-        let embed_bias = take_bias(&mut loader, "w.embed.bias")?;
+        let embed = DenseConv1d::from_hf_weight(
+            &gguf_to_hf(&take_vec(&mut loader, "w.embed.weight")?),
+            take_bias(&mut loader, "w.embed.bias")?,
+        );
 
         let mut resnets: Vec<ResnetBlock> = Vec::with_capacity(4);
         for i in [0usize, 1, 3, 4] {
@@ -674,22 +761,26 @@ impl WavTokenizerDecoder {
                     config.group_norm_groups,
                     config.group_norm_eps,
                 )?,
-                conv1_weight: gguf_to_hf(&take_vec(
-                    &mut loader,
-                    &format!("w.pos_net.{i}.conv1.weight"),
-                )?),
-                conv1_bias: take_bias(&mut loader, &format!("w.pos_net.{i}.conv1.bias"))?,
+                conv1: DenseConv1d::from_hf_weight(
+                    &gguf_to_hf(&take_vec(
+                        &mut loader,
+                        &format!("w.pos_net.{i}.conv1.weight"),
+                    )?),
+                    take_bias(&mut loader, &format!("w.pos_net.{i}.conv1.bias"))?,
+                ),
                 norm2: take_gn(
                     &mut loader,
                     &format!("w.pos_net.{i}.norm2"),
                     config.group_norm_groups,
                     config.group_norm_eps,
                 )?,
-                conv2_weight: gguf_to_hf(&take_vec(
-                    &mut loader,
-                    &format!("w.pos_net.{i}.conv2.weight"),
-                )?),
-                conv2_bias: take_bias(&mut loader, &format!("w.pos_net.{i}.conv2.bias"))?,
+                conv2: DenseConv1d::from_hf_weight(
+                    &gguf_to_hf(&take_vec(
+                        &mut loader,
+                        &format!("w.pos_net.{i}.conv2.weight"),
+                    )?),
+                    take_bias(&mut loader, &format!("w.pos_net.{i}.conv2.bias"))?,
+                ),
             });
         }
 
@@ -769,8 +860,7 @@ impl WavTokenizerDecoder {
         Ok(Self {
             config,
             codebook,
-            embed_weight,
-            embed_bias,
+            embed,
             resnets,
             attention,
             pos_group_norm,
@@ -830,7 +920,7 @@ impl WavTokenizerDecoder {
         }
 
         // -- embed conv k7 p3 --
-        let mut x = conv1d(&x, &self.embed_weight, &self.embed_bias, 3, 1);
+        let mut x = conv1d_dense(&x, &self.embed, 3);
         if trace_on {
             trace.embed = Some(x.clone());
         }
@@ -845,25 +935,13 @@ impl WavTokenizerDecoder {
                 for v in rows.iter_mut() {
                     *v = swish(*v);
                 }
-                let h = conv1d(
-                    &CpuTensor::from_data(vec![dim, t2], rows),
-                    &r.conv1_weight,
-                    &r.conv1_bias,
-                    1,
-                    1,
-                );
+                let h = conv1d_dense(&CpuTensor::from_data(vec![dim, t2], rows), &r.conv1, 1);
                 let h = group_norm(&h, &r.norm2);
                 let mut rows = h.data().to_vec();
                 for v in rows.iter_mut() {
                     *v = swish(*v);
                 }
-                let h = conv1d(
-                    &CpuTensor::from_data(vec![dim, t2], rows),
-                    &r.conv2_weight,
-                    &r.conv2_bias,
-                    1,
-                    1,
-                );
+                let h = conv1d_dense(&CpuTensor::from_data(vec![dim, t2], rows), &r.conv2, 1);
                 backend.add(x, &h).map_err(|e| anyhow::anyhow!("{e}"))
             };
 
@@ -884,30 +962,17 @@ impl WavTokenizerDecoder {
                 let v =
                     a.v.forward(backend, &ht)
                         .map_err(|e| anyhow::anyhow!("{e}"))?;
-                // w[i,j] = <q_i, k_j> * scale, softmax over keys j
+                // w[i,j] = <q_i, k_j> * scale, softmax over keys j —
+                // one packed sgemm per product instead of scalar loops
+                let kt = transpose(&k); // [C, T]
+                let scores = q.par_matmul(&kt).data().to_vec();
                 let mut w = vec![0.0f32; t2 * t2];
-                for (i, wr_row) in w.chunks_mut(t2).enumerate() {
-                    let qr = &q.data()[i * dim..(i + 1) * dim];
-                    for (kr, slot) in k.data().chunks(dim).zip(wr_row.iter_mut()).take(t2) {
-                        let mut acc = 0.0f32;
-                        for d in 0..dim {
-                            acc += qr[d] * kr[d];
-                        }
-                        *slot = acc * scale;
-                    }
+                for (acc, slot) in scores.into_iter().zip(w.iter_mut()) {
+                    *slot = acc * scale;
                 }
                 softmax_rows(&mut w, t2);
                 // out[i] = sum_j w[i,j] * v[j]
-                let mut att = vec![0.0f32; t2 * dim];
-                for (i, wr) in w.chunks(t2).enumerate() {
-                    let orow = &mut att[i * dim..(i + 1) * dim];
-                    for (&wv, vr) in wr.iter().zip(v.data().chunks(dim)) {
-                        for (o, &vv) in orow.iter_mut().zip(vr) {
-                            *o += wv * vv;
-                        }
-                    }
-                }
-                let att = CpuTensor::from_data(vec![t2, dim], att);
+                let att = CpuTensor::from_data(vec![t2, t2], w).par_matmul(&v);
                 let proj = a
                     .proj_out
                     .forward(backend, &att)

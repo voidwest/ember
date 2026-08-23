@@ -142,6 +142,16 @@ pub(crate) fn run_tts_command(command: &TtsCommand, _args: &Args) -> Result<()> 
         let mut timings = timings;
         timings.time_to_first_audio_ms = ttfa.lock().map(|t| t.unwrap_or(0.0)).unwrap_or(0.0);
         let chunks = cadence.lock().map(|c| c.clone()).unwrap_or_default();
+        // persist the naive concatenation for offline drift analysis
+        {
+            let streamed_path = std::path::PathBuf::from(format!("{}.streamed.wav", command.out));
+            if let Ok(s) = all_pcm.lock()
+                && !s.is_empty()
+                && let Err(e) = write_wav(&streamed_path, &s, sr)
+            {
+                eprintln!("warn: could not write {streamed_path:?}: {e}");
+            }
+        }
         println!(
             "streamed {} chunks -> {} samples | time-to-first-audio {:.0} ms | wall {wall:.0} ms",
             chunks.len(),
@@ -151,6 +161,22 @@ pub(crate) fn run_tts_command(command: &TtsCommand, _args: &Args) -> Result<()> 
         for (i, (n, at)) in chunks.iter().enumerate().take(6) {
             println!("  chunk {i}: {n} samples at {at:.0} ms");
         }
+        println!(
+            "streamed-vs-final: max_abs {:.4} rms_rel {:.2e} corr {:.6} | refined: max_abs {:.4} rms_rel {:.2e}",
+            timings.streamed_max_abs,
+            timings.streamed_rms_rel,
+            timings.streamed_corr,
+            timings.refined_max_abs,
+            timings.refined_rms_rel
+        );
+        println!(
+            "drift-by-distance (tokens behind frontier; mean |Δ|): <4: {:.2e}  <8: {:.2e}  <16: {:.2e}  <32: {:.2e}  32+: {:.2e}",
+            timings.drift_by_distance[0],
+            timings.drift_by_distance[1],
+            timings.drift_by_distance[2],
+            timings.drift_by_distance[3],
+            timings.drift_by_distance[4]
+        );
         (full, ids2, timings)
     } else {
         let (pcm, ids, timings) = tts.synthesize(&backend, text, command.max_tokens, |_| true)?;
