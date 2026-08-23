@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use cpal::traits::{DeviceTrait, HostTrait};
 
-use ember::duplex::{device::LiveDuplex, DuplexController, EnergyVad, TurnDetector, TurnEvent};
+use ember::duplex::{device::LiveDuplex, DuplexController, EnergyVad, TurnEvent};
 
 #[derive(Parser)]
 pub struct VoiceCommand {

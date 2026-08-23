@@ -147,8 +147,7 @@ impl SmolVlmVideo {
             } else {
                 crate::multimodal::image::resize(f, longest, longest, Resample::Bicubic)?
             };
-            let resized =
-                crate::multimodal::image::resize(&up, size, size, Resample::Bicubic)?;
+            let resized = crate::multimodal::image::resize(&up, size, size, Resample::Bicubic)?;
             let pp = preprocess(&resized, &self.preprocess_config)?;
             ensure!(
                 pp.tiles.shape() == [1, 3, size, size],

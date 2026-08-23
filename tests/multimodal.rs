@@ -1055,8 +1055,7 @@ fn bicubic_resize_matches_pillow() {
     for y in 0..h {
         for x in 0..w {
             for c in 0..3 {
-                img[c * h * w + y * w + x] =
-                    ((x * 7 + y * 13 + c * 29) % 251) as f32;
+                img[c * h * w + y * w + x] = ((x * 7 + y * 13 + c * 29) % 251) as f32;
             }
         }
     }
