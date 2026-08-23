@@ -103,7 +103,11 @@ impl crate::ultravox::Ultravox {
             streaming_audio_input: true,
             long_form_audio: true,
             streaming_audio_output: false,
-            full_duplex: false,
+            // Truthful only when the concurrent audio-I/O path is compiled
+            // in AND has an executable demonstration (`ember voice
+            // --duplex-smoke`, Phase 5 Track A). Without the feature the
+            // runtime has no live I/O and the flag stays false.
+            full_duplex: cfg!(feature = "audio"),
         }
     }
 }

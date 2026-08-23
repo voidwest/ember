@@ -13,6 +13,8 @@ mod cli_probe;
 mod cli_score_batch;
 mod cli_tts;
 mod cli_video;
+#[cfg(feature = "audio")]
+mod cli_voice;
 
 use cli_commands::{
     effective_context_limit, run_bench_decode_command, run_bench_lifecycle_command,
@@ -313,6 +315,10 @@ pub(crate) enum Commands {
 
     /// video-conditioned generation + validation dumps (SmolVLM2)
     Video(cli_video::VideoCommand),
+
+    /// live full-duplex audio (feature "audio"): devices + duplex smoke
+    #[cfg(feature = "audio")]
+    Voice(cli_voice::VoiceCommand),
 
     /// speech output: codec self-test ladder + OuteTTS synthesis
     Tts(cli_tts::TtsCommand),
@@ -712,6 +718,8 @@ fn main() -> anyhow::Result<()> {
             Commands::Audio(command) => cli_audio::run_audio_command(command, &args),
             Commands::Tts(command) => cli_tts::run_tts_command(command, &args),
             Commands::Video(command) => cli_video::run_video_command(command, &args),
+            #[cfg(feature = "audio")]
+            Commands::Voice(command) => cli_voice::run_voice_command(command),
             Commands::ScoreBatch(command) => {
                 cli_score_batch::run_score_batch_command(command, k_strategy, args.k_allow_fallback)
             }

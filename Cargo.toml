@@ -21,6 +21,7 @@ rand = "0.8"
 # rand 0.9/0.10 (ashpd/oo7), and num-bigint-dig (also via gpui) needs 0.8,
 # so 0.8 here costs nothing extra and matches the sampling API.
 rayon = "1"
+rtrb = "0.3"  # lock-free SPSC rings for the duplex audio queues (pure rust)
 tiny_http = "0.12"
 # v0.6 native console: gpui (Zed's GPU-accelerated framework, blade/Vulkan on
 # Linux). Optional (feature "gui", on by default): headless research builds
@@ -35,9 +36,17 @@ sha2 = "0.10"
 unicode-normalization = "0.1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
+# Phase 5 Track A: live audio I/O. Opt-in because it links libasound at
+# build time (absent on some CI/hermetic hosts); everything else about the
+# duplex runtime (queues, VAD, policies) is pure Rust and always compiled.
+# cpal reaches PipeWire/JACK through their ALSA compat layers and gives a
+# direct CoreAudio path for a future macOS port.
+cpal = { version = "0.15", optional = true }
+
 [features]
 default = ["gui"]
 gui = ["dep:gpui", "dep:unicode-segmentation"]
+audio = ["dep:cpal"]
 
 # Cross-crate inlining for the CLI binary without full fat-LTO build cost.
 # (codegen-units stays at the default; measure 1-unit builds on a cool

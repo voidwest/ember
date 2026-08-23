@@ -28,6 +28,8 @@ pub mod atomic_file;
 pub mod backend;
 pub mod compare;
 pub mod decode_profile;
+pub mod duplex;
+// (device bindings live in duplex::device behind the "audio" feature)
 pub mod embedding;
 pub mod experiments;
 pub mod extraction;
