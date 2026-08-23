@@ -1,6 +1,6 @@
 [package]
 name = "ember"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -55,6 +55,10 @@ harness = false
 
 [[bench]]
 name = "k_quant_matmul"
+harness = false
+
+[[bench]]
+name = "multimodal_batch"
 harness = false
 
 # Mirror CI's clippy posture so local `cargo clippy` matches `cargo clippy

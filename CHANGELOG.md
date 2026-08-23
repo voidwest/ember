@@ -7,6 +7,59 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.6.5] - 2026-08-23
+
+### Added
+
+Multimodal foundation (Phases 1–4, sessions 1–2): image/audio/video input,
+persistent voice sessions, and the first speech output — all through the
+existing embedding-seam LLM path (`EmbeddingSequence`), so the transformer,
+KV cache, and K-quant kernels stay modality-blind.
+
+- `multimodal` request substrate: ordered `ContentPart`s (text / image /
+  audio / video) with in-memory or file-backed media; model adapters fail
+  closed on unsupported combinations.
+- SmolVLM-256M still-image VLM: Pillow-exact preprocessing with the
+  reference tile-rounding stage, heterogeneous tile geometries grouped per
+  encoder pass, multi-image requests, cross-request ownership-aware batch
+  encoding (`benches/multimodal_batch.rs`).
+- SmolVLM2-256M video: deterministic frame-sampling policies with full
+  provenance; reference prompt expansion byte-matches HF.
+- Ultravox v0.5 audio input: Whisper-style encoder + SwiGLU projector in
+  Rust; long-form audio via reference chunking protocol (30.1/45/60 s
+  validated against fresh HuggingFace references); incremental streaming
+  frontend (`AudioStream`: stateful resampler + log-mel, bit-exact under
+  arbitrary partitioning) with encoder scheduling that encodes finalized
+  30 s windows exactly once and rebuilds stale ones when the global mel
+  floor moved — streamed inference is bit-exact vs static across partition
+  patterns (`ember audio --stream-validate`).
+- Persistent `VoiceSession`: committed-prefix KV reuse across turns (turn
+  embeddings retained for O(1) re-prefill), media feature cache keyed by
+  content ⊕ recipe ⊕ tower identity, provisional partial transcripts on a
+  cloned scratch KV (committed state provably untouched), cancellation via
+  `KVCache::truncate_to` cursor rollback.
+- First speech output: OuteTTS-0.2-500M (qwen2 base, official GGUF) +
+  WavTokenizer decoder implemented in Rust (Vocos backbone, iSTFT head,
+  Bluestein FFT for N=1280); every decoder boundary validated against the
+  unmodified reference implementation (waveform rms_rel ~6e-6, cos 1.0);
+  greedy generation agrees with llama.cpp to a near-tie codec flip;
+  `ember tts [--stream]` synthesizes WAV files with time-to-first-audio
+  metrics. VoiceLoop barge-in policy: interrupt during generation cancels
+  and rolls back; interrupt during playback stops audio but keeps committed
+  text.
+- Output-event boundary (`OutputEvent::{TextDelta, AudioChunk}`) and
+  executable-truth capability reporting per wrapper.
+
+### Changed
+
+- Multimodal wrappers load quantized text GGUFs compressed-resident
+  (`KStrategy::Auto`) instead of silently dequantizing K-quants at load:
+  Q6_K/Q4_K_M decode ~0.6 → ~15 tok/s, same-request RSS ~13.1 → ~4.3 GB
+  (request-sized KV allocation everywhere).
+- Vision softmax uses an AVX2/FMA fast-exp path (two-part ln2 range
+  reduction, degree-7 Taylor; opt-out `EMBER_VISION_FAST_EXP=0`);
+  single-image encode −13%, 48-frame video −10%; all numerical gates held.
+
 ## [0.6.3] - 2026-08-16
 
 ### Changed
