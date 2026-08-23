@@ -737,6 +737,11 @@ impl<'m> VoiceSession<'m> {
         self.committed_len += scaffold_rows;
 
         let eos_ids = self.tokenizer.eos_token_ids();
+        // UTF-8-safe streaming: byte-level BPE tokens can split multi-byte
+        // code points, and per-token decode would emit U+FFFD mid-word for
+        // every non-ASCII script (Arabic in particular). The incremental
+        // decoder releases only complete characters.
+        let mut stream_decoder = self.tokenizer.incremental_decoder();
         let mut ids: Vec<u32> = Vec::new();
         let mut cancelled = false;
         let mut stopped_on_eos = false;
@@ -748,9 +753,10 @@ impl<'m> VoiceSession<'m> {
             let best = crate::sampler::argmax_token(self.backend.data(&logits));
             let best = u32::try_from(best)?;
             ids.push(best);
+            let piece = stream_decoder.push(best)?;
             on_event(OutputEvent::TextDelta {
                 token_id: best,
-                piece: self.tokenizer.decode(&[best])?,
+                piece,
             });
             if eos_ids.contains(&best) {
                 stopped_on_eos = true;
@@ -769,6 +775,17 @@ impl<'m> VoiceSession<'m> {
                 &mut self.cache,
                 reply_start + scaffold_rows + ids.len() - 1,
             )?;
+        }
+
+        // flush any held-back bytes (a split code point at the very end)
+        if !cancelled {
+            let tail = stream_decoder.finish()?;
+            if !tail.is_empty() {
+                on_event(OutputEvent::TextDelta {
+                    token_id: ids.last().copied().unwrap_or(0),
+                    piece: tail,
+                });
+            }
         }
 
         if cancelled {
