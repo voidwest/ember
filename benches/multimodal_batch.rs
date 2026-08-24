@@ -10,8 +10,12 @@ fn main() {
     let mmproj = match std::env::args().nth(1) {
         Some(p) => p,
         None => {
-            eprintln!("usage: multimodal_batch_bench <mmproj.gguf> [n_images]");
-            std::process::exit(2);
+            // `cargo test --all-targets` executes harness=false benches with
+            // no arguments; skip silently like the absent-fixture path below
+            // instead of failing the CI test run (this exact exit(2) turned
+            // the v0.6.5 release CI red on both tiers).
+            eprintln!("skip: usage: multimodal_batch_bench <mmproj.gguf> [n_images]");
+            return;
         }
     };
     let n_images: usize = std::env::args()
