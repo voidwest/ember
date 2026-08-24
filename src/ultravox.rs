@@ -812,7 +812,7 @@ impl Ultravox {
         schedule_stream_update(&self.audio, backend, sched, stream, infer_active_window)
     }
 
-    /// See [`schedule_stream_finish`] (this is the thin typed wrapper).
+    /// Thin typed wrapper over the crate-internal `schedule_stream_finish`.
     pub fn stream_finish(
         &self,
         backend: &CpuBackend,

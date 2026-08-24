@@ -33,6 +33,7 @@ pub mod audio;
 pub mod audio_encoder;
 pub mod batch;
 pub mod cache;
+pub mod converse;
 pub mod image;
 pub mod output;
 pub mod request;

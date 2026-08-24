@@ -545,6 +545,11 @@ impl<'m> VoiceSession<'m> {
         });
     }
 
+    /// True when a turn is staged but not yet committed.
+    pub fn has_pending_turn(&self) -> bool {
+        self.pending.is_some()
+    }
+
     /// Stage the text prompt of the pending turn. Use [`AUDIO_PLACEHOLDER`]
     /// where staged audio should bind.
     pub fn set_turn_prompt(&mut self, text: String) -> Result<()> {

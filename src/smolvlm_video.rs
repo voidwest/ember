@@ -40,7 +40,7 @@ use crate::tokenizer::EmberTokenizer;
 use anyhow::{ensure, Result};
 use std::time::Instant;
 
-/// The `<video>` placeholder understood by [`render_video_prompt`].
+/// The `<video>` placeholder understood by `render_prompt`.
 pub const VIDEO_PLACEHOLDER: &str = "<video>";
 
 #[derive(Debug, Clone, Default, serde::Serialize)]

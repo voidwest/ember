@@ -64,12 +64,21 @@ pub(crate) struct TtsCommand {
     /// dump progressive-validation artifacts here (self-test or synthesis)
     #[arg(long)]
     dump_dir: Option<PathBuf>,
+
+    /// MMS-TTS (VITS) GGUF: switch to the Arabic-capable engine for
+    /// synthesis (`--text` + `--out`), skipping the OuteTTS path entirely
+    #[arg(long)]
+    vits_model: Option<String>,
 }
 
 use std::path::{Path, PathBuf};
 
 pub(crate) fn run_tts_command(command: &TtsCommand, _args: &Args) -> Result<()> {
     use ember::tts::wavtokenizer::WavTokenizerDecoder;
+
+    if let Some(vits_path) = &command.vits_model {
+        return vits_synthesize(command, vits_path);
+    }
 
     if command.codec_selftest {
         let decoder = WavTokenizerDecoder::from_gguf(std::path::Path::new(&command.codec))
@@ -367,5 +376,145 @@ fn write_bin(dir: &Path, name: &str, data: &[f32], _shape: Vec<usize>) -> Result
         bytes.extend(v.to_le_bytes());
     }
     std::fs::write(dir.join(format!("{name}.bin")), &bytes)?;
+    Ok(())
+}
+
+/// MMS-VITS synthesis path (Phase 5 Session 2 Track C): Arabic-capable
+/// deterministic text-to-speech with optional ladder dumps.
+fn vits_synthesize(command: &TtsCommand, vits_path: &str) -> Result<()> {
+    let backend = ember::backend::CpuBackend;
+    let model = ember::tts::vits::MmsVits::from_gguf(Path::new(vits_path))
+        .context("loading mms-vits gguf")?;
+    let text = command
+        .text
+        .as_deref()
+        .context("--text is required with --vits-model")?;
+    let t0 = std::time::Instant::now();
+    let result = if command.stream {
+        let mut first_audio_ms = None;
+        let mut chunks = 0usize;
+        let (pcm, _codes, timings) = model.synthesize_streaming(
+            &backend,
+            text,
+            4096,
+            command.chunk_tokens.max(8),
+            |_meta| {
+                chunks += 1;
+                if first_audio_ms.is_none() {
+                    first_audio_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
+                }
+                true
+            },
+            |_| true,
+        )?;
+        println!(
+            "vits streaming: {} chunks, TTFA {:.0} ms, wall {:.0} ms",
+            chunks,
+            first_audio_ms.unwrap_or(0.0),
+            t0.elapsed().as_secs_f64() * 1e3
+        );
+        (pcm, timings)
+    } else {
+        let r = model.synthesize(&backend, text, command.dump_dir.is_some())?;
+        (r.pcm, r.timings)
+    };
+    let (pcm, timings) = result;
+    write_wav(Path::new(&command.out), &pcm, model.config.sample_rate)?;
+    println!(
+        "vits: \"{}\" -> {} samples @{} Hz ({:.2} s audio) in {:.0} ms | prompt {:.0} prefill {:.0} gen {:.0} codec {:.0} ms | RTF {:.2}",
+        text,
+        pcm.len(),
+        model.config.sample_rate,
+        pcm.len() as f64 / model.config.sample_rate as f64,
+        t0.elapsed().as_secs_f64() * 1e3,
+        timings.prompt_ms,
+        timings.prefill_ms,
+        timings.generate_ms,
+        timings.codec_ms,
+        timings.rtf()
+    );
+
+    if let Some(dir) = &command.dump_dir {
+        std::fs::create_dir_all(dir)?;
+        // ladder mirror of scripts/ref_vits.py dumps
+        let r = model.synthesize(&backend, text, true)?;
+        let write_npy = |name: &str, data: &[f32], shape: Vec<usize>| -> Result<()> {
+            // simple .npy writer (float32, C order)
+            let mut header = vec![0x93u8; 0];
+            header.extend_from_slice(&[0x93u8, b'N', b'U', b'M', b'P', b'Y']);
+            header.push(1u8);
+            header.push(0u8);
+            let descr = format!(
+                "{{'descr': '<f4', 'fortran_order': False, 'shape': ({},)}}",
+                shape.iter().product::<usize>()
+            );
+            let hlen = (descr.len() + 1) as u16;
+            header.extend(&(hlen).to_le_bytes());
+            header.extend(descr.as_bytes());
+            header.push(b'\n');
+            let mut bytes = header;
+            for v in data {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            std::fs::write(dir.join(format!("{name}.npy")), bytes)?;
+            Ok(())
+        };
+        write_npy("00_input_ids", &[0.0], vec![1])?; // ids dumped via manifest below
+        if let Some(tr) = Some(&r.trace) {
+            if let Some(x) = &tr.embed_scaled {
+                write_npy(
+                    "01_embed_scaled",
+                    x,
+                    vec![x.len() / model.config.hidden_size, model.config.hidden_size],
+                )?;
+            }
+            if let Some(x) = &tr.encoder_out {
+                write_npy(
+                    "02_encoder_out",
+                    x,
+                    vec![x.len() / model.config.hidden_size, model.config.hidden_size],
+                )?;
+            }
+            if let Some(x) = &tr.prior_means {
+                write_npy(
+                    "03_prior_means",
+                    x,
+                    vec![x.len() / model.config.flow_size, model.config.flow_size],
+                )?;
+            }
+            if let Some(ld) = &tr.log_duration {
+                write_npy("05_log_duration", ld, vec![ld.len()])?;
+            }
+            if let Some(x) = &tr.expanded_hidden {
+                write_npy(
+                    "07_expanded_hidden",
+                    x,
+                    vec![x.len() / model.config.hidden_size, model.config.hidden_size],
+                )?;
+            }
+            if let Some(z) = &tr.flow_z {
+                write_npy(
+                    "09_flow_z",
+                    z,
+                    vec![model.config.flow_size, z.len() / model.config.flow_size],
+                )?;
+            }
+            if let Some(w) = &tr.waveform {
+                write_npy("10_waveform", w, vec![w.len()])?;
+            }
+        }
+        let manifest = serde_json::json!({
+            "engine": "mms-vits",
+            "text": text,
+            "ids": r.trace.ids.clone().unwrap_or_default(),
+            "waveform_samples": r.trace.waveform.as_ref().map(|w| w.len()).unwrap_or(0),
+            "sample_rate": model.config.sample_rate,
+        });
+        std::fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string_pretty(&manifest)?,
+        )?;
+        println!("dumped ladder artifacts to {}", dir.display());
+    }
     Ok(())
 }

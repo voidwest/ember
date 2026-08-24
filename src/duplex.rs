@@ -21,7 +21,7 @@
 //! rates flow through the existing [`crate::multimodal::stream`] resampler,
 //! never a hidden second path.
 //!
-//! The `cpal` device bindings live in [`device`] behind the `audio` cargo
+//! The `cpal` device bindings live in the `device` submodule behind the `audio` cargo
 //! feature; everything here is pure Rust so the policy layer is testable
 //! without hardware.
 
@@ -533,36 +533,59 @@ impl DuplexController {
     /// Drain captured audio into the detector; returns the turn event (if
     /// any). Fires barge-in on SpeechStarted during assistant activity.
     pub fn pump(&mut self) -> Option<TurnEvent> {
+        self.pump_events().into_iter().next()
+    }
+
+    /// Like [`pump`](Self::pump) but reports EVERY detector transition the
+    /// drained chunk contained, in order (a single pop can carry both an
+    /// onset and an endpoint; callers driving a state machine need both).
+    pub fn pump_events(&mut self) -> Vec<TurnEvent> {
+        self.pump_with_chunk_cb(|_, _| ())
+    }
+
+    /// [`pump_events`](Self::pump_events) with a tap on each drained chunk
+    /// (`samples`, `device_sample_rate`). The tap runs BEFORE event
+    /// application, so a driver can mirror live PCM into its own frontend
+    /// while the controller simultaneously maintains utterance collection.
+    pub fn pump_with_chunk_cb(&mut self, mut on_chunk: impl FnMut(&[f32], u32)) -> Vec<TurnEvent> {
         if self.capture.queued() == 0 {
-            return None;
+            return Vec::new();
         }
         let chunk = match self.capture.pop_chunk(self.utterance_rate) {
             Ok(c) => c,
-            Err(_) => return None,
+            Err(_) => return Vec::new(),
         };
         let rate = chunk.sample_rate;
+        on_chunk(&chunk.samples, rate);
         // Feed in ~10 ms slices so a chunk containing BOTH an onset and an
-        // end does not lose one of the two transitions (feed reports one
-        // event per call).
+        // end loses neither transition.
         let slice = (rate as usize / 100).max(16);
-        let mut event: Option<TurnEvent> = None;
+        let mut events: Vec<TurnEvent> = Vec::new();
         for piece in chunk.samples.chunks(slice.max(16)) {
             if let Some(e) = self.detector.feed(&AudioChunk {
                 samples: piece.to_vec(),
                 sample_rate: rate,
                 first_sample_offset: 0,
-            }) && event.is_none()
-            {
-                event = Some(e);
+            }) {
+                events.push(e);
+                self.apply_event_state(Some(e));
             }
-            self.apply_event_state(event);
         }
         let _ = rate;
-        if !self.utterance.is_empty() || self.speaking_state {
-            // collect everything belonging to the open utterance
+        // Collect everything belonging to the open utterance. The condition
+        // must include "a transition happened in THIS chunk": a chunk that
+        // contains a full utterance (onset + endpoint) ends with
+        // speaking_state == false and an empty buffer, and skipping
+        // collection there would lose the entire utterance.
+        if !events.is_empty() || !self.utterance.is_empty() || self.speaking_state {
             self.utterance.extend_from_slice(&chunk.samples);
         }
-        event
+        events
+    }
+
+    /// Device sample rate utterances are collected at (constructor arg).
+    pub fn utterance_sample_rate(&self) -> u32 {
+        self.utterance_rate
     }
 
     /// Mirror detector transitions into controller state; fires barge-in.

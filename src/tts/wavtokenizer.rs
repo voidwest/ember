@@ -359,17 +359,17 @@ struct AdaLayerNorm {
 /// one packed sgemm over an [T', C_in*k] column matrix. Accumulation order
 /// differs from the direct form (numerically equivalent, ladder-gated).
 #[derive(Debug, Clone)]
-struct DenseConv1d {
+pub(crate) struct DenseConv1d {
     /// row-major [C_in * k, C_out]; index f = ci * k + tap
-    w_t: CpuTensor,
-    bias: Vec<f32>,
-    k: usize,
-    c_in: usize,
-    c_out: usize,
+    pub(crate) w_t: CpuTensor,
+    pub(crate) bias: Vec<f32>,
+    pub(crate) k: usize,
+    pub(crate) c_in: usize,
+    pub(crate) c_out: usize,
 }
 
 impl DenseConv1d {
-    fn from_hf_weight(w: &CpuTensor, bias: Vec<f32>) -> Self {
+    pub(crate) fn from_hf_weight(w: &CpuTensor, bias: Vec<f32>) -> Self {
         assert_eq!(
             w.shape().len(),
             3,
@@ -460,7 +460,7 @@ pub struct WavTokenizerDecoder {
 
 /// Groups=1 Conv1d via im2col + packed sgemm (the codec's hot path).
 /// Output `[C_out, T']`, same layout contract as [`conv1d`].
-fn conv1d_dense(input: &CpuTensor, c: &DenseConv1d, pad: usize) -> CpuTensor {
+pub(crate) fn conv1d_dense(input: &CpuTensor, c: &DenseConv1d, pad: usize) -> CpuTensor {
     let c_in = input.shape()[0];
     let t = input.shape()[1];
     assert_eq!(c_in, c.c_in, "conv1d_dense channel mismatch");
@@ -507,7 +507,7 @@ fn conv1d_dense(input: &CpuTensor, c: &DenseConv1d, pad: usize) -> CpuTensor {
     CpuTensor::from_data(vec![c.c_out, t_out], ct)
 }
 
-fn conv1d(
+pub(crate) fn conv1d(
     input: &CpuTensor,
     weight: &CpuTensor,
     bias: &[f32],
@@ -650,7 +650,7 @@ fn swish(v: f32) -> f32 {
 
 /// Reverse a GGUF-loaded tensor's dim order keeping the HF row-major
 /// payload (same convention as the audio tower loader).
-fn gguf_to_hf(t: &CpuTensor) -> CpuTensor {
+pub(crate) fn gguf_to_hf(t: &CpuTensor) -> CpuTensor {
     let mut shape = t.shape().to_vec();
     shape.reverse();
     CpuTensor::from_data(shape, t.data().to_vec())
@@ -880,7 +880,7 @@ impl WavTokenizerDecoder {
 // ---------------------------------------------------------------------------
 
 impl WavTokenizerDecoder {
-    /// Decode codec token ids to mono PCM at [`Self::config.sample_rate`].
+    /// Decode codec token ids to mono PCM at the configured `sample_rate`.
     pub fn decode(&self, backend: &CpuBackend, codes: &[u32]) -> Result<Vec<f32>> {
         let (pcm, _) = self.decode_traced(backend, codes, false)?;
         Ok(pcm)

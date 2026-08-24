@@ -387,6 +387,12 @@ impl OuteTts {
         if !eos_ids.contains(&im_end_id) {
             eos_ids.push(im_end_id);
         }
+        if std::env::var("EMBER_CONVERSE_DBG").is_ok() {
+            eprintln!(
+                "EOSDBG audio_end={} im_end={} eos_ids={:?}",
+                audio_end_id, im_end_id, eos_ids
+            );
+        }
         // TEXT_SEP itself is consumed only at prompt-render time; no field.
         Ok(Self {
             llm,
@@ -531,6 +537,14 @@ impl OuteTts {
         let mut logits = self
             .llm
             .forward_last_logits_embeddings_with_cache(backend, &emb, &mut cache, 0)?;
+        if std::env::var("EMBER_CONVERSE_DBG").is_ok() {
+            let best = crate::sampler::argmax_token(backend.data(&logits));
+            eprintln!(
+                "TTSDbg prompt={:?} plen={} first_best={best}",
+                prompt,
+                prompt_ids.len()
+            );
+        }
         timings.prefill_ms = t_all.elapsed().as_secs_f64() * 1e3 - timings.prompt_ms;
 
         let t_gen = Instant::now();
@@ -559,11 +573,20 @@ impl OuteTts {
         // naive concatenation vs revision-applying accumulators (metrics)
         let mut concat: Vec<f32> = Vec::new();
         let mut refined: Vec<f32> = Vec::new();
+        if std::env::var("EMBER_CONVERSE_DBG").is_ok() {
+            eprintln!("LOOPDBG max_tokens={max_tokens}");
+        }
         while ids.len() < max_tokens {
             let best = crate::sampler::argmax_token(backend.data(&logits));
             let best = u32::try_from(best)?;
             ids.push(best);
+            if std::env::var("EMBER_CONVERSE_DBG").is_ok() && ids.len() <= 2 {
+                eprintln!("LOOPDBG it{} best={best}", ids.len());
+            }
             if !on_token(best) {
+                if std::env::var("EMBER_CONVERSE_DBG").is_ok() {
+                    eprintln!("LOOPDBG cancel-at {}", ids.len());
+                }
                 cancelled = true;
                 break;
             }

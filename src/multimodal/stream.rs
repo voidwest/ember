@@ -522,8 +522,8 @@ impl AudioStream {
         })
     }
 
-    /// Unstable partial mel over finalized frames (display only — see
-    /// [`MelStream::provisional`]).
+    /// Unstable partial mel over finalized frames (display only; mirrors the
+    /// mel stream's private provisional view).
     pub fn provisional_mel(&self) -> Option<CpuTensor> {
         let m = self.mel.provisional();
         if m.shape()[1] == 0 {

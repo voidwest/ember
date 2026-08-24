@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 /// Hash of everything about a preprocessing recipe that affects output.
 ///
-/// Structs feed their fields via [`PreprocessFingerprint::mix`]; adding a
+/// Structs feed their fields via [`PreprocessFingerprint::mix_u64`]; adding a
 /// field to a recipe MUST add a mix call (enforced by review; the fingerprint
 /// also embeds a format tag so accidental layout changes invalidate).
 #[derive(Debug, Clone, Default)]
@@ -108,7 +108,7 @@ impl MediaFeatureCache {
         }
     }
 
-    /// Like [`get`] but records a hit/miss.
+    /// Like [`MediaFeatureCache::get`] but records a hit/miss.
     pub fn lookup(&mut self, key: &FeatureCacheKey) -> Option<&CpuTensor> {
         if self.map.contains_key(key) {
             self.hits += 1;
