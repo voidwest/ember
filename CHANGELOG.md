@@ -7,6 +7,56 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.6.6] - 2026-08-25
+
+### Added
+
+Multimodal patch (Phase 5, session 2): live model-in-the-loop voice
+conversation and Arabic speech input/output over the v0.6.5 multimodal
+foundation.
+
+- `ember voice --converse`: full conversation loop in one command — cpal
+  capture ring → energy VAD → streaming audio → `VoiceSession` → LLM →
+  speech output → playback ring, with barge-in (generation-phase cancel +
+  KV rollback via `KVCache::truncate_to`, playback-phase interrupt),
+  deferred recapture seeded from the utterance buffer, and a total
+  transition graph pinned by `tests/converse_machine.rs`.
+- `duplex` pump rework: `pump_events`/`pump_with_chunk_cb` so onset AND
+  endpoint in one chunk both fire; utterance-head-preserving collection;
+  device-rate mixdown with the single validated sinc resample downstream.
+- MMS-TTS (facebook/mms-tts-\*, VITS architecture) inference from scratch in
+  Rust (`src/tts/vits.rs`): character frontend over raw Arabic script,
+  relative-position transformer encoder, deterministic SDP reverse,
+  monotonic duration expansion, WaveNet prior flow reverse, HiFi-GAN
+  decoder. Parity vs the HuggingFace reference is measured at every
+  boundary (`scripts/ref_vits.py`, `ref_flow_dump.py`, `ref_decoder_dump.py`,
+  `ref_rb_dump.py`, `compare_vits.py`): embeddings exact; encoder out
+  2.5e-7 rms_rel; flow z 3.4e-7; all decoder substages ≤5e-6; waveform
+  rms_rel 8.8e-6 / cosine 0.99999999996 with exact sample counts. The
+  residual is proven to sit below torch's own f32-vs-f64 cross-precision
+  floor (accumulation order, not semantics). Fixes that closed it:
+  resblock dilation cycle [1,3,5] (was d+1), final pre-conv_post leaky at
+  transformers' default slope 0.01 (not config's 0.1), conv_post tail
+  computing every valid output (last 6 were zeroed), and rel-pos slice-row
+  indexing for sequences shorter than the attention window.
+- `SpeechOut` trait unifying OuteTTS/MMS-VITS behind one streaming seam so
+  `--vits-model` swaps the Arabic-capable engine into the conversation
+  loop (`tests/arabic_s2s_vits.rs` drives bank audio → transcript → reply →
+  PCM end-to-end against real weights).
+- Streaming audio input scheduling surfaces: finalized-window encode-once,
+  explicit-floor window slices, running floor — stream-validate proves
+  streamed == static bit-exact across push patterns on an Arabic speech
+  bank builder (`scripts/build_arabic_speech_bank.py`).
+- JSONL benchmark harness (`scripts/bench_phase5.py`): per-record git/CPU/
+  thermal/load metadata + workload timings.
+
+### Fixed
+
+- CI: `benches/multimodal_batch.rs` exited 2 when executed without
+  arguments by `cargo test --all-targets`, turning the v0.6.5 release run
+  red on both the x86_64 and aarch64 tiers; it now skips silently like the
+  absent-fixture path.
+
 ## [0.6.5] - 2026-08-23
 
 ### Added
