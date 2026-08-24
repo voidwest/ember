@@ -49,7 +49,10 @@ jobs:
       - name: install X11 system libraries (gpui native GUI)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+          # libasound2-dev: the `audio` feature (cpal -> alsa-sys) needs the
+          # ALSA headers; only `clippy --all-features` compiles it, but a
+          # missing header fails that step (v0.6.6 first run).
+          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libasound2-dev pkg-config
 
       - name: build
         run: cargo build --locked --release --all-targets --verbose
