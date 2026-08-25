@@ -22,6 +22,7 @@ extern crate alloc;
 #[global_allocator]
 static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 
+pub mod agent;
 pub mod alloc_counter;
 pub mod artifact;
 pub mod atomic_file;

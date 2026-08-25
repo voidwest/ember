@@ -4,6 +4,7 @@ mod gui;
 #[cfg(feature = "gui")]
 mod gui_native;
 
+mod cli_agent;
 mod cli_audio;
 mod cli_commands;
 mod cli_generation;
@@ -328,6 +329,10 @@ pub(crate) enum Commands {
 
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
+    /// agentic tool-calling runtime (Phase 1): run tasks + research demo
+    Agent(cli_agent::AgentCommand),
+    /// inspect agent research traces (JSONL)
+    Trace(cli_agent::TraceCommand),
     /// native experiment console (v0.6): gpui single-window GUI over the
     /// v0.5 experiment pipeline
     #[cfg(feature = "gui")]
@@ -723,6 +728,8 @@ fn main() -> anyhow::Result<()> {
             Commands::ScoreBatch(command) => {
                 cli_score_batch::run_score_batch_command(command, k_strategy, args.k_allow_fallback)
             }
+            Commands::Agent(command) => cli_agent::run_agent_command(command),
+            Commands::Trace(command) => cli_agent::run_trace_command(command),
             Commands::Experiment(command) => match &command.command {
                 cli_experiment::ExperimentSubcommand::Validate(command) => {
                     cli_experiment::run_validate_command(command)
