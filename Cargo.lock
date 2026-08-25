@@ -1735,7 +1735,7 @@ dependencies = [
 
 [[package]]
 name = "ember"
-version = "0.6.6"
+version = "0.6.7"
 dependencies = [
  "anyhow",
  "clap",

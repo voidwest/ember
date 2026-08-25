@@ -7,6 +7,65 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [0.6.7] - 2026-08-25
+
+### Added
+
+Agentic execution layer + research tracing (`ember::agent`): Ember can now
+act, not merely generate. The loop sits entirely ABOVE inference (no
+attention/KV/tokenizer changes) and drives the existing session machinery.
+
+- Tool runtime: `ToolSchema` (JSON-Schema-compatible subset: string,
+  number/integer, boolean, array, nested object, string enums, required),
+  strict argument validation with structured multi-error reporting
+  (`ValidatedArguments`; unknown fields/missing/wrong-type/enum all
+  collected), frozen `ToolRegistry` with duplicate rejection, watchdog-
+  enforced tool timeouts (detached-worker caveat documented), contained
+  panics, cooperative cancellation via the existing `GenerationControl`.
+- Protocol boundary: `ToolCallProtocol` with three codecs - Qwen2.5
+  ChatML+`<tool_call>` (official convention), Llama 3.x
+  `<|python_tag|>` JSON custom functions (Meta zero-shot convention,
+  `ipython` result role), and an honest generic-JSON testing mode.
+  Rendered messages are pinned byte-exactly by unit tests; present-but-
+  broken calls classify as explicit `MalformedToolCall`, never silently
+  recovered to prose. One call per step (documented; extras counted in
+  traces).
+- Agent state machine (`AgentSession::run`): explicit loop with hard
+  limits (max steps / max tool calls / wall time / per-tool timeout /
+  per-turn output tokens / tool-result reinjection cap), commit ledger
+  (`system → user → assistant_tool_call → tool_result → … → final`),
+  limit outcomes as first-class `RunStatus::LimitReached` +
+  `run_terminated` terminal events. Cancellation mid-generation commits
+  nothing (engine rolls the KV cursor back); a tool that executed before
+  cancellation keeps its side effect visible via `tool_result_uncommitted`.
+- Deterministic built-ins: `calculate`, `lookup` (fixture table),
+  `echo`, `write_artifact` (hashed), `fail`, sandboxed read-only
+  `read_text_file`/`search_text` (traversal fails closed). No
+  shell/network/delete tools by design.
+- Research tracing: crash-tolerant JSONL (`ember.agent.trace.v1`,
+  monotonic `seq`, flush-per-event, torn-line tolerant parser), span-ish
+  step ids, privacy knobs (prompts/generated text on/off → hashes;
+  tool payloads full/summary(2048 default)/hash; token events off),
+  provenance event (ember version, git commit/rustc/target from build.rs,
+  model identity incl. SHA-256 + quant + tokenizer hash, protocol id,
+  tool-schema snapshot, config).
+- Artifacts: run-local `ArtifactStore` writing sanitized, atomically
+  published files with sha256/size/media-type/producer provenance, traced
+  as `artifact_written`.
+- CLI: `ember agent run|demo` (llama/qwen-family GGUFs, `--protocol`,
+  deterministic built-ins incl. sandboxed file tools, trace out) and
+  `ember trace inspect` (compact timeline + aggregates).
+- Tests: 40 lib unit tests + 19 hermetic scripted-model integration tests
+  (`tests/agent_runtime.rs`: exact one-tool round trip, multi-step,
+  failure/malformed/unknown-tool recovery, max-steps/max-tool-calls/
+  wall-time limits, mid-generation and mid-execution cancellation,
+  timeout, panic containment, artifact hashing, incremental+torn JSONL)
+  plus a real-GGUF gate (`tests/agent_e2e.rs`, `EMBER_AGENT_E2E=1`)
+  executed against Llama-3.2-1B-Instruct-Q8_0 and Qwen2.5-1.5B-Q8_0.
+- Bench: `benches/agent_overhead.rs` - orchestration ≈0.5–1.9 ms/run
+  (mock tools), trace overhead ≈0.2 ms, ~16 events / ~5 KB per one-tool
+  run.
+
 ## [0.6.6] - 2026-08-25
 
 ### Added
