@@ -247,10 +247,7 @@ impl ToolCallProtocol for Qwen25ToolProtocol {
         if !tools.is_empty() {
             s.push_str("\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n");
             for tool in tools {
-                s.push_str(
-                    &serde_json::to_string(&tool.to_json_schema())
-                        .unwrap_or_else(|_| "{}".to_string()),
-                );
+                s.push_str(&super::schema::canonical_json(&tool.to_json_schema()));
                 s.push('\n');
             }
             s.push_str("</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name-in-string>, \"arguments\": <args-json-object>}\n</tool_call>");
@@ -378,9 +375,9 @@ impl ToolCallProtocol for LlamaToolProtocol {
             let schemas: Vec<serde_json::Value> =
                 tools.iter().map(|t| t.to_json_schema()).collect();
             s.push_str("\n\nYou have access to the following functions. To call a function, respond with JSON for a function call. Respond in the format {\"name\": function name, \"parameters\": dictionary of argument name and its value}. Do not use variables.\n\n");
-            s.push_str(
-                &serde_json::to_string_pretty(&schemas).unwrap_or_else(|_| "[]".to_string()),
-            );
+            let canonical_array =
+                super::schema::canonical_json_pretty(&serde_json::Value::Array(schemas));
+            s.push_str(&canonical_array);
         }
         s.push_str(LLAMA_EOT);
         s
@@ -502,9 +499,9 @@ impl ToolCallProtocol for EmberJsonToolProtocol {
             let schemas: Vec<serde_json::Value> =
                 tools.iter().map(|t| t.to_json_schema()).collect();
             s.push_str("\n\nTo call a tool, emit exactly this JSON object (and nothing else required):\n{\"type\":\"tool_call\",\"name\":<tool-name>,\"arguments\":{...}}\n\nAvailable tools (JSON schemas):\n");
-            s.push_str(
-                &serde_json::to_string_pretty(&schemas).unwrap_or_else(|_| "[]".to_string()),
-            );
+            let canonical_array =
+                super::schema::canonical_json_pretty(&serde_json::Value::Array(schemas));
+            s.push_str(&canonical_array);
         } else {
             s.push_str("\n\nNo tools are available; answer in plain text.");
         }

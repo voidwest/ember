@@ -27,7 +27,7 @@ fn weather_schema() -> ToolSchema {
 #[test]
 fn qwen_system_message_is_pinned_byte_exact() {
     let rendered = qwen().render_system_message(None, &[weather_schema()]);
-    let expected = "<|im_start|>system\nYou are a helpful assistant with access to the following tools. When you need information from a tool, call it instead of guessing.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\":\"get_weather\",\"description\":\"fixture temperature for a city\",\"parameters\":{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"]}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name-in-string>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n";
+    let expected = "<|im_start|>system\nYou are a helpful assistant with access to the following tools. When you need information from a tool, call it instead of guessing.\n\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"description\":\"fixture temperature for a city\",\"name\":\"get_weather\",\"parameters\":{\"properties\":{\"city\":{\"type\":\"string\"}},\"required\":[\"city\"],\"type\":\"object\"}}\n</tools>\n\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\n<tool_call>\n{\"name\": <function-name-in-string>, \"arguments\": <args-json-object>}\n</tool_call><|im_end|>\n";
     assert_eq!(rendered, expected);
 }
 

@@ -677,3 +677,148 @@ mod tests {
         );
     }
 }
+
+/// Deterministic compact JSON encoding with lexicographically sorted
+/// object keys, independent of `serde_json` feature flags.
+///
+/// Why not `serde_json::to_string`: another dependency can enable
+/// `preserve_order`, switching `Map` from BTree- to IndexMap-backed and
+/// silently changing serialized key order PER PLATFORM. Tool definitions
+/// reach the model as prompt bytes and are pinned by golden tests, so
+/// their encoding must not depend on the feature graph. This walker
+/// sorts every object it encounters and delegates scalar escaping to
+/// serde_json.
+pub fn canonical_json(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    write_canonical(value, &mut out);
+    out
+}
+
+/// [`canonical_json`] with two-space indentation (same ordering rules).
+pub fn canonical_json_pretty(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    write_canonical_pretty(value, 0, &mut out);
+    out
+}
+
+fn write_canonical(value: &serde_json::Value, out: &mut String) {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(key).expect("string escapes"));
+                out.push(':');
+                write_canonical(&map[*key], out);
+            }
+            out.push('}');
+        }
+        serde_json::Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_canonical(item, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())),
+    }
+}
+
+fn write_canonical_pretty(value: &serde_json::Value, depth: usize, out: &mut String) {
+    let pad = |n: usize, out: &mut String| {
+        for _ in 0..n {
+            out.push_str("  ");
+        }
+    };
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            if keys.is_empty() {
+                out.push_str("{}");
+                return;
+            }
+            out.push_str("{\n");
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(",\n");
+                }
+                pad(depth + 1, out);
+                out.push_str(&serde_json::to_string(key).expect("string escapes"));
+                out.push_str(": ");
+                write_canonical_pretty(&map[*key], depth + 1, out);
+            }
+            out.push('\n');
+            pad(depth, out);
+            out.push('}');
+        }
+        serde_json::Value::Array(items) => {
+            if items.is_empty() {
+                out.push_str("[]");
+                return;
+            }
+            out.push_str("[\n");
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(",\n");
+                }
+                pad(depth + 1, out);
+                write_canonical_pretty(item, depth + 1, out);
+            }
+            out.push('\n');
+            pad(depth, out);
+            out.push(']');
+        }
+        other => out.push_str(&serde_json::to_string(other).unwrap_or_else(|_| "null".to_string())),
+    }
+}
+
+#[cfg(test)]
+mod canonical_tests {
+    use super::*;
+
+    /// Pins the platform-independent encoding: sorted keys, compact
+    /// separators. Guards against serde_json `preserve_order` feature
+    /// unification changing byte output per platform (caught on aarch64
+    /// CI during the v0.6.7 release).
+    #[test]
+    fn canonical_json_sorts_keys_recursively_and_is_platform_stable() {
+        let v = serde_json::json!({
+            "zeta": 1,
+            "alpha": {"y": [3, {"b": true, "a": null}], "x": "s\"q"},
+            "mid": []
+        });
+        assert_eq!(
+            canonical_json(&v),
+            r#"{"alpha":{"x":"s\"q","y":[3,{"a":null,"b":true}]},"mid":[],"zeta":1}"#
+        );
+        let pretty = canonical_json_pretty(&v);
+        assert!(pretty.starts_with("{\n  \"alpha\": {"));
+        assert_eq!(
+            pretty,
+            concat!(
+                "{\n",
+                "  \"alpha\": {\n",
+                "    \"x\": \"s\\\"q\",\n",
+                "    \"y\": [\n",
+                "      3,\n",
+                "      {\n",
+                "        \"a\": null,\n",
+                "        \"b\": true\n",
+                "      }\n",
+                "    ]\n",
+                "  },\n",
+                "  \"mid\": [],\n",
+                "  \"zeta\": 1\n",
+                "}"
+            )
+        );
+    }
+}
