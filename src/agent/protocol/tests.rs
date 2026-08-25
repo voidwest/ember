@@ -44,7 +44,7 @@ fn qwen_user_assistant_and_result_messages_are_pinned() {
     let msg = ToolResultMessage::from_text("get_weather", true, "41 C");
     assert_eq!(
         p.render_tool_result_message(&msg),
-        "<|im_start|>user\n<tool_response>\n{\"name\":\"get_weather\",\"content\":\"41 C\"}\n</tool_response><|im_end|>\n"
+        "<|im_start|>user\n<tool_response>\n{\"content\":\"41 C\",\"name\":\"get_weather\"}\n</tool_response><|im_end|>\n"
     );
 }
 
@@ -228,5 +228,30 @@ fn balanced_scanner_returns_none_for_unbalanced_input() {
     assert_eq!(
         find_balanced_json_object("pre {\"a\": 1} post", 0),
         Some((4, 12))
+    );
+}
+
+#[test]
+fn render_paths_use_canonical_serialization_only() {
+    // Regression guard for the aarch64 CI failure: `serde_json::to_string`
+    // of a Value depends on whether some dependency enables
+    // `preserve_order`, which flips key order PER PLATFORM. Everything in
+    // this module renders model-facing bytes, so it must go through the
+    // canonical writer instead.
+    let source = include_str!("../protocol.rs");
+    let offenders: Vec<String> = source
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.contains("serde_json::to_string")
+                || l.contains("serde_json::to_string_pretty")
+                || l.contains("serde_json::to_vec")
+        })
+        .map(|(i, _)| format!("protocol.rs line {}", i + 1))
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "non-canonical serialization in protocol.rs at {:?}",
+        offenders
     );
 }

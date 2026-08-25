@@ -1,6 +1,6 @@
 //! Approval gating (Track H, Phase 2): risk-aware execution policy.
 //!
-//! Phase 1 recorded each tool's [`ToolEffect`](crate::agent::ToolEffect)
+//! Phase 1 recorded each tool's [`ToolEffect`]
 //! but never gated on it. This module closes that gap with a small,
 //! embeddable policy seam: the session consults
 //! [`ApprovalPolicy::approve`] between validation and execution, and a

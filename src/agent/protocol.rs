@@ -318,7 +318,7 @@ impl ToolCallProtocol for Qwen25ToolProtocol {
         });
         let mut s = self.open_role("user");
         s.push_str("<tool_response>\n");
-        s.push_str(&serde_json::to_string(&payload).unwrap_or_else(|_| "\"\"".to_string()));
+        s.push_str(&super::schema::canonical_json(&payload));
         s.push('\n');
         s.push_str("</tool_response>");
         s.push_str(&self.close_role());
