@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="tool calling without changing the inference core" />
+        <meta property="og:description" content="How Ember v0.6.7 added structured tool execution, commit semantics, protocol adapters, and auditable traces entirely above the existing inference and session stack." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/engineering/tool-calling-without-changing-the-inference-core/" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>tool calling without changing the inference core</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/engineering/tool-calling-without-changing-the-inference-core/index.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            <a href="/ember/">ember</a>
+            <a href="/ember/engineering/">engineering</a>
+        </div>
+
+        <h1>tool calling without changing the inference core</h1>
+
+        <div class="meta">
+            2026-08-25 · Ember v0.6.7 · structured execution and research tracing
+        </div>
+
+        <p>
+            once a model can call tools, generation attracts responsibilities it
+            should not own. tool syntax starts leaking into token loops, retries
+            become decode branches, and external side effects get confused with
+            KV state. soon the forward pass is carrying execution policy that has
+            nothing to do with producing the next token.
+        </p>
+
+        <p>
+            Ember v0.6.7 keeps that boundary hard. tool calling was added as an
+            explicit state machine above the existing inference and session stack.
+            attention, KV storage, tokenization, model forward passes, and tensor
+            code did not change. the runtime lives in the additive
+            <span class="mono">src/agent/</span> module tree; a thin CLI exposes it.
+            the model still does exactly one job: generate tokens.
+        </p>
+
+        <pre><code>src/agent/session.rs       explicit execution state machine + commit ledger
+        │
+        ├── protocol.rs    model-family render/parse codecs
+        ├── schema.rs      raw JSON → ValidatedArguments
+        ├── tool.rs        bounded execution, cancellation, timeout
+        ├── trace.rs       authoritative ordered event record
+        └── artifact.rs    atomic, hashed run artifacts
+        │
+        ▼
+ChatModelEngine           narrow seam over the existing model session
+        │
+        ▼
+inference core            tokenizer · forward pass · attention · KV · tensors
+                          unchanged in v0.6.7</code></pre>
+
+        <p>
+            that layout is the design. the agent layer can decide that generated
+            text describes an action, but it cannot redefine inference to make the
+            action happen.
+        </p>
+
+        <h2>the loop is a state machine</h2>
+
+        <ol class="flow-list">
+            <li><strong>model turn</strong><span>: generate one assistant turn against the currently committed session.</span></li>
+            <li><strong>parse action</strong><span>: classify the turn as final text, a tool call, or an explicitly malformed call.</span></li>
+            <li><strong>validate</strong><span>: resolve the registered tool and convert raw JSON into typed, validated arguments.</span></li>
+            <li><strong>execute</strong><span>: run the tool under cancellation, timeout, panic containment, and hard-call limits.</span></li>
+            <li><strong>reinject</strong><span>: render the result through the same family protocol and commit it to the same session.</span></li>
+            <li><strong>continue</strong><span>: start the next model turn, or commit final text and stop.</span></li>
+        </ol>
+
+        <p>
+            there is no recursive call back into an "agent prompt." one loop owns
+            the state transitions. it checks maximum model steps, tool calls,
+            wall time, per-tool timeout, per-turn output tokens, and reinjected
+            result size at explicit boundaries. cancellation is a first-class
+            outcome, not another string placed in context.
+        </p>
+
+        <h2>model syntax ends at the protocol boundary</h2>
+
+        <p>
+            Qwen2.5 and Llama 3.x do not describe tool calls the same way. Qwen
+            uses a ChatML assistant message containing
+            <span class="mono">&lt;tool_call&gt;...&lt;/tool_call&gt;</span>. Llama uses
+            <span class="mono">&lt;|python_tag|&gt;</span> followed by a JSON custom-function
+            call, then expects the result under an <span class="mono">ipython</span>
+            role. stop tokens and result rendering differ too.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>family |</th><th>assistant action |</th><th>result form</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Qwen2.5</td><td><span class="mono">&lt;tool_call&gt;{"name":…,"arguments":…}&lt;/tool_call&gt;</span></td><td>ChatML user message with <span class="mono">&lt;tool_response&gt;</span></td></tr>
+                    <tr><td>Llama 3.x</td><td><span class="mono">&lt;|python_tag|&gt;{"name":…,"parameters":…}</span></td><td><span class="mono">ipython</span> role message</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            the generic loop knows neither syntax. it receives one of three
+            protocol-level actions: <span class="mono">FinalText</span>,
+            <span class="mono">ToolCall</span>, or
+            <span class="mono">MalformedToolCall</span>. codecs render the system
+            tool schemas, user messages, assistant framing, and tool results, then
+            parse model output back into that common action type. their byte-exact
+            renders are pinned by tests.
+        </p>
+
+        <p>
+            this is where model-family special cases belong. adding another syntax
+            means implementing another codec, not branching inside session logic
+            or teaching the KV cache what a tool response is.
+        </p>
+
+        <h2>raw model output is never executable input</h2>
+
+        <p>
+            parsing a JSON-looking span is only syntax recognition. it is not
+            permission to execute. the runtime resolves the named tool, parses its
+            argument object, validates it against the registered schema, and only
+            then constructs <span class="mono">ValidatedArguments</span>. the
+            <span class="mono">Tool</span> trait accepts that type; it has no entry
+            point that accepts raw model text.
+        </p>
+
+        <pre><code>model bytes
+  → protocol parser
+  → raw tool call
+  → schema validation
+  → ValidatedArguments
+  → Tool::execute(...)</code></pre>
+
+        <p>
+            validation is strict and recursive. it checks strings, numbers,
+            integers, booleans, arrays, enums, and nested objects. missing required
+            fields, unknown fields, wrong types, enum violations, malformed JSON,
+            and excessive nesting fail closed. schema validation collects every
+            field error in the call instead of stopping at the first one.
+        </p>
+
+        <pre><code>{
+  "ok": false,
+  "kind": "invalid_arguments",
+  "errors": [
+    {"path":"operation", "reason":"missing required argument"},
+    {"path":"precision", "reason":"unknown field"},
+    {"path":"a", "reason":"expected number, got string"}
+  ]
+}</code></pre>
+
+        <p>
+            malformed calls and validation failures are traced as rejections and
+            reinjected through the protocol as <span class="mono">ok:false</span>
+            tool results. the model can repair the call on its next turn. recovery
+            remains bounded by the same step and wall-time limits; a bad call does
+            not quietly become prose, and it never reaches the tool.
+        </p>
+
+        <h2>generation can roll back; an executed side effect cannot</h2>
+
+        <p>
+            the difficult boundary is not parsing. it is commit semantics. model
+            generation is speculative until the turn completes. an external tool
+            effect becomes real when the tool executes. those are different kinds
+            of state, and the runtime refuses to pretend otherwise.
+        </p>
+
+        <pre><code>cancel during generation
+  → truncate speculative KV state
+  → commit no assistant turn
+
+tool executes
+  → external side effect now exists
+
+cancel before tool-result commit
+  → keep the external effect visible
+  → do not inject the result into the session
+  → emit tool_result_uncommitted</code></pre>
+
+        <p>
+            the committed ledger records the actual conversation transition:
+            <span class="mono">system → user → assistant_tool_call → tool_result → … → final</span>.
+            cancellation during generation rolls back to the previous KV boundary.
+            cancellation after execution leaves a valid committed prefix and no
+            fictional tool-result message, while the trace states that the
+            external effect already happened.
+        </p>
+
+        <p>
+            this distinction matters most for writes. deleting a generated suffix
+            cannot unwrite a file, reverse an API mutation, or retract a message.
+            rollback is a property of speculative model state, not a universal undo
+            mechanism.
+        </p>
+
+        <h2>the trace is the execution record</h2>
+
+        <p>
+            tracing in v0.6.7 is not diagnostic logging added around the real
+            result. the JSONL trace is the authoritative execution history. every
+            line carries the <span class="mono">ember.agent.trace.v1</span> schema,
+            a run id, and a monotonic sequence number. wall-clock timestamps help
+            with latency; ordering comes from <span class="mono">seq</span>.
+        </p>
+
+        <pre><code>{"schema":"ember.agent.trace.v1","run_id":"run-…","seq":29,
+ "event_type":"tool_execution_finished","step":"tool-3","phase":"execute",
+ "data":{"tool":"write_artifact","ok":true,"duration_ms":0.3,
+         "artifact_ids":["0000-94474f5d7426"]}}</code></pre>
+
+        <p>
+            the provenance event pins the runtime, model and tokenizer identity,
+            protocol and tool-schema snapshot, and run configuration. subsequent
+            events record model turns, parse decisions, validation, tool execution,
+            session mutations, result commits, terminal states, and artifact hashes.
+        </p>
+
+        <p>
+            each JSONL event is flushed when appended, so a crash leaves a readable
+            prefix; the parser reports a torn trailing line instead of rejecting the
+            history. privacy controls can replace prompts or generated text with
+            lengths and hashes, summarize or hash tool payloads, and keep per-token
+            events off. auditable does not have to mean copying every payload into
+            the trace.
+        </p>
+
+        <h2>the model said it wrote the file</h2>
+
+        <p>
+            the most useful failure in the real-model runs was not a crash. in one
+            attempt, the model narrated that it had written an artifact. it had not
+            called <span class="mono">write_artifact</span>. the trace contained no
+            tool-execution event, and the artifact store was empty.
+        </p>
+
+        <div class="quote-block">
+            <div class="text">model narration ≠ execution history</div>
+        </div>
+
+        <p>
+            without the execution boundary, the final sentence is tempting to
+            treat as success. with it, the claim is easy to falsify. an artifact
+            exists only when the tool ran, the store published the bytes, and the
+            trace recorded the resulting identity. generated text can describe
+            that history; it cannot manufacture it.
+        </p>
+
+        <h2>one successful run</h2>
+
+        <p>
+            a Qwen2.5-1.5B Q8_0 run exercised the same boundary successfully. the
+            model read experiment summaries containing a baseline score of 0.612
+            and a tuned score of 0.744, called the calculator, wrote a Markdown
+            artifact, and returned <span class="mono">DONE 21.57%</span>.
+        </p>
+
+        <pre><code>source scores     baseline_q4 = 0.612, tuned_q8 = 0.744
+calculation       (0.744 - 0.612) / 0.612 × 100 = 21.5686…%
+artifact          0000-94474f5d7426-best-config.md
+sha256            94474f5d742605e55400ce8d35ff27d6ef204c13b8820c02acb89fdef0e01d6e
+final answer      DONE 21.57%</code></pre>
+
+        <p>
+            the interesting result is not that the model can divide. it is that
+            the reads, calculation, write, content hash, and final synthesis are
+            distinct, attributable events. the trace shows which facts came from
+            files, which number came from a tool, and which bytes became an
+            artifact.
+        </p>
+
+        <h2>orchestration is not the bottleneck</h2>
+
+        <p>
+            a release-mode scripted benchmark measured the runtime around model
+            inference: parsing, validation, mock tool execution, state transitions,
+            and tracing. these are the reported results from 200 repetitions on
+            the report host, not tool-latency or model-throughput numbers.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>scenario |</th><th>wall time / run</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>one tool, tracing off</td><td>0.494 ms</td></tr>
+                    <tr><td>one tool, JSONL tracing</td><td>0.700 ms</td></tr>
+                    <tr><td>three tools, memory trace</td><td>1.898 ms</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            agent orchestration is not the bottleneck; model inference still
+            dominates by orders of magnitude. the real Qwen workflow spent about
+            63.7 seconds in model turns and 2.8 milliseconds in tools. the boundary
+            is explicit without being expensive.
+        </p>
+
+        <h2>the claim stays narrow</h2>
+
+        <p>
+            this is not an autonomous-agent framework, browser agent, shell
+            executor, MCP implementation, multi-agent system, or approval
+            framework. v0.6.7 is a small structured execution layer with explicit
+            state and an auditable history. its built-ins are deterministic local
+            tools; there is no shell, network, browser, or delete tool.
+        </p>
+
+        <p>
+            the current protocol surface executes one tool call per assistant step;
+            additional calls are counted and traced rather than fanned out. tool
+            timeouts use a watchdog around synchronous work, so a timed-out worker
+            is detached and its result discarded rather than preempted unsafely.
+            those limits are visible parts of the contract, not hidden behind the
+            word "agent."
+        </p>
+
+        <p>
+            tool calling did not need to become part of inference. the model still
+            generates tokens. the runtime above it decides whether those tokens
+            describe a final answer or a valid action, and the trace records what
+            actually happened.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

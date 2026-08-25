@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="استدعاء الأدوات بدون تغيير قلب الاستدلال" />
+        <meta property="og:description" content="كيف أضاف Ember v0.6.7 تنفيذ أدوات منظم، وحدود commit واضحة، وprotocol adapters، وtrace قابل للتدقيق بالكامل فوق مسار الاستدلال والجلسة الموجود." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/ember/engineering/tool-calling-without-changing-the-inference-core/index.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary" />
+        <title>استدعاء الأدوات بدون تغيير قلب الاستدلال</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=92d23cd55470" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/engineering/tool-calling-without-changing-the-inference-core/">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            <a href="/ember/index.ar.html"><bdi>ember</bdi></a>
+            <a href="/ember/engineering/index.ar.html"><bdi>engineering</bdi></a>
+        </div>
+
+        <h1>استدعاء الأدوات بدون تغيير قلب الاستدلال</h1>
+
+        <div class="meta">
+            كيف أضاف <bdi>Ember v0.6.7</bdi> تنفيذ الأدوات فوق طبقة الجلسة من غير ما يلمس قلب الاستدلال<br>
+            محمد الثبيتي · 2026-08-25<br>
+            <span class="tag key">Ember</span>
+            <span class="tag key">tool calling</span>
+            <span class="tag key">state machines</span>
+            <span class="tag key">research tracing</span>
+        </div>
+
+        <p>
+            أول ما النموذج يقدر يستدعي أدوات، تصير فيه إغراءات معمارية مو
+            بسيطة. <bdi>syntax</bdi> الأداة يبدأ يدخل في <bdi>token loop</bdi>،
+            والـ<bdi>retries</bdi> تصير فروع خاصة داخل <bdi>decode</bdi>، وحالة
+            التنفيذ الخارجي تختلط مع <bdi>KV state</bdi>. شوي شوي يصير
+            <bdi>forward pass</bdi> شايل سياسة تنفيذ ما لها أي علاقة باختيار
+            الـ<bdi>token</bdi> الجاي.
+        </p>
+
+        <p>
+            <bdi>Ember v0.6.7</bdi> تعمّد يقفل الحد هذا. استدعاء الأدوات انضاف
+            كـ<bdi>state machine</bdi> صريحة فوق مسار الاستدلال والجلسة الموجود.
+            ما تغير <bdi>attention</bdi>، ولا تخزين <bdi>KV</bdi>، ولا
+            <bdi>tokenization</bdi>، ولا <bdi>model forward</bdi>، ولا كود
+            الـ<bdi>tensors</bdi>. الـ<bdi>runtime</bdi> موجود في شجرة إضافية
+            تحت <span class="mono">src/agent/</span>، والـ<bdi>CLI</bdi> فوقها
+            مجرد واجهة خفيفة. النموذج لسه عنده شغلة وحدة: يولّد
+            <bdi>tokens</bdi>.
+        </p>
+
+        <pre dir="ltr"><code>src/agent/session.rs       explicit execution state machine + commit ledger
+        │
+        ├── protocol.rs    model-family render/parse codecs
+        ├── schema.rs      raw JSON → ValidatedArguments
+        ├── tool.rs        bounded execution, cancellation, timeout
+        ├── trace.rs       authoritative ordered event record
+        └── artifact.rs    atomic, hashed run artifacts
+        │
+        ▼
+ChatModelEngine           narrow seam over the existing model session
+        │
+        ▼
+inference core            tokenizer · forward pass · attention · KV · tensors
+                          unchanged in v0.6.7</code></pre>
+
+        <p>
+            الرسم هذا هو التصميم، مو بس ترتيب ملفات. طبقة الـ<bdi>agent</bdi>
+            تقدر تقرر إن النص المولّد يصف فعل لازم يتنفذ، بس ما تقدر تعيد
+            تعريف الاستدلال عشان تنفذ الفعل.
+        </p>
+
+        <h2>الـ<bdi>loop</bdi> عبارة عن <bdi>state machine</bdi></h2>
+
+        <ol class="flow-list">
+            <li><strong>دور النموذج</strong><span>: ولّد رد واحد فوق حالة الجلسة اللي ثبتناها إلى الآن.</span></li>
+            <li><strong>حلّل الفعل</strong><span>: صنّف الرد: جواب نهائي، أو استدعاء أداة، أو استدعاء واضح بس تركيبه خربان.</span></li>
+            <li><strong>تحقق</strong><span>: حدّد الأداة المسجلة وحوّل <bdi>JSON</bdi> الخام إلى معاملات مكتوبة ومتحقق منها.</span></li>
+            <li><strong>نفّذ</strong><span>: شغّل الأداة تحت الإلغاء والمهلة واحتواء الـ<bdi>panic</bdi> والحد الأعلى للاستدعاءات.</span></li>
+            <li><strong>رجّع النتيجة</strong><span>: صيّغ النتيجة ببروتوكول عائلة النموذج وثبّتها في نفس الجلسة.</span></li>
+            <li><strong>كمّل</strong><span>: ابدأ دور النموذج الجاي، أو ثبّت الجواب النهائي ووقف.</span></li>
+        </ol>
+
+        <p>
+            ما فيه استدعاء عودي يرجع إلى «<bdi>agent prompt</bdi>». فيه
+            <bdi>loop</bdi> واحد يملك انتقالات الحالة. قبل الحدود الواضحة يفحص
+            عدد أدوار النموذج، وعدد استدعاءات الأدوات، ووقت التشغيل الكلي،
+            ومهلة كل أداة، وعدد <bdi>tokens</bdi> في كل رد، وحجم النتيجة اللي
+            بترجع للسياق. الإلغاء نتيجة من الدرجة الأولى، مو نص ثاني نحطه في
+            الـ<bdi>prompt</bdi>.
+        </p>
+
+        <h2>تركيب كل عائلة يوقف عند حد الـ<bdi>protocol</bdi></h2>
+
+        <p>
+            <bdi>Qwen2.5</bdi> و<bdi>Llama 3.x</bdi> ما يكتبوا استدعاء الأداة
+            بنفس الطريقة. <bdi>Qwen</bdi> يستخدم رسالة <bdi>ChatML</bdi> فيها
+            <span class="mono">&lt;tool_call&gt;...&lt;/tool_call&gt;</span>.
+            <bdi>Llama</bdi> يستخدم <span class="mono">&lt;|python_tag|&gt;</span>
+            وبعده استدعاء <bdi>JSON custom function</bdi>، ويتوقع النتيجة تحت
+            دور <span class="mono">ipython</span>. حتى <bdi>stop tokens</bdi>
+            وطريقة صياغة النتيجة مختلفة.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>العائلة |</th><th>شكل فعل المساعد |</th><th>شكل النتيجة</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><bdi>Qwen2.5</bdi></td><td><span class="mono">&lt;tool_call&gt;{"name":…,"arguments":…}&lt;/tool_call&gt;</span></td><td>رسالة مستخدم <bdi>ChatML</bdi> فيها <span class="mono">&lt;tool_response&gt;</span></td></tr>
+                    <tr><td><bdi>Llama 3.x</bdi></td><td><span class="mono">&lt;|python_tag|&gt;{"name":…,"parameters":…}</span></td><td>رسالة بدور <span class="mono">ipython</span></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            الـ<bdi>loop</bdi> العام ما يعرف أي وحدة من هذي الصيغ. اللي يوصله
+            واحد من ثلاثة أفعال على مستوى الـ<bdi>protocol</bdi>:
+            <span class="mono">FinalText</span>، أو
+            <span class="mono">ToolCall</span>، أو
+            <span class="mono">MalformedToolCall</span>. الـ<bdi>codecs</bdi>
+            تصيغ <bdi>system tool schemas</bdi>، ورسائل المستخدم، وإطار رد
+            المساعد، ونتائج الأدوات، وبعدها ترجع خرج النموذج إلى النوع المشترك.
+            الاختبارات تثبت الصياغة <bdi>byte-for-byte</bdi>.
+        </p>
+
+        <p>
+            هنا مكان الحالات الخاصة بكل عائلة. إضافة صيغة جديدة معناها نكتب
+            <bdi>codec</bdi> جديد، مو نضيف فروع داخل منطق الجلسة ولا نعلّم
+            <bdi>KV cache</bdi> إيش يعني رد أداة.
+        </p>
+
+        <h2>خرج النموذج الخام ما يصير مدخل تنفيذ</h2>
+
+        <p>
+            إننا لقينا جزء يشبه <bdi>JSON</bdi> يعني بس إننا تعرفنا على
+            الـ<bdi>syntax</bdi>. ما يعني إنه صار مسموح يتنفذ. الـ<bdi>runtime</bdi>
+            يبحث عن الأداة باسمها، ويحلل كائن المعاملات، ويتحقق منه مقابل
+            الـ<bdi>schema</bdi> المسجلة، وبعدها فقط يبني
+            <span class="mono">ValidatedArguments</span>. الـ<span class="mono">Tool</span>
+            <bdi>trait</bdi> يستقبل النوع هذا. ما عنده مدخل يستقبل كلام النموذج
+            الخام.
+        </p>
+
+        <pre dir="ltr"><code>model bytes
+  → protocol parser
+  → raw tool call
+  → schema validation
+  → ValidatedArguments
+  → Tool::execute(...)</code></pre>
+
+        <p>
+            التحقق صارم ويمشي داخل البنية. يفحص النصوص والأرقام والأعداد
+            الصحيحة والقيم المنطقية والمصفوفات والـ<bdi>enums</bdi> والكائنات
+            المتداخلة. الحقول المطلوبة الناقصة، والحقول الغريبة، والأنواع
+            الغلط، ومخالفات الـ<bdi>enum</bdi>، و<bdi>JSON</bdi> المشوه، والتداخل
+            الأعمق من الحد كلها تنرفض. فحص الـ<bdi>schema</bdi> يجمع كل أخطاء
+            الحقول في الاستدعاء بدل ما يوقف عند أول خطأ.
+        </p>
+
+        <pre dir="ltr"><code>{
+  "ok": false,
+  "kind": "invalid_arguments",
+  "errors": [
+    {"path":"operation", "reason":"missing required argument"},
+    {"path":"precision", "reason":"unknown field"},
+    {"path":"a", "reason":"expected number, got string"}
+  ]
+}</code></pre>
+
+        <p>
+            الاستدعاءات المشوهة وأخطاء التحقق تنسجل كحالات رفض، وبعدها ترجع
+            للنموذج عبر الـ<bdi>protocol</bdi> كـ<bdi>tool result</bdi> مرفوضة
+            بقيمة <span class="mono">ok:false</span>. يقدر النموذج يصلح
+            الاستدعاء في دوره الجاي. بس الاسترجاع يبقى تحت نفس حدود الخطوات
+            والوقت. الاستدعاء الخربان ما يتحول بصمت إلى كلام عادي، وأبداً ما
+            يوصل للأداة.
+        </p>
+
+        <h2>نقدر نرجع <bdi>generation</bdi>، بس ما نقدر نمسح أثراً صار فعلاً</h2>
+
+        <p>
+            أصعب حد هنا مو التحليل. هو معنى الـ<bdi>commit</bdi>. توليد النموذج
+            يبقى تخمينياً إلى أن يخلص الدور. أما أثر الأداة الخارجي فيصير حقيقي
+            لحظة تنفيذها. هذي حالتين من نوع مختلف، والـ<bdi>runtime</bdi> ما
+            يتظاهر إنهم نفس الشيء.
+        </p>
+
+        <pre dir="ltr"><code>cancel during generation
+  → truncate speculative KV state
+  → commit no assistant turn
+
+tool executes
+  → external side effect now exists
+
+cancel before tool-result commit
+  → keep the external effect visible
+  → do not inject the result into the session
+  → emit tool_result_uncommitted</code></pre>
+
+        <p>
+            سجل الـ<bdi>commit</bdi> يحفظ انتقال المحادثة اللي صار فعلاً:
+            <span class="mono">system → user → assistant_tool_call → tool_result → … → final</span>.
+            لو جاء الإلغاء أثناء التوليد، يرجع <bdi>KV</bdi> إلى آخر حد ثابت.
+            ولو جاء بعد تنفيذ الأداة، يبقى الجزء المثبت من الجلسة نظيف وما ندخل
+            له نتيجة وهمية، وفي نفس الوقت يقول الـ<bdi>trace</bdi> بوضوح إن
+            الأثر الخارجي صار.
+        </p>
+
+        <p>
+            الفرق هذا يبان أكثر مع الكتابة. حذف آخر <bdi>tokens</bdi> مولّدة ما
+            يقدر يحذف ملف انكتب، أو يعكس تغيير في <bdi>API</bdi>، أو يسحب رسالة
+            انرسلت. الـ<bdi>rollback</bdi> خاص بحالة النموذج التخمينية. مو زر
+            تراجع شامل للعالم الخارجي.
+        </p>
+
+        <h2>الـ<bdi>trace</bdi> هو سجل التنفيذ</h2>
+
+        <p>
+            الـ<bdi>tracing</bdi> في <bdi>v0.6.7</bdi> مو <bdi>debug logs</bdi>
+            ملفوفة حول النتيجة الحقيقية. ملف <bdi>JSONL</bdi> هو التاريخ المعتمد
+            للتنفيذ. كل سطر يحمل <span class="mono">ember.agent.trace.v1</span>،
+            ومعرّف التشغيل، ورقم تسلسلي يزيد دائماً. الوقت الجداري مفيد لقياس
+            التأخير؛ ترتيب الأحداث يجي من <span class="mono">seq</span>.
+        </p>
+
+        <pre dir="ltr"><code>{"schema":"ember.agent.trace.v1","run_id":"run-…","seq":29,
+ "event_type":"tool_execution_finished","step":"tool-3","phase":"execute",
+ "data":{"tool":"write_artifact","ok":true,"duration_ms":0.3,
+         "artifact_ids":["0000-94474f5d7426"]}}</code></pre>
+
+        <p>
+            حدث الـ<bdi>provenance</bdi> يثبت هوية الـ<bdi>runtime</bdi> والنموذج
+            والـ<bdi>tokenizer</bdi>، ولقطة الـ<bdi>protocol</bdi> والأدوات،
+            وإعدادات التشغيل. الأحداث اللي بعده تسجل أدوار النموذج، وقرار
+            التحليل، والتحقق، وتنفيذ الأداة، وتغييرات الجلسة، وتثبيت النتائج،
+            وحالات النهاية، و<bdi>artifact hashes</bdi>.
+        </p>
+
+        <p>
+            كل حدث ينكتب وينعمل له <bdi>flush</bdi> مباشرة، عشان لو البرنامج
+            طاح يبقى عندنا جزء <bdi>JSONL</bdi> مقروء. والـ<bdi>parser</bdi>
+            يبلغ عن آخر سطر مقطوع بدل ما يرفض التاريخ كله. إعدادات الخصوصية
+            تقدر تستبدل الـ<bdi>prompts</bdi> أو النص المولّد بالأطوال
+            والـ<bdi>hashes</bdi>،
+            وتختصر أو تعمل <bdi>hash</bdi> لنتائج الأدوات، وتخلي أحداث كل
+            <bdi>token</bdi> مقفلة. قابلية التدقيق ما تعني إننا لازم ننسخ كل
+            محتوى داخل الـ<bdi>trace</bdi>.
+        </p>
+
+        <h2>النموذج قال إنه كتب الملف</h2>
+
+        <p>
+            أكثر فشل فادني في تشغيل نموذج حقيقي ما كان <bdi>crash</bdi>. في
+            محاولة، النموذج حكى إنه كتب <bdi>artifact</bdi>. بس هو فعلياً ما
+            استدعى <span class="mono">write_artifact</span>. ما كان فيه حدث
+            تنفيذ للأداة في الـ<bdi>trace</bdi>، ومخزن الـ<bdi>artifacts</bdi>
+            كان فاضي.
+        </p>
+
+        <div class="quote-block">
+            <div class="text">كلام النموذج ≠ تاريخ التنفيذ</div>
+        </div>
+
+        <p>
+            بدون حد التنفيذ، آخر جملة تغريك تعتبر التشغيل ناجح. مع الحد، الادعاء
+            سهل يتفند. الـ<bdi>artifact</bdi> ما يعتبر موجود إلا إذا الأداة
+            اشتغلت، والمخزن نشر الـ<bdi>bytes</bdi>، والـ<bdi>trace</bdi> سجل
+            هويتها. النص المولّد يقدر يوصف التاريخ؛ ما يقدر يصنعه.
+        </p>
+
+        <h2>تشغيل واحد نجح فعلاً</h2>
+
+        <p>
+            تشغيل <bdi>Qwen2.5-1.5B Q8_0</bdi> مر على نفس الحد ونجح. النموذج
+            قرأ ملخصات تجارب فيها نتيجة <bdi>baseline</bdi> تساوي
+            <bdi>0.612</bdi> ونتيجة إعداد محسّن تساوي <bdi>0.744</bdi>، واستدعى
+            الحاسبة، وكتب <bdi>Markdown artifact</bdi>، ورجع
+            <span class="mono">DONE 21.57%</span>.
+        </p>
+
+        <pre dir="ltr"><code>source scores     baseline_q4 = 0.612, tuned_q8 = 0.744
+calculation       (0.744 - 0.612) / 0.612 × 100 = 21.5686…%
+artifact          0000-94474f5d7426-best-config.md
+sha256            94474f5d742605e55400ce8d35ff27d6ef204c13b8820c02acb89fdef0e01d6e
+final answer      DONE 21.57%</code></pre>
+
+        <p>
+            المهم هنا مو إن النموذج يعرف يقسم. المهم إن القراءة، والحسبة،
+            والكتابة، و<bdi>content hash</bdi>، وصياغة الجواب النهائي أحداث
+            منفصلة وتُنسب كل وحدة لمصدرها. الـ<bdi>trace</bdi> يوضح أي
+            معلومة جت من ملف، وأي رقم طلع من أداة، وأي <bdi>bytes</bdi> صارت
+            <bdi>artifact</bdi>.
+        </p>
+
+        <h2>تنسيق التنفيذ مو هو عنق الزجاجة</h2>
+
+        <p>
+            <bdi>benchmark</bdi> في وضع <bdi>release</bdi> وبمحرك اختباري مخصص
+            قاس الكلفة اللي حول استدلال النموذج: التحليل،
+            والتحقق، وتنفيذ أدوات وهمية، وانتقالات الحالة، والـ<bdi>tracing</bdi>.
+            هذي الأرقام المبلّغ عنها من <bdi>200</bdi> إعادة على جهاز التقرير،
+            مو أرقام لسرعة الأدوات ولا لسرعة النموذج.
+        </p>
+
+        <div class="table-wrap">
+            <table class="simd-table">
+                <thead>
+                    <tr><th>الحالة |</th><th>الوقت لكل تشغيل</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>أداة وحدة، والـ<bdi>tracing</bdi> مقفل</td><td><bdi>0.494 ms</bdi></td></tr>
+                    <tr><td>أداة وحدة، و<bdi>JSONL tracing</bdi> شغال</td><td><bdi>0.700 ms</bdi></td></tr>
+                    <tr><td>ثلاث أدوات، و<bdi>memory trace</bdi></td><td><bdi>1.898 ms</bdi></td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <p>
+            تنسيق الـ<bdi>agent</bdi> مو هو عنق الزجاجة؛ استدلال النموذج لسه
+            يهيمن بفارق مراتب كاملة. تشغيل <bdi>Qwen</bdi> الحقيقي أخذ تقريباً
+            <bdi>63.7 ثانية</bdi> في أدوار النموذج و<bdi>2.8 مللي ثانية</bdi>
+            في الأدوات. الحد صريح، بس كلفته صغيرة.
+        </p>
+
+        <h2>حد الادعاء ضيق</h2>
+
+        <p>
+            هذا مو <bdi>autonomous-agent framework</bdi>، ولا
+            <bdi>browser agent</bdi>، ولا منفذ <bdi>shell</bdi>، ولا تطبيق
+            <bdi>MCP</bdi>، ولا نظام <bdi>multi-agent</bdi>، ولا إطار موافقات.
+            <bdi>v0.6.7</bdi> طبقة تنفيذ منظمة وصغيرة، بحالة صريحة وتاريخ نقدر
+            ندققه. الأدوات المدمجة حتمية ومحلية؛ ما فيه أداة
+            <bdi>shell</bdi> أو شبكة أو متصفح أو حذف.
+        </p>
+
+        <p>
+            السطح الحالي ينفذ استدعاء أداة واحد في كل دور للمساعد. الاستدعاءات
+            الإضافية تنعد وتنسجل بدل ما تتوزع بالتوازي. مهلة الأدوات تستخدم
+            <bdi>watchdog</bdi> حول شغل متزامن، عشان كذا الـ<bdi>worker</bdi>
+            اللي تنتهي مهلته ينفصل عن مسار التنفيذ وتُهمل نتيجته بدل ما نحاول
+            نوقفه بطريقة مو آمنة. هذي حدود ظاهرة في العقد، مو تفاصيل مخفية
+            وراء كلمة «<bdi>agent</bdi>».
+        </p>
+
+        <p>
+            استدعاء الأدوات ما احتاج يصير جزء من الاستدلال. النموذج لسه يولّد
+            <bdi>tokens</bdi>. الـ<bdi>runtime</bdi> اللي فوقه يقرر هل هذي
+            الـ<bdi>tokens</bdi> تصف جواب نهائي أو فعل صالح، والـ<bdi>trace</bdi>
+            يسجل إيش صار فعلاً.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
