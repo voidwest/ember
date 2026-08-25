@@ -7,7 +7,7 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
-## [Unreleased] - agentic phase 2
+## [0.6.8] - 2026-08-25
 
 ### Added
 
