@@ -676,3 +676,184 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 }
+
+// ---------------------------------------------------------------------------
+// multimodal tool-result fixture (Track W)
+// ---------------------------------------------------------------------------
+
+/// Generates a tiny deterministic PNG as a tool result. Proves the
+/// artifact path can carry binary media with a real media type; future
+/// renderers attach such payloads to `ContentPart::Image` through the
+/// existing multimodal architecture. The image content is a pure function
+/// of the arguments, so runs stay reproducible.
+pub struct ImageFixtureTool;
+
+impl ImageFixtureTool {
+    /// Deterministic RGB pixels from `width` x `height` + seed; same
+    /// arguments, same bytes.
+    fn render(width: u32, height: u32, seed: u64) -> Vec<u8> {
+        let img = image::RgbImage::from_fn(width, height, |x, y| {
+            let h = (x as u64)
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add((y as u64).wrapping_mul(1442695040888963407))
+                .wrapping_add(seed)
+                .swap_bytes();
+            let channel = |shift: u32| ((h >> shift) & 0xFF) as u8;
+            image::Rgb([channel(56), channel(40), channel(24)])
+        });
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("png encode of an in-memory raster cannot fail");
+        png.into_inner()
+    }
+}
+
+impl Tool for ImageFixtureTool {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new(
+            "image_fixture",
+            "Produce a small deterministic PNG test pattern as an artifact of this run.",
+        )
+        .param(
+            ParamSchema::new("name", JsonType::String)
+                .required()
+                .describe("artifact file name, e.g. pattern.png"),
+        )
+        .param(
+            ParamSchema::new("seed", JsonType::Integer)
+                .describe("pattern seed (default 0); same seed, same bytes"),
+        )
+        .effect(ToolEffect::LocalWrite)
+    }
+
+    fn execute(&self, args: &ValidatedArguments, ctx: &ToolContext<'_>) -> ToolOutcome {
+        let name = args
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let seed = args
+            .get("seed")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            .max(0) as u64;
+        let png = Self::render(8, 8, seed);
+        if !name.ends_with(".png") {
+            return Err(fail(
+                ToolFailureKind::Execution,
+                "image_fixture requires a `.png` file name",
+            ));
+        }
+        let record = {
+            let mut store = ctx
+                .artifacts
+                .lock()
+                .map_err(|_| fail(ToolFailureKind::Execution, "artifact store poisoned"))?;
+            store.write(name, "image/png", &png, "image_fixture", ctx.step_id)
+        };
+        match record {
+            Ok(record) => Ok(ToolOutput {
+                payload: ToolPayload::Json(serde_json::json!({
+                    "kind": "image",
+                    "media_type": record.media_type,
+                    "artifact_id": record.artifact_id,
+                    "path": record.path.display().to_string(),
+                    "sha256": record.sha256,
+                    "size_bytes": record.size_bytes,
+                })),
+                artifact_ids: vec![record.artifact_id],
+            }),
+            Err(e) => Err(fail(
+                ToolFailureKind::Execution,
+                format!("artifact write failed: {e:#}"),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod image_fixture_tests {
+    use super::*;
+    use crate::agent::artifact::ArtifactStore;
+    use crate::agent::CancelFlag;
+    use std::sync::Mutex;
+
+    #[test]
+    fn deterministic_png_artifact_with_real_media_type() {
+        let dir = std::env::temp_dir().join(format!(
+            "ember-imgfx-{}",
+            std::time::Instant::now().elapsed().as_nanos()
+        ));
+        let store = Mutex::new(ArtifactStore::open(&dir, "run-img").unwrap());
+        let cancel = CancelFlag::new();
+        let ctx = ToolContext {
+            run_id: "run-img",
+            step_id: "tool-0",
+            call_seq: 1,
+            deadline: Instant::now() + Duration::from_secs(60),
+            cancel: &cancel,
+            artifacts: &store,
+        };
+        let tool = ImageFixtureTool;
+        let schema = tool.schema();
+        let a = tool
+            .execute(
+                &ValidatedArguments::parse(&schema, r#"{"name":"p.png","seed":7}"#).unwrap(),
+                &ctx,
+            )
+            .unwrap();
+        let b = tool
+            .execute(
+                &ValidatedArguments::parse(&schema, r#"{"name":"q.png","seed":7}"#).unwrap(),
+                &ctx,
+            )
+            .unwrap();
+        // same seed -> identical bytes (reproducible fixture)
+        match (&a.payload, &b.payload) {
+            (ToolPayload::Json(x), ToolPayload::Json(y)) => assert_eq!(x["sha256"], y["sha256"]),
+            other => panic!("expected json payloads, got {other:?}"),
+        }
+        // the artifact is a real decodable PNG
+        match &a.payload {
+            ToolPayload::Json(v) => {
+                let path = v["path"].as_str().unwrap();
+                let reader = image::ImageReader::open(path)
+                    .unwrap()
+                    .with_guessed_format()
+                    .unwrap();
+                let img = reader.decode().unwrap();
+                assert_eq!((img.width(), img.height()), (8, 8));
+                assert_eq!(v["media_type"], "image/png");
+            }
+            other => panic!("expected json payload, got {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn rejects_non_png_names() {
+        let dir = std::env::temp_dir().join(format!(
+            "ember-imgfx-bad-{}",
+            std::time::Instant::now().elapsed().as_nanos()
+        ));
+        let store = Mutex::new(ArtifactStore::open(&dir, "run").unwrap());
+        let cancel = CancelFlag::new();
+        let ctx = ToolContext {
+            run_id: "run",
+            step_id: "tool-0",
+            call_seq: 1,
+            deadline: Instant::now() + Duration::from_secs(60),
+            cancel: &cancel,
+            artifacts: &store,
+        };
+        let tool = ImageFixtureTool;
+        let err = tool
+            .execute(
+                &ValidatedArguments::parse(&tool.schema(), r#"{"name":"x.txt"}"#).unwrap(),
+                &ctx,
+            )
+            .unwrap_err();
+        assert_eq!(err.kind, ToolFailureKind::Execution);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}

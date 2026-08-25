@@ -698,3 +698,314 @@ fn registry_enumerates_schemas_stably() {
     .unwrap();
     assert!(rendered.contains("\"calculate\""));
 }
+
+// -- Phase 2: multi-call steps ------------------------------------------------
+
+#[test]
+fn one_step_can_request_multiple_tools_executed_in_order() {
+    let mut engine = ScriptedModel::new(vec![
+        ScriptedTurn::output(format!(
+            "{} {}",
+            generic_call("lookup", r#"{"key":"alpha"}"#),
+            generic_call("calculate", r#"{"operation":"multiply","a":6,"b":7}"#)
+        )),
+        ScriptedTurn::output("alpha=42 and 6x7=42; consistent."),
+    ]);
+    let (summary, events) = {
+        let mut session = scripted_session(&mut engine, basic_registry());
+        let s = session
+            .run(&CancelFlag::new(), "cross-check", memory_resources())
+            .unwrap();
+        (s, session.trace_events())
+    };
+    assert_eq!(summary.status, ember::agent::RunStatus::Completed);
+    assert_eq!(summary.tool_calls_executed, 2);
+    assert_eq!(summary.steps_executed, 2); // two model turns total
+                                           // BOTH results entered the conversation, in request order
+    let committed: Vec<&str> = engine
+        .committed_messages
+        .iter()
+        .filter(|(r, t)| r == "message" && t.contains("tool_result"))
+        .map(|(_, t)| t.as_str())
+        .collect();
+    assert_eq!(committed.len(), 2);
+    assert!(committed[0].contains(r#""value":"42""#));
+    assert!(committed[1].contains(r#""result":42"#));
+    // per-step parse event records the count
+    assert!(events
+        .iter()
+        .any(|e| e["event_type"] == "assistant_action_parsed"
+            && e["data"]["action"] == "tool_calls"
+            && e["data"]["count"] == 2));
+    assert_eq!(validate_trace_invariants(&events), Vec::<String>::new());
+}
+
+#[test]
+fn limits_fire_between_calls_of_one_step() {
+    let mut engine = ScriptedModel::new(vec![ScriptedTurn::output(format!(
+        "{} {} {}",
+        generic_call("echo", r#"{"text":"1"}"#),
+        generic_call("echo", r#"{"text":"2"}"#),
+        generic_call("echo", r#"{"text":"3"}"#)
+    ))]);
+    let registry = ToolRegistry::builder()
+        .register(Arc::new(EchoTool))
+        .unwrap()
+        .build()
+        .unwrap();
+    let summary = {
+        let mut session = AgentSession::new(
+            &mut engine,
+            json_protocol(),
+            registry,
+            AgentConfig::default(),
+            AgentLimits {
+                max_steps: 2,
+                max_tool_calls: 2,
+                ..Default::default()
+            },
+        );
+        session
+            .run(&CancelFlag::new(), "x", memory_resources())
+            .unwrap()
+    };
+    assert_eq!(
+        summary.status,
+        ember::agent::RunStatus::LimitReached(ember::agent::LimitKind::MaxToolCalls)
+    );
+    assert_eq!(summary.tool_calls_executed, 2);
+}
+
+// -- Phase 2: approval gating (Track H) ----------------------------------------
+
+/// Declares ExternalSideEffect so policies have something to bite on.
+struct ExternalProbe;
+
+impl Tool for ExternalProbe {
+    fn schema(&self) -> ToolSchema {
+        ToolSchema::new("external_probe", "declares external effects")
+            .effect(ember::agent::ToolEffect::ExternalSideEffect)
+    }
+
+    fn execute(
+        &self,
+        _args: &ember::agent::ValidatedArguments,
+        _ctx: &ToolContext<'_>,
+    ) -> ToolOutcome {
+        Ok(ember::agent::ToolOutput::text("side effect done"))
+    }
+}
+
+#[test]
+fn default_policy_denies_declared_external_effects_and_the_model_recovers() {
+    let mut engine = ScriptedModel::new(vec![
+        ScriptedTurn::output(generic_call("external_probe", "{}")),
+        ScriptedTurn::output("understood; staying local."),
+    ]);
+    let registry = ToolRegistry::builder()
+        .register(Arc::new(ExternalProbe))
+        .unwrap()
+        .build()
+        .unwrap();
+    let (summary, events) = {
+        // AgentConfig::default() = DenyExternalSideEffect
+        let mut session = scripted_session(&mut engine, registry);
+        let s = session
+            .run(&CancelFlag::new(), "go external", memory_resources())
+            .unwrap();
+        (s, session.trace_events())
+    };
+    assert_eq!(summary.status, ember::agent::RunStatus::Completed);
+    assert_eq!(summary.rejected_calls, 1);
+    assert_eq!(summary.tool_calls_executed, 0, "nothing executed");
+    let rejected = events
+        .iter()
+        .find(|e| e["event_type"] == "tool_call_rejected")
+        .expect("rejection recorded");
+    assert_eq!(rejected["data"]["kind"], "denied_by_policy");
+    // denial was fed back to the model
+    assert!(engine
+        .committed_messages
+        .iter()
+        .any(|(_, t)| t.contains("denied by approval policy")));
+    assert_eq!(validate_trace_invariants(&events), Vec::<String>::new());
+}
+
+#[test]
+fn auto_policy_executes_external_declaring_tools() {
+    let mut engine = ScriptedModel::new(vec![
+        ScriptedTurn::output(generic_call("external_probe", "{}")),
+        ScriptedTurn::output("done."),
+    ]);
+    let registry = ToolRegistry::builder()
+        .register(Arc::new(ExternalProbe))
+        .unwrap()
+        .build()
+        .unwrap();
+    let summary = {
+        let mut session = AgentSession::new(
+            &mut engine,
+            json_protocol(),
+            registry,
+            AgentConfig {
+                approval: ember::agent::ApprovalPolicy::Auto,
+                ..Default::default()
+            },
+            AgentLimits::default(),
+        );
+        session
+            .run(&CancelFlag::new(), "go", memory_resources())
+            .unwrap()
+    };
+    assert_eq!(summary.status, ember::agent::RunStatus::Completed);
+    assert_eq!(summary.tool_calls_executed, 1);
+    assert_eq!(summary.rejected_calls, 0);
+}
+
+// -- Phase 2: trace diff / replay / HTML ---------------------------------------
+
+fn two_runs(script: Vec<ScriptedTurn>) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+    let run_once = || {
+        let mut engine = ScriptedModel::new(script.clone());
+        let mut session = scripted_session(&mut engine, basic_registry());
+        session
+            .run(&CancelFlag::new(), "same input", memory_resources())
+            .unwrap();
+        session.trace_events()
+    };
+    (run_once(), run_once())
+}
+
+#[test]
+fn trace_diff_reports_identical_structure_for_same_script() {
+    let (a, b) = two_runs(vec![
+        ScriptedTurn::output(generic_call("lookup", r#"{"key":"alpha"}"#)),
+        ScriptedTurn::output("The value is 42."),
+    ]);
+    let (_, _, diff) = ember::agent::inspect::diff(&a, &b);
+    assert!(diff.is_identical(), "{:?}", diff.differences);
+}
+
+#[test]
+fn trace_diff_catches_skeleton_divergence() {
+    let (a, b) = two_runs(vec![ScriptedTurn::output("plain answer")]);
+    let (a2, _) = two_runs(vec![
+        ScriptedTurn::output(generic_call("echo", r#"{"text":"x"}"#)),
+        ScriptedTurn::output("with tool"),
+    ]);
+    // same-script pair must be identical even when compared across scripts
+    let (_, _, same) = ember::agent::inspect::diff(&a, &b);
+    assert!(same.is_identical());
+    let (_, _, different) = ember::agent::inspect::diff(&a, &a2);
+    assert!(!different.is_identical());
+    assert!(different
+        .differences
+        .iter()
+        .any(|d| d.contains("event skeleton diverges")));
+}
+
+#[test]
+fn replay_reexecutes_recorded_calls_and_verifies_digests() {
+    use ember::agent::inspect::replay;
+    let dir = std::env::temp_dir().join(format!(
+        "ember-replay-it-{}",
+        std::time::Instant::now().elapsed().as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let script = vec![
+        ScriptedTurn::output(format!(
+            "{} {} {}",
+            generic_call("lookup", r#"{"key":"alpha"}"#),
+            generic_call(
+                "write_artifact",
+                r#"{"name":"note.md","content":"replay me"}"#
+            ),
+            generic_call("fail", r#"{"message":"expected failure"}"#)
+        )),
+        ScriptedTurn::output("done"),
+    ];
+    let fixtures = std::collections::BTreeMap::from([("alpha".to_string(), "42".to_string())]);
+    let registry = ToolRegistry::builder()
+        .register(Arc::new(LookupFixtureTool::from_map(fixtures)))
+        .unwrap()
+        .register(Arc::new(WriteArtifactTool))
+        .unwrap()
+        .register(Arc::new(FailTool))
+        .unwrap()
+        .build()
+        .unwrap();
+    let events = {
+        let mut engine = ScriptedModel::new(script);
+        let resources = RunResources {
+            trace: Some(TraceRecorder::open(TraceConfig::default(), "pending").unwrap()),
+            artifacts: Arc::new(Mutex::new(ArtifactStore::open(&dir, "pending").unwrap())),
+        };
+        let mut session = AgentSession::new(
+            &mut engine,
+            json_protocol(),
+            registry.clone(),
+            AgentConfig::default(),
+            AgentLimits::default(),
+        );
+        session.run(&CancelFlag::new(), "go", resources).unwrap();
+        session.trace_events()
+    };
+    let report = replay(&events, &registry).unwrap();
+    assert_eq!(report.outcomes.len(), 3);
+    // lookup + write_artifact verify (artifact ids/paths excluded from the
+    // stable digest); the failed call is skipped, not counted as mismatch
+    assert_eq!(
+        report
+            .outcomes
+            .iter()
+            .filter(|o| o.matches == Some(true))
+            .count(),
+        2,
+        "{:?}",
+        report.outcomes
+    );
+    assert_eq!(report.skipped(), 1);
+    assert_eq!(
+        report.skipped()
+            + report
+                .outcomes
+                .iter()
+                .filter(|o| o.matches == Some(true))
+                .count(),
+        3
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn html_report_renders_self_contained_summary() {
+    let mut engine = ScriptedModel::new(vec![
+        ScriptedTurn::output(generic_call("echo", r#"{"text":"hi"}"#)),
+        ScriptedTurn::output("done"),
+    ]);
+    let registry = ToolRegistry::builder()
+        .register(Arc::new(EchoTool))
+        .unwrap()
+        .build()
+        .unwrap();
+    let events = {
+        let mut session = AgentSession::new(
+            &mut engine,
+            json_protocol(),
+            registry,
+            AgentConfig::default(),
+            AgentLimits::default(),
+        );
+        session
+            .run(&CancelFlag::new(), "hi", memory_resources())
+            .unwrap();
+        session.trace_events()
+    };
+    let summary = ember::agent::inspect::summarize(&events);
+    let html = ember::agent::inspect::render_html(&events, &summary);
+    assert!(html.starts_with("<!doctype html>"));
+    assert!(html.contains(&summary.run_id));
+    assert!(html.contains("tool_execution_finished"));
+    assert!(html.contains(".bar"));
+    assert!(!html.contains("<script"), "no JS, no external assets");
+}

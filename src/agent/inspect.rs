@@ -293,3 +293,358 @@ pub fn validate_trace_invariants(events: &[serde_json::Value]) -> Vec<String> {
     }
     problems
 }
+
+// ---------------------------------------------------------------------------
+// Phase 2: trace diff, deterministic replay, HTML report
+// ---------------------------------------------------------------------------
+
+use crate::agent::schema::{canonical_json, ValidatedArguments};
+use crate::agent::tool::ToolRegistry;
+
+/// Field-level differences between two run summaries.
+#[derive(Debug, Default)]
+pub struct TraceDiff {
+    pub differences: Vec<String>,
+}
+
+impl TraceDiff {
+    pub fn is_identical(&self) -> bool {
+        self.differences.is_empty()
+    }
+}
+
+/// Compare two runs' summaries plus their event-type skeletons. The
+/// skeleton check catches structural divergence (a tool call appearing in
+/// one run and not the other) even when totals happen to match.
+pub fn diff(
+    a: &[serde_json::Value],
+    b: &[serde_json::Value],
+) -> (TraceSummary, TraceSummary, TraceDiff) {
+    let sa = summarize(a);
+    let sb = summarize(b);
+    let mut diff = TraceDiff::default();
+    let field = |diff: &mut TraceDiff, name: &str, va: String, vb: String| {
+        if va != vb {
+            diff.differences.push(format!("{name}: {va} vs {vb}"));
+        }
+    };
+    field(
+        &mut diff,
+        "status",
+        sa.status.clone().unwrap_or_default(),
+        sb.status.clone().unwrap_or_default(),
+    );
+    field(
+        &mut diff,
+        "model_steps",
+        sa.model_steps.to_string(),
+        sb.model_steps.to_string(),
+    );
+    field(
+        &mut diff,
+        "tool_calls",
+        sa.tool_calls.to_string(),
+        sb.tool_calls.to_string(),
+    );
+    field(
+        &mut diff,
+        "rejected_calls",
+        sa.rejected_calls.to_string(),
+        sb.rejected_calls.to_string(),
+    );
+    field(
+        &mut diff,
+        "artifacts",
+        sa.artifacts.len().to_string(),
+        sb.artifacts.len().to_string(),
+    );
+    field(
+        &mut diff,
+        "output_tokens",
+        sa.output_tokens.to_string(),
+        sb.output_tokens.to_string(),
+    );
+    field(
+        &mut diff,
+        "final_text",
+        sha_digest(sa.final_text.as_deref().unwrap_or("")),
+        sha_digest(sb.final_text.as_deref().unwrap_or("")),
+    );
+
+    let skeleton_a: Vec<&str> = a
+        .iter()
+        .map(|e| e["event_type"].as_str().unwrap_or(""))
+        .filter(|t| {
+            !matches!(
+                *t,
+                "provenance" | "message_committed" | "session_state_changed"
+            )
+        })
+        .collect();
+    let skeleton_b: Vec<&str> = b
+        .iter()
+        .map(|e| e["event_type"].as_str().unwrap_or(""))
+        .filter(|t| {
+            !matches!(
+                *t,
+                "provenance" | "message_committed" | "session_state_changed"
+            )
+        })
+        .collect();
+    if skeleton_a != skeleton_b
+        && let Some(i) = skeleton_a
+            .iter()
+            .zip(skeleton_b.iter())
+            .position(|(x, y)| x != y)
+    {
+        diff.differences.push(format!(
+            "event skeleton diverges at position {i}: {} vs {} (lengths {}/{} )",
+            skeleton_a[i],
+            skeleton_b.get(i).copied().unwrap_or("<end>"),
+            skeleton_a.len(),
+            skeleton_b.len()
+        ));
+    }
+    (sa, sb, diff)
+}
+
+use crate::extraction::sha256_bytes;
+
+fn sha_digest(text: &str) -> String {
+    if text.is_empty() {
+        "<none>".to_string()
+    } else {
+        crate::extraction::sha256_bytes(text.as_bytes())[..12].to_string()
+    }
+}
+
+/// Result of replaying one recorded call.
+#[derive(Debug)]
+pub struct ReplayOutcome {
+    pub seq: u64,
+    pub tool: String,
+    pub ok: bool,
+    pub matches: Option<bool>,
+    /// Empty digest when the recorded event predates replay digests or
+    /// the call failed.
+    pub recorded_replay_sha256: String,
+    pub computed_replay_sha256: String,
+}
+
+#[derive(Debug, Default)]
+pub struct ReplayReport {
+    pub outcomes: Vec<ReplayOutcome>,
+}
+
+impl ReplayReport {
+    pub fn all_matched(&self) -> bool {
+        self.outcomes.iter().all(|o| o.matches.unwrap_or(false))
+    }
+
+    pub fn skipped(&self) -> usize {
+        self.outcomes.iter().filter(|o| o.matches.is_none()).count()
+    }
+}
+
+/// Re-execute every successful recorded tool call against `registry` and
+/// verify the stable payload digest. Requires deterministic tools; the
+/// recorded `replay_sha256` deliberately excludes volatile identity
+/// fields (`path`, `artifact_id`) so artifact-producing tools verify too.
+pub fn replay(
+    events: &[serde_json::Value],
+    registry: &ToolRegistry,
+) -> anyhow::Result<ReplayReport> {
+    use crate::agent::tool::{execute_tool, ToolInvocation};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    let mut report = ReplayReport::default();
+    // validated arguments strictly precede their execution event
+    let mut pending_args: std::collections::VecDeque<serde_json::Value> =
+        std::collections::VecDeque::new();
+    let dir = std::env::temp_dir().join(format!(
+        "ember-replay-{}-{}",
+        std::process::id(),
+        std::time::Instant::now().elapsed().as_nanos()
+    ));
+    std::fs::create_dir_all(&dir)?;
+    let artifacts = Arc::new(Mutex::new(crate::agent::ArtifactStore::open(
+        &dir, "replay",
+    )?));
+    let cancel = crate::agent::CancelFlag::new();
+
+    for e in events {
+        let et = e["event_type"].as_str().unwrap_or("");
+        let step = e["step"].as_str().unwrap_or("");
+        match et {
+            "tool_call_validated" => {
+                if let Some(args) = e["data"]["arguments"].as_object() {
+                    pending_args.push_back(e["data"]["arguments"].clone());
+                    let _ = args;
+                }
+            }
+            "tool_execution_finished" => {
+                let recorded = pending_args.pop_front();
+                let tool_name = e["data"]["tool"].as_str().unwrap_or("").to_string();
+                let ok = e["data"]["ok"] == true;
+                let expected = e["data"]["replay_sha256"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+
+                if !ok || expected.is_empty() || recorded.is_none() {
+                    report.outcomes.push(ReplayOutcome {
+                        seq: e["seq"].as_u64().unwrap_or(0),
+                        tool: tool_name,
+                        ok,
+                        matches: None,
+                        recorded_replay_sha256: expected,
+                        computed_replay_sha256: String::new(),
+                    });
+                    continue;
+                }
+                let Some(tool) = registry.get(&tool_name) else {
+                    anyhow::bail!("registry lacks recorded tool `{tool_name}`");
+                };
+                let schema = tool.schema();
+                let args_text = canonical_json(&recorded.unwrap());
+                let validated = ValidatedArguments::parse(&schema, &args_text)?;
+                let invocation = ToolInvocation {
+                    tool: Arc::clone(tool),
+                    args: validated,
+                    run_id: "replay".to_string(),
+                    step_id: step.to_string(),
+                    call_seq: 0,
+                    deadline: Instant::now() + Duration::from_secs(60),
+                    cancel: cancel.clone(),
+                    artifacts: Arc::clone(&artifacts),
+                };
+                let outcome = execute_tool(&invocation);
+                let (ok_now, stable_now) = match outcome {
+                    Ok(out) => {
+                        let mut value: serde_json::Value = serde_json::from_str(
+                            &out.payload.serialize_compact(),
+                        )
+                        .unwrap_or(serde_json::Value::String(out.payload.serialize_compact()));
+                        if let Some(obj) = value.as_object_mut() {
+                            obj.remove("path");
+                            obj.remove("artifact_id");
+                        }
+                        (true, sha256_bytes(canonical_json(&value).as_bytes()))
+                    }
+                    Err(failure) => (false, failure.message),
+                };
+                report.outcomes.push(ReplayOutcome {
+                    seq: e["seq"].as_u64().unwrap_or(0),
+                    tool: tool_name,
+                    ok: ok && ok_now,
+                    matches: Some(ok_now && stable_now == expected),
+                    recorded_replay_sha256: expected,
+                    computed_replay_sha256: stable_now,
+                });
+            }
+            _ => {}
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    Ok(report)
+}
+
+/// Self-contained HTML report (inline CSS, no JS, no external assets).
+pub fn render_html(events: &[serde_json::Value], summary: &TraceSummary) -> String {
+    fn esc(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+    let mut body = String::new();
+    body.push_str("<!doctype html>\n<html><head><meta charset=\"utf-8\">\n<title>ember trace ");
+    body.push_str(&esc(&summary.run_id));
+    body.push_str("</title>\n<style>\nbody{font-family:ui-monospace,Menlo,Consolas,monospace;margin:2rem;background:#111;color:#ddd}\n");
+    body.push_str(".card{border:1px solid #333;border-radius:6px;padding:.8rem 1rem;margin-bottom:1rem;background:#181818}\n");
+    body.push_str("h1{font-size:1.1rem}h2{font-size:.9rem;color:#9ab}\n");
+    body.push_str("table{border-collapse:collapse;width:100%;font-size:.78rem}\ntd,th{border-bottom:1px solid #262626;padding:.25rem .5rem;text-align:left;white-space:pre-wrap}\nth{color:#9ab}\n");
+    body.push_str(".bar{height:10px;border-radius:5px;display:inline-block;vertical-align:middle}\n.model{background:#4a7dbd}.tool{background:#57a05a}.gap{background:#333}\n.ok{color:#8c8}.err{color:#c77}\n");
+    body.push_str("</style></head><body>\n");
+
+    body.push_str("<div class=\"card\"><h1>run ");
+    body.push_str(&esc(&summary.run_id));
+    body.push_str("</h1><p>");
+    body.push_str(&format!(
+        "{} ({:?}, {}) &middot; protocol {}<br>status <span class=\"{}\">{}</span> &middot; steps {} &middot; tools {} &middot; rejected {} &middot; artifacts {}<br>",
+        esc(summary.model_path.as_deref().unwrap_or("?")),
+        summary.quantization.as_deref().unwrap_or("?"),
+        esc(summary.architecture.as_deref().unwrap_or("?")),
+        esc(summary.protocol_id.as_deref().unwrap_or("?")),
+        if summary.status.as_deref() == Some("completed") { "ok" } else { "err" },
+        esc(summary.status.as_deref().unwrap_or("(incomplete)")),
+        summary.model_steps,
+        summary.tool_calls,
+        summary.rejected_calls,
+        summary.artifacts.len(),
+    ));
+    body.push_str(&format!(
+        "model {:.0}ms (prefill {:.0} / decode {:.0}) &middot; tools {:.1}ms &middot; tokens out {}</p></div>",
+        summary.total_model_ms, summary.prefill_ms, summary.decode_ms, summary.total_tool_ms, summary.output_tokens,
+    ));
+
+    // timeline: contiguous spans from model/tool start->finish events
+    body.push_str("<div class=\"card\"><h2>timeline</h2>\n<table><tr><th>step</th><th>kind</th><th>span</th><th>ms</th><th width=\"40%\"></th></tr>\n");
+    let total_ms = summary.last_t_ms.max(1.0);
+    let starts: Vec<(String, String, f64)> = events
+        .iter()
+        .filter_map(|e| {
+            let t = e["t_ms"].as_f64()?;
+            match e["event_type"].as_str()? {
+                "model_call_started" => {
+                    Some((e["step"].as_str()?.to_string(), "model".to_string(), t))
+                }
+                "tool_execution_started" => {
+                    Some((e["step"].as_str()?.to_string(), "tool".to_string(), t))
+                }
+                _ => None,
+            }
+        })
+        .collect();
+    for (i, (step, kind, t0)) in starts.iter().enumerate() {
+        let end = starts
+            .get(i + 1)
+            .map(|(_, _, t)| *t)
+            .unwrap_or(summary.last_t_ms);
+        let dur = (end - t0).max(0.0);
+        let pct = (dur / total_ms * 100.0).clamp(0.15, 100.0);
+        body.push_str(&format!(
+            "<tr><td>{}</td><td>{}</td><td>{:.1} - {:.1}</td><td>{dur:.1}</td><td>\
+             <span class=\"bar {kind}\" style=\"width:{pct:.2}%\"></span></td></tr>\n",
+            esc(step),
+            kind,
+            t0,
+            end
+        ));
+    }
+    body.push_str("</table></div>\n");
+
+    // artifacts
+    if !summary.artifacts.is_empty() {
+        body.push_str("<div class=\"card\"><h2>artifacts</h2><ul>");
+        for id in &summary.artifacts {
+            body.push_str(&format!("<li>{}</li>", esc(id)));
+        }
+        body.push_str("</ul></div>");
+    }
+
+    // full event table
+    body.push_str("<div class=\"card\"><h2>events</h2><table><tr><th>seq</th><th>t_ms</th><th>type</th><th>step</th><th>data</th></tr>\n");
+    for e in events {
+        body.push_str(&format!(
+            "<tr><td>{}</td><td>{:.1}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            e["seq"].as_u64().unwrap_or(0),
+            e["t_ms"].as_f64().unwrap_or(0.0),
+            esc(e["event_type"].as_str().unwrap_or("")),
+            esc(e["step"].as_str().unwrap_or("")),
+            esc(&canonical_json(&e["data"])),
+        ));
+    }
+    body.push_str("</table></div>\n</body></html>\n");
+    body
+}

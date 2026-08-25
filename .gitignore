@@ -27,6 +27,7 @@ docs/plots/root_probe_scale_comparison.png
 !README.md
 !/CHANGELOG.md
 !/CONTRIBUTING.md
+!docs/agent-runtime.md
 !docs/dataset_pipeline.md
 !docs/packed-q8-phase0.md
 !docs/packed-q8-research-memo.md

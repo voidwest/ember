@@ -91,11 +91,10 @@ fn llama_parses_python_tag_whole_object() {
     );
     assert_eq!(
         action,
-        AssistantAction::ToolCall(RawToolCall {
-            name: "get_weather".to_string(),
-            arguments_json: r#"{"city":"Riyadh"}"#.to_string(),
-            additional_calls_ignored: 0,
-        })
+        AssistantAction::ToolCalls(vec![RawToolCall::new(
+            "get_weather",
+            r#"{"city":"Riyadh"}"#,
+        )])
     );
 }
 
@@ -105,9 +104,10 @@ fn llama_accepts_arguments_alias_and_surrounding_prose_without_tag() {
         "Sure, checking now.\n{\"name\":\"lookup\",\"arguments\":{\"key\":\"alpha\"}}\nDone.",
     );
     match action {
-        AssistantAction::ToolCall(call) => {
-            assert_eq!(call.name, "lookup");
-            assert_eq!(call.arguments_json, r#"{"key":"alpha"}"#);
+        AssistantAction::ToolCalls(calls) => {
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].name, "lookup");
+            assert_eq!(calls[0].arguments_json, r#"{"key":"alpha"}"#);
         }
         other => panic!("expected tool call, got {other:?}"),
     }
@@ -139,11 +139,13 @@ fn qwen_parses_first_call_and_counts_ignored_extras() {
         "<tool_call>\n{\"name\": \"b\", \"arguments\": {}}\n</tool_call>"
     );
     match qwen().parse_assistant_output(raw) {
-        AssistantAction::ToolCall(call) => {
-            assert_eq!(call.name, "a");
-            assert_eq!(call.additional_calls_ignored, 1);
+        AssistantAction::ToolCalls(calls) => {
+            // multi-call steps now parse fully (Phase 2)
+            assert_eq!(calls.len(), 2);
+            assert_eq!(calls[0].name, "a");
+            assert_eq!(calls[1].name, "b");
         }
-        other => panic!("expected tool call, got {other:?}"),
+        other => panic!("expected two tool calls, got {other:?}"),
     }
 }
 
@@ -160,7 +162,7 @@ fn qwen_broken_json_inside_tag_is_malformed() {
 #[test]
 fn qwen_unclosed_tag_still_yields_intent_or_malformed_never_final() {
     let action = qwen().parse_assistant_output("<tool_call>\n{\"name\": \"x\", \"arguments\": {}}");
-    assert!(matches!(action, AssistantAction::ToolCall(_)));
+    assert!(matches!(action, AssistantAction::ToolCalls(_)));
 }
 
 #[test]
@@ -175,9 +177,10 @@ fn qwen_plain_text_is_final() {
 fn generic_parses_typed_call_whole_text() {
     let raw = r#"{"type": "tool_call", "name": "lookup", "arguments": {"query": "alpha"}}"#;
     match generic().parse_assistant_output(raw) {
-        AssistantAction::ToolCall(call) => {
-            assert_eq!(call.name, "lookup");
-            assert_eq!(call.arguments_json, r#"{"query":"alpha"}"#);
+        AssistantAction::ToolCalls(calls) => {
+            assert_eq!(calls.len(), 1);
+            assert_eq!(calls[0].name, "lookup");
+            assert_eq!(calls[0].arguments_json, r#"{"query":"alpha"}"#);
         }
         other => panic!("expected tool call, got {other:?}"),
     }
@@ -193,7 +196,7 @@ fn generic_finds_embedded_call_and_skips_other_objects() {
         " done"
     );
     match generic().parse_assistant_output(raw) {
-        AssistantAction::ToolCall(call) => assert_eq!(call.name, "calc"),
+        AssistantAction::ToolCalls(calls) => assert_eq!(calls[0].name, "calc"),
         other => panic!("expected tool call, got {other:?}"),
     }
 }
@@ -203,7 +206,7 @@ fn generic_brace_scanner_respects_strings_with_escapes() {
     let raw =
         r#"text {"a":"has } brace \" inside","type":"tool_call","name":"t","arguments":{}} tail"#;
     match generic().parse_assistant_output(raw) {
-        AssistantAction::ToolCall(call) => assert_eq!(call.name, "t"),
+        AssistantAction::ToolCalls(calls) => assert_eq!(calls[0].name, "t"),
         other => panic!("expected tool call, got {other:?}"),
     }
 }

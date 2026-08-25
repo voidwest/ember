@@ -35,6 +35,7 @@ use std::time::{Duration, Instant};
 
 use crate::extraction::sha256_bytes;
 
+use super::approval::{ApprovalDecision, ApprovalGate};
 use super::artifact::ArtifactStore;
 use super::ids;
 use super::model::{ChatModelEngine, GenerationParams};
@@ -85,6 +86,9 @@ pub struct AgentConfig {
     pub seed: Option<u64>,
     /// KV capacity for the conversation (context budget).
     pub kv_capacity: usize,
+    /// Execution policy consulted between validation and execution
+    /// (Track H). Default: deny declared `ExternalSideEffect`.
+    pub approval: super::approval::ApprovalPolicy,
 }
 
 impl Default for AgentConfig {
@@ -96,6 +100,7 @@ impl Default for AgentConfig {
             top_p: None,
             seed: None,
             kv_capacity: 8192,
+            approval: super::approval::ApprovalPolicy::default(),
         }
     }
 }
@@ -633,229 +638,278 @@ impl<'e> AgentSession<'e> {
                     }
                     continue;
                 }
-                AssistantAction::ToolCall(raw_call) => {
-                    if raw_call.additional_calls_ignored > 0
-                        && let Some(t) = self.trace.as_mut()
-                    {
+                AssistantAction::ToolCalls(calls) => {
+                    if let Some(t) = self.trace.as_mut() {
                         t.emit(
                             trace::ev::ASSISTANT_ACTION_PARSED,
                             &step_id,
                             Some("parse"),
-                            serde_json::json!({
-                                "action": "tool_call",
-                                "note": "additional calls ignored (phase-1 single-call limit)",
-                                "ignored": raw_call.additional_calls_ignored,
-                            }),
+                            serde_json::json!({ "action": "tool_calls", "count": calls.len() }),
                         );
                     }
-                    // ledger: assistant requested a tool (its message is committed)
                     let call_span = (
                         self.engine
                             .committed_len()
                             .saturating_sub(turn.committed_ids.len()),
                         self.engine.committed_len(),
                     );
-                    self.ledger.push(CommittedMessage::AssistantToolCall {
-                        span: call_span,
-                        text_before_call: String::new(),
-                        tool_name: raw_call.name.clone(),
-                    });
 
-                    // -- validate ---------------------------------------
-                    let validation = self.validate_call(&raw_call.name, &raw_call.arguments_json);
-                    let call = match validation {
-                        Ok(call) => {
-                            if let Some(t) = self.trace.as_mut() {
-                                t.emit(
-                                    trace::ev::TOOL_CALL_VALIDATED,
-                                    &step_id,
-                                    Some("validate"),
-                                    serde_json::json!({
-                                        "tool": call.schema.name,
-                                        "arguments": call.validated.to_json(),
-                                        "approval": "auto",
-                                        "effect": call.schema.effect.as_str(),
-                                    }),
-                                );
-                            }
-                            call
+                    for raw_call in &calls {
+                        self.ledger.push(CommittedMessage::AssistantToolCall {
+                            span: call_span,
+                            text_before_call: String::new(),
+                            tool_name: raw_call.name.clone(),
+                        });
+
+                        // -- boundary checks BETWEEN calls of one step ------
+                        if control.is_cancelled() {
+                            return LoopOutcome::Cancelled("between-tool-calls".to_string());
                         }
-                        Err(rejection) => {
+                        if let Some(deadline) = wall_deadline
+                            && Instant::now() >= deadline
+                        {
+                            return LoopOutcome::Limit(LimitKind::WallTime);
+                        }
+                        if self.tool_calls_executed >= self.limits.max_tool_calls {
+                            return LoopOutcome::Limit(LimitKind::MaxToolCalls);
+                        }
+
+                        // -- validate -----------------------------------
+                        let validation =
+                            self.validate_call(&raw_call.name, &raw_call.arguments_json);
+                        let call = match validation {
+                            Ok(call) => {
+                                if let Some(t) = self.trace.as_mut() {
+                                    t.emit(
+                                        trace::ev::TOOL_CALL_VALIDATED,
+                                        &step_id,
+                                        Some("validate"),
+                                        serde_json::json!({
+                                            "tool": call.schema.name,
+                                            "arguments": call.validated.to_json(),
+                                            "effect": call.schema.effect.as_str(),
+                                        }),
+                                    );
+                                }
+                                call
+                            }
+                            Err(rejection) => {
+                                self.rejected_calls += 1;
+                                if let Some(t) = self.trace.as_mut() {
+                                    t.emit(
+                                        trace::ev::TOOL_CALL_REJECTED,
+                                        &step_id,
+                                        Some("validate"),
+                                        serde_json::json!({
+                                            "kind": rejection.kind_str(),
+                                            "tool": raw_call.name,
+                                            "reason": rejection.reason(),
+                                        }),
+                                    );
+                                }
+                                let feedback = ToolResultMessage::from_text(
+                                    &raw_call.name,
+                                    false,
+                                    &format!(
+                                        "tool call rejected [{}]: {}",
+                                        rejection.kind_str(),
+                                        rejection.reason()
+                                    ),
+                                );
+                                if let Err(LoopOutcome::Failed(m)) = self.commit_feedback(&feedback)
+                                {
+                                    return LoopOutcome::Failed(m);
+                                }
+                                continue;
+                            }
+                        };
+
+                        // -- approval gate (Track H) --------------------
+                        let decision = self.config.approval.approve(&call.schema, &call.validated);
+                        if let ApprovalDecision::Deny { reason } = decision {
                             self.rejected_calls += 1;
                             if let Some(t) = self.trace.as_mut() {
                                 t.emit(
                                     trace::ev::TOOL_CALL_REJECTED,
                                     &step_id,
-                                    Some("validate"),
+                                    Some("approve"),
                                     serde_json::json!({
-                                        "kind": rejection.kind_str(),
-                                        "tool": raw_call.name,
-                                        "reason": rejection.reason(),
+                                        "kind": "denied_by_policy",
+                                        "tool": call.schema.name,
+                                        "effect": call.schema.effect.as_str(),
+                                        "reason": reason,
                                     }),
                                 );
                             }
                             let feedback = ToolResultMessage::from_text(
-                                &raw_call.name,
+                                &call.schema.name,
                                 false,
-                                &format!(
-                                    "tool call rejected [{}]: {}",
-                                    rejection.kind_str(),
-                                    rejection.reason()
-                                ),
+                                &format!("tool call denied by approval policy: {reason}"),
                             );
                             if let Err(LoopOutcome::Failed(m)) = self.commit_feedback(&feedback) {
                                 return LoopOutcome::Failed(m);
                             }
                             continue;
                         }
-                    };
 
-                    let ValidatedCall {
-                        schema,
-                        validated,
-                        tool,
-                    } = call;
-                    // -- hard limit before execution ---------------------
-                    if self.tool_calls_executed >= self.limits.max_tool_calls {
-                        return LoopOutcome::Limit(LimitKind::MaxToolCalls);
-                    }
-
-                    // -- execute (auto-approved deterministic registry) --
-                    let tool_step = format!("tool-{}", self.tool_calls_executed);
-                    if let Some(t) = self.trace.as_mut() {
-                        t.emit(
-                            trace::ev::TOOL_EXECUTION_STARTED,
-                            &tool_step,
-                            Some("execute"),
-                            serde_json::json!({
-                                "tool": schema.name,
-                                "call_seq": self.tool_calls_executed + 1,
-                            }),
-                        );
-                    }
-                    let deadline = Instant::now() + self.limits.tool_timeout;
-                    let invocation = ToolInvocation {
-                        tool: Arc::clone(&tool),
-                        args: validated,
-                        run_id: self.run_id.clone(),
-                        step_id: tool_step.clone(),
-                        call_seq: self.tool_calls_executed as u64 + 1,
-                        deadline,
-                        cancel: control.clone(),
-                        artifacts: Arc::clone(&self.artifacts),
-                    };
-                    let exec_start = Instant::now();
-                    let outcome = invocation.execute();
-                    let exec_ms = exec_start.elapsed().as_secs_f64() * 1e3;
-                    self.total_tool_ms += exec_ms;
-                    self.tool_calls_executed += 1;
-
-                    let (ok, payload_text, failure_kind, artifact_ids) = match outcome {
-                        Ok(out) => {
-                            let text = out.payload.serialize_compact();
-                            (true, text, None::<String>, out.artifact_ids)
-                        }
-                        Err(failure) => {
-                            let kind = failure.kind.as_str().to_string();
-                            (false, failure.message.clone(), Some(kind), Vec::new())
-                        }
-                    };
-                    let new_artifacts = self.artifact_records_for(&artifact_ids);
-                    if let Some(t) = self.trace.as_mut() {
-                        let mut payload_mode = t.tool_payload_data(&payload_text);
-                        let mut data = serde_json::json!({
-                            "tool": schema.name,
-                            "ok": ok,
-                            "duration_ms": exec_ms,
-                            "failure_kind": failure_kind,
-                            "artifact_ids": artifact_ids,
-                        });
-                        if let (Some(obj), Some(dst)) =
-                            (payload_mode.as_object_mut(), data.as_object_mut())
-                        {
-                            for (k, v) in obj {
-                                dst.insert(k.clone(), v.clone());
-                            }
-                        }
-                        t.emit(
-                            trace::ev::TOOL_EXECUTION_FINISHED,
-                            &tool_step,
-                            Some("execute"),
-                            data,
-                        );
-                        for record in &new_artifacts {
-                            t.emit(
-                                trace::ev::ARTIFACT_WRITTEN,
-                                &tool_step,
-                                None,
-                                serde_json::to_value(record).unwrap_or(serde_json::Value::Null),
-                            );
-                        }
-                    }
-
-                    // cancellation AFTER execution: side effect happened;
-                    // result stays OUT of the session (documented seam).
-                    if control.is_cancelled() {
+                        // -- execute ------------------------------------
+                        let tool_step = format!("tool-{}", self.tool_calls_executed);
                         if let Some(t) = self.trace.as_mut() {
                             t.emit(
-                                trace::ev::TOOL_RESULT_UNCOMMITTED,
+                                trace::ev::TOOL_EXECUTION_STARTED,
                                 &tool_step,
-                                None,
+                                Some("execute"),
                                 serde_json::json!({
-                                    "tool": schema.name,
-                                    "reason": "cancelled after execution; external side effect already occurred",
+                                    "tool": call.schema.name,
+                                    "call_seq": self.tool_calls_executed + 1,
                                 }),
                             );
                         }
-                        return LoopOutcome::Cancelled("after-tool-execution".to_string());
-                    }
+                        let deadline = Instant::now() + self.limits.tool_timeout;
+                        let invocation = ToolInvocation {
+                            tool: Arc::clone(&call.tool),
+                            args: call.validated,
+                            run_id: self.run_id.clone(),
+                            step_id: tool_step.clone(),
+                            call_seq: self.tool_calls_executed as u64 + 1,
+                            deadline,
+                            cancel: control.clone(),
+                            artifacts: Arc::clone(&self.artifacts),
+                        };
+                        let exec_start = Instant::now();
+                        let outcome = invocation.execute();
+                        let exec_ms = exec_start.elapsed().as_secs_f64() * 1e3;
+                        self.total_tool_ms += exec_ms;
+                        self.tool_calls_executed += 1;
 
-                    // -- reinject into the SAME session ------------------
-                    let content_value: serde_json::Value = serde_json::from_str(&payload_text)
-                        .unwrap_or_else(|_| serde_json::Value::String(payload_text.clone()));
-                    let bounded = self.bound_payload(content_value);
-                    let msg = ToolResultMessage {
-                        call_name: &schema.name,
-                        ok,
-                        content_json: bounded.value,
-                    };
-                    let rendered = self.protocol.render_tool_result_message(&msg);
-                    let commit_res = self
-                        .engine
-                        .commit_message(&rendered)
-                        .context("committing tool result");
-                    match commit_res {
-                        Ok(span) => {
-                            self.prompt_tokens_committed += span.1 - span.0;
-                            self.ledger.push(CommittedMessage::ToolResult {
-                                span,
-                                call_name: schema.name.clone(),
-                                ok,
+                        let (ok, payload_text, failure_kind, artifact_ids) = match outcome {
+                            Ok(out) => {
+                                let text = out.payload.serialize_compact();
+                                (true, text, None::<String>, out.artifact_ids)
+                            }
+                            Err(failure) => {
+                                let kind = failure.kind.as_str().to_string();
+                                (false, failure.message.clone(), Some(kind), Vec::new())
+                            }
+                        };
+                        // digests recorded under every privacy mode so
+                        // deterministic replay can verify without payloads.
+                        // `replay_sha256` strips volatile identity fields
+                        // (artifact ids/paths differ across reruns).
+                        let payload_digest = sha256_bytes(payload_text.as_bytes());
+                        let replay_digest = {
+                            let mut stable =
+                                serde_json::from_str::<serde_json::Value>(&payload_text)
+                                    .unwrap_or_else(|_| {
+                                        serde_json::Value::String(payload_text.clone())
+                                    });
+                            if let Some(obj) = stable.as_object_mut() {
+                                obj.remove("path");
+                                obj.remove("artifact_id");
+                            }
+                            sha256_bytes(super::schema::canonical_json(&stable).as_bytes())
+                        };
+                        let new_artifacts = self.artifact_records_for(&artifact_ids);
+                        if let Some(t) = self.trace.as_mut() {
+                            let mut payload_mode = t.tool_payload_data(&payload_text);
+                            let mut data = serde_json::json!({
+                                "tool": call.schema.name,
+                                "ok": ok,
+                                "duration_ms": exec_ms,
+                                "failure_kind": failure_kind,
+                                "artifact_ids": artifact_ids,
+                                "payload_sha256": payload_digest,
+                                "replay_sha256": replay_digest,
                             });
-                            if let Some(t) = self.trace.as_mut() {
+                            if let (Some(obj), Some(dst)) =
+                                (payload_mode.as_object_mut(), data.as_object_mut())
+                            {
+                                for (k, v) in obj {
+                                    dst.insert(k.clone(), v.clone());
+                                }
+                            }
+                            t.emit(
+                                trace::ev::TOOL_EXECUTION_FINISHED,
+                                &tool_step,
+                                Some("execute"),
+                                data,
+                            );
+                            for record in &new_artifacts {
                                 t.emit(
-                                    trace::ev::TOOL_RESULT_COMMITTED,
+                                    trace::ev::ARTIFACT_WRITTEN,
                                     &tool_step,
                                     None,
-                                    serde_json::json!({
-                                        "tool": schema.name,
-                                        "ok": ok,
-                                        "truncated": bounded.truncated,
-                                        "committed_len": self.engine.committed_len(),
-                                    }),
-                                );
-                                t.emit(
-                                    trace::ev::SESSION_STATE_CHANGED,
-                                    &tool_step,
-                                    None,
-                                    serde_json::json!({
-                                        "role": "tool_result",
-                                        "span": [span.0, span.1],
-                                    }),
+                                    serde_json::to_value(record).unwrap_or(serde_json::Value::Null),
                                 );
                             }
                         }
-                        Err(e) => return LoopOutcome::Failed(format!("reinjection failed: {e:#}")),
+
+                        // cancellation AFTER execution: side effect happened;
+                        // result stays OUT of the session (documented seam).
+                        if control.is_cancelled() {
+                            if let Some(t) = self.trace.as_mut() {
+                                t.emit(
+                                    trace::ev::TOOL_RESULT_UNCOMMITTED,
+                                    &tool_step,
+                                    None,
+                                    serde_json::json!({
+                                        "tool": call.schema.name,
+                                        "reason": "cancelled after execution; external side effect already occurred",
+                                    }),
+                                );
+                            }
+                            return LoopOutcome::Cancelled("after-tool-execution".to_string());
+                        }
+
+                        // -- reinject into the SAME session --------------
+                        let content_value: serde_json::Value = serde_json::from_str(&payload_text)
+                            .unwrap_or_else(|_| serde_json::Value::String(payload_text.clone()));
+                        let bounded = self.bound_payload(content_value);
+                        let msg = ToolResultMessage {
+                            call_name: &call.schema.name,
+                            ok,
+                            content_json: bounded.value,
+                        };
+                        let rendered = self.protocol.render_tool_result_message(&msg);
+                        let commit_res = self
+                            .engine
+                            .commit_message(&rendered)
+                            .context("committing tool result");
+                        match commit_res {
+                            Ok(span) => {
+                                self.prompt_tokens_committed += span.1 - span.0;
+                                self.ledger.push(CommittedMessage::ToolResult {
+                                    span,
+                                    call_name: call.schema.name.clone(),
+                                    ok,
+                                });
+                                if let Some(t) = self.trace.as_mut() {
+                                    t.emit(
+                                        trace::ev::TOOL_RESULT_COMMITTED,
+                                        &tool_step,
+                                        None,
+                                        serde_json::json!({
+                                            "tool": call.schema.name,
+                                            "ok": ok,
+                                            "truncated": bounded.truncated,
+                                            "committed_len": self.engine.committed_len(),
+                                        }),
+                                    );
+                                    t.emit(
+                                        trace::ev::SESSION_STATE_CHANGED,
+                                        &tool_step,
+                                        None,
+                                        serde_json::json!({
+                                            "role": "tool_result",
+                                            "span": [span.0, span.1],
+                                        }),
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                return LoopOutcome::Failed(format!("reinjection failed: {e:#}"))
+                            }
+                        }
                     }
                 }
             }

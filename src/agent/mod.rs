@@ -26,6 +26,7 @@
 //! touches attention, KV kernels, tokenization primitives, encoders, or
 //! tensor math; it drives the existing session/runtime abstractions only.
 
+pub mod approval;
 pub mod artifact;
 pub mod ids;
 pub mod inspect;
@@ -38,6 +39,7 @@ pub mod tool;
 pub mod tools;
 pub mod trace;
 
+pub use approval::{ApprovalDecision, ApprovalGate, ApprovalPolicy};
 pub use artifact::{ArtifactRecord, ArtifactStore};
 pub use inspect::{inspect_file, timeline, validate_trace_invariants, TraceSummary};
 pub use model::{
@@ -61,7 +63,7 @@ pub use tool::{
     UnknownTool,
 };
 pub use tools::{
-    CalculatorTool, EchoTool, FailTool, LookupFixtureTool, ReadTextFileTool, SearchTextTool,
-    SlowTool, WriteArtifactTool,
+    CalculatorTool, EchoTool, FailTool, ImageFixtureTool, LookupFixtureTool, ReadTextFileTool,
+    SearchTextTool, SlowTool, WriteArtifactTool,
 };
 pub use trace::{parse_trace_file, ToolTraceMode, TraceConfig, TraceRecorder, TRACE_SCHEMA};

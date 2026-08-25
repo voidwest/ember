@@ -120,6 +120,10 @@ pub(crate) struct AgentRunArgs {
     /// search tool available when a sandbox root is set
     #[arg(long, default_value_t = true)]
     pub allow_search: bool,
+
+    /// approve tools that declare ExternalSideEffect (built-ins never do)
+    #[arg(long, default_value_t = false)]
+    pub allow_unsafe_effects: bool,
 }
 
 #[derive(clap::Args)]
@@ -163,6 +167,51 @@ pub(crate) struct TraceCommand {
 pub(crate) enum TraceSubcommand {
     /// Print a compact timeline + aggregates from an agent trace JSONL
     Inspect(TraceInspectArgs),
+    /// Structurally compare two traces (status, steps, tools, skeleton)
+    Diff(TraceDiffArgs),
+    /// Re-execute recorded deterministic tool calls and verify digests
+    Replay(TraceReplayArgs),
+    /// Write a self-contained HTML report for a trace
+    Report(TraceReportArgs),
+}
+
+#[derive(ClapArgs)]
+pub(crate) struct TraceDiffArgs {
+    /// first trace
+    #[arg(long)]
+    pub a: String,
+    /// second trace
+    #[arg(long)]
+    pub b: String,
+    /// exit non-zero when the traces differ (for scripting)
+    #[arg(long, default_value_t = false)]
+    pub fail_on_diff: bool,
+}
+
+#[derive(ClapArgs)]
+pub(crate) struct TraceReplayArgs {
+    /// trace whose tool calls to replay
+    #[arg(long)]
+    pub input: String,
+    /// built-in tools to register (must cover every recorded call)
+    #[arg(long, value_delimiter = ',')]
+    pub tools: Vec<String>,
+    /// fixture for the lookup tool: key=value (repeatable)
+    #[arg(long = "fixture", value_delimiter = ',')]
+    pub fixtures: Vec<String>,
+    /// sandbox root for file tools
+    #[arg(long)]
+    pub sandbox_root: Option<String>,
+}
+
+#[derive(ClapArgs)]
+pub(crate) struct TraceReportArgs {
+    /// trace to render
+    #[arg(long)]
+    pub input: String,
+    /// output HTML path
+    #[arg(long)]
+    pub output: String,
 }
 
 #[derive(clap::Args)]
@@ -213,6 +262,7 @@ fn build_registry(
             }
             "echo" => builder.register(Arc::new(ember::agent::EchoTool)),
             "write_artifact" => builder.register(Arc::new(ember::agent::WriteArtifactTool)),
+            "image_fixture" => builder.register(Arc::new(ember::agent::ImageFixtureTool)),
             "read_text_file" | "search_text" => {
                 let root = sandbox_root.ok_or_else(|| {
                     anyhow::anyhow!("tool `{name}` requires --sandbox-root <dir>")
@@ -225,7 +275,7 @@ fn build_registry(
                     Ok(builder)
                 }
             }
-            other => anyhow::bail!("unknown built-in tool `{other}` (available: calculate, lookup, echo, write_artifact)"),
+            other => anyhow::bail!("unknown built-in tool `{other}` (available: calculate, lookup, echo, write_artifact, image_fixture)"),
         }
         .with_context(|| format!("registering tool `{name}`"))?;
     }
@@ -414,6 +464,11 @@ fn run_agent_run(args: &AgentRunArgs) -> Result<()> {
             top_p: None,
             seed: args.seed,
             kv_capacity: args.kv_capacity,
+            approval: if args.allow_unsafe_effects {
+                ember::agent::ApprovalPolicy::Auto
+            } else {
+                ember::agent::ApprovalPolicy::default()
+            },
         },
         !args.privacy_off_content,
     )
@@ -580,7 +635,104 @@ fn run_agent_demo(args: &AgentDemoArgs) -> Result<()> {
 }
 
 pub(crate) fn run_trace_command(command: &TraceCommand) -> Result<()> {
-    let TraceSubcommand::Inspect(args) = &command.command;
+    match &command.command {
+        TraceSubcommand::Inspect(args) => run_trace_inspect(args),
+        TraceSubcommand::Diff(args) => run_trace_diff(args),
+        TraceSubcommand::Replay(args) => run_trace_replay(args),
+        TraceSubcommand::Report(args) => run_trace_report(args),
+    }
+}
+
+fn run_trace_diff(args: &TraceDiffArgs) -> Result<()> {
+    let (ea, _) = ember::agent::parse_trace_file(std::path::Path::new(&args.a))?;
+    let (eb, _) = ember::agent::parse_trace_file(std::path::Path::new(&args.b))?;
+    let (sa, sb, diff) = ember::agent::inspect::diff(&ea, &eb);
+    println!(
+        "a: {} ({})\nb: {} ({})",
+        sa.run_id,
+        sa.status.as_deref().unwrap_or("?"),
+        sb.run_id,
+        sb.status.as_deref().unwrap_or("?"),
+    );
+    if diff.is_identical() {
+        println!("verdict: IDENTICAL (structure + totals)");
+    } else {
+        println!("verdict: DIFFERS");
+        for d in &diff.differences {
+            println!("  - {d}");
+        }
+    }
+    println!(
+        "\n         a          b\nsteps    {:>8} {:>10}\ntools    {:>8} {:>10}\nrejected {:>8} {:>10}\nartifacts {:>7} {:>10}\nout tok  {:>8} {:>10}\nmodel ms {:>8.0} {:>10.0}",
+        sa.model_steps, sb.model_steps,
+        sa.tool_calls, sb.tool_calls,
+        sa.rejected_calls, sb.rejected_calls,
+        sa.artifacts.len(), sb.artifacts.len(),
+        sa.output_tokens, sb.output_tokens,
+        sa.total_model_ms, sb.total_model_ms,
+    );
+    if diff.differences.is_empty() {
+        Ok(())
+    } else if args.fail_on_diff {
+        anyhow::bail!("traces differ")
+    } else {
+        Ok(())
+    }
+}
+
+fn run_trace_replay(args: &TraceReplayArgs) -> Result<()> {
+    let (events, skipped) = ember::agent::parse_trace_file(std::path::Path::new(&args.input))?;
+    anyhow::ensure!(
+        skipped.is_empty(),
+        "refusing to replay a torn trace ({skipped:?})"
+    );
+    let registry = build_registry(
+        &args.tools,
+        &args.fixtures,
+        args.sandbox_root.as_deref(),
+        true,
+    )?;
+    let report = ember::agent::inspect::replay(&events, &registry)?;
+    for o in &report.outcomes {
+        match o.matches {
+            Some(true) => println!("{:>4} {} ok (digest match)", o.seq, o.tool),
+            Some(false) => println!(
+                "{:>4} {} MISMATCH recorded={} computed={}",
+                o.seq, o.tool, o.recorded_replay_sha256, o.computed_replay_sha256
+            ),
+            None => println!("{:>4} {} skipped (no digest / failed call)", o.seq, o.tool),
+        }
+    }
+    println!(
+        "{} calls verified, {} skipped; verdict: {}",
+        report
+            .outcomes
+            .iter()
+            .filter(|o| o.matches == Some(true))
+            .count(),
+        report.skipped(),
+        if report.all_matched() {
+            "MATCH"
+        } else {
+            "MISMATCH"
+        },
+    );
+    if !report.all_matched() {
+        anyhow::bail!("replay verification failed");
+    }
+    Ok(())
+}
+
+fn run_trace_report(args: &TraceReportArgs) -> Result<()> {
+    let (events, _) = ember::agent::parse_trace_file(std::path::Path::new(&args.input))?;
+    let summary = ember::agent::inspect::summarize(&events);
+    let html = ember::agent::inspect::render_html(&events, &summary);
+    std::fs::write(&args.output, html).with_context(|| format!("writing {}", args.output))?;
+    eprintln!("wrote {}", args.output);
+    Ok(())
+}
+
+fn run_trace_inspect(args: &TraceInspectArgs) -> Result<()> {
     let (summary, timeline_rows, skipped) =
         ember::agent::inspect_file(std::path::Path::new(&args.input))?;
     if args.json {

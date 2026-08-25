@@ -53,20 +53,20 @@ pub enum ToolPayload {
 }
 
 impl ToolPayload {
-    /// Compact serialization used for tracing digests and size limits.
+    /// Compact serialization used for tracing digests, reinjection, and
+    /// replay verification. Canonical (sorted keys): the digest must be
+    /// reproducible across platforms regardless of serde_json features.
     pub fn serialize_compact(&self) -> String {
         match self {
             ToolPayload::Text(t) => t.clone(),
-            ToolPayload::Json(v) => {
-                serde_json::to_string(v).unwrap_or_else(|_| "\"<unserializable>\"".to_string())
-            }
+            ToolPayload::Json(v) => super::schema::canonical_json(v),
         }
     }
 
     pub fn byte_len(&self) -> usize {
         match self {
             ToolPayload::Text(t) => t.len(),
-            ToolPayload::Json(v) => serde_json::to_vec(v).map(|b| b.len()).unwrap_or(0),
+            ToolPayload::Json(v) => super::schema::canonical_json(v).len(),
         }
     }
 }

@@ -27,9 +27,11 @@ use super::schema::ToolSchema;
 pub enum AssistantAction {
     /// Plain completion; ends the run.
     FinalText(String),
-    /// A tool decision: name plus RAW argument JSON. Schema validation
-    /// happens later, against the registry — parsing never validates.
-    ToolCall(RawToolCall),
+    /// One or more tool decisions: names plus RAW argument JSON. Schema
+    /// validation happens later, against the registry - parsing never
+    /// validates. Calls execute in order; the session enforces limits
+    /// between them.
+    ToolCalls(Vec<RawToolCall>),
     /// Tool-call syntax was present but could not be parsed. Explicitly
     /// distinct from `FinalText` so the loop can reject it loudly.
     MalformedToolCall { excerpt: String, reason: String },
@@ -40,9 +42,15 @@ pub struct RawToolCall {
     pub name: String,
     /// Raw argument JSON exactly as extracted (validated downstream).
     pub arguments_json: String,
-    /// How many additional well-formed calls were ignored (Phase 1
-    /// single-call limit); traced for honesty.
-    pub additional_calls_ignored: usize,
+}
+
+impl RawToolCall {
+    pub fn new(name: impl Into<String>, arguments_json: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            arguments_json: arguments_json.into(),
+        }
+    }
 }
 
 /// The protocol boundary. All rendered strings are COMPLETE messages or
@@ -106,10 +114,10 @@ impl<'a> ToolResultMessage<'a> {
         }
     }
 
-    /// Compact serialization used inside rendered messages.
+    /// Compact serialization used inside rendered messages. Canonical
+    /// (sorted keys) so prompt bytes are platform-stable.
     pub fn content_compact(&self) -> String {
-        serde_json::to_string(&self.content_json)
-            .unwrap_or_else(|_| "\"<unserializable>\"".to_string())
+        super::schema::canonical_json(&self.content_json)
     }
 }
 
@@ -181,18 +189,8 @@ pub(crate) fn extract_call_fields(obj: &serde_json::Value) -> Result<(String, St
     if !args_value.is_object() {
         return Err(format!("`arguments` must be an object, got {}", args_value));
     }
-    let arguments_json = serde_json::to_string(&args_value)
-        .map_err(|e| format!("arguments not serializable: {e}"))?;
+    let arguments_json = super::schema::canonical_json(&args_value);
     Ok((name.to_string(), arguments_json))
-}
-
-/// Count non-overlapping occurrences of `needle` (honesty counter for
-/// ignored extra calls).
-fn count_occurrences(haystack: &str, needle: &str) -> usize {
-    if needle.is_empty() {
-        return 0;
-    }
-    haystack.matches(needle).count()
 }
 
 // ---------------------------------------------------------------------------
@@ -276,32 +274,41 @@ impl ToolCallProtocol for Qwen25ToolProtocol {
         let Some(open_pos) = raw.find(QWEN_TOOL_CALL_OPEN) else {
             return AssistantAction::FinalText(raw.trim().to_string());
         };
-        let body_start = open_pos + QWEN_TOOL_CALL_OPEN.len();
-        let remainder = &raw[body_start..];
-        let close_pos = remainder.find(QWEN_TOOL_CALL_CLOSE);
-        let body = match close_pos {
-            Some(p) => &remainder[..p],
-            None => remainder, // unclosed tag: still an explicit intent
-        };
-        let total_calls = count_occurrences(raw, QWEN_TOOL_CALL_OPEN);
-        let ignored = total_calls.saturating_sub(1);
-        match serde_json::from_str::<serde_json::Value>(body.trim()) {
-            Ok(value) => match extract_call_fields(&value) {
-                Ok((name, arguments_json)) => AssistantAction::ToolCall(RawToolCall {
-                    name,
-                    arguments_json,
-                    additional_calls_ignored: ignored,
-                }),
-                Err(reason) => AssistantAction::MalformedToolCall {
-                    excerpt: body.trim().chars().take(160).collect(),
-                    reason,
-                },
-            },
-            Err(e) => AssistantAction::MalformedToolCall {
-                excerpt: body.trim().chars().take(160).collect(),
-                reason: format!("invalid JSON inside <tool_call>: {e}"),
-            },
+        // Every <tool_call> block parses or the whole step is malformed:
+        // partial acceptance would silently drop requested side effects.
+        let mut cursor = 0usize;
+        let mut calls: Vec<RawToolCall> = Vec::new();
+        while let Some(open_rel) = raw[cursor..].find(QWEN_TOOL_CALL_OPEN) {
+            let after_open = cursor + open_rel + QWEN_TOOL_CALL_OPEN.len();
+            let tail = &raw[after_open..];
+            let (body, next) = match tail.find(QWEN_TOOL_CALL_CLOSE) {
+                Some(p) => (&tail[..p], after_open + p + QWEN_TOOL_CALL_CLOSE.len()),
+                None => (tail, raw.len()), // unclosed tag: still explicit intent
+            };
+            match serde_json::from_str::<serde_json::Value>(body.trim())
+                .map_err(|e| format!("invalid JSON inside <tool_call>: {e}"))
+                .and_then(|v| extract_call_fields(&v))
+            {
+                Ok((name, arguments_json)) => {
+                    calls.push(RawToolCall::new(name, arguments_json));
+                }
+                Err(reason) => {
+                    return AssistantAction::MalformedToolCall {
+                        excerpt: body.trim().chars().take(160).collect(),
+                        reason,
+                    };
+                }
+            }
+            cursor = next;
         }
+        if calls.is_empty() {
+            // marker existed (checked above) but nothing parsable inside
+            return AssistantAction::MalformedToolCall {
+                excerpt: raw[open_pos..].chars().take(160).collect(),
+                reason: "<tool_call> marker present but no call could be parsed".to_string(),
+            };
+        }
+        AssistantAction::ToolCalls(calls)
     }
 
     fn render_tool_result_message(&self, result: &ToolResultMessage<'_>) -> String {
@@ -406,11 +413,7 @@ impl ToolCallProtocol for LlamaToolProtocol {
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&stripped)
             && let Ok((name, arguments_json)) = extract_call_fields(&value)
         {
-            return AssistantAction::ToolCall(RawToolCall {
-                name,
-                arguments_json,
-                additional_calls_ignored: 0,
-            });
+            return AssistantAction::ToolCalls(vec![RawToolCall::new(name, arguments_json)]);
         }
 
         // Fallback: first balanced object (models sometimes add prose).
@@ -418,11 +421,7 @@ impl ToolCallProtocol for LlamaToolProtocol {
             && let Ok(value) = serde_json::from_str::<serde_json::Value>(&stripped[start..end])
             && let Ok((name, arguments_json)) = extract_call_fields(&value)
         {
-            return AssistantAction::ToolCall(RawToolCall {
-                name,
-                arguments_json,
-                additional_calls_ignored: 0,
-            });
+            return AssistantAction::ToolCalls(vec![RawToolCall::new(name, arguments_json)]);
         }
 
         if had_tag {
@@ -525,26 +524,24 @@ impl ToolCallProtocol for EmberJsonToolProtocol {
         // whole-text first
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw.trim()) {
             if Self::looks_like_call(&value) {
-                if let Ok((name, arguments_json)) = extract_call_fields(&value) {
-                    return AssistantAction::ToolCall(RawToolCall {
-                        name,
-                        arguments_json,
-                        additional_calls_ignored: 0,
-                    });
-                }
-                return AssistantAction::MalformedToolCall {
-                    excerpt: raw.trim().chars().take(160).collect(),
-                    reason: "tool_call object missing valid `name`/`arguments`".to_string(),
+                return match extract_call_fields(&value) {
+                    Ok((name, arguments_json)) => {
+                        AssistantAction::ToolCalls(vec![RawToolCall::new(name, arguments_json)])
+                    }
+                    Err(reason) => AssistantAction::MalformedToolCall {
+                        excerpt: raw.trim().chars().take(160).collect(),
+                        reason,
+                    },
                 };
             }
             // a plain JSON value that is NOT a call: surface as text
             return AssistantAction::FinalText(raw.trim().to_string());
         }
-        // embedded objects: a candidate that LOOKS like a call (typed or
-        // tagged) but does not parse is an explicit MalformedToolCall —
-        // never silently recovered into prose.
+        // Embedded calls COLLECT (multi-call steps are first-class);
+        // any candidate that looks like a call but fails to parse is an
+        // explicit MalformedToolCall — never silently dropped into prose.
         let mut search_from = 0usize;
-        let ignored = 0usize;
+        let mut calls: Vec<RawToolCall> = Vec::new();
         if find_balanced_json_object(raw, 0).is_none()
             && let Some(brace) = raw.find('{')
             && raw[brace..].contains(GENERIC_TYPE_TAG)
@@ -560,19 +557,18 @@ impl ToolCallProtocol for EmberJsonToolProtocol {
         while let Some((start, end)) = find_balanced_json_object(raw, search_from) {
             let candidate = &raw[start..end];
             match serde_json::from_str::<serde_json::Value>(candidate) {
-                Ok(value) if Self::looks_like_call(&value) => {
-                    return match extract_call_fields(&value) {
-                        Ok((name, arguments_json)) => AssistantAction::ToolCall(RawToolCall {
-                            name,
-                            arguments_json,
-                            additional_calls_ignored: ignored,
-                        }),
-                        Err(reason) => AssistantAction::MalformedToolCall {
+                Ok(value) if Self::looks_like_call(&value) => match extract_call_fields(&value) {
+                    Ok((name, arguments_json)) => {
+                        calls.push(RawToolCall::new(name, arguments_json));
+                        search_from = end;
+                    }
+                    Err(reason) => {
+                        return AssistantAction::MalformedToolCall {
                             excerpt: candidate.chars().take(160).collect(),
                             reason,
-                        },
-                    };
-                }
+                        };
+                    }
+                },
                 Ok(_) => {
                     search_from = end;
                 }
@@ -589,6 +585,9 @@ impl ToolCallProtocol for EmberJsonToolProtocol {
                 }
             }
         }
+        if !calls.is_empty() {
+            return AssistantAction::ToolCalls(calls);
+        }
         AssistantAction::FinalText(raw.trim().to_string())
     }
 
@@ -601,7 +600,7 @@ impl ToolCallProtocol for EmberJsonToolProtocol {
         });
         format!(
             "<|im_start|>user\n{}<|im_end|>\n",
-            serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
+            super::schema::canonical_json(&payload)
         )
     }
 }

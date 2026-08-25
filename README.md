@@ -20,6 +20,7 @@ research write-up: https://voidwest.dev/ember
 - plan-driven decode
 - deterministic, verifiable experiment bundles
 - native and browser experiment consoles (`ember gui`, `ember web-gui`)
+- agentic tool-calling runtime with auditable research traces
 - Arabic morphology and quantization research workflows
 
 Ember is not a llama.cpp throughput competitor. llama.cpp remains the
@@ -94,6 +95,30 @@ target/release/ember --arch auto --model Qwen3-0.6B-Q8_0.gguf \
   --prompt "The capital of France is" --max-tokens 8 --temperature 0
 ```
 
+### agentic execution (v0.6.7)
+
+The model can request a tool through its own structured protocol; Ember
+validates the call, executes it deterministically, reinjects the result
+into the same session, and continues until a final answer - with every
+step in an auditable JSONL trace:
+
+```bash
+target/release/ember agent run \
+  --model Llama-3.2-1B-Instruct-Q8_0.gguf --tokenizer tokenizer.json \
+  --protocol llama3 --tools lookup --fixture riyadh="41 C" \
+  --prompt "Use the available tool to tell me the fixture temperature in Riyadh." \
+  --trace-out run.jsonl
+
+target/release/ember trace inspect run.jsonl
+```
+
+Deterministic built-in tools only (arithmetic, fixtures, artifacts,
+sandboxed file reads); unknown tools fail closed, hard limits bound every
+run, and cancellation never leaves session state half-committed.
+`ember trace diff|replay|report` compare runs, verify recorded tool calls
+offline against their digests, and render self-contained HTML reports.
+Details: [docs/agent-runtime.md](docs/agent-runtime.md).
+
 ## architecture
 
 ```
@@ -147,11 +172,16 @@ Validated on the qwen3/llama rows with completed golden checks; see
   producing `ember.bundle.v1` bundles with semantic/payload identity and
   offline verification (introduced in v0.5.0; current patch release v0.5.1).
   Gates A-I: [docs/v05-research-contract.md](docs/v05-research-contract.md).
-- **v0.6**: experiment consoles — `ember gui` (native gpui/Vulkan window,
+- **v0.6**: experiment consoles - `ember gui` (native gpui/Vulkan window,
   dark theme with light/dark toggle) and `ember web-gui` (single-page
   browser console with a light/dark toggle); the v0.5 run path was split
   into `prepare_run` / `execute_prepared` so one resident model serves
   repeated runs. [docs/v06-gui.md](docs/v06-gui.md).
+- **v0.6.7**: agentic execution layer - structured tool calls behind a
+  model-family protocol boundary (Qwen2.5, Llama 3.x), strict validation,
+  approval gating, crash-tolerant research traces with provenance and
+  hashed artifacts, `ember agent` / `ember trace` CLI.
+  [docs/agent-runtime.md](docs/agent-runtime.md).
 
 ## validation status
 
@@ -169,6 +199,7 @@ per-architecture golden-logit and activation-reference status.
 - [docs/v04-execution-contract.md](docs/v04-execution-contract.md) - plan-driven decode, gates A-G
 - [docs/v05-research-contract.md](docs/v05-research-contract.md) - experiment workflow, gates A-I
 - [docs/v06-gui.md](docs/v06-gui.md) - native + browser experiment consoles (v0.6)
+- [docs/agent-runtime.md](docs/agent-runtime.md) - agentic runtime, tool calls, research traces
 - [docs/research.md](docs/research.md) - Arabic morphology dataset pipeline and probing
 - [docs/dataset_pipeline.md](docs/dataset_pipeline.md) - dataset input/output schemas
 

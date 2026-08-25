@@ -7,6 +7,43 @@ Ember's Rust experiment API is explicitly unstable during the 0.1 series;
 the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
 carries no compatibility guarantee.
 
+## [Unreleased] - agentic phase 2
+
+### Added
+
+Follow-ups to the v0.6.7 agentic layer, all additive:
+
+- multi-call steps: one assistant turn may request several tools; the loop
+  validates, approves, executes, and reinjects them in order with limits
+  and cancellation checked between calls. Protocols now parse ALL well-
+  formed calls per step (Qwen `<tool_call>` blocks collect all-or-nothing
+  on malformed bodies; the generic mode collects embedded calls).
+- approval gating (completes the Track H seam): `ApprovalPolicy` of `Auto`
+  / `DenyExternalSideEffect` (new default) / custom host gate; denials are
+  structured `denied_by_policy` rejections that are traced and fed back to
+  the model. CLI: `--allow-unsafe-effects`.
+- trace tooling: `ember trace diff` (status/totals/final-digest plus
+  event-skeleton comparison, `--fail-on-diff` for scripting),
+  `ember trace replay` (re-executes recorded deterministic tool calls
+  offline against a fresh registry and verifies stable payload digests;
+  volatile fields excluded, legacy traces skipped honestly),
+  `ember trace report` (self-contained HTML: summary, timeline bars,
+  artifacts, full event table; inline CSS only).
+- every tool execution now records both `payload_sha256` and a
+  `replay_sha256` (stable across reruns) under all privacy modes.
+- `image_fixture` built-in: deterministic PNG test pattern through the
+  artifact path (`image/png`), proving binary media flows end-to-end
+  (Track W seam).
+- docs: `docs/agent-runtime.md`; README gains an agentic section.
+
+### Fixed
+
+- platform-stable canonical serialization for tool-schema prompts and
+  tool-result payloads: serde_json key order depends on whether another
+  dependency enables `preserve_order` (observed flipping byte-pinned
+  protocol renders on aarch64 CI). Prompt bytes, digests, and golden pins
+  now use an explicit canonical writer with sorted keys.
+
 ## [0.6.7] - 2026-08-25
 
 ### Added

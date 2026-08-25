@@ -378,10 +378,10 @@ impl ValidatedArguments {
         &self.value
     }
 
-    /// Compact canonical serialization (stable key order from serde_json's
-    /// BTree-backed Map).
+    /// Canonical compact serialization (sorted keys via
+    /// [`canonical_json`]); stable across platforms and feature flags.
     pub fn serialize_compact(&self) -> String {
-        serde_json::to_string(&self.value).unwrap_or_else(|_| "{}".to_string())
+        canonical_json(&self.value)
     }
 
     pub fn get(&self, key: &str) -> Option<&serde_json::Value> {
