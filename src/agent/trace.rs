@@ -87,7 +87,8 @@ pub struct TraceConfig {
     pub trace_prompts: bool,
     /// Capture generated assistant text verbatim. Default true.
     pub trace_generated_text: bool,
-    /// Tool payload capture mode. Default [`ToolTraceMode::Summary(2048)`].
+    /// Tool payload capture mode. Default: [`ToolTraceMode::Summary`] with a
+    /// 2048-byte excerpt.
     pub tool_results: ToolTraceMode,
     /// Per-token trace events (id + fragment). Default false: this is the
     /// one knob that can produce very large files on long runs.

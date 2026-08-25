@@ -2,7 +2,8 @@
 //!
 //! Everything here is local, reproducible, and side-effect-bounded:
 //! arithmetic over f64, fixture lookups over an injected map, artifact
-//! writes through the run's [`ArtifactStore`], and read-only text-file
+//! writes through the run's artifact store (`crate::agent::ArtifactStore`),
+//! and read-only text-file
 //! access strictly rooted at a configured directory (traversal fails
 //! closed). There is deliberately NO shell/network/delete tool in Phase 1
 //! — this phase proves orchestration, not general-purpose execution.
