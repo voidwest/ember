@@ -97,6 +97,8 @@ def section_for(path: Path) -> str:
         return "tools"
     if rel.startswith("terms/"):
         return "terms"
+    if rel.startswith("cv/"):
+        return "cv"
     return "home"
 
 
@@ -127,6 +129,7 @@ def localized_href(section: str, ar: bool) -> str:
         "research": ("/research-notes/", "/research-notes/index.ar.html"),
         "tools": ("/tools/", "/tools/index.ar.html"),
         "terms": ("/terms/", "/terms/index.ar.html"),
+        "cv": ("/cv/", "/cv/index.ar.html"),
     }
     return paths[section][1 if ar else 0]
 
@@ -169,6 +172,7 @@ def nav_html(path: Path, text: str) -> str:
         ("research", "research notes", localized_href("research", ar)),
         ("tools", "tools", localized_href("tools", ar)),
         ("terms", "terms", localized_href("terms", ar)),
+        ("cv", "cv", localized_href("cv", ar)),
     ]
 
     def current_attr(section: str) -> str:

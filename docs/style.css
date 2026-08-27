@@ -444,6 +444,119 @@ hr {
     border: 0;
 }
 
+/* ── cv page ───────────────────────────────────────────────────────── */
+
+.cv-page {
+    max-inline-size: 900px;
+    margin-inline: auto;
+}
+
+.cv-masthead {
+    padding-block: 9px 34px;
+    border-block-end: 1px solid var(--border);
+}
+
+.cv-kicker {
+    margin-block-end: 10px;
+    color: var(--accent-strong);
+    font-family: var(--mono-font);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    text-transform: lowercase;
+}
+
+.cv-masthead h1 {
+    margin-block-end: 12px;
+}
+
+.cv-lead {
+    max-inline-size: 640px;
+    margin-block-end: 18px;
+    color: var(--muted);
+    font-size: 1.05rem;
+}
+
+.cv-actions {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+
+.cv-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 13px;
+    border: 1px solid var(--accent-strong);
+    border-radius: var(--radius);
+    background: var(--accent-strong);
+    color: var(--bg);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.cv-button:hover {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    text-decoration: none;
+}
+
+.cv-viewer {
+    margin-block-start: 50px;
+}
+
+.cv-viewer-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 20px;
+    border-block-end: 1px solid var(--border-soft);
+}
+
+.cv-viewer-header h2 {
+    margin: 0;
+    padding: 0 0 9px;
+    border: 0;
+}
+
+.cv-viewer-header p {
+    margin: 0 0 9px;
+    color: var(--muted);
+    font-family: var(--mono-font);
+    font-size: 11px;
+}
+
+.cv-pdf {
+    display: block;
+    inline-size: 100%;
+    block-size: clamp(680px, 125vw, 1100px);
+    margin-block-start: 24px;
+    border: 1px solid var(--border-soft);
+    background: #fff;
+}
+
+.cv-fallback {
+    padding: 28px;
+    color: #18191b;
+    font-family: var(--body-font);
+}
+
+.cv-fallback p {
+    color: inherit;
+}
+
+[dir="rtl"] .cv-kicker,
+[dir="rtl"] .cv-viewer-header p {
+    font-family: var(--arabic-font);
+}
+
+[dir="rtl"] .cv-masthead h1 {
+    font-family: var(--arabic-serif);
+}
+
 [dir="rtl"] .hero .name,
 [dir="rtl"] .hero .logo {
     font-family: var(--arabic-serif);
