@@ -932,16 +932,20 @@ img,
     background: var(--surface-2);
 }
 
-.theme-chart-light {
+.theme-chart-dark {
     display: none;
+}
+
+.theme-chart-light {
+    display: block;
 }
 
 :root[data-theme="dark"] .theme-chart-dark {
-    display: none;
+    display: block;
 }
 
 :root[data-theme="dark"] .theme-chart-light {
-    display: block;
+    display: none;
 }
 
 .arch-tree,
