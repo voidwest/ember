@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="What Does a Morphology Probe Measure? Lexical Splits and Representation Interfaces" />
+        <meta property="og:description" content="An audited 11-model Arabic evaluation of lexical split sensitivity, prompt information, token alignment, and target-span pooling." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/lexical-splits-morphology-probing.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>what does a morphology probe measure? · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=86f87ae438c8" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+                <a href="/cv/">cv</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/lexical-splits-morphology-probing.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+
+        <h1>What Does a Morphology Probe Measure? Lexical Splits and Representation Interfaces</h1>
+
+        <div class="meta">
+            an audited 11-model evaluation of Arabic morphology probing<br>
+            mohammed al-thobaiti · 2026-08-27<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>
+            i ended up treating a probe score as a property of a representation
+            under a particular prompt, split, alignment rule, pooling rule,
+            selected layer, and estimator. the useful question here is narrow:
+            what changes when familiar lexical identities stay out of training?
+        </p>
+
+        <p>
+            the testbed is 4,701 Modern Standard Arabic stimuli derived from
+            Universal Dependencies Arabic-PADT and CAMeL Tools processing. the
+            tasks are part of speech, gender, and number. the analysis is
+            deliberately a measurement study: linear recoverability under named
+            conditions, not an unrestricted claim about Arabic competence or
+            model behavior.
+        </p>
+
+        <h2>the measurement unit</h2>
+
+        <p>
+            the matrix crosses eleven decoder-only models with three split
+            conditions and four representation interfaces. every combination
+            uses five outer folds. the probe is fixed:
+        </p>
+
+        <pre><code class="language-plaintext">StandardScaler + RidgeClassifier(alpha=1.0)</code></pre>
+
+        <p>
+            for each outer fold, layer selection is performed on the training
+            data and a development partition carved from the outer-training
+            portion. the chosen layer is then refit on train plus development
+            and evaluated once on test. test metrics never select the layer,
+            preprocessing, model, or hyperparameter. macro-F1 is reported with
+            accuracy and a majority reference computed from training labels
+            only.
+        </p>
+
+        <p>
+            the splits ask different questions:
+        </p>
+
+        <ul>
+            <li><strong>random instance</strong>: an optimistic reference for interpolation among a familiar lexical inventory;</li>
+            <li><strong>lemma-heldout</strong>: transfer across lemma groups;</li>
+            <li><strong>root-heldout</strong>: transfer across root groups, a broader and different grouping key.</li>
+        </ul>
+
+        <p>
+            the grouped partitions have zero overlap for their applicable key,
+            but they do not remove every semantic, orthographic, morphological,
+            source-document, or tokenizer correlation.
+        </p>
+
+        <h2>random is an optimistic reference</h2>
+
+        <p>
+            the compact comparison has one row for each model, task, and
+            interface: 132 rows in total. the quantities are:
+        </p>
+
+        <pre><code class="language-plaintext">delta_lemma = macro_f1_random - macro_f1_lemma_heldout
+delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
+
+        <p>
+            all 132 <code>delta_lemma</code> values are positive. all 132
+            <code>delta_root</code> values are positive. across the matrix,
+            random minus lemma-heldout ranges from <strong>+0.0127</strong> to
+            <strong>+0.2863</strong>, with mean <strong>+0.1059</strong>.
+            random minus root-heldout ranges from <strong>+0.0255</strong> to
+            <strong>+0.2796</strong>, with mean <strong>+0.1179</strong>.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart" src="/plots/lre_split_deltas.png"
+                 alt="Mean random-minus-heldout macro-F1 gaps for eleven decoder-only models, with lemma-heldout and root-heldout bars"
+                 loading="lazy" />
+            <figcaption>
+                mean random-minus-heldout macro-F1 gaps, averaged over the three
+                tasks and four representation interfaces. the bars summarize
+                model means; the 132-row table is the comparison used for the
+                all-positive result.
+            </figcaption>
+        </figure>
+
+        <p>
+            random splitting is therefore useful as a reference for instance-level
+            interpolation, not as a universal baseline to be corrected by
+            one fixed penalty. the gap depends on model, task, representation
+            interface, and grouping key. the direction is stable here; the
+            magnitude is not.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>random − lemma</th>
+                    <th>random − root</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>ALLaM-7B</td><td>+0.0637</td><td>+0.0816</td></tr>
+                <tr><td>Gemma-4-E2B</td><td>+0.1382</td><td>+0.1518</td></tr>
+                <tr><td>Jais-13B</td><td>+0.0711</td><td>+0.0918</td></tr>
+                <tr><td>Llama-3.1-8B</td><td>+0.0835</td><td>+0.0895</td></tr>
+                <tr><td>Llama-3.2-1B</td><td>+0.1881</td><td>+0.2054</td></tr>
+                <tr><td>Llama-3.2-3B</td><td>+0.1276</td><td>+0.1279</td></tr>
+                <tr><td>Mistral-7B</td><td>+0.0993</td><td>+0.1117</td></tr>
+                <tr><td>Phi-3-mini</td><td>+0.1036</td><td>+0.1314</td></tr>
+                <tr><td>Qwen2.5-1.5B</td><td>+0.1134</td><td>+0.1188</td></tr>
+                <tr><td>Qwen3-0.6B</td><td>+0.0977</td><td>+0.1118</td></tr>
+                <tr><td>Qwen3-8B</td><td>+0.0783</td><td>+0.0750</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            the model means are orientation, not a ranking. the matrix mixes
+            architecture, tokenizer, parameter count, training mixture, and
+            instruction status. it is not a controlled scaling study. notably,
+            Qwen3-8B has a slightly larger lemma gap than root gap, while most
+            rows go the other way.
+        </p>
+
+        <h2>prompt context changes the interface</h2>
+
+        <p>
+            the full-metadata prompt is:
+        </p>
+
+        <pre><code class="language-plaintext">Arabic morphology token probe.
+Surface: {surface_dediac}
+Token: {target}
+Lemma: {lemma}
+Root: {root}
+Pattern: {abstract_pattern}
+Predict the token morphology.</code></pre>
+
+        <p>
+            the metadata-free prompt removes the explicit lexical fields:
+        </p>
+
+        <pre><code class="language-plaintext">Arabic morphology token probe.
+Surface: {surface_dediac}
+Token: {target}
+Predict the token morphology.</code></pre>
+
+        <p>
+            full-metadata prompt-final and target-final are not a pure position
+            comparison. the final state of the complete prompt can attend to
+            later lemma, root, and pattern fields. target-final subtoken is
+            taken from a causal prefix ending at the selected final
+            target-overlapping token, so those later fields are unavailable at
+            that location. metadata-free prompt-final narrows the information-
+            availability confound, while retaining a prompt-final context.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>condition</th>
+                    <th>full metadata</th>
+                    <th>metadata-free</th>
+                    <th>target-final</th>
+                    <th>target-mean</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Qwen3-0.6B · lemma-heldout POS</td>
+                    <td>0.8565</td>
+                    <td>0.7855</td>
+                    <td>0.8213</td>
+                    <td>0.8116</td>
+                </tr>
+                <tr>
+                    <td>Jais-13B · lemma-heldout number</td>
+                    <td>0.7249</td>
+                    <td>0.8272</td>
+                    <td>—</td>
+                    <td>—</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>
+            explicit metadata is not uniformly beneficial: the Qwen example
+            favors the full prompt, while the Jais number example reverses that
+            ordering. these are construct-validity comparisons, because both
+            position and available information vary. a prompt-final score is a
+            statement about that prompt endpoint, not automatically about the
+            target word state.
+        </p>
+
+        <h2>pooling is part of the construct</h2>
+
+        <p>
+            every target-overlapping token state is archived. the two target
+            interfaces are local operations on that same span:
+        </p>
+
+        <ul>
+            <li><strong>target-final subtoken</strong>: the state of the final token overlapping the target;</li>
+            <li><strong>target-mean span</strong>: the arithmetic mean over every overlapping token state.</li>
+        </ul>
+
+        <p>
+            averaged over the full matrix, the split gaps are:
+        </p>
+
+        <table>
+            <thead>
+                <tr><th>interface</th><th>random − lemma</th><th>random − root</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>target-final subtoken</td><td>+0.1141</td><td>+0.1179</td></tr>
+                <tr><td>target-mean span</td><td>+0.1222</td><td>+0.1337</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            pooling changes absolute scores and gap magnitude, but every one of
+            the 132 random-minus-grouped comparisons remains positive. retaining
+            the complete span is what makes this check possible without another
+            model forward pass.
+        </p>
+
+        <h2>alignment before probing</h2>
+
+        <p>
+            target position is never inferred from <code>[-1]</code>, row order,
+            or a text search that happens to match. each per-example record
+            includes:
+        </p>
+
+        <ul>
+            <li>the rendered prompt and target text;</li>
+            <li>character and UTF-8 byte spans;</li>
+            <li>token IDs and token pieces;</li>
+            <li>target token indices and target token count;</li>
+            <li>the selected final overlapping token.</li>
+        </ul>
+
+        <p>
+            alignment requires contiguous complete span coverage. all 22
+            model-by-prompt-condition bundles contain 4,701 examples and 4,701
+            successful alignments. the probe pipeline enters analysis only
+            after identity, ordering, shape, and finite-value checks pass.
+        </p>
+
+        <h2>capture once, analyze locally</h2>
+
+        <p>
+            extraction stores the embedding output, the prompt-final state for
+            every transformer layer, and all target-span token states for every
+            transformer layer. it does not retain full-sequence activations.
+            the post-capture analysis contract is effectively:
+        </p>
+
+        <pre><code class="language-plaintext">weights_required = false</code></pre>
+
+        <p>
+            with those arrays and manifests in hand, split audits, pooling
+            analyses, probe reruns, layer curves, fragmentation checks, and
+            error analysis can run locally. model inference is the expensive
+            boundary; the later analyses do not depend on keeping a cloud
+            instance alive or reloading model weights.
+        </p>
+
+        <h2>controls are pipeline checks</h2>
+
+        <p>
+            shuffled-label controls cover the two primary models (Qwen3-0.6B and
+            Llama-3.2-1B), four interfaces, three tasks, three splits, and five
+            folds: <strong>360 cells</strong> in total. labels are shuffled
+            independently within train, development, and test, and the full
+            layer-selection pipeline is rerun. none exceeds its corresponding
+            train-only majority baseline.
+        </p>
+
+        <p>
+            this is a useful sanity check that removing the label relationship
+            does not create comparable performance. it is not evidence of causal
+            model use. shuffled labels, like the real-label probe, do not turn a
+            linear recoverability measurement into an intervention.
+        </p>
+
+        <h2>the reportable unit</h2>
+
+        <p>
+            a result should be stated with enough mechanics that its estimand is
+            recoverable. at minimum, name the:
+        </p>
+
+        <ul>
+            <li>lexical grouping rule;</li>
+            <li>prompt information available at the extraction site;</li>
+            <li>target-to-token alignment;</li>
+            <li>representation position;</li>
+            <li>subtoken pooling rule;</li>
+            <li>probe estimator;</li>
+            <li>layer-selection procedure;</li>
+            <li>development/test boundary;</li>
+            <li>metric;</li>
+            <li>majority reference.</li>
+        </ul>
+
+        <p>
+            the precise claim is therefore of this form:
+        </p>
+
+        <pre><code class="language-plaintext">under this prompt, lexical split, aligned token span,
+pooling rule, selected layer, and linear estimator,
+feature X is recoverable at score Y.</code></pre>
+
+        <p>
+            “model X encodes morphology” is too unrestricted for this evidence.
+            the study establishes conditional linear recoverability. causal
+            use, generation behavior, and broader linguistic competence require
+            separate measurements.
+        </p>
+
+        <h2>artifacts and status</h2>
+
+        <p>
+            the code, manifests, generated result tables, validation reports,
+            and reproducibility artifacts are in the
+            <a href="https://github.com/voidwest/arabic-morphology-probing-lre">arabic-morphology-probing-lre repository</a>.
+            the frozen captures preserve the evidence needed for the stated
+            post-extraction analyses; model weights are not part of the public
+            artifact package.
+        </p>
+
+        <p>
+            the paper, “Lexical Split Design and Representation-Interface Validity
+            in Decoder-Only Morphology Probing: An Arabic Evaluation Study,” is
+            currently under editorial assignment at
+            <em>Language Resources and Evaluation</em>.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

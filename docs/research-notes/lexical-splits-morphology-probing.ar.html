@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="ماذا يقيس مسبار الصرف؟ الانقسامات المعجمية وواجهات التمثيل" />
+        <meta property="og:description" content="تقييم عربي مدقّق على 11 نموذجاً يختبر حساسية الانقسام المعجمي ومعلومات الـprompt ومحاذاة التوكن وتجميع span الهدف." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/lexical-splits-morphology-probing.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>ماذا يقيس مسبار الصرف؟ · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=86f87ae438c8" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+                <a href="/cv/index.ar.html">cv</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/lexical-splits-morphology-probing.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>ماذا يقيس مسبار الصرف؟ الانقسامات المعجمية وواجهات التمثيل</h1>
+
+        <div class="meta">
+            تجربة مدقّقة على 11 نموذجاً في <bdi>Arabic morphology probing</bdi><br>
+            محمد الثبيتي · 2026-08-27<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag model">Qwen</span>
+            <span class="tag model">LLaMA</span>
+        </div>
+
+        <p>
+            المسبار ما يعطي رقماً عن النموذج لحاله. النتيجة تخص تمثيل النموذج
+            تحت <bdi>prompt</bdi> وانقسام وقاعدة محاذاة وقاعدة تجميع وطبقة مختارة
+            ومقدّر محدد. في هذا التقييم خلّينا الواجهات واضحة وسألنا سؤالاً
+            بسيطاً: إيش يصير للنتيجة لما نخلي الهويات المعجمية المألوفة خارج
+            التدريب؟
+        </p>
+
+        <p>
+            مجموعة الاختبار فيها 4,701 محفزاً من العربية الفصحى الحديثة، مشتقة من
+            <bdi>Universal Dependencies Arabic-PADT</bdi> ومعالجة
+            <bdi>CAMeL Tools</bdi>. المهام هي <bdi>POS</bdi> والجنس والعدد.
+            الفكرة هنا قياس قابلية استرجاع خطية تحت شروط واضحة، مو ادعاءً مطلقاً
+            عن كفاءة العربية أو سلوك النموذج.
+        </p>
+
+        <h2>إيش اللي قسناه؟</h2>
+
+        <p>
+            المصفوفة عندنا تجمع 11 نموذجاً <bdi>decoder-only</bdi> مع ثلاثة شروط
+            للانقسام وأربع واجهات للتمثيل. كل تركيبة تستخدم خمس
+            <bdi>outer folds</bdi>. والمسبار نفسه ثابت:
+        </p>
+
+        <pre><code class="language-plaintext">StandardScaler + RidgeClassifier(alpha=1.0)</code></pre>
+
+        <p>
+            في كل <bdi>outer fold</bdi>، نختار الطبقة باستخدام بيانات التدريب
+            وتقسيم <bdi>development</bdi> مأخوذ من جزء التدريب الخارجي. بعدها
+            نعيد ملاءمة الطبقة المختارة على <bdi>train + development</bdi> ونقيسها
+            مرة واحدة على <bdi>test</bdi>. مقاييس الاختبار ما تدخل في اختيار الطبقة
+            ولا المعالجة ولا النموذج ولا قيمة <bdi>hyperparameter</bdi>. نعرض
+            <bdi>macro-F1</bdi> مع الدقة ومرجع الأغلبية المحسوب من تسميات التدريب
+            بس.
+        </p>
+
+        <p>كل انقسام يسألنا سؤالاً مختلفاً:</p>
+
+        <ul>
+            <li><strong><bdi>random instance</bdi></strong>: مرجع متفائل لو بنختبر التداخل بين أمثلة من مخزون معجمي مألوف؛</li>
+            <li><strong><bdi>lemma-heldout</bdi></strong>: انتقال بين مجموعات اللمات؛</li>
+            <li><strong><bdi>root-heldout</bdi></strong>: انتقال بين مجموعات الجذور، وهي قاعدة تجميع أوسع ومختلفة.</li>
+        </ul>
+
+        <p>
+            الانقسامات المجمّعة ما فيها تداخل في المفتاح المعني، بس هذا ما يعني
+            إنها شالت كل الارتباطات الدلالية أو الإملائية أو الصرفية أو المرتبطة
+            بمصدر النص أو بتقطيع الـ<bdi>tokenizer</bdi>.
+        </p>
+
+        <h2>العشوائي مرجع متفائل</h2>
+
+        <p>
+            المقارنة المختصرة عندنا فيها صف لكل نموذج ومهمة وواجهة: 132 صفاً
+            إجمالاً. والتعريفان هما:
+        </p>
+
+        <pre><code class="language-plaintext">delta_lemma = macro_f1_random - macro_f1_lemma_heldout
+delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
+
+        <p>
+            كل قيم <code>delta_lemma</code> الـ132 طلعت موجبة، وكل قيم
+            <code>delta_root</code> الـ132 طلعت موجبة. عبر المصفوفة، فرق العشوائي
+            ناقص <bdi>lemma-heldout</bdi> يمتد من <strong>+0.0127</strong> إلى
+            <strong>+0.2863</strong>، بمتوسط <strong>+0.1059</strong>.
+            وفرق العشوائي ناقص <bdi>root-heldout</bdi> يمتد من
+            <strong>+0.0255</strong> إلى <strong>+0.2796</strong>، بمتوسط
+            <strong>+0.1179</strong>.
+        </p>
+
+        <figure class="chart-wrap">
+            <img class="chart" src="/plots/lre_split_deltas.png"
+                 alt="متوسط فروق macro-F1 بين الانقسام العشوائي والانقسامات المجمّعة في 11 نموذجاً، مع أشرطة lemma-heldout وroot-heldout"
+                 loading="lazy" />
+            <figcaption>
+                متوسط فرق <bdi>macro-F1</bdi> بين العشوائي والانقسام المجمّع،
+                بعد المتوسط عبر المهام الثلاث وواجهات التمثيل الأربع. الأشرطة
+                تلخص متوسطات النماذج؛ أما نتيجة الإيجابية في كل الصفوف فتأتي من
+                جدول المقارنة ذي الـ132 صفاً.
+            </figcaption>
+        </figure>
+
+        <p>
+            الخلاصة: الانقسام العشوائي ينفع كمرجع للتداخل على مخزون معجمي مألوف،
+            مو كـ<bdi>baseline</bdi> عام نطرح منه عقوبة ثابتة. الفجوة تعتمد على
+            النموذج والمهمة وواجهة التمثيل ومفتاح التجميع. الاتجاه ثابت هنا، بس
+            مقدار الفجوة مو ثابت.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج</th>
+                    <th><bdi>random − lemma</bdi></th>
+                    <th><bdi>random − root</bdi></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>ALLaM-7B</bdi></td><td>+0.0637</td><td>+0.0816</td></tr>
+                <tr><td><bdi>Gemma-4-E2B</bdi></td><td>+0.1382</td><td>+0.1518</td></tr>
+                <tr><td><bdi>Jais-13B</bdi></td><td>+0.0711</td><td>+0.0918</td></tr>
+                <tr><td><bdi>Llama-3.1-8B</bdi></td><td>+0.0835</td><td>+0.0895</td></tr>
+                <tr><td><bdi>Llama-3.2-1B</bdi></td><td>+0.1881</td><td>+0.2054</td></tr>
+                <tr><td><bdi>Llama-3.2-3B</bdi></td><td>+0.1276</td><td>+0.1279</td></tr>
+                <tr><td><bdi>Mistral-7B</bdi></td><td>+0.0993</td><td>+0.1117</td></tr>
+                <tr><td><bdi>Phi-3-mini</bdi></td><td>+0.1036</td><td>+0.1314</td></tr>
+                <tr><td><bdi>Qwen2.5-1.5B</bdi></td><td>+0.1134</td><td>+0.1188</td></tr>
+                <tr><td><bdi>Qwen3-0.6B</bdi></td><td>+0.0977</td><td>+0.1118</td></tr>
+                <tr><td><bdi>Qwen3-8B</bdi></td><td>+0.0783</td><td>+0.0750</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            متوسطات النماذج هنا للتوجيه، مو عشان نرتب النماذج. المصفوفة تخلط بين
+            الهندسة و<bdi>tokenizer</bdi> وعدد المعاملات وخليط التدريب وحالة
+            <bdi>instruction tuning</bdi>؛ يعني ما هي دراسة تحجيم مضبوطة.
+            ومن اللافت إن فجوة <bdi>Qwen3-8B</bdi> مع اللمات أكبر شوي من فجوتها
+            مع الجذور، بينما أغلب الصفوف عكس ذلك.
+        </p>
+
+        <h2>الـprompt يغيّر الصورة</h2>
+
+        <p>هذا هو الـ<bdi>prompt</bdi> اللي فيه كل البيانات:</p>
+
+        <pre><code class="language-plaintext">Arabic morphology token probe.
+Surface: {surface_dediac}
+Token: {target}
+Lemma: {lemma}
+Root: {root}
+Pattern: {abstract_pattern}
+Predict the token morphology.</code></pre>
+
+        <p>وهذا الـ<bdi>prompt</bdi> من غير <bdi>metadata</bdi>، بعد حذف الحقول المعجمية الصريحة:</p>
+
+        <pre><code class="language-plaintext">Arabic morphology token probe.
+Surface: {surface_dediac}
+Token: {target}
+Predict the token morphology.</code></pre>
+
+        <p>
+            مقارنة <bdi>full-metadata prompt-final</bdi> مع
+            <bdi>target-final</bdi> مو مقارنة موقع وبس. الحالة النهائية
+            للـ<bdi>prompt</bdi> الكامل تقدر تستفيد من حقول <bdi>lemma</bdi>
+            و<bdi>root</bdi> و<bdi>pattern</bdi> اللي تجي بعد الهدف. أما
+            <bdi>target-final subtoken</bdi> فتؤخذ من بادئة سببية تنتهي عند آخر
+            توكن متداخل مع الهدف، فهذه الحقول اللاحقة ما تكون متاحة هناك.
+            <bdi>metadata-free prompt-final</bdi> يضيّق مشكلة توفر المعلومات،
+            لكنه يحتفظ بسياق نهاية الـ<bdi>prompt</bdi>.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>الحالة</th>
+                    <th><bdi>full metadata</bdi></th>
+                    <th><bdi>metadata-free</bdi></th>
+                    <th><bdi>target-final</bdi></th>
+                    <th><bdi>target-mean</bdi></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><bdi>Qwen3-0.6B · lemma-heldout POS</bdi></td>
+                    <td>0.8565</td><td>0.7855</td><td>0.8213</td><td>0.8116</td>
+                </tr>
+                <tr>
+                    <td><bdi>Jais-13B · lemma-heldout number</bdi></td>
+                    <td>0.7249</td><td>0.8272</td><td>—</td><td>—</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>
+            البيانات الصريحة مو دايم تفيد بنفس الاتجاه: مثال
+            <bdi>Qwen</bdi> يفضل الـ<bdi>prompt</bdi> الكامل، بينما مثال العدد
+            في <bdi>Jais</bdi> يعكس الترتيب. هذه مقارنات لصلاحية البناء
+            <bdi>construct validity</bdi> لأن الموقع وتوفر المعلومات يتغيران
+            مع بعض. نتيجة نهاية الـ<bdi>prompt</bdi> تصف تلك النهاية، مو حالة كلمة
+            الهدف تلقائياً.
+        </p>
+
+        <h2>التجميع جزء من اللي نقيسه</h2>
+
+        <p>
+            حفظنا كل حالة توكن متداخلة مع الهدف. الواجهتان المستهدفتان عمليتان
+            محليتان على نفس الـ<bdi>span</bdi>:
+        </p>
+
+        <ul>
+            <li><strong><bdi>target-final subtoken</bdi></strong>: حالة آخر توكن يتداخل مع الهدف؛</li>
+            <li><strong><bdi>target-mean span</bdi></strong>: المتوسط الحسابي لكل حالات التوكن المتداخلة.</li>
+        </ul>
+
+        <p>ومتوسط فجوات الانقسام عبر المصفوفة كلها يطلع كذا:</p>
+
+        <table>
+            <thead>
+                <tr><th>الواجهة</th><th><bdi>random − lemma</bdi></th><th><bdi>random − root</bdi></th></tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>target-final subtoken</bdi></td><td>+0.1141</td><td>+0.1179</td></tr>
+                <tr><td><bdi>target-mean span</bdi></td><td>+0.1222</td><td>+0.1337</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            التجميع يغيّر القيم المطلقة ومقدار الفجوة، بس كل مقارنات العشوائي
+            ناقص المجمّع الـ132 تظل موجبة. حفظ الـ<bdi>span</bdi> كاملاً هو اللي
+            خلّى هذا الفحص ممكناً من دون تمريرة جديدة على النموذج.
+        </p>
+
+        <h2>المحاذاة أول شيء</h2>
+
+        <p>
+            موقع الهدف ما نخمّنه من <code>[-1]</code> أو من ترتيب الصفوف، ولا نختاره
+            ببحث نصي ممكن يجيب تطابقاً بالصدفة. كل سجل لكل مثال فيه:
+        </p>
+
+        <ul>
+            <li>الـ<bdi>prompt</bdi> المرمّز والنص الهدف؛</li>
+            <li>امتدادي المحارف و<bdi>UTF-8 byte span</bdi>؛</li>
+            <li>معرّفات التوكن وقطع التوكن؛</li>
+            <li>فهارس توكنات الهدف وعددها؛</li>
+            <li>آخر توكن متداخل تم اختياره.</li>
+        </ul>
+
+        <p>
+            المحاذاة لازم تغطي الـ<bdi>span</bdi> كاملاً وبشكل متصل. كل حزم النماذج
+            والـ<bdi>prompt conditions</bdi> الـ22 فيها 4,701 مثال و4,701
+            محاذاة ناجحة. خط الأنابيب ما يدخل التحليل إلا بعد فحوصات الهوية
+            والترتيب والأشكال والقيم المنتهية.
+        </p>
+
+        <h2>نلتقط مرة ونحلّل محلياً</h2>
+
+        <p>
+            وقت الاستخراج نحفظ خرج التضمين، وحالة نهاية الـ<bdi>prompt</bdi> لكل
+            طبقة من طبقات المحوّل، وكل حالات توكنات <bdi>target span</bdi> لكل
+            طبقة. وما نحفظ تنشيطات التسلسل الكامل. عقد التحليل بعد الالتقاط هو:
+        </p>
+
+        <pre><code class="language-plaintext">weights_required = false</code></pre>
+
+        <p>
+            بهذه المصفوفات والبيانات الوصفية، تقدر فحوصات الانقسام وتحليلات
+            التجميع وإعادة تشغيل المجسات ومنحنيات الطبقات وفحوصات التجزئة وتحليل
+            الأخطاء تشتغل محلياً. استدلال النموذج هو الجزء المكلف؛ التحليلات
+            اللاحقة ما تحتاج تبقي مثيل سحابي شغال ولا تعيد تحميل الأوزان.
+        </p>
+
+        <h2>الضوابط فحص للـpipeline</h2>
+
+        <p>
+            ضوابط التسميات الملخبطة تغطي النموذجين الأساسيين
+            (<bdi>Qwen3-0.6B</bdi> و<bdi>Llama-3.2-1B</bdi>)، والواجهات الأربع،
+            والمهام الثلاث، والانقسامات الثلاثة، والخمس <bdi>folds</bdi>:
+            <strong>360 خلية</strong> إجمالاً. التسميات تتخلط بشكل مستقل داخل
+            التدريب والتطوير والاختبار، وبعدها نعيد تشغيل خط اختيار الطبقة كامل.
+            ولا تتجاوز أي خلية مرجع الأغلبية المحسوب من التدريب بس.
+        </p>
+
+        <p>
+            هذا فحص سلامة مفيد للـ<bdi>pipeline</bdi>: لما نشيل العلاقة بين
+            التسمية والبيانات، ما يطلع أداء مشابه. بس مو دليل على استخدام سببي
+            من النموذج. التسميات الملخبطة، مثل المسبار الحقيقي، ما تحول قياس
+            القابلية الخطية إلى تدخل.
+        </p>
+
+        <h2>إيش لازم نذكر مع النتيجة؟</h2>
+
+        <p>
+            عشان أي أحد يقدر يعيد بناء النتيجة، لازم نعطي تفاصيلها. على الأقل
+            سمِّ:
+        </p>
+
+        <ul>
+            <li>قاعدة التجميع المعجمي؛</li>
+            <li>معلومات الـ<bdi>prompt</bdi> المتاحة عند موقع الاستخراج؛</li>
+            <li>محاذاة الهدف مع التوكن؛</li>
+            <li>موقع التمثيل؛</li>
+            <li>قاعدة تجميع القطع؛</li>
+            <li>مقدّر المسبار؛</li>
+            <li>طريقة اختيار الطبقة؛</li>
+            <li>حد التطوير/الاختبار؛</li>
+            <li>المقياس؛</li>
+            <li>مرجع الأغلبية.</li>
+        </ul>
+
+        <p>الصياغة الأدق تكون كذا:</p>
+
+        <pre><code class="language-plaintext">under this prompt, lexical split, aligned token span,
+pooling rule, selected layer, and linear estimator,
+feature X is recoverable at score Y.</code></pre>
+
+        <p>
+            جملة «النموذج X يشفّر الصرف» أوسع من الدليل الموجود. الدراسة تثبت
+            قابلية استرجاع خطية مشروطة. الاستخدام السببي وسلوك التوليد والكفاءة
+            اللغوية الأوسع تحتاج قياسات ثانية.
+        </p>
+
+        <h2>الملفات والحالة</h2>
+
+        <p>
+            الكود والبيانات الوصفية وجداول النتائج وتقارير التحقق وملفات قابلية
+            إعادة الإنتاج تلقاها في
+            <a href="https://github.com/voidwest/arabic-morphology-probing-lre">مستودع arabic-morphology-probing-lre</a>.
+            اللقطات المجمّدة تحفظ الدليل المطلوب للتحليلات بعد الاستخراج؛ أما
+            أوزان النماذج فمو ضمن حزمة الملفات العامة.
+        </p>
+
+        <p>
+            الورقة حالياً في مرحلة التعيين التحريري في مجلة
+            <em>Language Resources and Evaluation</em>.
+        </p>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
