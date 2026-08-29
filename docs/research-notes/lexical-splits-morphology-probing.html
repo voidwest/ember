@@ -82,10 +82,9 @@
         <p>
             the testbed is 4,701 Modern Standard Arabic stimuli derived from
             Universal Dependencies Arabic-PADT and CAMeL Tools processing. the
-            tasks are part of speech, gender, and number. the analysis is
-            deliberately a measurement study: linear recoverability under named
-            conditions, not an unrestricted claim about Arabic competence or
-            model behavior.
+            tasks are part of speech, gender, and number. all results below are
+            about linear recoverability under named conditions; broader Arabic
+            competence and model behavior are separate questions.
         </p>
 
         <h2>the measurement unit</h2>
@@ -109,19 +108,19 @@
         </p>
 
         <p>
-            the splits ask different questions:
+            the three split conditions put different lexical units on the other
+            side of the boundary: <strong>random instance</strong> is an optimistic
+            reference for interpolation among a familiar lexical inventory;
+            <strong>lemma-heldout</strong> tests transfer across lemma groups; and
+            <strong>root-heldout</strong> tests transfer across root groups, a broader
+            and different grouping key.
         </p>
 
-        <ul>
-            <li><strong>random instance</strong>: an optimistic reference for interpolation among a familiar lexical inventory;</li>
-            <li><strong>lemma-heldout</strong>: transfer across lemma groups;</li>
-            <li><strong>root-heldout</strong>: transfer across root groups, a broader and different grouping key.</li>
-        </ul>
-
         <p>
-            the grouped partitions have zero overlap for their applicable key,
-            but they do not remove every semantic, orthographic, morphological,
-            source-document, or tokenizer correlation.
+            direct overlap checks find no shared applicable key across the
+            grouped partitions. Semantic, orthographic, morphological,
+            source-document, and tokenizer correlations can still travel across
+            those boundaries.
         </p>
 
         <h2>random is an optimistic reference</h2>
@@ -156,11 +155,11 @@ delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
         </figure>
 
         <p>
-            random splitting is therefore useful as a reference for instance-level
-            interpolation, not as a universal baseline to be corrected by
-            one fixed penalty. the gap depends on model, task, representation
-            interface, and grouping key. the direction is stable here; the
-            magnitude is not.
+            taken as a reference, random splitting measures interpolation among
+            instances from a familiar lexical inventory. the grouped runs ask
+            transfer questions, and their effect sizes vary by model, task,
+            representation interface, and grouping key. the table below maps that
+            heterogeneity rather than collapsing it into one correction.
         </p>
 
         <table>
@@ -187,11 +186,11 @@ delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
         </table>
 
         <p>
-            the model means are orientation, not a ranking. the matrix mixes
+            these means help map heterogeneity rather than rank models.
             architecture, tokenizer, parameter count, training mixture, and
-            instruction status. it is not a controlled scaling study. notably,
-            Qwen3-8B has a slightly larger lemma gap than root gap, while most
-            rows go the other way.
+            instruction status are all mixed in the matrix, so model ordering
+            cannot identify a size or family effect. Qwen3-8B has a slightly
+            larger lemma gap than root gap, while most rows go the other way.
         </p>
 
         <h2>prompt context changes the interface</h2>
@@ -218,13 +217,13 @@ Token: {target}
 Predict the token morphology.</code></pre>
 
         <p>
-            full-metadata prompt-final and target-final are not a pure position
-            comparison. the final state of the complete prompt can attend to
-            later lemma, root, and pattern fields. target-final subtoken is
-            taken from a causal prefix ending at the selected final
-            target-overlapping token, so those later fields are unavailable at
-            that location. metadata-free prompt-final narrows the information-
-            availability confound, while retaining a prompt-final context.
+            full-metadata prompt-final and target-final differ along two axes.
+            the final state of the complete prompt can attend to later lemma,
+            root, and pattern fields. target-final subtoken comes from a causal
+            prefix ending at the selected final target-overlapping token, where
+            those later fields have not appeared. metadata-free prompt-final
+            narrows the information-availability difference while retaining a
+            prompt-final context.
         </p>
 
         <table>
@@ -256,12 +255,11 @@ Predict the token morphology.</code></pre>
         </table>
 
         <p>
-            explicit metadata is not uniformly beneficial: the Qwen example
-            favors the full prompt, while the Jais number example reverses that
-            ordering. these are construct-validity comparisons, because both
-            position and available information vary. a prompt-final score is a
-            statement about that prompt endpoint, not automatically about the
-            target word state.
+            the examples go in opposite directions. Qwen favors the full prompt,
+            while the Jais number example favors the metadata-free version. the
+            ordering changes because position and available information move
+            together, so these rows are construct-validity comparisons. a
+            prompt-final score belongs to that endpoint and its context.
         </p>
 
         <h2>pooling is part of the construct</h2>
@@ -291,18 +289,19 @@ Predict the token morphology.</code></pre>
         </table>
 
         <p>
-            pooling changes absolute scores and gap magnitude, but every one of
-            the 132 random-minus-grouped comparisons remains positive. retaining
-            the complete span is what makes this check possible without another
-            model forward pass.
+            pooling changes absolute scores and gap size while preserving the
+            all-positive split result in this matrix: every one of the 132
+            random-minus-grouped comparisons remains positive. retaining the
+            complete span makes the check available without another model forward
+            pass.
         </p>
 
         <h2>alignment before probing</h2>
 
         <p>
-            target position is never inferred from <code>[-1]</code>, row order,
-            or a text search that happens to match. each per-example record
-            includes:
+            target position comes from validated offsets rather than a fixed
+            <code>[-1]</code> index, row order, or an accidental text match. each
+            per-example record includes:
         </p>
 
         <ul>
@@ -325,8 +324,8 @@ Predict the token morphology.</code></pre>
         <p>
             extraction stores the embedding output, the prompt-final state for
             every transformer layer, and all target-span token states for every
-            transformer layer. it does not retain full-sequence activations.
-            the post-capture analysis contract is effectively:
+            transformer layer. full-sequence activations are omitted. the
+            post-capture analysis contract is effectively:
         </p>
 
         <pre><code class="language-plaintext">weights_required = false</code></pre>
@@ -351,10 +350,11 @@ Predict the token morphology.</code></pre>
         </p>
 
         <p>
-            this is a useful sanity check that removing the label relationship
-            does not create comparable performance. it is not evidence of causal
-            model use. shuffled labels, like the real-label probe, do not turn a
-            linear recoverability measurement into an intervention.
+            the control checks whether removing the label relationship still
+            produces comparable performance. its scope ends there: causal use of
+            the real-label signal would require intervention evidence. shuffled
+            labels and the real-label probe are both linear recoverability
+            measurements.
         </p>
 
         <h2>the reportable unit</h2>
@@ -386,10 +386,9 @@ pooling rule, selected layer, and linear estimator,
 feature X is recoverable at score Y.</code></pre>
 
         <p>
-            “model X encodes morphology” is too unrestricted for this evidence.
-            the study establishes conditional linear recoverability. causal
-            use, generation behavior, and broader linguistic competence require
-            separate measurements.
+            that wording keeps the claim tied to the probe interface. causal use,
+            generation behavior, and broader linguistic competence are separate
+            measurements.
         </p>
 
         <h2>artifacts and status</h2>
