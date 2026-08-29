@@ -186,11 +186,11 @@ delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
         </table>
 
         <p>
-            these means help map heterogeneity rather than rank models.
-            architecture, tokenizer, parameter count, training mixture, and
-            instruction status are all mixed in the matrix, so model ordering
-            cannot identify a size or family effect. Qwen3-8B has a slightly
-            larger lemma gap than root gap, while most rows go the other way.
+            these means map heterogeneity across the matrix. architecture,
+            tokenizer, parameter count, training mixture, and instruction status
+            all vary together, so the table cannot isolate a size or family
+            effect. Qwen3-8B has a slightly larger lemma gap than root gap,
+            while most rows go the other way.
         </p>
 
         <h2>prompt context changes the interface</h2>
@@ -259,20 +259,19 @@ Predict the token morphology.</code></pre>
             while the Jais number example favors the metadata-free version. the
             ordering changes because position and available information move
             together, so these rows are construct-validity comparisons. a
-            prompt-final score belongs to that endpoint and its context.
+            prompt-final score belongs to that endpoint and its context; the
+            target-word question uses a different interface.
         </p>
 
         <h2>pooling is part of the construct</h2>
 
         <p>
-            every target-overlapping token state is archived. the two target
-            interfaces are local operations on that same span:
+            every target-overlapping token state is archived.
+            <strong>target-final subtoken</strong> uses the state of the final
+            token overlapping the target; <strong>target-mean span</strong> takes
+            the arithmetic mean over every overlapping token state. both are
+            local operations on the same span.
         </p>
-
-        <ul>
-            <li><strong>target-final subtoken</strong>: the state of the final token overlapping the target;</li>
-            <li><strong>target-mean span</strong>: the arithmetic mean over every overlapping token state.</li>
-        </ul>
 
         <p>
             averaged over the full matrix, the split gaps are:
@@ -289,11 +288,9 @@ Predict the token morphology.</code></pre>
         </table>
 
         <p>
-            pooling changes absolute scores and gap size while preserving the
-            all-positive split result in this matrix: every one of the 132
-            random-minus-grouped comparisons remains positive. retaining the
-            complete span makes the check available without another model forward
-            pass.
+            pooling changes absolute scores and gap size. in this matrix all 132
+            random-minus-grouped comparisons stay positive, and complete-span
+            storage makes the check available without another model forward pass.
         </p>
 
         <h2>alignment before probing</h2>
@@ -301,16 +298,10 @@ Predict the token morphology.</code></pre>
         <p>
             target position comes from validated offsets rather than a fixed
             <code>[-1]</code> index, row order, or an accidental text match. each
-            per-example record includes:
+            per-example record carries the rendered prompt and target text,
+            character and UTF-8 byte spans, token IDs and token pieces, target
+            token indices and count, and the selected final overlapping token.
         </p>
-
-        <ul>
-            <li>the rendered prompt and target text;</li>
-            <li>character and UTF-8 byte spans;</li>
-            <li>token IDs and token pieces;</li>
-            <li>target token indices and target token count;</li>
-            <li>the selected final overlapping token.</li>
-        </ul>
 
         <p>
             alignment requires contiguous complete span coverage. all 22
@@ -361,21 +352,12 @@ Predict the token morphology.</code></pre>
 
         <p>
             a result should be stated with enough mechanics that its estimand is
-            recoverable. at minimum, name the:
+            recoverable. the record should name the lexical grouping rule, prompt
+            information available at the extraction site, target-to-token
+            alignment, representation position, subtoken pooling rule, probe
+            estimator, layer-selection procedure, development/test boundary,
+            metric, and majority reference.
         </p>
-
-        <ul>
-            <li>lexical grouping rule;</li>
-            <li>prompt information available at the extraction site;</li>
-            <li>target-to-token alignment;</li>
-            <li>representation position;</li>
-            <li>subtoken pooling rule;</li>
-            <li>probe estimator;</li>
-            <li>layer-selection procedure;</li>
-            <li>development/test boundary;</li>
-            <li>metric;</li>
-            <li>majority reference.</li>
-        </ul>
 
         <p>
             the precise claim is therefore of this form:
