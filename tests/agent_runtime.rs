@@ -79,7 +79,6 @@ impl Tool for CancellingSlowTool {
         args: &ember::agent::ValidatedArguments,
         ctx: &ToolContext<'_>,
     ) -> ToolOutcome {
-        std::thread::sleep(Duration::from_millis(20));
         self.cancel.cancel();
         SlowTool::new(20).execute(args, ctx)
     }
