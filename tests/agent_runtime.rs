@@ -63,6 +63,28 @@ fn generic_call(tool: &str, args: &str) -> String {
     format!(r#"{{"type":"tool_call","name":"{tool}","arguments":{args}}}"#)
 }
 
+/// SlowTool wrapper that cancels from inside the invocation, avoiding a
+/// scheduler-dependent test race while proving cancellation during execute.
+struct CancellingSlowTool {
+    cancel: CancelFlag,
+}
+
+impl Tool for CancellingSlowTool {
+    fn schema(&self) -> ToolSchema {
+        SlowTool::new(20).schema()
+    }
+
+    fn execute(
+        &self,
+        args: &ember::agent::ValidatedArguments,
+        ctx: &ToolContext<'_>,
+    ) -> ToolOutcome {
+        std::thread::sleep(Duration::from_millis(20));
+        self.cancel.cancel();
+        SlowTool::new(20).execute(args, ctx)
+    }
+}
+
 /// A deliberately panicking tool (panic containment proof).
 struct PanicProbe;
 
@@ -444,17 +466,14 @@ fn cancellation_during_tool_execution_keeps_side_effect_visible_and_session_clea
         ScriptedTurn::output(generic_call("slow", r#"{"milliseconds":400}"#)),
         ScriptedTurn::output("unreached"),
     ]);
+    let control = CancelFlag::new();
     let registry = ToolRegistry::builder()
-        .register(Arc::new(SlowTool::new(20)))
+        .register(Arc::new(CancellingSlowTool {
+            cancel: control.clone(),
+        }))
         .unwrap()
         .build()
         .unwrap();
-    let control = CancelFlag::new();
-    let canceller = control.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(60));
-        canceller.cancel();
-    });
     let (summary, events) = {
         let mut session = AgentSession::new(
             &mut engine,
