@@ -105,7 +105,7 @@ pub const MAX_IMAGE_DIM: u32 = 8192;
 /// Per-image decoder allocation budget. The `image` crate's own default is
 /// 512 MiB and is *non-strict* for some decoders; we set an explicit
 /// budget here and additionally reject anything above it. After decode,
-/// [`rgb8_to_tensor`] multiplies this by four (u8 bitmap -> f32 tensor),
+/// `rgb8_to_tensor` multiplies this by four (u8 bitmap -> f32 tensor),
 /// so an admission cap here is what keeps a decompression bomb from
 /// turning into a multi-GiB f32 allocation on a 16 GB host.
 pub const MAX_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
