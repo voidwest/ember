@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="Jais 1 → Jais 2: What Changed in Arabic Morphology Probing?" />
+        <meta property="og:description" content="A frozen-run comparison of Jais-13B and JAIS-2-8B-Chat on Arabic morphology probing across lexical splits and representation interfaces." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/jais-1-vs-jais-2-morphology-probing.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>jais 1 → jais 2: what changed in arabic morphology probing? · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+                <a href="/cv/">cv</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>Jais 1 → Jais 2: What Changed in Arabic Morphology Probing?</h1>
+
+        <div class="meta">
+            a frozen-run comparison of Arabic morphology representations<br>
+            mohammed al-thobaiti · 2026-08-30<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag model">Jais</span>
+        </div>
+
+        <p>
+            Jais 2 is not simply a uniformly better version of Jais 1 in this
+            probe. it is much better on number, roughly similar on gender and
+            POS in the main full-metadata interface, and changes more when the explicit lexical metadata is removed. the useful comparison is not
+            a single leaderboard number; it is the pattern across tasks, lexical
+            splits, and representation interfaces.
+        </p>
+
+        <p>
+            both runs use the same 4,701-example Modern Standard Arabic testbed,
+            derived from Universal Dependencies Arabic-PADT and processed with
+            CAMeL Tools. they use BF16 hidden-state captures, the same four
+            feature interfaces, three tasks, random/lemma-heldout/root-heldout
+            splits, five outer folds, and the same fixed probe:
+        </p>
+
+        <pre><code class="language-plaintext">StandardScaler + RidgeClassifier(alpha=1.0)</code></pre>
+
+        <p>
+            these are two separately frozen experiments, not a controlled
+            intervention on one checkpoint. model revision, architecture,
+            tokenizer, parameter count, and base-versus-chat training status all
+            change together. the deltas below describe the two evaluated model
+            configurations; they do not isolate a causal “Jais 2 effect.”
+        </p>
+
+        <h2>the two model configurations</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>checkpoint role</th>
+                    <th>parameters</th>
+                    <th>hidden size</th>
+                    <th>layers</th>
+                    <th>context</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Jais-13B</strong></td>
+                    <td>base</td>
+                    <td>13B</td>
+                    <td>5,120</td>
+                    <td>40</td>
+                    <td>2,048</td>
+                </tr>
+                <tr>
+                    <td><strong>JAIS-2-8B-Chat</strong></td>
+                    <td>chat</td>
+                    <td>8B</td>
+                    <td>3,328</td>
+                    <td>32</td>
+                    <td>8,192</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>
+            Jais-13B uses <code>inceptionai/Jais-13B</code> at revision prefix
+            <code>0d5eb87f</code>; JAIS-2-8B-Chat uses
+            <code>inception42/Jais-2-8B-Chat</code> at revision prefix
+            <code>da0e1639</code>. both were requested and saved as BF16. the
+            tokenizer revisions differ too: Jais 1 has 5,149 target-span tokens
+            across the examples, while Jais 2 has 5,118. every example aligned
+            successfully in both runs. absolute layer numbers therefore should
+            not be compared as though the networks had the same depth.
+        </p>
+
+        <h2>the headline result is task-dependent</h2>
+
+        <p>
+            the table averages each task over the four interfaces and the two
+            grouped test splits. each underlying cell is a mean macro-F1 across five outer folds; the
+            displayed task values are unweighted averages over four interfaces
+            and two grouped splits. the delta is Jais 2 minus Jais 1. accuracy is included because
+            number is class-imbalanced and its accuracy can hide a change in
+            minority-class recovery.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>task</th>
+                    <th>Jais 1 accuracy</th>
+                    <th>Jais 2 accuracy</th>
+                    <th>Δ accuracy</th>
+                    <th>Jais 1 macro-F1</th>
+                    <th>Jais 2 macro-F1</th>
+                    <th>Δ macro-F1</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>gender</td><td>0.9315</td><td>0.9289</td><td>−0.0025</td><td>0.9259</td><td>0.9251</td><td>−0.0008</td></tr>
+                <tr><td>number</td><td>0.9362</td><td>0.9773</td><td><strong>+0.0412</strong></td><td>0.7177</td><td>0.9245</td><td><strong>+0.2068</strong></td></tr>
+                <tr><td>POS</td><td>0.8818</td><td>0.8543</td><td>−0.0276</td><td>0.8612</td><td>0.8358</td><td>−0.0254</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            number is the clear separation. Jais 1's full held-out number
+            macro-F1 is low despite 0.9362 accuracy, a sign that the majority
+            class is doing much of the work. Jais 2 raises both metrics, and its
+            macro-F1 gain is much larger than its accuracy gain. gender is nearly
+            unchanged in this aggregate, while POS declines modestly. those
+            summaries conceal an important interface effect.
+        </p>
+
+        <h2>metadata changes the comparison</h2>
+
+        <p>
+            <code>full_prompt_final</code> reads the final state of a prompt that
+            contains surface, target, lemma, root, and pattern. the fields after
+            the target are available at that endpoint. <code>metadata_free_prompt_final</code>
+            removes the explicit lexical fields but remains a prompt-final
+            representation. the following table uses only the two grouped splits:
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>task</th>
+                    <th>full metadata: J1 → J2</th>
+                    <th>full Δ</th>
+                    <th>metadata-free: J1 → J2</th>
+                    <th>metadata-free Δ</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>gender</td><td>0.9259 → 0.9251</td><td>−0.0008</td><td>0.9349 → 0.8580</td><td>−0.0768</td></tr>
+                <tr><td>number</td><td>0.7177 → 0.9245</td><td><strong>+0.2068</strong></td><td>0.8023 → 0.8647</td><td>+0.0624</td></tr>
+                <tr><td>POS</td><td>0.8612 → 0.8358</td><td>−0.0254</td><td>0.8816 → 0.8408</td><td>−0.0408</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            the striking result is that the Jais 2 number gain survives without
+            metadata, but is smaller there. gender loses about 0.077 macro-F1 in
+            the metadata-free interface even though it is unchanged with the
+            full prompt. this is why “Jais 2 is better at morphology” is too
+            broad: the answer depends on which information is present at the
+            extraction endpoint.
+        </p>
+
+        <h2>where the representation is read also matters</h2>
+
+        <p>
+            the two target-local interfaces read the final token overlapping the
+            target or the mean of every target-overlapping token state. averaged
+            over tasks and grouped splits, their macro-F1 comparison is:
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>interface</th>
+                    <th>Jais 1</th>
+                    <th>Jais 2</th>
+                    <th>Δ</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>full prompt-final</td><td>0.8349</td><td>0.8951</td><td><strong>+0.0602</strong></td></tr>
+                <tr><td>metadata-free prompt-final</td><td>0.8729</td><td>0.8545</td><td>−0.0184</td></tr>
+                <tr><td>target-final subtoken</td><td>0.8387</td><td>0.9006</td><td><strong>+0.0619</strong></td></tr>
+                <tr><td>target-mean span</td><td>0.8421</td><td>0.8876</td><td><strong>+0.0455</strong></td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            Jais 2 is strongest on the target-final interface in this aggregate,
+            narrowly ahead of full prompt-final. Jais 1's best aggregate here is
+            metadata-free prompt-final. that reversal is not evidence that one
+            pooling rule is universally correct; it shows that the probe's
+            estimand includes where the state is read, what the causal prefix
+            contains, and how a multi-token span is pooled.
+        </p>
+
+        <h2>held-out transfer is still not random interpolation</h2>
+
+        <p>
+            for the full-metadata interface, random, lemma-heldout, and
+            root-heldout macro-F1 means across the three tasks are:
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>model</th>
+                    <th>random</th>
+                    <th>lemma-heldout</th>
+                    <th>root-heldout</th>
+                    <th>random − lemma</th>
+                    <th>random − root</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>Jais-13B</td><td>0.9062</td><td>0.8457</td><td>0.8242</td><td>+0.0605</td><td>+0.0819</td></tr>
+                <tr><td>JAIS-2-8B-Chat</td><td>0.9650</td><td>0.8997</td><td>0.8906</td><td>+0.0653</td><td>+0.0744</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            both models lose performance when familiar lemma or root groups are
+            kept out of training. Jais 2's number result makes its grouped scores
+            much higher, but the lexical gap does not disappear. random splitting
+            remains an optimistic interpolation reference, not a measure of
+            transfer to unseen lexical groups.
+        </p>
+
+        <h2>controls and scope</h2>
+
+        <p>
+            each run selected layers on development data only, refit on
+            train-plus-development, and evaluated test once per outer fold. all
+            4,701 examples aligned successfully for both models. the Jais 2
+            archive contains 180 shuffled-label cells; none exceeds its
+            train-only majority baseline. the larger Jais 1 archive contains 360
+            shuffled cells for its two designated primary models (Qwen3-0.6B and
+            Llama-3.2-1B), not for Jais-13B itself. these controls check the
+            pipeline; they are not a causal test of model behavior.
+        </p>
+
+        <p>
+            the result is therefore precise but narrow: under this prompt,
+            lexical split, alignment rule, target interface, pooling rule,
+            selected layer, and linear estimator, Jais 2 makes number more
+            linearly recoverable than Jais 1 in these frozen captures. that does
+            not establish better Arabic generation, universal Arabic competence,
+            or that either model uses the decoded feature during generation.
+        </p>
+
+        <h2>frozen sources</h2>
+
+        <p>
+            the comparison is computed from the immutable result summaries, not
+            from manuscript tables. the two source records are:
+        </p>
+
+        <pre><code class="language-plaintext">freezes/bf16-analysis-20260826-v2/snapshot/analysis/results/summary.csv
+freezes/bf16-analysis-jais2-20260829-v1/snapshot/analysis/results/summary.csv</code></pre>
+
+        <p>
+            their analysis decisions record the five-fold, development-only
+            protocol and the weight-free post-capture contract. the corresponding
+            frozen model metadata and bundle manifests preserve the checkpoint
+            revisions, tokenizer revisions, successful alignments, and BF16
+            representation semantics. both freezes are evidence records; neither
+            should be regenerated or overwritten.
+        </p>
+
+        <p>
+            the broader study is documented in the
+            <a href="https://github.com/voidwest/arabic-morphology-probing-lre">arabic-morphology-probing-lre repository</a>.
+            the paper, “Lexical Split Design and Representation-Interface Validity
+            in Decoder-Only Morphology Probing: An Arabic Evaluation Study,” is
+            currently under editorial assignment at <em>Language Resources and
+            Evaluation</em>.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta property="og:title" content="من Jais 1 إلى Jais 2: وش تغيّر في اختبار الصرف العربي؟" />
+        <meta property="og:description" content="مقارنة بين تشغيلين مجمّدين لـ Jais-13B وJAIS-2-8B-Chat في اختبار الصرف العربي عبر التقسيمات المعجمية وواجهات التمثيل." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://voidwest.dev/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html" />
+        <meta property="og:site_name" content="voidwest" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <title>من jais 1 إلى jais 2: وش تغيّر في اختبار الصرف العربي؟ · research notes</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
+        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <!-- docs:og-image end -->
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
+                <a href="/tools/index.ar.html">tools</a>
+                <a href="/terms/index.ar.html">terms</a>
+                <a href="/cv/index.ar.html">cv</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/jais-1-vs-jais-2-morphology-probing.html">en</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+        <div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
+        </div>
+
+        <h1>من Jais 1 إلى Jais 2: وش تغيّر في اختبار الصرف العربي؟</h1>
+
+        <div class="meta">
+            مقارنة بين تشغيلين مجمّدين لتمثيلات الصرف العربي<br>
+            محمد الثبيتي · 2026-08-30<br>
+            <span class="tag key">Arabic NLP</span>
+            <span class="tag key">morphology</span>
+            <span class="tag key">probing</span>
+            <span class="tag key">evaluation</span>
+            <span class="tag key">reproducibility</span>
+            <span class="tag model">Jais</span>
+        </div>
+
+        <p>
+            Jais 2 مو نسخة أفضل من Jais 1 في كل شيء في هذا الاختبار. تحسّن
+            بوضوح في العدد، وكان قريباً من Jais 1 في الجنس و<bdi>POS</bdi> مع
+            الواجهة الأساسية اللي فيها كل البيانات، وتتغيّر نتيجته أكثر لما نشيل البيانات المعجمية الصريحة. المقارنة المفيدة مو رقم واحد في
+            <bdi>leaderboard</bdi>؛ المهم هو النمط عبر المهام والتقسيمات المعجمية
+            وواجهات التمثيل.
+        </p>
+
+        <p>
+            التشغيلان يستخدمان نفس مجموعة الاختبار المكوّنة من 4,701 مثالاً من
+            العربية الفصحى الحديثة، مشتقة من <bdi>Universal Dependencies
+            Arabic-PADT</bdi> ومعالجة بـ<bdi>CAMeL Tools</bdi>. كلاهما استخدم
+            التقاط الحالات المخفية بـ<bdi>BF16</bdi>، ونفس واجهات الميزات الأربع،
+            وثلاث مهام، وتقسيمات <bdi>random</bdi> و<bdi>lemma-heldout</bdi> و<bdi>root-heldout</bdi>،
+            وخمس <bdi>outer folds</bdi>، ونفس الاختبار الخطي الثابت:
+        </p>
+
+        <pre><code class="language-plaintext">StandardScaler + RidgeClassifier(alpha=1.0)</code></pre>
+
+        <p>
+            هذان تشغيلان مجمّدان بشكل منفصل، مو تدخلاً مضبوطاً على نفس الـ<bdi>checkpoint</bdi>.
+            الإصدار والهندسة والـ<bdi>tokenizer</bdi> وعدد المعاملات وحالة التدريب
+            <bdi>base</bdi> مقابل <bdi>chat</bdi> كلها تغيّرت مع بعض. الفروق تحت
+            تصف إعدادَي النموذج المقيمين؛ ما تعزل أثر “Jais 2” بشكل سببي.
+        </p>
+
+        <h2>إعدادا النموذج</h2>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج |</th>
+                    <th>دور الـ<bdi>checkpoint</bdi> |</th>
+                    <th>المعاملات |</th>
+                    <th>حجم الحالة |</th>
+                    <th>الطبقات |</th>
+                    <th>السياق</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong><bdi>Jais-13B</bdi></strong></td>
+                    <td><bdi>base</bdi></td>
+                    <td><bdi>13B</bdi></td>
+                    <td>5,120</td>
+                    <td>40</td>
+                    <td>2,048</td>
+                </tr>
+                <tr>
+                    <td><strong><bdi>JAIS-2-8B-Chat</bdi></strong></td>
+                    <td><bdi>chat</bdi></td>
+                    <td><bdi>8B</bdi></td>
+                    <td>3,328</td>
+                    <td>32</td>
+                    <td>8,192</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>
+            <bdi>Jais-13B</bdi> يستخدم <code>inceptionai/Jais-13B</code> عند
+            بادئة الإصدار <code>0d5eb87f</code>؛ و<bdi>JAIS-2-8B-Chat</bdi> يستخدم
+            <code>inception42/Jais-2-8B-Chat</code> عند بادئة الإصدار
+            <code>da0e1639</code>. كلاهما طُلب وحُفظ بـ<bdi>BF16</bdi>. حتى
+            إصدارات الـ<bdi>tokenizer</bdi> مختلفة: Jais 1 عنده 5,149 توكن في
+            <bdi>target span</bdi> عبر الأمثلة، وJais 2 عنده 5,118. كل مثال
+            اتّحدت محاذاته بنجاح في التشغيلين. لذلك ما يصح نقارن أرقام الطبقات
+            المطلقة كأن عمق الشبكتين واحد.
+        </p>
+
+        <h2>النتيجة الرئيسية تختلف حسب المهمة</h2>
+
+        <p>
+            الجدول يحسب متوسط كل مهمة عبر واجهات التمثيل الأربع والتقسيمين
+            المجمّعين. كل خلية أصلية هي متوسط <bdi>macro-F1</bdi> عبر خمس
+            <bdi>outer folds</bdi>؛ والقيم المعروضة متوسط غير موزون عبر أربع
+            واجهات وتقسيمين مجمّعين. والفرق هو Jais 2 ناقص Jais 1. أضفنا الدقة
+            لأن العدد غير متوازن طبقياً، وقد تخفي الدقة تغيراً في استرجاع الفئات
+            الأقل.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>المهمة |</th>
+                    <th>دقة Jais 1 |</th>
+                    <th>دقة Jais 2 |</th>
+                    <th>Δ الدقة |</th>
+                    <th><bdi>macro-F1</bdi> Jais 1 |</th>
+                    <th><bdi>macro-F1</bdi> Jais 2 |</th>
+                    <th>Δ <bdi>macro-F1</bdi></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>الجنس</td><td>0.9315</td><td>0.9289</td><td>−0.0025</td><td>0.9259</td><td>0.9251</td><td>−0.0008</td></tr>
+                <tr><td>العدد</td><td>0.9362</td><td>0.9773</td><td><strong>+0.0412</strong></td><td>0.7177</td><td>0.9245</td><td><strong>+0.2068</strong></td></tr>
+                <tr><td><bdi>POS</bdi></td><td>0.8818</td><td>0.8543</td><td>−0.0276</td><td>0.8612</td><td>0.8358</td><td>−0.0254</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            العدد هو الفرق الواضح. <bdi>macro-F1</bdi> للعدد عند Jais 1 في
+            الاختبار المجمّع منخفض رغم دقة 0.9362، وهذا يوحي أن فئة الأغلبية
+            تسوي جزءاً كبيراً من الشغل. Jais 2 رفع المقياسين، وزيادته في
+            <bdi>macro-F1</bdi> أكبر بكثير من زيادته في الدقة. الجنس تقريباً ما
+            تغيّر في هذا المتوسط، بينما <bdi>POS</bdi> نزل بشكل متوسط. لكن هذه
+            الخلاصة تخفي أثر واجهة التمثيل.
+        </p>
+
+        <h2>الـmetadata يغيّر المقارنة</h2>
+
+        <p>
+            <code>full_prompt_final</code> يقرأ الحالة النهائية لـ<bdi>prompt</bdi>
+            يحتوي على السطح والهدف واللّمة والجذر والوزن. الحقول اللي بعد الهدف
+            متاحة عند هذه النهاية. أما <code>metadata_free_prompt_final</code>
+            فيحذف الحقول المعجمية الصريحة، لكنه يظل تمثيلاً لنهاية الـ<bdi>prompt</bdi>.
+            الجدول التالي يستخدم التقسيمين المجمّعين فقط:
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>المهمة |</th>
+                    <th>كل البيانات: <bdi>Jais 1 → Jais 2</bdi> |</th>
+                    <th>الفرق |</th>
+                    <th>بدون <bdi>metadata</bdi>: <bdi>Jais 1 → Jais 2</bdi> |</th>
+                    <th>الفرق</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td>الجنس</td><td><bdi>0.9259 → 0.9251</bdi></td><td>−0.0008</td><td><bdi>0.9349 → 0.8580</bdi></td><td>−0.0768</td></tr>
+                <tr><td>العدد</td><td><bdi>0.7177 → 0.9245</bdi></td><td><strong>+0.2068</strong></td><td><bdi>0.8023 → 0.8647</bdi></td><td>+0.0624</td></tr>
+                <tr><td><bdi>POS</bdi></td><td><bdi>0.8612 → 0.8358</bdi></td><td>−0.0254</td><td><bdi>0.8816 → 0.8408</bdi></td><td>−0.0408</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            اللافت أن مكسب Jais 2 في العدد يبقى حتى بدون الـ<bdi>metadata</bdi>،
+            لكنه يصير أصغر. الجنس يخسر تقريباً 0.077 في <bdi>macro-F1</bdi>
+            بالواجهة الخالية من البيانات، مع أنه ما تغيّر مع الـ<bdi>prompt</bdi>
+            الكامل. عشان كذا عبارة “Jais 2 أفضل في الصرف” واسعة زيادة: النتيجة
+            تعتمد على المعلومات الموجودة عند نقطة استخراج الحالة.
+        </p>
+
+        <h2>مكان قراءة التمثيل يفرق أيضاً</h2>
+
+        <p>
+            الواجهتان المحليتان للهدف تقرآن حالة آخر توكن متداخل مع الهدف أو
+            متوسط كل حالات التوكنات المتداخلة مع الهدف. بعد المتوسط عبر المهام
+            والتقسيمين المجمّعين، مقارنة <bdi>macro-F1</bdi> هي:
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>الواجهة |</th>
+                    <th>Jais 1 |</th>
+                    <th>Jais 2 |</th>
+                    <th>Δ</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>full prompt-final</bdi></td><td>0.8349</td><td>0.8951</td><td><strong>+0.0602</strong></td></tr>
+                <tr><td><bdi>metadata-free prompt-final</bdi></td><td>0.8729</td><td>0.8545</td><td>−0.0184</td></tr>
+                <tr><td><bdi>target-final subtoken</bdi></td><td>0.8387</td><td>0.9006</td><td><strong>+0.0619</strong></td></tr>
+                <tr><td><bdi>target-mean span</bdi></td><td>0.8421</td><td>0.8876</td><td><strong>+0.0455</strong></td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            Jais 2 أقوى هنا على واجهة <bdi>target-final</bdi>، بفارق بسيط عن
+            <bdi>full prompt-final</bdi>. أفضل متوسط لـJais 1 في هذا الجدول هو
+            <bdi>metadata-free prompt-final</bdi>. هذا مو دليل أن طريقة تجميع
+            واحدة صحيحة دائماً؛ بل يوضح أن الشيء المقاس يتضمن مكان قراءة الحالة،
+            ومحتوى البادئة السببية، وطريقة تجميع الـ<bdi>span</bdi> متعدد التوكنات.
+        </p>
+
+        <h2>الانتقال في التقسيم المجمّع غير التداخل العشوائي</h2>
+
+        <p>
+            في واجهة البيانات الكاملة، هذه متوسطات <bdi>macro-F1</bdi> عبر المهام
+            الثلاث في التقسيم العشوائي وتقسيمي اللمات والجذور المحجوزة:
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>النموذج |</th>
+                    <th><bdi>random</bdi> |</th>
+                    <th><bdi>lemma-heldout</bdi> |</th>
+                    <th><bdi>root-heldout</bdi> |</th>
+                    <th><bdi>random − lemma</bdi> |</th>
+                    <th><bdi>random − root</bdi></th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td><bdi>Jais-13B</bdi></td><td>0.9062</td><td>0.8457</td><td>0.8242</td><td>+0.0605</td><td>+0.0819</td></tr>
+                <tr><td><bdi>JAIS-2-8B-Chat</bdi></td><td>0.9650</td><td>0.8997</td><td>0.8906</td><td>+0.0653</td><td>+0.0744</td></tr>
+            </tbody>
+        </table>
+
+        <p>
+            النموذجان يخسران أداءً لما نخلي مجموعات اللمات أو الجذور المألوفة خارج
+            التدريب. نتيجة العدد عند Jais 2 رفعت درجاته المجمّعة كثيراً، لكن الفجوة
+            المعجمية ما اختفت. يظل التقسيم العشوائي مرجعاً متفائلاً للتداخل، مو
+            مقياساً للانتقال إلى مجموعات معجمية ما شافها التدريب.
+        </p>
+
+        <h2>الضوابط ونطاق النتيجة</h2>
+
+        <p>
+            اختيار الطبقة في كل تشغيل صار باستخدام بيانات <bdi>development</bdi>
+            فقط، ثم أعدنا الملاءمة على <bdi>train + development</bdi> وقسنا
+            <bdi>test</bdi> مرة واحدة في كل <bdi>outer fold</bdi>. كل الأمثلة
+            الـ4,701 اتّحدت محاذاتها بنجاح للنموذجين. أرشيف Jais 2 فيه 180
+            خلية لتسميات ملخبطة؛ ولا خلية تجاوزت خط أساس الأغلبية المحسوب من
+            التدريب فقط. أرشيف Jais 1 الأكبر فيه 360 خلية ملخبطة لنموذجيه
+            الأساسيين المحددين (<bdi>Qwen3-0.6B</bdi> و<bdi>Llama-3.2-1B</bdi>)،
+            وليس لـ<bdi>Jais-13B</bdi> نفسه. هذه الضوابط تفحص الـ<bdi>pipeline</bdi>؛
+            ما هي اختبار سببي لسلوك النموذج.
+        </p>
+
+        <p>
+            النتيجة دقيقة لكنها ضيقة: تحت هذا الـ<bdi>prompt</bdi> والتقسيم
+            المعجمي وقاعدة المحاذاة وواجهة الهدف وطريقة التجميع والطبقة المختارة
+            والمقدّر الخطي، صار العدد أسهل في الاسترجاع الخطي عند Jais 2 من Jais 1
+            في هذه الالتقاطات المجمّدة. هذا ما يثبت توليداً عربياً أفضل، ولا كفاءة
+            عامة في العربية، ولا أن أي نموذج يستخدم الميزة المسترجعة أثناء التوليد.
+        </p>
+
+        <h2>المصادر المجمّدة</h2>
+
+        <p>
+            المقارنة محسوبة من ملخصات النتائج غير القابلة للتغيير، مو من جداول
+            المخطوطة. المصدران هما:
+        </p>
+
+        <pre><code class="language-plaintext">freezes/bf16-analysis-20260826-v2/snapshot/analysis/results/summary.csv
+freezes/bf16-analysis-jais2-20260829-v1/snapshot/analysis/results/summary.csv</code></pre>
+
+        <p>
+            قرارات التحليل تسجل بروتوكول الخمس طيات واختيار الطبقة من
+            <bdi>development</bdi> فقط، وعقد التحليل بعد الالتقاط من دون أوزان.
+            وبيانات النموذج و<bdi>bundle manifests</bdi> المجمّدة تحفظ إصدارات
+            الـ<bdi>checkpoint</bdi> والـ<bdi>tokenizer</bdi> والمحاذاة الناجحة
+            ودلالات تمثيل <bdi>BF16</bdi>. كلا التجميدين سجل أدلة؛ لا تعيد توليدهما
+            ولا تستبدلهما.
+        </p>
+
+        <p>
+            التوثيق الأوسع موجود في
+            <a href="https://github.com/voidwest/arabic-morphology-probing-lre">مستودع arabic-morphology-probing-lre</a>.
+            والورقة، “Lexical Split Design and Representation-Interface Validity
+            in Decoder-Only Morphology Probing: An Arabic Evaluation Study”، تحت
+            التعيين التحريري حالياً في <em>Language Resources and Evaluation</em>.
+        </p>
+
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
