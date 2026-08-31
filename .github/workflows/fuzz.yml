@@ -23,6 +23,8 @@ on:
       - "src/tensor.rs"
       - "src/quant.rs"
       - "src/quant_k.rs"
+      - "src/simd.rs"
+      - "src/multimodal/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/fuzz.yml"
@@ -40,6 +42,8 @@ on:
       - "src/tensor.rs"
       - "src/quant.rs"
       - "src/quant_k.rs"
+      - "src/simd.rs"
+      - "src/multimodal/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - ".github/workflows/fuzz.yml"
@@ -75,7 +79,8 @@ jobs:
       - name: run bounded parser campaigns
         run: |
           mkdir -p fuzz/artifacts fuzz/corpus_work
-          for target in gguf_loader gguf_to_llama npy_bytes kv_snapshot_manifest tokenizer_json; do
+          for target in gguf_loader gguf_to_llama npy_bytes kv_snapshot_manifest tokenizer_json \
+            wav_bytes image_bytes image_preprocess; do
             mkdir -p "fuzz/corpus_work/$target"
             cargo "+$FUZZ_TOOLCHAIN" fuzz run "$target" "fuzz/corpus_work/$target" -- \
               -max_total_time=30 -max_len=262144 -timeout=10 \
