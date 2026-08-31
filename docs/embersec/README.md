@@ -25,7 +25,7 @@ paper-sized claims.
 | **II** | Hostile multimodal inputs | Attacker-controlled image/audio bytes + shapes → decode, preprocess, encoders, fusion | `src/multimodal/image.rs` (limits), `audio.rs` (WAV hardening + resample caps), `vision.rs`/`audio_encoder.rs` (shape checks), `request.rs` (validated types), `batch.rs` guards, fuzz targets `wav_bytes`/`image_bytes`/`image_preprocess` | WAV unsupported-format panic → `Err`; zero/absurd sample rates → 16,000× resample amplification and capacity-overflow panic, both closed; long-form audio DoS bounded (1 h / 16 segments); PNG/JPEG decode bounded (8192 px/edge, 256 MiB); encoder shape panics → `CpuError` | Hostile media cannot crash or exhaust the process; parsed state is validated at a single seam (`ValidatedImageInput`/`ValidatedAudioInput`) | Does not prove decoder-internal memory safety (pure-Rust crates, out of scope); fuzz campaigns are bounded smoke runs, not years of coverage |
 | **III** | Reproducible execution | What must be fixed for a result to be reproducible and attributable | `--seed`, run-manifest v2 (`src/cli_support.rs`), `ember manifest verify` (`src/cli_manifest.rs`) | Execution identity = SHA-256 over a canonical sorted JSON of all output-affecting inputs (binary build, model/tokenizer hashes, prompt, sampler+seed, limits, threads, CPU features, behavior env knobs); tamper detection verified | Two runs with identical identity are expected to produce identical output; an edited record is detected | Does not prove the environment was honest (no TEE); does not prove bit-exactness across *different* machines/builds (that is replay verification, deferred) |
 | **IV** | Attested execution (pre-TEE) | Bind a record to a key; later, to an enclave | `ember evidence init/sign/verify` (`src/cli_evidence.rs`, Ed25519, `ed25519-dalek`) | Self-contained signed-evidence envelope over canonical JSON; signature verified with `verify_strict`; embedded execution identity re-checked on verify | The record bytes are exactly what the key holder signed; provenance is key-attributable | Does not prove trusted hardware, honest environment, or signer identity — TEE attestation (IVb) is the remaining layer; envelope schema is designed for drop-in key replacement |
-| **V** | Quantized-inference security | Single-bit faults in packed Q8_0/Q4_K/Q6_K weights | `src/quant_fault.rs` harness, `validate_integrity()` on both weight types, `EMBER_VERIFY_QUANT=1` load hook | Payload faults bounded (median rel-L2 0.001–0.04, never non-finite); **6.25% of f16 scale-word bit flips → NaN/Inf logits** (CLI bails; sampler argmax asserts) | The dangerous fault class is the scale header, not the payload; integrity validation detects corrupted headers at load | Does not prove immunity to multi-bit/rowhammer patterns; does not cover ECC/DRAM behavior; determinism claims remain tied to the existing serial≡parallel and scalar≡SIMD parity tests |
+| **V** | Quantized-inference security | Single-bit faults in packed Q8_0/Q4_K/Q6_K weights | `src/quant_fault.rs` harness, `validate_integrity()` on both weight types, `EMBER_VERIFY_QUANT=1` load hook | Payload faults stay finite in the deterministic sweep; FP16 `d` exponent bits 10–14 are structurally dangerous (the current test probes 40 flips/dtype across 8 synthetic blocks and early-stops per block; bit 14 yields non-finite logits) | The dangerous fault class is the scale header, not the payload; integrity validation detects corrupted headers at load | Does not prove immunity to multi-bit/rowhammer patterns; does not cover ECC/DRAM behavior; determinism claims remain tied to the existing serial≡parallel and scalar≡SIMD parity tests |
 
 **Phase I note:** the comparative GGUF security audit (llama.cpp/Candle findings,
 tokenizer-comparability matrix, loader check harness, frozen artifact hashes)
@@ -60,12 +60,12 @@ evidence" (Phases III + IV together):**
 **Paper candidate B — Phase V as its own focused note (DECIDED: separate,
 not an extension of A):**
 - Phase V answers a *different* question (fault tolerance of quantized
-  weights, not attribution of a run). It has self-contained measured data
-  (fault classes × formats, 6.25% non-finite scale-flip rate), a hermetic
-  seeded methodology, and a direct mechanism tie-in to the published pilot
-  finding (near-threshold flips: payload faults only flip top-1 at small
-  margins). It therefore deserves its **own focused note** rather than being
-  folded into the execution-evidence manuscript.
+  weights, not attribution of a run). It has self-contained fault-class and
+  format checks, an analytical FP16 exponent-field finding, a hermetic seeded
+  methodology, and a direct mechanism tie-in to the published pilot finding
+  (near-threshold flips: payload faults only flip top-1 at small margins). It
+  therefore deserves its **own focused note** rather than being folded into
+  the execution-evidence manuscript.
 - The bridge to A is real but small: `EMBER_VERIFY_QUANT` integrity
   verification is an input to attribution (a result is attributable to
   weights whose integrity was verified). That belongs as a one-paragraph

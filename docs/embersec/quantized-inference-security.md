@@ -38,22 +38,33 @@ determines the damage:
 - **Layout byte** (length/shape): impossible to corrupt silently; the
   constructors enforce exact block-count math and would reject the tensor.
 
-## 3. Measured findings (deterministic harness, single-bit faults)
+## 3. Findings from the deterministic harness (single-bit faults)
 
 | Fault site | Count | Median rel-L2 | p95 / max rel-L2 | Max abs logit Δ | Non-finite? |
 |---|---|---|---|---|---|
 | Q4_K payload (bit 3 of every nibble byte) | 1024 | 0.0011 | 0.0098 / 0.32 | 5748 | never |
 | Q6_K payload (bit 3 of every quant byte) | 1536 | 0.0104 | 0.085 / 0.16 | 797 | never |
 | Q8_0 payload (bit 5 of one quant byte/block) | 8 | 0.0405 | 0.052 | 0.67 | never |
-| Q4_K f16 `d` word, every bit | 128 | — | — | — | **8/128 = 6.25%** |
-| Q6_K f16 `d` word, every bit | 128 | — | — | — | **8/128 = 6.25%** |
+| Q4_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | — | — | — | 8 block hits (bit 14) |
+| Q6_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | — | — | — | 8 block hits (bit 14) |
 
 **Interpretation.** Payload faults are graceful degradation: median logit
 drift is ~0.1-4% relative, top-1 flips only when the pristine margin is
 small (the same near-threshold-flip mechanism documented in the Arabic
-quantization pilots). Scale-word faults are the dangerous class: 6.25% of
-single-bit flips in the f16 `d` word produce NaN/Inf logits (exponent →
-Inf, mantissa → NaN). Downstream behavior on non-finite logits:
+quantization pilots).
+
+The scale check is an analytical FP16 layout finding, not a percentage
+estimate. IEEE-754 binary16 stores its exponent in bits 10–14. The current
+test uses `d = 1.0`, probes those five positions, and stops after the first
+non-finite result in each block. With eight synthetic blocks per dtype, that
+is 5 × 8 = 40 attempted flips per dtype; bit 14 sets the exponent to the
+all-ones value and produces `Inf`, giving eight block hits. The test does not
+sweep all 16 bits, vary the starting `d`, or estimate a population hit rate.
+There is no confidence interval or per-trial result artifact; this is one
+repeatable deterministic unit-test invocation. Q8_0's `d` header is covered
+by integrity testing, not this exponent sweep.
+
+Downstream behavior on non-finite logits:
 - the CLI's logit validation **bails with a structured error** (safe);
 - the sampler's `argmax_token` **asserts on NaN** (crash, contained);
 - the K-matmul `validate` rejects non-finite activations before touching
