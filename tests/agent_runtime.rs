@@ -495,6 +495,9 @@ fn cancellation_during_tool_execution_keeps_side_effect_visible_and_session_clea
         .committed_messages
         .iter()
         .any(|(_, t)| t.contains(r#""type":"tool_result""#)));
+    assert!(events.iter().any(|e| {
+        e["event_type"] == "tool_execution_finished" && e["side_effect"] == true
+    }));
     assert!(events
         .iter()
         .any(|e| e["event_type"] == "tool_result_uncommitted"));
