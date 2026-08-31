@@ -1,7 +1,6 @@
 # EmberSEC Phase IV — Attested Execution: Signed Evidence (pre-TEE)
 
-**Status:** local-key signed evidence landed (main @ freeze `6b4723e1`);
-hardware
+**Status:** landed (main, freeze tag `embersec-freeze-2026-08-31`);
 attestation (TDX/SNP) is the documented next step, but the useful work —
 what a signature must cover and how verification works — is complete without
 any TEE hardware.

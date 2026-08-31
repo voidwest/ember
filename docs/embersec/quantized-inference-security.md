@@ -1,7 +1,6 @@
 # EmberSEC Phase V — Quantized Inference Security: Faults, Determinism, Integrity
 
-**Status:** fault-sensitivity harness + integrity validation landed (main @
-freeze `6b4723e1`). Threat model and measured findings below; all measurements
+**Status:** landed (main, freeze tag `embersec-freeze-2026-08-31`); Threat model and measured findings below; all measurements
 are from the hermetic, deterministic test harness (synthetic seeded blocks —
 no model files required).
 

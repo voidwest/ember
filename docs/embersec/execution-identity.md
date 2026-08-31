@@ -1,7 +1,7 @@
 # EmberSEC Phase III — Reproducible Execution: Execution Identity, Replay, Provenance
 
-**Status:** landed in full (main @ freeze `6b4723e1`, tag
-`embersec-freeze-2026-08-31`); read the "Implemented" section for what
+**Status:** landed in full (main, freeze tag `embersec-freeze-2026-08-31`,
+implementation through `6b4723e1`); read the "Implemented" section for what
 exists and "Deferred" for the roadmap ahead.
 **Research question:** what exactly must be fixed for an inference result to
 be reproducible and meaningfully attributable to a specific execution?

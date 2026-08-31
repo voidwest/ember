@@ -1,6 +1,8 @@
 # EmberSEC — Security Research Program Map (Phases I–V)
 
-**Freeze record:** `main` @ `6b4723e1` (tag `embersec-freeze-2026-08-31`), 2026-08-31.
+**Freeze record:** tag `embersec-freeze-2026-08-31` on `main`, 2026-08-31.
+The tagged commit is the final docs commit; implementation commits run
+through `6b4723e1`.
 **CI at freeze:** `ci` ✅ (run 33353747668, 15m) · `parser-fuzz` ✅ (run 33353747698, 41m,
 8 targets) · pages ✅ — all green on the freeze commit and re-verified after the
 documentation freeze push.
@@ -97,7 +99,8 @@ claim; not started, no hardware dependency on this host.
 
 ## Frozen state
 
-- Freeze commit: `6b4723e1` (main, pushed; tag `embersec-freeze-2026-08-31`).
+- Freeze tag: `embersec-freeze-2026-08-31` (main, pushed; implementation
+  through `6b4723e1`, phase docs committed with the tag).
 - Phase docs (this README + one per phase) are committed under
   `docs/embersec/`; the comparative Phase I docs remain on the
   `embersec/secure-gguf-loader` branch.
