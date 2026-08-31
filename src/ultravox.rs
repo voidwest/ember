@@ -24,7 +24,9 @@ use crate::backend::{Backend, CpuBackend};
 use crate::embedding::EmbeddingSequence;
 use crate::llama::{Llama, LlamaEmbedding};
 use crate::loader::{load_gguf, load_gguf_with_k_strategy};
-use crate::multimodal::audio::{self, to_mono_16k, AudioInput, MAX_FRAMES};
+use crate::multimodal::audio::{
+    self, AudioInput, ValidatedAudioInput, MAX_AUDIO_SEGMENTS, MAX_FRAMES,
+};
 use crate::multimodal::audio_encoder::{AudioModel, AudioTrace};
 use crate::multimodal::stream::{AudioStream, StreamProgress, StreamedAudio};
 use crate::tensor::CpuTensor;
@@ -286,12 +288,14 @@ impl Ultravox {
     /// inputs are chunked at encode time).
     pub fn build_mel(&self, input: &AudioInput) -> Result<(CpuTensor, f64, f64, f64)> {
         let t0 = Instant::now();
-        let decoded = to_mono_16k(input)?;
+        // validated seam: hostile rates/durations are rejected before any
+        // mel work or encoder queueing happens
+        let validated = ValidatedAudioInput::from_audio_input(input)?;
         let decode_ms = t0.elapsed().as_secs_f64() * 1e3;
-        let seconds = decoded.samples.len() as f64 / audio::TARGET_SAMPLE_RATE as f64;
+        let seconds = validated.duration_s;
 
         let t1 = Instant::now();
-        let mel = audio::log_mel_spectrogram_full(&decoded.samples)?;
+        let mel = audio::log_mel_spectrogram_full(&validated.samples)?;
         let features_ms = t1.elapsed().as_secs_f64() * 1e3;
         Ok((mel, decode_ms, features_ms, seconds))
     }
@@ -428,6 +432,12 @@ impl Ultravox {
         start_pos: usize,
     ) -> Result<(UltravoxTrace, EmbeddingSequence<CpuBackend>, AudioTimings)> {
         let mut timings = AudioTimings::default();
+
+        ensure!(
+            audios.len() <= MAX_AUDIO_SEGMENTS,
+            "request has {} audio segments, exceeding the {MAX_AUDIO_SEGMENTS}-segment admission limit",
+            audios.len()
+        );
 
         let mut features = Vec::new();
         let mut last_trace: Option<AudioTrace> = None;

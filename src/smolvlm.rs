@@ -28,7 +28,9 @@ use crate::loader::load_gguf; // mmproj (f16/f32 vision tensors) only
 use crate::multimodal::assembler::{EmbeddingAssembler, ImageFeatures, SmolVlmAssembler};
 use crate::multimodal::batch::BatchedImageInput;
 use crate::multimodal::image::{preprocess, ImagePreprocessConfig, PreprocessedImage};
-use crate::multimodal::request::{ContentPart, ImageInput, SegmentId};
+use crate::multimodal::request::{
+    ContentPart, ImageInput, SegmentId, ValidatedImageInput, MAX_IMAGES_PER_REQUEST,
+};
 use crate::multimodal::vision::{VisionModel, VisionTrace};
 use crate::tensor::CpuTensor;
 use crate::tokenizer::EmberTokenizer;
@@ -235,12 +237,19 @@ impl SmolVlm {
         backend: &CpuBackend,
         image_inputs: &[&ImageInput],
     ) -> Result<MediaPipelineResult> {
-        // 1. decode everything once; content ids from the decoded pixels
+        anyhow::ensure!(
+            image_inputs.len() <= MAX_IMAGES_PER_REQUEST,
+            "request has {} images, exceeding the {MAX_IMAGES_PER_REQUEST}-image admission limit",
+            image_inputs.len()
+        );
+        // 1. decode everything once through the validated seam (image-crate
+        // limits applied); content ids come from the decoded pixels.
         let t_media = Instant::now();
         let mut decoded = Vec::with_capacity(image_inputs.len());
         let mut keys = Vec::with_capacity(image_inputs.len());
         for img in image_inputs {
-            let d = img.decode()?;
+            let validated = ValidatedImageInput::decode(img)?;
+            let d = validated.rgb;
             keys.push(self.cache_key(crate::multimodal::request::MediaId::from_tensor(&d)));
             decoded.push(d);
         }

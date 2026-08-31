@@ -115,22 +115,49 @@ impl VisionTransformer {
         // `encode` path stays uninstrumented.
         let profile = trace.is_some();
         let mut timings = VisionOpTimings::default();
+        let cfg = &self.config;
+        // pixels is the untrusted/validated-state boundary for this encoder:
+        // shape is checked explicitly (not via asserts) so malformed input
+        // becomes a `Result` error instead of a panic or a silent OOB read.
+        if pixels.shape().len() != 4 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "vision encode expects [n_images, 3, height, width], got {:?}",
+                pixels.shape()
+            )));
+        }
         let (n_images, channels, height, width) = (
             pixels.shape()[0],
             pixels.shape()[1],
             pixels.shape()[2],
             pixels.shape()[3],
         );
-        let cfg = &self.config;
-        debug_assert_eq!(channels, 3);
-        debug_assert_eq!((height, width), (cfg.image_size, cfg.image_size));
+        if channels != 3 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "vision encode expects 3 channels, got {channels}"
+            )));
+        }
+        if (height, width) != (cfg.image_size, cfg.image_size) {
+            return Err(CpuError::ShapeMismatch(format!(
+                "vision encode expects {}x{} inputs, got {height}x{width}",
+                cfg.image_size, cfg.image_size
+            )));
+        }
+        if cfg.patch_size == 0 {
+            return Err(CpuError::ShapeMismatch(
+                "vision patch size must be non-zero".into(),
+            ));
+        }
 
         // -- patch embedding (conv, stride = patch size) --
         let t_op = Instant::now();
         let patches_per_side = height / cfg.patch_size;
         let num_patches = patches_per_side * patches_per_side;
         let patch_dim = 3 * cfg.patch_size * cfg.patch_size;
-        let mut patch_rows = vec![0.0f32; n_images * num_patches * patch_dim];
+        let patch_rows_len = n_images
+            .checked_mul(num_patches)
+            .and_then(|v| v.checked_mul(patch_dim))
+            .ok_or_else(|| CpuError::ShapeMismatch("vision patch buffer size overflow".into()))?;
+        let mut patch_rows = vec![0.0f32; patch_rows_len];
         for n in 0..n_images {
             for py in 0..patches_per_side {
                 for px in 0..patches_per_side {
@@ -252,13 +279,18 @@ impl VisionTransformer {
             }
 
             let t_attn = Instant::now();
-            let head_dim = cfg.embed_dim / cfg.n_heads;
+            if cfg.n_heads == 0 {
+                return Err(CpuError::ShapeMismatch(
+                    "vision attention head count must be non-zero".into(),
+                ));
+            }
             if !cfg.embed_dim.is_multiple_of(cfg.n_heads) {
                 return Err(CpuError::ShapeMismatch(format!(
                     "vision embed dim {} not divisible by {} heads",
                     cfg.embed_dim, cfg.n_heads
                 )));
             }
+            let head_dim = cfg.embed_dim / cfg.n_heads;
             let scale = (head_dim as f32).sqrt().recip();
             // per-image additive key bias when masks are present (0 for
             // valid patches, f32::MIN for padding — the reference's extended
@@ -456,8 +488,21 @@ fn attention_impl(
     n_heads: usize,
     mut split: Option<&mut AttentionSplit>,
 ) -> Result<CpuTensor, CpuError> {
+    if q.shape().len() != 2 || k.shape().len() != 2 || v.shape().len() != 2 {
+        return Err(CpuError::ShapeMismatch(format!(
+            "bidirectional attention expects [seq, dim] q/k/v, got {:?}/{:?}/{:?}",
+            q.shape(),
+            k.shape(),
+            v.shape()
+        )));
+    }
     let seq = q.shape()[0];
     let embed = q.shape()[1];
+    if n_heads == 0 {
+        return Err(CpuError::ShapeMismatch(
+            "bidirectional attention head count must be non-zero".into(),
+        ));
+    }
     if !embed.is_multiple_of(n_heads) {
         return Err(CpuError::ShapeMismatch(format!(
             "bidirectional attention: embed {embed} not divisible by {n_heads} heads"

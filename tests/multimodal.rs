@@ -1071,3 +1071,230 @@ fn bicubic_resize_matches_pillow() {
         assert_eq!(out.shape(), [3, oh, ow]);
     }
 }
+
+// ---------------------------------------------------------------------------
+// EmberSEC Phase 2: hostile multimodal input hardening
+// ---------------------------------------------------------------------------
+
+/// Minimal RIFF/WAVE bytes with attacker-controlled header fields.
+fn wav_bytes(
+    format_tag: u16,
+    bits_per_sample: u16,
+    channels: u16,
+    sample_rate: u32,
+    data: &[u8],
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36u32 + data.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&format_tag.to_le_bytes());
+    out.extend_from_slice(&channels.to_le_bytes());
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    let byte_rate = sample_rate * channels as u32 * bits_per_sample as u32 / 8;
+    out.extend_from_slice(&byte_rate.to_le_bytes());
+    out.extend_from_slice(&(channels * bits_per_sample / 8).to_le_bytes());
+    out.extend_from_slice(&bits_per_sample.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(data);
+    out
+}
+
+#[test]
+fn wav_unsupported_format_tag_is_error_not_panic() {
+    use ember::multimodal::audio::decode_wav_bytes;
+    // A-law (6) and MS ADPCM (2) tags with a data chunk previously hit the
+    // `_ => panic!` arm in read_one; they must now be structured errors.
+    for tag in [2u16, 6, 7, 0x11] {
+        let bytes = wav_bytes(tag, 8, 1, 8000, &[0u8; 8]);
+        let err = decode_wav_bytes(&bytes).expect_err("unsupported wav tag must error");
+        assert!(err.to_string().contains("unsupported wav format"), "{err}");
+    }
+    // IEEE-float tag with a 16-bit payload is also unsupported.
+    let err = decode_wav_bytes(&wav_bytes(3, 16, 1, 8000, &[0u8; 4]))
+        .expect_err("float tag with 16-bit payload must error");
+    assert!(err.to_string().contains("unsupported wav format"), "{err}");
+}
+
+#[test]
+fn wav_zero_sample_rate_is_rejected() {
+    use ember::multimodal::audio::decode_wav_bytes;
+    let err = decode_wav_bytes(&wav_bytes(1, 16, 1, 0, &[0u8; 8]))
+        .expect_err("zero sample rate must error");
+    assert!(err.to_string().contains("sample rate"), "{err}");
+}
+
+#[test]
+fn resample_rejects_zero_rate_and_bounds_amplification() {
+    use ember::multimodal::audio::resample;
+    let x = vec![0.0f32; 16];
+    // zero source rate used to produce an infinite output length
+    assert!(resample(&x, 0, 16_000).is_err());
+    // a tiny-rate source must not be able to amplify into a multi-GiB buffer
+    let big = vec![0.0f32; 1_000_000];
+    let err = resample(&big, 1, 16_000).expect_err("1 Hz upsample must hit the output cap");
+    assert!(err.to_string().contains("cap"), "{err}");
+    // normal rates still work
+    assert!(resample(&big, 44_100, 16_000).is_ok());
+}
+
+#[test]
+fn to_mono_16k_rejects_zero_rate_samples_input() {
+    use ember::multimodal::audio::{to_mono_16k, AudioInput};
+    let bad = AudioInput::Samples {
+        data: vec![0.0f32; 1000],
+        sample_rate: 0,
+    };
+    assert!(to_mono_16k(&bad).is_err());
+}
+
+#[test]
+fn validated_audio_input_rejects_oversized_duration() {
+    use ember::multimodal::audio::{AudioInput, ValidatedAudioInput};
+    // 3601 s at 16 kHz (230 MB f32, no resample work): over the 1 h cap.
+    let long = AudioInput::Samples {
+        data: vec![0.0f32; 3601 * 16_000],
+        sample_rate: 16_000,
+    };
+    let err = ValidatedAudioInput::from_audio_input(&long)
+        .expect_err(">1h audio must be rejected at admission");
+    assert!(err.to_string().contains("admission limit"), "{err}");
+    // a bounded input passes and carries validated invariants
+    let ok = AudioInput::Samples {
+        data: vec![0.0f32; 16_000],
+        sample_rate: 16_000,
+    };
+    let v = ValidatedAudioInput::from_audio_input(&ok).expect("1 s audio is fine");
+    assert_eq!(v.sample_rate, 16_000);
+    assert!((v.duration_s - 1.0).abs() < 1e-9);
+    assert_eq!(v.samples.len(), 16_000);
+}
+
+// --- image decode limits ---------------------------------------------------
+
+fn crc32_ieee(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in bytes {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+fn png_chunk(kind: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    out.extend_from_slice(kind);
+    out.extend_from_slice(data);
+    let mut crc_in = Vec::with_capacity(4 + data.len());
+    crc_in.extend_from_slice(kind);
+    crc_in.extend_from_slice(data);
+    out.extend_from_slice(&crc32_ieee(&crc_in).to_be_bytes());
+    out
+}
+
+fn png_with_dims(width: u32, height: u32) -> Vec<u8> {
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 2, 0, 0, 0]); // 8-bit RGB, deflate, adaptive, no interlace
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.extend_from_slice(&png_chunk(b"IHDR", &ihdr));
+    png.extend_from_slice(&png_chunk(b"IDAT", &[]));
+    png.extend_from_slice(&png_chunk(b"IEND", &[]));
+    png
+}
+
+#[test]
+fn image_decode_applies_decoder_limits() {
+    use ember::multimodal::image::decode_rgb_bytes;
+    // A decompression bomb: 65535x65535 declared dims with a tiny payload.
+    // The allocation budget must reject it before materializing 12+ GiB.
+    let bomb = png_with_dims(65_535, 65_535);
+    let err = decode_rgb_bytes(&bomb).expect_err("huge png must be rejected by the limits");
+    assert!(err.to_string().to_lowercase().contains("limit"), "{err}");
+    // A sane image still decodes through the same path.
+    use image::ImageEncoder;
+    let mut buf = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut buf)
+        .write_image(
+            &[0, 0, 0, 255, 255, 255],
+            2,
+            1,
+            image::ExtendedColorType::Rgb8,
+        )
+        .expect("encode 2x1 png");
+    let t = decode_rgb_bytes(&buf).expect("valid png decodes");
+    assert_eq!(t.shape(), [3, 1, 2]);
+}
+
+// --- validated image seam + batch geometry guards --------------------------
+
+#[test]
+fn validated_image_input_rejects_malformed_pixels() {
+    use ember::multimodal::request::{ImageInput, ValidatedImageInput};
+    let bad = CpuTensor::from_data(vec![4, 10], vec![0.0; 40]);
+    let err = ValidatedImageInput::decode(&ImageInput::Pixels { rgb: bad })
+        .expect_err("rank-2 pixels must be rejected");
+    assert!(err.to_string().contains("CHW"), "{err}");
+}
+
+#[test]
+fn validated_image_input_decodes_bytes_with_format() {
+    use ember::multimodal::request::{ImageInput, ValidatedImageFormat, ValidatedImageInput};
+    use image::ImageEncoder;
+    let mut buf = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut buf)
+        .write_image(&[0, 0, 0], 1, 1, image::ExtendedColorType::Rgb8)
+        .expect("encode 1x1 png");
+    let v = ValidatedImageInput::decode(&ImageInput::Bytes(buf)).expect("validated decode");
+    assert_eq!((v.width, v.height), (1, 1));
+    assert_eq!(v.format, ValidatedImageFormat::Png);
+    assert_eq!(v.rgb.shape(), [3, 1, 1]);
+}
+
+#[test]
+fn batch_encode_images_rejects_zero_geometry() {
+    use ember::multimodal::batch::BatchedImageInput;
+    use ember::multimodal::request::SegmentId;
+    let backend = CpuBackend;
+    let tiles = CpuTensor::from_data(vec![1, 3, 64, 64], vec![0.0f32; 3 * 64 * 64]);
+    let input = BatchedImageInput {
+        owner: SegmentId::new(0, 0),
+        tiles,
+    };
+    for scale in [0usize, 1] {
+        let r = ember::multimodal::batch::batch_encode_images(
+            &backend,
+            std::slice::from_ref(&input),
+            16,
+            scale,
+            |_, _| {
+                // 64x64 tile, patch 16 -> 4x4 patches -> 16 rows before
+                // the scale reduction
+                Ok((CpuTensor::from_data(vec![16, 1], vec![0.0; 16]), ()))
+            },
+        );
+        if scale == 0 {
+            assert!(
+                r.is_err(),
+                "zero scale_factor must error, not divide by zero"
+            );
+        } else {
+            assert!(r.is_ok(), "scale 1 with 64x64 tiles must work");
+        }
+    }
+    let r = ember::multimodal::batch::batch_encode_images(&backend, &[input], 0, 1, |_, _| {
+        Ok((CpuTensor::from_data(vec![1, 1], vec![0.0]), ()))
+    });
+    assert!(r.is_err(), "zero patch_size must error");
+}

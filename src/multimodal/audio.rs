@@ -32,6 +32,20 @@ pub const FREQ_BINS: usize = N_FFT / 2 + 1;
 /// (30 s); longer inputs are chunked by [`long_form_windows`].
 pub const MAX_FRAMES: usize = 3000;
 
+/// Maximum accepted input audio duration at the model boundary (seconds).
+/// Long-form chunking makes longer inputs valid in principle, but a hard
+/// admission cap keeps hostile/buggy callers from queueing unbounded
+/// encoder work (minutes-to-hours of CPU per request on a 16 GB host).
+pub const MAX_AUDIO_SECONDS: f64 = 3600.0;
+
+/// Maximum number of audio segments in one multimodal request.
+pub const MAX_AUDIO_SEGMENTS: usize = 16;
+
+/// Maximum output length of one [`resample`] call. Bounds upsampling
+/// amplification: with the file/byte caps in place, this keeps the f32
+/// output well under ~1.4 GiB even at extreme rate ratios (2 h at 48 kHz).
+pub const MAX_RESAMPLE_OUTPUT_SAMPLES: usize = 2 * 3600 * 48_000;
+
 /// The periodic Hann window (`np.hanning(401)[:-1]`) shared by the static
 /// and streaming frontends.
 pub(crate) fn window_fn() -> Vec<f64> {
@@ -78,6 +92,39 @@ pub enum AudioInput {
         data: Vec<f32>,
         sample_rate: u32,
     },
+}
+
+/// A decoded, validated audio input at the model boundary: mono f32 at
+/// [`TARGET_SAMPLE_RATE`] with a bounded duration. Produced by
+/// [`ValidatedAudioInput::from_audio_input`]; downstream stages (mel,
+/// encoder, projector) may rely on these invariants without re-checking.
+#[derive(Debug, Clone)]
+pub struct ValidatedAudioInput {
+    /// Mono f32 samples at `TARGET_SAMPLE_RATE` Hz, nominal [-1, 1].
+    pub samples: Vec<f32>,
+    /// Always `TARGET_SAMPLE_RATE` after normalization.
+    pub sample_rate: u32,
+    /// `samples.len() / TARGET_SAMPLE_RATE`.
+    pub duration_s: f64,
+}
+
+impl ValidatedAudioInput {
+    /// Decode and normalize any [`AudioInput`] to the model's mono 16 kHz
+    /// format, rejecting hostile rates/durations at the admission boundary
+    /// (zero/absurd rates, and inputs longer than [`MAX_AUDIO_SECONDS`]).
+    pub fn from_audio_input(input: &AudioInput) -> Result<Self> {
+        let decoded = to_mono_16k(input)?;
+        let duration_s = decoded.samples.len() as f64 / TARGET_SAMPLE_RATE as f64;
+        ensure!(
+            duration_s <= MAX_AUDIO_SECONDS,
+            "audio duration {duration_s:.1}s exceeds the {MAX_AUDIO_SECONDS:.0}s admission limit"
+        );
+        Ok(Self {
+            samples: decoded.samples,
+            sample_rate: decoded.sample_rate,
+            duration_s,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +344,7 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
     let (data_start, data_len) = data_range.ok_or_else(|| anyhow!("WAV has no data chunk"))?;
     let data = &bytes[data_start..data_start + data_len];
     ensure!(channels > 0, "WAV has zero channels");
+    ensure!(sample_rate > 0, "WAV sample rate must be non-zero");
 
     // resolve the effective format: raw tag or the extensible GUID mapping
     let effective_tag = if format_tag == 0xFFFE {
@@ -318,20 +366,24 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
     );
     let frames = data.len() / bytes_per_sample / channels as usize;
 
-    let read_one = |frame: usize, ch: usize| -> f32 {
+    let read_one = |frame: usize, ch: usize| -> Result<f32> {
         let off = (frame * channels as usize + ch) * bytes_per_sample;
         let b = &data[off..off + bytes_per_sample];
         match (effective_tag, bits_per_sample) {
-            (1, 8) => (b[0] as f32 - 128.0) / 128.0, // unsigned 8-bit
-            (1, 16) => i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0,
+            (1, 8) => Ok((b[0] as f32 - 128.0) / 128.0), // unsigned 8-bit
+            (1, 16) => Ok(i16::from_le_bytes([b[0], b[1]]) as f32 / 32768.0),
             (1, 24) => {
                 let v = ((b[2] as i32) << 24 | (b[1] as i32) << 16 | (b[0] as i32) << 8) >> 8;
-                v as f32 / 8388608.0
+                Ok(v as f32 / 8388608.0)
             }
-            (1, 32) => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / 2147483648.0,
-            (3, 32) => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-            (3, 64) => f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f32,
-            _ => panic!("unsupported wav format tag {effective_tag} at {bits_per_sample} bits"),
+            (1, 32) => Ok(i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32 / 2147483648.0),
+            (3, 32) => Ok(f32::from_le_bytes([b[0], b[1], b[2], b[3]])),
+            (3, 64) => {
+                Ok(f64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]) as f32)
+            }
+            _ => Err(anyhow!(
+                "unsupported wav format tag {effective_tag} at {bits_per_sample} bits"
+            )),
         }
     };
 
@@ -339,7 +391,7 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
     for f in 0..frames {
         let mut acc = 0.0f32;
         for c in 0..channels as usize {
-            acc += read_one(f, c);
+            acc += read_one(f, c)?;
         }
         samples.push(acc / channels as f32);
     }
@@ -358,12 +410,34 @@ pub fn decode_wav_bytes(bytes: &[u8]) -> Result<DecodedAudio> {
 /// high-quality settings). This is ember's own converter; it is validated
 /// for bandwidth preservation and identity at equal rates rather than
 /// bit-exactness against any external library.
-pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
-    if from_rate == to_rate || samples.is_empty() {
-        return samples.to_vec();
+///
+/// `from_rate` is attacker-controlled at the WAV/API boundary, so the rate
+/// ratio is validated here: a zero rate used to produce an infinite output
+/// length (capacity-overflow panic / OOM) and extreme ratios used to amplify
+/// a small input into a multi-GiB allocation are both rejected.
+pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Result<Vec<f32>> {
+    if samples.is_empty() {
+        return Ok(samples.to_vec());
+    }
+    ensure!(
+        from_rate > 0,
+        "resample: source sample rate must be non-zero, got {from_rate}"
+    );
+    if from_rate == to_rate {
+        return Ok(samples.to_vec());
     }
     let ratio = to_rate as f64 / from_rate as f64;
-    let out_len = ((samples.len() as f64) * ratio).round() as usize;
+    let out_len_f = (samples.len() as f64) * ratio;
+    ensure!(
+        out_len_f.is_finite() && out_len_f >= 0.0,
+        "resample: invalid output length for {from_rate} -> {to_rate} Hz"
+    );
+    let out_len = out_len_f.round() as usize;
+    ensure!(
+        out_len <= MAX_RESAMPLE_OUTPUT_SAMPLES,
+        "resample: output length {out_len} exceeds the {MAX_RESAMPLE_OUTPUT_SAMPLES}-sample cap          (input {} samples, {from_rate} -> {to_rate} Hz)",
+        samples.len()
+    );
     let mut out = vec![0.0f32; out_len];
     // sinc cutoff relative to the source grid; when downsampling we widen
     // the kernel to avoid aliasing
@@ -400,7 +474,7 @@ pub fn resample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
             0.0
         };
     }
-    out
+    Ok(out)
 }
 
 /// Normalize any [`AudioInput`] to mono f32 at 16 kHz: decode, mean-of-
@@ -424,7 +498,7 @@ pub fn to_mono_16k(input: &AudioInput) -> Result<DecodedAudio> {
             &decoded.samples,
             decoded.sample_rate,
             TARGET_SAMPLE_RATE as u32,
-        ),
+        )?,
     })
 }
 

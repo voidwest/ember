@@ -172,7 +172,19 @@ impl AudioEncoder {
         mut trace: Option<&mut AudioTrace>,
     ) -> Result<CpuTensor, CpuError> {
         let cfg = &self.config;
-        assert_eq!(mel.shape()[0], cfg.num_mel_bins, "mel bins mismatch");
+        if mel.shape().len() != 2 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "audio encode expects [n_mels, T], got {:?}",
+                mel.shape()
+            )));
+        }
+        if mel.shape()[0] != cfg.num_mel_bins {
+            return Err(CpuError::ShapeMismatch(format!(
+                "mel bins {} != configured {}",
+                mel.shape()[0],
+                cfg.num_mel_bins
+            )));
+        }
         let t_len = mel.shape()[1];
         if !(4..=cfg.max_source_positions * 2).contains(&t_len) {
             return Err(CpuError::ShapeMismatch(format!(
@@ -294,7 +306,11 @@ impl AudioEncoder {
             &self.conv2_bias
         };
         let (out_ch, in_ch, kernel) = (weight.shape()[0], weight.shape()[1], weight.shape()[2]);
-        assert_eq!(kernel, 3);
+        if kernel != 3 {
+            return Err(CpuError::ShapeMismatch(format!(
+                "conv1d kernel must be 3, got {kernel}"
+            )));
+        }
         let in_len = input.shape()[1];
         let out_len = (in_len + 2 - 3) / stride + 1;
 

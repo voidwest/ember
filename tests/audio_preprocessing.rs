@@ -96,9 +96,9 @@ fn wav_decode_roundtrip_matches_saved_samples() {
 fn resample_identity_and_length() {
     let x: Vec<f32> = (0..16_000).map(|i| ((i as f32) * 0.01).sin()).collect();
     // identity at equal rates
-    assert_eq!(resample(&x, 16_000, 16_000), x);
+    assert_eq!(resample(&x, 16_000, 16_000).unwrap(), x);
     // 2x upsample doubles length; energy roughly preserved
-    let up = resample(&x, 8_000, 16_000);
+    let up = resample(&x, 8_000, 16_000).unwrap();
     assert!((up.len() as i64 - 32_000).abs() <= 1);
     let rms_in = (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
     let rms_out = (up.iter().map(|v| v * v).sum::<f32>() / up.len() as f32).sqrt();

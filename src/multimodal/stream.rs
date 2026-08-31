@@ -660,7 +660,7 @@ mod tests {
     #[test]
     fn streamed_resampler_matches_one_shot_bit_exact() {
         let sig = signal(50_000, 42); // ~1.13 s @ 44.1 kHz
-        let one_shot = resample(&sig, 44_100, 16_000);
+        let one_shot = resample(&sig, 44_100, 16_000).expect("resample");
         assert!(!one_shot.is_empty());
 
         // 1-sample chunks
@@ -751,7 +751,7 @@ mod tests {
         // 44.1 kHz source through the full streamed pipeline vs
         // resample-then-mel on the whole buffer.
         let sig = signal(44_100, 777); // 1.0 s @ 44.1 kHz
-        let expected = log_mel_spectrogram_full(&resample(&sig, 44_100, 16_000))
+        let expected = log_mel_spectrogram_full(&resample(&sig, 44_100, 16_000).expect("resample"))
             .unwrap()
             .data()
             .to_vec();
