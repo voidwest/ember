@@ -63,8 +63,9 @@ fn generic_call(tool: &str, args: &str) -> String {
     format!(r#"{{"type":"tool_call","name":"{tool}","arguments":{args}}}"#)
 }
 
-/// SlowTool wrapper that cancels from inside the invocation, avoiding a
-/// scheduler-dependent test race while proving cancellation during execute.
+/// Tool fixture that cancels from inside the invocation, avoiding a
+/// scheduler-dependent race while proving post-execution cancellation keeps
+/// a completed side effect out of the committed conversation.
 struct CancellingSlowTool {
     cancel: CancelFlag,
 }
