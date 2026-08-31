@@ -263,18 +263,17 @@ impl Ultravox {
         let audio = AudioModel::from_mmproj_loader(&mut mmproj).with_context(|| {
             format!("failed to build audio model from {}", audio_path.display())
         })?;
-        // content hash of the audio tower file (feature-cache identity)
-        let audio_identity = {
-            use sha2::{Digest, Sha256};
-            let bytes = std::fs::read(audio_path).with_context(|| {
-                format!(
-                    "failed to read audio model for hashing {}",
-                    audio_path.display()
-                )
-            })?;
-            let digest = Sha256::digest(&bytes);
-            u64::from_le_bytes(digest[..8].try_into().expect("sha256 >= 8 bytes"))
-        };
+        anyhow::ensure!(
+            audio.projector.output_width() == llm.config.embed_dim,
+            "audio projector output width {} does not match text embedding width {}",
+            audio.projector.output_width(),
+            llm.config.embed_dim
+        );
+        // content hash of the audio tower file (feature-cache identity).
+        // Streamed with a hard cap and path identity checks so a
+        // large/sparse mmproj cannot be materialized just to be hashed.
+        let audio_identity = crate::loader::gguf_content_identity(audio_path)
+            .context("failed to hash audio model for feature-cache identity")?;
         Ok(Self {
             llm,
             audio,

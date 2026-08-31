@@ -93,6 +93,12 @@ impl SmolVlmVideo {
         let llm = Llama::from_loader(loader)?;
         let mut mmproj = load_gguf(mmproj_path)?;
         let vision = VisionModel::from_mmproj_loader(&mut mmproj)?;
+        anyhow::ensure!(
+            vision.llm_width(&CpuBackend) == llm.config.embed_dim,
+            "vision connector output width {} does not match text embedding width {}",
+            vision.llm_width(&CpuBackend),
+            llm.config.embed_dim
+        );
         let preprocess_config = ImagePreprocessConfig {
             // reference video path: stretch-resize straight onto the tower's
             // square input (no longest-edge stage, no tiling)

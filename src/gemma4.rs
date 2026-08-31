@@ -100,24 +100,39 @@ impl Gemma4Config {
 
         let n_layers =
             get_u32_any(loader, &["gemma4.block_count", "gemma3.block_count"], 32)? as usize;
+        // Validate this before parse_layer_types allocates a vector sized by
+        // block_count. The full config validation below repeats the check.
+        anyhow::ensure!(
+            n_layers <= crate::loader::limits::MAX_LAYERS,
+            "Gemma block_count {n_layers} exceeds the {} layer limit",
+            crate::loader::limits::MAX_LAYERS
+        );
         let n_heads = get_u32_any(
             loader,
             &["gemma4.attention.head_count", "gemma3.attention.head_count"],
             32,
         )? as usize;
         anyhow::ensure!(
-            n_heads > 0 && n_heads <= 8192,
-            "Gemma attention head_count {n_heads} must be in 1..=8192"
+            n_heads > 0 && n_heads <= crate::loader::limits::MAX_HEADS,
+            "Gemma attention head_count {n_heads} must be in 1..={}",
+            crate::loader::limits::MAX_HEADS
         );
         let embed_dim = get_u32_any(
             loader,
             &["gemma4.embedding_length", "gemma3.embedding_length"],
             4096,
         )? as usize;
+        // Keep the fallback conversion checked: metadata can set
+        // embedding_length to u32::MAX, and `* 4` must not wrap/panic before
+        // config validation gets a chance to reject it.
+        let default_intermediate_dim = embed_dim
+            .checked_mul(4)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(u32::MAX);
         let intermediate_dim = get_u32_or_first_array_any(
             loader,
             &["gemma4.feed_forward_length", "gemma3.feed_forward_length"],
-            embed_dim as u32 * 4,
+            default_intermediate_dim,
         )? as usize;
         let vocab_size =
             get_u32_any(loader, &["gemma4.vocab_size", "gemma3.vocab_size"], 256000)? as usize;
@@ -165,8 +180,9 @@ impl Gemma4Config {
             4096,
         )? as usize;
         anyhow::ensure!(
-            max_seq_len <= 2_000_000,
-            "Gemma context_length {max_seq_len} exceeds the 2,000,000 sanity cap"
+            max_seq_len <= crate::loader::limits::MAX_CONTEXT_LEN,
+            "Gemma context_length {max_seq_len} exceeds the {} sanity cap",
+            crate::loader::limits::MAX_CONTEXT_LEN
         );
         let rope_theta = get_f32_any(
             loader,
@@ -325,12 +341,104 @@ impl Gemma4Config {
             "Gemma query head count must be divisible by both KV head counts"
         );
         anyhow::ensure!(
-            self.local_head_dim > 0 && self.global_head_dim > 0,
-            "Gemma attention head dimensions must be greater than zero"
+            self.local_head_dim >= 2 && self.local_head_dim.is_multiple_of(2),
+            "Gemma local attention head dimension must be positive and even, got {}",
+            self.local_head_dim
+        );
+        anyhow::ensure!(
+            self.global_head_dim >= 2 && self.global_head_dim.is_multiple_of(2),
+            "Gemma global attention head dimension must be positive and even, got {}",
+            self.global_head_dim
         );
         anyhow::ensure!(
             self.sliding_window > 0,
             "Gemma sliding_window must be greater than zero"
+        );
+        // Metadata magnitudes are attacker-controlled. Check every dimension
+        // before the loader allocates RoPE tables, blocks, or KV state.
+        use crate::loader::limits as l;
+        anyhow::ensure!(
+            self.n_layers <= l::MAX_LAYERS,
+            "Gemma block_count {} exceeds the {} layer limit",
+            self.n_layers,
+            l::MAX_LAYERS
+        );
+        anyhow::ensure!(
+            self.n_heads <= l::MAX_HEADS,
+            "Gemma attention head_count {} exceeds the {} head limit",
+            self.n_heads,
+            l::MAX_HEADS
+        );
+        anyhow::ensure!(
+            self.embed_dim <= l::MAX_EMBED_DIM,
+            "Gemma embedding_length {} exceeds the {} limit",
+            self.embed_dim,
+            l::MAX_EMBED_DIM
+        );
+        anyhow::ensure!(
+            self.intermediate_dim <= l::MAX_INTERMEDIATE_DIM,
+            "Gemma feed_forward_length {} exceeds the {} limit",
+            self.intermediate_dim,
+            l::MAX_INTERMEDIATE_DIM
+        );
+        anyhow::ensure!(
+            self.vocab_size <= l::MAX_VOCAB_SIZE,
+            "Gemma vocab_size {} exceeds the {} limit",
+            self.vocab_size,
+            l::MAX_VOCAB_SIZE
+        );
+        anyhow::ensure!(
+            self.max_seq_len <= l::MAX_CONTEXT_LEN,
+            "Gemma context_length {} exceeds the {} limit",
+            self.max_seq_len,
+            l::MAX_CONTEXT_LEN
+        );
+        anyhow::ensure!(
+            self.local_head_dim <= l::MAX_HEAD_DIM && self.global_head_dim <= l::MAX_HEAD_DIM,
+            "Gemma attention head dimensions {} and {} exceed the {} limit",
+            self.local_head_dim,
+            self.global_head_dim,
+            l::MAX_HEAD_DIM
+        );
+        anyhow::ensure!(
+            self.sliding_window <= l::MAX_SLIDING_WINDOW,
+            "Gemma sliding_window {} exceeds the {} limit",
+            self.sliding_window,
+            l::MAX_SLIDING_WINDOW
+        );
+        anyhow::ensure!(
+            self.num_kv_shared_layers <= self.n_layers,
+            "Gemma shared KV layer count {} exceeds block_count {}",
+            self.num_kv_shared_layers,
+            self.n_layers
+        );
+        anyhow::ensure!(
+            self.num_kv_shared_layers <= l::MAX_LAYERS,
+            "Gemma shared KV layer count {} exceeds the {} layer limit",
+            self.num_kv_shared_layers,
+            l::MAX_LAYERS
+        );
+        if let Some(dim) = self.hidden_size_per_layer_input {
+            anyhow::ensure!(
+                dim <= l::MAX_EMBED_DIM,
+                "Gemma hidden_size_per_layer_input {dim} exceeds the {} limit",
+                l::MAX_EMBED_DIM
+            );
+        }
+        if let Some(size) = self.vocab_size_per_layer_input {
+            anyhow::ensure!(
+                size <= l::MAX_VOCAB_SIZE,
+                "Gemma vocab_size_per_layer_input {size} exceeds the {} limit",
+                l::MAX_VOCAB_SIZE
+            );
+        }
+        anyhow::ensure!(
+            self.max_seq_len
+                .checked_mul(self.local_head_dim.max(self.global_head_dim))
+                .is_some_and(|elements| elements <= l::MAX_ROPE_TABLE_ELEMENTS),
+            "Gemma context_length {} * head_dim exceeds the {} RoPE-table element limit",
+            self.max_seq_len,
+            l::MAX_ROPE_TABLE_ELEMENTS
         );
         for (name, value) in [
             ("rope.freq_base", self.rope_theta),
@@ -1061,12 +1169,278 @@ impl Gemma4<CpuBackend> {
             Gemma4Embedding::F32(table) => table.shape()[0],
             Gemma4Embedding::Q8_0(table) => table.out_features(),
         };
+        // The embedding tensor is authoritative for Gemma vocab size. Re-run
+        // validation after deriving it so a hostile tensor cannot bypass the
+        // metadata-time vocabulary cap.
+        config.validate()?;
 
-        // Load rope_freqs for partial RoPE application (global layers)
+        // Load rope_freqs for partial RoPE application (global layers).
+        // Validate this optional tensor before compute_rope_freqs: malformed
+        // shapes or factors would otherwise trip its assertions.
         let rope_freqs: Option<Vec<f32>> = match loader.tensors.remove("rope_freqs.weight") {
-            Some(LoadedTensor::F32(tensor)) => Some(tensor.data),
+            Some(LoadedTensor::F32(tensor)) => {
+                anyhow::ensure!(
+                    tensor.shape() == [config.global_head_dim / 2],
+                    "rope_freqs.weight must have shape [{}], got {:?}",
+                    config.global_head_dim / 2,
+                    tensor.shape()
+                );
+                anyhow::ensure!(
+                    tensor
+                        .data()
+                        .iter()
+                        .all(|factor| factor.is_finite() && *factor > 0.0),
+                    "rope_freqs.weight must contain only finite positive factors"
+                );
+                Some(tensor.data)
+            }
             _ => None,
         };
+
+        // Validate the mandatory inventory before allocating the local/global
+        // RoPE tables. Shared-KV layers intentionally omit their own K/V
+        // tensors; every other layer must carry both projections.
+        let first_shared_layer = if config.num_kv_shared_layers > 0 {
+            config.n_layers - config.num_kv_shared_layers
+        } else {
+            usize::MAX
+        };
+        let mut required = Vec::with_capacity(1 + config.n_layers * 10);
+        required.push("output_norm.weight".to_string());
+        let mut last_local_source = false;
+        let mut last_global_source = false;
+        for layer in 0..config.n_layers {
+            for suffix in [
+                "attn_q.weight",
+                "attn_output.weight",
+                "attn_q_norm.weight",
+                "attn_k_norm.weight",
+                "attn_norm.weight",
+                "ffn_norm.weight",
+                "ffn_gate.weight",
+                "ffn_up.weight",
+                "ffn_down.weight",
+            ] {
+                required.push(format!("blk.{layer}.{suffix}"));
+            }
+            for suffix in ["attn_post_norm.weight", "ffn_post_norm.weight"] {
+                let primary = format!("blk.{layer}.{suffix}");
+                let alias_suffix = if suffix == "attn_post_norm.weight" {
+                    "post_attention_norm.weight"
+                } else {
+                    "post_ffw_norm.weight"
+                };
+                let alias = format!("blk.{layer}.{alias_suffix}");
+                if !loader.tensors.contains_key(&primary) && !loader.tensors.contains_key(&alias) {
+                    required.push(primary);
+                }
+            }
+            let layer_type = config.layer_type(layer);
+            let has_k = loader
+                .tensors
+                .contains_key(&format!("blk.{layer}.attn_k.weight"));
+            let has_v = loader
+                .tensors
+                .contains_key(&format!("blk.{layer}.attn_v.weight"));
+            anyhow::ensure!(
+                has_k == has_v,
+                "Gemma 4 layer {layer} must provide both K and V projections or neither"
+            );
+            let has_own_kv = has_k;
+            let is_shared = layer >= first_shared_layer;
+            let has_source = match layer_type {
+                Gemma4AttentionType::Local => last_local_source,
+                Gemma4AttentionType::Global => last_global_source,
+            };
+            if is_shared {
+                if !has_source {
+                    required.push(format!("blk.{layer}.attn_k.weight"));
+                    required.push(format!("blk.{layer}.attn_v.weight"));
+                }
+            } else {
+                anyhow::ensure!(
+                    has_own_kv,
+                    "Gemma 4 non-shared layer {layer} must provide both K and V projections"
+                );
+                match layer_type {
+                    Gemma4AttentionType::Local => last_local_source = true,
+                    Gemma4AttentionType::Global => last_global_source = true,
+                }
+            }
+        }
+        crate::loader::require_tensors(&loader, &required)?;
+        loader.check_model_dequantization_budget()?;
+        let per_layer_dim = config
+            .hidden_size_per_layer_input
+            .unwrap_or(config.embed_dim);
+        // Automatic Q8 packed decode repacks eligible projections into
+        // same-size anonymous buffers; skip it for oversized Q8_0 payloads so
+        // a large valid model does not double its resident footprint.
+        let pack_gate_up =
+            loader.q8_0_encoded_bytes()? <= crate::loader::limits::MAX_PACKED_DECODE_BYTES;
+        // Validate tensor geometry before allocating tables sized by hostile
+        // context metadata. The token embedding was consumed above, so its
+        // in-memory orientation is checked separately.
+        match &embed_tokens {
+            Gemma4Embedding::F32(table) => anyhow::ensure!(
+                table.shape() == [config.vocab_size, config.embed_dim],
+                "token_embd.weight has dimensions {:?}, expected [{}, {}]",
+                table.shape(),
+                config.vocab_size,
+                config.embed_dim
+            ),
+            Gemma4Embedding::Q8_0(table) => anyhow::ensure!(
+                (table.out_features(), table.in_features())
+                    == (config.vocab_size, config.embed_dim),
+                "token_embd.weight has dimensions [{}, {}], expected [{}, {}]",
+                table.out_features(),
+                table.in_features(),
+                config.vocab_size,
+                config.embed_dim
+            ),
+        };
+        let tensor_dims = |name: &str| -> anyhow::Result<Vec<usize>> {
+            if let Some(meta) = loader.tensor_meta.get(name) {
+                return Ok(meta.dims.clone());
+            }
+            match loader.tensors.get(name) {
+                Some(LoadedTensor::F32(tensor)) => Ok(tensor.shape().to_vec()),
+                Some(LoadedTensor::Q8_0(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                Some(LoadedTensor::KQuant(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                None => anyhow::bail!("missing tensor geometry for '{name}'"),
+            }
+        };
+        let check_tensor_dims = |name: &str, expected: &[usize]| -> anyhow::Result<()> {
+            let actual = tensor_dims(name)?;
+            anyhow::ensure!(
+                actual == expected,
+                "tensor '{name}' has dimensions {:?}, expected {:?}",
+                actual,
+                expected
+            );
+            Ok(())
+        };
+        check_tensor_dims("output_norm.weight", &[config.embed_dim])?;
+        for layer in 0..config.n_layers {
+            let layer_type = config.layer_type(layer);
+            let head_dim = config.head_dim_for(layer_type);
+            let kv_heads = config.kv_heads_for(layer_type);
+            let prefix = format!("blk.{layer}.");
+            check_tensor_dims(
+                &format!("{prefix}attn_q.weight"),
+                &[config.embed_dim, config.n_heads * head_dim],
+            )?;
+            check_tensor_dims(
+                &format!("{prefix}attn_output.weight"),
+                &[config.n_heads * head_dim, config.embed_dim],
+            )?;
+            let has_k = loader
+                .tensors
+                .contains_key(&format!("{prefix}attn_k.weight"));
+            let has_v = loader
+                .tensors
+                .contains_key(&format!("{prefix}attn_v.weight"));
+            anyhow::ensure!(
+                has_k == has_v,
+                "Gemma 4 layer {layer} must provide both K and V projections or neither"
+            );
+            let is_shared = layer >= first_shared_layer;
+            if has_k && !is_shared {
+                for suffix in ["attn_k.weight", "attn_v.weight"] {
+                    check_tensor_dims(
+                        &format!("{prefix}{suffix}"),
+                        &[config.embed_dim, kv_heads * head_dim],
+                    )?;
+                }
+            }
+            for suffix in ["attn_q_norm.weight", "attn_k_norm.weight"] {
+                check_tensor_dims(&format!("{prefix}{suffix}"), &[head_dim])?;
+            }
+            for suffix in ["attn_norm.weight", "ffn_norm.weight"] {
+                check_tensor_dims(&format!("{prefix}{suffix}"), &[config.embed_dim])?;
+            }
+            for suffix in ["attn_post_norm.weight", "ffn_post_norm.weight"] {
+                let alias_suffix = if suffix == "attn_post_norm.weight" {
+                    "post_attention_norm.weight"
+                } else {
+                    "post_ffw_norm.weight"
+                };
+                let name = if loader.tensors.contains_key(&format!("{prefix}{suffix}")) {
+                    format!("{prefix}{suffix}")
+                } else {
+                    format!("{prefix}{alias_suffix}")
+                };
+                check_tensor_dims(&name, &[config.embed_dim])?;
+            }
+            for suffix in ["ffn_gate.weight", "ffn_up.weight"] {
+                check_tensor_dims(
+                    &format!("{prefix}{suffix}"),
+                    &[config.embed_dim, config.intermediate_dim],
+                )?;
+            }
+            check_tensor_dims(
+                &format!("{prefix}ffn_down.weight"),
+                &[config.intermediate_dim, config.embed_dim],
+            )?;
+            let has_ple = loader.tensors.contains_key(&format!("{prefix}proj.weight"));
+            if has_ple {
+                check_tensor_dims(
+                    &format!("{prefix}inp_gate.weight"),
+                    &[config.embed_dim, per_layer_dim],
+                )?;
+                check_tensor_dims(
+                    &format!("{prefix}proj.weight"),
+                    &[per_layer_dim, config.embed_dim],
+                )?;
+                check_tensor_dims(&format!("{prefix}post_norm.weight"), &[config.embed_dim])?;
+                check_tensor_dims(&format!("{prefix}layer_output_scale.weight"), &[1])?;
+            }
+        }
+
+        // Optional head and global-PLE geometry: malformed optional tensors
+        // must fail before any materialization, not after all blocks/RoPE
+        // tables are built.
+        if loader.tensors.contains_key("output.weight") {
+            check_tensor_dims("output.weight", &[config.embed_dim, config.vocab_size])?;
+        }
+        if loader.tensors.contains_key("per_layer_model_proj.weight") {
+            let global_ple_width = config
+                .n_layers
+                .checked_mul(per_layer_dim)
+                .ok_or_else(|| anyhow::anyhow!("global PLE projection width overflow"))?;
+            check_tensor_dims(
+                "per_layer_model_proj.weight",
+                &[config.embed_dim, global_ple_width],
+            )?;
+            check_tensor_dims("per_layer_proj_norm.weight", &[per_layer_dim])?;
+        }
+        // File loads carry GGUF-native dims in `tensor_meta`; the PLE
+        // embedding is a 3D tensor, so the fallback path used by direct
+        // unit-test loaders is not shape-consistent for it and stays covered
+        // by `validate_loaded_shapes` after materialization.
+        for name in [
+            "per_layer_token_embd.weight",
+            "token_embd_per_layer.weight",
+            "per_layer_embd.weight",
+        ] {
+            if let Some(meta) = loader.tensor_meta.get(name) {
+                anyhow::ensure!(
+                    meta.dims.len() == 3
+                        && meta.dims[0] == config.n_layers
+                        && meta.dims[1] >= config.vocab_size
+                        && meta.dims[2] == per_layer_dim,
+                    "tensor '{name}' must have shape [layers={}, vocab>={}, dim={}], got {:?}",
+                    config.n_layers,
+                    config.vocab_size,
+                    per_layer_dim,
+                    meta.dims
+                );
+            }
+        }
 
         let local_rope = {
             // SWA (local) layers rotate with the plain SWA base frequency;
@@ -1089,27 +1463,28 @@ impl Gemma4<CpuBackend> {
             (Arc::new(cos), Arc::new(sin))
         };
 
-        let per_layer_dim = config
-            .hidden_size_per_layer_input
-            .unwrap_or(config.embed_dim);
         let mut blocks = Vec::with_capacity(config.n_layers);
         let mut last_local_source = None;
         let mut last_global_source = None;
         // KV sharing starts at n_layers - num_kv_shared_layers regardless of
         // whether the checkpoint still carries per-layer k/v weights: HF
         // ignores those tensors for shared layers.
-        let first_shared_layer = if config.num_kv_shared_layers > 0 {
-            config.n_layers - config.num_kv_shared_layers
-        } else {
-            usize::MAX
-        };
         for i in 0..config.n_layers {
             let layer_type = config.layer_type(i);
             let k_name = format!("blk.{}.attn_k.weight", i);
             let v_name = format!("blk.{}.attn_v.weight", i);
-            let has_own_kv =
-                loader.tensors.contains_key(&k_name) && loader.tensors.contains_key(&v_name);
-            let is_shared = i >= first_shared_layer || !has_own_kv;
+            let has_k = loader.tensors.contains_key(&k_name);
+            let has_v = loader.tensors.contains_key(&v_name);
+            anyhow::ensure!(
+                has_k == has_v,
+                "Gemma 4 layer {i} must provide both K and V projections or neither"
+            );
+            let has_own_kv = has_k;
+            let is_shared = i >= first_shared_layer;
+            anyhow::ensure!(
+                is_shared || has_own_kv,
+                "Gemma 4 non-shared layer {i} must provide both K and V projections"
+            );
             let shared_source_layer = if is_shared {
                 match layer_type {
                     Gemma4AttentionType::Local => last_local_source,
@@ -1181,7 +1556,7 @@ impl Gemma4<CpuBackend> {
                 .take_optional_f32(&[
                     format!("blk.{}.attn_post_norm.weight", i),
                     format!("blk.{}.post_attention_norm.weight", i),
-                ])
+                ])?
                 .ok_or_else(|| {
                     anyhow::anyhow!("Missing tensor: blk.{}.attn_post_norm.weight", i)
                 })?;
@@ -1189,7 +1564,7 @@ impl Gemma4<CpuBackend> {
                 .take_optional_f32(&[
                     format!("blk.{}.ffn_post_norm.weight", i),
                     format!("blk.{}.post_ffw_norm.weight", i),
-                ])
+                ])?
                 .ok_or_else(|| anyhow::anyhow!("Missing tensor: blk.{}.ffn_post_norm.weight", i))?;
 
             let proj_name = format!("blk.{}.proj.weight", i);
@@ -1245,8 +1620,10 @@ impl Gemma4<CpuBackend> {
             let mut gate_proj =
                 take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_gate.weight", i))?;
             let mut up_proj = take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_up.weight", i))?;
-            gate_proj.prepare_packed_decode();
-            up_proj.prepare_packed_decode();
+            if pack_gate_up {
+                gate_proj.prepare_packed_decode();
+                up_proj.prepare_packed_decode();
+            }
 
             blocks.push(Gemma4Block {
                 input_norm: loader.take_f32(&format!("blk.{}.attn_norm.weight", i))?,
@@ -1279,12 +1656,14 @@ impl Gemma4<CpuBackend> {
             Some(t) => {
                 if t.shape().len() != 3
                     || t.shape()[0] != config.n_layers
-                    || (t.shape()[2] != config.embed_dim && t.shape()[2] != per_layer_dim)
+                    || t.shape()[1] < config.vocab_size
+                    || t.shape()[2] != per_layer_dim
                 {
                     anyhow::bail!(
-                        "Gemma 4 PLE tensor must have shape [layers, vocab, {} or hidden={}], got {:?}",
+                        "Gemma 4 PLE tensor must have shape [layers={}, vocab>={}, dim={}], got {:?}",
+                        config.n_layers,
+                        config.vocab_size,
                         per_layer_dim,
-                        config.embed_dim,
                         t.shape()
                     );
                 }
@@ -1307,10 +1686,17 @@ impl Gemma4<CpuBackend> {
         }
 
         let head = match loader.tensors.remove("output.weight") {
-            Some(LoadedTensor::F32(tensor)) => Gemma4Head::Linear(Linear::new(
-                crate::loader::gguf_to_row_major_f32(tensor),
-                None,
-            )),
+            Some(LoadedTensor::F32(tensor)) => {
+                anyhow::ensure!(
+                    tensor.ndim() == 2,
+                    "output.weight must be a 2D linear weight, got {:?}",
+                    tensor.shape()
+                );
+                Gemma4Head::Linear(Linear::new(
+                    crate::loader::gguf_to_row_major_f32(tensor),
+                    None,
+                ))
+            }
             Some(LoadedTensor::Q8_0(weight)) => Gemma4Head::Linear(Linear::new_q8_0(weight, None)),
             Some(LoadedTensor::KQuant(_)) => {
                 anyhow::bail!(NO_K_QUANT)
@@ -1328,6 +1714,11 @@ impl Gemma4<CpuBackend> {
                         // like every other linear or the PLE context
                         // projection reads transposed bytes
                         LoadedTensor::F32(tensor) => {
+                            anyhow::ensure!(
+                                tensor.ndim() == 2,
+                                "per_layer_model_proj.weight must be a 2D linear weight, got {:?}",
+                                tensor.shape()
+                            );
                             Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
                         }
                         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, None),
@@ -1393,6 +1784,79 @@ impl Gemma4<CpuBackend> {
             head_shape.0,
             head_shape.1
         );
+        let per_layer_dim = if let Some(ple) = &self.ple {
+            match ple {
+                Gemma4Ple::Hidden(tensor) => {
+                    let shape = tensor.shape();
+                    anyhow::ensure!(
+                        shape.len() == 3
+                            && shape[0] == self.config.n_layers
+                            && shape[1] >= self.config.vocab_size
+                            && shape[2] > 0,
+                        "PLE tensor must have shape [layers={}, vocab>={}, dim>0], got {:?}",
+                        self.config.n_layers,
+                        self.config.vocab_size,
+                        shape
+                    );
+                    shape[2]
+                }
+                Gemma4Ple::PackedQ8 {
+                    embeddings,
+                    per_layer_dim,
+                } => {
+                    let expected = self
+                        .config
+                        .n_layers
+                        .checked_mul(*per_layer_dim)
+                        .ok_or_else(|| anyhow::anyhow!("PLE packed width overflow"))?;
+                    anyhow::ensure!(
+                        embeddings.out_features() >= self.config.vocab_size
+                            && embeddings.in_features() == expected,
+                        "packed PLE must have at least {} vocab rows and width {}, got {} rows x {}",
+                        self.config.vocab_size,
+                        expected,
+                        embeddings.out_features(),
+                        embeddings.in_features()
+                    );
+                    *per_layer_dim
+                }
+            }
+        } else {
+            0
+        };
+        match (
+            &self.per_layer_model_proj,
+            &self.per_layer_proj_norm,
+            self.ple.is_some(),
+        ) {
+            (Some(proj), Some(norm), true) => {
+                let expected = self
+                    .config
+                    .n_layers
+                    .checked_mul(per_layer_dim)
+                    .ok_or_else(|| anyhow::anyhow!("global PLE projection width overflow"))?;
+                anyhow::ensure!(
+                    proj.in_features(&backend) == self.config.embed_dim
+                        && proj.out_features(&backend) == expected,
+                    "global PLE projection must be {} -> {}, got {} -> {}",
+                    self.config.embed_dim,
+                    expected,
+                    proj.in_features(&backend),
+                    proj.out_features(&backend)
+                );
+                anyhow::ensure!(
+                    norm.shape() == [per_layer_dim],
+                    "global PLE projection norm must have shape [{}], got {:?}",
+                    per_layer_dim,
+                    norm.shape()
+                );
+            }
+            (None, None, false) => {}
+            (Some(_), _, false) | (_, Some(_), false) => {
+                anyhow::bail!("global PLE projection requires a PLE tensor")
+            }
+            _ => anyhow::bail!("global PLE projection and norm must be provided together"),
+        }
 
         for (index, block) in self.blocks.iter().enumerate() {
             for (name, norm) in [
@@ -1463,6 +1927,46 @@ impl Gemma4<CpuBackend> {
                     norm.shape() == [self.config.embed_dim],
                     "block {index} post-PLE norm must have shape [{}]",
                     self.config.embed_dim
+                );
+            }
+            if self.ple.is_some() {
+                let inp_gate = block.inp_gate.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("block {index} is missing its PLE input gate")
+                })?;
+                let ple_proj = block.ple_proj.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("block {index} is missing its PLE projection")
+                })?;
+                anyhow::ensure!(
+                    block.post_ple_norm.is_some(),
+                    "block {index} is missing its post-PLE norm"
+                );
+                anyhow::ensure!(
+                    inp_gate.in_features(&backend) == self.config.embed_dim
+                        && inp_gate.out_features(&backend) == per_layer_dim,
+                    "block {index} PLE input gate must be {} -> {}",
+                    self.config.embed_dim,
+                    per_layer_dim
+                );
+                anyhow::ensure!(
+                    ple_proj.in_features(&backend) == per_layer_dim
+                        && ple_proj.out_features(&backend) == self.config.embed_dim,
+                    "block {index} PLE projection must be {} -> {}",
+                    per_layer_dim,
+                    self.config.embed_dim
+                );
+            } else {
+                anyhow::ensure!(
+                    block.inp_gate.is_none()
+                        && block.ple_proj.is_none()
+                        && block.post_ple_norm.is_none(),
+                    "block {index} has PLE block tensors without a PLE embedding"
+                );
+            }
+            if let Some(scale) = &block.layer_output_scale {
+                anyhow::ensure!(
+                    scale.shape() == [1],
+                    "block {index} layer output scale must have shape [1], got {:?}",
+                    scale.shape()
                 );
             }
         }
@@ -2274,10 +2778,17 @@ fn get_optional_f32(loader: &GgufLoader, keys: &[&str]) -> Option<f32> {
 
 fn take_gemma4_linear(loader: &mut GgufLoader, name: &str) -> anyhow::Result<Linear<CpuBackend>> {
     match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => Ok(Linear::new(
-            crate::loader::gguf_to_row_major_f32(tensor),
-            None,
-        )),
+        LoadedTensor::F32(tensor) => {
+            anyhow::ensure!(
+                tensor.ndim() == 2,
+                "{name} must be a 2D linear weight, got {:?}",
+                tensor.shape()
+            );
+            Ok(Linear::new(
+                crate::loader::gguf_to_row_major_f32(tensor),
+                None,
+            ))
+        }
         LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, None)),
         LoadedTensor::KQuant(_) => {
             anyhow::bail!(NO_K_QUANT)
@@ -2455,6 +2966,99 @@ mod tests {
         assert_eq!(cfg.n_layers, 2);
         assert_eq!(cfg.embed_dim, 8);
         assert_eq!(cfg.local_head_dim, 4);
+    }
+
+    #[test]
+    fn gemma4_config_rejects_odd_dimensions_and_large_rope_tables() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "gemma4.attention.local_key_length".to_string(),
+            GgufValue::U32(3),
+        );
+        let odd = Gemma4Config::from_gguf_metadata(&loader_with(metadata))
+            .expect_err("odd local RoPE dimensions must be rejected");
+        assert!(odd.to_string().contains("positive and even"), "{odd}");
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "gemma4.context_length".to_string(),
+            GgufValue::U32(1_000_000),
+        );
+        metadata.insert(
+            "gemma4.attention.local_key_length".to_string(),
+            GgufValue::U32(512),
+        );
+        metadata.insert(
+            "gemma4.attention.global_key_length".to_string(),
+            GgufValue::U32(512),
+        );
+        let oversized = Gemma4Config::from_gguf_metadata(&loader_with(metadata))
+            .expect_err("RoPE table products must be bounded");
+        assert!(
+            oversized.to_string().contains("RoPE-table element limit"),
+            "{oversized}"
+        );
+    }
+
+    #[test]
+    fn gemma4_rejects_hostile_rope_factors_and_linear_shapes() {
+        fn loader_with_rope(shape: Vec<usize>, values: Vec<f32>) -> GgufLoader {
+            let mut metadata = HashMap::new();
+            metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
+            metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(4));
+            metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
+            metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(4));
+            metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
+            metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+            let tensors = HashMap::from([
+                ("token_embd.weight".to_string(), tiny_tensor(&[4, 4], 0.1)),
+                (
+                    "rope_freqs.weight".to_string(),
+                    LoadedTensor::F32(CpuTensor::from_data(shape, values)),
+                ),
+            ]);
+            GgufLoader {
+                metadata,
+                tensors,
+                k_strategy: crate::quant_k::KStrategy::EagerF32,
+                k_decisions: HashMap::new(),
+                tensor_meta: HashMap::new(),
+            }
+        }
+
+        let shape_err = Gemma4::from_loader(loader_with_rope(vec![1], vec![1.0]))
+            .err()
+            .expect("wrong RoPE factor shape must be rejected");
+        assert!(
+            shape_err.to_string().contains("rope_freqs.weight"),
+            "{shape_err}"
+        );
+
+        let value_err = Gemma4::from_loader(loader_with_rope(vec![2], vec![f32::INFINITY, 1.0]))
+            .err()
+            .expect("non-finite RoPE factors must be rejected");
+        assert!(
+            value_err.to_string().contains("finite positive factors"),
+            "{value_err}"
+        );
+
+        let mut loader = GgufLoader {
+            metadata: HashMap::new(),
+            tensors: HashMap::from([(
+                "bad.weight".to_string(),
+                LoadedTensor::F32(CpuTensor::from_data(vec![4], vec![0.0; 4])),
+            )]),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let linear_err = take_gemma4_linear(&mut loader, "bad.weight")
+            .err()
+            .expect("non-2D linear weights must be rejected");
+        assert!(
+            linear_err.to_string().contains("2D linear weight"),
+            "{linear_err}"
+        );
     }
 
     #[test]
@@ -2703,6 +3307,78 @@ mod tests {
     }
 
     #[test]
+    fn loader_rejects_malformed_optional_output_weight_geometry() {
+        let mut metadata = HashMap::new();
+        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
+        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
+        metadata.insert(
+            "gemma4.attention.head_count_kv".to_string(),
+            GgufValue::U32(1),
+        );
+        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
+        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+
+        let mut tensors = HashMap::new();
+        insert_tiny_gemma4_tensors(&mut tensors);
+        // Corrupt the optional LM-head weight: expected [embed_dim=2, vocab=4].
+        tensors.insert("output.weight".to_string(), tiny_weight(&[2, 3]));
+        let loader = GgufLoader {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let error = Gemma4::from_loader(loader)
+            .err()
+            .expect("malformed optional output.weight must be rejected before allocation");
+        assert!(error.to_string().contains("output.weight"), "{error}");
+        assert!(error.to_string().contains("dimensions"), "{error}");
+    }
+
+    #[test]
+    fn loader_rejects_malformed_ple_block_geometry() {
+        let mut metadata = HashMap::new();
+        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(1));
+        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
+        metadata.insert(
+            "gemma4.attention.head_count_kv".to_string(),
+            GgufValue::U32(1),
+        );
+        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
+        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        metadata.insert(
+            "gemma4.hidden_size_per_layer_input".to_string(),
+            GgufValue::U32(2),
+        );
+
+        let mut tensors = HashMap::new();
+        insert_tiny_gemma4_tensors(&mut tensors);
+        // A PLE layer requires inp_gate [embed, per_layer_dim]; give it the
+        // wrong width so the preflight must reject before block allocation.
+        tensors.insert("blk.0.proj.weight".to_string(), tiny_weight(&[2, 2]));
+        tensors.insert("blk.0.inp_gate.weight".to_string(), tiny_weight(&[3, 2]));
+        let loader = GgufLoader {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let error = Gemma4::from_loader(loader)
+            .err()
+            .expect("malformed PLE block tensors must be rejected before allocation");
+        assert!(error.to_string().contains("inp_gate.weight"), "{error}");
+        assert!(error.to_string().contains("dimensions"), "{error}");
+    }
+
+    #[test]
     fn loader_accepts_shared_kv_layers_without_own_kv_tensors() {
         let mut metadata = HashMap::new();
         metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(2));
@@ -2716,6 +3392,10 @@ mod tests {
         metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
         metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
         metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        metadata.insert(
+            "gemma4.attention.shared_kv_layers".to_string(),
+            GgufValue::U32(1),
+        );
 
         let mut tensors = HashMap::new();
         insert_tiny_gemma4_tensors(&mut tensors);

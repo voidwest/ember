@@ -127,9 +127,105 @@ impl<'a> Cursor<'a> {
 /// Integer PCM is scaled to nominal [-1, 1] by dividing through the format
 /// midpoint (matching librosa/soundfile conventions: symmetric around zero,
 /// so positive full scale is +1.0 and negative full scale is exactly -1.0).
+/// Maximum WAV file size accepted by the path-backed `decode_wav` reader.
+///
+/// Real recordings are far smaller than this bound. Keeping a finite limit
+/// prevents an attacker-controlled path from forcing an unbounded read and
+/// decode allocation before audio processing starts. In-memory
+/// [`AudioInput::Bytes`] inputs are already bounded by the caller.
+pub const MAX_WAV_FILE_BYTES: u64 = 256 * 1024 * 1024;
+
 pub fn decode_wav(path: &Path) -> Result<DecodedAudio> {
-    let bytes =
-        std::fs::read(path).map_err(|e| anyhow!("failed to read wav {}: {e}", path.display()))?;
+    use std::io::Read;
+
+    // One-descriptor bounded read with path identity checks (same contract
+    // as the tokenizer/NPY readers): reject symlinks up front, then verify
+    // the opened descriptor and the path still refer to the same regular
+    // file after reading.
+    let path_metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| anyhow!("failed to stat wav {}: {e}", path.display()))?;
+    anyhow::ensure!(
+        path_metadata.file_type().is_file(),
+        "wav {} is not a regular file",
+        path.display()
+    );
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| anyhow!("failed to read wav {}: {e}", path.display()))?;
+    let initial = file
+        .metadata()
+        .map_err(|e| anyhow!("failed to stat wav {}: {e}", path.display()))?;
+    anyhow::ensure!(
+        initial.file_type().is_file()
+            && initial.len() == path_metadata.len()
+            && initial.modified().ok() == path_metadata.modified().ok(),
+        "wav file changed while opening {}",
+        path.display()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(
+            initial.dev() == path_metadata.dev() && initial.ino() == path_metadata.ino(),
+            "wav file changed while opening {}",
+            path.display()
+        );
+    }
+    let length = initial.len();
+    anyhow::ensure!(
+        length <= MAX_WAV_FILE_BYTES,
+        "wav file {} is {length} bytes, exceeding the {MAX_WAV_FILE_BYTES} byte limit",
+        path.display()
+    );
+    let capacity =
+        usize::try_from(length).map_err(|_| anyhow!("wav file length exceeds address space"))?;
+    let max_bytes = usize::try_from(MAX_WAV_FILE_BYTES)
+        .map_err(|_| anyhow!("wav byte limit exceeds address space"))?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(capacity)
+        .map_err(|e| anyhow!("failed to reserve wav buffer: {e}"))?;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut chunk)
+            .map_err(|e| anyhow!("failed to read wav {}: {e}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        anyhow::ensure!(
+            bytes.len() <= max_bytes.saturating_sub(read),
+            "wav file {} grew beyond the {MAX_WAV_FILE_BYTES} byte limit while reading",
+            path.display()
+        );
+        bytes
+            .try_reserve_exact(read)
+            .map_err(|e| anyhow!("failed to grow wav buffer: {e}"))?;
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    let final_metadata = file
+        .metadata()
+        .map_err(|e| anyhow!("failed to stat wav {} after reading: {e}", path.display()))?;
+    let final_path_metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| anyhow!("failed to stat wav {} after reading: {e}", path.display()))?;
+    anyhow::ensure!(
+        final_metadata.len() == length
+            && final_metadata.modified().ok() == initial.modified().ok()
+            && final_path_metadata.file_type().is_file()
+            && final_path_metadata.len() == initial.len()
+            && final_path_metadata.modified().ok() == initial.modified().ok(),
+        "wav file changed while reading {}",
+        path.display()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(
+            final_path_metadata.dev() == initial.dev()
+                && final_path_metadata.ino() == initial.ino(),
+            "wav file changed while reading {}",
+            path.display()
+        );
+    }
     decode_wav_bytes(&bytes)
 }
 
@@ -547,4 +643,45 @@ pub fn log_mel_spectrogram_full(samples: &[f32]) -> Result<CpuTensor> {
     }
 
     Ok(CpuTensor::from_data(vec![N_MELS, usable], data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn decode_wav_rejects_symlinks_and_oversized_files() {
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "ember-wav-path-{}-{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&dir).expect("create wav fixture dir");
+        let path = dir.join("clip.wav");
+        std::fs::write(&path, b"not a wav").expect("write wav fixture");
+        #[cfg(unix)]
+        {
+            let link = dir.join("clip-link.wav");
+            std::os::unix::fs::symlink(&path, &link).expect("create wav symlink");
+            let error = decode_wav(&link).expect_err("symlinked wav paths must be rejected");
+            assert!(error.to_string().contains("regular file"), "{error}");
+        }
+        // A regular file passes the path checks and fails at parse time.
+        let error = decode_wav(&path)
+            .expect_err("a regular file must pass path checks and fail at parse time");
+        assert!(!error.to_string().contains("regular file"), "{error}");
+
+        // A sparse oversized file is rejected by the size cap before reading.
+        let big = dir.join("big.wav");
+        let file = std::fs::File::create(&big).expect("create sparse wav fixture");
+        file.set_len(MAX_WAV_FILE_BYTES + 1)
+            .expect("extend sparse wav fixture");
+        drop(file);
+        let error = decode_wav(&big).expect_err("an oversized wav must be rejected before reading");
+        assert!(error.to_string().contains("byte limit"), "{error}");
+
+        std::fs::remove_dir_all(&dir).expect("remove wav fixture dir");
+    }
 }

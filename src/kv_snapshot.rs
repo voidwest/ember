@@ -9,6 +9,7 @@ use crate::plan::ExecutionPlan;
 use crate::v05::manifest::{hex, sha256_hex};
 use anyhow::Context;
 use half::f16;
+use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
@@ -30,9 +31,10 @@ const MAX_LAYERS: usize = 4096;
 const MAX_KV_HEADS: usize = 4096;
 const MAX_HEAD_DIM: usize = 65_536;
 const MAX_SEQUENCE_LENGTH: usize = 16 * 1024 * 1024;
-/// A hard trust boundary for the default loader. Callers that intentionally
-/// handle larger artifacts can use [`KvSnapshot::load_dir_with_limit`].
-pub const DEFAULT_MAX_PAYLOAD_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+/// A hard trust boundary for the default loader. The limit leaves headroom
+/// for decoded values and a destination cache on 16-GiB hosts; callers that
+/// intentionally handle larger artifacts can use [`KvSnapshot::load_dir_with_limit`].
+pub const DEFAULT_MAX_PAYLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -297,6 +299,132 @@ pub struct KvSnapshotManifest {
     pub snapshot_hash: String,
 }
 
+/// Seed used to walk untyped JSON and reject duplicate object keys before
+/// serde maps them with last-wins semantics.
+struct DuplicateKeySeed;
+
+impl<'de> DeserializeSeed<'de> for DuplicateKeySeed {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(DuplicateKeyVisitor)
+    }
+}
+
+struct DuplicateKeyVisitor;
+
+impl<'de> Visitor<'de> for DuplicateKeyVisitor {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON value")
+    }
+
+    fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+    where
+        M: MapAccess<'de>,
+    {
+        let mut keys = std::collections::HashSet::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if !keys.insert(key.clone()) {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate object key '{key}'"
+                )));
+            }
+            map.next_value_seed(DuplicateKeySeed)?;
+        }
+        Ok(())
+    }
+
+    fn visit_seq<S>(self, mut sequence: S) -> Result<Self::Value, S::Error>
+    where
+        S: SeqAccess<'de>,
+    {
+        while sequence.next_element_seed(DuplicateKeySeed)?.is_some() {}
+        Ok(())
+    }
+
+    fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_none<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(())
+    }
+}
+
+impl KvSnapshotManifest {
+    /// Deserialize and structurally validate an in-memory snapshot manifest.
+    ///
+    /// This is the same manifest boundary used by [`KvSnapshot::load_dir`],
+    /// exposed without filesystem access so hostile JSON can be fuzzed or
+    /// validated before payload files are opened. The one-megabyte manifest
+    /// limit is enforced here as well as by the directory loader.
+    pub fn from_json_bytes(bytes: &[u8]) -> anyhow::Result<Self> {
+        let length =
+            u64::try_from(bytes.len()).context("KV snapshot manifest length exceeds u64")?;
+        anyhow::ensure!(
+            length <= MAX_MANIFEST_BYTES,
+            "snapshot manifest is {length} bytes; limit is {MAX_MANIFEST_BYTES}"
+        );
+        let mut duplicate_check = serde_json::Deserializer::from_slice(bytes);
+        duplicate_check
+            .deserialize_any(DuplicateKeyVisitor)
+            .map_err(|error| anyhow::anyhow!("malformed KV snapshot manifest: {error}"))?;
+        duplicate_check
+            .end()
+            .map_err(|error| anyhow::anyhow!("malformed KV snapshot manifest: {error}"))?;
+        let manifest: Self = serde_json::from_slice(bytes)
+            .map_err(|error| anyhow::anyhow!("malformed KV snapshot manifest: {error}"))?;
+        validate_manifest_metadata(&manifest)?;
+        Ok(manifest)
+    }
+}
+
 /// A verified, owned snapshot. Payloads never alias a live cache.
 pub struct KvSnapshot {
     manifest: KvSnapshotManifest,
@@ -355,8 +483,6 @@ impl KvSnapshot {
         } else {
             (None, None)
         };
-        let key_bytes = f16_to_le_bytes(&keys);
-        let value_bytes = f16_to_le_bytes(&values);
         let elements = expected_elements(
             sequence_length,
             target.layer_count,
@@ -393,8 +519,8 @@ impl KvSnapshot {
             rope: target.rope,
             value_state: target.value_state,
             provenance,
-            keys: payload_descriptor(KV_KEY_FILE, elements, &key_bytes)?,
-            values: payload_descriptor(KV_VALUE_FILE, elements, &value_bytes)?,
+            keys: payload_descriptor_from_f16(KV_KEY_FILE, elements, &keys)?,
+            values: payload_descriptor_from_f16(KV_VALUE_FILE, elements, &values)?,
             snapshot_hash: String::new(),
         };
         manifest.snapshot_hash = manifest_hash(&manifest)?;
@@ -530,8 +656,8 @@ impl KvSnapshot {
         let staging = create_staging_directory(parent, name)?;
         let mut guard = StagingGuard::new(staging.clone());
 
-        write_new_file(&staging.join(KV_KEY_FILE), &f16_to_le_bytes(&self.keys))?;
-        write_new_file(&staging.join(KV_VALUE_FILE), &f16_to_le_bytes(&self.values))?;
+        write_f16_new_file(&staging.join(KV_KEY_FILE), &self.keys)?;
+        write_f16_new_file(&staging.join(KV_VALUE_FILE), &self.values)?;
         let mut manifest_bytes = serde_json::to_vec_pretty(&self.manifest)?;
         manifest_bytes.push(b'\n');
         write_new_file(&staging.join(KV_MANIFEST_FILE), &manifest_bytes)?;
@@ -556,7 +682,7 @@ impl KvSnapshot {
         Ok(output.to_path_buf())
     }
 
-    /// Load with the default 16-GiB total payload trust boundary.
+    /// Load with the default 4-GiB total payload trust boundary.
     pub fn load_dir(input: impl AsRef<Path>) -> anyhow::Result<Self> {
         Self::load_dir_with_limit(input, DEFAULT_MAX_PAYLOAD_BYTES)
     }
@@ -576,9 +702,7 @@ impl KvSnapshot {
             "snapshot manifest is {manifest_len} bytes; limit is {MAX_MANIFEST_BYTES}"
         );
         let manifest_bytes = read_exact_file(&manifest_path, manifest_len)?;
-        let manifest: KvSnapshotManifest = serde_json::from_slice(&manifest_bytes)
-            .map_err(|error| anyhow::anyhow!("malformed KV snapshot manifest: {error}"))?;
-        validate_manifest_metadata(&manifest)?;
+        let manifest = KvSnapshotManifest::from_json_bytes(&manifest_bytes)?;
 
         let expected = expected_elements(
             manifest.sequence_length,
@@ -618,12 +742,16 @@ impl KvSnapshot {
             total <= max_payload_bytes,
             "snapshot payload is {total} bytes; configured allocation limit is {max_payload_bytes}"
         );
-        let key_bytes = read_exact_file(&input.join(KV_KEY_FILE), expected_bytes)?;
-        let value_bytes = read_exact_file(&input.join(KV_VALUE_FILE), expected_bytes)?;
+        // Decode one payload at a time directly into its final f16 storage.
+        // Keeping the on-disk bytes out of long-lived Vecs avoids retaining
+        // both the serialized and decoded copies at once (the limit above is
+        // a payload-size limit, not permission to transiently double it).
+        let keys = read_f16_file(&input.join(KV_KEY_FILE), expected_bytes)?;
+        let values = read_f16_file(&input.join(KV_VALUE_FILE), expected_bytes)?;
         let snapshot = Self {
             manifest,
-            keys: f16_from_le_bytes(&key_bytes)?,
-            values: f16_from_le_bytes(&value_bytes)?,
+            keys,
+            values,
         };
         snapshot.verify()?;
         Ok(snapshot)
@@ -1103,16 +1231,20 @@ fn expected_elements(
         .ok_or_else(|| anyhow::anyhow!("KV payload shape product overflow"))
 }
 
-fn payload_descriptor(
+fn payload_descriptor_from_f16(
     file: &str,
     elements: usize,
-    bytes: &[u8],
+    values: &[f16],
 ) -> anyhow::Result<KvPayloadDescriptor> {
+    ensure_finite_f16(file, values)?;
+    let byte_length = u64::try_from(values.len())?
+        .checked_mul(2)
+        .ok_or_else(|| anyhow::anyhow!("{file} byte length overflow"))?;
     Ok(KvPayloadDescriptor {
         file: file.into(),
         elements,
-        byte_length: u64::try_from(bytes.len())?,
-        sha256: sha256_hex(bytes),
+        byte_length,
+        sha256: hash_f16_le(values),
     })
 }
 
@@ -1130,12 +1262,15 @@ fn verify_payload_descriptor(
         descriptor.elements == values.len(),
         "{expected_file} element count mismatch"
     );
-    let bytes = f16_to_le_bytes(values);
+    ensure_finite_f16(expected_file, values)?;
+    let byte_length = u64::try_from(values.len())?
+        .checked_mul(2)
+        .ok_or_else(|| anyhow::anyhow!("{expected_file} byte length overflow"))?;
     anyhow::ensure!(
-        descriptor.byte_length == u64::try_from(bytes.len())?,
+        descriptor.byte_length == byte_length,
         "{expected_file} byte length mismatch"
     );
-    let computed = sha256_hex(&bytes);
+    let computed = hash_f16_le(values);
     anyhow::ensure!(
         descriptor.sha256 == computed,
         "{expected_file} SHA-256 mismatch: recorded {}, computed {computed}",
@@ -1198,6 +1333,31 @@ fn hash_token_ids(tokens: &[u32]) -> String {
     hex(&hasher.finalize())
 }
 
+fn ensure_finite_f16(file: &str, values: &[f16]) -> anyhow::Result<()> {
+    for (index, value) in values.iter().enumerate() {
+        anyhow::ensure!(
+            value.to_f32().is_finite(),
+            "{file} contains a non-finite f16 payload value at index {index}"
+        );
+    }
+    Ok(())
+}
+
+fn write_f16_new_file(path: &Path, values: &[f16]) -> anyhow::Result<()> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let mut bytes = [0u8; PAYLOAD_READ_CHUNK_BYTES];
+    for chunk in values.chunks(bytes.len() / 2) {
+        for (index, value) in chunk.iter().enumerate() {
+            let offset = index * 2;
+            bytes[offset..offset + 2].copy_from_slice(&value.to_bits().to_le_bytes());
+        }
+        file.write_all(&bytes[..chunk.len() * 2])?;
+    }
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(test)]
 fn f16_to_le_bytes(values: &[f16]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(values.len().saturating_mul(2));
     for value in values {
@@ -1206,19 +1366,71 @@ fn f16_to_le_bytes(values: &[f16]) -> Vec<u8> {
     bytes
 }
 
-fn f16_from_le_bytes(bytes: &[u8]) -> anyhow::Result<Vec<f16>> {
+const PAYLOAD_READ_CHUNK_BYTES: usize = 64 * 1024;
+
+/// Read a serialized f16 payload into its final representation without first
+/// materializing a second full-size byte buffer. The bounded chunk also keeps
+/// this path independent of the payload size supplied by an untrusted
+/// manifest.
+fn read_f16_file(path: &Path, length: u64) -> anyhow::Result<Vec<f16>> {
+    let length_usize = usize::try_from(length)
+        .map_err(|_| anyhow::anyhow!("file '{}' is too large for this platform", path.display()))?;
     anyhow::ensure!(
-        bytes.len().is_multiple_of(2),
+        length_usize.is_multiple_of(2),
         "f16 payload byte length is odd"
+    );
+    let mut file = open_snapshot_file(path)?;
+    let initial_metadata = file.metadata()?;
+    anyhow::ensure!(
+        initial_metadata.file_type().is_file(),
+        "'{}' is not a regular file",
+        path.display()
     );
     let mut values = Vec::new();
     values
-        .try_reserve_exact(bytes.len() / 2)
+        .try_reserve_exact(length_usize / 2)
         .map_err(|error| anyhow::anyhow!("cannot allocate decoded f16 payload: {error}"))?;
-    for pair in bytes.chunks_exact(2) {
-        values.push(f16::from_bits(u16::from_le_bytes([pair[0], pair[1]])));
+    let mut bytes = [0u8; PAYLOAD_READ_CHUNK_BYTES];
+    let mut remaining = length_usize;
+    while remaining > 0 {
+        // The payload length is even and the chunk size is even, so every
+        // iteration can be decoded as complete little-endian f16 pairs.
+        let chunk_length = remaining.min(bytes.len());
+        file.read_exact(&mut bytes[..chunk_length])?;
+        for pair in bytes[..chunk_length].chunks_exact(2) {
+            let value = f16::from_bits(u16::from_le_bytes([pair[0], pair[1]]));
+            anyhow::ensure!(
+                value.to_f32().is_finite(),
+                "'{}' contains a non-finite f16 payload value",
+                path.display()
+            );
+            values.push(value);
+        }
+        remaining -= chunk_length;
     }
+    let mut trailing = [0u8; 1];
+    anyhow::ensure!(
+        file.read(&mut trailing)? == 0,
+        "'{}' has unexpected extra bytes",
+        path.display()
+    );
+    ensure_snapshot_file_unchanged(path, &file, &initial_metadata)?;
     Ok(values)
+}
+
+/// Hash f16 values in the canonical little-endian representation without
+/// allocating a byte vector the size of the payload.
+fn hash_f16_le(values: &[f16]) -> String {
+    let mut hasher = Sha256::new();
+    let mut bytes = [0u8; PAYLOAD_READ_CHUNK_BYTES];
+    for chunk in values.chunks(bytes.len() / 2) {
+        for (index, value) in chunk.iter().enumerate() {
+            let offset = index * 2;
+            bytes[offset..offset + 2].copy_from_slice(&value.to_bits().to_le_bytes());
+        }
+        hasher.update(&bytes[..chunk.len() * 2]);
+    }
+    hex(&hasher.finalize())
 }
 
 fn validate_sha256(name: &str, value: &str) -> anyhow::Result<()> {
@@ -1272,12 +1484,45 @@ fn validate_snapshot_directory(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn open_snapshot_file(path: &Path) -> anyhow::Result<File> {
+    // Reject symlinks before opening and compare the opened descriptor with
+    // that lstat result. This closes the common replacement race without
+    // following an attacker-controlled snapshot path outside its directory.
+    let path_metadata = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(
+        path_metadata.file_type().is_file(),
+        "'{}' is not a regular file",
+        path.display()
+    );
+    let file = File::open(path)?;
+    let file_metadata = file.metadata()?;
+    anyhow::ensure!(
+        file_metadata.file_type().is_file()
+            && file_metadata.len() == path_metadata.len()
+            && file_metadata.modified().ok() == path_metadata.modified().ok(),
+        "file changed while opening '{}'",
+        path.display()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(
+            file_metadata.dev() == path_metadata.dev()
+                && file_metadata.ino() == path_metadata.ino(),
+            "file changed while opening '{}'",
+            path.display()
+        );
+    }
+    Ok(file)
+}
+
 fn read_exact_file(path: &Path, length: u64) -> anyhow::Result<Vec<u8>> {
     let length_usize = usize::try_from(length)
         .map_err(|_| anyhow::anyhow!("file '{}' is too large for this platform", path.display()))?;
-    let mut file = File::open(path)?;
+    let mut file = open_snapshot_file(path)?;
+    let initial_metadata = file.metadata()?;
     anyhow::ensure!(
-        file.metadata()?.file_type().is_file(),
+        initial_metadata.file_type().is_file(),
         "'{}' is not a regular file",
         path.display()
     );
@@ -1296,7 +1541,37 @@ fn read_exact_file(path: &Path, length: u64) -> anyhow::Result<Vec<u8>> {
         "'{}' has unexpected extra bytes",
         path.display()
     );
+    ensure_snapshot_file_unchanged(path, &file, &initial_metadata)?;
     Ok(bytes)
+}
+
+fn ensure_snapshot_file_unchanged(
+    path: &Path,
+    file: &std::fs::File,
+    initial_metadata: &std::fs::Metadata,
+) -> anyhow::Result<()> {
+    let final_metadata = file.metadata()?;
+    let final_path_metadata = std::fs::symlink_metadata(path)?;
+    anyhow::ensure!(
+        final_metadata.len() == initial_metadata.len()
+            && final_metadata.modified().ok() == initial_metadata.modified().ok()
+            && final_path_metadata.file_type().is_file()
+            && final_path_metadata.len() == initial_metadata.len()
+            && final_path_metadata.modified().ok() == initial_metadata.modified().ok(),
+        "file changed while reading '{}'",
+        path.display()
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(
+            final_path_metadata.dev() == initial_metadata.dev()
+                && final_path_metadata.ino() == initial_metadata.ino(),
+            "file changed while reading '{}'",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 fn create_staging_directory(parent: &Path, name: &str) -> anyhow::Result<PathBuf> {
@@ -1501,10 +1776,26 @@ mod tests {
     }
 
     #[test]
+    fn manifest_duplicate_keys_are_rejected() {
+        let manifest = snapshot(1, 2).manifest().clone();
+        let mut bytes = serde_json::to_vec(&manifest).unwrap();
+        assert_eq!(bytes.pop(), Some(b'}'));
+        bytes.extend_from_slice(br#","schema":"ember.kv-snapshot.v1"}"#);
+        let error = KvSnapshotManifest::from_json_bytes(&bytes).unwrap_err();
+        assert!(
+            error.to_string().contains("duplicate object key"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn directory_round_trip_and_integrity_verification() {
         let root = temp_dir("roundtrip");
         let original = snapshot(3, 5);
         original.save_dir(&root, false).unwrap();
+        let manifest_bytes = std::fs::read(root.join(KV_MANIFEST_FILE)).unwrap();
+        let parsed = KvSnapshotManifest::from_json_bytes(&manifest_bytes).unwrap();
+        assert_eq!(&parsed, original.manifest());
         let loaded = KvSnapshot::load_dir(&root).unwrap();
         assert_eq!(original.manifest(), loaded.manifest());
         assert_eq!(original.keys(), loaded.keys());
@@ -1563,6 +1854,24 @@ mod tests {
         std::fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
         let error = KvSnapshot::load_dir(&root).err().unwrap().to_string();
         assert!(error.contains("layer count") || error.contains("overflow"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn streamed_f16_payload_read_and_hash_match_serialized_bytes() {
+        let root = temp_dir("streamed-payload");
+        std::fs::create_dir(&root).unwrap();
+        let values: Vec<f16> = (0..(PAYLOAD_READ_CHUNK_BYTES / 2 + 1))
+            .map(|index| f16::from_f32(index as f32 / 16.0 - 100.0))
+            .collect();
+        let bytes = f16_to_le_bytes(&values);
+        let path = root.join(KV_KEY_FILE);
+        std::fs::write(&path, &bytes).unwrap();
+
+        let loaded = read_f16_file(&path, bytes.len() as u64).unwrap();
+        assert_eq!(loaded, values);
+        assert_eq!(hash_f16_le(&loaded), sha256_hex(&bytes));
+
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,8 +1,9 @@
 //! Experimental execution hooks for built-in research interventions.
 //!
-//! This API is intentionally narrow and **unstable in Ember v0.1**. It
-//! supports one statically compiled experiment per generation run. It is not
-//! a dynamic plugin ABI, registry, event bus, or compatibility commitment.
+//! This API is intentionally narrow and **pre-1.0**. It supports one
+//! statically compiled experiment per generation run. It is not a dynamic
+//! plugin ABI, registry, event bus, or compatibility commitment. See
+//! `docs/api-stability.md` for the Rust API support tiers and release rules.
 
 mod activation_patch;
 mod activation_stats;
@@ -605,9 +606,8 @@ impl core::fmt::Debug for ExperimentRunner {
 
 /// Experiment-aware cached inference implemented by the supported CPU models.
 ///
-/// This trait exists only to connect Ember's CLI to the unstable v0.1
-/// experiment API. It is not a general backend or third-party model extension
-/// interface.
+/// This trait exists only to connect Ember's CLI to the pre-1.0 experiment
+/// API. It is not a general backend or third-party model extension interface.
 #[doc(hidden)]
 pub trait ExperimentalForwardModel: ForwardModel<CpuBackend> {
     fn forward_last_logits_with_experiment(

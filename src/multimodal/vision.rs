@@ -670,11 +670,13 @@ impl VisionModel {
     /// dict under a `v.` prefix with GGUF `[in, out]` linear dims (the same
     /// convention the llama loader uses).
     pub fn from_mmproj_loader(loader: &mut GgufLoader) -> Result<Self> {
-        use crate::loader::{gguf_to_row_major_f32, GgufValue};
+        use crate::loader::{try_gguf_to_row_major_f32, GgufValue};
 
+        loader.check_all_f32_dequantization_budget()?;
         let get_u32 = |key: &str| -> Result<usize> {
             match loader.metadata.get(key) {
-                Some(GgufValue::U32(v)) => Ok(*v as usize),
+                Some(GgufValue::U32(v)) => usize::try_from(*v)
+                    .map_err(|error| anyhow::anyhow!("{key} does not fit in usize: {error}")),
                 Some(other) => anyhow::bail!("{key} must be U32, got {other:?}"),
                 None => anyhow::bail!("mmproj missing required metadata {key}"),
             }
@@ -695,6 +697,90 @@ impl VisionModel {
         let intermediate_size = get_u32("smolvlm.vision.intermediate_size")?;
         let norm_eps = get_f32("smolvlm.vision.layer_norm_eps")?;
         let scale_factor = get_u32("smolvlm.scale_factor")?;
+
+        // Metadata is external input. Validate it before calling
+        // `num_patches`, sizing vectors, or indexing any loaded tensor. In
+        // particular, a zero patch size used to panic in `num_patches()`.
+        anyhow::ensure!(patch_size > 0, "vision patch size must be non-zero");
+        anyhow::ensure!(image_size > 0, "vision image size must be non-zero");
+        anyhow::ensure!(
+            norm_eps.is_finite() && norm_eps >= 0.0,
+            "vision layer-norm epsilon must be finite and non-negative, got {norm_eps}"
+        );
+        anyhow::ensure!(
+            patch_size <= image_size,
+            "vision patch size {patch_size} exceeds image size {image_size}"
+        );
+        anyhow::ensure!(
+            image_size.is_multiple_of(patch_size),
+            "vision image size {image_size} is not divisible by patch size {patch_size}"
+        );
+        anyhow::ensure!(embed_dim > 0, "vision embedding width must be non-zero");
+        anyhow::ensure!(n_layers > 0, "vision tower must contain at least one layer");
+        anyhow::ensure!(n_heads > 0, "vision attention head count must be non-zero");
+        anyhow::ensure!(
+            intermediate_size > 0,
+            "vision intermediate width must be non-zero"
+        );
+        anyhow::ensure!(
+            scale_factor > 0,
+            "vision pixel-shuffle scale must be non-zero"
+        );
+        anyhow::ensure!(
+            n_layers <= crate::loader::limits::MAX_LAYERS,
+            "vision layer count {n_layers} exceeds the {} layer limit",
+            crate::loader::limits::MAX_LAYERS
+        );
+        anyhow::ensure!(
+            embed_dim <= crate::loader::limits::MAX_EMBED_DIM,
+            "vision embedding width {embed_dim} exceeds the {} element limit",
+            crate::loader::limits::MAX_EMBED_DIM
+        );
+        anyhow::ensure!(
+            n_heads <= crate::loader::limits::MAX_HEADS,
+            "vision head count {n_heads} exceeds the {} head limit",
+            crate::loader::limits::MAX_HEADS
+        );
+        anyhow::ensure!(
+            intermediate_size <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+            "vision intermediate width {intermediate_size} exceeds the {} element limit",
+            crate::loader::limits::MAX_INTERMEDIATE_DIM
+        );
+        anyhow::ensure!(
+            embed_dim.is_multiple_of(n_heads),
+            "vision embedding width {embed_dim} is not divisible by {n_heads} heads"
+        );
+        anyhow::ensure!(
+            embed_dim / n_heads <= crate::loader::limits::MAX_HEAD_DIM,
+            "vision head width {} exceeds the {} element limit",
+            embed_dim / n_heads,
+            crate::loader::limits::MAX_HEAD_DIM
+        );
+
+        let patches_per_side = image_size / patch_size;
+        let num_patches = patches_per_side
+            .checked_mul(patches_per_side)
+            .ok_or_else(|| anyhow::anyhow!("vision patch-count overflow for image size {image_size} and patch size {patch_size}"))?;
+        let scale_area = scale_factor.checked_mul(scale_factor).ok_or_else(|| {
+            anyhow::anyhow!("vision pixel-shuffle scale area overflow for scale {scale_factor}")
+        })?;
+        anyhow::ensure!(
+            num_patches <= crate::loader::limits::MAX_CONTEXT_LEN,
+            "vision patch count {num_patches} exceeds the {} element limit",
+            crate::loader::limits::MAX_CONTEXT_LEN
+        );
+        anyhow::ensure!(
+            num_patches.is_multiple_of(scale_area),
+            "vision patch count {num_patches} is not divisible by pixel-shuffle area {scale_area}"
+        );
+        let connector_input = embed_dim
+            .checked_mul(scale_area)
+            .ok_or_else(|| anyhow::anyhow!("vision connector input width overflow"))?;
+        anyhow::ensure!(
+            connector_input <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+            "vision connector input width {connector_input} exceeds the {} element limit",
+            crate::loader::limits::MAX_INTERMEDIATE_DIM
+        );
         let config = VisionTransformerConfig {
             patch_size,
             image_size,
@@ -705,25 +791,183 @@ impl VisionModel {
             norm_eps,
         };
 
-        let take_linear = |loader: &mut GgufLoader, name: &str| -> Result<Linear<CpuBackend>> {
+        // Check the complete inventory and cheap tensor geometry before
+        // dequantizing any tower layer or allocating the layer vector.
+        let mut required = vec![
+            "v.vision.embeddings.patch_embedding.weight".to_string(),
+            "v.vision.embeddings.patch_embedding.bias".to_string(),
+            "v.vision.embeddings.position_embedding.weight".to_string(),
+            "v.vision.post_layernorm.weight".to_string(),
+            "v.vision.post_layernorm.bias".to_string(),
+            "v.connector.modality_projection.proj.weight".to_string(),
+        ];
+        required.reserve(n_layers * 16);
+        for i in 0..n_layers {
+            let p = format!("v.vision.encoder.layers.{i}.");
+            for suffix in [
+                "layer_norm1.weight",
+                "layer_norm1.bias",
+                "self_attn.q_proj.weight",
+                "self_attn.k_proj.weight",
+                "self_attn.v_proj.weight",
+                "self_attn.out_proj.weight",
+                "layer_norm2.weight",
+                "layer_norm2.bias",
+                "mlp.fc1.weight",
+                "mlp.fc2.weight",
+            ] {
+                required.push(format!("{p}{suffix}"));
+            }
+        }
+        let tensor_dims = |name: &str| -> Result<Vec<usize>> {
+            if let Some(meta) = loader.tensor_meta.get(name) {
+                return Ok(meta.dims.clone());
+            }
+            match loader.tensors.get(name) {
+                Some(crate::loader::LoadedTensor::F32(tensor)) => Ok(tensor.shape().to_vec()),
+                Some(crate::loader::LoadedTensor::Q8_0(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                Some(crate::loader::LoadedTensor::KQuant(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                None => anyhow::bail!("missing tensor geometry for '{name}'"),
+            }
+        };
+        let check_dims = |name: &str, expected: &[usize]| -> Result<()> {
+            let actual = tensor_dims(name)?;
+            anyhow::ensure!(
+                actual == expected,
+                "{name} gguf dims {actual:?} != expected {expected:?}"
+            );
+            Ok(())
+        };
+        // Surface malformed present tensors before the complete-inventory
+        // error, keeping this boundary diagnostic and panic-free even for a
+        // truncated synthetic mmproj.
+        let patch_name = "v.vision.embeddings.patch_embedding.weight";
+        if loader.tensors.contains_key(patch_name) {
+            check_dims(patch_name, &[patch_size, patch_size, 3, embed_dim])?;
+        }
+        for i in 0..n_layers {
+            let name = format!("v.vision.encoder.layers.{i}.self_attn.q_proj.weight");
+            if loader.tensors.contains_key(&name) {
+                check_dims(&name, &[embed_dim, embed_dim])?;
+            }
+        }
+        crate::loader::require_tensors(loader, &required)?;
+        check_dims(
+            "v.vision.embeddings.patch_embedding.weight",
+            &[patch_size, patch_size, 3, embed_dim],
+        )?;
+        check_dims("v.vision.embeddings.patch_embedding.bias", &[embed_dim])?;
+        check_dims(
+            "v.vision.embeddings.position_embedding.weight",
+            &[embed_dim, num_patches],
+        )?;
+        check_dims("v.vision.post_layernorm.weight", &[embed_dim])?;
+        check_dims("v.vision.post_layernorm.bias", &[embed_dim])?;
+        let connector_dims = tensor_dims("v.connector.modality_projection.proj.weight")?;
+        anyhow::ensure!(
+            connector_dims.len() == 2
+                && connector_dims[0] == connector_input
+                && connector_dims[1] > 0
+                && connector_dims[1] <= crate::loader::limits::MAX_EMBED_DIM,
+            "connector projection dimensions {connector_dims:?} are incompatible with input {connector_input}"
+        );
+        for i in 0..n_layers {
+            let p = format!("v.vision.encoder.layers.{i}.");
+            for suffix in [
+                "layer_norm1.weight",
+                "layer_norm1.bias",
+                "layer_norm2.weight",
+                "layer_norm2.bias",
+            ] {
+                check_dims(&format!("{p}{suffix}"), &[embed_dim])?;
+            }
+            for suffix in [
+                "self_attn.q_proj.weight",
+                "self_attn.k_proj.weight",
+                "self_attn.v_proj.weight",
+                "self_attn.out_proj.weight",
+            ] {
+                check_dims(&format!("{p}{suffix}"), &[embed_dim, embed_dim])?;
+            }
+            check_dims(
+                &format!("{p}mlp.fc1.weight"),
+                &[embed_dim, intermediate_size],
+            )?;
+            check_dims(
+                &format!("{p}mlp.fc2.weight"),
+                &[intermediate_size, embed_dim],
+            )?;
+            for (suffix, width) in [
+                ("self_attn.q_proj.bias", embed_dim),
+                ("self_attn.k_proj.bias", embed_dim),
+                ("self_attn.v_proj.bias", embed_dim),
+                ("self_attn.out_proj.bias", embed_dim),
+                ("mlp.fc1.bias", intermediate_size),
+                ("mlp.fc2.bias", embed_dim),
+            ] {
+                let name = format!("{p}{suffix}");
+                if loader.tensors.contains_key(&name) {
+                    check_dims(&name, &[width])?;
+                }
+            }
+        }
+
+        // `expected` is the GGUF [in, out] shape. Check it before converting:
+        // `CpuTensor::transpose` is intentionally infallible for trusted
+        // tensors, while this loader handles untrusted mmproj data.
+        let take_linear = |loader: &mut GgufLoader,
+                           name: &str,
+                           expected: &[usize]|
+         -> Result<Linear<CpuBackend>> {
             let weight_name = format!("{name}.weight");
             let weight = loader
                 .take_f32(&weight_name)
                 .with_context(|| format!("mmproj missing tensor {weight_name}"))?;
-            let bias = loader.take_optional_f32(&[format!("{name}.bias")]);
-            let weight = gguf_to_row_major_f32(weight);
+            anyhow::ensure!(
+                weight.shape() == expected,
+                "{weight_name} gguf dims {:?} != expected {:?}",
+                weight.shape(),
+                expected
+            );
+            let bias = loader.take_optional_f32(&[format!("{name}.bias")])?;
+            if let Some(ref bias) = bias {
+                anyhow::ensure!(
+                    bias.shape() == [expected[1]],
+                    "{name}.bias shape {:?} != [{}]",
+                    bias.shape(),
+                    expected[1]
+                );
+            }
+            let weight = try_gguf_to_row_major_f32(weight)?;
             Ok(Linear::new(weight, bias))
         };
-        let take_norm =
-            |loader: &mut GgufLoader, name: &str, eps: f32| -> Result<LayerNorm<CpuBackend>> {
-                let weight = loader
-                    .take_f32(&format!("{name}.weight"))
-                    .with_context(|| format!("mmproj missing tensor {name}.weight"))?;
-                let bias = loader
-                    .take_f32(&format!("{name}.bias"))
-                    .with_context(|| format!("mmproj missing tensor {name}.bias"))?;
-                Ok(LayerNorm::new(weight, bias, eps))
-            };
+        let take_norm = |loader: &mut GgufLoader,
+                         name: &str,
+                         width: usize,
+                         eps: f32|
+         -> Result<LayerNorm<CpuBackend>> {
+            let weight = loader
+                .take_f32(&format!("{name}.weight"))
+                .with_context(|| format!("mmproj missing tensor {name}.weight"))?;
+            anyhow::ensure!(
+                weight.shape() == [width],
+                "{name}.weight shape {:?} != [{width}]",
+                weight.shape()
+            );
+            let bias = loader
+                .take_f32(&format!("{name}.bias"))
+                .with_context(|| format!("mmproj missing tensor {name}.bias"))?;
+            anyhow::ensure!(
+                bias.shape() == [width],
+                "{name}.bias shape {:?} != [{width}]",
+                bias.shape()
+            );
+            Ok(LayerNorm::new(weight, bias, eps))
+        };
 
         // patch embedding: 4-D conv weight. GGUF dims are the reversed HF
         // shape [kw, kh, in, out]; the payload is HF row-major
@@ -740,39 +984,78 @@ impl VisionModel {
         let patch_embed_bias = loader
             .take_f32("v.vision.embeddings.patch_embedding.bias")
             .context("mmproj missing patch_embedding.bias")?;
+        anyhow::ensure!(
+            patch_embed_bias.shape() == [embed_dim],
+            "patch_embedding.bias shape {:?} != [{embed_dim}]",
+            patch_embed_bias.shape()
+        );
         // GGUF dims are reversed HF shape: [embed, num_patches]; payload is
         // HF row-major [num_patches][embed].
         let pos_embed = loader
             .take_f32("v.vision.embeddings.position_embedding.weight")
             .context("mmproj missing position_embedding.weight")?;
         anyhow::ensure!(
-            pos_embed.shape() == [embed_dim, config.num_patches()],
-            "position_embedding.weight gguf dims {:?} != [{embed_dim}, {}]",
-            pos_embed.shape(),
-            config.num_patches()
+            pos_embed.shape() == [embed_dim, num_patches],
+            "position_embedding.weight gguf dims {:?} != [{embed_dim}, {num_patches}]",
+            pos_embed.shape()
         );
 
         let mut layers = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
             let p = format!("v.vision.encoder.layers.{i}.");
             layers.push(VisionLayer {
-                ln1: take_norm(loader, &format!("{p}layer_norm1"), norm_eps)?,
-                q_proj: take_linear(loader, &format!("{p}self_attn.q_proj"))?,
-                k_proj: take_linear(loader, &format!("{p}self_attn.k_proj"))?,
-                v_proj: take_linear(loader, &format!("{p}self_attn.v_proj"))?,
-                out_proj: take_linear(loader, &format!("{p}self_attn.out_proj"))?,
-                ln2: take_norm(loader, &format!("{p}layer_norm2"), norm_eps)?,
-                fc1: take_linear(loader, &format!("{p}mlp.fc1"))?,
-                fc2: take_linear(loader, &format!("{p}mlp.fc2"))?,
+                ln1: take_norm(loader, &format!("{p}layer_norm1"), embed_dim, norm_eps)?,
+                q_proj: take_linear(
+                    loader,
+                    &format!("{p}self_attn.q_proj"),
+                    &[embed_dim, embed_dim],
+                )?,
+                k_proj: take_linear(
+                    loader,
+                    &format!("{p}self_attn.k_proj"),
+                    &[embed_dim, embed_dim],
+                )?,
+                v_proj: take_linear(
+                    loader,
+                    &format!("{p}self_attn.v_proj"),
+                    &[embed_dim, embed_dim],
+                )?,
+                out_proj: take_linear(
+                    loader,
+                    &format!("{p}self_attn.out_proj"),
+                    &[embed_dim, embed_dim],
+                )?,
+                ln2: take_norm(loader, &format!("{p}layer_norm2"), embed_dim, norm_eps)?,
+                fc1: take_linear(
+                    loader,
+                    &format!("{p}mlp.fc1"),
+                    &[embed_dim, intermediate_size],
+                )?,
+                fc2: take_linear(
+                    loader,
+                    &format!("{p}mlp.fc2"),
+                    &[intermediate_size, embed_dim],
+                )?,
             });
         }
-        let post_ln = take_norm(loader, "v.vision.post_layernorm", norm_eps)?;
+        let post_ln = take_norm(loader, "v.vision.post_layernorm", embed_dim, norm_eps)?;
 
         let proj_weight = loader
             .take_f32("v.connector.modality_projection.proj.weight")
             .context("mmproj missing connector proj.weight")?;
-        let llm_width = proj_weight.shape()[1];
-        let proj = Linear::new(gguf_to_row_major_f32(proj_weight), None);
+        let (proj_in, llm_width) = match proj_weight.shape() {
+            [input, output] => (*input, *output),
+            shape => anyhow::bail!("connector proj.weight must be 2D, got gguf dims {shape:?}"),
+        };
+        anyhow::ensure!(
+            proj_in == connector_input,
+            "connector proj.weight input width {proj_in} != expected {connector_input}"
+        );
+        anyhow::ensure!(
+            llm_width > 0,
+            "connector projection output width must be non-zero"
+        );
+        let proj = Linear::new(try_gguf_to_row_major_f32(proj_weight)?, None);
 
         let transformer = VisionTransformer {
             config,
@@ -783,7 +1066,6 @@ impl VisionModel {
             post_ln,
         };
         let connector = PixelShuffleConnector { scale_factor, proj };
-        let _ = llm_width;
         Ok(Self {
             transformer,
             connector,
@@ -846,4 +1128,122 @@ fn ensure_mask_shape(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::{GgufValue, LoadedTensor};
+    use std::collections::HashMap;
+
+    fn metadata(patch_size: u32) -> HashMap<String, GgufValue> {
+        HashMap::from([
+            (
+                "smolvlm.vision.patch_size".into(),
+                GgufValue::U32(patch_size),
+            ),
+            ("smolvlm.vision.image_size".into(), GgufValue::U32(2)),
+            ("smolvlm.vision.hidden_size".into(), GgufValue::U32(4)),
+            ("smolvlm.vision.num_hidden_layers".into(), GgufValue::U32(1)),
+            (
+                "smolvlm.vision.num_attention_heads".into(),
+                GgufValue::U32(1),
+            ),
+            ("smolvlm.vision.intermediate_size".into(), GgufValue::U32(8)),
+            ("smolvlm.vision.layer_norm_eps".into(), GgufValue::F32(1e-5)),
+            ("smolvlm.scale_factor".into(), GgufValue::U32(1)),
+        ])
+    }
+
+    fn tensor(shape: &[usize]) -> LoadedTensor {
+        let elements = shape.iter().product();
+        LoadedTensor::F32(CpuTensor::from_data(shape.to_vec(), vec![0.0; elements]))
+    }
+
+    fn loader(
+        metadata: HashMap<String, GgufValue>,
+        tensors: HashMap<String, LoadedTensor>,
+    ) -> GgufLoader {
+        GgufLoader {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn zero_patch_size_is_an_error_not_a_num_patches_panic() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut loader = loader(metadata(0), HashMap::new());
+            VisionModel::from_mmproj_loader(&mut loader)
+        }));
+        let result = result.expect("malformed vision metadata must not panic");
+        let error = match result {
+            Ok(_) => panic!("zero patch size unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("patch size must be non-zero"));
+    }
+
+    #[test]
+    fn malformed_patch_rank_is_rejected_before_tensor_indexing() {
+        let mut tensors = HashMap::new();
+        tensors.insert(
+            "v.vision.embeddings.patch_embedding.weight".into(),
+            tensor(&[2, 2, 3]),
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut loader = loader(metadata(2), tensors);
+            VisionModel::from_mmproj_loader(&mut loader)
+        }));
+        let result = result.expect("malformed patch rank must not panic");
+        let error = match result {
+            Ok(_) => panic!("malformed patch rank unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("patch_embedding.weight"));
+        assert!(error.to_string().contains("gguf dims"));
+    }
+
+    #[test]
+    fn malformed_linear_rank_is_rejected_without_transpose_panic() {
+        let mut tensors = HashMap::new();
+        tensors.insert(
+            "v.vision.embeddings.patch_embedding.weight".into(),
+            tensor(&[2, 2, 3, 4]),
+        );
+        tensors.insert(
+            "v.vision.embeddings.patch_embedding.bias".into(),
+            tensor(&[4]),
+        );
+        tensors.insert(
+            "v.vision.embeddings.position_embedding.weight".into(),
+            tensor(&[4, 1]),
+        );
+        tensors.insert(
+            "v.vision.encoder.layers.0.layer_norm1.weight".into(),
+            tensor(&[4]),
+        );
+        tensors.insert(
+            "v.vision.encoder.layers.0.layer_norm1.bias".into(),
+            tensor(&[4]),
+        );
+        tensors.insert(
+            "v.vision.encoder.layers.0.self_attn.q_proj.weight".into(),
+            tensor(&[4, 4, 1]),
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut loader = loader(metadata(2), tensors);
+            VisionModel::from_mmproj_loader(&mut loader)
+        }));
+        let result = result.expect("malformed linear rank must not panic");
+        let error = match result {
+            Ok(_) => panic!("malformed linear rank unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("q_proj.weight"));
+        assert!(error.to_string().contains("expected"));
+    }
 }

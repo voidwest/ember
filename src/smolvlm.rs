@@ -125,6 +125,12 @@ impl SmolVlm {
                 mmproj_path.display()
             )
         })?;
+        anyhow::ensure!(
+            vision.llm_width(&CpuBackend) == llm.config.embed_dim,
+            "vision connector output width {} does not match text embedding width {}",
+            vision.llm_width(&CpuBackend),
+            llm.config.embed_dim
+        );
         let assembler = SmolVlmAssembler::default();
         let preprocess_config = ImagePreprocessConfig {
             resize_longest_edge: Some(2048),
@@ -135,18 +141,11 @@ impl SmolVlm {
             std: [0.5; 3],
         };
         // content hash of the mmproj file: cache keys are invalid across
-        // different encoder weights
-        let vision_identity = {
-            use sha2::{Digest, Sha256};
-            let bytes = std::fs::read(mmproj_path).with_context(|| {
-                format!(
-                    "failed to read mmproj for hashing {}",
-                    mmproj_path.display()
-                )
-            })?;
-            let digest = Sha256::digest(&bytes);
-            u64::from_le_bytes(digest[..8].try_into().expect("sha256 >= 8 bytes"))
-        };
+        // different encoder weights. Streamed with a hard cap and path
+        // identity checks so a large/sparse mmproj cannot be materialized
+        // just to be hashed.
+        let vision_identity = crate::loader::gguf_content_identity(mmproj_path)
+            .context("failed to hash mmproj for feature-cache identity")?;
         Ok(Self {
             llm,
             vision,

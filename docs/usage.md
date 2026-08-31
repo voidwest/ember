@@ -162,9 +162,10 @@ capture -> intervene -> compare -> patch -> restore workflow is
 restoration criterion: a patched run's captured logits must be bit-identical
 to the baseline's.
 
-Ember v0.1 has an intentionally unstable, statically compiled experiment API.
-It intentionally ships with two proof points: one observation experiment and
-one intervention experiment.
+Ember's Rust experiment modules remain pre-1.0 and may evolve at minor
+release boundaries. The CLI and versioned experiment/bundle formats are the
+primary compatibility anchors; see [docs/api-stability.md](api-stability.md)
+for the full API, MSRV, and deprecation policy.
 
 To observe execution without changing it, record activation norms and
 fingerprints:

@@ -209,36 +209,63 @@ impl LlamaConfig {
             "embedding_length must be greater than zero"
         );
         anyhow::ensure!(
-            self.head_dim > 0,
-            "attention key_length must be greater than zero"
+            self.head_dim >= 2 && self.head_dim.is_multiple_of(2),
+            "attention key_length must be positive and even, got {}",
+            self.head_dim
         );
         anyhow::ensure!(
             self.max_seq_len > 0,
             "context_length must be greater than zero"
         );
         anyhow::ensure!(self.vocab_size > 0, "vocab_size must be greater than zero");
-        // llama.cpp-style sanity caps: reject absurd GGUF metadata before it
-        // can drive multi-TB rope-table/KV-cache allocations (DoS via crafted
-        // header). Generous headroom over every real model.
+        // Metadata values are attacker-controlled. Keep the existing
+        // llama.cpp-style bounds (which are part of the loader contract) and
+        // add caps for dimensions that otherwise size model allocations.
+        use crate::loader::limits as l;
         anyhow::ensure!(
-            self.max_seq_len <= 2_000_000,
-            "context_length {} exceeds the 2,000,000 sanity cap",
+            self.n_layers <= l::MAX_LAYERS,
+            "block_count {} exceeds the {} layer limit",
+            self.n_layers,
+            l::MAX_LAYERS
+        );
+        anyhow::ensure!(
+            self.embed_dim <= l::MAX_EMBED_DIM,
+            "embedding_length {} exceeds the {} limit",
+            self.embed_dim,
+            l::MAX_EMBED_DIM
+        );
+        anyhow::ensure!(
+            self.max_seq_len <= l::MAX_CONTEXT_LEN,
+            "context_length {} exceeds the {} sanity cap",
+            self.max_seq_len,
+            l::MAX_CONTEXT_LEN
+        );
+        anyhow::ensure!(
+            self.n_heads <= l::MAX_HEADS,
+            "attention head_count {} exceeds the {} sanity cap",
+            self.n_heads,
+            l::MAX_HEADS
+        );
+        anyhow::ensure!(
+            self.head_dim <= l::MAX_HEAD_DIM,
+            "attention key_length {} exceeds the {} sanity cap",
+            self.head_dim,
+            l::MAX_HEAD_DIM
+        );
+        anyhow::ensure!(
+            self.vocab_size <= l::MAX_VOCAB_SIZE,
+            "vocab_size {} exceeds the {} sanity cap",
+            self.vocab_size,
+            l::MAX_VOCAB_SIZE
+        );
+        anyhow::ensure!(
             self.max_seq_len
-        );
-        anyhow::ensure!(
-            self.n_heads <= 8192,
-            "attention head_count {} exceeds the 8192 sanity cap",
-            self.n_heads
-        );
-        anyhow::ensure!(
-            self.head_dim <= 512,
-            "attention key_length {} exceeds the 512 sanity cap",
-            self.head_dim
-        );
-        anyhow::ensure!(
-            self.vocab_size <= 16_000_000,
-            "vocab_size {} exceeds the 16,000,000 sanity cap",
-            self.vocab_size
+                .checked_mul(self.head_dim)
+                .is_some_and(|elements| elements <= l::MAX_ROPE_TABLE_ELEMENTS),
+            "context_length {} * key_length {} exceeds the {} RoPE-table element limit",
+            self.max_seq_len,
+            self.head_dim,
+            l::MAX_ROPE_TABLE_ELEMENTS
         );
         anyhow::ensure!(
             self.rope_theta.is_finite() && self.rope_theta > 0.0,
@@ -2167,11 +2194,15 @@ impl Llama<CpuBackend> {
         // absent, the token embedding tensor's row count is authoritative
         // for the vocabulary. This only fires for a missing key; a
         // present-but-wrong key stays a hard error downstream.
-        let vocab_key_missing = matches!(
-            loader.metadata.get("general.architecture"),
-            Some(crate::loader::GgufValue::Str(arch))
-                if matches!(arch.as_str(), "qwen2" | "qwen3")
-        ) && !loader.metadata.contains_key("qwen2.vocab_size");
+        let vocab_key_missing = match loader.metadata.get("general.architecture") {
+            Some(crate::loader::GgufValue::Str(arch)) if arch == "qwen2" => {
+                !loader.metadata.contains_key("qwen2.vocab_size")
+            }
+            Some(crate::loader::GgufValue::Str(arch)) if arch == "qwen3" => {
+                !loader.metadata.contains_key("qwen3.vocab_size")
+            }
+            _ => false,
+        };
         if vocab_key_missing {
             // GGUF token_embd dims are [n_embd, n_vocab] (first dim
             // contiguous); the vocab dimension is the second.
@@ -2194,30 +2225,155 @@ impl Llama<CpuBackend> {
             config.max_seq_len = config.max_seq_len.min(max_seq_len);
         }
         log::debug!("llama config: {:?}", config);
+        loader.check_model_dequantization_budget()?;
         let n_layers = config.n_layers;
-        let packed_decode_enabled = allow_automatic_packing
+        let mut packed_decode_enabled = allow_automatic_packing
             && config.rope_layout == RopeLayout::AdjacentPair
             && std::env::var_os("EMBER_LLAMA_PACKED_Q8").is_none_or(|value| value != "0");
+        if packed_decode_enabled
+            && loader.q8_0_encoded_bytes()? > crate::loader::limits::MAX_PACKED_DECODE_BYTES
+        {
+            log::warn!(
+                "auto packed decode disabled: Q8_0 payload exceeds the {}-byte budget",
+                crate::loader::limits::MAX_PACKED_DECODE_BYTES
+            );
+            packed_decode_enabled = false;
+        }
 
         // precompute rope tables once, shared across all attention layers.
         // Llama-3.x models converted with llama3-style rope scaling carry a
         // `rope_freqs.weight` tensor of per-frequency-pair factors (ggml
         // semantics: effective freq = base_freq / factor); load and apply
         // it when present so scaled models match the HF reference exactly.
-        let rope_factors = loader.take_optional_f32(&["rope_freqs.weight".to_string()]);
+        let rope_factors = loader.take_optional_f32(&["rope_freqs.weight".to_string()])?;
         let rope_factors = match rope_factors {
             Some(t) => {
                 anyhow::ensure!(
-                    t.len() == config.head_dim / 2,
-                    "rope_freqs.weight has {} elements but head_dim/2 is {}",
-                    t.len(),
-                    config.head_dim / 2
+                    t.shape() == [config.head_dim / 2],
+                    "rope_freqs.weight must have shape [{}], got {:?}",
+                    config.head_dim / 2,
+                    t.shape()
+                );
+                anyhow::ensure!(
+                    t.data()
+                        .iter()
+                        .all(|factor| factor.is_finite() && *factor > 0.0),
+                    "rope_freqs.weight must contain only finite positive factors"
                 );
                 log::info!("llama: applying rope_freqs.weight factors (llama3-style rope scaling)");
                 Some(t.data().to_vec())
             }
             None => None,
         };
+        // Check the mandatory inventory before computing RoPE tables. A
+        // truncated/hostile GGUF must not pay the metadata-sized allocation
+        // cost merely to fail on its first missing tensor.
+        let mut required = Vec::with_capacity(2 + n_layers * 9);
+        required.push("token_embd.weight".to_string());
+        required.push("output_norm.weight".to_string());
+        for layer in 0..n_layers {
+            for suffix in [
+                "attn_q.weight",
+                "attn_k.weight",
+                "attn_v.weight",
+                "attn_output.weight",
+                "ffn_gate.weight",
+                "ffn_up.weight",
+                "ffn_down.weight",
+                "attn_norm.weight",
+                "ffn_norm.weight",
+            ] {
+                required.push(format!("blk.{layer}.{suffix}"));
+            }
+        }
+        crate::loader::require_tensors(&loader, &required)?;
+        // Validate the cheap tensor geometry before allocating tables sized by
+        // hostile context metadata. `tensor_meta` retains GGUF-native [in,
+        // out] dimensions; direct unit-test loaders fall back to their
+        // in-memory tensor shapes.
+        let tensor_dims = |name: &str| -> anyhow::Result<Vec<usize>> {
+            if let Some(meta) = loader.tensor_meta.get(name) {
+                return Ok(meta.dims.clone());
+            }
+            match loader.tensors.get(name) {
+                Some(crate::loader::LoadedTensor::F32(tensor)) => Ok(tensor.shape().to_vec()),
+                Some(crate::loader::LoadedTensor::Q8_0(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                Some(crate::loader::LoadedTensor::KQuant(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                None => anyhow::bail!("missing tensor geometry for '{name}'"),
+            }
+        };
+        let check_tensor_dims = |name: &str, expected: &[usize]| -> anyhow::Result<()> {
+            let actual = tensor_dims(name)?;
+            anyhow::ensure!(
+                actual == expected,
+                "tensor '{name}' has dimensions {:?}, expected {:?}",
+                actual,
+                expected
+            );
+            Ok(())
+        };
+        check_tensor_dims("token_embd.weight", &[config.embed_dim, config.vocab_size])?;
+        check_tensor_dims("output_norm.weight", &[config.embed_dim])?;
+        if loader.tensors.contains_key("output.weight") {
+            check_tensor_dims("output.weight", &[config.embed_dim, config.vocab_size])?;
+        }
+        for layer in 0..n_layers {
+            let prefix = format!("blk.{layer}.");
+            check_tensor_dims(
+                &format!("{prefix}attn_q.weight"),
+                &[config.embed_dim, config.n_heads * config.head_dim],
+            )?;
+            for suffix in ["attn_k.weight", "attn_v.weight"] {
+                check_tensor_dims(
+                    &format!("{prefix}{suffix}"),
+                    &[config.embed_dim, config.n_kv_heads * config.head_dim],
+                )?;
+            }
+            check_tensor_dims(
+                &format!("{prefix}attn_output.weight"),
+                &[config.n_heads * config.head_dim, config.embed_dim],
+            )?;
+            for (suffix, width) in [
+                ("attn_q.bias", config.n_heads * config.head_dim),
+                ("attn_k.bias", config.n_kv_heads * config.head_dim),
+                ("attn_v.bias", config.n_kv_heads * config.head_dim),
+            ] {
+                let name = format!("{prefix}{suffix}");
+                if loader.tensors.contains_key(&name) {
+                    check_tensor_dims(&name, &[width])?;
+                }
+            }
+            for suffix in ["attn_q_norm.weight", "attn_k_norm.weight"] {
+                let name = format!("{prefix}{suffix}");
+                if loader.tensors.contains_key(&name) {
+                    check_tensor_dims(&name, &[config.head_dim])?;
+                }
+            }
+            let gate_dims = tensor_dims(&format!("{prefix}ffn_gate.weight"))?;
+            anyhow::ensure!(
+                gate_dims.len() == 2
+                    && gate_dims[0] == config.embed_dim
+                    && gate_dims[1] <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+                "tensor '{prefix}ffn_gate.weight' has dimensions {:?}, expected [embed_dim, intermediate_dim]",
+                gate_dims
+            );
+            let intermediate_dim = gate_dims[1];
+            check_tensor_dims(
+                &format!("{prefix}ffn_up.weight"),
+                &[config.embed_dim, intermediate_dim],
+            )?;
+            check_tensor_dims(
+                &format!("{prefix}ffn_down.weight"),
+                &[intermediate_dim, config.embed_dim],
+            )?;
+            for suffix in ["attn_norm.weight", "ffn_norm.weight"] {
+                check_tensor_dims(&format!("{prefix}{suffix}"), &[config.embed_dim])?;
+            }
+        }
         let (rope_cos, rope_sin) = compute_rope_freqs(
             config.max_seq_len,
             config.head_dim,
@@ -2328,6 +2484,11 @@ impl Llama<CpuBackend> {
         let has_output_weight = loader.tensors.contains_key("output.weight");
         let mut head = match loader.tensors.remove("output.weight") {
             Some(LoadedTensor::F32(tensor)) => {
+                anyhow::ensure!(
+                    tensor.ndim() == 2,
+                    "output.weight must be a 2D linear weight, got {:?}",
+                    tensor.shape()
+                );
                 Linear::new(crate::loader::gguf_to_row_major_f32(tensor), None)
             }
             Some(LoadedTensor::Q8_0(weight)) => Linear::new_q8_0(weight, None),
@@ -2606,9 +2767,17 @@ fn take_llama_linear(
 ) -> anyhow::Result<Linear<CpuBackend>> {
     use crate::loader::LoadedTensor;
 
-    let bias = bias_name.and_then(|bias_name| loader.take_optional_f32(&[bias_name.to_string()]));
+    let bias = match bias_name {
+        Some(bias_name) => loader.take_optional_f32(&[bias_name.to_string()])?,
+        None => None,
+    };
     let mut linear = match loader.take_tensor(name)? {
         LoadedTensor::F32(tensor) => {
+            anyhow::ensure!(
+                tensor.ndim() == 2,
+                "{name} must be a 2D linear weight, got {:?}",
+                tensor.shape()
+            );
             Linear::new(crate::loader::gguf_to_row_major_f32(tensor), bias)
         }
         LoadedTensor::Q8_0(weight) => Linear::new_q8_0(weight, bias),
@@ -3214,7 +3383,7 @@ mod tests {
         ExecutionPhase, ExperimentHook, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
         ZeroLayerOutputSpec, ZeroLayerOutputStage,
     };
-    use crate::loader::{GgufLoader, GgufValue};
+    use crate::loader::{GgufLoader, GgufValue, LoadedTensor};
     use crate::planned_decode::planned_causal_attention;
     use crate::quant::{QuantizedWeight, Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
     use std::collections::HashMap;
@@ -3234,6 +3403,108 @@ mod tests {
         let config = LlamaConfig::from_gguf_metadata(&loader);
 
         assert_eq!(config.max_seq_len, 131_072);
+    }
+
+    #[test]
+    fn llama_config_rejects_odd_rope_dimensions_and_large_tables() {
+        fn config_with(values: &[(&str, u32)]) -> LlamaConfig {
+            let metadata = values
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), GgufValue::U32(*value)))
+                .collect();
+            let loader = GgufLoader {
+                metadata,
+                tensors: HashMap::new(),
+                k_strategy: crate::quant_k::KStrategy::EagerF32,
+                k_decisions: HashMap::new(),
+                tensor_meta: HashMap::new(),
+            };
+            LlamaConfig::from_gguf_metadata(&loader)
+        }
+
+        let odd = config_with(&[("llama.attention.key_length", 1)])
+            .validate()
+            .expect_err("odd RoPE dimensions must be rejected before table construction");
+        assert!(odd.to_string().contains("positive and even"), "{odd}");
+
+        // Both individual values are within their sanity caps, but their
+        // product would allocate an unreasonably large pair of tables.
+        let oversized = config_with(&[
+            ("llama.context_length", 1_000_000),
+            ("llama.attention.key_length", 512),
+        ])
+        .validate()
+        .expect_err("RoPE table product must be bounded");
+        assert!(
+            oversized.to_string().contains("RoPE-table element limit"),
+            "{oversized}"
+        );
+    }
+
+    #[test]
+    fn llama_rejects_hostile_rope_factors_and_linear_shapes() {
+        fn base_metadata() -> HashMap<String, GgufValue> {
+            HashMap::from([
+                ("llama.embedding_length".to_string(), GgufValue::U32(4)),
+                ("llama.attention.head_count".to_string(), GgufValue::U32(1)),
+                ("llama.attention.key_length".to_string(), GgufValue::U32(4)),
+                ("llama.context_length".to_string(), GgufValue::U32(8)),
+            ])
+        }
+        fn loader_with_rope(
+            metadata: HashMap<String, GgufValue>,
+            shape: Vec<usize>,
+            values: Vec<f32>,
+        ) -> GgufLoader {
+            GgufLoader {
+                metadata,
+                tensors: HashMap::from([(
+                    "rope_freqs.weight".to_string(),
+                    LoadedTensor::F32(CpuTensor::from_data(shape, values)),
+                )]),
+                k_strategy: crate::quant_k::KStrategy::EagerF32,
+                k_decisions: HashMap::new(),
+                tensor_meta: HashMap::new(),
+            }
+        }
+
+        let shape_err = Llama::from_loader(loader_with_rope(base_metadata(), vec![1], vec![1.0]))
+            .err()
+            .expect("wrong RoPE factor shape must be rejected");
+        assert!(
+            shape_err.to_string().contains("rope_freqs.weight"),
+            "{shape_err}"
+        );
+
+        let value_err = Llama::from_loader(loader_with_rope(
+            base_metadata(),
+            vec![2],
+            vec![f32::NAN, 1.0],
+        ))
+        .err()
+        .expect("non-finite RoPE factors must be rejected");
+        assert!(
+            value_err.to_string().contains("finite positive factors"),
+            "{value_err}"
+        );
+
+        let mut loader = GgufLoader {
+            metadata: HashMap::new(),
+            tensors: HashMap::from([(
+                "bad.weight".to_string(),
+                LoadedTensor::F32(CpuTensor::from_data(vec![4], vec![0.0; 4])),
+            )]),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let linear_err = take_llama_linear(&mut loader, "bad.weight", None, false)
+            .err()
+            .expect("non-2D linear weights must be rejected");
+        assert!(
+            linear_err.to_string().contains("2D linear weight"),
+            "{linear_err}"
+        );
     }
 
     fn test_q8_linear(out_features: usize, in_features: usize, seed: usize) -> Linear<CpuBackend> {

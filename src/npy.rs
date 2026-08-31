@@ -4,6 +4,13 @@ use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Maximum `.npy` payload accepted by the path and in-memory readers.
+///
+/// This is a trust boundary, not a format limitation. Research callers that
+/// need larger activation matrices should use a bounded/chunked reader rather
+/// than handing an untrusted path to `read_npy_2d`.
+pub const MAX_NPY_BYTES: usize = 256 * 1024 * 1024;
+
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn write_npy_2d(path: &str, data: &[f32], shape: &[usize; 2]) -> anyhow::Result<()> {
@@ -78,41 +85,140 @@ fn write_f32_slice(w: &mut impl Write, data: &[f32]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Read an in-memory little-endian f32 `.npy` file.
+///
+/// This is the same strict parser used by [`read_npy_2d`], without a
+/// filesystem dependency, so callers handling untrusted bytes can validate
+/// them before deciding where (or whether) to persist them.
+pub fn read_npy_2d_bytes(bytes: &[u8]) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
+    read_npy_2d_bytes_named(bytes, "<memory>")
+}
+
 /// Read a little-endian f32 `.npy` file written by [`write_npy_2d`].
 ///
 /// Returns `(shape, values)` with values in row-major order. Rejects
 /// non-f32 dtypes, fortran order, and truncated or oversized payloads.
 pub fn read_npy_2d(path: &str) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
-    use anyhow::Context;
-    let bytes = fs::read(path).with_context(|| format!("failed to read npy '{path}'"))?;
+    use std::io::Read;
+
+    let path_metadata =
+        fs::symlink_metadata(path).with_context(|| format!("failed to stat npy '{path}'"))?;
+    anyhow::ensure!(
+        path_metadata.file_type().is_file(),
+        "'{path}' is not a regular file"
+    );
+    let mut file = fs::File::open(path).with_context(|| format!("failed to read npy '{path}'"))?;
+    let initial_metadata = file
+        .metadata()
+        .with_context(|| format!("failed to stat npy '{path}'"))?;
+    anyhow::ensure!(
+        initial_metadata.file_type().is_file()
+            && initial_metadata.len() == path_metadata.len()
+            && initial_metadata.modified().ok() == path_metadata.modified().ok(),
+        "npy file changed while opening '{path}'"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(
+            initial_metadata.dev() == path_metadata.dev()
+                && initial_metadata.ino() == path_metadata.ino(),
+            "npy file changed while opening '{path}'"
+        );
+    }
+    let length = initial_metadata.len();
+    anyhow::ensure!(
+        length <= MAX_NPY_BYTES as u64,
+        "'{path}' is {length} bytes, exceeding the {MAX_NPY_BYTES} byte limit"
+    );
+    // Read through the already-open handle and one byte beyond the limit. A
+    // replacement/growth race cannot make fs::read allocate without bound.
+    let capacity = usize::try_from(length).context("NPY file length exceeds address space")?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(capacity)
+        .map_err(|error| anyhow::anyhow!("cannot reserve NPY buffer: {error}"))?;
+    let mut chunk = [0u8; 64 * 1024];
+    loop {
+        let remaining = MAX_NPY_BYTES.saturating_sub(bytes.len()).saturating_add(1);
+        if remaining == 0 {
+            break;
+        }
+        let count = remaining.min(chunk.len());
+        let read = file
+            .read(&mut chunk[..count])
+            .with_context(|| format!("failed to read npy '{path}'"))?;
+        if read == 0 {
+            break;
+        }
+        anyhow::ensure!(
+            bytes.len() <= MAX_NPY_BYTES.saturating_sub(read),
+            "'{path}' grew beyond the {MAX_NPY_BYTES} byte limit while reading"
+        );
+        bytes
+            .try_reserve_exact(read)
+            .map_err(|error| anyhow::anyhow!("cannot grow NPY buffer: {error}"))?;
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    let final_metadata = file
+        .metadata()
+        .with_context(|| format!("failed to stat npy '{path}' after reading"))?;
+    let final_path_metadata = fs::symlink_metadata(path)
+        .with_context(|| format!("failed to stat npy '{path}' after reading"))?;
+    anyhow::ensure!(
+        final_metadata.len() == length
+            && final_metadata.modified().ok() == initial_metadata.modified().ok()
+            && final_path_metadata.file_type().is_file()
+            && final_path_metadata.len() == initial_metadata.len()
+            && final_path_metadata.modified().ok() == initial_metadata.modified().ok(),
+        "npy file changed while reading '{path}'"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        anyhow::ensure!(
+            final_path_metadata.dev() == initial_metadata.dev()
+                && final_path_metadata.ino() == initial_metadata.ino(),
+            "npy file changed while reading '{path}'"
+        );
+    }
+    read_npy_2d_bytes_named(&bytes, path)
+}
+
+fn read_npy_2d_bytes_named(bytes: &[u8], source: &str) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
+    anyhow::ensure!(
+        bytes.len() <= MAX_NPY_BYTES,
+        "'{source}' is {} bytes, exceeding the {MAX_NPY_BYTES} byte limit",
+        bytes.len()
+    );
     if bytes.len() < 10 || &bytes[..6] != b"\x93NUMPY" {
-        anyhow::bail!("'{path}' is not a valid npy file (bad magic)");
+        anyhow::bail!("'{source}' is not a valid npy file (bad magic)");
     }
     if bytes[6] != 1 {
-        anyhow::bail!("'{path}' uses unsupported npy major version {}", bytes[6]);
+        anyhow::bail!("'{source}' uses unsupported npy major version {}", bytes[6]);
     }
     let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
     let header_start = 10;
     let header_end = header_start + header_len;
     if header_end > bytes.len() {
-        anyhow::bail!("'{path}' has a truncated npy header");
+        anyhow::bail!("'{source}' has a truncated npy header");
     }
     let header = String::from_utf8_lossy(&bytes[header_start..header_end]);
 
     // Parse the Python-dict header: {'descr': '<f4', 'fortran_order': False, 'shape': (..), }
     let descr = parse_header_value(&header, "descr")
-        .with_context(|| format!("'{path}' header has no descr"))?;
+        .with_context(|| format!("'{source}' header has no descr"))?;
     let descr = descr.trim().trim_matches('\'');
     if descr != "<f4" {
-        anyhow::bail!("'{path}' has unsupported dtype '{descr}' (expected '<f4')");
+        anyhow::bail!("'{source}' has unsupported dtype '{descr}' (expected '<f4')");
     }
     let fortran = parse_header_value(&header, "fortran_order")
-        .with_context(|| format!("'{path}' header has no fortran_order"))?;
+        .with_context(|| format!("'{source}' header has no fortran_order"))?;
     if fortran.trim() != "False" {
-        anyhow::bail!("'{path}' is fortran-ordered; expected row-major");
+        anyhow::bail!("'{source}' is fortran-ordered; expected row-major");
     }
     let shape_text =
-        parse_shape_value(&header).with_context(|| format!("'{path}' header has no shape"))?;
+        parse_shape_value(&header).with_context(|| format!("'{source}' header has no shape"))?;
     let shape_text = shape_text.trim();
     let shape = if shape_text == "()" {
         Vec::new()
@@ -129,25 +235,25 @@ pub fn read_npy_2d(path: &str) -> anyhow::Result<(Vec<usize>, Vec<f32>)> {
                 .map(|dim| {
                     dim.trim()
                         .parse::<usize>()
-                        .with_context(|| format!("'{path}' has an invalid shape '{shape_text}'"))
+                        .with_context(|| format!("'{source}' has an invalid shape '{shape_text}'"))
                 })
                 .collect::<anyhow::Result<Vec<_>>>()?
         }
     };
     if shape.len() != 2 {
-        anyhow::bail!("'{path}' has rank {}, expected a 2D tensor", shape.len());
+        anyhow::bail!("'{source}' has rank {}, expected a 2D tensor", shape.len());
     }
     let element_count = shape
         .iter()
         .try_fold(1usize, |acc, dim| acc.checked_mul(*dim))
-        .with_context(|| format!("'{path}' shape overflows: {shape:?}"))?;
+        .with_context(|| format!("'{source}' shape overflows: {shape:?}"))?;
     let payload = &bytes[header_end..];
     let expected = element_count
         .checked_mul(4)
-        .with_context(|| format!("'{path}' payload size overflows"))?;
+        .with_context(|| format!("'{source}' payload size overflows"))?;
     if payload.len() != expected {
         anyhow::bail!(
-            "'{path}' payload is {} bytes, expected {expected} for shape {shape:?}",
+            "'{source}' payload is {} bytes, expected {expected} for shape {shape:?}",
             payload.len()
         );
     }
@@ -343,6 +449,10 @@ mod tests {
         let (shape, values) = read_npy_2d(path_str).unwrap();
         assert_eq!(shape, vec![4, 6]);
         assert_eq!(values, data);
+        let bytes = std::fs::read(path_str).unwrap();
+        let (bytes_shape, bytes_values) = read_npy_2d_bytes(&bytes).unwrap();
+        assert_eq!(bytes_shape, shape);
+        assert_eq!(bytes_values, values);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -367,6 +477,17 @@ mod tests {
         assert_eq!((10 + header_len) % 64, 0);
         assert_eq!(bytes[10 + header_len - 1], b'\n');
         std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn npy_reader_rejects_oversized_file_before_reading() {
+        let path =
+            std::env::temp_dir().join(format!("ember_npy_test_oversized_{}", std::process::id()));
+        let file = fs::File::create(&path).unwrap();
+        file.set_len((MAX_NPY_BYTES as u64) + 1).unwrap();
+        let error = read_npy_2d(path.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("limit"));
+        fs::remove_file(path).ok();
     }
 
     #[test]

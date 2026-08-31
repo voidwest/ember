@@ -43,8 +43,12 @@ docs/plots/root_probe_scale_comparison.png
 !docs/v05-*.md
 !docs/v06-gui.md
 !docs/performance-baseline-dossier.md
+!docs/phase2-optimization-report.md
+!docs/api-stability.md
+!docs/fuzzing.md
 !docs/k-quant-gemv-design.md
 !docs/reproducibility.md
+!docs/external-benchmark.md
 !docs/interventions.md
 !docs/token-selection.md
 !docs/bundle-schema-v1.md
@@ -137,6 +141,24 @@ artifacts/golden-v03/**/*.bin
 # The security harness is injected into worktrees by
 # research/embersec/comparative/run_eval.py and is intentionally not committed.
 /research/
-/fuzz/
+# cargo-fuzz source is tracked; generated outputs and working corpora are not.
+/fuzz/*
+!/fuzz/
+!/fuzz/Cargo.toml
+!/fuzz/Cargo.lock
+!/fuzz/fuzz_targets/
+!/fuzz/fuzz_targets/*.rs
+!/fuzz/README.md
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/
+/fuzz/corpus_work/
 /tests/_embersec_harness.rs
 /docs/road-to-1.0-plan.html
+
+# collaboration guidance is intentionally tracked despite the broad Markdown ignore
+!/.github/PULL_REQUEST_TEMPLATE.md
+!docs/audits/
+!docs/audits/*.md
+!docs/adr/
+!docs/adr/*.md

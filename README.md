@@ -200,6 +200,11 @@ per-architecture golden-logit and activation-reference status.
 - [docs/v05-research-contract.md](docs/v05-research-contract.md) - experiment workflow, gates A-I
 - [docs/v06-gui.md](docs/v06-gui.md) - native + browser experiment consoles (v0.6)
 - [docs/agent-runtime.md](docs/agent-runtime.md) - agentic runtime, tool calls, research traces
+- [docs/api-stability.md](docs/api-stability.md) - Rust/CLI compatibility policy, MSRV, and release rules
+- [docs/audits/README.md](docs/audits/README.md) - subsystem ownership, recurring audits, and handoffs
+- [docs/adr/0001-architecture-bets.md](docs/adr/0001-architecture-bets.md) - architecture decisions and revisit triggers
+- [docs/fuzzing.md](docs/fuzzing.md) - model-free hostile-input parser fuzzing
+- [docs/external-benchmark.md](docs/external-benchmark.md) - neutral third-party benchmark submission pathway
 - [docs/research.md](docs/research.md) - Arabic morphology dataset pipeline and probing
 - [docs/dataset_pipeline.md](docs/dataset_pipeline.md) - dataset input/output schemas
 

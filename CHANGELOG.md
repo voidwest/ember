@@ -3,9 +3,18 @@
 All notable changes to Ember are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-Ember's Rust experiment API is explicitly unstable during the 0.1 series;
-the v0.2 activation-artifact schema (`0.2.0-experimental`) is versioned but
-carries no compatibility guarantee.
+Ember's compatibility levels, SemVer/MSRV rules, and deprecation policy are
+maintained in [docs/api-stability.md](docs/api-stability.md). The Rust crate
+is still pre-1.0: versioned CLI/artifact contracts are the primary integration
+anchors, while undocumented or `#[doc(hidden)]` Rust modules are not supported
+API.
+
+## [Unreleased]
+
+### Documentation
+
+- Added the API stability policy covering SemVer, MSRV, compatibility tiers,
+  deprecation, and release review.
 
 ## [0.6.8] - 2026-08-25
 

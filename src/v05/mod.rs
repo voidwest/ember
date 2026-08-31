@@ -2,9 +2,10 @@
 //! experiment bundles, and the reproducible research-workflow CLI.
 //!
 //! The v0.5 thesis (docs/v05-research-contract.md): tracing, capture,
-//! token-selection, intervention, and provenance primitives become a
-//! stable experiment interface that researchers can use without writing
-//! Rust.
+//! token-selection, intervention, and provenance primitives form a
+//! versioned experiment interface that researchers can use without writing
+//! Rust. The CLI/schema contract is the compatibility anchor; Rust helpers
+//! remain pre-1.0 unless explicitly promoted (see docs/api-stability.md).
 
 pub mod bundle;
 pub mod capture;

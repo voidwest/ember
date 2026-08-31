@@ -4,6 +4,12 @@ version = "0.6.8"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
+description = "CPU-first Rust inference and hidden-state research layer for GGUF models"
+repository = "https://github.com/voidwest/ember"
+homepage = "https://voidwest.dev/ember"
+readme = "README.md"
+keywords = ["gguf", "llm", "inference", "interpretability", "research"]
+categories = ["command-line-utilities", "science"]
 
 [dependencies]
 tokenizers = "0.20"

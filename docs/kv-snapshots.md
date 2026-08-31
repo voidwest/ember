@@ -77,7 +77,10 @@ round trip. This permits a compatible replay target to use a different cache
 capacity as long as the stored sequence fits.
 
 The attention-score scratch buffer is not semantic KV state and is not
-serialized.
+serialized. Snapshot readers reject non-finite f16 payload values before
+verification. The default reader/importer bounds the combined serialized
+payload at 4 GiB; callers handling larger, trusted artifacts must opt into an
+explicit limit.
 
 ### What K and V mean
 

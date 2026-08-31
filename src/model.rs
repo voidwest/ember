@@ -902,13 +902,14 @@ impl Gpt2<CpuBackend> {
     /// metadata keys `gpt2.block_count` and `gpt2.attention.head_count` control
     /// the number of layers and heads (default 12 each if missing).
     pub fn from_loader(mut loader: crate::loader::GgufLoader) -> anyhow::Result<Self> {
-        if let Some(crate::loader::GgufValue::Str(architecture)) =
-            loader.metadata.get("general.architecture")
-        {
-            anyhow::ensure!(
-                architecture == "gpt2",
-                "unsupported GPT-2 GGUF architecture '{architecture}'"
-            );
+        if let Some(architecture) = loader.metadata.get("general.architecture") {
+            match architecture {
+                crate::loader::GgufValue::Str(architecture) => anyhow::ensure!(
+                    architecture == "gpt2",
+                    "unsupported GPT-2 GGUF architecture '{architecture}'"
+                ),
+                _ => anyhow::bail!("GGUF general.architecture must be a string"),
+            }
         }
         // metadata
         let n_layers = match loader.metadata.get("gpt2.block_count") {
@@ -921,6 +922,122 @@ impl Gpt2<CpuBackend> {
         };
         anyhow::ensure!(n_layers > 0, "GPT-2 model must contain at least one layer");
         anyhow::ensure!(n_heads > 0, "GPT-2 attention head count must be non-zero");
+        // Metadata values are attacker-controlled; enforce construction caps
+        // before sizing the block vector or loading per-block projections.
+        anyhow::ensure!(
+            n_layers <= crate::loader::limits::MAX_LAYERS,
+            "gpt2.block_count {n_layers} exceeds the {} layer limit",
+            crate::loader::limits::MAX_LAYERS
+        );
+        anyhow::ensure!(
+            n_heads <= crate::loader::limits::MAX_HEADS,
+            "gpt2.attention.head_count {n_heads} exceeds the {} head limit",
+            crate::loader::limits::MAX_HEADS
+        );
+
+        // Verify the complete tensor inventory and cheap geometry before
+        // dequantizing/allocating any block. A hostile but syntactically valid
+        // block weight must not consume the construction budget before a
+        // malformed embedding or output shape is discovered.
+        let mut required = vec![
+            "token_embd.weight".to_string(),
+            "position_embd.weight".to_string(),
+            "output_norm.weight".to_string(),
+            "output_norm.bias".to_string(),
+            "output.weight".to_string(),
+        ];
+        required.reserve(n_layers * 12);
+        for i in 0..n_layers {
+            for suffix in [
+                "attn_qkv.weight",
+                "attn_qkv.bias",
+                "attn_output.weight",
+                "attn_output.bias",
+                "ffn_up.weight",
+                "ffn_up.bias",
+                "ffn_down.weight",
+                "ffn_down.bias",
+                "attn_norm.weight",
+                "attn_norm.bias",
+                "ffn_norm.weight",
+                "ffn_norm.bias",
+            ] {
+                required.push(format!("blk.{i}.{suffix}"));
+            }
+        }
+        crate::loader::require_tensors(&loader, &required)?;
+        loader.check_model_dequantization_budget()?;
+
+        let token_shape = gpt2_embedding_shape(&loader, "token_embd.weight")?;
+        let position_shape = gpt2_embedding_shape(&loader, "position_embd.weight")?;
+        let (vocab_size, embed_dim) = token_shape;
+        anyhow::ensure!(
+            vocab_size > 0 && vocab_size <= crate::loader::limits::MAX_VOCAB_SIZE,
+            "GPT-2 vocabulary size {vocab_size} is outside the supported range"
+        );
+        anyhow::ensure!(
+            embed_dim > 0 && embed_dim <= crate::loader::limits::MAX_EMBED_DIM,
+            "GPT-2 embedding width {embed_dim} is outside the supported range"
+        );
+        anyhow::ensure!(
+            position_shape.0 > 0 && position_shape.0 <= crate::loader::limits::MAX_CONTEXT_LEN,
+            "GPT-2 context length {} is outside the supported range",
+            position_shape.0
+        );
+        anyhow::ensure!(
+            position_shape.1 == embed_dim,
+            "GPT-2 token/position embedding widths differ: {embed_dim} vs {}",
+            position_shape.1
+        );
+        anyhow::ensure!(
+            embed_dim.is_multiple_of(n_heads),
+            "GPT-2 embedding width {embed_dim} is not divisible by {n_heads} heads"
+        );
+        let head_dim = embed_dim / n_heads;
+        anyhow::ensure!(
+            head_dim <= crate::loader::limits::MAX_HEAD_DIM,
+            "GPT-2 attention head dimension {head_dim} exceeds the {} limit",
+            crate::loader::limits::MAX_HEAD_DIM
+        );
+        gpt2_check_linear(&loader, "output.weight", embed_dim, vocab_size)?;
+        gpt2_check_vector(&loader, "output_norm.weight", embed_dim)?;
+        gpt2_check_vector(&loader, "output_norm.bias", embed_dim)?;
+        for i in 0..n_layers {
+            let prefix = format!("blk.{i}.");
+            gpt2_check_linear(
+                &loader,
+                &format!("{prefix}attn_qkv.weight"),
+                embed_dim,
+                embed_dim * 3,
+            )?;
+            gpt2_check_vector(&loader, &format!("{prefix}attn_qkv.bias"), embed_dim * 3)?;
+            gpt2_check_linear(
+                &loader,
+                &format!("{prefix}attn_output.weight"),
+                embed_dim,
+                embed_dim,
+            )?;
+            gpt2_check_vector(&loader, &format!("{prefix}attn_output.bias"), embed_dim)?;
+            let (mlp_input, intermediate) =
+                gpt2_linear_shape(&loader, &format!("{prefix}ffn_up.weight"))?;
+            anyhow::ensure!(
+                mlp_input == embed_dim && intermediate > 0 && intermediate <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+                "GPT-2 block {i} MLP up projection must be {embed_dim} -> an intermediate width <= {}, got {mlp_input} -> {intermediate}",
+                crate::loader::limits::MAX_INTERMEDIATE_DIM
+            );
+            gpt2_check_vector(&loader, &format!("{prefix}ffn_up.bias"), intermediate)?;
+            gpt2_check_linear(
+                &loader,
+                &format!("{prefix}ffn_down.weight"),
+                intermediate,
+                embed_dim,
+            )?;
+            gpt2_check_vector(&loader, &format!("{prefix}ffn_down.bias"), embed_dim)?;
+            gpt2_check_vector(&loader, &format!("{prefix}attn_norm.weight"), embed_dim)?;
+            gpt2_check_vector(&loader, &format!("{prefix}attn_norm.bias"), embed_dim)?;
+            gpt2_check_vector(&loader, &format!("{prefix}ffn_norm.weight"), embed_dim)?;
+            gpt2_check_vector(&loader, &format!("{prefix}ffn_norm.bias"), embed_dim)?;
+        }
 
         // blocks
         let mut blocks = Vec::with_capacity(n_layers);
@@ -970,23 +1087,6 @@ impl Gpt2<CpuBackend> {
 
         let wte = take_gpt2_embedding(&mut loader, "token_embd.weight")?;
         let wpe = take_gpt2_embedding(&mut loader, "position_embd.weight")?;
-        anyhow::ensure!(wte.ndim() == 2, "token_embd.weight must be 2D");
-        anyhow::ensure!(wpe.ndim() == 2, "position_embd.weight must be 2D");
-        let embed_dim = wte.shape()[1];
-        anyhow::ensure!(embed_dim > 0, "GPT-2 embedding width must be non-zero");
-        anyhow::ensure!(wte.shape()[0] > 0, "GPT-2 vocabulary must be non-zero");
-        anyhow::ensure!(wpe.shape()[0] > 0, "GPT-2 context length must be non-zero");
-        anyhow::ensure!(
-            wpe.shape()[1] == embed_dim,
-            "GPT-2 token/position embedding widths differ: {} vs {}",
-            embed_dim,
-            wpe.shape()[1]
-        );
-        anyhow::ensure!(
-            embed_dim.is_multiple_of(n_heads),
-            "GPT-2 embedding width {embed_dim} is not divisible by {n_heads} heads"
-        );
-
         let ln_f = LayerNorm::new(
             loader.take_f32("output_norm.weight")?,
             loader.take_f32("output_norm.bias")?,
@@ -1019,6 +1119,85 @@ impl Gpt2<CpuBackend> {
     }
 }
 
+fn gpt2_linear_shape(
+    loader: &crate::loader::GgufLoader,
+    name: &str,
+) -> anyhow::Result<(usize, usize)> {
+    use crate::loader::LoadedTensor;
+    let tensor = loader
+        .tensors
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("missing tensor: {name}"))?;
+    match tensor {
+        LoadedTensor::F32(tensor) => match tensor.shape() {
+            [output, input] => Ok((*input, *output)),
+            shape => anyhow::bail!("{name} must be a 2D linear weight, got {shape:?}"),
+        },
+        LoadedTensor::Q8_0(weight) => Ok((weight.in_features(), weight.out_features())),
+        LoadedTensor::KQuant(_) => {
+            anyhow::bail!("{name} uses unsupported compressed K-quant tensors")
+        }
+    }
+}
+
+fn gpt2_embedding_shape(
+    loader: &crate::loader::GgufLoader,
+    name: &str,
+) -> anyhow::Result<(usize, usize)> {
+    use crate::loader::LoadedTensor;
+    let tensor = loader
+        .tensors
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("missing tensor: {name}"))?;
+    match tensor {
+        LoadedTensor::F32(tensor) => match tensor.shape() {
+            [embedding, vocab] => Ok((*vocab, *embedding)),
+            shape => anyhow::bail!("{name} must be a 2D embedding, got {shape:?}"),
+        },
+        LoadedTensor::Q8_0(weight) => Ok((weight.out_features(), weight.in_features())),
+        LoadedTensor::KQuant(_) => {
+            anyhow::bail!("{name} uses unsupported compressed K-quant tensors")
+        }
+    }
+}
+
+fn gpt2_check_linear(
+    loader: &crate::loader::GgufLoader,
+    name: &str,
+    input: usize,
+    output: usize,
+) -> anyhow::Result<()> {
+    let actual = gpt2_linear_shape(loader, name)?;
+    anyhow::ensure!(
+        actual == (input, output),
+        "GPT-2 {name} must be {input} -> {output}, got {} -> {}",
+        actual.0,
+        actual.1
+    );
+    Ok(())
+}
+
+fn gpt2_check_vector(
+    loader: &crate::loader::GgufLoader,
+    name: &str,
+    width: usize,
+) -> anyhow::Result<()> {
+    use crate::loader::LoadedTensor;
+    let tensor = loader
+        .tensors
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("missing tensor: {name}"))?;
+    match tensor {
+        LoadedTensor::F32(tensor) => anyhow::ensure!(
+            tensor.shape() == [width],
+            "GPT-2 {name} must have shape [{width}], got {:?}",
+            tensor.shape()
+        ),
+        _ => anyhow::bail!("GPT-2 {name} must be an f32 vector of width {width}"),
+    }
+    Ok(())
+}
+
 fn take_gpt2_embedding(
     loader: &mut crate::loader::GgufLoader,
     name: &str,
@@ -1033,11 +1212,33 @@ fn take_gpt2_embedding(
                 tensor.data().to_vec(),
             ))
         }
-        LoadedTensor::Q8_0(weight) => Ok(weight.dequantize_all()),
+        LoadedTensor::Q8_0(weight) => {
+            crate::loader::check_f32_dequantization_size(
+                name,
+                weight.out_features(),
+                weight.in_features(),
+            )?;
+            Ok(weight.dequantize_all())
+        }
         LoadedTensor::KQuant(_) => {
             anyhow::bail!("gpt2 does not support compressed K-quant tensors in v0.3")
         }
     }
+}
+
+fn validate_gpt2_linear_bias(
+    linear: &Linear<CpuBackend>,
+    expected: usize,
+    name: &str,
+) -> anyhow::Result<()> {
+    if let Some(bias) = &linear.bias {
+        anyhow::ensure!(
+            bias.shape() == [expected],
+            "GPT-2 {name} bias must have shape [{expected}], got {:?}",
+            bias.shape()
+        );
+    }
+    Ok(())
 }
 
 fn validate_gpt2_norm(
@@ -1073,6 +1274,12 @@ fn validate_gpt2_block(
             && block.attn.c_proj.out_features(&backend) == embed_dim,
         "GPT-2 block {index} attention output projection must be {embed_dim} -> {embed_dim}"
     );
+    validate_gpt2_linear_bias(&block.attn.c_attn, qkv_width, &format!("block {index} QKV"))?;
+    validate_gpt2_linear_bias(
+        &block.attn.c_proj,
+        embed_dim,
+        &format!("block {index} attention output"),
+    )?;
     let intermediate = block.mlp.c_fc.out_features(&backend);
     anyhow::ensure!(
         block.mlp.c_fc.in_features(&backend) == embed_dim
@@ -1081,6 +1288,16 @@ fn validate_gpt2_block(
             && block.mlp.c_proj.out_features(&backend) == embed_dim,
         "GPT-2 block {index} MLP projection shapes are inconsistent"
     );
+    validate_gpt2_linear_bias(
+        &block.mlp.c_fc,
+        intermediate,
+        &format!("block {index} MLP up"),
+    )?;
+    validate_gpt2_linear_bias(
+        &block.mlp.c_proj,
+        embed_dim,
+        &format!("block {index} MLP down"),
+    )?;
     validate_gpt2_norm(
         &block.ln_1,
         embed_dim,
@@ -1099,7 +1316,14 @@ fn take_gpt2_linear(
 
     let bias = bias_name.map(|name| loader.take_f32(name)).transpose()?;
     match loader.take_tensor(name)? {
-        LoadedTensor::F32(tensor) => Ok(Linear::new(tensor.transpose(), bias)),
+        LoadedTensor::F32(tensor) => {
+            anyhow::ensure!(
+                tensor.ndim() == 2,
+                "{name} must be a 2D linear weight, got {:?}",
+                tensor.shape()
+            );
+            Ok(Linear::new(tensor.transpose(), bias))
+        }
         LoadedTensor::Q8_0(weight) => Ok(Linear::new_q8_0(weight, bias)),
         LoadedTensor::KQuant(_) => {
             anyhow::bail!("gpt2 does not support compressed K-quant tensors in v0.3")
@@ -1424,7 +1648,48 @@ mod tests {
     use super::*;
     use crate::backend::CpuBackend;
     use crate::kv_cache::KVCache;
+    use crate::loader::{GgufLoader, GgufValue, LoadedTensor};
     use crate::tensor::CpuTensor;
+    use std::collections::HashMap;
+
+    #[test]
+    fn gpt2_rejects_hostile_metadata_and_non_2d_linear_weights() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "general.architecture".to_string(),
+            GgufValue::Str("gpt2".to_string()),
+        );
+        metadata.insert("gpt2.block_count".to_string(), GgufValue::U32(1_000_000));
+        let loader = GgufLoader {
+            metadata,
+            tensors: HashMap::new(),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let count_err = Gpt2::from_loader(loader)
+            .err()
+            .expect("hostile block_count must be rejected before allocation");
+        assert!(count_err.to_string().contains("block_count"), "{count_err}");
+
+        let mut loader = GgufLoader {
+            metadata: HashMap::new(),
+            tensors: HashMap::from([(
+                "bad.weight".to_string(),
+                LoadedTensor::F32(CpuTensor::from_data(vec![4], vec![0.0; 4])),
+            )]),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let linear_err = take_gpt2_linear(&mut loader, "bad.weight", None)
+            .err()
+            .expect("non-2D linear weights must be rejected");
+        assert!(
+            linear_err.to_string().contains("2D linear weight"),
+            "{linear_err}"
+        );
+    }
 
     fn backend() -> CpuBackend {
         CpuBackend

@@ -22,7 +22,7 @@
 //! ```
 
 use crate::backend::{Backend, CpuBackend, CpuError, Module};
-use crate::loader::{gguf_to_row_major_f32, GgufLoader};
+use crate::loader::GgufLoader;
 use crate::model::{LayerNorm, Linear};
 use crate::multimodal::vision::{attention_head, slice_rows_cols};
 use crate::tensor::CpuTensor;
@@ -362,6 +362,11 @@ pub struct UltravoxProjector {
 }
 
 impl UltravoxProjector {
+    /// Output width consumed by the text model's embedding stream.
+    pub(crate) fn output_width(&self) -> usize {
+        self.linear_2.out_features(&CpuBackend)
+    }
+
     /// Project encoder frames `[frames, d_model]` to LLM-width tokens.
     ///
     /// Returns `ceil(frames / stack_factor)` rows; zero-padding at the end
@@ -431,11 +436,13 @@ fn gguf_to_hf_layout(t: &CpuTensor) -> CpuTensor {
 impl AudioModel {
     /// Load from an audio mmproj GGUF (see `tools/convert_ultravox_audio.py`).
     pub fn from_mmproj_loader(loader: &mut GgufLoader) -> Result<Self> {
-        use crate::loader::GgufValue;
+        use crate::loader::{try_gguf_to_row_major_f32, GgufValue};
 
+        loader.check_all_f32_dequantization_budget()?;
         let get_u32 = |key: &str| -> Result<usize> {
             match loader.metadata.get(key) {
-                Some(GgufValue::U32(v)) => Ok(*v as usize),
+                Some(GgufValue::U32(v)) => usize::try_from(*v)
+                    .map_err(|error| anyhow::anyhow!("{key} does not fit in usize: {error}")),
                 Some(other) => anyhow::bail!("{key} must be U32, got {other:?}"),
                 None => anyhow::bail!("audio mmproj missing required metadata {key}"),
             }
@@ -455,11 +462,68 @@ impl AudioModel {
         let max_pos = get_u32("ultravox.audio.max_source_positions")?;
         let eps = get_f32("ultravox.audio.layer_norm_eps")?;
         let stack_factor = get_u32("ultravox.stack_factor")?;
-        // whisper-large-v3-turbo uses 20 heads at d_model 1280
+        anyhow::ensure!(num_mel_bins > 0, "audio mel-bin count must be non-zero");
+        anyhow::ensure!(d_model > 0, "audio model width must be non-zero");
+        anyhow::ensure!(n_layers > 0, "audio tower must contain at least one layer");
+        anyhow::ensure!(ffn_dim > 0, "audio feed-forward width must be non-zero");
+        anyhow::ensure!(max_pos > 0, "audio position-table length must be non-zero");
+        anyhow::ensure!(
+            stack_factor > 0,
+            "audio projector stack factor must be non-zero"
+        );
+        anyhow::ensure!(
+            eps.is_finite() && eps >= 0.0,
+            "audio layer-norm epsilon must be finite and non-negative, got {eps}"
+        );
+        anyhow::ensure!(
+            num_mel_bins <= crate::loader::limits::MAX_EMBED_DIM,
+            "audio mel-bin count {num_mel_bins} exceeds the {} element limit",
+            crate::loader::limits::MAX_EMBED_DIM
+        );
+        anyhow::ensure!(
+            d_model <= crate::loader::limits::MAX_EMBED_DIM,
+            "audio model width {d_model} exceeds the {} element limit",
+            crate::loader::limits::MAX_EMBED_DIM
+        );
+        anyhow::ensure!(
+            n_layers <= crate::loader::limits::MAX_LAYERS,
+            "audio layer count {n_layers} exceeds the {} layer limit",
+            crate::loader::limits::MAX_LAYERS
+        );
+        anyhow::ensure!(
+            ffn_dim <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+            "audio feed-forward width {ffn_dim} exceeds the {} element limit",
+            crate::loader::limits::MAX_INTERMEDIATE_DIM
+        );
+        anyhow::ensure!(
+            max_pos <= crate::loader::limits::MAX_CONTEXT_LEN / 2,
+            "audio position-table length {max_pos} exceeds the supported context limit"
+        );
+        let stacked_dim = d_model
+            .checked_mul(stack_factor)
+            .ok_or_else(|| anyhow::anyhow!("audio projector stacked width overflow"))?;
+        anyhow::ensure!(
+            stacked_dim <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+            "audio projector stacked width {stacked_dim} exceeds the {} element limit",
+            crate::loader::limits::MAX_INTERMEDIATE_DIM
+        );
+
+        // whisper-large-v3-turbo uses 20 heads at d_model 1280. Keep this
+        // explicit until another audio tower's head layout is supported.
         let n_heads = match d_model {
             1280 => 20,
             other => anyhow::bail!("unsupported audio tower d_model {other}: add its head count"),
         };
+        anyhow::ensure!(
+            d_model.is_multiple_of(n_heads),
+            "audio model width {d_model} is not divisible by {n_heads} heads"
+        );
+        anyhow::ensure!(
+            d_model / n_heads <= crate::loader::limits::MAX_HEAD_DIM,
+            "audio head width {} exceeds the {} element limit",
+            d_model / n_heads,
+            crate::loader::limits::MAX_HEAD_DIM
+        );
         let config = AudioEncoderConfig {
             num_mel_bins,
             d_model,
@@ -470,67 +534,331 @@ impl AudioModel {
             layer_norm_eps: eps,
         };
 
-        let take_linear = |loader: &mut GgufLoader, name: &str| -> Result<Linear<CpuBackend>> {
+        // Check the complete inventory and cheap tensor geometry before
+        // dequantizing any tower layer or allocating the layer vector.
+        let mut required = vec![
+            "a.audio_tower.conv1.weight".to_string(),
+            "a.audio_tower.conv1.bias".to_string(),
+            "a.audio_tower.conv2.weight".to_string(),
+            "a.audio_tower.conv2.bias".to_string(),
+            "a.audio_tower.position_embedding.weight".to_string(),
+            "a.audio_tower.layer_norm.weight".to_string(),
+            "a.audio_tower.layer_norm.bias".to_string(),
+            "a.projector.ln_pre.weight".to_string(),
+            "a.projector.ln_mid.weight".to_string(),
+            "a.projector.linear_1.weight".to_string(),
+            "a.projector.linear_2.weight".to_string(),
+        ];
+        required.reserve(n_layers * 20);
+        for i in 0..n_layers {
+            let p = format!("a.audio_tower.layers.{i}.");
+            for suffix in [
+                "self_attn_layer_norm.weight",
+                "self_attn_layer_norm.bias",
+                "self_attn.q_proj.weight",
+                "self_attn.k_proj.weight",
+                "self_attn.v_proj.weight",
+                "self_attn.out_proj.weight",
+                "final_layer_norm.weight",
+                "final_layer_norm.bias",
+                "fc1.weight",
+                "fc2.weight",
+            ] {
+                required.push(format!("{p}{suffix}"));
+            }
+        }
+        let tensor_dims = |name: &str| -> Result<Vec<usize>> {
+            if let Some(meta) = loader.tensor_meta.get(name) {
+                return Ok(meta.dims.clone());
+            }
+            match loader.tensors.get(name) {
+                Some(crate::loader::LoadedTensor::F32(tensor)) => Ok(tensor.shape().to_vec()),
+                Some(crate::loader::LoadedTensor::Q8_0(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                Some(crate::loader::LoadedTensor::KQuant(weight)) => {
+                    Ok(vec![weight.in_features(), weight.out_features()])
+                }
+                None => anyhow::bail!("missing tensor geometry for '{name}'"),
+            }
+        };
+        let check_dims = |name: &str, expected: &[usize]| -> Result<()> {
+            let actual = tensor_dims(name)?;
+            anyhow::ensure!(
+                actual == expected,
+                "{name} gguf dims {actual:?} != expected {expected:?}"
+            );
+            Ok(())
+        };
+        // Surface malformed present convolution metadata before reporting a
+        // truncated inventory, preserving a useful panic-free diagnostic.
+        let conv1_name = "a.audio_tower.conv1.weight";
+        if loader.tensors.contains_key(conv1_name) {
+            check_dims(conv1_name, &[3, num_mel_bins, d_model])?;
+        }
+        crate::loader::require_tensors(loader, &required)?;
+        check_dims("a.audio_tower.conv1.weight", &[3, num_mel_bins, d_model])?;
+        check_dims("a.audio_tower.conv1.bias", &[d_model])?;
+        check_dims("a.audio_tower.conv2.weight", &[3, d_model, d_model])?;
+        check_dims("a.audio_tower.conv2.bias", &[d_model])?;
+        check_dims(
+            "a.audio_tower.position_embedding.weight",
+            &[d_model, max_pos],
+        )?;
+        check_dims("a.audio_tower.layer_norm.weight", &[d_model])?;
+        check_dims("a.audio_tower.layer_norm.bias", &[d_model])?;
+        check_dims("a.projector.ln_pre.weight", &[stacked_dim])?;
+        let mid = match tensor_dims("a.projector.ln_mid.weight")?.as_slice() {
+            [width] if *width > 0 && *width <= crate::loader::limits::MAX_INTERMEDIATE_DIM => *width,
+            shape => anyhow::bail!(
+                "a.projector.ln_mid.weight must be a non-empty rank-1 tensor within the {} element limit, got {shape:?}",
+                crate::loader::limits::MAX_INTERMEDIATE_DIM
+            ),
+        };
+        let linear_1_output = mid
+            .checked_mul(2)
+            .ok_or_else(|| anyhow::anyhow!("audio projector SwiGLU width overflow"))?;
+        anyhow::ensure!(
+            linear_1_output <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+            "audio projector SwiGLU width {linear_1_output} exceeds the {} element limit",
+            crate::loader::limits::MAX_INTERMEDIATE_DIM
+        );
+        check_dims(
+            "a.projector.linear_1.weight",
+            &[stacked_dim, linear_1_output],
+        )?;
+        let linear_2_dims = tensor_dims("a.projector.linear_2.weight")?;
+        anyhow::ensure!(
+            linear_2_dims.len() == 2
+                && linear_2_dims[0] == mid
+                && linear_2_dims[1] > 0
+                && linear_2_dims[1] <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+            "a.projector.linear_2.weight dimensions {linear_2_dims:?} are incompatible with input {mid}"
+        );
+        for i in 0..n_layers {
+            let p = format!("a.audio_tower.layers.{i}.");
+            for suffix in [
+                "self_attn_layer_norm.weight",
+                "self_attn_layer_norm.bias",
+                "final_layer_norm.weight",
+                "final_layer_norm.bias",
+            ] {
+                check_dims(&format!("{p}{suffix}"), &[d_model])?;
+            }
+            for suffix in [
+                "self_attn.q_proj.weight",
+                "self_attn.k_proj.weight",
+                "self_attn.v_proj.weight",
+                "self_attn.out_proj.weight",
+            ] {
+                check_dims(&format!("{p}{suffix}"), &[d_model, d_model])?;
+            }
+            check_dims(&format!("{p}fc1.weight"), &[d_model, ffn_dim])?;
+            check_dims(&format!("{p}fc2.weight"), &[ffn_dim, d_model])?;
+            for (suffix, width) in [
+                ("self_attn.q_proj.bias", d_model),
+                ("self_attn.k_proj.bias", d_model),
+                ("self_attn.v_proj.bias", d_model),
+                ("self_attn.out_proj.bias", d_model),
+                ("fc1.bias", ffn_dim),
+                ("fc2.bias", d_model),
+            ] {
+                let name = format!("{p}{suffix}");
+                if loader.tensors.contains_key(&name) {
+                    check_dims(&name, &[width])?;
+                }
+            }
+        }
+
+        // All `expected` values below are GGUF [in, out] dimensions. Check
+        // rank and dimensions before conversion: `CpuTensor::transpose` is an
+        // infallible trusted-data operation, but a malformed mmproj is not
+        // trusted and must return an error rather than panic.
+        let take_linear = |loader: &mut GgufLoader,
+                           name: &str,
+                           expected: &[usize]|
+         -> Result<Linear<CpuBackend>> {
             let weight_name = format!("{name}.weight");
             let weight = loader
                 .take_f32(&weight_name)
                 .with_context(|| format!("audio mmproj missing tensor {weight_name}"))?;
-            let bias = loader.take_optional_f32(&[format!("{name}.bias")]);
-            let weight = gguf_to_row_major_f32(weight);
+            anyhow::ensure!(
+                weight.shape() == expected,
+                "{weight_name} gguf dims {:?} != expected {:?}",
+                weight.shape(),
+                expected
+            );
+            let bias = loader.take_optional_f32(&[format!("{name}.bias")])?;
+            if let Some(ref bias) = bias {
+                anyhow::ensure!(
+                    bias.shape() == [expected[1]],
+                    "{name}.bias shape {:?} != [{}]",
+                    bias.shape(),
+                    expected[1]
+                );
+            }
+            let weight = try_gguf_to_row_major_f32(weight)?;
             Ok(Linear::new(weight, bias))
         };
-        let take_linear_nb = |loader: &mut GgufLoader, name: &str| -> Result<Linear<CpuBackend>> {
+        let take_linear_nb = |loader: &mut GgufLoader,
+                              name: &str,
+                              expected: &[usize]|
+         -> Result<Linear<CpuBackend>> {
             let weight_name = format!("{name}.weight");
             let weight = loader
                 .take_f32(&weight_name)
                 .with_context(|| format!("audio mmproj missing tensor {weight_name}"))?;
-            let weight = gguf_to_row_major_f32(weight);
+            anyhow::ensure!(
+                weight.shape() == expected,
+                "{weight_name} gguf dims {:?} != expected {:?}",
+                weight.shape(),
+                expected
+            );
+            let weight = try_gguf_to_row_major_f32(weight)?;
             Ok(Linear::new(weight, None))
         };
-        let take_norm = |loader: &mut GgufLoader, name: &str| -> Result<LayerNorm<CpuBackend>> {
+        let take_linear_nb_input = |loader: &mut GgufLoader,
+                                    name: &str,
+                                    expected_input: usize|
+         -> Result<Linear<CpuBackend>> {
+            let weight_name = format!("{name}.weight");
             let weight = loader
-                .take_f32(&format!("{name}.weight"))
-                .with_context(|| format!("audio mmproj missing {name}.weight"))?;
-            let bias = loader
-                .take_f32(&format!("{name}.bias"))
-                .with_context(|| format!("audio mmproj missing {name}.bias"))?;
-            Ok(LayerNorm::new(weight, bias, eps))
+                .take_f32(&weight_name)
+                .with_context(|| format!("audio mmproj missing tensor {weight_name}"))?;
+            let (input, output) = match weight.shape() {
+                [input, output] => (*input, *output),
+                shape => anyhow::bail!("{weight_name} must be 2D, got gguf dims {shape:?}"),
+            };
+            anyhow::ensure!(
+                input == expected_input,
+                "{weight_name} input width {input} != expected {expected_input}"
+            );
+            anyhow::ensure!(output > 0, "{weight_name} output width must be non-zero");
+            let weight = try_gguf_to_row_major_f32(weight)?;
+            Ok(Linear::new(weight, None))
         };
-        let take_vec = |loader: &mut GgufLoader, name: &str| -> Result<CpuTensor> {
-            loader
+        let take_norm =
+            |loader: &mut GgufLoader, name: &str, width: usize| -> Result<LayerNorm<CpuBackend>> {
+                let weight = loader
+                    .take_f32(&format!("{name}.weight"))
+                    .with_context(|| format!("audio mmproj missing {name}.weight"))?;
+                anyhow::ensure!(
+                    weight.shape() == [width],
+                    "{name}.weight shape {:?} != [{width}]",
+                    weight.shape()
+                );
+                let bias = loader
+                    .take_f32(&format!("{name}.bias"))
+                    .with_context(|| format!("audio mmproj missing {name}.bias"))?;
+                anyhow::ensure!(
+                    bias.shape() == [width],
+                    "{name}.bias shape {:?} != [{width}]",
+                    bias.shape()
+                );
+                Ok(LayerNorm::new(weight, bias, eps))
+            };
+        let take_vec =
+            |loader: &mut GgufLoader, name: &str, expected: &[usize]| -> Result<CpuTensor> {
+                let tensor = loader
+                    .take_f32(name)
+                    .with_context(|| format!("audio mmproj missing tensor {name}"))?;
+                anyhow::ensure!(
+                    tensor.shape() == expected,
+                    "{name} gguf dims {:?} != expected {:?}",
+                    tensor.shape(),
+                    expected
+                );
+                Ok(tensor)
+            };
+        let take_nonempty_vec = |loader: &mut GgufLoader, name: &str| -> Result<CpuTensor> {
+            let tensor = loader
                 .take_f32(name)
-                .with_context(|| format!("audio mmproj missing tensor {name}"))
+                .with_context(|| format!("audio mmproj missing tensor {name}"))?;
+            anyhow::ensure!(
+                tensor.ndim() == 1 && tensor.shape()[0] > 0,
+                "{name} must be a non-empty rank-1 tensor, got shape {:?}",
+                tensor.shape()
+            );
+            Ok(tensor)
         };
 
-        let conv1_weight = gguf_to_hf_layout(&take_vec(loader, "a.audio_tower.conv1.weight")?);
-        let conv1_bias = take_vec(loader, "a.audio_tower.conv1.bias")?;
-        let conv2_weight = gguf_to_hf_layout(&take_vec(loader, "a.audio_tower.conv2.weight")?);
-        let conv2_bias = take_vec(loader, "a.audio_tower.conv2.bias")?;
+        // GGUF dimensions are reversed HF dimensions. The payload remains
+        // HF row-major, so restore the shape without changing its flat data.
+        let conv1_weight = gguf_to_hf_layout(&take_vec(
+            loader,
+            "a.audio_tower.conv1.weight",
+            &[3, num_mel_bins, d_model],
+        )?);
+        let conv1_bias = take_vec(loader, "a.audio_tower.conv1.bias", &[d_model])?;
+        let conv2_weight = gguf_to_hf_layout(&take_vec(
+            loader,
+            "a.audio_tower.conv2.weight",
+            &[3, d_model, d_model],
+        )?);
+        let conv2_bias = take_vec(loader, "a.audio_tower.conv2.bias", &[d_model])?;
         let pos_embed = gguf_to_hf_layout(&take_vec(
             loader,
             "a.audio_tower.position_embedding.weight",
+            &[d_model, max_pos],
         )?);
 
         let mut layers = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
             let p = format!("a.audio_tower.layers.{i}");
             layers.push(AudioEncoderLayer {
-                self_attn_layer_norm: take_norm(loader, &format!("{p}.self_attn_layer_norm"))?,
-                q_proj: take_linear(loader, &format!("{p}.self_attn.q_proj"))?,
-                k_proj: take_linear(loader, &format!("{p}.self_attn.k_proj"))?,
-                v_proj: take_linear(loader, &format!("{p}.self_attn.v_proj"))?,
-                out_proj: take_linear(loader, &format!("{p}.self_attn.out_proj"))?,
-                final_layer_norm: take_norm(loader, &format!("{p}.final_layer_norm"))?,
-                fc1: take_linear(loader, &format!("{p}.fc1"))?,
-                fc2: take_linear(loader, &format!("{p}.fc2"))?,
+                self_attn_layer_norm: take_norm(
+                    loader,
+                    &format!("{p}.self_attn_layer_norm"),
+                    d_model,
+                )?,
+                q_proj: take_linear(
+                    loader,
+                    &format!("{p}.self_attn.q_proj"),
+                    &[d_model, d_model],
+                )?,
+                k_proj: take_linear(
+                    loader,
+                    &format!("{p}.self_attn.k_proj"),
+                    &[d_model, d_model],
+                )?,
+                v_proj: take_linear(
+                    loader,
+                    &format!("{p}.self_attn.v_proj"),
+                    &[d_model, d_model],
+                )?,
+                out_proj: take_linear(
+                    loader,
+                    &format!("{p}.self_attn.out_proj"),
+                    &[d_model, d_model],
+                )?,
+                final_layer_norm: take_norm(loader, &format!("{p}.final_layer_norm"), d_model)?,
+                fc1: take_linear(loader, &format!("{p}.fc1"), &[d_model, ffn_dim])?,
+                fc2: take_linear(loader, &format!("{p}.fc2"), &[ffn_dim, d_model])?,
             });
         }
-        let final_norm = take_norm(loader, "a.audio_tower.layer_norm")?;
+        let final_norm = take_norm(loader, "a.audio_tower.layer_norm", d_model)?;
 
-        let ln_pre_weight = take_vec(loader, "a.projector.ln_pre.weight")?;
-        let linear_1 = take_linear_nb(loader, "a.projector.linear_1")?;
-        let ln_mid_weight = take_vec(loader, "a.projector.ln_mid.weight")?;
-        let linear_2 = take_linear_nb(loader, "a.projector.linear_2")?;
+        let ln_pre_weight = take_vec(loader, "a.projector.ln_pre.weight", &[stacked_dim])?;
+        // `ln_mid` determines both SwiGLU halves; its geometry was checked
+        // before any tensor was materialized above.
+        let ln_mid_weight = take_nonempty_vec(loader, "a.projector.ln_mid.weight")?;
+        anyhow::ensure!(
+            ln_mid_weight.shape() == [mid],
+            "a.projector.ln_mid.weight shape {:?} != [{mid}]",
+            ln_mid_weight.shape()
+        );
+        let linear_1 = take_linear_nb(
+            loader,
+            "a.projector.linear_1",
+            &[stacked_dim, linear_1_output],
+        )?;
+        let linear_2 = take_linear_nb_input(loader, "a.projector.linear_2", mid)?;
+        anyhow::ensure!(
+            linear_2.out_features(&CpuBackend) <= crate::loader::limits::MAX_INTERMEDIATE_DIM,
+            "audio projector linear_2 output width {} exceeds the {} element limit",
+            linear_2.out_features(&CpuBackend),
+            crate::loader::limits::MAX_INTERMEDIATE_DIM
+        );
 
         Ok(Self {
             encoder: AudioEncoder {
@@ -563,5 +891,81 @@ impl AudioModel {
         let (encoder_out, trace) = self.encoder.encode_traced(backend, mel)?;
         let projected = self.projector.forward(backend, &encoder_out)?;
         Ok((projected, trace))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loader::{GgufValue, LoadedTensor};
+    use std::collections::HashMap;
+
+    fn metadata(stack_factor: u32) -> HashMap<String, GgufValue> {
+        HashMap::from([
+            ("ultravox.audio.num_mel_bins".into(), GgufValue::U32(128)),
+            ("ultravox.audio.d_model".into(), GgufValue::U32(1280)),
+            ("ultravox.audio.encoder_layers".into(), GgufValue::U32(1)),
+            (
+                "ultravox.audio.encoder_ffn_dim".into(),
+                GgufValue::U32(5120),
+            ),
+            (
+                "ultravox.audio.max_source_positions".into(),
+                GgufValue::U32(1500),
+            ),
+            ("ultravox.audio.layer_norm_eps".into(), GgufValue::F32(1e-5)),
+            ("ultravox.stack_factor".into(), GgufValue::U32(stack_factor)),
+        ])
+    }
+
+    fn tensor(shape: &[usize]) -> LoadedTensor {
+        let elements = shape.iter().product();
+        LoadedTensor::F32(CpuTensor::from_data(shape.to_vec(), vec![0.0; elements]))
+    }
+
+    fn loader(
+        metadata: HashMap<String, GgufValue>,
+        tensors: HashMap<String, LoadedTensor>,
+    ) -> GgufLoader {
+        GgufLoader {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn zero_stack_factor_is_an_error_not_a_projector_panic() {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut loader = loader(metadata(0), HashMap::new());
+            AudioModel::from_mmproj_loader(&mut loader)
+        }));
+        let result = result.expect("malformed audio metadata must not panic");
+        let error = match result {
+            Ok(_) => panic!("zero stack factor unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("stack factor must be non-zero"));
+    }
+
+    #[test]
+    fn malformed_conv_rank_is_rejected_before_hf_layout_conversion() {
+        let mut tensors = HashMap::new();
+        // GGUF conv1 shape is [kernel, in_channels, out_channels]. This
+        // rank-2 value used to reach runtime indexing after a permissive load.
+        tensors.insert("a.audio_tower.conv1.weight".into(), tensor(&[3, 128]));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut loader = loader(metadata(8), tensors);
+            AudioModel::from_mmproj_loader(&mut loader)
+        }));
+        let result = result.expect("malformed conv rank must not panic");
+        let error = match result {
+            Ok(_) => panic!("malformed conv rank unexpectedly loaded"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("a.audio_tower.conv1.weight"));
+        assert!(error.to_string().contains("gguf dims"));
     }
 }

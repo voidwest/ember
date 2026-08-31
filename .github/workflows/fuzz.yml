@@ -1,0 +1,87 @@
+name: parser-fuzz
+
+# Short libFuzzer smoke campaigns for the model-free hostile-input boundaries.
+# Longer campaigns are run locally or on dedicated fuzzing infrastructure.
+
+# Fuzz targets execute repository-controlled code; keep the job token
+# read-only even for same-repository pull requests.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "fuzz/**"
+      - "src/loader.rs"
+      - "src/npy.rs"
+      - "src/kv_snapshot.rs"
+      - "src/tokenizer.rs"
+      - "src/llama.rs"
+      - "src/model.rs"
+      - "src/gemma4.rs"
+      - "src/tensor.rs"
+      - "src/quant.rs"
+      - "src/quant_k.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "fuzz/**"
+      - "src/loader.rs"
+      - "src/npy.rs"
+      - "src/kv_snapshot.rs"
+      - "src/tokenizer.rs"
+      - "src/llama.rs"
+      - "src/model.rs"
+      - "src/gemma4.rs"
+      - "src/tensor.rs"
+      - "src/quant.rs"
+      - "src/quant_k.rs"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz.yml"
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Pin both the fuzz driver and compiler so CI does not change underneath
+  # parser campaigns. CARGOFLAGS is honored by cargo-fuzz's child Cargo
+  # invocations (cargo-fuzz 0.13.2 has no --locked option of its own).
+  FUZZ_TOOLCHAIN: nightly-2026-05-26
+  CARGOFLAGS: --locked
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+          cargo "+$FUZZ_TOOLCHAIN" install cargo-fuzz@0.13.2 --locked
+
+      - name: type-check fuzz targets
+        run: cargo "+$FUZZ_TOOLCHAIN" fuzz check
+
+      - name: run bounded parser campaigns
+        run: |
+          mkdir -p fuzz/artifacts fuzz/corpus_work
+          for target in gguf_loader gguf_to_llama npy_bytes kv_snapshot_manifest tokenizer_json; do
+            mkdir -p "fuzz/corpus_work/$target"
+            cargo "+$FUZZ_TOOLCHAIN" fuzz run "$target" "fuzz/corpus_work/$target" -- \
+              -max_total_time=30 -max_len=262144 -timeout=10 \
+              -rss_limit_mb=2048
+          done
+
+      - name: upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: parser-fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
