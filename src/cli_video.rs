@@ -11,7 +11,7 @@ use crate::Args;
 use anyhow::{Context, Result};
 use clap::Args as ClapArgs;
 use ember::backend::CpuBackend;
-use ember::multimodal::request::{ContentPart, VideoFrames, VideoInput};
+use ember::multimodal::request::{ContentPart, VideoFrames, VideoInput, MAX_VIDEO_FRAMES};
 use ember::multimodal::video::FrameSampling;
 use ember::smolvlm_video::SmolVlmVideo;
 use ember::tensor::CpuTensor;
@@ -79,6 +79,11 @@ pub(crate) fn run_video_command(command: &VideoCommand, _args: &Args) -> Result<
         .collect();
     names.sort();
     anyhow::ensure!(!names.is_empty(), "no PNG frames in {}", command.frames_dir);
+    anyhow::ensure!(
+        names.len() <= MAX_VIDEO_FRAMES,
+        "{} frames exceed the {MAX_VIDEO_FRAMES}-frame admission limit",
+        names.len()
+    );
     let mut frames = Vec::with_capacity(names.len());
     for p in &names {
         frames.push(ember::multimodal::image::decode_rgb(p)?);

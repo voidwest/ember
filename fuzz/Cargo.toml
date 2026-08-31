@@ -1,0 +1,74 @@
+# Isolated cargo-fuzz package. It is intentionally not a workspace member, so
+# the stable CI build/test jobs do not compile libFuzzer instrumentation.
+# Install cargo-fuzz and the pinned nightly-2026-05-26 toolchain, then run:
+#
+#     CARGOFLAGS=--locked cargo +nightly-2026-05-26 fuzz run gguf_loader -- -max_total_time=60
+#
+[package]
+name = "ember-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ember = { path = "..", default-features = false }
+
+[[bin]]
+name = "gguf_loader"
+path = "fuzz_targets/gguf_loader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gguf_to_llama"
+path = "fuzz_targets/gguf_to_llama.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "npy_bytes"
+path = "fuzz_targets/npy_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kv_snapshot_manifest"
+path = "fuzz_targets/kv_snapshot_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tokenizer_json"
+path = "fuzz_targets/tokenizer_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wav_bytes"
+path = "fuzz_targets/wav_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "image_bytes"
+path = "fuzz_targets/image_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "image_preprocess"
+path = "fuzz_targets/image_preprocess.rs"
+test = false
+doc = false
+bench = false

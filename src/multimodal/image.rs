@@ -97,10 +97,36 @@ pub struct PreprocessTimings {
     pub normalize_ms: f64,
 }
 
+/// Maximum decoded image edge (pixels) for decoders that honor strict
+/// dimension limits (zune-jpeg does; the png crate does not — its output
+/// is bounded by [`MAX_IMAGE_DECODE_BYTES`] instead).
+pub const MAX_IMAGE_DIM: u32 = 8192;
+
+/// Per-image decoder allocation budget. The `image` crate's own default is
+/// 512 MiB and is *non-strict* for some decoders; we set an explicit
+/// budget here and additionally reject anything above it. After decode,
+/// [`rgb8_to_tensor`] multiplies this by four (u8 bitmap -> f32 tensor),
+/// so an admission cap here is what keeps a decompression bomb from
+/// turning into a multi-GiB f32 allocation on a 16 GB host.
+pub const MAX_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Explicit decoder limits applied to every untrusted image decode.
+fn image_decode_limits() -> image::Limits {
+    // `Limits` is #[non_exhaustive]; Default keeps the crate's other
+    // behaviors and we tighten exactly the fields we care about.
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIM);
+    limits.max_image_height = Some(MAX_IMAGE_DIM);
+    limits.max_alloc = Some(MAX_IMAGE_DECODE_BYTES);
+    limits
+}
+
 /// Decode an image from memory (PNG/JPEG bytes) and return RGB pixels as
 /// f32 `[3, height, width]` with values in 0..255 (channels-first).
 pub fn decode_rgb_bytes(bytes: &[u8]) -> Result<CpuTensor> {
-    let img = image::ImageReader::new(std::io::Cursor::new(bytes))
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes));
+    reader.limits(image_decode_limits());
+    let img = reader
         .with_guessed_format()
         .map_err(|e| anyhow!("failed to read image bytes: {e}"))?
         .decode()
@@ -112,8 +138,12 @@ pub fn decode_rgb_bytes(bytes: &[u8]) -> Result<CpuTensor> {
 /// Decode an image file (PNG/JPEG) and return RGB pixels as f32
 /// `[3, height, width]` with values in 0..255 (channels-first).
 pub fn decode_rgb(path: &Path) -> Result<CpuTensor> {
-    let img = image::ImageReader::open(path)
-        .map_err(|e| anyhow!("failed to open image {}: {e}", path.display()))?
+    let mut reader = image::ImageReader::open(path)
+        .map_err(|e| anyhow!("failed to open image {}: {e}", path.display()))?;
+    reader.limits(image_decode_limits());
+    let img = reader
+        .with_guessed_format()
+        .map_err(|e| anyhow!("failed to read image {}: {e}", path.display()))?
         .decode()
         .map_err(|e| anyhow!("failed to decode image {}: {e}", path.display()))?
         .to_rgb8();

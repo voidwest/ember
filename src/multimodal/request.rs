@@ -56,6 +56,91 @@ impl ImageInput {
     }
 }
 
+/// Maximum number of image parts in one multimodal request (admission cap;
+/// each image is additionally bounded by the decode limits in
+/// [`crate::multimodal::image`]).
+pub const MAX_IMAGES_PER_REQUEST: usize = 16;
+
+/// Maximum number of video frames in one multimodal request (admission cap).
+pub const MAX_VIDEO_FRAMES: usize = 1024;
+
+/// Decoded image format, for provenance/logging on validated inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidatedImageFormat {
+    Png,
+    Jpeg,
+    /// Already-decoded pixels supplied by the caller.
+    RawPixels,
+    Unknown,
+}
+
+/// A decoded, validated image: CHW `[3, h, w]` f32 pixels (0..255) plus
+/// the geometry downstream stages may assume without re-validating.
+///
+/// This is the Phase-2 validated-state seam: raw [`ImageInput`] is decoded
+/// exactly once here, under the image-crate limits, and everything after
+/// (preprocess, batch encode, assembler) consumes [`ValidatedImageInput`].
+#[derive(Debug, Clone)]
+pub struct ValidatedImageInput {
+    /// CHW `[3, height, width]`, values 0..255.
+    pub rgb: CpuTensor,
+    pub width: usize,
+    pub height: usize,
+    pub format: ValidatedImageFormat,
+}
+
+impl ValidatedImageInput {
+    /// Decode (or pass through already-decoded pixels) with the image
+    /// decoder limits applied. Rejects malformed `Pixels` shapes.
+    pub fn decode(input: &ImageInput) -> anyhow::Result<Self> {
+        match input {
+            ImageInput::File(path) => {
+                let format = image::ImageFormat::from_path(path)
+                    .ok()
+                    .map(validated_format)
+                    .unwrap_or(ValidatedImageFormat::Unknown);
+                let rgb = crate::multimodal::image::decode_rgb(path)?;
+                Ok(Self::from_rgb(rgb, format))
+            }
+            ImageInput::Bytes(bytes) => {
+                let format = image::guess_format(bytes)
+                    .ok()
+                    .map(validated_format)
+                    .unwrap_or(ValidatedImageFormat::Unknown);
+                let rgb = crate::multimodal::image::decode_rgb_bytes(bytes)?;
+                Ok(Self::from_rgb(rgb, format))
+            }
+            ImageInput::Pixels { rgb } => {
+                anyhow::ensure!(
+                    rgb.ndim() == 3 && rgb.shape()[0] == 3,
+                    "ImageInput::Pixels expects CHW [3, h, w], got {:?}",
+                    rgb.shape()
+                );
+                Ok(Self::from_rgb(rgb.clone(), ValidatedImageFormat::RawPixels))
+            }
+        }
+    }
+
+    fn from_rgb(rgb: CpuTensor, format: ValidatedImageFormat) -> Self {
+        let height = rgb.shape()[1];
+        let width = rgb.shape()[2];
+        Self {
+            rgb,
+            width,
+            height,
+            format,
+        }
+    }
+}
+
+fn validated_format(f: image::ImageFormat) -> ValidatedImageFormat {
+    match f {
+        image::ImageFormat::Png => ValidatedImageFormat::Png,
+        image::ImageFormat::Jpeg => ValidatedImageFormat::Jpeg,
+        _ => ValidatedImageFormat::Unknown,
+    }
+}
+
 /// A raw video input: a sequence of already-decoded frames plus timing
 /// metadata. Frame data uses the image layout (CHW `[3, h, w]` f32 0..255).
 ///

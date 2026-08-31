@@ -56,7 +56,17 @@ pub fn batch_encode_images<T>(
     scale_factor: usize,
     project: impl Fn(&CpuBackend, &CpuTensor) -> Result<(CpuTensor, T)>,
 ) -> Result<(Vec<BatchedImageOutput>, Vec<T>, CpuTensor)> {
-    let scale2 = scale_factor * scale_factor;
+    ensure!(
+        patch_size > 0,
+        "batch_encode_images: patch_size must be non-zero"
+    );
+    ensure!(
+        scale_factor > 0,
+        "batch_encode_images: scale_factor must be non-zero"
+    );
+    let scale2 = scale_factor
+        .checked_mul(scale_factor)
+        .ok_or_else(|| anyhow::anyhow!("batch_encode_images: scale_factor overflow"))?;
 
     // group inputs by tile geometry, preserving order inside groups
     let mut group_index: HashMap<[usize; 3], usize> = HashMap::new();
