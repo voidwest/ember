@@ -56,7 +56,11 @@ env:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Compiling ember + deps with libFuzzer instrumentation on a cold runner
+    # takes 20-40 min; 30 min was repeatedly exceeded (job cancelled at the
+    # limit with zero campaigns run). 90 min covers cold builds with margin
+    # while still failing loudly on genuinely stuck campaigns.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
