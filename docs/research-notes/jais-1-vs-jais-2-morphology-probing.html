@@ -144,12 +144,12 @@
         <h2>the headline result is task-dependent</h2>
 
         <p>
-            the table averages each task over the four interfaces and the two
-            grouped test splits. each underlying cell is a mean macro-F1 across five outer folds; the
-            displayed task values are unweighted averages over four interfaces
-            and two grouped splits. the delta is Jais 2 minus Jais 1. accuracy is included because
-            number is class-imbalanced and its accuracy can hide a change in
-            minority-class recovery.
+            the table compares the main <code>full_prompt_final</code> interface,
+            averaging each task over the lemma-heldout and root-heldout test
+            splits. each underlying split value is itself a mean across five
+            outer folds. the delta is Jais 2 minus Jais 1. accuracy is included
+            because the number task is imbalanced across classes and its accuracy
+            can hide a change in minority-class recovery.
         </p>
 
         <table>
@@ -172,8 +172,8 @@
         </table>
 
         <p>
-            number is the clear separation. Jais 1's full held-out number
-            macro-F1 is low despite 0.9362 accuracy, a sign that the majority
+            number is the clear separation. Jais 1's full-metadata held-out
+            number macro-F1 is low despite 0.9362 accuracy, a sign that the majority
             class is doing much of the work. Jais 2 raises both metrics, and its
             macro-F1 gain is much larger than its accuracy gain. gender is nearly
             unchanged in this aggregate, while POS declines modestly. those
