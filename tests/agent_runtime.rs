@@ -14,8 +14,8 @@ use ember::agent::tools::{
 };
 use ember::agent::{
     validate_trace_invariants, AgentConfig, AgentLimits, AgentSession, ArtifactStore, CancelFlag,
-    RunResources, Tool, ToolContext, ToolOutcome, ToolRegistry, ToolSchema, TraceConfig,
-    TraceRecorder,
+    RunResources, Tool, ToolContext, ToolOutcome, ToolOutput, ToolRegistry, ToolSchema,
+    TraceConfig, TraceRecorder,
 };
 
 // -- helpers ---------------------------------------------------------------
@@ -80,7 +80,7 @@ impl Tool for CancellingSlowTool {
         ctx: &ToolContext<'_>,
     ) -> ToolOutcome {
         self.cancel.cancel();
-        SlowTool::new(20).execute(args, ctx)
+        Ok(ToolOutput::json(serde_json::json!({ "side_effect": true })))
     }
 }
 
