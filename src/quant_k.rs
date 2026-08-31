@@ -636,19 +636,83 @@ impl KQuantWeight {
         } else {
             None
         };
-        Ok(Self {
+        let weight = Self {
             data,
             shape,
             dtype,
             execution,
             presplit,
-        })
+        };
+        if crate::quant::quant_verify_enabled() {
+            weight
+                .validate_integrity()
+                .map_err(|e| anyhow::anyhow!("quant integrity check failed: {e}"))?;
+        }
+        Ok(weight)
     }
 
     /// Raw packed storage.
     #[inline]
     pub fn data(&self) -> &[u8] {
         self.data.as_slice()
+    }
+
+    /// Mutable access to the packed bytes for owned weights (fault-injection
+    /// harnesses, integrity tooling). Returns `None` for file-mapped weights.
+    pub fn data_mut(&mut self) -> Option<&mut [u8]> {
+        match &mut self.data {
+            QuantizedData::Owned(data) => Some(Arc::make_mut(data)),
+            QuantizedData::Mapped { .. } => None,
+        }
+    }
+
+    /// Content-level integrity check: block-layout math and the per-block
+    /// finite header fields (Q4_K `d`/`min`, Q6_K `d`). A NaN/Inf header
+    /// (e.g. from a single corrupted scale byte) propagates non-finite
+    /// dequantized values into logits, where the sampler's argmax asserts.
+    pub fn validate_integrity(&self) -> Result<(), String> {
+        let blocks = self
+            .shape
+            .iter()
+            .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+            .ok_or_else(|| "K-quant shape product overflow".to_string())?
+            / QK_K;
+        let expected_len = blocks
+            .checked_mul(self.dtype.block_bytes())
+            .ok_or_else(|| "K-quant byte length overflow".to_string())?;
+        if self.byte_len() != expected_len {
+            return Err(format!(
+                "{} data len {} != expected {expected_len}",
+                self.dtype.name(),
+                self.byte_len()
+            ));
+        }
+        let data = self.data();
+        match self.dtype {
+            KQuantDtype::Q4K => {
+                for block in 0..blocks {
+                    let off = block * Q4_K_BLOCK_BYTES;
+                    let d = f16_to_f32(u16::from_le_bytes([data[off], data[off + 1]]));
+                    let min = f16_to_f32(u16::from_le_bytes([data[off + 2], data[off + 3]]));
+                    if !d.is_finite() {
+                        return Err(format!("Q4_K block {block} has non-finite d scale {d}"));
+                    }
+                    if !min.is_finite() {
+                        return Err(format!("Q4_K block {block} has non-finite min {min}"));
+                    }
+                }
+            }
+            KQuantDtype::Q6K => {
+                for block in 0..blocks {
+                    let off = block * Q6_K_BLOCK_BYTES;
+                    let d = f16_to_f32(u16::from_le_bytes([data[off + 208], data[off + 209]]));
+                    if !d.is_finite() {
+                        return Err(format!("Q6_K block {block} has non-finite d scale {d}"));
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Pre-split quant bytes for the prefill-only four-row tile, if built.

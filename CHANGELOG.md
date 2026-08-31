@@ -23,6 +23,10 @@ API.
 - `ember evidence init|sign|verify`: Ed25519-signed evidence envelopes over
   canonical JSON records (run manifests included); `verify` also re-checks
   the embedded execution identity (Phase IV, pre-TEE).
+- Quantized-inference security (Phase V): `quant_fault` harness (seeded
+  single-bit fault injection over Q8_0/Q4_K/Q6_K with impact measurement),
+  `validate_integrity()` on quantized weights (block layout + finite
+  headers), and the `EMBER_VERIFY_QUANT=1` load-time integrity hook.
 
 ### Documentation
 

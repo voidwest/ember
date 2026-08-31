@@ -66,6 +66,7 @@ mod plan_build;
 pub mod planned_decode;
 pub mod quant;
 #[doc(hidden)]
+pub mod quant_fault;
 pub mod quant_k;
 #[doc(hidden)]
 pub mod residency;

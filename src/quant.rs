@@ -135,6 +135,19 @@ pub fn quantize_q8_0_into(src: &[f32], dst: &mut Vec<u8>) {
 /// q8_0 blocks (which run along the in_features dimension) are
 /// contiguous per output feature.  `shape[0]` is `out_features`,
 /// `shape[1]` is `in_features`.
+/// Whether load-time quantized-weight integrity verification is enabled
+/// (`EMBER_VERIFY_QUANT=1|true|yes`). When set, every constructed quantized
+/// weight is scanned once for layout and finite-scale violations before it
+/// is used (EmberSEC Phase V). Off by default: the scan costs one pass over
+/// the packed bytes, and compressed-resident Q8 loads deliberately avoid
+/// touching file pages.
+pub(crate) fn quant_verify_enabled() -> bool {
+    matches!(
+        std::env::var("EMBER_VERIFY_QUANT").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
+}
+
 #[derive(Clone)]
 pub(crate) enum QuantizedData {
     Owned(Arc<[u8]>),
@@ -236,13 +249,60 @@ impl QuantizedWeight {
                 expected_len
             );
         }
-        Ok(Self { data, shape })
+        let weight = Self { data, shape };
+        if quant_verify_enabled() {
+            weight
+                .validate_integrity()
+                .map_err(|e| anyhow::anyhow!("quant integrity check failed: {e}"))?;
+        }
+        Ok(weight)
     }
 
     /// Raw Q8_0 storage.
     #[inline]
     pub fn data(&self) -> &[u8] {
         self.data.as_slice()
+    }
+
+    /// Mutable access to the packed bytes for owned weights (fault-injection
+    /// harnesses, integrity tooling). Returns `None` for file-mapped weights,
+    /// whose bytes must stay read-only.
+    pub fn data_mut(&mut self) -> Option<&mut [u8]> {
+        match &mut self.data {
+            QuantizedData::Owned(data) => Some(Arc::make_mut(data)),
+            QuantizedData::Mapped { .. } => None,
+        }
+    }
+
+    /// Content-level integrity check: block-layout math and every block's
+    /// f16 scale must be finite. A NaN/Inf scale (e.g. from a single
+    /// corrupted scale byte) would otherwise propagate non-finite logits
+    /// into sampling, where the sampler's argmax asserts on NaN.
+    pub fn validate_integrity(&self) -> Result<(), String> {
+        let expected_elements = self
+            .shape
+            .iter()
+            .try_fold(1usize, |acc, &d| acc.checked_mul(d))
+            .ok_or_else(|| "q8_0 shape product overflow".to_string())?;
+        let blocks = expected_elements / Q8_0_BLOCK_SIZE;
+        let expected_len = blocks
+            .checked_mul(Q8_0_TYPE_SIZE)
+            .ok_or_else(|| "q8_0 byte length overflow".to_string())?;
+        if self.byte_len() != expected_len {
+            return Err(format!(
+                "q8_0 data len {} != expected {expected_len}",
+                self.byte_len()
+            ));
+        }
+        let data = self.data();
+        for block in 0..blocks {
+            let off = block * Q8_0_TYPE_SIZE;
+            let scale = f16::from_bits(u16::from_le_bytes([data[off], data[off + 1]])).to_f32();
+            if !scale.is_finite() {
+                return Err(format!("q8_0 block {block} has non-finite scale {scale}"));
+            }
+        }
+        Ok(())
     }
 
     /// Compressed byte size of this weight.
@@ -471,36 +531,67 @@ pub struct QuantizedWeightVnni {
 
 impl QuantizedWeightVnni {
     /// Repack a row-contiguous Q8_0 matrix without changing its encoded size.
+    ///
+    /// Set `EMBER_PARALLEL_REPACK=1` to parallelize warm-cache startup; the
+    /// default stays sequential to avoid random cold mmap faults.
     pub fn from_quantized(weight: &QuantizedWeight) -> Self {
+        let parallel_repack =
+            std::env::var_os("EMBER_PARALLEL_REPACK").is_some_and(|value| value == "1");
+        Self::from_quantized_with_mode(weight, parallel_repack)
+    }
+
+    fn from_quantized_with_mode(weight: &QuantizedWeight, parallel_repack: bool) -> Self {
         let out_features = weight.out_features();
         let in_features = weight.in_features();
         let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
         let output_tiles = out_features.div_ceil(VNNI_OUT_TILE);
-        let mut data = vec![0_u8; output_tiles * blocks_per_row * VNNI_BLOCK_RECORD_SIZE];
+        let tile_bytes = blocks_per_row * VNNI_BLOCK_RECORD_SIZE;
+        let mut data = vec![0_u8; output_tiles * tile_bytes];
         let source = weight.data();
         let source_row_size = blocks_per_row * Q8_0_TYPE_SIZE;
+        const TILES_PER_TASK: usize = 16;
+        let task_bytes = tile_bytes * TILES_PER_TASK;
+        let pack_task = |task: usize, task_data: &mut [u8]| {
+            let first_tile = task * TILES_PER_TASK;
+            let tiles = task_data.len() / tile_bytes;
+            for tile_offset in 0..tiles {
+                let tile = first_tile + tile_offset;
+                let tile_data =
+                    &mut task_data[tile_offset * tile_bytes..(tile_offset + 1) * tile_bytes];
+                for block in 0..blocks_per_row {
+                    let record = block * VNNI_BLOCK_RECORD_SIZE;
+                    let scales = record + VNNI_OUT_TILE * Q8_0_BLOCK_SIZE;
 
-        for tile in 0..output_tiles {
-            for block in 0..blocks_per_row {
-                let record = (tile * blocks_per_row + block) * VNNI_BLOCK_RECORD_SIZE;
-                let scales = record + VNNI_OUT_TILE * Q8_0_BLOCK_SIZE;
+                    for lane in 0..VNNI_OUT_TILE {
+                        let row = tile * VNNI_OUT_TILE + lane;
+                        if row >= out_features {
+                            continue;
+                        }
+                        let source_block = row * source_row_size + block * Q8_0_TYPE_SIZE;
+                        tile_data[scales + lane * 2..scales + lane * 2 + 2]
+                            .copy_from_slice(&source[source_block..source_block + 2]);
 
-                for lane in 0..VNNI_OUT_TILE {
-                    let row = tile * VNNI_OUT_TILE + lane;
-                    if row >= out_features {
-                        continue;
-                    }
-                    let source_block = row * source_row_size + block * Q8_0_TYPE_SIZE;
-                    data[scales + lane * 2..scales + lane * 2 + 2]
-                        .copy_from_slice(&source[source_block..source_block + 2]);
-
-                    for group in 0..Q8_0_BLOCK_SIZE / 4 {
-                        let destination = record + group * VNNI_OUT_TILE * 4 + lane * 4;
-                        let source_quants = source_block + 2 + group * 4;
-                        data[destination..destination + 4]
-                            .copy_from_slice(&source[source_quants..source_quants + 4]);
+                        for group in 0..Q8_0_BLOCK_SIZE / 4 {
+                            let destination = record + group * VNNI_OUT_TILE * 4 + lane * 4;
+                            let source_quants = source_block + 2 + group * 4;
+                            tile_data[destination..destination + 4]
+                                .copy_from_slice(&source[source_quants..source_quants + 4]);
+                        }
                     }
                 }
+            }
+        };
+
+        // Parallel tile repacking improves warm startup, but parallel page
+        // faults can hurt cold file-backed startup. Keep the safe default
+        // sequential; deployments with warm page cache may opt in.
+        if parallel_repack {
+            data.par_chunks_mut(task_bytes)
+                .enumerate()
+                .for_each(|(task, task_data)| pack_task(task, task_data));
+        } else {
+            for (task, task_data) in data.chunks_mut(task_bytes).enumerate() {
+                pack_task(task, task_data);
             }
         }
 
@@ -557,6 +648,19 @@ mod tests {
             let expected = (*value * scale).round() as i8;
             assert_eq!(encoded[2 + index] as i8, expected, "index {index}");
         }
+    }
+
+    #[test]
+    fn parallel_vnni_repack_is_byte_identical_to_sequential() {
+        let weight = QuantizedWeight::new(
+            vec![0x5a; 4 * 64 / Q8_0_BLOCK_SIZE * Q8_0_TYPE_SIZE],
+            vec![4, 64],
+        );
+        let sequential = QuantizedWeightVnni::from_quantized_with_mode(&weight, false);
+        let parallel = QuantizedWeightVnni::from_quantized_with_mode(&weight, true);
+        assert_eq!(parallel.data, sequential.data);
+        assert_eq!(parallel.shape, sequential.shape);
+        assert_eq!(parallel.blocks_per_row, sequential.blocks_per_row);
     }
 
     #[test]
