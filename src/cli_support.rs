@@ -3,6 +3,7 @@ use anyhow::Context;
 use ember::extraction::{git_commit, sha256_bytes, sha256_file_result, unix_timestamp};
 use ember::loader::{GgufLoader, GgufValue};
 use ember::tokenizer::EmberTokenizer;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -251,12 +252,159 @@ pub(crate) fn validate_token_ids_for_model(
     Ok(())
 }
 
+/// Behavior-affecting environment knobs that are part of execution identity.
+///
+/// Any knob that changes numerics, kernel dispatch, or side-effect behavior
+/// of a run must be recorded so two runs with different knob values never
+/// share an identity. (Output-neutral knobs like `EMBER_REQUIRE_X86_TESTS`
+/// are deliberately excluded.)
+const BEHAVIOR_ENV_KNOBS: &[&str] = &[
+    "EMBER_VISION_FAST_EXP",
+    "EMBER_FUSED_GREEDY",
+    "EMBER_PRESPLIT",
+    "EMBER_K_AVX512",
+    "EMBER_LLAMA_PACKED_Q8",
+    "EMBER_PARALLEL_REPACK",
+    "EMBER_GEMMA_DUMP",
+    "EMBER_CONVERSE_DBG",
+];
+
+/// Snapshot of the behavior-affecting environment knobs (None = unset).
+pub(crate) fn behavior_env_snapshot() -> BTreeMap<String, Option<String>> {
+    BEHAVIOR_ENV_KNOBS
+        .iter()
+        .map(|name| (name.to_string(), env::var(name).ok()))
+        .collect()
+}
+
+/// The canonical execution identity: a sorted JSON object of every
+/// output-affecting input of a run. Field order is irrelevant (the serde_json
+/// Map is BTreeMap-backed); volatile metadata (timestamps, argv, paths) is
+/// excluded so the digest is stable across identical runs and sensitive to
+/// any input that would change the output.
+pub(crate) fn execution_identity_canonical(
+    args: &Args,
+    prompt: &str,
+    model_sha256: Option<&str>,
+    tokenizer_sha256: Option<&str>,
+    env_knobs: &BTreeMap<String, Option<String>>,
+) -> serde_json::Value {
+    let mut canonical: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    canonical.insert(
+        "schema".to_string(),
+        serde_json::json!("execution-identity-v1"),
+    );
+    canonical.insert(
+        "binary".to_string(),
+        serde_json::json!({
+            "git_commit": option_env!("EMBER_GIT_COMMIT"),
+            "git_dirty": option_env!("EMBER_GIT_DIRTY"),
+            "rustc": option_env!("EMBER_RUSTC_VERSION"),
+            "target": option_env!("EMBER_TARGET"),
+        }),
+    );
+    canonical.insert(
+        "model".to_string(),
+        serde_json::json!({
+            "sha256": model_sha256,
+            "architecture": args.arch,
+            "k_strategy": args.k_strategy,
+            "k_allow_fallback": args.k_allow_fallback,
+        }),
+    );
+    canonical.insert(
+        "tokenizer".to_string(),
+        serde_json::json!({ "sha256": tokenizer_sha256 }),
+    );
+    canonical.insert("prompt".to_string(), serde_json::json!(prompt));
+    canonical.insert(
+        "sampler".to_string(),
+        serde_json::json!({
+            "temperature": args.temperature,
+            "top_k": args.top_k,
+            "top_p": args.top_p,
+            "seed": args.seed,
+        }),
+    );
+    canonical.insert(
+        "limits".to_string(),
+        serde_json::json!({
+            "max_tokens": args.max_tokens,
+            "max_seq_len": args.max_seq_len,
+        }),
+    );
+    canonical.insert(
+        "threads".to_string(),
+        serde_json::json!(rayon::current_num_threads()),
+    );
+    canonical.insert(
+        "cpu_features".to_string(),
+        serde_json::json!(cpu_features_detected()),
+    );
+    canonical.insert("env".to_string(), serde_json::json!(env_knobs));
+
+    let mut mode: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    mode.insert("probe".to_string(), serde_json::json!(args.probe));
+    mode.insert(
+        "probe_stimuli".to_string(),
+        serde_json::json!(args.probe_stimuli),
+    );
+    mode.insert(
+        "probe_template".to_string(),
+        serde_json::json!(args.probe_template),
+    );
+    mode.insert(
+        "probe_position".to_string(),
+        serde_json::json!(args.probe_position),
+    );
+    mode.insert(
+        "probe_generate_tokens".to_string(),
+        serde_json::json!(args.probe_generate_tokens),
+    );
+    mode.insert(
+        "probe_limit".to_string(),
+        serde_json::json!(args.probe_limit),
+    );
+    if let Some(spec) = args.zero_layer_output {
+        mode.insert(
+            "experiment".to_string(),
+            serde_json::json!({
+                "name": "zero-layer-output",
+                "layer": spec.layer(),
+                "stage": spec.stage().to_string(),
+            }),
+        );
+    } else if let Some(path) = &args.activation_stats {
+        mode.insert(
+            "experiment".to_string(),
+            serde_json::json!({ "name": "activation-stats", "output": path }),
+        );
+    }
+    canonical.insert(
+        "mode".to_string(),
+        serde_json::Value::Object(mode.into_iter().collect()),
+    );
+
+    // serde_json is compiled with preserve_order in this crate, so the Map is
+    // an IndexMap: build from the BTreeMap so keys serialize in sorted order,
+    // which is what makes the digest canonical and round-trip-stable.
+    serde_json::Value::Object(canonical.into_iter().collect())
+}
+
+/// SHA-256 over the compact canonical identity JSON. Deterministic because
+/// every nested object is BTreeMap-backed (sorted keys).
+pub(crate) fn execution_identity_digest(canonical: &serde_json::Value) -> String {
+    let bytes = serde_json::to_vec(canonical).expect("canonical identity serializes");
+    sha256_bytes(&bytes)
+}
+
 pub(crate) fn build_run_manifest(
     args: &Args,
     tokenizer_path: &str,
     model_sha256: Option<&str>,
     tokenizer_sha256: Option<&str>,
     gguf_metadata: &serde_json::Value,
+    prompt: &str,
 ) -> serde_json::Value {
     let mut execution = serde_json::json!({
         "max_seq_len": args.max_seq_len,
@@ -274,6 +422,8 @@ pub(crate) fn build_run_manifest(
         "probe_limit": args.probe_limit,
         "k_strategy": args.k_strategy,
         "k_allow_fallback": args.k_allow_fallback,
+        "prompt": prompt,
+        "seed": args.seed,
     });
     if let Some(spec) = args.zero_layer_output {
         execution
@@ -302,10 +452,26 @@ pub(crate) fn build_run_manifest(
             );
     }
 
+    let env_knobs = behavior_env_snapshot();
+    let identity_canonical =
+        execution_identity_canonical(args, prompt, model_sha256, tokenizer_sha256, &env_knobs);
+    let identity_sha256 = execution_identity_digest(&identity_canonical);
+
     serde_json::json!({
-        "schema_version": 1,
+        "schema_version": 2,
         "created_at_unix": unix_timestamp(),
         "command_argv": env::args().collect::<Vec<_>>(),
+        "identity": {
+            "schema": "execution-identity-v1",
+            "sha256": identity_sha256,
+            "canonical": identity_canonical,
+        },
+        "binary": {
+            "git_commit": option_env!("EMBER_GIT_COMMIT"),
+            "git_dirty": option_env!("EMBER_GIT_DIRTY"),
+            "rustc_version": option_env!("EMBER_RUSTC_VERSION"),
+            "target": option_env!("EMBER_TARGET"),
+        },
         "source": {
             "git_commit": git_commit(),
         },
@@ -430,6 +596,123 @@ mod tests {
             k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         }
+    }
+
+    fn args_with(extra: &[&str]) -> Args {
+        use clap::Parser;
+        Args::try_parse_from(std::iter::once("ember").chain(extra.iter().copied())).unwrap()
+    }
+
+    fn canonical_for(args: &Args, prompt: &str) -> serde_json::Value {
+        execution_identity_canonical(
+            args,
+            prompt,
+            Some("model-sha"),
+            Some("tok-sha"),
+            &behavior_env_snapshot(),
+        )
+    }
+
+    #[test]
+    fn execution_identity_is_stable_across_builds_and_sensitive_to_inputs() {
+        let base = args_with(&[
+            "--arch",
+            "llama",
+            "--model",
+            "m.gguf",
+            "--temperature",
+            "0.8",
+        ]);
+        let a = execution_identity_digest(&canonical_for(&base, "hello"));
+        // same inputs => same identity (field order and timestamps are irrelevant)
+        let b = execution_identity_digest(&canonical_for(&base, "hello"));
+        assert_eq!(a, b);
+        // any output-affecting input change => different identity
+        let prompt = execution_identity_digest(&canonical_for(&base, "hello there"));
+        let temp = execution_identity_digest(&canonical_for(
+            &args_with(&[
+                "--arch",
+                "llama",
+                "--model",
+                "m.gguf",
+                "--temperature",
+                "0.0",
+            ]),
+            "hello",
+        ));
+        let seed = execution_identity_digest(&canonical_for(
+            &args_with(&[
+                "--arch",
+                "llama",
+                "--model",
+                "m.gguf",
+                "--temperature",
+                "0.8",
+                "--seed",
+                "7",
+            ]),
+            "hello",
+        ));
+        let arch = execution_identity_digest(&canonical_for(
+            &args_with(&[
+                "--arch",
+                "qwen3",
+                "--model",
+                "m.gguf",
+                "--temperature",
+                "0.8",
+            ]),
+            "hello",
+        ));
+        assert_ne!(b, prompt);
+        assert_ne!(b, temp);
+        assert_ne!(b, seed);
+        assert_ne!(b, arch);
+    }
+
+    #[test]
+    fn execution_identity_is_sensitive_to_model_and_env_knobs() {
+        let args = args_with(&["--arch", "llama", "--model", "m.gguf"]);
+        let canonical = |model_sha, knobs: &BTreeMap<String, Option<String>>| {
+            execution_identity_canonical(&args, "p", model_sha, Some("tok"), knobs)
+        };
+        let base = execution_identity_digest(&canonical(Some("m1"), &BTreeMap::new()));
+        let other_model = execution_identity_digest(&canonical(Some("m2"), &BTreeMap::new()));
+        assert_ne!(base, other_model);
+        let mut knobs = BTreeMap::new();
+        knobs.insert("EMBER_VISION_FAST_EXP".to_string(), Some("0".to_string()));
+        let knobbed = execution_identity_digest(&canonical(Some("m1"), &knobs));
+        assert_ne!(base, knobbed);
+    }
+
+    #[test]
+    fn manifest_identity_recomputes_after_json_round_trip() {
+        let args = args_with(&[
+            "--arch",
+            "llama",
+            "--model",
+            "m.gguf",
+            "--temperature",
+            "0.8",
+            "--seed",
+            "42",
+        ]);
+        let manifest = build_run_manifest(
+            &args,
+            "tokenizer.json",
+            Some("model-sha"),
+            Some("tok-sha"),
+            &serde_json::json!({}),
+            "hello",
+        );
+        let raw = serde_json::to_vec(&manifest).unwrap();
+        let reparsed: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        let recorded = reparsed["identity"]["sha256"].as_str().unwrap();
+        let recomputed = execution_identity_digest(&reparsed["identity"]["canonical"]);
+        assert_eq!(recomputed, recorded);
+        assert_eq!(reparsed["schema_version"], 2);
+        assert_eq!(reparsed["execution"]["seed"], 42);
+        assert_eq!(reparsed["execution"]["prompt"], "hello");
     }
 
     #[test]

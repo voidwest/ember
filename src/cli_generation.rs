@@ -147,7 +147,7 @@ pub(crate) fn run_single_prompt_with_experiment(
         args.trace_run_metadata,
         rayon_current_num_threads(),
         effective_context_limit(backend, model, args),
-        None,
+        args.seed,
     )?;
     println!("{}", output);
     Ok(())
@@ -178,6 +178,7 @@ where
         args.trace_run_metadata,
         rayon_current_num_threads(),
         effective_context_limit(backend, model, args),
+        args.seed,
     )?;
     println!("{}", output);
     Ok(())
@@ -706,6 +707,7 @@ pub(crate) fn generate<B: Backend>(
     trace_run_metadata: bool,
     thread_count: usize,
     context_limit: usize,
+    rng_seed: Option<u64>,
 ) -> anyhow::Result<String>
 where
     B::Error: Send + Sync + 'static,
@@ -728,7 +730,7 @@ where
         trace_run_metadata,
         thread_count,
         context_limit,
-        None,
+        rng_seed,
     )
 }
 
@@ -1398,6 +1400,7 @@ where
                     max_seq_len.unwrap_or_else(|| {
                         <Gpt2<B> as ForwardModel<B>>::max_seq_len(model, backend)
                     }),
+                    None, // interactive mode keeps the thread-local RNG
                 )?;
                 println!("{}", output);
                 print!("> ");
@@ -1646,6 +1649,7 @@ mod tests {
             None,
             None,
             &serde_json::json!({}),
+            "test prompt",
         );
         assert!(normal_manifest["execution"].get("experiment").is_none());
 
@@ -1658,6 +1662,7 @@ mod tests {
             None,
             None,
             &serde_json::json!({}),
+            "test prompt",
         );
         assert_eq!(
             active_manifest["execution"]["experiment"],
@@ -1683,6 +1688,7 @@ mod tests {
             None,
             None,
             &serde_json::json!({}),
+            "test prompt",
         );
         assert_eq!(
             observation_manifest["execution"]["experiment"],

@@ -220,6 +220,7 @@ where
                     false,
                     rayon_current_num_threads(),
                     context_limit,
+                    None,
                 )?;
                 Ok(serde_json::json!({ "id": id, "text": text }))
             }

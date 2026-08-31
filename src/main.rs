@@ -9,6 +9,7 @@ mod cli_audio;
 mod cli_commands;
 mod cli_generation;
 mod cli_kv;
+mod cli_manifest;
 mod cli_multimodal;
 mod cli_probe;
 mod cli_score_batch;
@@ -98,6 +99,13 @@ pub(crate) struct Args {
     /// top-p (nucleus) sampling: keep smallest set of tokens with cumulative probability >= p
     #[arg(long, value_parser = parse_top_p)]
     top_p: Option<f32>,
+
+    /// seed for stochastic sampling (temperature > 0): fixes the RNG so the
+    /// same seed + inputs reproduce the same token sequence. Recorded in the
+    /// run manifest as part of execution identity. Omitted = thread-local RNG
+    /// (not reproducible across runs).
+    #[arg(long)]
+    seed: Option<u64>,
 
     /// stay in an interactive read-eval-print loop after the first prompt
     #[arg(short, long)]
@@ -329,6 +337,9 @@ pub(crate) enum Commands {
 
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
+
+    /// run-manifest verification: recompute and check execution identity
+    Manifest(cli_manifest::ManifestCommand),
     /// agentic tool-calling runtime (Phase 1): run tasks + research demo
     Agent(cli_agent::AgentCommand),
     /// inspect agent research traces (JSONL)
@@ -730,6 +741,7 @@ fn main() -> anyhow::Result<()> {
             }
             Commands::Agent(command) => cli_agent::run_agent_command(command),
             Commands::Trace(command) => cli_agent::run_trace_command(command),
+            Commands::Manifest(command) => cli_manifest::run_manifest_command(command),
             Commands::Experiment(command) => match &command.command {
                 cli_experiment::ExperimentSubcommand::Validate(command) => {
                     cli_experiment::run_validate_command(command)
@@ -816,6 +828,7 @@ fn main() -> anyhow::Result<()> {
         model_sha256.as_deref(),
         tokenizer_sha256.as_deref(),
         &gguf_metadata,
+        &args.prompt,
     );
     let run_metadata = RunMetadata {
         gguf_metadata,

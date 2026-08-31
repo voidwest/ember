@@ -11,6 +11,16 @@ API.
 
 ## [Unreleased]
 
+### Added
+
+- `--seed` for stochastic sampling: same seed + inputs reproduce the same
+  token sequence.
+- Run-manifest execution identity (schema v2): canonical SHA-256 over all
+  output-affecting inputs (binary build, model/tokenizer hashes, prompt,
+  sampler + seed, limits, threads, CPU features, behavior env knobs).
+- `ember manifest verify <path>`: recompute and check a recorded execution
+  identity; detects edited records.
+
 ### Documentation
 
 - Added the API stability policy covering SemVer, MSRV, compatibility tiers,
