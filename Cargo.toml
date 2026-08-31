@@ -48,6 +48,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # cpal reaches PipeWire/JACK through their ALSA compat layers and gives a
 # direct CoreAudio path for a future macOS port.
 cpal = { version = "0.15", optional = true }
+ed25519-dalek = "2"
 
 [features]
 default = ["gui"]

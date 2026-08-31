@@ -20,6 +20,9 @@ API.
   sampler + seed, limits, threads, CPU features, behavior env knobs).
 - `ember manifest verify <path>`: recompute and check a recorded execution
   identity; detects edited records.
+- `ember evidence init|sign|verify`: Ed25519-signed evidence envelopes over
+  canonical JSON records (run manifests included); `verify` also re-checks
+  the embedded execution identity (Phase IV, pre-TEE).
 
 ### Documentation
 

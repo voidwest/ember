@@ -7,6 +7,7 @@ mod gui_native;
 mod cli_agent;
 mod cli_audio;
 mod cli_commands;
+mod cli_evidence;
 mod cli_generation;
 mod cli_kv;
 mod cli_manifest;
@@ -340,6 +341,9 @@ pub(crate) enum Commands {
 
     /// run-manifest verification: recompute and check execution identity
     Manifest(cli_manifest::ManifestCommand),
+
+    /// signed execution evidence: key init, sign, verify (Ed25519)
+    Evidence(cli_evidence::EvidenceCommand),
     /// agentic tool-calling runtime (Phase 1): run tasks + research demo
     Agent(cli_agent::AgentCommand),
     /// inspect agent research traces (JSONL)
@@ -742,6 +746,7 @@ fn main() -> anyhow::Result<()> {
             Commands::Agent(command) => cli_agent::run_agent_command(command),
             Commands::Trace(command) => cli_agent::run_trace_command(command),
             Commands::Manifest(command) => cli_manifest::run_manifest_command(command),
+            Commands::Evidence(command) => cli_evidence::run_evidence_command(command),
             Commands::Experiment(command) => match &command.command {
                 cli_experiment::ExperimentSubcommand::Validate(command) => {
                     cli_experiment::run_validate_command(command)
