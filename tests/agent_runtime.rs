@@ -76,8 +76,8 @@ impl Tool for CancellingSlowTool {
 
     fn execute(
         &self,
-        args: &ember::agent::ValidatedArguments,
-        ctx: &ToolContext<'_>,
+        _args: &ember::agent::ValidatedArguments,
+        _ctx: &ToolContext<'_>,
     ) -> ToolOutcome {
         self.cancel.cancel();
         Ok(ToolOutput::json(serde_json::json!({ "side_effect": true })))
