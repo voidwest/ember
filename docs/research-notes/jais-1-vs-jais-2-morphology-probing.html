@@ -171,6 +171,21 @@
             </tbody>
         </table>
 
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="/plots/jais_1_vs_jais_2_full_prompt.png"
+                 alt="Held-out macro-F1 for Jais 1 and Jais 2 on gender, number, and POS with the full metadata prompt"
+                 loading="lazy" />
+            <img class="chart theme-chart-light" src="/plots/jais_1_vs_jais_2_full_prompt_light.png"
+                 alt="Held-out macro-F1 for Jais 1 and Jais 2 on gender, number, and POS with the full metadata prompt"
+                 loading="lazy" />
+            <figcaption>
+                held-out macro-F1 in the full_prompt_final interface, averaged
+                over lemma-heldout and root-heldout. the number gain is the
+                largest visual separation; each bar is an unweighted task mean
+                across the two grouped splits.
+            </figcaption>
+        </figure>
+
         <p>
             number is the clear separation. Jais 1's full-metadata held-out
             number macro-F1 is low despite 0.9362 accuracy, a sign that the majority

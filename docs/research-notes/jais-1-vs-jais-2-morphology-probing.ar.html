@@ -172,6 +172,21 @@
             </tbody>
         </table>
 
+        <figure class="chart-wrap">
+            <img class="chart theme-chart-dark" src="/plots/jais_1_vs_jais_2_full_prompt.png"
+                 alt="مقارنة macro-F1 في الاختبار المجمّع بين Jais 1 وJais 2 لمهام الجنس والعدد وPOS مع prompt الكامل"
+                 loading="lazy" />
+            <img class="chart theme-chart-light" src="/plots/jais_1_vs_jais_2_full_prompt_light.png"
+                 alt="مقارنة macro-F1 في الاختبار المجمّع بين Jais 1 وJais 2 لمهام الجنس والعدد وPOS مع prompt الكامل"
+                 loading="lazy" />
+            <figcaption>
+                <bdi>macro-F1</bdi> في الاختبار المجمّع مع واجهة <bdi>full_prompt_final</bdi>،
+                بعد المتوسط عبر <bdi>lemma-heldout</bdi> و<bdi>root-heldout</bdi>.
+                الفرق البصري الأكبر يطلع في العدد؛ كل شريط هو متوسط غير موزون
+                عبر التقسيمين المجمّعين.
+            </figcaption>
+        </figure>
+
         <p>
             العدد هو الفرق الواضح. <bdi>macro-F1</bdi> للعدد عند Jais 1 في
             التقسيمين المجمّعين منخفض رغم دقة 0.9362، وهذا غالباً يعني إن فئة
