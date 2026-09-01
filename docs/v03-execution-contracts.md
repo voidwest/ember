@@ -69,12 +69,12 @@ tensor, and model builders consume `LoadedTensor::F32`. Consequences:
 
 New `KQuantWeight` in `src/quant_k.rs`, mirroring `QuantizedWeight`:
 
-- `data: QuantizedData` — the existing owned/mmap storage enum from
+- `data: QuantizedData`: the existing owned/mmap storage enum from
   `src/quant.rs` (made crate-visible); mmap-backed by default through
   `load_gguf`, owned fallback for reader loads;
-- `shape: [usize; 2]` — `[out_features, in_features]`, reversed from
+- `shape: [usize; 2]`: `[out_features, in_features]`, reversed from
   GGUF, same convention as Q8_0 so blocks are contiguous per output row;
-- `dtype: KQuantDtype { Q4K, Q6K }` — the per-tensor GGUF type; no
+- `dtype: KQuantDtype { Q4K, Q6K }`: the per-tensor GGUF type; no
   model-level "Q4/Q6" claim is ever made from the file name;
 - construction is checked: block alignment (element count multiple of
   256), byte length (blocks x 144/210), mapped range within the file;
@@ -172,7 +172,7 @@ scope. No model-scale persistent f32 weight buffer exists on the native path.
 
 ## 8. Semantic hook boundaries
 
-Guaranteed identical across reference (eager-f32) and optimized paths —
+Guaranteed identical across reference (eager-f32) and optimized paths :
 these are the existing, already-supported boundaries and v0.3 does not
 move them:
 
@@ -215,7 +215,7 @@ relax.
 
 Amendment 2026-08-03: the logits bound is 2e-2 for qwen-family rungs.
 Evidence: qwen2.5-1.5b q4_k_m observed decode-step max_abs 0.0107 vs
-the llama-grade 1e-2 (28 layers, larger logit magnitudes) — marginal
+the llama-grade 1e-2 (28 layers, larger logit magnitudes): marginal
 accumulation drift, kernel-validated at Gate A/D; qwen q6_k passes the
 1e-2 bound. Layer and cosine gates are unchanged; the qwen amendment is
 applied per family in tests/k_parity.rs.
@@ -232,7 +232,7 @@ before any run.
 Amendment 2026-08-03: the drafted 1e-2/2e-2 max-abs bounds misread the
 existing golden standard. The pilot's own llama-3.2-1B Q8_0 report
 (artifacts/golden_logits_llama_ladder/golden_logit_report_final_arch.md)
-shows max abs 0.364 / mean 0.067 against llama.cpp's integer kernels —
+shows max abs 0.364 / mean 0.067 against llama.cpp's integer kernels :
 no accumulation-order change can reach 1e-2 on this family. The
 evidence-based Gate C standard, applied by
 scripts/validate_golden_ladder.sh (reference extraction via the
@@ -241,7 +241,7 @@ has no logit-dump option): top-1 agreement 100%, cosine >= 1 - 1e-3,
 mean abs diff <= 0.1, max abs diff <= 1.0, on final-position logits for
 both families x all three rungs. Second amendment (same day): the fresh
 ladder's llama Q8_0 rung observed max abs 0.590 / mean 0.087 / cosine
-0.99951 / top-1 2/2 — one extreme element out of 128k per sample is
+0.99951 / top-1 2/2: one extreme element out of 128k per sample is
 quantizer- and order-sensitive, so the single-element max gate moved
 0.5 -> 1.0 while the stable gates (top-1, cosine, mean) are unchanged.
 
@@ -256,7 +256,7 @@ scripts/validate_golden_ladder.sh: llama max 1.0 / mean 0.2 / cosine
 0.998; qwen max 2.0 / mean 0.3 / cosine 0.995. Top-1 agreement 100%
 remains the primary functional gate.
 
-Amendment 2026-08-11 — native Q8_K activation semantics: Gate A and the
+Amendment 2026-08-11: native Q8_K activation semantics: Gate A and the
 original Gate B remain the contract for the explicitly named exact-f32 oracle;
 they no longer define the production K-quant algorithm. Production packs every
 finite activation row to Q8_K and runs Q4_K/Q6_K × Q8_K integer dots;
@@ -286,7 +286,7 @@ Evidence must be attributed rather than inferred from this contract:
   is current only when its machine-readable artifact names kernel revision 2
   and records the model hash and actual dispatch.
 
-Gate D — x86 vs scalar: both implement the same Q8_K mathematical primitive,
+Gate D: x86 vs scalar: both implement the same Q8_K mathematical primitive,
 but SIMD lane reduction may differ from scalar by the registered tolerance;
 serial versus Rayon scheduling within a fixed tier is bit-identical when the
 caller/workers share the same FP control state.

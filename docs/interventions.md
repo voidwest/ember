@@ -6,14 +6,14 @@ documented hook timing (see `docs/v05-research-contract.md`).
 
 ## Operations
 
-- `replace` — copy the source row into the target row(s).
-- `zero` — fill the target row(s) with zeros.
-- `scale { factor }` — multiply the current values by `factor`
+- `replace`: copy the source row into the target row(s).
+- `zero`: fill the target row(s) with zeros.
+- `scale { factor }`: multiply the current values by `factor`
   (finite-checked).
-- `interpolate { alpha }` — `target := (1 - alpha) * target + alpha *
+- `interpolate { alpha }`: `target := (1 - alpha) * target + alpha *
   source` (finite-checked).
-- `add-delta` — `target := target + source`.
-- `restore-original` — write back the exact pre-intervention snapshot of
+- `add-delta`: `target := target + source`.
+- `restore-original`: write back the exact pre-intervention snapshot of
   the target row.
 
 The pre-intervention snapshot of every intervened row is taken at the
@@ -21,15 +21,15 @@ first fire and checksummed; `restore-original` reproduces it exactly.
 
 ## Sources
 
-- `inline-vector { values }` — one row, broadcast to every selected row.
-- `capture-from-current-run { capture_id }` — rows from a capture in the
+- `inline-vector { values }`: one row, broadcast to every selected row.
+- `capture-from-current-run { capture_id }`: rows from a capture in the
   same run; the capture must have fired earlier in execution order.
-- `capture-from-bundle { bundle_path, capture_id, input_id, layer }` —
+- `capture-from-bundle { bundle_path, capture_id, input_id, layer }` :
   rows from a verified bundle. The source bundle must pass full offline
   verification, and the model/tokenizer hashes must match unless an
   explicit expert compatibility override is set (recorded prominently in
   provenance).
-- `zero` — an all-zero row.
+- `zero`: an all-zero row.
 
 No arbitrary executable transformations exist.
 
@@ -57,7 +57,7 @@ interventions.
 3. Apply `restore-original` at the same site.
 4. Compare against the unintervened baseline: the reference example
    (`examples/experiments/morphology-restoration.toml`) restores
-   bit-exactly — `compare` reports identical tokens, text, top-1, and
+   bit-exactly: `compare` reports identical tokens, text, top-1, and
    every capture `exact`.
 
 ## Cross-bundle replacement (real-model workflow)

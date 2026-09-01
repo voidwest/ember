@@ -6,17 +6,17 @@ decoded strings.
 
 ## Selectors
 
-- `prompt-final` — the final token of the complete model input (BOS
+- `prompt-final`: the final token of the complete model input (BOS
   included).
-- `absolute-token { index }` — the token at a 0-based model-input
+- `absolute-token { index }`: the token at a 0-based model-input
   position.
-- `relative-token { offset_from_end }` — position `seq_len - 1 - offset`;
+- `relative-token { offset_from_end }`: position `seq_len - 1 - offset`;
   offset 0 equals `prompt-final`.
-- `generated-step { step }` — the token generated at 1-based decode step
+- `generated-step { step }`: the token generated at 1-based decode step
   N, observed at the decode evaluation that processes it.
-- `matched-span { text, occurrence, subtokens, normalization }` — exact
+- `matched-span { text, occurrence, subtokens, normalization }`: exact
   text-span match.
-- `byte-span { start, end, subtokens }` — explicit byte span into the
+- `byte-span { start, end, subtokens }`: explicit byte span into the
   prompt.
 
 `subtokens` selects `first`, `final`, or `all` of the tokenizer's tokens
@@ -32,11 +32,11 @@ length and monotonicity before selection.
 
 Coverage is classified:
 
-- `exact` — the union of selected token intervals equals the span;
-- `enclosing` — the union strictly contains the span; the boundary
+- `exact`: the union of selected token intervals equals the span;
+- `enclosing`: the union strictly contains the span; the boundary
   expansion (extra bytes pulled in by token boundaries) is recorded,
   never silently repaired;
-- `none` — no token covers the span (selection fails).
+- `none`: no token covers the span (selection fails).
 
 ## Fail-closed rules
 
@@ -73,7 +73,7 @@ reports the five subtokens covering the diacritized word (bytes
 first covering token also includes the preceding space.
 
 Diacritics matter: matching `كتاب` (undiacritized) against a prompt
-containing `كِتَاب` **fails** — Ember never strips combining marks.
+containing `كِتَاب` **fails**: Ember never strips combining marks.
 
 Repeated spans: `occurrence = 0, 1, 2, ...` resolves the o-th
 non-overlapping match deterministically; a missing occurrence fails.

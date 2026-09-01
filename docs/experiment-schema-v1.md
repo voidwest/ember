@@ -5,7 +5,7 @@ strict TOML document: unknown fields, unknown schema majors, duplicate
 IDs, invalid references, and impossible settings fail with the exact
 field path before any inference runs.
 
-`v1` means the schema is stable within Ember 0.5.x — it does not freeze
+`v1` means the schema is stable within Ember 0.5.x: it does not freeze
 every possible future field forever.
 
 ## Top-level

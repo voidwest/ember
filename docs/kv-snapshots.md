@@ -362,7 +362,7 @@ For every step it reports per-layer semantic `attention-output` cosine/MSE/
 max error, full-logit cosine, both top-1 IDs, agreement, and the first forced
 prediction disagreement. Aggregate attention metrics concatenate the fixed
 same-input steps per layer. `attention-output` is the O-projection result after
-O bias and before the attention residual add—not per-head weighted V.
+O bias and before the attention residual add, not per-head weighted V.
 
 The behavioral phase re-imports two clean caches and independently follows
 each side's own greedy argmax. It reports both token-ID sequences, agreement

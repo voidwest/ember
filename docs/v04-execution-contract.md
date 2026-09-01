@@ -87,35 +87,35 @@ has them). Qwen2.5-1.5B is in scope as `qwen2`.
 Model-level sequence (prefill `seq=N`, decode `seq=1`; `start_pos` is the
 absolute KV position):
 
-1. `x0 = Embedding(token_embd.weight, tokens)` — row lookup + K-quant
+1. `x0 = Embedding(token_embd.weight, tokens)`: row lookup + K-quant
    dequant of one row; `[seq, embed]` f32.
 2. For layer `l` in `0..n_layers` (`before_layer` hook fires on block input):
-   a. `n1 = RMSNorm(x, input_layernorm, eps)` — `[seq, embed]` f32;
+   a. `n1 = RMSNorm(x, input_layernorm, eps)`: `[seq, embed]` f32;
       norm weight is F32.
-   b. `q = q_proj(n1)` — `[seq, n_heads*head_dim]` f32 (K-quant matvec;
+   b. `q = q_proj(n1)`: `[seq, n_heads*head_dim]` f32 (K-quant matvec;
       qwen adds F32 bias).
-   c. `k = k_proj(n1)` — `[seq, n_kv_heads*head_dim]` f32.
-   d. `v = v_proj(n1)` — `[seq, n_kv_heads*head_dim]` f32.
-   e. `q_r = RoPE(q)` with optional qk-norm per `QkNormOrder` — same shape.
-   f. `k_r = RoPE(k)` with optional k-norm — same shape.
+   c. `k = k_proj(n1)`: `[seq, n_kv_heads*head_dim]` f32.
+   d. `v = v_proj(n1)`: `[seq, n_kv_heads*head_dim]` f32.
+   e. `q_r = RoPE(q)` with optional qk-norm per `QkNormOrder`: same shape.
+   f. `k_r = RoPE(k)` with optional k-norm: same shape.
    g. KV store: `k_r`, `v_r` converted f32→f16 into the flat cache
       `[layer][head][pos][head_dim]` at `cursor..cursor+seq`.
-   h. `attn = causal_attention(q_r, cache_k, cache_v)` — scores
+   h. `attn = causal_attention(q_r, cache_k, cache_v)`: scores
       `[n_heads, total_seq]` f32 scratch, softmax, weighted sum →
       `[seq, n_heads*head_dim]` f32.
-   i. `o = o_proj(attn)` — `[seq, embed]` f32 (`after_attention` hook fires
+   i. `o = o_proj(attn)`: `[seq, embed]` f32 (`after_attention` hook fires
       on `o`, pre-residual).
-   j. `x1 = x + o` — residual add.
-   k. `n2 = RMSNorm(x1, post_attention_layernorm, eps)` — `[seq, embed]`.
-   l. `g = gate_proj(n2)` — `[seq, inter]` f32; `gs = silu(g)`.
-   m. `u = up_proj(n2)` — `[seq, inter]` f32.
-   n. `gu = gs * u` — elementwise multiply.
-   o. `m = down_proj(gu)` — `[seq, embed]` f32 (`after_mlp` hook fires on
+   j. `x1 = x + o`: residual add.
+   k. `n2 = RMSNorm(x1, post_attention_layernorm, eps)`: `[seq, embed]`.
+   l. `g = gate_proj(n2)`: `[seq, inter]` f32; `gs = silu(g)`.
+   m. `u = up_proj(n2)`: `[seq, inter]` f32.
+   n. `gu = gs * u`: elementwise multiply.
+   o. `m = down_proj(gu)`: `[seq, embed]` f32 (`after_mlp` hook fires on
       `m`, pre-residual).
-   p. `x2 = x1 + m` — residual add (`after_layer` hook fires on `x2`).
-3. `hf = RMSNorm(x2, output_norm, eps)` — `[seq, embed]` (`before_logits`
+   p. `x2 = x1 + m`: residual add (`after_layer` hook fires on `x2`).
+3. `hf = RMSNorm(x2, output_norm, eps)`: `[seq, embed]` (`before_logits`
    hook fires on `hf`).
-4. `logits = head(hf)` — `[seq, vocab]` f32; tied head (llama) is the
+4. `logits = head(hf)`: `[seq, vocab]` f32; tied head (llama) is the
    embedding tensor, untied head (qwen) is `output.weight` (`after_logits`
    hook fires on `logits`).
 
@@ -136,17 +136,17 @@ Experiment-level: `on_model_loaded`, `before_prefill`,
 
 Layer/execution-level (capture stages in parentheses):
 
-- `before_layer` (stage `before-layer`) — block input `x` of layer `l`,
+- `before_layer` (stage `before-layer`): block input `x` of layer `l`,
   shape `[seq, embed]` f32.
-- `after_attention` (stage `after-attention`) — attention output `o`
+- `after_attention` (stage `after-attention`): attention output `o`
   pre-residual-add, shape `[seq, embed]` f32.
-- `after_mlp` (stage `after-mlp`) — MLP output `m` pre-residual-add,
+- `after_mlp` (stage `after-mlp`): MLP output `m` pre-residual-add,
   shape `[seq, embed]` f32.
-- `after_layer` (stage `after-layer`) — block output `x2`, shape
+- `after_layer` (stage `after-layer`): block output `x2`, shape
   `[seq, embed]` f32.
-- `before_logits` (stage `before-logits`) — final-norm output `hf`, shape
+- `before_logits` (stage `before-logits`): final-norm output `hf`, shape
   `[seq, embed]` f32.
-- `after_logits` (stage `after-logits`) — `logits`, shape `[seq, vocab]`
+- `after_logits` (stage `after-logits`): `logits`, shape `[seq, vocab]`
   f32.
 
 These six stages are the complete set of hidden-state observation and
@@ -183,7 +183,7 @@ fused sequence, eliminated intermediates, materialization under
 observation, de-fusion under intervention, numerical equivalence tolerance
 (Gate A numbers apply), selected kernel, and a provenance record.
 
-F1 — RMSNorm + quantized linear projection.
+F1: RMSNorm + quantized linear projection.
 - Unfused: `n = RMSNorm(x, w_n)`; `y = W·n`.
 - Current concrete route: `FusedQkv` executes the norm once into the shared
   `scaled` arena region, then runs Q/K/V projections from that region. It is an
@@ -196,7 +196,7 @@ F1 — RMSNorm + quantized linear projection.
   `simd::rms_norm_into`; test-only execution counters prove the concrete F1/F3
   branch runs rather than accepting output parity alone.
 
-F2 — residual add + RMSNorm.
+F2: residual add + RMSNorm.
 - Unfused: `x1 = x + o`; `n2 = RMSNorm(x1, w_n)`.
 - Fused: single pass computes `n2` from `x + o` with the norm scale,
   without materializing `x1`.
@@ -206,11 +206,11 @@ F2 — residual add + RMSNorm.
 - Observation/de-fusion: as F1.
 - Tolerance: Gate A; kernel parity-tested against `add` then `RMSNorm`.
 
-F3 — Q/K/V projection orchestration with shared normalized input.
+F3: Q/K/V projection orchestration with shared normalized input.
 - Unfused: three separate `q/k/v_proj` matvec dispatches from `n1`.
 - Fused: one orchestration pass over `n1` dispatching the three kernels
   from shared scratch input, with one dispatch decision instead of three.
-- Eliminated: nothing — `q`, `k`, `v` are still materialized (RoPE, KV
+- Eliminated: nothing: `q`, `k`, `v` are still materialized (RoPE, KV
   store, and attention consume them). Eliminated work is repeated
   dispatch and per-projection scratch bookkeeping.
 - Observation/de-fusion: no stage targets `q/k/v`; if one is added, the
@@ -218,7 +218,7 @@ F3 — Q/K/V projection orchestration with shared normalized input.
 - Tolerance: identical to unfused (same kernels, same input); Gate A.
 - Kernel: resolved per projection.
 
-F4 — RoPE within the planned attention path.
+F4: RoPE within the planned attention path.
 - Unfused: separate Q and K RoPE ops before KV storage/attention.
 - Current concrete route: K remains a separate RoPE op because the roped K
   must be stored; Q RoPE (+ optional qk-norm in architecture order) executes
@@ -227,7 +227,7 @@ F4 — RoPE within the planned attention path.
 - Tolerance: the same architecture-specific routines and ordering as the
   reference route; Gate A.
 
-F5 — output projection + residual add.
+F5: output projection + residual add.
 - Unfused: `o = o_proj(attn)`; `x1 = x + o`.
 - Fused: accumulate the output projection directly into a destination seeded
   with the residual (`x1 = x + W·attn`). Dense f32 and canonical
@@ -249,7 +249,7 @@ Cross-cutting rules:
   different semantic tensor because fusion changed the graph.
 - Prefer graceful de-fusion over "unsupported hook" failures; if a hook
   cannot be supported under a fusion, the planner either selects the
-  unfused route during planning or fails clearly before execution — never
+  unfused route during planning or fails clearly before execution: never
   mid-decode.
 - No blind QKV re-packing: the three projection weights stay in their
   native GGUF tensors; F3 is orchestration only.
@@ -301,7 +301,7 @@ Cross-cutting rules:
   readable oracle for parity gates and the default during development.
   Kernels are the same scalar/AVX2 implementations; dispatch is dynamic.
 - **planned execution** (`--execution planned`): the identical operation
-  sequence driven by the immutable plan — resolved kernel per tensor,
+  sequence driven by the immutable plan: resolved kernel per tensor,
   scratch-region destinations, no per-token shape/dispatch rediscovery,
   no fusion. Must match reference within Gate A/B numbers.
 - **fused planned execution** (`--execution planned-fused`): the plan with
@@ -347,7 +347,7 @@ optional fused rms-norm weight), `Rope` (layout, qk-norm ref + order),
 carry `FusedOp { kind: F1..F5, components: [op ids], eliminated: [tensor ids] }`.
 
 `TensorRecord` = `{ id, name, shape, gguf_dtype, execution, kernel,
-resident_bytes, mmap: bool }` — derived from the v0.3 inventory; stable
+resident_bytes, mmap: bool }`: derived from the v0.3 inventory; stable
 `id` is the plan's `TensorRef`.
 
 `ScratchPlan` = `{ total_bytes, alignment, regions: [ { name, offset,
@@ -404,11 +404,11 @@ provenance and run artifacts.
 ## 12. Hook modes
 
 ```text
-HookMode::Disabled   — fast normal path; no capture metadata, no clones,
+HookMode::Disabled  : fast normal path; no capture metadata, no clones,
                        no string lookup, no registry inspection, no trace
                        serialization, no unpredictable inner-loop branches.
-HookMode::Observe    — existing capture semantics unchanged.
-HookMode::Intervene  — existing patch semantics unchanged.
+HookMode::Observe   : existing capture semantics unchanged.
+HookMode::Intervene : existing patch semantics unchanged.
 ```
 
 Active hook sites resolve to compact IDs/bitsets at plan build. The
@@ -422,7 +422,7 @@ with no registered hooks; one hidden-state capture; one intervention
 
 ## 13. Correctness gates (frozen)
 
-Gate A — kernel/operation parity (unit + integration tests, deterministic
+Gate A: kernel/operation parity (unit + integration tests, deterministic
 seeds): planned and fused outputs vs the independent reference path
 (`dequant_tensor` → f32 → `CpuTensor::matmul` for kernels; the unfused op
 sequence for fusions). `max_abs <= 1e-4 * max(1, max_abs_ref)` over the
@@ -432,7 +432,7 @@ nibble saturation; both dtypes; the v0.3 matvec gates are preserved and not
 weakened. Planned-dispatch vs legacy-dispatch kernel equivalence is
 asserted per supported tensor.
 
-Gate B — model parity, all four combinations, three paths
+Gate B: model parity, all four combinations, three paths
 (reference/planned/planned-fused): per capture-stage tensor
 `max_abs <= 5e-4 * max(1, max_abs_ref)` and cosine >= 1 - 1e-6; final
 logits `max_abs <= 1e-2` (llama family) / `2e-2` (qwen family, v0.3
@@ -458,26 +458,26 @@ separate exact-f32 dequantize-and-dot oracle. Historical benchmark/golden
 numbers are not relabeled as current evidence unless their artifact records
 kernel revision 2 and actual dispatch.
 
-Gate C — hook semantics, every supported site: inactive hooks bit-identical
+Gate C: hook semantics, every supported site: inactive hooks bit-identical
 to disabled; captures match between reference and planned paths (same
 shape/indexing, same values within Gate B envelope); interventions occur
 at the same tensor and layer; exact-restoration tests pass; fused
 execution de-fuses correctly when a hook requires it; provenance records
 the actual selected route.
 
-Gate D — memory: no material regression of v0.3 compressed residency.
+Gate D: memory: no material regression of v0.3 compressed residency.
 Llama-3.2-1B Q4_K_M: no more than 10% peak-RSS regression relative to v0.3
 under the same benchmark; scratch allocation reported separately; any
 increase explained by the named reusable arena. Packed Q4_K/Q6_K weights
 remain mmap-resident (asserted via residency checks).
 
-Gate E — allocation: after warmup, the normal planned decode loop with
+Gate E: allocation: after warmup, the normal planned decode loop with
 hooks disabled performs zero heap allocations per token (counting
 allocator, section 11). If absolute zero is blocked by a documented
 dependency, the remaining allocation is isolated and quantified, then
 removed before release unless clearly impossible.
 
-Gate F — performance: median planned-fused decode throughput >= 1.75x the
+Gate F: performance: median planned-fused decode throughput >= 1.75x the
 v0.3 baseline (same model, same quant, same benchmark protocol) on at
 least three of the four primary combinations; no supported model regresses
 by more than 5%; Q8_0 does not regress materially; scalar and AVX2 results
@@ -486,7 +486,7 @@ This gate is not amended after seeing final results unless profiling
 demonstrates the target rests on a false assumption; any amendment must be
 documented with measurements and committed before final benchmarking.
 
-Gate G — external parity: same pinned llama.cpp revision and golden-ladder
+Gate G: external parity: same pinned llama.cpp revision and golden-ladder
 strategy as v0.3 (scripts/validate_golden_ladder.sh); the final optimized
 path preserves 100% greedy top-1 agreement on the frozen ladder and the
 v0.3 per-family logit/cosine envelopes (llama max 1.0 / mean 0.2 / cosine
@@ -508,9 +508,9 @@ greedy decode; fixed prompts; fixed seeds where relevant; no sampling;
 identical context and token limits across arms. Raw measurements
 preserved; deterministic machine-readable summaries.
 
-Profiling (Phase 8): time per operation category — quantized matvec,
+Profiling (Phase 8): time per operation category: quantized matvec,
 RMSNorm, RoPE, attention, softmax, KV writes, allocation, hook checks,
-dispatch, thread synchronization — via the existing `decode_profile`
+dispatch, thread synchronization: via the existing `decode_profile`
 instrumentation extended to the planned path, fully disabled in release
 benchmarks except where a category is the measured subject.
 

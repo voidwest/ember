@@ -61,19 +61,19 @@ the bundle and is exposed through `inspect`.
 
 ## Workflow semantics
 
-1. **Resolve** — the TOML spec is parsed strictly (unknown fields and
+1. **Resolve**: the TOML spec is parsed strictly (unknown fields and
    unknown schema majors fail); defaults are applied and recorded.
-2. **Load and validate** — model and tokenizer SHA-256 are verified
+2. **Load and validate**: model and tokenizer SHA-256 are verified
    against the spec when provided; mismatches fail closed.
-3. **Tokenize and align** — token selection is exact, byte-based, and
+3. **Tokenize and align**: token selection is exact, byte-based, and
    fail-closed (see `docs/token-selection.md`).
-4. **Execute** — every input is generated through the existing v0.4
+4. **Execute**: every input is generated through the existing v0.4
    execution machinery; captures and interventions fire at the six
    public semantic hook sites (see `docs/v05-research-contract.md`).
-5. **Bundle** — a deterministic `ember.bundle.v1` is staged and
+5. **Bundle**: a deterministic `ember.bundle.v1` is staged and
    atomically renamed into place only after all payloads, checksums, and
    the manifest are complete (see `docs/bundle-schema-v1.md`).
-6. **Self-verify** — the run command verifies the bundle it just wrote.
+6. **Self-verify**: the run command verifies the bundle it just wrote.
 
 ## Determinism and identity
 
@@ -93,12 +93,12 @@ few seconds on the pinned Q8_0 model.
 
 ## References
 
-- `docs/experiment-schema-v1.md` — the specification language.
-- `docs/bundle-schema-v1.md` — the bundle layout and identity rules.
-- `docs/token-selection.md` — token selection and Arabic alignment.
-- `docs/interventions.md` — interventions and restoration.
-- `docs/reproducibility.md` — verification, comparison, reproduction.
-- `docs/v05-research-contract.md` — the frozen research contract and
+- `docs/experiment-schema-v1.md`: the specification language.
+- `docs/bundle-schema-v1.md`: the bundle layout and identity rules.
+- `docs/token-selection.md`: token selection and Arabic alignment.
+- `docs/interventions.md`: interventions and restoration.
+- `docs/reproducibility.md`: verification, comparison, reproduction.
+- `docs/v05-research-contract.md`: the frozen research contract and
   gates.
 
 ## Related v0.1/v0.2 interfaces

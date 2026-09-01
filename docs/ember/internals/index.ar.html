@@ -4,14 +4,14 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta property="og:title" content="ember internals">
-        <meta property="og:description" content="Close-up of the data structures, algorithms, and memory layouts that power ember — tensor, backend trait, KV cache, GGUF, sampler, and the probing pipeline.">
+        <meta property="og:description" content="Close-up of the data structures, algorithms, and memory layouts that power ember: tensor, backend trait, KV cache, GGUF, sampler, and the probing pipeline.">
         <meta property="og:type" content="article">
         <meta property="og:url" content="https://voidwest.dev/ember/internals/index.ar.html">
         <meta property="og:site_name" content="voidwest">
         <meta name="twitter:card" content="summary">
         <title>ember internals</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
-        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/ember.png">
         <meta property="og:image:width" content="1200">
@@ -549,7 +549,7 @@ dist.iter().enumerate()
             <span class="mono">forward_with_cache</span> هو مسار الاستدلال المعياري:
             embed tokens، مرر عبر transformer blocks مع kv cache،
             project إلى logits. <span class="mono">forward_with_activations</span> هو مدخل
-            الـ probing — نفس forward pass، لكنه يجمع hidden states
+            الـ probing: نفس forward pass، لكنه يجمع hidden states
             بعد كل كتلة transformer عند آخر موضع token بدل رميها.
             هذا لا يستدعيه نمط <span class="mono">--probe</span> لاستخراج الـ activations
             للتحليل اللاحق.
@@ -580,7 +580,7 @@ dist.iter().enumerate()
             وتُنسخ لكل طبقة <span class="mono">LlamaAttention</span>. وقت الاستدلال،
             <span class="mono">apply_rotary_emb</span> يدور tensors q و k في مكانها
             باستخدام هذه الجداول. الحساب المسبق يعني أن RoPE يكلف
-            دوران subspace ثنائي الأبعاد واحد لكل زوج بعد لكل token — لا
+            دوران subspace ثنائي الأبعاد واحد لكل زوج بعد لكل token: لا
             trigonometry في الـ hot path.
         </p>
 
@@ -628,7 +628,7 @@ out  = down_proj(y)         // الإسقاط النهائي</code></pre>
 
         <p>
             llama يستخدم رؤوس kv أقل من رؤوس query لتقليل ذاكرة cache.
-            llama 3.2 1B يستخدم 32 رأس q و8 رؤوس kv — أربع رؤوس q تتشارك
+            llama 3.2 1B يستخدم 32 رأس q و8 رؤوس kv: أربع رؤوس q تتشارك
             كل زوج kv. الـ <span class="mono">KVCache</span> يخزن فقط
             <span class="mono">n_kv_heads</span> k/v لكل طبقة، ليس <span class="mono">n_heads</span>.
         </p>
@@ -681,7 +681,7 @@ let kv_h = h / n_repeat;              // أي رأس kv يستخدم رأس quer
             <span class="mono">activations[layer][d]</span> هو قيمة hidden state
             للبعد <span class="mono">d</span> في الطبقة <span class="mono">layer</span>.
             هذه تُسطح وتُصف في مصفوفة 3d وتحفظ بصيغة numpy (npy.)
-            format — يمكن تحميلها مباشرة من سكريبتات python.
+            format: يمكن تحميلها مباشرة من سكريبتات python.
         </p>
 
         <p>

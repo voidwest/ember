@@ -1,4 +1,4 @@
-# `<subsystem>` audit — YYYY-MM-DD
+# `<subsystem>` audit: YYYY-MM-DD
 
 > Copy this file to `YYYY-MM-DD-<subsystem>.md`, fill every field, and link it
 > from [`README.md`](README.md). Keep claims at the evidence level actually

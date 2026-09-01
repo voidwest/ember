@@ -11,12 +11,12 @@ A capture artifact is produced by `--capture-activations capture.toml` during
 a generation run. It records selected live activations at the six semantic
 hook stages:
 
-- `before-layer` — residual stream before the layer's input RMSNorm
-- `after-attention` — attention output projection, **before** the residual add
-- `after-mlp` — MLP down projection, **before** the residual add
-- `after-layer` — residual stream after the residual add
-- `before-logits` — final-RMSNorm output (last token), before the LM head
-- `after-logits` — logits `[1, vocab]`; for gemma4 this is **after** the final
+- `before-layer`: residual stream before the layer's input RMSNorm
+- `after-attention`: attention output projection, **before** the residual add
+- `after-mlp`: MLP down projection, **before** the residual add
+- `after-layer`: residual stream after the residual add
+- `before-logits`: final-RMSNorm output (last token), before the LM head
+- `after-logits`: logits `[1, vocab]`; for gemma4 this is **after** the final
   logit softcap
 
 Layout:
@@ -67,7 +67,7 @@ identical selection semantics.
   (`prefill -> generic`, `decode -> fast`, ...)
 - **experiment**: the active experiment's name and arguments, or `none`
 - **capture_selection**: the effective selection (including `config_hash`)
-- **records**: per record — index, phase, layer, stage, start position, token
+- **records**: per record: index, phase, layer, stage, start position, token
   count, shape, dtype (`f32`), byte order (`little-endian`), tensor path,
   tensor sha256, l2 norm, abs max, dispatch path
 - **truncated**: true when `max_records` stopped capture early
@@ -90,7 +90,7 @@ research data:
   retaining the prompt hash and token IDs.
 - Activations can be reconstructed into meaningful hidden states; do not
   publish them casually.
-- Patched runs are not comparable to ordinary benchmark runs — never report
+- Patched runs are not comparable to ordinary benchmark runs: never report
   throughput or quality numbers from intervention runs.
 
 ## Comparing artifacts
@@ -101,7 +101,7 @@ ember compare-artifacts --left ... --right ... --json --output report.json
 ```
 
 Records align on (phase, layer, stage, start position). Duplicate keys on
-either side are a hard error — alignment never guesses. Missing or extra
+either side are a hard error: alignment never guesses. Missing or extra
 records are reported. Per-record output: bit-exact equality, max/mean/RMS
 difference, cosine, L2 norms, relative L2 error, shape and dtype match.
 Run-level provenance fields (model hash, tokenizer hash, prompt hash, token

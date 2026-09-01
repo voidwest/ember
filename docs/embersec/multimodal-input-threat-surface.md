@@ -1,4 +1,4 @@
-# EmberSEC Phase 2 — Hostile Multimodal Inputs (read-only threat-surface audit)
+# EmberSEC Phase 2: Hostile Multimodal Inputs (read-only threat-surface audit)
 
 **Date:** 2026-08-31 · **Branch/commit:** main @ `6ed3a133` (dirty worktree; audit read-only, no files changed)
 **Scope:** image, audio, video, and fusion paths from attacker-controlled bytes/files into tensors and the LLM.
@@ -38,10 +38,10 @@ hand-rolled RIFF/WAVE parser `decode_wav_bytes` (audio.rs:233-350) →
 
 > **Status marker (freeze 2026-08-31):** the findings below describe the
 > audited state (main @ `6ed3a133`); **all P1/P2 items were fixed** in
-> `50b3af30` + `75183e67` — see §4 for the fix map. Do not read any finding
+> `50b3af30` + `75183e67`: see §4 for the fix map. Do not read any finding
 > below as an open vulnerability.
 
-### P1 — crash or resource amplification on attacker-controlled input (fix first)
+### P1: crash or resource amplification on attacker-controlled input (fix first)
 
 - **AUD-1 · Panic on unsupported WAV format.** `decode_wav_bytes`'s `read_one` has a
   `_ => panic!("unsupported wav format tag ...")` arm (`src/multimodal/audio.rs:334`). A WAV with
@@ -68,14 +68,14 @@ hand-rolled RIFF/WAVE parser `decode_wav_bytes` (audio.rs:233-350) →
 
 - **IMG-1 · Image decode has no explicit limits.** `decode_rgb_bytes`/`decode_rgb` never call
   `ImageReader::limits(...)` (`src/multimodal/image.rs:102-121`), so only the image crate's defaults apply:
-  `max_alloc = 512 MiB` (non-strict for some decoders — zune-jpeg may not honor it), **no width/height
-  caps**. After decode, `rgb8_to_tensor` allocates f32 at 12 B/px — 4× the bitmap (`image.rs:126`),
+  `max_alloc = 512 MiB` (non-strict for some decoders: zune-jpeg may not honor it), **no width/height
+  caps**. After decode, `rgb8_to_tensor` allocates f32 at 12 B/px: 4× the bitmap (`image.rs:126`),
   so a ~512 MiB decoded bitmap becomes a ~2 GiB f32 tensor before preprocessing. `cli_multimodal`
   accepts unbounded repeated `--image` (`src/cli_multimodal.rs:26-29`) → N × ~2 GiB peak → OOM abort on
   this host. Fix: set explicit `Limits` (max width/height + tighter alloc) and a per-request
   total-pixel/media budget at admission.
 
-### P2 — panic on public-API shape misuse (not reachable via the current CLI, but pub API)
+### P2: panic on public-API shape misuse (not reachable via the current CLI, but pub API)
 
 - **PAN-1 · Vision rank/shape assumptions.** `encode_impl` indexes `pixels.shape()[0..3]` before any
   ndim check (`src/multimodal/vision.rs:118-126`); rank < 4 → index panic. Release mode has only
@@ -88,10 +88,10 @@ hand-rolled RIFF/WAVE parser `decode_wav_bytes` (audio.rs:233-350) →
 - **PAN-3 · batch_encode_images division by zero.** `scale2 = scale_factor * scale_factor` unchecked
   (`src/multimodal/batch.rs:59`) and `rows = ... / scale2` (batch.rs:121); `scale_factor = 0` from any
   caller → divide-by-zero panic. `patch_size = 0` similarly.
-- **PAN-4 · conv1d kernel assert** `assert_eq!(kernel, 3)` (`audio_encoder.rs:297`) — internal invariant
+- **PAN-4 · conv1d kernel assert** `assert_eq!(kernel, 3)` (`audio_encoder.rs:297`): internal invariant
   after load-time dim checks; listed for completeness.
 
-### P3 — robustness / validated-state seams
+### P3: robustness / validated-state seams
 
 - **VAL-1 · No validated boundary types.** `ImageInput`/`AudioInput` are raw enums; geometry (dims,
   rate, duration, byte budget) is re-derived at each stage with inconsistent checks. The natural Phase-2
@@ -108,14 +108,14 @@ hand-rolled RIFF/WAVE parser `decode_wav_bytes` (audio.rs:233-350) →
 - **VAL-4 · Zero-size edge is contained but duplicated.** `preprocess` guards h/w ≥ 1 only in the
   resize branch (image.rs:171-172); a `[3,0,0]` input under a no-resize config flows to a 0-row tensor
   and fails at the assembler (error, not panic). `tile_grid_for` (image.rs:286-327) duplicates the
-  rounding math — divergence risk, not a security issue.
+  rounding math: divergence risk, not a security issue.
 - **VAL-5 · Fuzz gap.** `fuzz/` covers gguf_loader, gguf_to_llama, kv_snapshot_manifest, npy_bytes,
-  tokenizer_json — **no wav, png/jpeg, or multimodal request fuzz targets**; `tests/multimodal.rs`
+  tokenizer_json: **no wav, png/jpeg, or multimodal request fuzz targets**; `tests/multimodal.rs`
   exercises only valid shapes. Suggested matrix: `decode_wav_bytes` (headers/format tags/rates/chunk
   arithmetic), `decode_rgb_bytes` (png/jpeg bombs, truncated files), `ImageInput::Pixels`/`AudioInput::Samples`
   shape fuzz against `preprocess`/`to_mono_16k`/encoder entry points.
 - **VAL-6 · Unsafe reachability after media decode.** Enabled decoders (png 0.18, zune-jpeg 0.5) are pure
-  Rust — no C/FFI in the decode path. The only `unsafe` reachable downstream are `matrixmultiply::sgemm`
+  Rust: no C/FFI in the decode path. The only `unsafe` reachable downstream are `matrixmultiply::sgemm`
   (`src/tensor.rs:197-214, 262-279`, guarded by shape asserts + contiguous-layout invariants) and the
   AVX2 `fast_exp_raw` (`src/simd.rs:1544-1608`, length-checked wrappers). No unsafe/FFI finding.
 
@@ -123,7 +123,7 @@ hand-rolled RIFF/WAVE parser `decode_wav_bytes` (audio.rs:233-350) →
 
 ## 3. Verdict
 
-**Enough for a real Phase 2 — yes.** Two code-verified panic paths (AUD-1, AUD-2) and one unbounded
+**Enough for a real Phase 2: yes.** Two code-verified panic paths (AUD-1, AUD-2) and one unbounded
 resource amplification (AUD-2, AUD-3) sit on attacker-controlled WAV bytes/headers; the image side lacks
 explicit decode limits and any media-count admission bound; public encoder entry points panic on
 malformed shapes; and there is zero fuzz coverage for any multimodal input.
@@ -165,11 +165,11 @@ Regression tests added in `tests/multimodal.rs` (9 tests) and lib unit suites.
 
 **Commit/state note (final):** all hardening is committed on `main` and
 pushed to `origin/main`:
-- `50b3af30` — image/video boundary hardening (image limits, validated image
+- `50b3af30`: image/video boundary hardening (image limits, validated image
   seam, batch guards, video frame cap, fuzz targets),
-- `00e6ced7` — the previously pending staged batch (multimodal phase 4/5,
+- `00e6ced7`: the previously pending staged batch (multimodal phase 4/5,
   gemma4 parity, loader/npy/tokenizer/kv hardening, fuzz harness, docs),
-- `75183e67` — audio/vision hardening delta (WAV panic/amplification fixes,
+- `75183e67`: audio/vision hardening delta (WAV panic/amplification fixes,
   encoder shape checks, validated audio seam + duration/segment caps, tests).
 The pre-existing unstaged leftovers (`src/quant.rs`, the deleted
 `data/test_*.npy`, and the two untracked files) were left untouched.

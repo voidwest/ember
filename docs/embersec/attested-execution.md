@@ -1,8 +1,8 @@
-# EmberSEC Phase IV — Attested Execution: Signed Evidence (pre-TEE)
+# EmberSEC Phase IV: Attested Execution: Signed Evidence (pre-TEE)
 
 **Status:** landed (main, freeze tag `embersec-freeze-2026-08-31`);
-attestation (TDX/SNP) is the documented next step, but the useful work —
-what a signature must cover and how verification works — is complete without
+attestation (TDX/SNP) is the documented next step, but the useful work :
+what a signature must cover and how verification works: is complete without
 any TEE hardware.
 
 ---
@@ -28,14 +28,14 @@ signed-evidence-v1 envelope:
 
 Verification recomputes the canonical bytes from the **embedded** input
 (so the envelope is self-contained and verifiable offline), checks the digest
-and the Ed25519 signature, and — when the record is a v2 run manifest — also
+and the Ed25519 signature, and: when the record is a v2 run manifest: also
 re-checks the internal execution identity (`identity.sha256` vs
 `identity.canonical`). Three independent integrity layers:
 
-1. **Envelope digest** — catches any edit to the record after signing.
-2. **Ed25519 signature** — binds the record to a specific signing key
+1. **Envelope digest**: catches any edit to the record after signing.
+2. **Ed25519 signature**: binds the record to a specific signing key
    (`verify_strict`, so malleability attacks fail closed).
-3. **Execution identity** — catches a record that was already internally
+3. **Execution identity**: catches a record that was already internally
    inconsistent before signing (e.g. a manifest whose canonical section was
    edited without updating its digest).
 
@@ -93,4 +93,4 @@ Key format: hex-encoded 32-byte Ed25519 seed (private) / 32-byte public key.
    optional `attestation` section (quote, PCRs/measurements, nonce) without
    changing `signed-evidence-v1`'s core fields.
 3. `evidence verify` checks the attestation when present and reports
-   "locally signed" otherwise — a single verification path for both eras.
+   "locally signed" otherwise: a single verification path for both eras.

@@ -1,4 +1,4 @@
-# EmberSEC Phase III — Reproducible Execution: Execution Identity, Replay, Provenance
+# EmberSEC Phase III: Reproducible Execution: Execution Identity, Replay, Provenance
 
 **Status:** landed in full (main, freeze tag `embersec-freeze-2026-08-31`,
 implementation through `6b4723e1`); read the "Implemented" section for what
@@ -43,19 +43,19 @@ env ────────► behavior knobs (EMBER_*) that change numerics/pa
 
 ## 3. Gaps found (this phase)
 
-1. **No canonical identity digest** — the manifest was a JSON blob; timestamps
+1. **No canonical identity digest**: the manifest was a JSON blob; timestamps
    and argv made it non-reproducible as-is, and nothing bound its contents.
-2. **Prompt not recorded** — the single most output-affecting input was absent.
-3. **No seed on the CLI** — temperature > 0 runs were unreproducible across
+2. **Prompt not recorded**: the single most output-affecting input was absent.
+3. **No seed on the CLI**: temperature > 0 runs were unreproducible across
    processes by construction.
-4. **Behavior env knobs not recorded** — `EMBER_VISION_FAST_EXP` (changes
+4. **Behavior env knobs not recorded**: `EMBER_VISION_FAST_EXP` (changes
    softmax numerics), `EMBER_FUSED_GREEDY`, `EMBER_PRESPLIT`, `EMBER_K_AVX512`,
    `EMBER_LLAMA_PACKED_Q8`, `EMBER_PARALLEL_REPACK`, `EMBER_GEMMA_DUMP`,
    `EMBER_CONVERSE_DBG` were all invisible to the manifest.
-5. **No verification path** — nothing recomputed or checked the recorded
+5. **No verification path**: nothing recomputed or checked the recorded
    identity after the fact.
 
-## 4. Execution identity — definition
+## 4. Execution identity: definition
 
 **Execution identity = SHA-256 over a canonical, sorted JSON object of every
 output-affecting input**, specifically:
@@ -73,19 +73,19 @@ output-affecting input**, specifically:
 | mode | probe flags, experiment (zero-layer-output / activation-stats) |
 
 Canonicality rules:
-- **Sorted keys** — the canonical object is built from `BTreeMap` and the
+- **Sorted keys**: the canonical object is built from `BTreeMap` and the
   JSON written compactly, so field order is irrelevant and re-parsing the
   recorded object reproduces the same bytes.
-- **Volatile data excluded** — timestamps, argv, paths are *reported* in the
+- **Volatile data excluded**: timestamps, argv, paths are *reported* in the
   manifest but are not part of the identity.
-- **Sensitivity** — any change to any listed field changes the digest
+- **Sensitivity**: any change to any listed field changes the digest
   (verified by unit tests: prompt, temperature, seed, arch, model hash, and
   env knobs each flip the identity).
 
 Attribution semantics: two runs with the same identity are expected to produce
 the same output *for the same binary behavior*; a result recorded alongside a
 matching identity is attributable to that execution. A mismatch means the
-record was edited, the environment differed, or the binary was rebuilt —
+record was edited, the environment differed, or the binary was rebuilt :
 each a legitimate reason to distrust the result.
 
 ## 5. Implemented
@@ -94,11 +94,11 @@ each a legitimate reason to distrust the result.
   `run_single_prompt_with_experiment` and recorded in the manifest. Same seed
   + same inputs ⇒ same token sequence for temperature > 0.
 - Manifest schema v2 (`--write-run-manifest`):
-  - `identity.{schema, sha256, canonical}` — canonical object + digest,
+  - `identity.{schema, sha256, canonical}`: canonical object + digest,
   - `execution.prompt`, `execution.seed`,
   - `binary.{git_commit, git_dirty, rustc_version, target}` (build-time),
   - env knob snapshot lives inside `identity.canonical.env`.
-- `ember manifest verify <path>` — recomputes the digest from the recorded
+- `ember manifest verify <path>`: recomputes the digest from the recorded
   canonical object, prints `OK` + a summary, or fails with a mismatch
   (tamper detection). Verified end-to-end: intact manifest verifies, an
   edited `temperature` field fails.
@@ -115,7 +115,7 @@ each a legitimate reason to distrust the result.
   identity + outputs bit-exactly) is the natural `--verify` extension.
 - **Sampler expansion**: repeat-penalty / min-p would join the sampler group.
 - **Signed evidence**: LANDED in Phase IV (`ember evidence init|sign|verify`,
-  `src/cli_evidence.rs`) — the identity digest is signed under a local
+  `src/cli_evidence.rs`): the identity digest is signed under a local
   Ed25519 key; only the hardware-attestation step (IVb: TDX/SNP) remains
   deferred.
 - **Kernel-dispatch recording**: per-tensor K decisions and the resolved

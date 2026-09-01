@@ -26,8 +26,8 @@
 
 Gemma per-layer embedding (PLE) pathway uses two linear projections per block:
 
-- `blk.{i}.inp_gate.weight` — shape `[1536, 256]`, projects hidden `1536 -> 256` (no transpose).
-- `blk.{i}.proj.weight` — shape `[256, 1536]`, projects gated PLE `256 -> 1536` (no transpose).
+- `blk.{i}.inp_gate.weight`: shape `[1536, 256]`, projects hidden `1536 -> 256` (no transpose).
+- `blk.{i}.proj.weight`: shape `[256, 1536]`, projects gated PLE `256 -> 1536` (no transpose).
 
 Previously `blk.{i}.proj.weight` was loaded with `get_linear` (transposed), which would cause a
 dimension mismatch at runtime if the PLE path were exercised. Changed to `get_linear_no_transpose`.
@@ -109,16 +109,16 @@ pub fn compute_rope_freqs(
 |------------|--------------|--------|--------|
 | PLE disabled | Remove PLE from block | cosine 0.08 (fail) | Rejected |
 | Softcap disabled | Remove final softcap | Minimal change | Rejected |
-| PLE at end of block | Move PLE after FFN residual | cosine 0.10 (fail) | Rejected — correct placement confirmed |
-| PLE at start of block | Move PLE before attention | cosine 0.72 | Accepted — matches llama.cpp |
-| Embedding scaling disabled | Remove `sqrt(1536)` | cosine 0.86 | Minor — kept for completeness |
-| Layer output scale disabled | Remove per-layer scalar | cosine -0.54 (fail) | Rejected — essential |
-| V unweighted RMS norm | Normalize V before cache | cosine 0.70 (drop) | Rejected — degrades results |
-| Wrong RMS norm formula | Compared SIMD vs scalar | Identical | Rejected — correct |
-| Wrong RMS norm weights | Dumped weights vs GGUF | Cosine 1.0, diff 0.0 | Rejected — correct |
-| Q8_0 dequantization | F32 MLP vs Q8_0 MLP | Identical cosine | Rejected — correct |
-| `sum_squares` AVX2 bug | Forced scalar path | Identical output | Rejected — correct |
-| FP non-associativity (root cause) | L0 attn_norm comparison | Bit-identical | Rejected — not the root cause |
+| PLE at end of block | Move PLE after FFN residual | cosine 0.10 (fail) | Rejected: correct placement confirmed |
+| PLE at start of block | Move PLE before attention | cosine 0.72 | Accepted: matches llama.cpp |
+| Embedding scaling disabled | Remove `sqrt(1536)` | cosine 0.86 | Minor: kept for completeness |
+| Layer output scale disabled | Remove per-layer scalar | cosine -0.54 (fail) | Rejected: essential |
+| V unweighted RMS norm | Normalize V before cache | cosine 0.70 (drop) | Rejected: degrades results |
+| Wrong RMS norm formula | Compared SIMD vs scalar | Identical | Rejected: correct |
+| Wrong RMS norm weights | Dumped weights vs GGUF | Cosine 1.0, diff 0.0 | Rejected: correct |
+| Q8_0 dequantization | F32 MLP vs Q8_0 MLP | Identical cosine | Rejected: correct |
+| `sum_squares` AVX2 bug | Forced scalar path | Identical output | Rejected: correct |
+| FP non-associativity (root cause) | L0 attn_norm comparison | Bit-identical | Rejected: not the root cause |
 | Global layer RoPE | Added freq_factors | Minimal cosine change | Minor improvement |
 
 ## Layerwise Comparison Pipeline
@@ -185,8 +185,8 @@ The remaining gap is **not** attributed to:
 The current best explanation:
 
 1. The pipeline starts perfectly (L0 attn_norm bit-identical).
-2. Small upstream numerical differences — potentially from GELU, matmul accumulation,
-   attention scoring, or quantization order — are introduced at each layer.
+2. Small upstream numerical differences: potentially from GELU, matmul accumulation,
+   attention scoring, or quantization order: are introduced at each layer.
 3. The next layer's RMSNorm weight (with values up to 236) amplifies these micro-differences:
    a 0.4% angular difference in the input becomes a 54% difference in the RMSNorm output.
 4. This amplification compounds over 35 layers, producing the 13% final cosine gap.

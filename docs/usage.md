@@ -316,12 +316,12 @@ after load, plus a plan-driven single-token decode interpreter
 (`docs/v04-execution-contract.md`). Three execution concepts are selectable
 with `--execution` (default `reference`):
 
-- `reference` — the v0.3 generic hooked path with per-tensor K dispatch
+- `reference`: the v0.3 generic hooked path with per-tensor K dispatch
   (the readable oracle and parity baseline).
-- `planned` — the same operation sequence driven by the execution plan:
+- `planned`: the same operation sequence driven by the execution plan:
   resolved kernel per tensor, scratch-region destinations, no per-token
   shape/dispatch rediscovery, no fusion.
-- `planned-fused` — the plan with the frozen fusion set (F1-F5): fused
+- `planned-fused`: the plan with the frozen fusion set (F1-F5): fused
   QKV orchestration with a single norm pass, Q rope inside attention,
   output projection accumulating into the residual, and residual+RMSNorm;
   fusions that would eliminate a hooked tensor are defused per layer.

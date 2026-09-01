@@ -4,14 +4,14 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta property="og:title" content="ember internals">
-        <meta property="og:description" content="Close-up of the data structures, algorithms, and memory layouts that power ember — tensor, backend trait, KV cache, GGUF, sampler, and the probing pipeline.">
+        <meta property="og:description" content="Close-up of the data structures, algorithms, and memory layouts that power ember: tensor, backend trait, KV cache, GGUF, sampler, and the probing pipeline.">
         <meta property="og:type" content="article">
         <meta property="og:url" content="https://voidwest.dev/ember/internals/">
         <meta property="og:site_name" content="voidwest">
         <meta name="twitter:card" content="summary">
         <title>ember internals</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
-        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/ember.png">
         <meta property="og:image:width" content="1200">
@@ -512,7 +512,7 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
             <span class="mono">forward_with_cache</span> is the standard inference path:
             embed tokens, run through transformer blocks with kv cache,
             project to logits. <span class="mono">forward_with_activations</span> is the
-            probing entry point — same forward pass, but it collects hidden
+            probing entry point: same forward pass, but it collects hidden
             states after every transformer block at the last token position
             instead of discarding them. this is what <span class="mono">--probe</span> mode
             calls to extract activations for downstream analysis.
@@ -543,7 +543,7 @@ let tensor = CpuTensor::from_data(dims, flat_f32_data);</code></pre>
             and cloned into each <span class="mono">LlamaAttention</span> layer. at inference
             time, <span class="mono">apply_rotary_emb</span> rotates the q and k tensors
             in-place using these tables. the precomputation means RoPE costs
-            one 2d-subspace rotation per dimension pair per token — no
+            one 2d-subspace rotation per dimension pair per token: no
             trigonometry in the hot path.
         </p>
 
@@ -591,7 +591,7 @@ out  = down_proj(y)         // final projection</code></pre>
 
         <p>
             llama uses fewer kv heads than query heads to reduce cache memory.
-            llama 3.2 1B uses 32 q heads and 8 kv heads — four q heads share
+            llama 3.2 1B uses 32 q heads and 8 kv heads: four q heads share
             each kv pair. the <span class="mono">KVCache</span> stores only
             <span class="mono">n_kv_heads</span> k/v per layer, not <span class="mono">n_heads</span>.
         </p>
@@ -639,7 +639,7 @@ divergence_analysis.py  → layer-wise js divergence</div>
         <p>
             <span class="mono">forward_with_activations</span> runs the same forward pass as
             inference but collects hidden states after each block at the last
-            token position — shape <span class="mono">[embed_dim]</span> per layer. this is
+            token position: shape <span class="mono">[embed_dim]</span> per layer. this is
             the standard probing setup: train a simple classifier on these
             representations and test whether the model encodes specific
             linguistic properties (e.g. morphological features) at particular

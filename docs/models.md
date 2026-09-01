@@ -24,13 +24,13 @@ The GGUF loader accepts these tensor encodings:
 | Q2_K / Q3_K / Q4_K / Q5_K / Q6_K | dequantized once to f32 while loading | generic f32 kernels |
 
 K-quant tensors are dequantized to f32 at load (transcribed from llama.cpp;
-validated against llama.cpp logits and fp16 source tensors — see
+validated against llama.cpp logits and fp16 source tensors: see
 `src/quant_k.rs`). A GGUF may mix the listed types, as real models commonly
 do for norms, embeddings, and linear weights. “Supported” here means Ember
 has an execution path; external golden-logit or activation-reference status
 is tracked separately in the validation tables below.
 
-Note: the K-quant path is a research loader, not a deployment path —
+Note: the K-quant path is a research loader, not a deployment path :
 dequant-to-f32 makes Q4/Q6 models use 2.6–4.5× more RAM and run 16–52×
 slower than Q8 (the Q8 path keeps weights compressed and uses the fast
 decode path).

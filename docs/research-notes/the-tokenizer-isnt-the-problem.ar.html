@@ -4,14 +4,14 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta property="og:title" content="الـ tokenizer مو المشكلة">
-        <meta property="og:description" content="What I learned reading Arabic NLP papers for a week. Why GPT-4o hits 97% on nonce morphology with the worst tokenizer alignment — and what it means for Arabic NLP.">
+        <meta property="og:description" content="What I learned reading Arabic NLP papers for a week. Why GPT-4o hits 97% on nonce morphology with the worst tokenizer alignment: and what it means for Arabic NLP.">
         <meta property="og:type" content="article">
         <meta property="og:url" content="https://voidwest.dev/research-notes/the-tokenizer-isnt-the-problem.ar.html">
         <meta property="og:site_name" content="voidwest">
         <meta name="twitter:card" content="summary">
         <title>الـ tokenizer مو المشكلة · research notes</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
-        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
         <meta property="og:image:width" content="1200">
@@ -58,9 +58,9 @@
 
         <h2><bdi>why Arabic is a real stress test for tokenizers</bdi></h2>
 
-        <p>العربي يستخدم <strong>نظام الجذر والوزن</strong>. جذر من 3 حروف مثل <em>k-t-b</em> (كتب) يندمج مع قوالب صوتية وينتج: <em>kataba</em> (هو كتب)، <em>kitaab</em> (كتاب)، <em>maktab</em> (مكتب)، <em>maktūb</em> (مكتوب)، <em>yaktubu</em> (هو يكتب). الجذر ما يظهر ككلمة مستقلة أبداً — دايم متداخل داخل الشكل السطحي.</p>
+        <p>العربي يستخدم <strong>نظام الجذر والوزن</strong>. جذر من 3 حروف مثل <em>k-t-b</em> (كتب) يندمج مع قوالب صوتية وينتج: <em>kataba</em> (هو كتب)، <em>kitaab</em> (كتاب)، <em>maktab</em> (مكتب)، <em>maktūb</em> (مكتوب)، <em>yaktubu</em> (هو يكتب). الجذر ما يظهر ككلمة مستقلة أبداً: دايم متداخل داخل الشكل السطحي.</p>
 
-        <p>كلمة عربية وحدة تقدر تحمل اللي يعادل 4 tokens في الإنجليزي. <em>fasayaktubūnahā</em> (فسيكتبونها) = "and they will write it" — كلمة وحدة فيها proclitics وجذر و enclitic مدمجين.</p>
+        <p>كلمة عربية وحدة تقدر تحمل اللي يعادل 4 tokens في الإنجليزي. <em>fasayaktubūnahā</em> (فسيكتبونها) = "and they will write it": كلمة وحدة فيها proclitics وجذر و enclitic مدمجين.</p>
 
         <p><bdi>BPE</bdi> مصمم يدمج سلاسل حروف متجاورة بناءً على التكرار. المعنى في العربي يعيش في تداخل الجذر والوزن غير المتصل. الاثنين متعارضين هيكلياً.</p>
         <p>ضيف الحركات الاختيارية، عدم ثبات المسافات، وتعدد العربي نفسه (فصحى، مصري، خليجي، شامي)، وعندك مشكلة معقدة فعلاً.</p>
@@ -85,7 +85,7 @@
             من SDAIA، MBZUAI، و PNU
         </div>
 
-        <p>قيّموا 7 LLMs عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) مدى محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) مدى قدرة النماذج على <em>توليد</em> أشكال الجذر والوزن، بما فيها <strong>nonce roots</strong> — جذور مبتكرة ما مرت عليهم قبل — وهذا يختبر التعميم الحقيقي، مو الحفظ.</p>
+        <p>قيّموا 7 LLMs عربية (ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، Cohere) على بعدين: (1) مدى محاذاة الـ tokenizers حقهم مع حدود الـ morpheme المثالية، و (2) مدى قدرة النماذج على <em>توليد</em> أشكال الجذر والوزن، بما فيها <strong>nonce roots</strong>: جذور مبتكرة ما مرت عليهم قبل: وهذا يختبر التعميم الحقيقي، مو الحفظ.</p>
 
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
@@ -98,7 +98,7 @@
 
         <p>FANAR، اللي tokenizer حقه واعي بالصرف (MorphBPE)، أدى بشكل ثابت لكن ما سيطر. يمكن سبب أدائه المستقر هو قدرته على اتباع التعليمات، مو جودة الـ tokenizer.</p>
 
-        <p>الـ prompts بالإنجليزي تفوقت على العربي في معظم النماذج — بيانات instruction-tuning أغلبها إنجليزي.</p>
+        <p>الـ prompts بالإنجليزي تفوقت على العربي في معظم النماذج: بيانات instruction-tuning أغلبها إنجليزي.</p>
 
         <p>استنتاج الورقة: <strong>الكفاءة الصرفية تنقاس بالتعميم، مو بجودة التقطيع السطحي.</strong> النموذج يقدر يعوض ضعف الـ tokenizer بقدراته الداخلية وقدرته على فهم التعليمات.</p>
 

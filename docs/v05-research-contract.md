@@ -44,25 +44,25 @@ interpreter (`forward_last_logits_planned`, src/planned_decode.rs).
 
 Exact meanings per site:
 
-1. `residual-pre-attention` — for layer `l`, the tensor `x` at block entry.
+1. `residual-pre-attention`: for layer `l`, the tensor `x` at block entry.
    During prefill this is the full `[seq, embed]` block input; during decode
    it is the `[1, embed]` row for the evaluated token position. It is the
    tensor the input RMS norm consumes. In the planned path it resolves to
    the first op's input region (input norm or fused qkv input).
-2. `attention-output` — for layer `l`, the tensor produced by the attention
+2. `attention-output`: for layer `l`, the tensor produced by the attention
    output projection (`o_proj` result, attention scores applied to `V` then
    projected). It is observed **pre-residual**: the value at this site does
    not include the residual stream. The residual add happens after the hook
    returns. In the planned-fused builder, fusion F5 eliminates the standalone
    `o` tensor; the site then de-fuses (section 9, 10).
-3. `mlp-output` — for layer `l`, the MLP down-projection result
+3. `mlp-output`: for layer `l`, the MLP down-projection result
    (SwiGLU `gate(x)*up(x)` projected by `down_proj`), **pre-residual**.
-4. `residual-post-mlp` — for layer `l`, the block output: the residual
+4. `residual-post-mlp`: for layer `l`, the block output: the residual
    stream after both the attention and MLP residual adds. This is the input
    to layer `l+1`.
-5. `final-norm-output` — the final RMS norm output (no layer). Shape
+5. `final-norm-output`: the final RMS norm output (no layer). Shape
    `[1, embed]` in both phases (prefill hooks expose only the final row).
-6. `logits` — the LM head output, shape `[1, vocab]`.
+6. `logits`: the LM head output, shape `[1, vocab]`.
 
 **Sites that do not exist in v0.5.** There is no public site between the
 attention residual add and the MLP input norm (`residual-post-attention` /
@@ -142,19 +142,19 @@ metadata; out-of-range selectors fail validation.
 
 Selection is exact and fail-closed (section 17). The typed selector is:
 
-- `prompt-final` — the last token of the complete model input.
-- `absolute-token { index }` — the token at position `index`.
-- `relative-token { offset_from_end }` — position `seq_len - 1 - offset`
+- `prompt-final`: the last token of the complete model input.
+- `absolute-token { index }`: the token at position `index`.
+- `relative-token { offset_from_end }`: position `seq_len - 1 - offset`
   (offset 0 equals `prompt-final`). Out-of-range offsets fail.
-- `generated-step { step }` — the token generated at decode step `step`
+- `generated-step { step }`: the token generated at decode step `step`
   (1-based), observed at the decode evaluation processing it. Fails when
   generation produced fewer than `step` tokens.
-- `matched-span { text, occurrence, subtokens }` — exact text match
+- `matched-span { text, occurrence, subtokens }`: exact text match
   (section 7).
-- `byte-span { start, end, subtokens }` — byte span into the prompt text
+- `byte-span { start, end, subtokens }`: byte span into the prompt text
   (section 7).
 
-Subtoken selection: `first`, `final`, `all` — the first / final / all
+Subtoken selection: `first`, `final`, `all`: the first / final / all
 tokens whose byte coverage intersects the matched span (see section 7 for
 coverage rules).
 
@@ -278,7 +278,7 @@ plan hash, hook sites, capture/intervention definitions, generated token
 IDs, output text, tensor payload checksums, deterministic warnings, Ember
 version/commit. `runtime.json` holds timestamp, hostname, OS, CPU model and
 features, thread count, wall-clock timings, peak RSS, compiler version,
-PID, local paths — verifiable but excluded from the semantic hash.
+PID, local paths: verifiable but excluded from the semantic hash.
 `BundleIdentity { semantic_hash, payload_hash }` splits the two.
 
 ## 15. Fail-closed behavior
@@ -302,12 +302,12 @@ PID, local paths — verifiable but excluded from the semantic hash.
 
 ## 16. v0.5 gates
 
-- **Gate A — specification correctness.** Valid v1 specs parse and resolve
+- **Gate A: specification correctness.** Valid v1 specs parse and resolve
   deterministically; invalid field paths produce precise errors; unknown
   schema majors fail; duplicate ids fail; ambiguous token matches fail;
   invalid layer selectors fail; unsupported hook sites and execution modes
   fail before execution; resolved specs serialize deterministically.
-- **Gate B — token-selection correctness.** Across ASCII and Arabic
+- **Gate B: token-selection correctness.** Across ASCII and Arabic
   prompts: prompt-final selects the actual final prompt token; explicit
   indices resolve; final-subtoken selection matches byte coverage;
   occurrence selection is deterministic; absent spans fail; ambiguous spans
@@ -318,35 +318,35 @@ PID, local paths — verifiable but excluded from the semantic hash.
   Arabic/Latin text, leading-space tokenization, target at prompt
   start/end, multi-token targets, one-token targets, normalization-
   sensitive boundaries.
-- **Gate C — capture semantics.** For every public site: captured tensors
+- **Gate C: capture semantics.** For every public site: captured tensors
   match direct internal captures from the reference path; layer ids and
   token rows are correct; selected-row capture equals the corresponding
   row of a full capture; planned and planned-fused results satisfy the
   existing parity envelopes; fusion deactivates when required; provenance
   records the executed route; payloads remain valid after scratch reuse.
-- **Gate D — intervention semantics.** Replace/zero/scale/interpolate
+- **Gate D: intervention semantics.** Replace/zero/scale/interpolate
   execute at the correct site; cross-bundle replacement rejects
   incompatible sources; shape and model mismatches fail; exact restoration
   reproduces the baseline; intervention-disabled execution is bit-identical;
   reference/planned/planned-fused agree within existing gates.
-- **Gate E — bundle determinism.** Two equivalent runs on the same
+- **Gate E: bundle determinism.** Two equivalent runs on the same
   supported environment produce identical resolved specs, token-selection
   records, generated token ids, semantic manifests, semantic hashes,
   capture payloads (where execution is bit-identical), and matching
   payload hashes except for documented architecture-dependent float cases.
   Timestamps, hostname, timing, local paths never alter the semantic hash.
-- **Gate F — verification.** Valid bundles verify; one-byte payload
+- **Gate F: verification.** Valid bundles verify; one-byte payload
   corruption fails; altered manifest values fail; removed files fail;
   extra unindexed payloads fail or produce an explicit policy error;
   invalid relative paths fail; unsupported bundle schema fails; incomplete
   staging bundles fail; model mismatch under deep verification fails;
   verification is fully offline.
-- **Gate G — comparison.** Identical bundles report semantic identity;
+- **Gate G: comparison.** Identical bundles report semantic identity;
   timing-only differences are separated; capture perturbations produce
   correct tensor metrics; token divergence reports the first differing
   position; intervention differences are identified precisely;
   machine-readable output is deterministic.
-- **Gate H — performance and memory.** Relative to the final v0.4 release
+- **Gate H: performance and memory.** Relative to the final v0.4 release
   under the same protocol: ordinary inference does not regress more than
   3% median decode throughput; peak RSS without captures does not regress
   more than 3%; compressed Q4_K/Q6_K residency remains intact; Q8_0 stays
@@ -355,10 +355,10 @@ PID, local paths — verifiable but excluded from the semantic hash.
   allocations enter ordinary decode; bundle-system binary-size increase is
   documented. This gate is not weakened after seeing final results without
   a committed evidence-based amendment.
-- **Gate I — clean-machine workflow.** On a clean supported machine,
+- **Gate I: clean-machine workflow.** On a clean supported machine,
   following only the documentation: install/build, validate a provided
   spec, run the reference example, inspect the bundle, verify it, run an
-  intervention, compare bundles — no source edits, no knowledge of Ember's
+  intervention, compare bundles: no source edits, no knowledge of Ember's
   internal Rust types.
 
 ## 17. Compatibility policy

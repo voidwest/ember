@@ -4,8 +4,8 @@
 below is retained as a postmortem of the discarded design, not as a description
 of current execution.
 
-The old design correctly identified ggml's normal dataflow—pack each activation
-row once as Q8_K, then run Q4_K/Q6_K × Q8_K integer dots—but rejected it to
+The old design correctly identified ggml's normal dataflow, pack each activation
+row once as Q8_K, then run Q4_K/Q6_K × Q8_K integer dots, but rejected it to
 preserve an internal eager-f32 parity threshold. That made a slow oracle into a
 production semantic. The separate float GEMV and register-tiled float GEMM,
 their AVX-512 downclock, Rayon pointer plumbing, and environment tuning knobs
@@ -41,7 +41,7 @@ fail-closed commands are `tools/verify_k_quant_llamacpp.sh` and
 
 ---
 
-# K-quant batch-1 GEMV redesign — design notes (pre-implementation)
+# K-quant batch-1 GEMV redesign: design notes (pre-implementation)
 
 Status: design + pre-coding analysis for the K-quant decode optimization phase.
 
@@ -85,7 +85,7 @@ Q6_K (210 B, used for ~18 of 114 tensors in Llama-1B Q4_K_M incl. half the
 ## 3. Where the redundant work is (measured, not guessed)
 
 Each super-block is decoded exactly once per matmul (once for its own
-column) — the traversal does not re-read weight bytes. The inefficiency is
+column): the traversal does not re-read weight bytes. The inefficiency is
 **per-value decode/reduction overhead** that keeps the kernel ~8× below the
 machine's memory bandwidth (4.3 GB/s effective vs ~35 GB/s):
 
@@ -95,7 +95,7 @@ machine's memory bandwidth (4.3 GB/s effective vs ~35 GB/s):
 2. **Scale/min unpacking re-broadcast per 8-value chunk** (`get_scale_min_k4`
    scalar bit-ops + f16→f32 per column/block), instead of once per block.
 3. **The min term is computed per value** (`fma(q, d1, -m1)` then
-   `fma(x, v, acc)`) — two chained FMAs per value in a dependency chain.
+   `fma(x, v, acc)`): two chained FMAs per value in a dependency chain.
 4. **f32 dequantization per value** (cvtepu8_epi32 → cvtps) with no
    integer MACs; Q8_0 uses AVX-512 VNNI (vpdpbusd) but K-quant is AVX2-only
    float, so the machine's 512-bit + VNNI units sit idle for K-quant.
@@ -122,7 +122,7 @@ llama.cpp's batch-1 K-quant path (`ggml_vec_dot_q4_K_q8_K`, AVX2):
 Idea we adopt: **unpack scales once per block, keep vector accumulators
 across the whole column, one horizontal reduction per output element**.
 Idea we do NOT adopt for this phase: **int8 activation quantization
-(q8_K/q8_1)** — it changes Ember's numerical semantics (activation
+(q8_K/q8_1)**: it changes Ember's numerical semantics (activation
 quantization error) and would push the eager-vs-compressed logit delta past
 the frozen Gate-B bound (1e-2). The Q8_0 path may use VNNI on quantized
 activations because its own gates allow it; the K-quant gates compare
@@ -160,7 +160,7 @@ No perf (hardware counters unavailable, paranoid=2); powersave governor
 noise handled with medians over ≥5 reps; AVX-512 presence checked at
 runtime; llama.cpp comparison via the pinned `llama-bench` binary on the
 same files (isolated per-projection llama.cpp benchmarks are not exposed by
-that build — full-model tg is used).
+that build: full-model tg is used).
 
 ## 7. Post-implementation verification and the column-blocking experiment (2026-08-10)
 
@@ -170,7 +170,7 @@ dispatch bug: the fallback `while i < dst_chunk.len()` loop had lost its
 looped forever on column 0. The handoff-required `cargo test --release
 --lib k_gemv` hung; the fix is a one-line `i += 1` and the suite now
 passes in ~0.3 s. Lesson: the col2 edit restructured the loop body and the
-increment was dropped — kernel dispatch loops need a regression test that
+increment was dropped: kernel dispatch loops need a regression test that
 terminates.
 
 ### Column-blocking A/B (CB = columns per activation L1 load)
@@ -179,11 +179,11 @@ Three AVX-512 bodies were measured: single-column (CB=1, the shipped
 pre-edit path), column-pair (CB=2), and 4-column (CB=4), on the real
 Q4_K_M/Q6_K Llama-3.2-1B projections and end-to-end, interleaved to cancel
 thermal drift (the host idles at ~84 °C with the GUI up; long sequential
-matrices are unusable — the same binary measures 6.1 tps hot vs 13.6 tps
+matrices are unusable: the same binary measures 6.1 tps hot vs 13.6 tps
 cool).
 
 - Microbenchmark (isolated kernels, medians of 7): CB=2/CB=4 are within
-  ±10 % of CB=1 on every projection — no systematic win at 1t or 4t.
+  ±10 % of CB=1 on every projection: no systematic win at 1t or 4t.
 - End-to-end `bench-decode --execution planned` Q4_K_M 8t: **CB=1 13.55 /
   CB=2 11.63 / CB=4 7.51 tps** (round 1; round 2 10.33 / 9.94 / 6.77).
 - Conclusion: **CB=1 is the default**. The kernels are FMA/issue-bound,
@@ -217,16 +217,16 @@ The v0.3 prefill path (`rows > 1`) was catastrophic: 4.7 tok/s vs llama.cpp
 121-132 tok/s (a 28x gap). The old kernels had the same anti-patterns the
 decode phase fixed, worse: for each output column they re-read every
 activation from L2, horizontal-reduced every 8 values, and
-read-modify-wrote `dst` per 8-value chunk — and prefill was never
+read-modify-wrote `dst` per 8-value chunk: and prefill was never
 parallelized (the generic path called the serial `matmul_k_into`).
 
 ### Implementation (`src/k_prefill.rs`)
 
 A register-blocked exact-f32 GEMM (AVX-512):
-- fixed (RT x CT) tiles with **compile-time loop bounds** — the first
+- fixed (RT x CT) tiles with **compile-time loop bounds**: the first
   attempt used runtime `acc[r][col]` indexing and the compiler spilled every
   accumulator to the stack (`vmovaps (%rsp)... / vfmadd / vmovaps ...(%rsp)`
-  per FMA — ~3 memory ops per FMA, ~10-15 GFLOPS). The macro-generated
+  per FMA: ~3 memory ops per FMA, ~10-15 GFLOPS). The macro-generated
   constant tiles keep all 16-32 accumulators in zmm registers (zero spills).
 - Q4_K main tile 4x4 (measured best of 4x2/2x4/4x4 via `EMBER_KPREFILL_TILE`),
   Q6_K tile 2x1, small fixed remainder tiles.
@@ -244,7 +244,7 @@ A register-blocked exact-f32 GEMM (AVX-512):
 |---|---|---|---|---|
 | llama-1B Q4_K_M | 4.7 tok/s | **36.4** (7.7x) | 121 | 3.3x |
 | llama-1B Q6_K | ~5.4 | **39.7** (~7.4x) | ~121 | ~3.0x |
-| qwen-1.5B Q4_K_M | — | **22.1** | 96.4 | 4.4x |
+| qwen-1.5B Q4_K_M | n/a | **22.1** | 96.4 | 4.4x |
 
 Isolated kernel (26 rows, 8 threads, aggregate): q 82 GFLOP/s, o 87,
 gate/up 71-74, down (Q6K) 100; single-thread ~20-28 GFLOPS (the
@@ -274,7 +274,7 @@ removed. Parallel scaling saturates at 3.6x on the 4 physical cores
 (hyperthreading adds nothing; task granularity 128-1024 cols is
 insensitive). llama.cpp's ~121 tok/s prefill implies ~300 GFLOP/s
 aggregate via VNNI (i8 activation quantization, 4x MACs per instruction)
-— outside the frozen exact-f32 Gate-B envelope, so the remaining 3.3x gap
+outside the frozen exact-f32 Gate-B envelope, so the remaining 3.3x gap
 is structural on this hardware, not a kernel deficiency.
 
 ### Remaining (ranked)
@@ -282,7 +282,7 @@ is structural on this hardware, not a kernel deficiency.
 1. Single-thread tile kernel efficiency (~20 GFLOPS; dequant port
    contention + x L1 re-reads); deeper unrolling or a hybrid
    dequant-once-two-level cache scheme.
-2. Parallel scaling caps at ~4x (8 threads) — memory contention on x
+2. Parallel scaling caps at ~4x (8 threads): memory contention on x
    re-reads/weights; larger per-task column tiles may help.
 3. Generic-path per-op Vec materialization for the non-matmul ops (silu,
-   norms, residual adds) — the Q8 path has the same overhead.
+   norms, residual adds): the Q8 path has the same overhead.

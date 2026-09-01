@@ -11,7 +11,7 @@
         <meta name="twitter:card" content="summary_large_image">
         <title>crossover point for CPU LLM decode · research notes</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
-        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
         <meta property="og:image:width" content="1200">
@@ -95,7 +95,7 @@
             during decode, a transformer produces one token at a time. each
             token passes through every layer: attention projections, MLP
             projections, RMS norms, rotary embeddings. most of that work is
-            matrix multiplication — small matmuls, one after another, each
+            matrix multiplication: small matmuls, one after another, each
             processing a single row of activations against a quantized weight
             matrix.
         </p>
@@ -131,7 +131,7 @@
         <p>
             <b>kernel-level</b>: run a synthetic sweep of
             <code>matmul_q8_0_decode</code> at six matrix sizes with a
-            fixed 1:3 aspect ratio (embed_dim : inter_dim ≈ 1:3). 100
+            fixed 1:3 aspect ratio (embed_dim: inter_dim ≈ 1:3). 100
             measurements per cell, median and coefficient-of-variation
             reported.
         </p>
@@ -156,11 +156,11 @@
             <tbody>
                 <tr>
                     <td>Qwen3-0.6B</td><td>1024</td><td>3072</td><td>6.3</td>
-                    <td>6.97 tok/s</td><td>6.48 (0.93×)</td><td>5.89 (0.85×)</td><td>—</td>
+                    <td>6.97 tok/s</td><td>6.48 (0.93×)</td><td>5.89 (0.85×)</td><td>n/a</td>
                 </tr>
                 <tr>
                     <td>LLaMA-3.2-1B</td><td>2048</td><td>5632</td><td>23.1</td>
-                    <td>2.84 tok/s</td><td>2.73 (0.96×)</td><td>2.78 (0.98×)</td><td>—</td>
+                    <td>2.84 tok/s</td><td>2.73 (0.96×)</td><td>2.78 (0.98×)</td><td>n/a</td>
                 </tr>
                 <tr>
                     <td>LLaMA-3.2-3B</td><td>3072</td><td>8192</td><td>50.3</td>
@@ -179,14 +179,14 @@
         <p>
             at 6.3 and 23.1 MFLOPs per matmul, threads are net-negative or
             break-even. Ember's <code>should_parallel_q8_decode</code> gate
-            returns false at these sizes — the matmul stays single-threaded
+            returns false at these sizes: the matmul stays single-threaded
             while the larger thread-pool configuration provides no useful
             parallel work and slightly regresses end-to-end throughput.
         </p>
 
         <p>
             at 50.3 MFLOPs, 2 threads give 1.46×, 4 threads give 1.56×.
-            8 threads regress to 1.48× with high variance — the CPU has only
+            8 threads regress to 1.48× with high variance: the CPU has only
             four physical cores; hyperthreads contend for cache and memory
             bandwidth.
         </p>
@@ -202,7 +202,7 @@
         <p>
             to sample the transition region, a kernel-only sweep was run on
             synthetic Q8_0 weights at six MFLOPs levels. the column
-            <code>ms/op</code> is median single-kernel latency — this is not
+            <code>ms/op</code> is median single-kernel latency: this is not
             full-model throughput.
         </p>
 
@@ -235,7 +235,7 @@
         <p>
             speedup = ms/op(1 thread) / ms/op(n threads). each cell: 100
             measurements. the synthetic harness bypasses Ember's per-call
-            <code>should_parallel_q8_decode</code> gate — it shows what the
+            <code>should_parallel_q8_decode</code> gate: it shows what the
             parallel kernel <em>would</em> deliver if always activated, not
             what a real model run currently does.
         </p>
@@ -277,7 +277,7 @@
         </table>
 
         <p>
-            at 14.2 MFLOPs, matmul latency is ~1.7 ms — scheduling overhead
+            at 14.2 MFLOPs, matmul latency is ~1.7 ms: scheduling overhead
             (~4 µs for 2 threads) is small in absolute terms. the real issue
             was the gate used at the time: it kept these small real-model calls
             serial. the current Q8×Q8 implementation has since lowered that
@@ -348,7 +348,7 @@ else:
         <p>
             llama.cpp's <code>llama-bench</code> gives end-to-end throughput
             numbers but does not break down per-operation scaling. the
-            synthetic sweep here is complementary — it measures the kernel in
+            synthetic sweep here is complementary: it measures the kernel in
             isolation to find the exact crossover.
         </p>
 

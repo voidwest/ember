@@ -51,13 +51,13 @@ deterministic.
    original);
 4. compares against the original and classifies:
 
-- `exact-semantic` — identical semantic hashes (same output directory
+- `exact-semantic`: identical semantic hashes (same output directory
   placement, bit-identical execution);
-- `exact` — identical tokens and exact captures;
-- `output-equivalent` — identical tokens, captures within the
+- `exact`: identical tokens and exact captures;
+- `output-equivalent`: identical tokens, captures within the
   float envelope;
-- `top1-equivalent` — only the final top-1 agrees;
-- `failed` — divergence or incompatibility.
+- `top1-equivalent`: only the final top-1 agrees;
+- `failed`: divergence or incompatibility.
 
 A run is never called reproduced merely because generated text matches
 while requested captures differ.

@@ -1,7 +1,7 @@
-# EmberSEC Phase V — Quantized Inference Security: Faults, Determinism, Integrity
+# EmberSEC Phase V: Quantized Inference Security: Faults, Determinism, Integrity
 
 **Status:** landed (main, freeze tag `embersec-freeze-2026-08-31`); Threat model and measured findings below; all measurements
-are from the hermetic, deterministic test harness (synthetic seeded blocks —
+are from the hermetic, deterministic test harness (synthetic seeded blocks :
 no model files required).
 
 ---
@@ -31,9 +31,9 @@ SHA-256 in run manifests, bundle payload hashes); this phase covers the
 determines the damage:
 
 - **Payload byte** (quants): the affected dequantized values change by one
-  or a few quantization steps — bounded logit drift, no crash.
+  or a few quantization steps: bounded logit drift, no crash.
 - **Scale/header byte** (f16 `d`/`min`, or int8 scales): a single bit can
-  turn the scale into NaN/Inf, or flip its sign — unbounded drift and
+  turn the scale into NaN/Inf, or flip its sign: unbounded drift and
   non-finite logits.
 - **Layout byte** (length/shape): impossible to corrupt silently; the
   constructors enforce exact block-count math and would reject the tensor.
@@ -45,8 +45,8 @@ determines the damage:
 | Q4_K payload (bit 3 of every nibble byte) | 1024 | 0.0011 | 0.0098 / 0.32 | 5748 | never |
 | Q6_K payload (bit 3 of every quant byte) | 1536 | 0.0104 | 0.085 / 0.16 | 797 | never |
 | Q8_0 payload (bit 5 of one quant byte/block) | 8 | 0.0405 | 0.052 | 0.67 | never |
-| Q4_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | — | — | — | 8 block hits (bit 14) |
-| Q6_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | — | — | — | 8 block hits (bit 14) |
+| Q4_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | n/a | n/a | n/a | 8 block hits (bit 14) |
+| Q6_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | n/a | n/a | n/a | 8 block hits (bit 14) |
 
 **Interpretation.** Payload faults are graceful degradation: median logit
 drift is ~0.1-4% relative, top-1 flips only when the pristine margin is
@@ -94,14 +94,14 @@ injection.
 
 ## 6. Recommendations
 
-1. Keep the CLI's non-finite logit validation (structured bail) — it is the
+1. Keep the CLI's non-finite logit validation (structured bail): it is the
    crash-safe boundary for the scale-fault class.
 2. For long-running server contexts, run with `EMBER_VERIFY_QUANT=1` once at
    load; the one-pass cost is negligible relative to model load.
 3. If top-1 stability under payload faults matters (e.g., benchmarking),
    margin-aware reporting (already the pilot methodology) is the right tool;
    do not add redundancy to the quant formats for this threat.
-4. Determinism: no change needed — the existing serial ≡ parallel and
+4. Determinism: no change needed: the existing serial ≡ parallel and
    scalar ≡ SIMD parity tests are the contract; the harness reuses the same
    kernels so fault measurements and determinism guarantees share one code
    path.

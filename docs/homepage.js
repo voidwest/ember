@@ -87,7 +87,7 @@
                 }
                 const day = date.format(new Date(`${cell.date}T00:00:00Z`));
                 tooltip.textContent = arabic
-                    ? `${number.format(cell.count)} مساهمة — ${day}`
+                    ? `${number.format(cell.count)} مساهمة: ${day}`
                     : cell.count === 0
                         ? `No contributions on ${day}`
                         : `${number.format(cell.count)} contribution${cell.count === 1 ? "" : "s"} on ${day}`;

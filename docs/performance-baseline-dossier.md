@@ -1,4 +1,4 @@
-# Ember performance baseline dossier — batch-1 decode, prefill, startup
+# Ember performance baseline dossier: batch-1 decode, prefill, startup
 
 Status: baseline only. **No optimization was performed.** All numbers below
 were produced with the codebase at `f8e97a7` plus isolated profiling
@@ -34,28 +34,28 @@ Reproduce with `scripts/performance/profile_baseline.py`,
 
 1. **The whole decode is DRAM-bandwidth-bound.** Every token streams ~1.31 GB
    of quantized weights (MLP 856 MB + LM head 279 MB + QKV/O 178 MB) at a
-   measured 35.7 GB/s — at the machine's measured DRAM ceiling (28–40 GB/s).
+   measured 35.7 GB/s: at the machine's measured DRAM ceiling (28–40 GB/s).
    Kernel math is not the limit for Q8; bytes-per-token is. *(confidence:
-   high — per-op timing + per-token weight bytes + independent bandwidth probe)*
-2. **MLP gate/up/down projections: 18.2 ms/token (49.6%)** — three 16.8M-MAC
+   high: per-op timing + per-token weight bytes + independent bandwidth probe)*
+2. **MLP gate/up/down projections: 18.2 ms/token (49.6%)**: three 16.8M-MAC
    GEMVs per layer × 16 layers. Bandwidth-bound like everything else, but the
    largest single consumer. *(high)*
-3. **LM head: 6.24 ms/token (17.0%)** — one 262.7M-MAC GEMV (2048×128256).
+3. **LM head: 6.24 ms/token (17.0%)**: one 262.7M-MAC GEMV (2048×128256).
    A single operator. *(high)*
 4. **K-quant decode is ~8× below memory bandwidth (4.3 GB/s vs 35.7 GB/s).**
    The Q4_K_M/Q6_K kernels dequantize every weight block once per output
    column (no block reuse across columns) and only parallelize projections
    ≥ 8M MACs; q/k/v/o run serial and get *slower* with more threads. End
    result: planned K-quant decode 6.25 tps vs llama.cpp 42.2 tps on the same
-   file. *(high — direct comparison + per-op scaling)*
+   file. *(high: direct comparison + per-op scaling)*
 5. **Inter-op overhead grows with thread count: 1.8–6.3 ms/token (5–17%) on
-   the fast path at 8 threads** — ~80 rayon join/wake barriers per token,
-   plus a per-token 513 KB logits allocation/copy. *(medium — residual
+   the fast path at 8 threads**: ~80 rayon join/wake barriers per token,
+   plus a per-token 513 KB logits allocation/copy. *(medium: residual
    measurement; see section 2)*
 
 Prefill-specific: the generic prefill path materializes every intermediate
 (~1,700 allocations/token at decode; prefill similar per-row) and the K-quant
-prefill batch kernel is catastrophic (4.7 tok/s vs llama.cpp 131.9 tok/s —
+prefill batch kernel is catastrophic (4.7 tok/s vs llama.cpp 131.9 tok/s :
 28× behind).
 
 ### Top 5 suspected optimization opportunities
@@ -96,7 +96,7 @@ fixing K-quant, which currently wastes 8× of its bandwidth budget.
 
 ## 2. DECODE LATENCY BREAKDOWN
 
-### Llama-3.2-1B Q8_0, fast (workspace) path, 8 threads — 36.8 ms/token (27.2 tps, ctx 1→129)
+### Llama-3.2-1B Q8_0, fast (workspace) path, 8 threads: 36.8 ms/token (27.2 tps, ctx 1→129)
 
 From `bench-decode --profile-operators` (per-op medians × 16 layers):
 
@@ -122,7 +122,7 @@ the sum of ~80 rayon join/wake barriers, the per-token logits allocation
 (513 KB), and loop bookkeeping. Median-vs-mean bias bounds it between 2.8 and
 6.3 ms; a dedicated loop-instrumentation pass is the honest next step.
 
-### Llama-3.2-1B Q4_K_M, planned path, 8 threads — 160 ms/token (6.25 tps)
+### Llama-3.2-1B Q4_K_M, planned path, 8 threads: 160 ms/token (6.25 tps)
 
 | subsystem | ms/token | % |
 |---|---|---|
@@ -139,13 +139,13 @@ run serial; at 8 threads they cost as much as the parallelized gate
 (1.58 ms vs 1.65 ms per layer) and *regress* with thread count (1.18 ms @1 t
 → 1.58 ms @8 t).
 
-### Generic (hooked) path, Llama-3.2-1B Q8_0, 8 threads — 57.6 ms/token (trace-instrumented)
+### Generic (hooked) path, Llama-3.2-1B Q8_0, 8 threads: 57.6 ms/token (trace-instrumented)
 
 Shares are stable across baseline/capture/intervene (99.2% covered by spans):
 up 21.5%, gate 21.2%, lm_head 19.0%, down 15.8%, q 6.9%, o 6.4%, k 2.7%,
 v 2.6%, silu 1.6%, attention 1.4%, everything else < 1%. The generic path is
 **1.85× slower than the fast path** on the same model (57.6 vs 31 ms/token)
-— allocations + per-op dispatch + no workspace.
+allocations + per-op dispatch + no workspace.
 
 ### vs llama.cpp (identical files, 8 threads)
 
@@ -171,7 +171,7 @@ Q4 is faster than Q8 there *because it reads fewer bytes*.
 | qwen-1.5B Q8_0 generic | 33.3 | 0.50× (llama.cpp 66.1) |
 
 Op breakdown (llama Q8, 26 rows, trace): down 26.6%, up 24.4%, gate 23.6%,
-o 7.1%, q 6.9%, silu 2.8%, k/v 2.7% each, lm_head 1.6%, attention 0.5% —
+o 7.1%, q 6.9%, silu 2.8%, k/v 2.7% each, lm_head 1.6%, attention 0.5% :
 matmuls ≈ 94%. Prefill uses the generic tensor path (per-op Vec
 materialization); the batch Q8 matmul tiles rows 4-per-task. K-quant prefill
 uses the *serial* `matmul_k_into` batch loop (no parallelization at all for
@@ -184,7 +184,7 @@ Per-token (counting allocator; `bench-decode --allocations`):
 | path | alloc events/token (caller) | bytes/token | hot sites |
 |---|---|---|---|
 | llama Q8 fast | 3–5 | ~513 KB | `logits` Vec (128256×f32) in `forward_decode_with_workspace`; workspace is thread-local and reused (0 steady-state beyond logits) |
-| llama Q4 planned | 4 | ~514 KB | `dst.to_vec()` in the plan's Logits op (arena→owned tensor; arena itself is allocation-free — Gate E holds for the compute loop) |
+| llama Q4 planned | 4 | ~514 KB | `dst.to_vec()` in the plan's Logits op (arena→owned tensor; arena itself is allocation-free: Gate E holds for the compute loop) |
 | qwen Q8 generic | **1,695** | **6.5 MB** | every op materializes new Vecs (rms_norm, q/k/v/o, gate/up/down, rope, attention, logits) across 28 layers |
 
 Worker-thread allocations (global delta − caller): ~10 events and ~24 KB per
@@ -194,7 +194,7 @@ tiny (allocs balanced by frees).
 - Scratch reuse: fast path reuses a thread-local `Workspace`; planned path
   reuses a 20 MB arena (212 regions); generic path reuses nothing.
 - The one per-token allocation on fast/planned paths is the returned logits
-  tensor (~513 KB) — it is the API contract, not waste, but it is the only
+  tensor (~513 KB): it is the API contract, not waste, but it is the only
   remaining steady-state heap traffic and it is trivially removable with a
   caller-provided buffer.
 - Per-token alloc accounting adds no measurable timing perturbation
@@ -208,12 +208,12 @@ End-to-end decode scaling (median tps; RAYON_NUM_THREADS):
 |---|---|---|---|---|---|---|---|
 | llama Q8 fast | 11.86 | 19.79 | 24.95 | 26.68 | 27.10 | 27.17 | 2.29× |
 | qwen Q8 generic | 5.20 | 8.16 | 10.20 | 10.57 | 11.09 | 11.47 | 2.21× |
-| llama Q4 planned | 2.94 | 4.68 | — | 5.82 | — | 6.25 | 2.13× |
-| llama Q4 reference | 2.92 | 2.86 | — | 2.94 | — | 2.95 | 1.01× |
-| llama Q6 planned | 3.00 | 4.43 | — | 5.38 | — | 6.04 | 2.01× |
+| llama Q4 planned | 2.94 | 4.68 | n/a | 5.82 | n/a | 6.25 | 2.13× |
+| llama Q4 reference | 2.92 | 2.86 | n/a | 2.94 | n/a | 2.95 | 1.01× |
+| llama Q6 planned | 3.00 | 4.43 | n/a | 5.38 | n/a | 6.04 | 2.01× |
 
 - **4 physical threads ≈ saturation** on this host (Q8: +1.8% from 4→8 t).
-- **Reference (generic) K-quant path does not scale at all** — its matvec
+- **Reference (generic) K-quant path does not scale at all**: its matvec
   dispatch is serial per tensor; the 2.1× planned-vs-reference gap at 8 t is
   entirely the plan's column-parallel matvec (at 1 t they are identical:
   2.94 vs 2.92 tps → arena/plan overhead ≈ 0).
@@ -225,7 +225,7 @@ End-to-end decode scaling (median tps; RAYON_NUM_THREADS):
   1.1%→3.5% (planned). Small operators pay sync cost disproportionate to
   their work (e.g., a 1.6 µs RMSNorm between two 0.4 ms parallel matmuls).
 - The q8_matmul microbench (gate+up 2048×8192, hot cache): 2.14 ms @1 t,
-  1.15 @2 t, 0.69 @4 t, 0.63 @8 t — saturates at 4 threads; packed-paired
+  1.15 @2 t, 0.69 @4 t, 0.63 @8 t: saturates at 4 threads; packed-paired
   layout is 1.4–2.0× faster than the generic path and bit-identical.
 
 ## 6. KERNEL REPORT
@@ -246,7 +246,7 @@ Facts:
   at batch 1; prefill (rows=26) uses the tiled Q8 batch kernel.
 - Weights are **packed**: Q8_0 in VNNI-interleaved 16-row tiles (persistent,
   mmap-backed source, packed copy resident); K-quant stays **compressed on
-  mmap** and is dequantized per block *inside* the matvec — with no reuse
+  mmap** and is dequantized per block *inside* the matvec: with no reuse
   across output columns (each 256-element super-block is dequantized once per
   output column; scaling metadata is read repeatedly per column, adding
   traffic). Q4 planned achieves only 4.3 GB/s effective vs 35.7 GB/s Q8.
@@ -260,11 +260,11 @@ Facts:
 - KV cache: flat f16 `[layer][head][pos][head_dim]`, allocated once at
   `required_context`; head stride = `max_seq×head_dim` (e.g., 8.4 MB for
   llama ctx 131072), pos stride = head_dim (64). Full-context allocation for
-  llama-1B would be 4.3 GB (K+V) — generation caps the cache at
+  llama-1B would be 4.3 GB (K+V): generation caps the cache at
   prompt+generated length, keeping it small (≈3 MB for these runs).
 - Decode access pattern: one new (k,v) written per layer (`f32→f16`
   convert+copy, ~2.4 µs); attention reads the whole K/V prefix per layer with
-  head-stride jumps of `max_seq×head_dim` — strided, cache-hostile at large
+  head-stride jumps of `max_seq×head_dim`: strided, cache-hostile at large
   ctx, but the volume is small (KV ≈ 2 bytes/elem vs 1.06 bytes/elem × 16
   projections of weights).
 - Attention time scales linearly with ctx (40 µs/layer @ ctx 26 → 59 µs/layer
@@ -315,9 +315,9 @@ Same model/prompt/tokens, generate path, decode evals/s:
 | mode | llama Q8 fast, 1 t | llama Q8 fast, 8 t | qwen Q8 generic, 8 t |
 |---|---|---|---|
 | A. normal (hooks disabled) | 12.20 | 32.20 | 14.06 |
-| B. capture (after-attn+after-mlp, all 16 layers, every token — 32 records, 258 KB/token, verified in manifest) | 11.62–12.18 (noise-bound) | 32.16 | 14.38 |
+| B. capture (after-attn+after-mlp, all 16 layers, every token: 32 records, 258 KB/token, verified in manifest) | 11.62–12.18 (noise-bound) | 32.16 | 14.38 |
 | C. intervention (zero layer-8 attention output) + capture | 11.01–11.62 | 31.58 | 14.13 |
-| noop experiment attached (hooks_overhead bench, planned path Q6_K) | — | +4.0% | — |
+| noop experiment attached (hooks_overhead bench, planned path Q6_K) | n/a | +4.0% | n/a |
 
 - **Capture and intervention are effectively free at 8 threads (≤2%)** and at
   worst ~5% at 1 thread (noise-limited). The decode is bandwidth-bound; hook
@@ -327,7 +327,7 @@ Same model/prompt/tokens, generate path, decode evals/s:
   planned-path de-fusion when a hook is active → record buffering
   (serialized only at generation end).
 - Trace mode forces the generic path: op-level spans on the generic path are
-  1.85× slower than the fast path — the path switch, not the spans, is the
+  1.85× slower than the fast path: the path switch, not the spans, is the
   cost (spans cover 99.2% of generic-path time).
 - `hooks_overhead` on Q8 actually exercises the *planned* interpreter (Q8
   serial matvecs), not the fast path; use the generate-path numbers above for
@@ -341,7 +341,7 @@ Ranked by (expected impact, cost, risk, evidence quality):
    up to 5–6× on K-quant decode (6.25 → ~35 tps) and most of the 28× prefill
    gap; cost: high (new kernel core); risk: medium (must keep Gate A/B
    parity; a "dequant once per block, accumulate across a column tile"
-   restructure changes accumulation order — needs tolerance testing or
+   restructure changes accumulation order: needs tolerance testing or
    bit-preserving formulation); observability: low; evidence: high (4.3 vs
    30+ GB/s, llama.cpp 6.7× faster, q/o serial regression).
 2. **K-quant prefill batched kernel** (parallel row×column tiles, shared
@@ -365,12 +365,12 @@ Ranked by (expected impact, cost, risk, evidence quality):
    Impact: ~0.4 s of a 1.7–2.7 s startup; cost: low; risk: low.
 
 **Evaluation of the five named hypotheses:** batch-1 quantized GEMV
-specialization — *justified for K-quant* (the current kernel is the measured
+specialization: *justified for K-quant* (the current kernel is the measured
 bottleneck; Q8 GEMV is already specialized and at bandwidth); per-operator
-thread thresholds — *justified* (q/o regression, 17% sync residual);
-allocation-free steady-state decode — *already ~true* on fast/planned paths
-(one 513 KB logits alloc remains); persistent packed weights — *already done*
-for Q8; immutable model-specific execution plans — *already done and
+thread thresholds: *justified* (q/o regression, 17% sync residual);
+allocation-free steady-state decode: *already ~true* on fast/planned paths
+(one 513 KB logits alloc remains); persistent packed weights: *already done*
+for Q8; immutable model-specific execution plans: *already done and
 working*. **No IR/JIT/compiler-framework/architectural redesign is justified
 by this data.** The Q8 fast path should be left alone; the K-quant path and
 threading policy are where the measured problems are.
@@ -378,11 +378,11 @@ threading policy are where the measured problems are.
 ## 11. Files changed, commands, raw data
 
 Changed (all additive/isolated; full test suite green):
-- `src/alloc_counter.rs` — thread-local byte tracking
+- `src/alloc_counter.rs`: thread-local byte tracking
   (`count_allocations_with_bytes`); existing `count_allocations` unchanged.
-- `src/main.rs` — `bench-decode --allocations` flag.
-- `src/cli_commands.rs` — allocation report in bench-decode JSON.
-- `src/llama.rs` — `--profile-operators` now also times RMSNorm/RoPE/KV
+- `src/main.rs`: `bench-decode --allocations` flag.
+- `src/cli_commands.rs`: allocation report in bench-decode JSON.
+- `src/llama.rs`: `--profile-operators` now also times RMSNorm/RoPE/KV
   store/attention/SiLU/residual-adds/embedding on the fast path (guarded by
   the same flag; normal path unchanged).
 - `scripts/performance/{common,profile_baseline,startup_cold_warm,analyze}.py`

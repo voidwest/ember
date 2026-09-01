@@ -6,12 +6,12 @@ All artifacts in this report were produced by the repository's own tooling.
 
 ## Repository gates
 
-- `cargo fmt --all -- --check` — clean
-- `cargo check --all-targets` — clean
-- `cargo clippy --all-targets --all-features -- -D warnings` — clean
-- `cargo test --all-targets` — **161 passed** (23 new v0.2 tests), 7 ignored
+- `cargo fmt --all -- --check`: clean
+- `cargo check --all-targets`: clean
+- `cargo clippy --all-targets --all-features -- -D warnings`: clean
+- `cargo test --all-targets`: **161 passed** (23 new v0.2 tests), 7 ignored
   (docs), 0 failed
-- pytest — **27 passed**
+- pytest: **27 passed**
 
 New unit tests: npy reader round-trip + rejection, capture config parse /
 validation / filters / record cap / artifact determinism, patch target parse,
@@ -24,9 +24,9 @@ shape / dtype / missing / duplicate-refusal / JSON determinism.
 
 `--dump-logits` on "The capital of France is", compared bit-for-bit:
 
-- Qwen3-0.6B — **bit-identical** (max diff 0.0)
-- Llama-3.2-1B — **bit-identical**
-- Llama-3.2-3B — **bit-identical**
+- Qwen3-0.6B: **bit-identical** (max diff 0.0)
+- Llama-3.2-1B: **bit-identical**
+- Llama-3.2-3B: **bit-identical**
 
 No-experiment generation path (`run_single_prompt`, `DisabledHooks`) is
 structurally untouched; the bench-decode sanity run on the same binary:
@@ -40,11 +40,11 @@ Llama-3.2-1B (layer 6), prompt "The capital of France is", 4 tokens, greedy:
 - **Run A** (capture): generated ids `12095 13 576 6722` (qwen3) /
   `12366 13 578 469` (llama)
 - **Run B** (zero-layer-output L:mlp + capture): ids `279 6722 3283 315` /
-  `12366 11 323 279` — fully diverged from A
+  `12366 11 323 279`: fully diverged from A
 - **Run C** (patch A's activations back + capture): ids identical to A on
   both families
 - **A vs B**: `status=differs`, 0/8 identical, 8/8 differing
-- **A vs C**: `status=identical`, 8/8 identical — **logits bit-identical**
+- **A vs C**: `status=identical`, 8/8 identical: **logits bit-identical**
   (sha256-equal `[1, 151936]` after-logits records)
 
 PASS on both model families. Generated-text agreement alone was never used
@@ -64,7 +64,7 @@ as evidence; the artifact comparison is the criterion.
 - **Post-intervention capture**: run B's captured after-mlp record at the
   zeroed layer has abs_max exactly 0.0 (capture runs after the experiment).
 - **Dispatch provenance**: llama run records `prefill=generic`,
-  `decode=fast` per evaluation and per record — a mixed-path run is
+  `decode=fast` per evaluation and per record: a mixed-path run is
   represented explicitly, not collapsed to one value.
 
 ## Patch validation
@@ -96,7 +96,7 @@ as evidence; the artifact comparison is the criterion.
 
 ## Scope notes
 
-- Captured logits records (`after-logits`) are `[1, 151936]` — ~600 KB per
+- Captured logits records (`after-logits`) are `[1, 151936]`: ~600 KB per
   record; capture cost is bounded by `max_records` when set.
 - v0.2 deliberately unsupported: plugins, bindings, WASM, concurrent
   experiments, weight/KV mutation, backend/tokenizer replacement, async

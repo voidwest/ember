@@ -2,8 +2,8 @@
 
 `activation-patch` replaces one live activation during generation with a
 tensor captured from a previous run. It exists for controlled research
-interventions — restoring a zeroed contribution, transplanting a hidden
-state, ablating in reverse — not for inference optimization.
+interventions: restoring a zeroed contribution, transplanting a hidden
+state, ablating in reverse: not for inference optimization.
 
 **Patched runs are not comparable to ordinary benchmark runs.** Output from
 patched runs is research evidence with the patch provenance attached; never
@@ -30,11 +30,11 @@ ember ... --activation-patch runs/baseline/manifest.json \
 
 `--patch-target LAYER:STAGE:PHASE[:POSITION]`:
 
-- `LAYER` — layer index
-- `STAGE` — `before-layer`, `after-attention`, `after-mlp`, `after-layer`,
+- `LAYER`: layer index
+- `STAGE`: `before-layer`, `after-attention`, `after-mlp`, `after-layer`,
   `before-logits`, `after-logits`
-- `PHASE` — `prefill` or `decode`
-- `POSITION` — absolute decode position (optional)
+- `PHASE`: `prefill` or `decode`
+- `POSITION`: absolute decode position (optional)
 
 `--patch-target` is repeatable. `--activation-patch` conflicts with the other
 experiments; it can ride alongside `--capture-activations` (the captured
@@ -56,7 +56,7 @@ match is never chosen implicitly.
 At load time: artifact schema version, record dtype (`f32`) and byte order
 (little-endian), record shape vs. the manifest, and (at model load) layer
 range and hidden width. At hook time: the live tensor length must match the
-source exactly — patching a different prompt length or hidden size fails
+source exactly: patching a different prompt length or hidden size fails
 clearly instead of corrupting.
 
 ## The frozen restoration criterion
@@ -65,9 +65,9 @@ The reference workflow (`scripts/research_example_capture_patch.sh`) is:
 
 1. **A**: normal run with capture (baseline activations + logits)
 2. **B**: controlled intervention (`zero-layer-output`) with capture
-3. compare A vs B — must differ
+3. compare A vs B: must differ
 4. **C**: patch A's activation back into the same model/prompt
-5. compare A vs C — the frozen criterion: **all captured logits must be
+5. compare A vs C: the frozen criterion: **all captured logits must be
    bit-identical (sha256-equal)** to A's, because the patch restores the
    exact pre-intervention tensor and the downstream computation is
    deterministic.
@@ -76,7 +76,7 @@ Generated text equality alone is **not** sufficient evidence; the artifact
 comparison is the criterion. If bit-identical restoration is ever not
 achievable in an environment (nondeterministic kernels, changed binaries),
 the degraded fallback is max abs diff ≤ 1e-5 and cosine ≥ 0.99999 on the
-final-position logits, documented as such — never asserted silently.
+final-position logits, documented as such: never asserted silently.
 
 ## Failure modes
 

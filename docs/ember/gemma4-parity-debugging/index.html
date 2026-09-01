@@ -11,7 +11,7 @@
     <meta name="twitter:card" content="summary">
     <title>when the logits lie · gemma 4 gguf debugging</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
-        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
         <!-- docs:og-image start -->
         <meta property="og:image" content="https://voidwest.dev/og/ember.png">
         <meta property="og:image:width" content="1200">
@@ -133,10 +133,10 @@
           <tr><th>prompt</th><th>llama cosine</th><th>qwen3 cosine</th></tr>
         </thead>
         <tbody>
-          <tr><td>"Hello"</td><td class="num hi">0.99991</td><td class="num">—</td></tr>
+          <tr><td>"Hello"</td><td class="num hi">0.99991</td><td class="num">n/a</td></tr>
           <tr><td>"Hello world"</td><td class="num hi">0.99986</td><td class="num hi">0.99979</td></tr>
           <tr><td>"كتب الطالب"</td><td class="num hi">0.99984</td><td class="num hi">0.99974</td></tr>
-          <tr><td>"الطالبات كتبن"</td><td class="num">—</td><td class="num hi">0.99955</td></tr>
+          <tr><td>"الطالبات كتبن"</td><td class="num">n/a</td><td class="num hi">0.99955</td></tr>
         </tbody>
       </table>
     </div>
@@ -651,9 +651,9 @@ python3 scripts/compare_layer_dumps.py \
         <tbody>
           <tr><td>llama 3.2 1b</td><td class="num">7</td><td class="num hi">0.99947–0.99992</td><td>yes</td><td class="num">0.36</td></tr>
           <tr><td>qwen3 0.6b</td><td class="num">5</td><td class="num hi">0.99955–0.99979</td><td>yes</td><td class="num">0.59</td></tr>
-          <tr><td>gemma 4 e2b (early, flat logits)</td><td class="num">1</td><td class="num">0.18</td><td>no</td><td class="num">—</td></tr>
+          <tr><td>gemma 4 e2b (early, flat logits)</td><td class="num">1</td><td class="num">0.18</td><td>no</td><td class="num">n/a</td></tr>
           <tr><td>gemma 4 e2b (intermediate)</td><td class="num">1</td><td class="num">0.67</td><td>no</td><td class="num">31.7</td></tr>
-          <tr><td>gemma 4 e2b (after fixes)</td><td class="num">1</td><td class="num">~0.87</td><td>no</td><td class="num">—</td></tr>
+          <tr><td>gemma 4 e2b (after fixes)</td><td class="num">1</td><td class="num">~0.87</td><td>no</td><td class="num">n/a</td></tr>
         </tbody>
       </table>
     </div>

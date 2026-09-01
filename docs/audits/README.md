@@ -107,14 +107,14 @@ audit record.
 These documents are useful starting points, but they are not substitutes for
 the recurring records above:
 
-- [`docs/v03-execution-contracts.md`](../v03-execution-contracts.md) — frozen
+- [`docs/v03-execution-contracts.md`](../v03-execution-contracts.md): frozen
   Q4_K/Q6_K execution and parity contract.
-- [`docs/cleanup-audit-validation.md`](../cleanup-audit-validation.md) — a
+- [`docs/cleanup-audit-validation.md`](../cleanup-audit-validation.md): a
   historical cleanup validation report and its controlled benchmark protocol.
-- [`docs/validation.md`](../validation.md) — current evidence status and the
+- [`docs/validation.md`](../validation.md): current evidence status and the
   research validation ladder.
 - [`docs/backend_validation.md`](../backend_validation.md) and
-  [`docs/activation_reference_checks.md`](../activation_reference_checks.md) —
+  [`docs/activation_reference_checks.md`](../activation_reference_checks.md) :
   numerical/reference-check orientation for runtime and research audits.
 
 If an orientation link is stale, fix the link or remove it in the same PR; do
