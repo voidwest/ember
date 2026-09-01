@@ -21,11 +21,25 @@ research write-up: https://voidwest.dev/ember
 - deterministic, verifiable experiment bundles
 - native and browser experiment consoles (`ember gui`, `ember web-gui`)
 - agentic tool-calling runtime with auditable research traces
+- hostile artifact/media boundary hardening, signed execution evidence, and
+  quantized-weight fault analysis
 - Arabic morphology and quantization research workflows
 
 Ember is not a llama.cpp throughput competitor. llama.cpp remains the
 external performance and correctness reference; Ember prioritizes
 inspectability, intervention semantics, and reproducible research artifacts.
+
+## EmberSEC
+
+[EmberSEC](docs/embersec/README.md) documents the security research program
+across hostile model artifacts, hostile media, reproducible and signed
+execution evidence, and quantized-inference faults (Phases I-V). The complete
+[frozen Phase I comparative evaluation](research/embersec/comparative/README.md)
+includes its 62-case corpus, isolated harnesses, differential fuzzing logs,
+results, tables, figures, and hashes. Its claims are deliberately bounded to
+observed structured rejection, crash/DoS surfaces, and measured experiments;
+it is not a security certification or a claim of demonstrated memory
+corruption in another runtime.
 
 ## five-minute workflow
 

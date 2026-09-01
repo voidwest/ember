@@ -60,6 +60,7 @@ docs/plots/root_probe_scale_comparison.png
 !docs/research.md
 !docs/kv-snapshots.md
 !docs/kv-transfer-research.md
+!docs/embersec/*.md
 !/KV_ARCHITECTURE_AUDIT.md
 !/KV_FIRST_CLASS_PLAN.md
 !/CODE_CHANGES_KV_SNAPSHOT.md
@@ -137,10 +138,15 @@ artifacts/golden-v03/**/*.bin
 /docs/f9c1d7cc-*.png
 /docs/vault-*/**/*.pdf
 
-# local research artifacts (EmberSEC comparative eval, pilots, fuzz corpora).
-# The security harness is injected into worktrees by
-# research/embersec/comparative/run_eval.py and is intentionally not committed.
-/research/
+# Local research artifacts (pilots and working corpora) stay ignored. The
+# frozen EmberSEC Phase I comparative record, including its injected harness,
+# is intentionally published for reproducibility.
+/research/*
+!/research/embersec/
+/research/embersec/*
+!/research/embersec/comparative/
+!/research/embersec/comparative/**
+/research/embersec/comparative/**/__pycache__/
 # cargo-fuzz source is tracked; generated outputs and working corpora are not.
 /fuzz/*
 !/fuzz/

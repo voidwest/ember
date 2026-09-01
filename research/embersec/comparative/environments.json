@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "description": "Exact runtime environments for the EmberSEC comparative evaluation",
+  "host": {
+    "os": "Linux",
+    "machine": "x86_64",
+    "cpu_count": 8,
+    "ram_gb": 16,
+    "note": "thermally noisy host; short interleaved runs only"
+  },
+  "corpus": "research/embersec/comparative/corpus.json",
+  "targets": {
+    "ember-current": {
+      "kind": "ember",
+      "project": "ember",
+      "version": "0.6.2 + EmberSEC hardening (source 3ceb7039)",
+      "commit": "3ceb7039f117cece8e734049fb78d4f7b33b5ebf",
+      "branch": "embersec/secure-gguf-loader",
+      "toolchain": "rustc 1.92.0 (pinned via rust-toolchain.toml)",
+      "build": "cargo build --release (default profile; panic=unwind; no debug asserts)",
+      "assertions_enabled": false,
+      "worktree": "clean worktree from branch embersec/secure-gguf-loader",
+      "harness": "research/embersec/comparative/harness/_embersec_harness.rs (copied to tests/)"
+    },
+    "ember-baseline": {
+      "kind": "ember",
+      "project": "ember",
+      "version": "0.6.2 (pre-EmberSEC)",
+      "commit": "1157277ef17044c461d2dfe0d560d6574b873c29",
+      "tag": "v0.6.2",
+      "toolchain": "rustc 1.92.0 (pinned via rust-toolchain.toml)",
+      "build": "cargo build --release (default profile; panic=unwind; no debug asserts)",
+      "assertions_enabled": false,
+      "worktree": "/tmp/ember-baseline",
+      "note": "parent of the first EmberSEC commit 2eacfda; already contains the pre-EmberSEC fail-closed loader checks (9e434df)"
+    },
+    "llama-cpp": {
+      "kind": "llama-cpp-loader",
+      "project": "llama.cpp (ggml-org)",
+      "version": "b7999",
+      "commit": "0c1f39a9ae68d502bc73b2901e6985ae9f4557a1",
+      "date": "2026-07 (b7999)",
+      "toolchain": "gcc 16.1.1, cmake 4.4.2",
+      "build": "Release, GGML_NATIVE=OFF, BUILD_SHARED_LIBS=OFF; reference/llama_loader CMake harness (llama_model_load_from_file, load + free, no generation)",
+      "assertions_enabled": true,
+      "binary": "/tmp/embersec-llama-loader-build/embersec_loader_check",
+      "args": [],
+      "note": "FINAL matrix target: pristine b7999 loader API (load + free, no generation). S1 submitted upstream as PR #26946; S2/S3 were already fixed upstream and S5 is mitigated. llama-cli-based b5999 results remain in results/llama-cpp-cli-b5999.json for the record."
+    },
+    "candle": {
+      "kind": "candle",
+      "project": "candle (huggingface)",
+      "version": "0.11.0",
+      "commit": "crates.io candle-core/candle-transformers 0.11.0",
+      "toolchain": "rustc 1.95.0 (cargo new default)",
+      "build": "cargo build --release (candle-core + candle-transformers, default-features=false)",
+      "assertions_enabled": false,
+      "binary": "/tmp/embersec-candle/target/release/candle-gguf-check",
+      "note": "Parser-level only (gguf_file::Content::read): header+metadata+tensor infos, no tensor data, no model construction. Semantic/model cases are expected to parse; NOT_COMPARABLE at the model level."
+    }
+  }
+}

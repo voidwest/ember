@@ -1,0 +1,1209 @@
+{
+  "schema_version": 1,
+  "description": "EmberSEC comparative hostile-input corpus (GGUF + tokenizer JSON)",
+  "generated_by": "research/embersec/comparative/gen_corpus.py",
+  "case_count": 62,
+  "cases": [
+    {
+      "id": "gguf-001",
+      "name": "valid-f32",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_f32",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "loads cleanly",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "8244581d6d0312d4219f6e972f070b9eacb9fb5ab9844f45c6aff8a9972c35ed",
+      "size_bytes": 128,
+      "notes": "single f32 tensor [2,4]"
+    },
+    {
+      "id": "gguf-002",
+      "name": "valid-f16",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_f16",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "loads cleanly",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "acf41cf10268769a04b04517b50fe69e75b993f5c4851dd4da554c6ec8ef6aae",
+      "size_bytes": 128,
+      "notes": ""
+    },
+    {
+      "id": "gguf-003",
+      "name": "valid-bf16",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_bf16",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "loads cleanly",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "0d90c368d1b172945c521bde8d674532a2b40f9eae636acb0ec1d9d61ca3d52a",
+      "size_bytes": 128,
+      "notes": ""
+    },
+    {
+      "id": "gguf-004",
+      "name": "valid-q8_0",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_q8_0",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "loads cleanly",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "tensor descriptors",
+        "quantization layout"
+      ],
+      "sha256": "8dffc38ddb53934b3bb95391d0ade1d9bff022205ede89b4965e5e8b84bb31fe",
+      "size_bytes": 164,
+      "notes": ""
+    },
+    {
+      "id": "gguf-005",
+      "name": "valid-q4_k",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_q4_k",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "loads cleanly",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "tensor descriptors",
+        "quantization layout"
+      ],
+      "sha256": "49631fcadf20d2ebeb28c3390de180f6f12329da81adf41511eabc36cfddada7",
+      "size_bytes": 384,
+      "notes": ""
+    },
+    {
+      "id": "gguf-006",
+      "name": "valid-q6_k",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_q6_k",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "loads cleanly",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "tensor descriptors",
+        "quantization layout"
+      ],
+      "sha256": "c6e7f33e921d8d70f5001c4cf85131690ef822193d4f37e1db60c5595067357c",
+      "size_bytes": 516,
+      "notes": ""
+    },
+    {
+      "id": "gguf-007",
+      "name": "valid-metadata",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_metadata",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "loads cleanly",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "metadata",
+        "strings/arrays"
+      ],
+      "sha256": "9fa1976aa8071be4321ccda4de1a6dad27bb98f890de74e87e2185a45a5a474e",
+      "size_bytes": 224,
+      "notes": ""
+    },
+    {
+      "id": "gguf-008",
+      "name": "valid-eof-exact",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_eof_exact",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "tensor data ending exactly at EOF loads",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "extent arithmetic"
+      ],
+      "sha256": "c69fd55bc8b1014c19af8d959cfcd7fff801bd07b0c812845ec17bcf59cef9ae",
+      "size_bytes": 160,
+      "notes": ""
+    },
+    {
+      "id": "gguf-009",
+      "name": "valid-two-tensors",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/valid_two_tensors",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "disjoint tensors load",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "tensor descriptors",
+        "overlap/range"
+      ],
+      "sha256": "40c054f5add9e98fb8e9470c1dc3d06c64021276afe3673bfc9a993e07216049",
+      "size_bytes": 192,
+      "notes": ""
+    },
+    {
+      "id": "gguf-010",
+      "name": "bad-magic",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/bad_magic",
+      "origin": "regression fixture",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "header/count"
+      ],
+      "sha256": "9d908ecfb6b256def8b49a7c504e6c889c4b0e41fe6ce3e01863dd7b61a20aa0",
+      "size_bytes": 24,
+      "notes": ""
+    },
+    {
+      "id": "gguf-011",
+      "name": "unsupported-version",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/bad_version",
+      "origin": "regression fixture",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "header/count"
+      ],
+      "sha256": "69cb86ffffe1039003092edf0dc9415a36b5016eae5f93b7300f97e7fe67dcd9",
+      "size_bytes": 24,
+      "notes": ""
+    },
+    {
+      "id": "gguf-012",
+      "name": "huge-tensor-count",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/huge_tensor_count",
+      "origin": "fuzz corpus seed",
+      "bug_class": "G",
+      "expected_security_property": "count rejected before allocation",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "header/count"
+      ],
+      "sha256": "e96aa52c3d88f7a1fc6e5ec721a9e87725237e40e767491bebfceab9534924cc",
+      "size_bytes": 24,
+      "notes": ""
+    },
+    {
+      "id": "gguf-013",
+      "name": "huge-kv-count",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/huge_kv_count",
+      "origin": "fuzz corpus seed",
+      "bug_class": "G",
+      "expected_security_property": "count rejected before allocation",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "header/count",
+        "metadata"
+      ],
+      "sha256": "3eb0a7093dca586cc74d3f16f1536aae80167948df102fd636a0e84f94c9bc50",
+      "size_bytes": 24,
+      "notes": ""
+    },
+    {
+      "id": "gguf-014",
+      "name": "truncated-header",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/truncated_header",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "header/count"
+      ],
+      "sha256": "527ee9a8eac07fc69af277c264ea5bf5c0f037c442b5c3336c18aa10d2096bd6",
+      "size_bytes": 8,
+      "notes": ""
+    },
+    {
+      "id": "gguf-015",
+      "name": "truncated-tensor-data",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/truncated_tensor_data",
+      "origin": "fuzz corpus seed",
+      "bug_class": "B",
+      "expected_security_property": "range past EOF rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "extent arithmetic"
+      ],
+      "sha256": "47de1b5e6059625f7c0fb4290385e7612c8a0d0a5377266512e214b9782fbff4",
+      "size_bytes": 116,
+      "notes": ""
+    },
+    {
+      "id": "gguf-016",
+      "name": "offset-past-eof",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/offset_past_eof",
+      "origin": "fuzz corpus seed",
+      "bug_class": "B",
+      "expected_security_property": "range past EOF rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "extent arithmetic"
+      ],
+      "sha256": "8e8b1354dea6dfb632d46db47fc8a38f8ea608096be3915ddb0b619208bcf0bd",
+      "size_bytes": 120,
+      "notes": ""
+    },
+    {
+      "id": "gguf-017",
+      "name": "offset-u64-max",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/offset_overflow",
+      "origin": "fuzz corpus seed",
+      "bug_class": "B",
+      "expected_security_property": "offset overflow rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "extent arithmetic"
+      ],
+      "sha256": "92997e309809a696d79c8fd14b7bfcdaae0f439104e0b3bbc895ca8201d2c949",
+      "size_bytes": 72,
+      "notes": ""
+    },
+    {
+      "id": "gguf-018",
+      "name": "dim-product-overflow",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/dim_product_overflow",
+      "origin": "fuzz corpus seed",
+      "bug_class": "B",
+      "expected_security_property": "product overflow rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "extent arithmetic",
+        "tensor descriptors"
+      ],
+      "sha256": "c481af3777d550795e0d5762ff2e73282ef2c54c745e0edd241db3f26ad93639",
+      "size_bytes": 96,
+      "notes": ""
+    },
+    {
+      "id": "gguf-019",
+      "name": "rank-zero",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/rank_zero",
+      "origin": "fuzz corpus seed",
+      "bug_class": "D",
+      "expected_security_property": "invalid rank rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "f30ba02ed2c3fb9d730e30b1a18c653c62e482c039ff53a68cb9c907507954d6",
+      "size_bytes": 64,
+      "notes": ""
+    },
+    {
+      "id": "gguf-020",
+      "name": "rank-five",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/rank_five",
+      "origin": "fuzz corpus seed",
+      "bug_class": "D",
+      "expected_security_property": "invalid rank rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "8408bf6a5450d951b25ba3a506afb72db4ec74243f177d043d072db47929d060",
+      "size_bytes": 96,
+      "notes": ""
+    },
+    {
+      "id": "gguf-021",
+      "name": "zero-dimension",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/zero_dim",
+      "origin": "fuzz corpus seed",
+      "bug_class": "D",
+      "expected_security_property": "zero dim rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "f200bdec8c12c0ac6cc26993d2901af54c3805aa0062a965259b9e88bba780ea",
+      "size_bytes": 96,
+      "notes": ""
+    },
+    {
+      "id": "gguf-022",
+      "name": "unsupported-dtype-99",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/unsupported_dtype",
+      "origin": "fuzz corpus seed",
+      "bug_class": "J",
+      "expected_security_property": "clean rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "2675c7ae7a6c59d5889cb2cb2e5708207b763ec49f3924630d0f50bd09de4c4b",
+      "size_bytes": 128,
+      "notes": ""
+    },
+    {
+      "id": "gguf-023",
+      "name": "q4_0-unimplemented",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/q4_0_unimplemented",
+      "origin": "fuzz corpus seed",
+      "bug_class": "J",
+      "expected_security_property": "clean rejection (Ember does not support q4_0)",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "Ember-unsupported",
+      "coverage": [
+        "tensor descriptors",
+        "quantization layout"
+      ],
+      "sha256": "5553207932b253d37cdb66c8e441bbde539f6c7246cbd799a2f95dc86e3f65c7",
+      "size_bytes": 160,
+      "notes": "llama.cpp supports q4_0; not a defect in either runtime"
+    },
+    {
+      "id": "gguf-024",
+      "name": "q8_0-dim-misaligned",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/q8_0_dim_misaligned",
+      "origin": "fuzz corpus seed",
+      "bug_class": "D",
+      "expected_security_property": "contiguous dim must be 32-aligned",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "quantization layout"
+      ],
+      "sha256": "23f857f84279b130ab7e22b8e44ce53ad894c9aa270fd329bab86b999c12aa2f",
+      "size_bytes": 1184,
+      "notes": "full-payload fixture; baseline rejects later at the compressed constructor, current rejects at the validation gate (same outcome, earlier stage)"
+    },
+    {
+      "id": "gguf-025",
+      "name": "q4_k-dim-misaligned",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/q4_k_dim_misaligned",
+      "origin": "regression fixture",
+      "bug_class": "D",
+      "expected_security_property": "contiguous dim must be 256-aligned (llama.cpp ne[0] % QK_K == 0)",
+      "pre_hardening_behavior": "SEMANTIC_MISINTERPRETATION",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "quantization layout"
+      ],
+      "sha256": "15b492cfb468199e84f47dec81054295742fb911221c54ac6a2c2075450e2647",
+      "size_bytes": 384,
+      "notes": "full-payload fixture; BASELINE accepts on the eager K path and dequantizes with a non-compliant block order; headline layout-gap finding"
+    },
+    {
+      "id": "gguf-026",
+      "name": "q4_k-truncated",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/q4_k_truncated",
+      "origin": "fuzz corpus seed",
+      "bug_class": "B",
+      "expected_security_property": "range past EOF rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "extent arithmetic",
+        "quantization layout"
+      ],
+      "sha256": "1d5a13e98400675a99a391d23477812aa256cba3fdc48c2a2977dc1fec55a89d",
+      "size_bytes": 240,
+      "notes": ""
+    },
+    {
+      "id": "gguf-027",
+      "name": "overlapping-ranges",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/overlap",
+      "origin": "fuzz corpus seed",
+      "bug_class": "B",
+      "expected_security_property": "overlap rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "overlap/range"
+      ],
+      "sha256": "36717bdd0ca06edf5eb804868e238383118a1683158046cb1f5a0b58c42fb31c",
+      "size_bytes": 152,
+      "notes": ""
+    },
+    {
+      "id": "gguf-028",
+      "name": "duplicate-tensor-name",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/duplicate_name",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "duplicate rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "7452cce844d3bf261892c606900361671788699fa3c760dea360c4c0673065a0",
+      "size_bytes": 188,
+      "notes": ""
+    },
+    {
+      "id": "gguf-029",
+      "name": "huge-string-length",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/huge_string_len",
+      "origin": "fuzz corpus seed",
+      "bug_class": "G",
+      "expected_security_property": "string length rejected before allocation",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "strings/arrays"
+      ],
+      "sha256": "82d2c4e2f5a11840a3f9fbb503274f6cc1cecf86fc82bb56719eb9db6475b99b",
+      "size_bytes": 45,
+      "notes": ""
+    },
+    {
+      "id": "gguf-030",
+      "name": "string-longer-than-file",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/string_longer_than_file",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "strings/arrays"
+      ],
+      "sha256": "ffe3f1b966c55cd7ed670a6048356ba5e26db77f570641ba75f2441a6440bf14",
+      "size_bytes": 45,
+      "notes": ""
+    },
+    {
+      "id": "gguf-031",
+      "name": "huge-array-count",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/huge_array_count",
+      "origin": "fuzz corpus seed",
+      "bug_class": "G",
+      "expected_security_property": "array count rejected before allocation",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "strings/arrays"
+      ],
+      "sha256": "2b4e9483b0db7b7b0ff6574c36e2857b5e1e4266b17053154f7b5e0c14c12ea8",
+      "size_bytes": 49,
+      "notes": ""
+    },
+    {
+      "id": "gguf-032",
+      "name": "deep-nested-arrays",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/deep_nested_arrays",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "depth cap enforced",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "metadata",
+        "strings/arrays"
+      ],
+      "sha256": "0f0c2f4ee5d1afb67d4582a4a293dfcd7f54f5cee3100042cf5c5a44c96c9a2c",
+      "size_bytes": 258,
+      "notes": ""
+    },
+    {
+      "id": "gguf-033",
+      "name": "bad-bool-metadata",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/bad_bool",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "invalid bool rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "metadata"
+      ],
+      "sha256": "f06f982b157840ac3961a13da63ff458528baa4c460b6b1582da7f9cd31a1139",
+      "size_bytes": 38,
+      "notes": ""
+    },
+    {
+      "id": "gguf-034",
+      "name": "bad-metadata-value-type",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/bad_value_type",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "unknown value type rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "metadata"
+      ],
+      "sha256": "65332c9a5bdf94a263a1c21cac13267177fbf845fb02004b1b2e68891a865f0c",
+      "size_bytes": 37,
+      "notes": ""
+    },
+    {
+      "id": "gguf-035",
+      "name": "empty-metadata-key",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/empty_key",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "empty key rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "metadata"
+      ],
+      "sha256": "2cef2535ce942753bc61a01c22b2f50bad84fc8b5945f487a2542d42bbb81ced",
+      "size_bytes": 37,
+      "notes": ""
+    },
+    {
+      "id": "gguf-036",
+      "name": "bad-alignment",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/bad_alignment",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "non-power-of-two alignment rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "metadata",
+        "extent arithmetic"
+      ],
+      "sha256": "6e08a971b257a09d6fc16ba0e82e524967ef446a45eba93ca052e65a62f915ee",
+      "size_bytes": 57,
+      "notes": ""
+    },
+    {
+      "id": "gguf-037",
+      "name": "empty-tensor-name",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/empty_tensor_name",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "empty name rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tensor descriptors"
+      ],
+      "sha256": "a27c70debe4630505b96b27f580bc839bd1940c5c19017766db6dbb3e3715b09",
+      "size_bytes": 56,
+      "notes": ""
+    },
+    {
+      "id": "gguf-038",
+      "name": "offset-plus-size-overflow",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/range_overflow.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "B",
+      "expected_security_property": "start+byte_len wrap rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "extent arithmetic"
+      ],
+      "sha256": "98f28b340cb481f479bca849dce6c76647c2b823c3c559e29be3f4b582c2f217",
+      "size_bytes": 64,
+      "notes": ""
+    },
+    {
+      "id": "gguf-039",
+      "name": "huge-dimension-past-eof",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/huge_dim_past_eof.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "B",
+      "expected_security_property": "huge extent rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "extent arithmetic"
+      ],
+      "sha256": "7c23c97a715081c8f6a7f07edff5894f9d49dbbb73415ee20764755456d66269",
+      "size_bytes": 64,
+      "notes": ""
+    },
+    {
+      "id": "gguf-040",
+      "name": "tensor-count-above-abs-cap",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/count_above_abs_cap.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "G",
+      "expected_security_property": "count above named cap rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "header/count"
+      ],
+      "sha256": "8a52817a8994792b8b6f5cae6f1cf0688aed26296c214ff470c118526044db97",
+      "size_bytes": 24,
+      "notes": "baseline's file-relative bound also fires on this tiny file; the absolute cap is the EmberSEC addition"
+    },
+    {
+      "id": "gguf-041",
+      "name": "tiny-llama-valid",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_valid.bin",
+      "origin": "regression fixture",
+      "bug_class": "control",
+      "expected_security_property": "loads and builds a model",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "model construction",
+        "architecture metadata"
+      ],
+      "sha256": "40538313cf33c3dfc3a7ba1dae17d5f575c38aee2854c6f1ef8602bf7555c3c6",
+      "size_bytes": 3968,
+      "notes": ""
+    },
+    {
+      "id": "gguf-042",
+      "name": "llama-context-u32-max",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_hostile_ctx.bin",
+      "origin": "fuzz corpus seed",
+      "bug_class": "G",
+      "expected_security_property": "config cap rejects before rope allocation",
+      "pre_hardening_behavior": "PROCESS_CRASH",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "architecture metadata",
+        "model construction"
+      ],
+      "sha256": "adac72cd842796e24c6d23285890859a521481e259d4269fd4f996aa603ed66a",
+      "size_bytes": 3968,
+      "notes": "BASELINE: multi-TB vec! zero-fill thrashes; killed by harness timeout"
+    },
+    {
+      "id": "gguf-043",
+      "name": "llama-block-count-1m",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_hostile_layers.bin",
+      "origin": "fuzz corpus seed",
+      "bug_class": "G",
+      "expected_security_property": "layer cap rejects before block vector sizing",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "architecture metadata",
+        "model construction"
+      ],
+      "sha256": "ec4f299f351ee408dba64633c2daed8150395e9467cab2087e944e3a42ab5afa",
+      "size_bytes": 3968,
+      "notes": "baseline rejects at the first missing per-layer tensor but only after sizing the block vector"
+    },
+    {
+      "id": "gguf-044",
+      "name": "llama-missing-tensors",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_missing_tensors.bin",
+      "origin": "fuzz corpus seed",
+      "bug_class": "C",
+      "expected_security_property": "inventory gate reports all missing tensors",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "EMBER_SPECIFIC",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "model construction"
+      ],
+      "sha256": "533e6fd5ac04c40256f4c744677b42d381de1efdd4c32b371e6655347d9d3655",
+      "size_bytes": 102,
+      "notes": "baseline errors on the first missing tensor mid-construction; current lists all before allocating"
+    },
+    {
+      "id": "gguf-045",
+      "name": "llama-odd-key-length",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_odd_keylen.bin",
+      "origin": "fuzz-discovered class; canonical synthetic fixture",
+      "bug_class": "E",
+      "expected_security_property": "config rejects odd head_dim; no panic",
+      "pre_hardening_behavior": "PANIC",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "architecture metadata",
+        "model construction"
+      ],
+      "sha256": "01a1ee0adc2d22652a7824e3bca3bd95ace22a9926f115ab4d3217804ef0f230",
+      "size_bytes": 3968,
+      "notes": "fuzz-minimized artifact (key_length=1) panicked compute_rope_freqs in baseline"
+    },
+    {
+      "id": "gguf-046",
+      "name": "llama-1d-attn-q",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_1d_attn_q.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "E",
+      "expected_security_property": "1-D linear weight rejected; no transpose panic",
+      "pre_hardening_behavior": "PANIC",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "tensor descriptors",
+        "model construction"
+      ],
+      "sha256": "56423834720df5fa592bb58837f1283311e1a24863b917f31149e70f8a4ff98a",
+      "size_bytes": 3712,
+      "notes": ""
+    },
+    {
+      "id": "gguf-047",
+      "name": "llama-rope-product-cap",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_rope_product.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "G",
+      "expected_security_property": "rope table element product cap rejects",
+      "pre_hardening_behavior": "PROCESS_CRASH",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "architecture metadata",
+        "model construction"
+      ],
+      "sha256": "484b7653d85554a1fe53e2cec2c984513d1161e81bb06fe63cf2408aa749e7bc",
+      "size_bytes": 3968,
+      "notes": "individually legal caps whose product would drive a ~256 GiB rope table"
+    },
+    {
+      "id": "gguf-048",
+      "name": "llama-unknown-architecture",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_arch_gpt5.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "C",
+      "expected_security_property": "unknown architecture rejected",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "architecture metadata"
+      ],
+      "sha256": "cdef83e381f047b6d3abfc1539c322d835d897ec3b600c846e884a869d88fccb",
+      "size_bytes": 68,
+      "notes": ""
+    },
+    {
+      "id": "gguf-049",
+      "name": "llama-vocab-5m",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_hostile_vocab.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "C",
+      "expected_security_property": "vocab cap rejects",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "architecture metadata"
+      ],
+      "sha256": "9d75995c97ac7911d3750240b05c67ef895323e35aac73f6256c8b58faad605a",
+      "size_bytes": 3968,
+      "notes": ""
+    },
+    {
+      "id": "gguf-053",
+      "name": "alignment-zero",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/alignment_zero.bin",
+      "origin": "fuzz-discovered class; canonical synthetic fixture",
+      "bug_class": "A",
+      "expected_security_property": "alignment must be a non-zero power of two",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "metadata",
+        "extent arithmetic"
+      ],
+      "sha256": "ac4c8ef93b38e3a0b79fb69a54c74d92a7ec97e86a41cd9e964a9a5d36524990",
+      "size_bytes": 57,
+      "notes": "same bytes as the candle divide-by-zero panic input (S4): candle panics (div_ceil(0)), Ember and llama.cpp reject"
+    },
+    {
+      "id": "gguf-050",
+      "name": "tiny-llama-full-valid",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_llama_full.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "control",
+      "expected_security_property": "loads and builds on Ember; loads and generates on llama.cpp",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "model construction",
+        "architecture metadata",
+        "tokenizer JSON"
+      ],
+      "sha256": "6b4ade7042109acb4325fec39ba797fe01e70c1b11d915f452fd2b72303761c7",
+      "size_bytes": 25632,
+      "notes": "complete 1-layer llama with 264-token gpt2-style BPE vocab; llama.cpp loads it (requires byte tokens, merges key, 32-byte tensor alignment)"
+    },
+    {
+      "id": "gguf-051",
+      "name": "tiny-qwen3-full-valid",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_qwen3_full.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "control",
+      "expected_security_property": "loads and builds on Ember; loads and generates on llama.cpp",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "FULLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "model construction",
+        "architecture metadata",
+        "tokenizer JSON"
+      ],
+      "sha256": "8238be776625f10984571b03d04609e419920c9b88a62362cbe0b7647c586510",
+      "size_bytes": 25792,
+      "notes": "complete 1-layer qwen3 (qk norms included) with the same vocab"
+    },
+    {
+      "id": "gguf-052",
+      "name": "tiny-gemma4-full-valid",
+      "input_type": "GGUF",
+      "fixture": "fixtures/gguf/tiny_gemma4_full.bin",
+      "origin": "structured synthetic boundary case",
+      "bug_class": "control",
+      "expected_security_property": "loads and builds on Ember; llama.cpp b5999 lacks the gemma4 arch",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "PARTIALLY_COMPARABLE",
+      "format_status": "valid",
+      "coverage": [
+        "model construction",
+        "architecture metadata"
+      ],
+      "sha256": "b8746d6dd14c20693dc6e11d42b07260fb1f5191d6fd6f8a1c6f027ffffa12b9",
+      "size_bytes": 2624,
+      "notes": "complete 1-layer gemma4 for Ember; llama.cpp b5999 rejects with 'unknown model architecture: gemma4' (arch-support gap, not a defect)"
+    },
+    {
+      "id": "tok-001",
+      "name": "valid-mini-bpe",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/valid_mini_bpe.json",
+      "origin": "control",
+      "bug_class": "control",
+      "expected_security_property": "parses and encodes",
+      "pre_hardening_behavior": "ACCEPT",
+      "current_expected": "ACCEPT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "valid",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "10a74714662315c252fa84930083e36649213eab56f39bc8568a43ce1b5115b9",
+      "size_bytes": 401,
+      "notes": ""
+    },
+    {
+      "id": "tok-002",
+      "name": "decoder-invalid-utf8-26b",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/fuzz_decoder_invalid_utf8_26b.bin",
+      "origin": "fuzz-discovered minimized artifact (reconstructed)",
+      "bug_class": "F",
+      "expected_security_property": "malformed tokenizer JSON rejected; no panic",
+      "pre_hardening_behavior": "PANIC",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "7ebe2a69fbcae000fbfa4ce74c16cb4c0e51fb0b4a7267a5c7b2bd50e55af4f7",
+      "size_bytes": 26,
+      "notes": "exact 26-byte minimized reproducer of tokenizers-0.20.4 decoders/mod.rs:90 .expect(\"Helper\")"
+    },
+    {
+      "id": "tok-003",
+      "name": "decoder-bad-value-15b",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/fuzz_decoder_bad_value_15b.bin",
+      "origin": "fuzz-discovered minimized artifact (reconstructed)",
+      "bug_class": "F",
+      "expected_security_property": "malformed tokenizer JSON rejected; no panic",
+      "pre_hardening_behavior": "PANIC",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "60af269e6dce1457ccaaa7b0a7c9899ec3a1213db5de2820f32a8a77588c0a3e",
+      "size_bytes": 15,
+      "notes": "same upstream panic site, second minimized input"
+    },
+    {
+      "id": "tok-004",
+      "name": "decoder-invalid-utf8-nested",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/synth_decoder_invalid_utf8_nested.bin",
+      "origin": "fuzz-discovered class; canonical synthetic fixture",
+      "bug_class": "F",
+      "expected_security_property": "malformed tokenizer JSON rejected; no panic",
+      "pre_hardening_behavior": "PANIC",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "0865c6dfe6faca1cd87183733a27e906a6bfe94011ea31f657e2b1bf9efcc188",
+      "size_bytes": 35,
+      "notes": "same class as a 163-byte fuzz artifact whose bytes were not retained"
+    },
+    {
+      "id": "tok-005",
+      "name": "truncated-json",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/truncated.json",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "e4c0103138556c5477d45fd386bc428b270c0d3d14a6f1d8f838536946d4c201",
+      "size_bytes": 57,
+      "notes": ""
+    },
+    {
+      "id": "tok-006",
+      "name": "not-json",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/not_json.bin",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "8fde1f069125482093c9816eacba399df8419111201c5c73a8602f1d54dfe40c",
+      "size_bytes": 13,
+      "notes": ""
+    },
+    {
+      "id": "tok-007",
+      "name": "deep-nesting",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/deep_nesting.json",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "semantically hostile",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "12a4fe9b06b9b262869bdafd362f3b869c89d10d3a16bee13398e8850bb7c2fc",
+      "size_bytes": 466,
+      "notes": ""
+    },
+    {
+      "id": "tok-008",
+      "name": "bad-utf8-vocab",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/bad_utf8.json",
+      "origin": "fuzz corpus seed",
+      "bug_class": "A",
+      "expected_security_property": "structured rejection",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "format-invalid",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "1836cf3721357b0a1d39a98496ab8e2a2f133447c0ae2e294582ba9b520e5ce9",
+      "size_bytes": 60,
+      "notes": "invalid UTF-8 in a non-decoder field errors in baseline too (serde path, no panic)"
+    },
+    {
+      "id": "tok-009",
+      "name": "valid-json-unknown-top-level-key",
+      "input_type": "TOKENIZER_JSON",
+      "fixture": "fixtures/tokenizer/huge_declared.json",
+      "origin": "fuzz corpus seed",
+      "bug_class": "J",
+      "expected_security_property": "valid JSON, unsupported by the tokenizers crate (unknown top-level key)",
+      "pre_hardening_behavior": "STRUCTURED_REJECT",
+      "current_expected": "STRUCTURED_REJECT",
+      "semantic_comparability": "TOKENIZER_ONLY",
+      "format_status": "Ember-unsupported",
+      "coverage": [
+        "tokenizer JSON"
+      ],
+      "sha256": "8e9e175e853d20f5c2e0ecb2d97f36264ace3b65c4c248b2a90bd2923ff91e9f",
+      "size_bytes": 3062,
+      "notes": "the tokenizers crate rejects unknown top-level keys with a syntax-style error; not a defect in either build"
+    }
+  ]
+}

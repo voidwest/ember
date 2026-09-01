@@ -1,0 +1,5 @@
+target,ACCEPT,STRUCTURED_REJECT,PANIC,PROCESS_CRASH,TIMEOUT,NOT_COMPARABLE
+ember-baseline,15,40,5,1,1,0
+ember-current,14,48,0,0,0,0
+llama-cpp,2,49,0,2,0,9
+candle,39,13,1,0,0,9

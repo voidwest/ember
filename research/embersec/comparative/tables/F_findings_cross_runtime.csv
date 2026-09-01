@@ -1,0 +1,7 @@
+class,cases,bug_class,baseline,EmberSEC,llama.cpp,candle,note
+semantic config panic,gguf-045+gguf-046,E,PANIC/PANIC,STRUCTURED_REJECT/STRUCTURED_REJECT,STRUCTURED_REJECT/STRUCTURED_REJECT,ACCEPT/ACCEPT,odd head_dim / 1-D linear weight reach asserts in model construction
+layout misinterpretation,gguf-025,D,ACCEPT,STRUCTURED_REJECT,STRUCTURED_REJECT,ACCEPT,q4_k contiguous dim not 256-aligned: baseline eager-dequantizes; llama.cpp rejects by name
+resource amplification,gguf-042+gguf-047,G,TIMEOUT/PROCESS_CRASH,STRUCTURED_REJECT/STRUCTURED_REJECT,STRUCTURED_REJECT/STRUCTURED_REJECT,ACCEPT/ACCEPT,metadata-driven multi-TB rope allocation (ctx u32::MAX; 16M x 4096 product)
+zero-dim crash,gguf-021,D,STRUCTURED_REJECT,STRUCTURED_REJECT,PROCESS_CRASH,ACCEPT,zero tensor dimension: llama.cpp SIGFPE in gguf_init_from_file_impl
+empty metadata key,gguf-035,A,STRUCTURED_REJECT,STRUCTURED_REJECT,PROCESS_CRASH,ACCEPT,llama.cpp GGML_ASSERT(!key.empty()) abort at gguf.cpp:132
+alignment zero,gguf-053,A,STRUCTURED_REJECT,STRUCTURED_REJECT,STRUCTURED_REJECT,PANIC,candle div_ceil(0) panic; Ember and llama.cpp reject

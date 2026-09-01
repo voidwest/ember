@@ -1,0 +1,29 @@
+{
+  "mode": "raw",
+  "n_mutations": 10000,
+  "seed_cases": 53,
+  "rng_seed": 7,
+  "timeout_s": 8.0,
+  "per_target": {
+    "ember-current": {
+      "STRUCTURED_REJECT": 9119,
+      "ACCEPT": 881
+    },
+    "ember-baseline": {
+      "STRUCTURED_REJECT": 9083,
+      "ACCEPT": 917
+    },
+    "llama-cpp": {
+      "STRUCTURED_REJECT": 9603,
+      "ACCEPT": 196,
+      "PROCESS_CRASH": 197,
+      "TIMEOUT": 4
+    },
+    "candle": {
+      "STRUCTURED_REJECT": 6984,
+      "ACCEPT": 3010,
+      "PANIC": 6
+    }
+  },
+  "failure_inputs_saved": 166
+}

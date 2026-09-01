@@ -1,0 +1,3 @@
+build: 1 (1dc9614) with cc (GCC) 16.1.1 20260728 for x86_64-pc-linux-gnu
+main: llama backend init
+main: load the model and apply lora adapter, if any

@@ -1,0 +1,12 @@
+# Rejection cost (wall ms / peak RSS)
+
+| case | label | target | wall_ms_median | peak_rss_kb_median | file_size_bytes |
+|---|---|---|---|---|---|
+| gguf-041 | valid-tiny-llama | ember-current | 10.5 | 20712 | 3968 |
+| gguf-010 | bad-magic-early-reject | ember-current | 10.3 | 20840 | 24 |
+| gguf-042 | hostile-context-late-reject | ember-current | 10.4 | 20840 | 3968 |
+| real-model | Llama-3.2-1B-Instruct.Q8_0.gguf | ember-current | 1769.9 | 3937016 | 1321082624 |
+| gguf-041 | valid-tiny-llama | ember-baseline | 10.5 | 20504 | 3968 |
+| gguf-010 | bad-magic-early-reject | ember-baseline | 10.3 | 20632 | 24 |
+| gguf-042 | hostile-context-late-reject | ember-baseline | 30817.3 | None | 3968 |
+| real-model | Llama-3.2-1B-Instruct.Q8_0.gguf | ember-baseline | 2033.0 | 3936596 | 1321082624 |

@@ -1,0 +1,96 @@
+{
+  "target": "ember-baseline",
+  "commit": "1157277ef17044c461d2dfe0d560d6574b873c29",
+  "note": "wall ms / peak RSS KB per run; 3 runs",
+  "rows": [
+    {
+      "case": "gguf-041",
+      "label": "valid-tiny-llama",
+      "file_size_bytes": 3968,
+      "runs": [
+        [
+          10.5,
+          20352,
+          0
+        ],
+        [
+          10.5,
+          20504,
+          0
+        ],
+        [
+          10.4,
+          20504,
+          0
+        ]
+      ]
+    },
+    {
+      "case": "gguf-010",
+      "label": "bad-magic-early-reject",
+      "file_size_bytes": 24,
+      "runs": [
+        [
+          10.3,
+          20632,
+          1
+        ],
+        [
+          10.4,
+          20632,
+          1
+        ],
+        [
+          10.3,
+          20632,
+          1
+        ]
+      ]
+    },
+    {
+      "case": "gguf-042",
+      "label": "hostile-context-late-reject",
+      "file_size_bytes": 3968,
+      "runs": [
+        [
+          30926.6,
+          null,
+          -9
+        ],
+        [
+          30791.5,
+          null,
+          -9
+        ],
+        [
+          30817.3,
+          null,
+          -9
+        ]
+      ]
+    },
+    {
+      "case": "real-model",
+      "label": "Llama-3.2-1B-Instruct.Q8_0.gguf",
+      "file_size_bytes": 1321082624,
+      "sha256": "1b7f984d853990d1deb8b1f9be54a9eea3a3c05a955d6e74e97053f1c06d37e6",
+      "runs": [
+        [
+          3355.0,
+          3936596,
+          0
+        ],
+        [
+          1990.1,
+          3936512,
+          0
+        ],
+        [
+          2033.0,
+          3936660,
+          0
+        ]
+      ]
+    }
+  ]
+}
