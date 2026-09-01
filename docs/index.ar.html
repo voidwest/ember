@@ -1,111 +1,654 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="voidwest" />
-        <meta property="og:description" content="هندسة بحثية مستقلة في الأنظمة واللغة والتقييم." />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://voidwest.dev/index.ar.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
-        <title>voidwest</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
-        <link rel="stylesheet" href="/homepage.css?v=20260827-cv" />
-        <meta property="og:image" content="https://voidwest.dev/og/voidwest.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+        <meta property="og:title" content="voidwest">
+        <meta
+            property="og:description"
+            content="أنظمة استدلال محلية، ومنهجية تقييم، ومعالجة اللغة العربية، وملاحظات عن الأعطال بين هذه الأشياء."
+        >
+        <meta property="og:type" content="website">
+        <meta property="og:url" content="https://voidwest.dev/index.ar.html">
+        <meta property="og:site_name" content="voidwest">
+
+        <meta name="twitter:card" content="summary">
+
+        <title>voidwest · أنظمة الاستدلال وأبحاث التقييم</title>
+
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=20260901">
+        <link rel="stylesheet" href="/homepage.css?v=20260901-lab">
+
+        <meta property="og:image" content="https://voidwest.dev/og/voidwest.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/voidwest.png">
+
         <script src="/theme.js"></script>
+        <script src="/homepage.js" defer></script>
     </head>
+
     <body class="home">
         <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html" aria-current="page">voidwest</a>
+
             <div class="nav-links">
+                <a href="#recent">حديثًا</a>
+                <a href="#building">أبني</a>
+                <a href="#testing">أسئلة</a>
+                <a href="#writing">ملاحظات</a>
                 <a href="/ember/index.ar.html">ember</a>
-                <a href="/research-notes/index.ar.html">research notes</a>
-                <a href="/tools/index.ar.html">tools</a>
-                <a href="/terms/index.ar.html">terms</a>
-                <a href="/cv/index.ar.html">cv</a>
+                <a href="/cv/index.ar.html">عني</a>
             </div>
+
             <div class="nav-actions">
-                <a class="nav-lang" href="/">en</a>
-                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+                <a class="nav-lang" href="/" lang="en">en</a>
+
+                <button
+                    class="theme-toggle"
+                    type="button"
+                    aria-label="التبديل إلى الوضع الداكن"
+                    aria-pressed="true"
+                >
+                    <svg
+                        class="theme-icon theme-icon-moon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/>
+                    </svg>
+
+                    <svg
+                        class="theme-icon theme-icon-sun"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <circle cx="12" cy="12" r="4.2"/>
+                        <path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/>
+                    </svg>
+                </button>
             </div>
         </nav>
 
         <main>
-            <header class="home-masthead">
-                <p class="section-label">باحث مستقل</p>
-                <h1 id="hero-title">اللغة العربية، وتقييم النماذج،<br />وأنظمة الاستدلال.</h1>
-                <p class="home-intro">أستكشف معالجة اللغة العربية وتقييم النماذج وتحليل تمثيلاتها من خلال أبحاث دقيقة قابلة لإعادة الإنتاج.</p>
-                <div class="home-actions">
-                    <a class="text-link" href="/research-notes/index.ar.html">اقرأ ملاحظات البحث <span aria-hidden="true">←</span></a>
-                    <a class="text-link" href="/cv/index.ar.html">عرض السيرة الذاتية <span aria-hidden="true">←</span></a>
+            <svg
+                class="ambient-network"
+                viewBox="0 0 520 520"
+                aria-hidden="true"
+                focusable="false"
+            >
+                <g fill="none" stroke="currentColor">
+                    <path d="M34 372 Q198 126 498 166"/>
+                    <path d="M58 92 L182 42 L310 130 L466 70"/>
+                    <path d="M182 42 L236 234 L416 292 L466 70"/>
+                    <path d="M58 92 L126 278 L236 234 L330 452 L416 292"/>
+                </g>
+
+                <g fill="currentColor">
+                    <circle cx="58" cy="92" r="2"/>
+                    <circle cx="182" cy="42" r="3"/>
+                    <circle cx="310" cy="130" r="2"/>
+                    <circle cx="466" cy="70" r="2"/>
+                    <circle cx="126" cy="278" r="2"/>
+                    <circle cx="236" cy="234" r="3"/>
+                    <circle cx="330" cy="452" r="2"/>
+                    <circle cx="416" cy="292" r="3"/>
+                </g>
+            </svg>
+
+            <header class="lab-intro">
+                <div class="identity-block">
+                    <h1>محمد الثبيتي</h1>
                 </div>
+
+                <p class="intro-statement">
+                    أبني أنظمة استدلال محلية، وأدرس كيف تتصرف النماذج اللغوية،
+                    وأدقق في الأماكن التي قد تعطينا فيها أنظمة التقييم صورة خاطئة.
+                </p>
+
+                <p class="intro-copy">
+                    أغلب شغلي بين <bdi>Rust</bdi>، والاستدلال المكمّم على
+                    <bdi>CPU</bdi>، وتصميم التجارب، والصرف العربي.
+                    أختبر الافتراضات، وأتتبع سبب العطل من ملف النموذج إلى النواة،
+                    وبعدها أكتب وش اللي صار وليه.
+                </p>
+
+                <nav aria-label="الحسابات والتواصل" class="intro-links">
+                    <a
+                        aria-label="GitHub"
+                        href="https://github.com/voidwest"
+                        title="GitHub"
+                    >
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.88c-2.78.6-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.64 0 0 .84-.27 2.75 1.02A9.55 9.55 0 0 1 12 6.82a9.5 9.5 0 0 1 2.5.34c1.91-1.29 2.75-1.02 2.75-1.02.55 1.37.2 2.39.1 2.64.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.77c0 .27.18.58.69.48A10 10 0 0 0 12 2Z"></path>
+                        </svg>
+                        <span>GitHub</span>
+                    </a>
+
+                    <a
+                        aria-label="LinkedIn"
+                        href="https://www.linkedin.com/in/mthobaiti/"
+                        rel="me"
+                        title="LinkedIn"
+                    >
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M6.5 8.25H3.25V21H6.5V8.25ZM4.88 3A1.88 1.88 0 1 0 4.88 6.75 1.88 1.88 0 0 0 4.88 3ZM21 13.7c0-3.84-2.05-5.63-4.79-5.63-2.2 0-3.19 1.21-3.74 2.06V8.25H9.22V21h3.25v-6.31c0-1.66.31-3.27 2.37-3.27 2.03 0 2.05 1.9 2.05 3.38V21H21v-7.3Z"></path>
+                        </svg>
+                        <span>LinkedIn</span>
+                    </a>
+
+                    <a
+                        aria-label="البريد"
+                        href="mailto:mthobaiti@outlook.com"
+                        title="البريد"
+                    >
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M3 5h18v14H3V5Zm2 2v.35l7 5.25 7-5.25V7H5Zm14 10V9.85l-7 5.25-7-5.25V17h14Z"></path>
+                        </svg>
+                        <span>البريد</span>
+                    </a>
+
+                    <a
+                        aria-label="السيرة الذاتية"
+                        href="/cv/index.ar.html"
+                        title="السيرة الذاتية"
+                    >
+                        <svg aria-hidden="true" viewBox="0 0 24 24">
+                            <path d="M6 2h8l4 4v16H6V2Zm2 2v16h8V8h-4V4H8Zm6 .83V6h1.17L14 4.83ZM9 11h6v2H9v-2Zm0 4h6v2H9v-2Z"></path>
+                        </svg>
+                        <span>السيرة الذاتية</span>
+                    </a>
+                </nav>
             </header>
 
-            <section class="home-section" aria-labelledby="projects-title">
-                <h2 class="section-label" id="projects-title">المشاريع</h2>
+            <section
+                class="github-activity"
+                aria-labelledby="github-activity-title"
+            >
+                <div>
+                    <p id="github-activity-title">مساهماتي على GitHub</p>
+
+                    <a
+                        href="https://github.com/voidwest"
+                        aria-label="GitHub"
+                        title="GitHub"
+                    >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M14 3h7v7h-2V6.41l-8.3 8.3-1.4-1.42L17.58 5H14V3ZM5 5h6v2H7v10h10v-4h2v6H5V5Z"/>
+                        </svg>
+                    </a>
+                </div>
+
+                <a
+                    class="contribution-chart"
+                    href="https://github.com/voidwest"
+                    aria-label="View voidwest on GitHub"
+                >
+                    <img
+                        src="/assets/voidwest/github-contributions.svg"
+                        alt="GitHub contribution calendar for voidwest"
+                        width="663"
+                        height="112"
+                        referrerpolicy="no-referrer"
+                    >
+                    <span class="contribution-tooltip" aria-hidden="true"></span>
+                </a>
+            </section>
+
+            <section
+                class="lab-section"
+                id="recent"
+                aria-labelledby="recent-title"
+            >
+                <header class="section-heading">
+                    <div>
+                        <p>01 / من المختبر</p>
+                        <h2 id="recent-title">حديثًا</h2>
+                    </div>
+
+                    <p>أربع أشياء من الشغل الجاري، مو الأرشيف كله.</p>
+                </header>
+
+                <div class="lab-log">
+                    <article>
+                        <time datetime="2026-08-30">2026.08.30</time>
+                        <p class="entry-kind">بحث</p>
+
+                        <div>
+                            <h3>
+                                من Jais 1 إلى Jais 2:
+                                وش تغيّر في اختبار الصرف العربي؟
+                            </h3>
+
+                            <p>
+                                أغلب التحسن كان في العدد، والنتيجة تغيّرت لما
+                                بدّلنا واجهة التمثيل أو تقسيم الكلمات.
+                                عنوان أقل إثارة، بس أفيد.
+                            </p>
+                        </div>
+
+                        <a href="/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html">
+                            اقرأ ←
+                        </a>
+                    </article>
+
+                    <article>
+                        <time datetime="2026-08-25">2026.08.25</time>
+                        <p class="entry-kind">إصدار</p>
+
+                        <div>
+                            <h3>
+                                <bdi>Ember v0.6.8</bdi>:
+                                صار النظام يستخدم الأدوات من غير ما يتحول
+                                لصندوق أسود.
+                            </h3>
+
+                            <p>
+                                استدعاءات متعددة، وموافقات واضحة، وإعادة تشغيل
+                                للتتبّع، وبصمات للحمولات، وتقارير
+                                <bdi>HTML</bdi>.
+                                وكل هذا من غير ما نغيّر نواة الاستدلال.
+                            </p>
+                        </div>
+
+                        <a href="https://github.com/voidwest/ember/releases/tag/v0.6.8">
+                            الإصدار ↗
+                        </a>
+                    </article>
+
+                    <article>
+                        <time datetime="2026-08-16">2026.08.16</time>
+                        <p class="entry-kind">نمط عطل</p>
+
+                        <div>
+                            <h3>ملف النموذج أكبر من مجرد أوزان</h3>
+
+                            <p>
+                                الـ<bdi>fuzzing</bdi> على محمّلات
+                                <bdi>GGUF</bdi> وضّحها:
+                                البيانات الوصفية تتحكم في التنفيذ،
+                                يعني قراءتها قرار أمني، مو مجرد فتح ملف.
+                            </p>
+                        </div>
+
+                        <a href="/research-notes/a-model-file-is-more-than-weights.ar.html">
+                            ملاحظات ←
+                        </a>
+                    </article>
+
+                    <article>
+                        <time datetime="2026-08-09">2026.08.09</time>
+                        <p class="entry-kind">تجربة</p>
+
+                        <div>
+                            <h3>
+                                قبل ما نربط ذاكرات <bdi>KV</bdi> بين النماذج،
+                                لازم نخليها قابلة للقياس
+                            </h3>
+
+                            <p>
+                                ثبّت اللقطات وإعادة التشغيل المطابقة داخل نفس
+                                النموذج قبل ما أجرّب الربط بين النماذج،
+                                عشان ما ننسب كل عطل للرابط.
+                            </p>
+                        </div>
+
+                        <a href="/research-notes/before-mapping-kv-caches.ar.html">
+                            اقرأ ←
+                        </a>
+                    </article>
+                </div>
+
+                <nav class="recent-exits" aria-label="المزيد">
+                    <a href="/research-notes/index.ar.html">
+                        كل الملاحظات ←
+                    </a>
+                    <a href="#building">
+                        روح للمشاريع ←
+                    </a>
+                </nav>
+            </section>
+
+            <section
+                class="lab-section"
+                id="building"
+                aria-labelledby="building-title"
+            >
+                <header class="section-heading">
+                    <div>
+                        <p>02 / أنظمة</p>
+                        <h2 id="building-title">اللي أبنيه</h2>
+                    </div>
+
+                    <p>
+                        أبني أدوات لأسئلة مزعجة،
+                        بس بنتائج نقدر نعيدها ونراجعها.
+                    </p>
+                </header>
+
                 <div class="project-grid">
-                    <article class="project-record">
-                        <div>
-                            <h3><bdi>ember</bdi></h3>
-                            <p>استدلال <bdi>CPU</bdi> قابل للتفحص لأبحاث أنظمة <bdi>LLM</bdi> القابلة لإعادة الإنتاج.</p>
-                            <div class="project-meta"><a href="/ember/index.ar.html">عرض المشروع <span aria-hidden="true">←</span></a></div>
+                    <article class="project-tile">
+                        <header>
+                            <h3>
+                                <a href="/ember/index.ar.html">
+                                    <bdi>Ember</bdi>
+                                </a>
+                            </h3>
+                            <span>وقت تشغيل</span>
+                        </header>
+
+                        <p>
+                            وقت تشغيل للاستدلال المحلي على
+                            <bdi>CPU</bdi> بلغة <bdi>Rust</bdi> فوق
+                            <bdi>GGUF</bdi>، مع مسارات
+                            <bdi>Q4/Q6</bdi>، وتجارب قابلة للإعادة،
+                            ودعم متعدد الوسائط، وتتبع واضح للأدوات.
+                        </p>
+
+                        <p class="project-tags">
+                            Rust · GGUF · AVX2 · inference
+                        </p>
+
+                        <div class="row-links">
+                            <a href="/ember/index.ar.html">المشروع ←</a>
+                            <a href="https://github.com/voidwest/ember">المصدر ↗</a>
                         </div>
-                        <span class="project-index">01</span>
                     </article>
-                    <article class="project-record">
-                        <div>
-                            <h3><bdi>atlas</bdi></h3>
-                            <p>يرصد القيود والتقييمات الناقصة وادعاءات العمل المستقبلي في الأوراق. حتمي ويرتكز على الأدلة.</p>
-                            <div class="project-meta"><a href="https://github.com/voidwest/atlas">عرض المشروع <span aria-hidden="true">←</span></a></div>
+
+                    <article class="project-tile">
+                        <header>
+                            <h3>
+                                <a href="https://github.com/voidwest/atlas">
+                                    <bdi>Atlas</bdi>
+                                </a>
+                            </h3>
+                            <span>أدوات بحث</span>
+                        </header>
+
+                        <p>
+                            يلمّ قيود الأوراق، والتقييمات الناقصة،
+                            وكلام العمل المستقبلي.
+                            حتمي ومبني على الأدلة، ومتعمد يفرّق بين
+                            الدليل والتخمين بدل ما يدّعي وجود «فجوات بحثية» من عنده.
+                        </p>
+
+                        <p class="project-tags">
+                            Python · evidence · reports
+                        </p>
+
+                        <div class="row-links">
+                            <a href="https://github.com/voidwest/atlas">
+                                المصدر ↗
+                            </a>
+                            <a href="/research-notes/why-atlas-does-not-generate-research-gaps.ar.html">
+                                التصميم ←
+                            </a>
                         </div>
-                        <span class="project-index">02</span>
                     </article>
-                    <article class="project-record">
-                        <div>
-                            <h3><bdi>mini-os</bdi></h3>
-                            <p>نواة <bdi>x86_64</bdi> مصغرة بلغة <bdi>Rust</bdi> تدعم الذاكرة الافتراضية والتنفيذ غير المتزامن وقرصاً وصدفة صغيرة.</p>
-                            <div class="project-meta"><a href="https://github.com/voidwest/mini-os">عرض المصدر <span aria-hidden="true">←</span></a></div>
+
+                    <article class="project-tile">
+                        <header>
+                            <h3>
+                                <a href="https://github.com/voidwest/mini-os">
+                                    <bdi>mini-os</bdi>
+                                </a>
+                            </h3>
+                            <span>نواة</span>
+                        </header>
+
+                        <p>
+                            نواة <bdi>x86_64</bdi> صغيرة فيها ذاكرة افتراضية،
+                            و<bdi>heap</bdi>، وتنفيذ غير متزامن،
+                            و<bdi>ramdisk</bdi>، وصدفة.
+                            طبقات أقل، وأماكن أقل يستخبى فيها سبب المشكلة.
+                        </p>
+
+                        <p class="project-tags">
+                            Rust · x86_64 · no_std
+                        </p>
+
+                        <div class="row-links">
+                            <a href="https://github.com/voidwest/mini-os">
+                                المصدر ↗
+                            </a>
                         </div>
-                        <span class="project-index">03</span>
+                    </article>
+
+                    <article class="project-tile">
+                        <header>
+                            <h3>
+                                <a href="https://github.com/voidwest/devdocs-v2">
+                                    <bdi>devdocs-v2</bdi>
+                                </a>
+                            </h3>
+
+                            <span><bdi>RAG</bdi> محلي</span>
+                        </header>
+
+                        <p>
+                            نظام محلي أدوّر فيه داخل ملفات
+                            <bdi>PDF</bdi>، بفهرسة تدريجية،
+                            وتقسيم يحافظ على السياق،
+                            و<bdi>embeddings</bdi>،
+                            واستدلال محلي.
+                        </p>
+
+                        <p class="project-tags">
+                            Python · FastAPI · ChromaDB · Ollama
+                        </p>
+
+                        <div class="row-links">
+                            <a href="https://github.com/voidwest/devdocs-v2">
+                                المصدر ↗
+                            </a>
+                        </div>
                     </article>
                 </div>
             </section>
 
-            <section class="home-section" aria-labelledby="notes-title">
-                <h2 class="section-label" id="notes-title">ملاحظات البحث</h2>
-                <div class="notes-table">
-                    <a class="note-row" href="/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html">
-                        <time datetime="2026-08-30">2026-08-30</time><span class="note-title">من Jais 1 إلى Jais 2: وش تغيّر في اختبار الصرف العربي؟</span><span class="note-tags" lang="en">Arabic NLP &nbsp;&nbsp; morphology</span><span class="note-arrow" aria-hidden="true">←</span>
+            <section
+                class="lab-section"
+                id="testing"
+                aria-labelledby="testing-title"
+            >
+                <header class="section-heading">
+                    <div>
+                        <p>03 / بحث</p>
+                        <h2 id="testing-title">أسئلة أشتغل عليها</h2>
+                    </div>
+
+                    <p>
+                        ثلاثة أسئلة تحرّك الشغل حاليًا.
+                    </p>
+                </header>
+
+                <div class="lab-log">
+                    <article>
+                        <p class="entry-kind">تدقيق 11 نموذجًا</p>
+
+                        <div>
+                            <h3>
+                                وش يقيس اختبار الصرف العربي فعلًا؟
+                            </h3>
+
+                            <p>
+                                قد إيش من النتيجة جاية فعلًا من الصرف،
+                                وقد إيش جاية من تداخل الكلمات،
+                                أو تسريب السياق،
+                                أو موضع الرمز،
+                                أو طريقة تجميع تسهّل الموضوع زيادة؟
+                            </p>
+                        </div>
+
+                        <a href="/research-notes/lexical-splits-morphology-probing.ar.html">
+                            الإجابة الحالية ←
+                        </a>
+                    </article>
+
+                    <article>
+                        <p class="entry-kind">تحديد سببي</p>
+
+                        <div>
+                            <h3>
+                                إذا التكميم غيّر الإجابة،
+                                وين بدأ التغيير؟
+                            </h3>
+
+                            <p>
+                                قصة «العربية تتدهور مع <bdi>Q4</bdi>»
+                                ما صمدت في التجارب.
+                                اللي صمد فعلًا هو استبدال ناتج طبقة وحدة:
+                                أعطال نادرة حددنا مكانها عند
+                                <bdi>L7</bdi> في <bdi>Qwen</bdi>
+                                و<bdi>L1</bdi> في <bdi>Llama</bdi>.
+                            </p>
+                        </div>
+
+                        <a href="/ember/experiments/index.ar.html">
+                            التجارب ←
+                        </a>
+                    </article>
+
+                    <article>
+                        <p class="entry-kind">تشريح وقت التشغيل</p>
+
+                        <div>
+                            <h3>
+                                هل وقت التشغيل يسوي فعلًا
+                                اللي يقوله ملف النموذج؟
+                            </h3>
+
+                            <p>
+                                ملف <bdi>Q4</bdi> ممكن في النهاية يشتغل
+                                كـ<bdi>f32</bdi>.
+                                اللي يهمني إيش جالس في الذاكرة،
+                                وأي مسار اشتغل،
+                                ومن فين جا — مو اسم الملف وبس.
+                            </p>
+                        </div>
+
+                        <a href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">
+                            التشريح ←
+                        </a>
+                    </article>
+                </div>
+            </section>
+
+            <section
+                class="lab-section"
+                id="writing"
+                aria-labelledby="writing-title"
+            >
+                <header class="section-heading">
+                    <div>
+                        <p>04 / ملاحظات ميدانية</p>
+                        <h2 id="writing-title">من الدفتر</h2>
+                    </div>
+
+                    <p>
+                        أكتبها لما يصير عندي قياس، أو عطل،
+                        أو تحفّظ منهجي مزعج لدرجة ما أقدر
+                        أعدّيه من غير ما أوثّقه.
+                    </p>
+                </header>
+
+                <div class="writing-list">
+                    <a href="/research-notes/jais-1-vs-jais-2-morphology-probing.ar.html">
+                        <time datetime="2026-08-30">08.30</time>
+                        <span>
+                            من Jais 1 إلى Jais 2:
+                            وش تغيّر في اختبار الصرف العربي؟
+                        </span>
+                        <small>العربية / الاختبارات</small>
+                        <span aria-hidden="true">←</span>
                     </a>
-                    <a class="note-row" href="/research-notes/lexical-splits-morphology-probing.ar.html">
-                        <time datetime="2026-08-27">2026-08-27</time><span class="note-title">إيش يقيس اختبار الصرف؟</span><span class="note-tags" lang="en">Arabic NLP &nbsp;&nbsp; probing</span><span class="note-arrow" aria-hidden="true">←</span>
+
+                    <a href="/research-notes/lexical-splits-morphology-probing.ar.html">
+                        <time datetime="2026-08-27">08.27</time>
+                        <span>
+                            وش يقيس اختبار الصرف؟
+                            تقسيم الكلمات وطرق قراءة تمثيل النموذج
+                        </span>
+                        <small>التقييم / التقسيم</small>
+                        <span aria-hidden="true">←</span>
                     </a>
-                    <a class="note-row" href="/research-notes/a-model-file-is-more-than-weights.ar.html">
-                        <time datetime="2026-08-16">2026-08-16</time><span class="note-title">ملف النموذج أكبر من مجرد أوزان</span><span class="note-tags" lang="en"><bdi>Ember</bdi> &nbsp;&nbsp; systems security</span><span class="note-arrow" aria-hidden="true">←</span>
+
+                    <a href="/research-notes/a-model-file-is-more-than-weights.ar.html">
+                        <time datetime="2026-08-16">08.16</time>
+                        <span>
+                            ملف النموذج أكبر من مجرد أوزان
+                        </span>
+                        <small>GGUF / fuzzing</small>
+                        <span aria-hidden="true">←</span>
                     </a>
-                    <a class="note-row" href="/research-notes/before-mapping-kv-caches.ar.html">
-                        <time datetime="2026-08-09">2026-08-09</time><span class="note-title">قبل ما نربط ذاكرات <bdi>KV</bdi> بين النماذج، لازم نخليها قابلة للقياس</span><span class="note-tags" lang="en"><bdi>Ember</bdi> &nbsp;&nbsp; reproducibility</span><span class="note-arrow" aria-hidden="true">←</span>
-                    </a>
-                    <a class="note-row" href="/research-notes/the-file-said-q4-runtime-said-f32.ar.html">
-                        <time datetime="2026-08-01">2026-08-01</time><span class="note-title">الملف قال <bdi>Q4</bdi>. والـ<bdi>runtime</bdi> قال <bdi>f32</bdi>.</span><span class="note-tags" lang="en"><bdi>Ember</bdi> &nbsp;&nbsp; runtime systems</span><span class="note-arrow" aria-hidden="true">←</span>
+
+                    <a href="/research-notes/before-mapping-kv-caches.ar.html">
+                        <time datetime="2026-08-09">08.09</time>
+                        <span>
+                            قبل ما نربط ذاكرات KV بين النماذج،
+                            لازم نخليها قابلة للقياس
+                        </span>
+                        <small>KV cache / artifacts</small>
+                        <span aria-hidden="true">←</span>
                     </a>
                 </div>
-                <a class="text-link notes-all" href="/research-notes/index.ar.html">عرض كل الملاحظات <span aria-hidden="true">←</span></a>
+
+                <div class="row-links">
+                    <a href="/research-notes/index.ar.html">
+                        كل الملاحظات ←
+                    </a>
+                </div>
+            </section>
+
+            <section class="currently" aria-labelledby="currently-title">
+                <h2 id="currently-title">حاليًا</h2>
+
+                <p>
+                    <strong>أشتغل بـ:</strong>
+                    <bdi>Rust</bdi> و<bdi>Python</bdi> و<bdi>perf</bdi>
+                    وملفات <bdi>JSON manifest</bdi>
+                    أكثر مما يبدو ضروريًا.
+                </p>
+
+                <p>
+                    <strong>وش تحت المجهر:</strong>
+                    مسارات <bdi>Q4/Q6</bdi> على <bdi>CPU</bdi>،
+                    وتقسيمات تقييم العربية،
+                    وأي نتيجة تصير أنظف بشكل مريب بعد التصفية.
+                </p>
             </section>
         </main>
 
         <footer class="site-footer">
-            <span>© 2026 voidwest</span>
-            <span class="footer-social">
-                <a href="https://github.com/voidwest">github</a>
-                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-                <a href="mailto:mthobaiti@outlook.com">email</a>
-            </span>
+            <nav aria-label="روابط التواصل">
+                <a href="https://github.com/voidwest" aria-label="GitHub">
+                    GitHub
+                </a>
+
+                <a href="https://www.linkedin.com/in/mthobaiti/" aria-label="LinkedIn">
+                    LinkedIn
+                </a>
+
+                <a href="mailto:mthobaiti@outlook.com" aria-label="البريد">
+                    البريد
+                </a>
+            </nav>
         </footer>
     </body>
 </html>

@@ -1,22 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="research notes · voidwest" />
-        <meta property="og:description" content="Running notes on papers, experiments, and ideas. Current focus: Arabic NLP, tokenization, and mechanistic interpretability." />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content="https://voidwest.dev/research-notes/index.ar.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="research notes · voidwest">
+        <meta property="og:description" content="Running notes on papers, experiments, and ideas. Current focus: Arabic NLP, tokenization, and mechanistic interpretability.">
+        <meta property="og:type" content="website">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/index.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
         <title>research notes · voidwest</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=2203cc763d45">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png">
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
@@ -44,15 +44,12 @@
             <a href="/" class="ltr">← voidwest</a>
         </div>
 
-        <h1><bdi>research notes</bdi></h1>
+        <h1>ملاحظات البحث</h1>
 
-        <p>
-            ملاحظات على أوراق وتجارب وأفكار. كل ما أتعلم شيء
-            يستحق التدوين أضيفه هنا.
-        </p>
+        <p>هذي ملاحظاتي على أوراق وتجارب وأفكار. أي شيء أتعلمه ويستاهل التدوين أحطه هنا.</p>
 
         <!-- ════════════════════════════════════════════════════════ -->
-        <h2><bdi>research &amp; direction</bdi></h2>
+        <h2>البحث والاتجاه</h2>
 
         <div class="note-list">
             <div class="note-card">
@@ -62,8 +59,7 @@
                     >
                 </div>
                 <div class="desc">
-                    مقارنة بين تشغيلين مجمّدين توضّح أن مكاسب Jais 2 تتركز في
-                    العدد وتعتمد على واجهة التمثيل والتقسيم المعجمي.
+                    مقارنة بين تشغيلين مجمّدين تبيّن إن أغلب مكاسب <bdi>Jais 2</bdi> كانت في العدد، وإن النتيجة تتغيّر مع واجهة التمثيل وتقسيم الكلمات.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-08-30</span>
@@ -82,8 +78,7 @@
                     >
                 </div>
                 <div class="desc">
-                    تقييم عربي مدقّق يوضح كيف تغيّر الانقسامات المعجمية ومعلومات
-                    <bdi>prompt</bdi> ومحاذاة التوكن والتجميع ما يقيسه المسبار الخطي.
+                    تقييم عربي مدقّق يبيّن كيف تقسيم الكلمات، ومعلومات <bdi>prompt</bdi>، ومحاذاة التوكن، وطريقة التجميع تغيّر وش يقيسه المسبار الخطي فعلًا.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-08-27</span>
@@ -103,10 +98,7 @@
                     >
                 </div>
                 <div class="desc">
-                    إيش علّمني <bdi>fuzzing</bdi> عن التعامل مع بنية
-                    <bdi>GGUF</bdi> كمدخل تحكم مو موثوق، وكيف خلّيت الانتقال من
-                    <bdi>bytes</bdi> حللناها إلى حالة نقدر نشغّلها واضح في
-                    <bdi>Ember</bdi>.
+                    إيش علّمني <bdi>fuzzing</bdi> عن بنية <bdi>GGUF</bdi> كمدخل تحكم مو موثوق، وكيف خلّيت الانتقال من bytes حللناها إلى حالة تشغيل واضحة داخل <bdi>Ember</bdi>.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-08-16</span>
@@ -126,10 +118,7 @@
                     >
                 </div>
                 <div class="desc">
-                    ليش جمّد <bdi>Ember</bdi> حالة <bdi>KV</bdi> في أثر قابل
-                    للتحقق، وأثبت إعادة تشغيل مطابقة داخل النموذج نفسه، وأضاف
-                    مقاييس إعادة بناء وتشخيصات سببية قبل أي <bdi>ridge mapper</bdi>
-                    بين نموذجين <bdi>Qwen</bdi>.
+                    ليش جمّد <bdi>Ember</bdi> حالة <bdi>KV</bdi> في artifact نقدر نتحقق منه، وأثبت إعادة تشغيل مطابقة داخل نفس النموذج، وأضاف مقاييس وتشخيصات سببية قبل لا نجرّب أي ridge mapper بين نموذجين <bdi>Qwen</bdi>.
                 </div>
                 <div class="meta-row">
                     <span class="date">2026-08-09</span>

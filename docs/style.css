@@ -5,28 +5,29 @@
 :root {
     color-scheme: light;
 
-    /* surfaces — original voidwest light palette */
-    --bg: #f3efe5;
-    --surface: #fbf8f1;
-    --surface-2: #ece6da;
-    --accent-soft: color-mix(in srgb, var(--accent) 30%, transparent);
+    /* warm paper held inside a deeper astronomical viewport */
+    --outer-bg: #0b0c0e;
+    --bg: #f3f0e9;
+    --surface: #ece9e1;
+    --surface-2: #e5e1d7;
+    --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
 
     /* ink */
-    --text: #18191b;
-    --heading: #111216;
-    --muted: #66676b;
-    --subtle: #77746e;
+    --text: #242424;
+    --heading: #151515;
+    --muted: #666763;
+    --subtle: #85847e;
 
     /* lines */
-    --border: rgb(92 84 72 / 0.38);
-    --border-soft: rgb(92 84 72 / 0.2);
+    --border: rgb(54 53 49 / 0.28);
+    --border-soft: rgb(54 53 49 / 0.16);
 
-    /* accent */
-    --accent: #8275bc;
-    --accent-strong: #6659a1;
+    /* restrained cobalt */
+    --accent: #315fd6;
+    --accent-strong: #244ea9;
 
     /* code */
-    --code-bg: #ebe5da;
+    --code-bg: #e9e5dc;
     --code-text: #18191b;
 
     /* type */
@@ -49,25 +50,25 @@
 :root[data-theme="dark"] {
     color-scheme: dark;
 
-    /* surfaces — original voidwest dark palette */
-    --bg: #090b0e;
-    --surface: #0d1014;
-    --surface-2: #12151a;
-    --accent-soft: color-mix(in srgb, var(--accent) 20%, transparent);
+    --outer-bg: #070708;
+    --bg: #111214;
+    --surface: #15171a;
+    --surface-2: #191c20;
+    --accent-soft: color-mix(in srgb, var(--accent) 17%, transparent);
 
-    --text: #f3efe5;
-    --heading: #f8f4ea;
-    --muted: #a6a6ad;
-    --subtle: #7e7f87;
+    --text: #e9e6de;
+    --heading: #f3f0e9;
+    --muted: #a1a19d;
+    --subtle: #777a80;
 
-    --border: rgb(206 199 186 / 0.32);
-    --border-soft: rgb(206 199 186 / 0.18);
+    --border: rgb(214 216 221 / 0.25);
+    --border-soft: rgb(214 216 221 / 0.13);
 
-    --accent: #9b8fd1;
-    --accent-strong: #b3a7e2;
+    --accent: #4b76e5;
+    --accent-strong: #86a4f3;
 
-    --code-bg: #0c0f13;
-    --code-text: #f3efe5;
+    --code-bg: #0d0f12;
+    --code-text: #f3f0e9;
 }
 
 /* ── base ──────────────────────────────────────────────────────────── */
@@ -82,16 +83,27 @@
 }
 
 html {
-    background: var(--bg);
+    min-block-size: 100%;
+    background-color: var(--outer-bg);
+    background-image:
+        radial-gradient(circle at 8% 12%, rgb(215 215 210 / 0.14) 0 1px, transparent 1.4px),
+        radial-gradient(circle at 91% 18%, rgb(237 240 245 / 0.16) 0 0.8px, transparent 1.2px),
+        radial-gradient(circle at 16% 81%, rgb(237 240 245 / 0.12) 0 0.7px, transparent 1.1px),
+        radial-gradient(circle at 82% 74%, rgb(170 173 178 / 0.1) 0 1px, transparent 1.5px),
+        radial-gradient(ellipse at 50% 0%, #15171a 0, var(--outer-bg) 62%);
+    background-size: 173px 211px, 251px 197px, 307px 283px, 389px 347px, 100% 100%;
     scroll-behavior: smooth;
 }
 
 body {
-    inline-size: min(100%, calc(var(--page-width) + 56px));
-    min-block-size: 100vh;
-    margin: 0 auto;
-    padding: 0 28px 64px;
+    inline-size: min(calc(100% - 48px), calc(var(--page-width) + 88px));
+    min-block-size: calc(100vh - 48px);
+    margin: 24px auto;
+    padding: 0 44px 64px;
+    border: 1px solid rgb(255 255 255 / 0.08);
+    border-radius: 2px;
     background: var(--bg);
+    box-shadow: 0 18px 70px rgb(0 0 0 / 0.3);
     color: var(--text);
     font-family: var(--body-font);
     font-size: 16px;
@@ -150,9 +162,11 @@ button:focus-visible {
     padding: 0;
     border-block-end: 1px solid var(--border);
     color: var(--text);
-    font-family: var(--body-font);
-    font-size: 13px;
+    font-family: var(--mono-font);
+    font-size: 11px;
+    letter-spacing: 0.05em;
     line-height: 1;
+    text-transform: uppercase;
 }
 
 .site-nav a {
@@ -164,23 +178,23 @@ button:focus-visible {
     display: inline-flex;
     align-items: center;
     justify-self: start;
-    gap: 11px;
+    gap: 10px;
     inline-size: max-content;
     color: var(--heading);
-    font-weight: 600;
-    letter-spacing: 0.01em;
+    font-family: var(--mono-font);
+    font-size: 0.9rem;
+    font-weight: 500;
+    letter-spacing: 0.025em;
+    text-transform: lowercase;
 }
 
 .site-nav .brand::before {
     content: "";
     display: block;
-    inline-size: 28px;
-    block-size: 21px;
-    background: url("/assets/voidwest/vw-mark.svg") center / contain no-repeat;
-}
-
-:root[data-theme="dark"] .site-nav .brand::before {
-    background-image: url("/assets/voidwest/vw-mark-light.svg");
+    inline-size: 4px;
+    block-size: 4px;
+    border-radius: 50%;
+    background: var(--accent);
 }
 
 .site-nav .nav-links {
@@ -199,6 +213,19 @@ button:focus-visible {
 .site-nav a[aria-current="page"] {
     color: var(--accent);
     text-decoration: none;
+}
+
+.site-nav .nav-links a {
+    position: relative;
+}
+
+.site-nav .nav-links a[aria-current="page"]::after {
+    position: absolute;
+    inset-inline: 20%;
+    inset-block-end: 2px;
+    block-size: 1px;
+    background: var(--accent);
+    content: "";
 }
 
 .site-nav .nav-actions {
@@ -479,8 +506,29 @@ hr {
 .cv-actions {
     display: flex;
     align-items: center;
-    gap: 18px;
+    gap: 10px;
     flex-wrap: wrap;
+}
+
+.cv-icon-link {
+    display: inline-grid;
+    place-items: center;
+    inline-size: 42px;
+    block-size: 42px;
+    border: 1px solid var(--border-soft);
+    color: var(--muted);
+}
+
+.cv-icon-link:hover {
+    border-color: var(--accent);
+    color: var(--accent-strong);
+    text-decoration: none;
+}
+
+.cv-icon-link svg {
+    inline-size: 20px;
+    block-size: 20px;
+    fill: currentColor;
 }
 
 .cv-button {
@@ -529,23 +577,29 @@ hr {
     font-size: 11px;
 }
 
+.cv-embed {
+    margin-block-start: 24px;
+}
+
 .cv-pdf {
     display: block;
     inline-size: 100%;
-    block-size: clamp(680px, 125vw, 1100px);
-    margin-block-start: 24px;
+    block-size: clamp(720px, 122vw, 1120px);
     border: 1px solid var(--border-soft);
     background: #fff;
 }
 
-.cv-fallback {
-    padding: 28px;
-    color: #18191b;
-    font-family: var(--body-font);
+.cv-pdf-fallback {
+    margin: 9px 0 0;
+    color: var(--subtle);
+    font-family: var(--mono-font);
+    font-size: 10px;
+    line-height: 1.6;
+    text-align: end;
 }
 
-.cv-fallback p {
-    color: inherit;
+.cv-pdf-fallback a {
+    color: var(--accent-strong);
 }
 
 [dir="rtl"] .cv-kicker,
@@ -1110,7 +1164,7 @@ footer {
     border-block-start: 1px solid var(--border);
     color: var(--subtle);
     font-family: var(--mono-font);
-    font-size: 10px;
+    font-size: 11px;
     line-height: 1.8;
     text-align: center;
 }
@@ -1182,7 +1236,12 @@ footer a:hover {
     body,
     [dir="rtl"] body {
         inline-size: 100%;
+        min-block-size: 100vh;
+        margin: 0;
         padding: 0 18px 48px;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
         font-size: 15px;
         line-height: 1.72;
     }
@@ -1205,8 +1264,8 @@ footer a:hover {
     }
 
     .site-nav .brand::before {
-        inline-size: 24px;
-        block-size: 18px;
+        inline-size: 4px;
+        block-size: 4px;
     }
 
     .site-nav .nav-actions {
@@ -1433,4 +1492,9 @@ footer a:hover {
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
     }
+}
+
+@media print {
+    html { background: #fff; }
+    body { inline-size: 100%; margin: 0; border: 0; box-shadow: none; }
 }
