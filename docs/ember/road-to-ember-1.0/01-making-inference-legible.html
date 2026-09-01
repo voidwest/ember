@@ -1,24 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<meta content="v0.1: an inference engine that can explain what it did" property="og:title"/>
-<meta content="Part 1 of Road to Ember 1.0: GGUF loading, tracing, and hidden-state extraction, and why a tensor is only useful when its origin is explicit." property="og:description"/>
-<meta content="article" property="og:type"/>
-<meta content="https://voidwest.dev/ember/road-to-ember-1.0/01-making-inference-legible.html" property="og:url"/>
-<meta content="voidwest" property="og:site_name"/>
-<meta content="summary" name="twitter:card"/>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<meta content="v0.1: an inference engine that can explain what it did" property="og:title">
+<meta content="Part 1 of Road to Ember 1.0: GGUF loading, tracing, and hidden-state extraction, and why a tensor is only useful when its origin is explicit." property="og:description">
+<meta content="article" property="og:type">
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/01-making-inference-legible.html" property="og:url">
+<meta content="voidwest" property="og:site_name">
+<meta content="summary" name="twitter:card">
 <title>v0.1: an inference engine that can explain what it did</title>
-<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
         <!-- docs:og-image end -->
-        <link rel="stylesheet" href="series.css" />
+        <link rel="stylesheet" href="series.css">
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
@@ -62,8 +62,8 @@
 </div>
 <h1>v0.1: an inference engine that can explain what it did</h1>
 <div class="meta">
-            draft · part 1 of the road to Ember 1.0 series · not yet published<br/>
-            mohammed al-thobaiti · 2026-08-04<br/>
+            draft · part 1 of the road to Ember 1.0 series · not yet published<br>
+            mohammed al-thobaiti · 2026-08-04<br>
 <span class="tag key">Ember</span>
 <span class="tag key">GGUF</span>
 <span class="tag key">CPU inference</span>
@@ -154,8 +154,8 @@ extracting a tensor is the easy part. knowing what it means, which layer, which
             hidden states on the same binary, not necessarily the same wall-clock times.
         </p>
 <figure class="chart-wrap">
-<img alt="Data flow and observation points: GGUF file to loader to tensors to reference path to logits, with hidden-state observation points and a packed Q8 fast path" class="chart theme-chart-dark" loading="lazy" src="figures/part1-diagram1.svg" width="1120" height="520" decoding="async" />
-<img alt="Data flow and observation points (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part1-diagram1_light.svg" width="1120" height="520" decoding="async" />
+<img alt="Data flow and observation points: GGUF file to loader to tensors to reference path to logits, with hidden-state observation points and a packed Q8 fast path" class="chart theme-chart-dark" loading="lazy" src="figures/part1-diagram1.svg" width="1120" height="520" decoding="async">
+<img alt="Data flow and observation points (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part1-diagram1_light.svg" width="1120" height="520" decoding="async">
 <figcaption>
                 figure 1, data flow and observation points. hidden states are extractable at the marked
                 stages; the packed Q8 fast path must agree with the reference within the recorded envelopes

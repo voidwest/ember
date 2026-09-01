@@ -1,22 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="التقطيع في نماذج التضمين العربية" />
-        <meta property="og:description" content="Alkaoud & Syed (WANLP 2020): morph-aware tokenization in the embedding layer — 60% smaller vocabularies, better OOV handling, SOTA without retraining." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/research-notes/wanlp-2020-embeddings.ar.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="التقطيع في نماذج التضمين العربية">
+        <meta property="og:description" content="Alkaoud & Syed (WANLP 2020): morph-aware tokenization in the embedding layer — 60% smaller vocabularies, better OOV handling, SOTA without retraining.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/wanlp-2020-embeddings.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
         <title>التقطيع في نماذج التضمين العربية · research notes</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png">
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
@@ -24,18 +24,18 @@
     </head>
     <body>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html">ember</a>
-                <a href="/research-notes/index.ar.html" aria-current="page">research notes</a>
-                <a href="/tools/index.ar.html">tools</a>
-                <a href="/terms/index.ar.html">terms</a>
-                <a href="/cv/index.ar.html">cv</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/research-notes/wanlp-2020-embeddings.html">en</a>
-                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+                <a class="nav-lang" href="/research-notes/wanlp-2020-embeddings.html">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
             </div>
         </nav>
         <!-- docs:nav end -->
@@ -81,9 +81,9 @@
         <footer class="site-footer">
             <span>© 2026 voidwest</span>
             <span class="footer-social">
-                <a href="https://github.com/voidwest">github</a>
-                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-                <a href="mailto:mthobaiti@outlook.com">email</a>
+                <a href="https://github.com/voidwest">GitHub</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">LinkedIn</a>
+                <a href="mailto:mthobaiti@outlook.com">البريد</a>
             </span>
         </footer>
         <!-- docs:footer end -->

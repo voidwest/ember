@@ -1,43 +1,43 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="description" content="الجزء 4 من سلسلة الطريق إلى Ember 1.0: تخطيط عمل كل token مرة واحدة، وإخفاقات القياس اللي كادت تخفي التسريع." />
-        <meta property="og:title" content="v0.4، فك ترميز مُخطط من غير التضحية بالـ hooks" />
-        <meta property="og:description" content="معظم عمل فك token واحد هو تقرير ما لازم فعله، لا فعله. v0.4 أخرج ذلك القرار من الحلقة، من غير إخراج الـ hooks معه." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/04-plan-driven-decode.ar.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="الجزء 4 من سلسلة الطريق إلى Ember 1.0: تخطيط عمل كل token مرة واحدة، وإخفاقات القياس اللي كادت تخفي التسريع.">
+        <meta property="og:title" content="v0.4، فك ترميز مُخطط من غير التضحية بالـ hooks">
+        <meta property="og:description" content="معظم عمل فك token واحد هو تقرير ما لازم فعله، لا فعله. v0.4 أخرج ذلك القرار من الحلقة، من غير إخراج الـ hooks معه.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/04-plan-driven-decode.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
         <title>v0.4، فك ترميز مُخطط من غير التضحية بالـ hooks</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
         <!-- docs:og-image end -->
-        <link rel="stylesheet" href="series.css" />
+        <link rel="stylesheet" href="series.css">
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html" aria-current="page">ember</a>
-                <a href="/research-notes/index.ar.html">research notes</a>
-                <a href="/tools/index.ar.html">tools</a>
-                <a href="/terms/index.ar.html">terms</a>
-                <a href="/cv/index.ar.html">cv</a>
+                <a href="/research-notes/index.ar.html">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/ember/road-to-ember-1.0/04-plan-driven-decode.html">en</a>
-                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/04-plan-driven-decode.html">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
             </div>
         </nav>
         <!-- docs:nav end -->
@@ -147,10 +147,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/part4-diagram1.svg"
                  alt="مفاهيم التنفيذ الثلاثة: reference وplanned وplanned-fused من الـ tensors نفسها، مع defusion بقيادة الـ hooks على المسار المدمج"
-                 loading="lazy" width="1120" height="580" decoding="async" />
+                 loading="lazy" width="1120" height="580" decoding="async">
             <img class="chart theme-chart-light" src="figures/part4-diagram1_light.svg"
                  alt="مفاهيم التنفيذ الثلاثة (الوضع الفاتح)"
-                 loading="lazy" width="1120" height="580" decoding="async" />
+                 loading="lazy" width="1120" height="580" decoding="async">
             <figcaption>
                 الشكل 1، مفاهيم التنفيذ الثلاثة: reference (مرجع مقروء)، planned (مشغّل خطة)، planned-fused
                 (مجموعة fusion مجمّدة مع defusion بقيادة الـ hooks). الثلاثة تنتج tokens جشعة متطابقة ضمن
@@ -162,10 +162,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/part4-diagram2.svg"
                  alt="الـ fusion والـ defusion على طبقة واحدة: F1-F5 تلغي بس الوسطيات غير المربوطة؛ F5 يلغي tensor after_attention فيفرض الـ hook النشط المسار غير المدمج"
-                 loading="lazy" width="1120" height="580" decoding="async" />
+                 loading="lazy" width="1120" height="580" decoding="async">
             <img class="chart theme-chart-light" src="figures/part4-diagram2_light.svg"
                  alt="الـ fusion والـ defusion على طبقة واحدة (الوضع الفاتح)"
-                 loading="lazy" width="1120" height="580" decoding="async" />
+                 loading="lazy" width="1120" height="580" decoding="async">
             <figcaption>
                 الشكل 2، الـ fusion والـ defusion على طبقة واحدة. تلغي F1–F5 بس الوسطيات اللي مو مواقع
                 hook أبدًا؛ ويلغي F5 tensor after_attention (o)، فيفرض الـ hook النشط عند داك الموقع المسار
@@ -228,10 +228,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/part4-diagram3.svg"
                  alt="إخفاقات القياس الستة وإصلاح البروتوكول لكل منها: الضجيج الحراري، وضع قياس يشغل المرجع، اختبارات fusion من غير تغطية مسار، بوابة تخصيص محجوبة، نوى مثبتة، تخصيص زائف من تكرار attention"
-                 loading="lazy" width="1120" height="700" decoding="async" />
+                 loading="lazy" width="1120" height="700" decoding="async">
             <img class="chart theme-chart-light" src="figures/part4-diagram3_light.svg"
                  alt="إخفاقات القياس الستة وإصلاحاتها (الوضع الفاتح)"
-                 loading="lazy" width="1120" height="700" decoding="async" />
+                 loading="lazy" width="1120" height="700" decoding="async">
             <figcaption>
                 الشكل 3، لما أصبحت وحدة المعالجة شاهدًا غير موثوق: الإخفاقات الستة وإصلاح البروتوكول لكل
                 منها (CHANGELOG v0.4 Fixed؛ artifacts/benchmark-v04/2026-08-04/SUMMARY.md؛
@@ -348,9 +348,9 @@
         <footer class="site-footer">
             <span>© 2026 voidwest</span>
             <span class="footer-social">
-                <a href="https://github.com/voidwest">github</a>
-                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-                <a href="mailto:mthobaiti@outlook.com">email</a>
+                <a href="https://github.com/voidwest">GitHub</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">LinkedIn</a>
+                <a href="mailto:mthobaiti@outlook.com">البريد</a>
             </span>
         </footer>
         <!-- docs:footer end -->

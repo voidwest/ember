@@ -1,24 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<meta content="v0.3: quantized on disk, quantized in memory" property="og:title"/>
-<meta content="Part 3 of Road to Ember 1.0: why a Q4 checkpoint arrived in memory as f32, and what it took to keep quantized weights actually quantized." property="og:description"/>
-<meta content="article" property="og:type"/>
-<meta content="https://voidwest.dev/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.html" property="og:url"/>
-<meta content="voidwest" property="og:site_name"/>
-<meta content="summary" name="twitter:card"/>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<meta content="v0.3: quantized on disk, quantized in memory" property="og:title">
+<meta content="Part 3 of Road to Ember 1.0: why a Q4 checkpoint arrived in memory as f32, and what it took to keep quantized weights actually quantized." property="og:description">
+<meta content="article" property="og:type">
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.html" property="og:url">
+<meta content="voidwest" property="og:site_name">
+<meta content="summary" name="twitter:card">
 <title>v0.3: quantized on disk, quantized in memory</title>
-<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
         <!-- docs:og-image end -->
-        <link rel="stylesheet" href="series.css" />
+        <link rel="stylesheet" href="series.css">
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
@@ -50,8 +50,8 @@
 </div>
 <h1>v0.3: quantized on disk, quantized in memory</h1>
 <div class="meta">
-            draft · part 3 of the road to Ember 1.0 series · not yet published<br/>
-            mohammed al-thobaiti · 2026-08-04<br/>
+            draft · part 3 of the road to Ember 1.0 series · not yet published<br>
+            mohammed al-thobaiti · 2026-08-04<br>
 <span class="tag key">Ember</span>
 <span class="tag key">quantization</span>
 <span class="tag key">GGUF</span>
@@ -154,8 +154,8 @@ the file said Q4. the runtime said f32. the model was smaller on disk and
                 K-quant models keep the single generic forward path.</li>
 </ul>
 <figure class="chart-wrap">
-<img alt="Eager expansion vs compressed residency: the reference path expands the whole weight matrix to f32; the v0.3 path keeps packed blocks mmap-resident and runs native K-quant matvec" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram1.svg" width="1120" height="548" decoding="async" />
-<img alt="Eager expansion vs compressed residency (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram1_light.svg" width="1120" height="548" decoding="async" />
+<img alt="Eager expansion vs compressed residency: the reference path expands the whole weight matrix to f32; the v0.3 path keeps packed blocks mmap-resident and runs native K-quant matvec" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram1.svg" width="1120" height="548" decoding="async">
+<img alt="Eager expansion vs compressed residency (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram1_light.svg" width="1120" height="548" decoding="async">
 <figcaption>
                 figure 1, eager expansion vs compressed residency. peak RSS on the v0.3.0 tag build:
                 6,989,724–8,837,276 KB (eager) vs 844,216–1,266,684 KB (compressed) across Llama-3.2-1B and
@@ -180,8 +180,8 @@ the file said Q4. the runtime said f32. the model was smaller on disk and
             headers.
         </p>
 <figure class="chart-wrap">
-<img alt="Q4_K and Q6_K super-block anatomy: 8 blocks of 32 weights with per-block 2-bit scale factors for Q4_K; 16 blocks of 16 weights with int8 scales for Q6_K" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram4.svg" width="1120" height="540" decoding="async" />
-<img alt="Q4_K and Q6_K super-block anatomy (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram4_light.svg" width="1120" height="540" decoding="async" />
+<img alt="Q4_K and Q6_K super-block anatomy: 8 blocks of 32 weights with per-block 2-bit scale factors for Q4_K; 16 blocks of 16 weights with int8 scales for Q6_K" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram4.svg" width="1120" height="540" decoding="async">
+<img alt="Q4_K and Q6_K super-block anatomy (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram4_light.svg" width="1120" height="540" decoding="async">
 <figcaption>
                 figure 4, Q4_K and Q6_K super-block anatomy (conceptual). dispatch is per tensor, not per
                 file: the llama-3.2-1b Q4_K_M checkpoint mixes 96 Q4_K + 17 Q6_K + 34 F32 tensors
@@ -217,8 +217,8 @@ the file said Q4. the runtime said f32. the model was smaller on disk and
             and non-aligned edges (contract section 9, gate a).
         </p>
 <figure class="chart-wrap">
-<img alt="Anatomy of a K-quant matvec: decode one block into a small per-thread buffer, multiply by the activation slice, accumulate; the whole matrix never becomes f32-resident" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram2.svg" width="1120" height="560" decoding="async" />
-<img alt="Anatomy of a K-quant matvec (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram2_light.svg" width="1120" height="560" decoding="async" />
+<img alt="Anatomy of a K-quant matvec: decode one block into a small per-thread buffer, multiply by the activation slice, accumulate; the whole matrix never becomes f32-resident" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram2.svg" width="1120" height="560" decoding="async">
+<img alt="Anatomy of a K-quant matvec (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram2_light.svg" width="1120" height="560" decoding="async">
 <figcaption>
                 figure 2, anatomy of a K-quant matvec. one block is decoded into the [f32; 256] per-thread
                 buffer at a time; per-thread workspace for the compressed path is ≤ 9 KiB and no model-scale
@@ -252,8 +252,8 @@ the file said Q4. the runtime said f32. the model was smaller on disk and
                 tensor bit-exactly (<code>docs/validation.md</code>).</li>
 </ul>
 <figure class="chart-wrap">
-<img alt="Validation ladder: scalar packed kernel, AVX2 packed kernel, planned model execution, per-layer hidden-state parity, final logits, greedy tokens, pinned llama.cpp reference; capture and intervention hooks attach at the same six semantic sites" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram3.svg" width="1120" height="560" decoding="async" />
-<img alt="Validation ladder (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram3_light.svg" width="1120" height="560" decoding="async" />
+<img alt="Validation ladder: scalar packed kernel, AVX2 packed kernel, planned model execution, per-layer hidden-state parity, final logits, greedy tokens, pinned llama.cpp reference; capture and intervention hooks attach at the same six semantic sites" class="chart theme-chart-dark" loading="lazy" src="figures/part3-diagram3.svg" width="1120" height="560" decoding="async">
+<img alt="Validation ladder (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part3-diagram3_light.svg" width="1120" height="560" decoding="async">
 <figcaption>
                 figure 3, the validation ladder. kernel parity (gate a) → model parity (gates b/d) →
                 external golden against pinned llama.cpp (gate c), with the six semantic hook sites attached

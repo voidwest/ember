@@ -52,7 +52,7 @@ NAV_RE = re.compile(r"\n\s*<nav class=\"site-nav\"[\s\S]*?</nav>\s*", re.MULTILI
 FOOTER_RE = re.compile(r"\n\s*<footer>[\s\S]*?</footer>\s*", re.MULTILINE)
 HEAD_CLOSE_RE = re.compile(r"\n\s*</head>")
 STYLESHEET_RE = re.compile(
-    r'(\n[ \t]*<link rel="stylesheet" href="/style\.css(?:\?v=[A-Za-z0-9._-]+)?" />)'
+    r'(\n[ \t]*<link rel="stylesheet" href="/style\.css(?:\?v=[A-Za-z0-9._-]+)?"[ \t]*/?>)'
 )
 BODY_OPEN_RE = re.compile(r"(\n[ \t]*<body>)\s*\n")
 BODY_CLOSE_RE = re.compile(r"\n\s*</body>")
@@ -155,10 +155,10 @@ def og_image_html(path: Path) -> str:
     url = f"https://voidwest.dev/og/{og_slug_for(path)}.png"
     return f"""\
         <!-- docs:og-image start -->
-        <meta property="og:image" content="{url}" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="{url}" />
+        <meta property="og:image" content="{url}">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="{url}">
         <!-- docs:og-image end -->
 """
 
@@ -166,13 +166,17 @@ def og_image_html(path: Path) -> str:
 def nav_html(path: Path, text: str) -> str:
     ar = is_arabic(text)
     current = section_for(path)
-    lang_text = "en" if ar else "عربي"
+    lang_text = "EN" if ar else "عربي"
+    labels = {
+        "ember": "ember",
+        "research": "ملاحظات" if ar else "research notes",
+        "tools": "أدوات" if ar else "tools",
+        "terms": "مصطلحات" if ar else "terms",
+        "cv": "السيرة" if ar else "cv",
+    }
     links = [
-        ("ember", "ember", localized_href("ember", ar)),
-        ("research", "research notes", localized_href("research", ar)),
-        ("tools", "tools", localized_href("tools", ar)),
-        ("terms", "terms", localized_href("terms", ar)),
-        ("cv", "cv", localized_href("cv", ar)),
+        (section, labels[section], localized_href(section, ar))
+        for section in ("ember", "research", "tools", "terms", "cv")
     ]
 
     def current_attr(section: str) -> str:
@@ -184,14 +188,14 @@ def nav_html(path: Path, text: str) -> str:
     )
     return f"""\
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="{'التنقل الرئيسي' if ar else 'Primary'}">
             <a class="brand" href="{localized_href('home', ar)}"{current_attr('home')}>voidwest</a>
             <div class="nav-links">
 {link_lines}
             </div>
             <div class="nav-actions">
                 <a class="nav-lang" href="{alternate_href(path, ar)}">{lang_text}</a>
-                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+                <button class="theme-toggle" type="button" aria-label="{'التبديل إلى الوضع الفاتح' if ar else 'Switch to light theme'}" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
             </div>
         </nav>
         <!-- docs:nav end -->
@@ -199,19 +203,22 @@ def nav_html(path: Path, text: str) -> str:
 
 
 def footer_html(text: str) -> str:
+    ar = is_arabic(text)
+    github = "GitHub" if ar else "github"
+    linkedin = "LinkedIn" if ar else "linkedin"
+    email = "البريد" if ar else "email"
     return f"""\
         <!-- docs:footer start -->
         <footer class="site-footer">
             <span>© 2026 voidwest</span>
             <span class="footer-social">
-                <a href="https://github.com/voidwest">github</a>
-                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-                <a href="mailto:mthobaiti@outlook.com">email</a>
+                <a href="https://github.com/voidwest">{github}</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">{linkedin}</a>
+                <a href="mailto:mthobaiti@outlook.com">{email}</a>
             </span>
         </footer>
         <!-- docs:footer end -->
 """
-
 
 def update_head_scripts(text: str) -> str:
     text = MANAGED_HEAD_RE.sub("\n", text)
@@ -232,7 +239,7 @@ def update_og_image(path: Path, text: str) -> str:
 
 
 def update_stylesheet(text: str) -> str:
-    href = f'\n        <link rel="stylesheet" href="/style.css?v={STYLESHEET_VERSION}" />'
+    href = f'\n        <link rel="stylesheet" href="/style.css?v={STYLESHEET_VERSION}">'
     return STYLESHEET_RE.sub(href, text, count=1)
 
 

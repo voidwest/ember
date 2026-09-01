@@ -1,22 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="faster Q8 decode without keeping two models resident" />
-        <meta property="og:description" content="How Ember's packed Q8 decode path gained 40.6% on one Llama 1B workload, why the first memory result was misleading, and which projections kept most of the gain." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/ember/packed-q8-decode/" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="faster Q8 decode without keeping two models resident">
+        <meta property="og:description" content="How Ember's packed Q8 decode path gained 40.6% on one Llama 1B workload, why the first memory result was misleading, and which projections kept most of the gain.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/ember/packed-q8-decode/">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
         <title>faster Q8 decode without keeping two models resident</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png">
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -157,9 +157,9 @@ packed 16-row tile
 
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="/plots/packed_q8_decode_dark.svg"
-                 alt="Horizontal bars showing median full-model decode throughput: control 21.968 tokens per second; gate and up packed 27.659; attention, gate, and up packed with down excluded 30.199; all eligible projections packed 30.827." />
+                 alt="Horizontal bars showing median full-model decode throughput: control 21.968 tokens per second; gate and up packed 27.659; attention, gate, and up packed with down excluded 30.199; all eligible projections packed 30.827.">
             <img class="chart theme-chart-light" src="/plots/packed_q8_decode_light.svg"
-                 alt="Horizontal bars showing median full-model decode throughput: control 21.968 tokens per second; gate and up packed 27.659; attention, gate, and up packed with down excluded 30.199; all eligible projections packed 30.827." />
+                 alt="Horizontal bars showing median full-model decode throughput: control 21.968 tokens per second; gate and up packed 27.659; attention, gate, and up packed with down excluded 30.199; all eligible projections packed 30.827.">
             <figcaption>
                 medians of three randomized fresh processes. this is full-model
                 decode throughput after generic prefill, not an isolated kernel

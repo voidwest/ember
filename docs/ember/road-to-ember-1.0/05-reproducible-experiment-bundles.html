@@ -1,24 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<meta content="v0.5: from inference engine to research workflow" property="og:title"/>
-<meta content="Part 5 of Road to Ember 1.0: reproducibility as an artifact format, a verification procedure, and a fail-closed contract." property="og:description"/>
-<meta content="article" property="og:type"/>
-<meta content="https://voidwest.dev/ember/road-to-ember-1.0/05-reproducible-experiment-bundles.html" property="og:url"/>
-<meta content="voidwest" property="og:site_name"/>
-<meta content="summary" name="twitter:card"/>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<meta content="v0.5: from inference engine to research workflow" property="og:title">
+<meta content="Part 5 of Road to Ember 1.0: reproducibility as an artifact format, a verification procedure, and a fail-closed contract." property="og:description">
+<meta content="article" property="og:type">
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/05-reproducible-experiment-bundles.html" property="og:url">
+<meta content="voidwest" property="og:site_name">
+<meta content="summary" name="twitter:card">
 <title>v0.5: from inference engine to research workflow</title>
-<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
         <!-- docs:og-image end -->
-        <link rel="stylesheet" href="series.css" />
+        <link rel="stylesheet" href="series.css">
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
@@ -62,8 +62,8 @@
 </div>
 <h1>v0.5: from inference engine to research workflow</h1>
 <div class="meta">
-            draft · part 5 of the road to Ember 1.0 series · not yet published<br/>
-            mohammed al-thobaiti · 2026-08-04<br/>
+            draft · part 5 of the road to Ember 1.0 series · not yet published<br>
+            mohammed al-thobaiti · 2026-08-04<br>
 <span class="tag key">Ember</span>
 <span class="tag key">reproducibility</span>
 <span class="tag key">experiment bundles</span>
@@ -176,8 +176,8 @@ kind = "prompt-final"</code></pre>
             (<code>runs/part5-baseline</code>):
         </p>
 <figure class="chart-wrap">
-<img alt="The ember.bundle.v1 layout: the run directory with semantic-manifest.json and checksums.sha256 forming the verification boundary" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram2.svg" width="1120" height="600" decoding="async" />
-<img alt="The ember.bundle.v1 layout (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram2_light.svg" width="1120" height="600" decoding="async" />
+<img alt="The ember.bundle.v1 layout: the run directory with semantic-manifest.json and checksums.sha256 forming the verification boundary" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram2.svg" width="1120" height="600" decoding="async">
+<img alt="The ember.bundle.v1 layout (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram2_light.svg" width="1120" height="600" decoding="async">
 <figcaption>
                 figure 2, the ember.bundle.v1 layout (17 files in the live reproduction);
                 semantic-manifest.json and checksums.sha256 are the verification boundary
@@ -247,8 +247,8 @@ verdict: verified</code></pre>
             f32 digit.
         </p>
 <figure class="chart-wrap">
-<img alt="Baseline, intervention, restoration: the layer-7 replacement diverges output at step 1 and captures from layer 8; restoration reproduces the baseline bit-exactly" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram3.svg" width="1120" height="520" decoding="async" />
-<img alt="Baseline, intervention, restoration (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram3_light.svg" width="1120" height="520" decoding="async" />
+<img alt="Baseline, intervention, restoration: the layer-7 replacement diverges output at step 1 and captures from layer 8; restoration reproduces the baseline bit-exactly" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram3.svg" width="1120" height="520" decoding="async">
+<img alt="Baseline, intervention, restoration (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram3_light.svg" width="1120" height="520" decoding="async">
 <figcaption>
                 figure 3, baseline, intervention, restoration, live (2026-08-04): the layer-7 replacement
                 diverges the output at step 1 and the prompt-final captures from layer 8; restoration
@@ -286,8 +286,8 @@ verdict: verified
 $ ember experiment compare runs/part5-baseline runs/part5-restoration
 # generated tokens equal: true; all 32 captures bit-exact; restore event recorded</code></pre>
 <figure class="chart-wrap">
-<img alt="The experiment workflow: experiment.toml through validate, resolve, tokenize and align, execute, capture and intervene, to the atomic bundle, then verify, compare, and reproduce" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram1.svg" width="1120" height="560" decoding="async" />
-<img alt="The experiment workflow (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram1_light.svg" width="1120" height="560" decoding="async" />
+<img alt="The experiment workflow: experiment.toml through validate, resolve, tokenize and align, execute, capture and intervene, to the atomic bundle, then verify, compare, and reproduce" class="chart theme-chart-dark" loading="lazy" src="figures/part5-diagram1.svg" width="1120" height="560" decoding="async">
+<img alt="The experiment workflow (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part5-diagram1_light.svg" width="1120" height="560" decoding="async">
 <figcaption>
                 figure 1, the experiment workflow: validate → resolve → tokenize/align → execute →
                 capture/intervene → atomic bundle → verify → compare → reproduce; the bundle is the

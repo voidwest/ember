@@ -1,0 +1,152 @@
+/* Ember security thread: deliberately sparse while the research surface forms. */
+body.security-page {
+    --page-width: 1080px;
+    padding-block-end: 0;
+}
+
+.security-stage {
+    position: relative;
+    display: grid;
+    min-block-size: min(720px, calc(100svh - 190px));
+    grid-template-rows: auto 1fr auto;
+    overflow: hidden;
+    border-block: 1px solid var(--border);
+    isolation: isolate;
+}
+
+.security-rail {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-block: 18px;
+    color: var(--subtle);
+    font-family: var(--mono-font);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.security-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--accent-strong);
+}
+
+.security-status::before {
+    inline-size: 6px;
+    block-size: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    content: "";
+}
+
+.security-center {
+    display: grid;
+    place-items: center;
+    padding-block: clamp(54px, 8vw, 100px);
+}
+
+.security-lockup {
+    inline-size: 100%;
+    text-align: center;
+}
+
+.security-lockup h1 {
+    margin: 0 0 18px;
+    color: var(--heading);
+    font-family: var(--serif-font);
+    font-size: clamp(2rem, 4.2vw, 4.2rem);
+    font-weight: 400;
+    letter-spacing: -0.025em;
+    line-height: 1;
+}
+
+.security-wip {
+    margin-inline-start: -0.06em;
+    color: color-mix(in srgb, var(--accent) 7%, transparent);
+    font-family: var(--mono-font);
+    font-size: clamp(8rem, 25vw, 20rem);
+    font-weight: 500;
+    letter-spacing: -0.13em;
+    line-height: 0.78;
+    text-transform: uppercase;
+    -webkit-text-stroke: 1px color-mix(in srgb, var(--accent) 54%, transparent);
+    user-select: none;
+}
+
+.security-summary {
+    max-inline-size: 680px;
+    margin: 28px auto 0;
+    color: var(--muted);
+    font-size: clamp(0.9rem, 1.25vw, 1.05rem);
+    line-height: 1.75;
+    text-wrap: balance;
+}
+
+.security-foot {
+    display: grid;
+    grid-template-columns: minmax(160px, 0.42fr) minmax(0, 1.58fr);
+    gap: 32px;
+    padding-block: 22px 26px;
+    border-block-start: 1px solid var(--border-soft);
+}
+
+.security-foot h2 {
+    margin: 0;
+    color: var(--accent-strong);
+    font-family: var(--mono-font);
+    font-size: 0.68rem;
+    font-weight: 500;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
+
+.security-foot p {
+    max-inline-size: none;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.82rem;
+    line-height: 1.75;
+}
+
+.security-note {
+    margin-block: 18px 0;
+    color: var(--subtle);
+    font-family: var(--mono-font);
+    font-size: 0.68rem;
+}
+
+html[dir="rtl"] .security-wip {
+    direction: ltr;
+}
+
+html[dir="rtl"] .security-foot {
+    text-align: right;
+}
+
+@media (max-width: 720px) {
+    body.security-page {
+        padding-block-end: 0;
+    }
+
+    .security-stage {
+        min-block-size: calc(100svh - 150px);
+    }
+
+    .security-rail {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .security-wip {
+        font-size: clamp(6.7rem, 37vw, 10rem);
+    }
+
+    .security-foot {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+}

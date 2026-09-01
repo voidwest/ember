@@ -1,22 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta property="og:title" content="when the logits lie: gemma 4 gguf debugging" />
-    <meta property="og:description" content="Arabic went in. English and Japanese came out. Tracking down the Gemma 4 GGUF parity gap in Ember, from flat logits through the ablation graveyard to the discovery that RMSNorm weights were amplifying small numerical drift across 35 layers." />
-    <meta property="og:type" content="article" />
-    <meta property="og:url" content="https://voidwest.dev/ember/gemma4-parity-debugging/" />
-    <meta property="og:site_name" content="voidwest" />
-    <meta name="twitter:card" content="summary" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta property="og:title" content="when the logits lie: gemma 4 gguf debugging">
+    <meta property="og:description" content="Arabic went in. English and Japanese came out. Tracking down the Gemma 4 GGUF parity gap in Ember, from flat logits through the ablation graveyard to the discovery that RMSNorm weights were amplifying small numerical drift across 35 layers.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://voidwest.dev/ember/gemma4-parity-debugging/">
+    <meta property="og:site_name" content="voidwest">
+    <meta name="twitter:card" content="summary">
     <title>when the logits lie · gemma 4 gguf debugging</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png">
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -212,10 +212,10 @@
     <figure class="chart-wrap">
       <img class="chart theme-chart-dark" src="/plots/gemma_ablation_graveyard.png"
          alt="Ablation graveyard: horizontal bar chart showing attempted fixes and their impact on cosine similarity"
-         loading="lazy" />
+         loading="lazy">
       <img class="chart theme-chart-light" src="/plots/gemma_ablation_graveyard_light.png"
          alt="Ablation graveyard: horizontal bar chart showing attempted fixes and their impact on cosine similarity"
-         loading="lazy" />
+         loading="lazy">
     </figure>
 
     <p>
@@ -267,10 +267,10 @@
     <figure class="chart-wrap">
       <img class="chart theme-chart-dark" src="/plots/gemma_cosine_vs_topk.png"
          alt="Cosine vs top-k overlap: dual-axis chart showing cosine similarity improving while top-5 overlap stayed at zero"
-         loading="lazy" />
+         loading="lazy">
       <img class="chart theme-chart-light" src="/plots/gemma_cosine_vs_topk_light.png"
          alt="Cosine vs top-k overlap: dual-axis chart showing cosine similarity improving while top-5 overlap stayed at zero"
-         loading="lazy" />
+         loading="lazy">
     </figure>
 
     <p>
@@ -323,10 +323,10 @@ final logits:        cosine 0.87 , after output projection
     <figure class="chart-wrap">
       <img class="chart theme-chart-dark" src="/plots/gemma_layerwise_cosine.png"
          alt="Layerwise cosine: bar chart showing per-layer cosine similarity between Ember and llama.cpp hidden states, highlighting global attention layers and the final logit recovery"
-         loading="lazy" />
+         loading="lazy">
       <img class="chart theme-chart-light" src="/plots/gemma_layerwise_cosine_light.png"
          alt="Layerwise cosine: bar chart showing per-layer cosine similarity between Ember and llama.cpp hidden states, highlighting global attention layers and the final logit recovery"
-         loading="lazy" />
+         loading="lazy">
     </figure>
 
     <p>
@@ -448,10 +448,10 @@ final logits:        cosine 0.87 , after output projection
     <figure class="chart-wrap">
       <img class="chart theme-chart-dark" src="/plots/gemma_structural_fixes_timeline.png"
          alt="Structural fixes timeline: line chart showing cosine improvement as each fix was applied"
-         loading="lazy" />
+         loading="lazy">
       <img class="chart theme-chart-light" src="/plots/gemma_structural_fixes_timeline_light.png"
          alt="Structural fixes timeline: line chart showing cosine improvement as each fix was applied"
-         loading="lazy" />
+         loading="lazy">
     </figure>
 
     <p>
@@ -521,10 +521,10 @@ at every layer's normalization step.
     <figure class="chart-wrap">
       <img class="chart chart-full theme-chart-dark" src="/plots/gemma_rmsnorm_autopsy.png"
          alt="RMSNorm amplification: three-panel figure showing nearly identical inputs, large RMSNorm weights, and the resulting amplified output divergence"
-         loading="lazy" />
+         loading="lazy">
       <img class="chart chart-full theme-chart-light" src="/plots/gemma_rmsnorm_autopsy_light.png"
          alt="RMSNorm amplification: three-panel figure showing nearly identical inputs, large RMSNorm weights, and the resulting amplified output divergence"
-         loading="lazy" />
+         loading="lazy">
     </figure>
 
     <p>

@@ -1,22 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="what LLaMA knows about Arabic morphology (and won't say)" />
-        <meta property="og:description" content="Corrected probing of LLaMA 3.2 1B/3B shows root and pattern variables are linearly recoverable from prompts even when generation fails. 8B results are archived pending rerun." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/research-notes/llama-probing-results.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary_large_image" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="what LLaMA knows about Arabic morphology (and won't say)">
+        <meta property="og:description" content="Corrected probing of LLaMA 3.2 1B/3B shows root and pattern variables are linearly recoverable from prompts even when generation fails. 8B results are archived pending rerun.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/llama-probing-results.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary_large_image">
         <title>what LLaMA knows about Arabic morphology (and won't say) · research notes</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/llama-probing-results.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/llama-probing-results.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/llama-probing-results.png">
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -124,10 +124,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <figure class="chart-wrap">
         <img class="chart theme-chart-dark" src="/plots/llama1b_probe_results.png"
              alt="LLaMA 3.2 1B probing results: 3x2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
-             loading="lazy" />
+             loading="lazy">
         <img class="chart theme-chart-light" src="/plots/llama1b_probe_results_light.png"
              alt="LLaMA 3.2 1B probing results: 3x2 figure with probe accuracy, CCA/RSA heatmaps, subspace similarity, and divergence"
-             loading="lazy" />
+             loading="lazy">
         </figure>
 
         <p><strong>root identity</strong> is trivially decodable at every layer (96-100% accuracy, nearly flat curve). root information remains linearly recoverable across the full depth of the model.</p>
@@ -138,7 +138,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p><strong>root-pattern subspace CCA</strong> is low from the start in the corrected probe setup, roughly 0.04-0.08 across layers, with a minimum of 0.040 at layer 3. root and pattern probe weights are already strongly separated.</p>
 
-        <hr />
+        <hr>
 
         <!-- ── 3B chart ────────────────────────────────────── -->
         <h3>LLaMA 3.2 3B (28 layers, 3072-dim hidden)</h3>
@@ -146,10 +146,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <figure class="chart-wrap">
         <img class="chart theme-chart-dark" src="/plots/llama3b_probe_results.png"
              alt="LLaMA 3.2 3B probing results: note the U-shaped root accuracy dip and flat 100% pattern accuracy"
-             loading="lazy" />
+             loading="lazy">
         <img class="chart theme-chart-light" src="/plots/llama3b_probe_results_light.png"
              alt="LLaMA 3.2 3B probing results: note the U-shaped root accuracy dip and flat 100% pattern accuracy"
-             loading="lazy" />
+             loading="lazy">
         </figure>
 
         <p>this is where things get strange.</p>
@@ -167,7 +167,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <p><strong>3B still has the clearest root dip.</strong> After correcting the split logic, 1B no longer shows a pattern acquisition curve. Both 1B and 3B have pattern identity essentially available from layer 0. The robust 3B-specific result is the root dip: root identity is still recoverable, but less linearly accessible in the middle of the network. The model <a href="#caveats">still has no Arabic output</a> to show for it.</p>
         </div>
 
-        <hr />
+        <hr>
 
         <!-- ── 8B chart ────────────────────────────────────── -->
         <h3>LLaMA 3.1 8B (archived first pass, not rerun)</h3>
@@ -175,10 +175,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <figure class="chart-wrap">
         <img class="chart theme-chart-dark" src="/plots/llama8b_probe_results.png"
              alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
-             loading="lazy" />
+             loading="lazy">
         <img class="chart theme-chart-light" src="/plots/llama8b_probe_results_light.png"
              alt="LLaMA 3.1 8B probing results: deepest U-dip in root accuracy, mixing-then-separating subspace curve"
-             loading="lazy" />
+             loading="lazy">
         </figure>
 
         <p><strong>archival caveat:</strong> this 8B section uses the first-pass probe files and has not been rerun with the corrected split logic. do not compare its exact numbers to the corrected 1B/3B results yet.</p>
@@ -196,7 +196,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <p><strong>root probing is non-monotonic in the corrected local reruns.</strong> 1B stays high and nearly flat; 3B develops a mid-layer dip with an 86% trough. the older 8B run suggested a deeper 70% trough, but that result is pending rerun with the corrected splits.</p>
         </div>
 
-        <hr />
+        <hr>
 
         <!-- ── comparison grid ─────────────────────────────── -->
         <h3>side-by-side</h3>

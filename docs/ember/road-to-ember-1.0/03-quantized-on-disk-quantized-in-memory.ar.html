@@ -1,43 +1,43 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="description" content="الجزء 3 من سلسلة الطريق إلى Ember 1.0: ملف Q4 يصل إلى الذاكرة كـ f32، وما تطلبه إبقاء الأوزان الكمّية كمّية فعلًا." />
-        <meta property="og:title" content="v0.3، كمّي على القرص، كمّي في الذاكرة" />
-        <meta property="og:description" content="الملف قال Q4 والمحرك قال f32. النموذج كان أصغر على القرص وبنفس الحجم في الذاكرة، حتى أوقف v0.3 المحرك من فك ضغط النموذج." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.ar.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="الجزء 3 من سلسلة الطريق إلى Ember 1.0: ملف Q4 يصل إلى الذاكرة كـ f32، وما تطلبه إبقاء الأوزان الكمّية كمّية فعلًا.">
+        <meta property="og:title" content="v0.3، كمّي على القرص، كمّي في الذاكرة">
+        <meta property="og:description" content="الملف قال Q4 والمحرك قال f32. النموذج كان أصغر على القرص وبنفس الحجم في الذاكرة، حتى أوقف v0.3 المحرك من فك ضغط النموذج.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
         <title>v0.3، كمّي على القرص، كمّي في الذاكرة</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
         <!-- docs:og-image end -->
-        <link rel="stylesheet" href="series.css" />
+        <link rel="stylesheet" href="series.css">
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
     </head>
     <body>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html" aria-current="page">ember</a>
-                <a href="/research-notes/index.ar.html">research notes</a>
-                <a href="/tools/index.ar.html">tools</a>
-                <a href="/terms/index.ar.html">terms</a>
-                <a href="/cv/index.ar.html">cv</a>
+                <a href="/research-notes/index.ar.html">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.html">en</a>
-                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+                <a class="nav-lang" href="/ember/road-to-ember-1.0/03-quantized-on-disk-quantized-in-memory.html">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
             </div>
         </nav>
         <!-- docs:nav end -->
@@ -164,10 +164,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/part3-diagram1.svg"
                  alt="التوسعة الـ eager مقابل الإقامة المضغوطة: المسار المرجعي يوسّع مصفوفة الأوزان كلها إلى f32؛ مسار v0.3 يُبقي الكتل مضغوطة عبر mmap ويشغّل matvec K-quant أصليًا"
-                 loading="lazy" width="1120" height="548" decoding="async" />
+                 loading="lazy" width="1120" height="548" decoding="async">
             <img class="chart theme-chart-light" src="figures/part3-diagram1_light.svg"
                  alt="التوسعة الـ eager مقابل الإقامة المضغوطة (الوضع الفاتح)"
-                 loading="lazy" width="1120" height="548" decoding="async" />
+                 loading="lazy" width="1120" height="548" decoding="async">
             <figcaption>
                 الشكل 1، التوسعة الـ eager مقابل الإقامة المضغوطة. ذروة RSS على بناء tag v0.3.0:
                 6,989,724–8,837,276 KB (eager) مقابل 844,216–1,266,684 KB (مضغوط) عبر Llama-3.2-1B
@@ -195,10 +195,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/part3-diagram4.svg"
                  alt="تشريح super-block لـ Q4_K وQ6_K: 8 كتل من 32 وزنًا بعوامل مقاييس 2-بت لـ Q4_K؛ 16 كتلة من 16 وزنًا بمقاييس int8 لـ Q6_K"
-                 loading="lazy" width="1120" height="540" decoding="async" />
+                 loading="lazy" width="1120" height="540" decoding="async">
             <img class="chart theme-chart-light" src="figures/part3-diagram4_light.svg"
                  alt="تشريح super-block لـ Q4_K وQ6_K (الوضع الفاتح)"
-                 loading="lazy" width="1120" height="540" decoding="async" />
+                 loading="lazy" width="1120" height="540" decoding="async">
             <figcaption>
                 الشكل 4، تشريح super-block لـ Q4_K وQ6_K (مفاهيمي). التوزيع لكل tensor لا لكل ملف: ملف
                 llama-3.2-1b q4_k_m يخلط 96 Q4_K + 17 Q6_K + 34 F32 (docs/v03-execution-contracts.md §5).
@@ -238,10 +238,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/part3-diagram2.svg"
                  alt="تشريح matvec K-quant: فك كتلة واحدة في مخزن صغير لكل خيط، ضربها بشريحة التنشيط، تراكمها؛ المصفوفة كلها لا تصبح f32 مقيمة أبدًا"
-                 loading="lazy" width="1120" height="560" decoding="async" />
+                 loading="lazy" width="1120" height="560" decoding="async">
             <img class="chart theme-chart-light" src="figures/part3-diagram2_light.svg"
                  alt="تشريح matvec K-quant (الوضع الفاتح)"
-                 loading="lazy" width="1120" height="560" decoding="async" />
+                 loading="lazy" width="1120" height="560" decoding="async">
             <figcaption>
                 الشكل 2، تشريح matvec K-quant. تُفك كتلة واحدة في مخزن [f32; 256] لكل خيط في كل مرة؛
                 مساحة عمل المسار المضغوط لكل خيط ≤ 9 KiB ولا يُنشأ مخزن f32 بمقياس النموذج أبدًا
@@ -280,10 +280,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/part3-diagram3.svg"
                  alt="سلم التحقق: kernel عددية مضغوطة، kernel AVX2 مضغوطة، تنفيذ النموذج المخطط، توازي الـ hidden states لكل طبقة، logits نهائية، tokens جشعة، مرجع llama.cpp المثبّت؛ hooks الالتقاط والتدخل تلتصق بالمواقع الست نفسها"
-                 loading="lazy" width="1120" height="560" decoding="async" />
+                 loading="lazy" width="1120" height="560" decoding="async">
             <img class="chart theme-chart-light" src="figures/part3-diagram3_light.svg"
                  alt="سلم التحقق (الوضع الفاتح)"
-                 loading="lazy" width="1120" height="560" decoding="async" />
+                 loading="lazy" width="1120" height="560" decoding="async">
             <figcaption>
                 الشكل 3، سلم التحقق. توازي kernels (Gate A) → توازي النموذج (Gates B/D) → golden خارجي
                 مقابل llama.cpp المثبّت (Gate C)، مع التصاق مواقع الـ hooks الدلالية الست بمواقع النداء نفسها
@@ -375,9 +375,9 @@
         <footer class="site-footer">
             <span>© 2026 voidwest</span>
             <span class="footer-social">
-                <a href="https://github.com/voidwest">github</a>
-                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-                <a href="mailto:mthobaiti@outlook.com">email</a>
+                <a href="https://github.com/voidwest">GitHub</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">LinkedIn</a>
+                <a href="mailto:mthobaiti@outlook.com">البريد</a>
             </span>
         </footer>
         <!-- docs:footer end -->

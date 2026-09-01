@@ -1,23 +1,23 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta name="description" content="A frozen-feature pilot testing whether development-ranked layer groups carry stronger held-out Arabic POS signal than non-overlapping random-matched groups." />
-        <meta property="og:title" content="A Local Signal for Geometry-Guided Arabic Morphology Adaptation" />
-        <meta property="og:description" content="Frozen-feature controls before targeted LoRA: Qwen3-0.6B and Llama-3.2-1B POS results with non-overlapping random layer controls." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/research-notes/geometry-guided-arabic-morphology-pilot.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary_large_image" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="A frozen-feature pilot testing whether development-ranked layer groups carry stronger held-out Arabic POS signal than non-overlapping random-matched groups.">
+        <meta property="og:title" content="A Local Signal for Geometry-Guided Arabic Morphology Adaptation">
+        <meta property="og:description" content="Frozen-feature controls before targeted LoRA: Qwen3-0.6B and Llama-3.2-1B POS results with non-overlapping random layer controls.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/geometry-guided-arabic-morphology-pilot.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary_large_image">
         <title>A Local Signal for Geometry-Guided Arabic Morphology Adaptation · research notes</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png">
         <!-- docs:og-image end -->
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
@@ -169,10 +169,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/k4_geometry_vs_random_accuracy.svg"
                  alt="Grouped bar chart showing K=4 geometry-selected held-out POS accuracy above the mean of five non-overlapping random layer controls for Qwen3-0.6B and Llama-3.2-1B"
-                 loading="lazy" />
+                 loading="lazy">
             <img class="chart theme-chart-light" src="figures/k4_geometry_vs_random_accuracy_light.svg"
                  alt="Grouped bar chart showing K=4 geometry-selected held-out POS accuracy above the mean of five non-overlapping random layer controls for Qwen3-0.6B and Llama-3.2-1B"
-                 loading="lazy" />
+                 loading="lazy">
             <figcaption>
                 K=4 held-out POS accuracy. random bars show mean ± population SD
                 across five deterministic, non-overlapping layer draws.
@@ -218,10 +218,10 @@
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="figures/k4_class_f1_deltas.svg"
                  alt="Horizontal bars showing positive K=4 F1 differences for ADJ, NOUN, and VERB in both Qwen3-0.6B and Llama-3.2-1B"
-                 loading="lazy" />
+                 loading="lazy">
             <img class="chart theme-chart-light" src="figures/k4_class_f1_deltas_light.svg"
                  alt="Horizontal bars showing positive K=4 F1 differences for ADJ, NOUN, and VERB in both Qwen3-0.6B and Llama-3.2-1B"
-                 loading="lazy" />
+                 loading="lazy">
             <figcaption>
                 every POS class improves in F1 at K=4. the aggregate result is
                 not only a majority-class NOUN effect.

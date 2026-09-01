@@ -1,22 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ar" dir="rtl">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="Q8 decode أسرع بدون إبقاء نسختين من النموذج في الذاكرة" />
-        <meta property="og:description" content="كيف رفع مسار packed Q8 سرعة decode بنسبة 40.6% في workload واحد، ولماذا كانت قراءة الذاكرة الأولى ناقصة، وأي projections احتفظت بمعظم التحسن." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/ember/packed-q8-decode/index.ar.html" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="Q8 decode أسرع بدون إبقاء نسختين من النموذج في الذاكرة">
+        <meta property="og:description" content="كيف رفع مسار packed Q8 سرعة decode بنسبة 40.6% في workload واحد، ولماذا كانت قراءة الذاكرة الأولى ناقصة، وأي projections احتفظت بمعظم التحسن.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/ember/packed-q8-decode/index.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
         <title>Q8 decode أسرع بدون إبقاء نسختين من النموذج في الذاكرة</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png">
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -36,18 +36,18 @@
     </head>
     <body>
         <!-- docs:nav start -->
-        <nav class="site-nav" aria-label="Primary">
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
             <a class="brand" href="/index.ar.html">voidwest</a>
             <div class="nav-links">
                 <a href="/ember/index.ar.html" aria-current="page">ember</a>
-                <a href="/research-notes/index.ar.html">research notes</a>
-                <a href="/tools/index.ar.html">tools</a>
-                <a href="/terms/index.ar.html">terms</a>
-                <a href="/cv/index.ar.html">cv</a>
+                <a href="/research-notes/index.ar.html">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
             </div>
             <div class="nav-actions">
-                <a class="nav-lang" href="/ember/packed-q8-decode/">en</a>
-                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+                <a class="nav-lang" href="/ember/packed-q8-decode/">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
             </div>
         </nav>
         <!-- docs:nav end -->
@@ -158,9 +158,9 @@ packed 16-row tile
 
         <figure class="chart-wrap">
             <img class="chart theme-chart-dark" src="/plots/packed_q8_decode_dark.svg"
-                 alt="رسم أعمدة أفقي لسرعة full-model decode: control عند 21.968 token في الثانية، gate وup عند 27.659، attention وgate وup بدون down عند 30.199، وكل projections المؤهلة عند 30.827." />
+                 alt="رسم أعمدة أفقي لسرعة full-model decode: control عند 21.968 token في الثانية، gate وup عند 27.659، attention وgate وup بدون down عند 30.199، وكل projections المؤهلة عند 30.827.">
             <img class="chart theme-chart-light" src="/plots/packed_q8_decode_light.svg"
-                 alt="رسم أعمدة أفقي لسرعة full-model decode: control عند 21.968 token في الثانية، gate وup عند 27.659، attention وgate وup بدون down عند 30.199، وكل projections المؤهلة عند 30.827." />
+                 alt="رسم أعمدة أفقي لسرعة full-model decode: control عند 21.968 token في الثانية، gate وup عند 27.659، attention وgate وup بدون down عند 30.199، وكل projections المؤهلة عند 30.827.">
             <figcaption>
                 median لثلاث processes جديدة بترتيب عشوائي. هذا full-model
                 decode بعد generic prefill، وليس kernel microbenchmark. قيمة
@@ -258,9 +258,9 @@ packed 16-row tile
         <footer class="site-footer">
             <span>© 2026 voidwest</span>
             <span class="footer-social">
-                <a href="https://github.com/voidwest">github</a>
-                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
-                <a href="mailto:mthobaiti@outlook.com">email</a>
+                <a href="https://github.com/voidwest">GitHub</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">LinkedIn</a>
+                <a href="mailto:mthobaiti@outlook.com">البريد</a>
             </span>
         </footer>
         <!-- docs:footer end -->

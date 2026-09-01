@@ -1,22 +1,22 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
     <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <meta property="og:title" content="simd kernels, qwen 3, and gemma 4 support" />
-        <meta property="og:description" content="How ember's SIMD Q8_0 kernels, Qwen 3 path, and dense text-only Gemma 4 support fit into the CPU-first inference engine." />
-        <meta property="og:type" content="article" />
-        <meta property="og:url" content="https://voidwest.dev/ember/simd-qwen-gemma/" />
-        <meta property="og:site_name" content="voidwest" />
-        <meta name="twitter:card" content="summary" />
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="simd kernels, qwen 3, and gemma 4 support">
+        <meta property="og:description" content="How ember's SIMD Q8_0 kernels, Qwen 3 path, and dense text-only Gemma 4 support fit into the CPU-first inference engine.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/ember/simd-qwen-gemma/">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
         <title>simd kernels, qwen 3, and gemma 4 support</title>
-        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml" />
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/simd-qwen-gemma.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/simd-qwen-gemma.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/simd-qwen-gemma.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/simd-qwen-gemma.png">
         <!-- docs:og-image end -->
         <!-- docs:head-scripts start -->
         <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -163,7 +163,7 @@
         <figure class="chart-wrap">
             <img class="chart" src="/plots/simd_benchmark_dark.png"
                  alt="Ember Q8_0 CPU kernel benchmark showing 3.8x Q8_0 dequant speedup and 8.2x fused Q8_0 decode speedup"
-                 loading="lazy" />
+                 loading="lazy">
             <figcaption>
                 kernel benchmark, not full-model latency. full generation still pays
                 tokenizer, attention, sampling, allocation, and cache costs, but the

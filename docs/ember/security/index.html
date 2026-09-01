@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta property="og:title" content="Ember security research — work in progress">
+    <meta property="og:description" content="A developing research thread on security boundaries in local inference engines.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://voidwest.dev/ember/security/">
+    <meta property="og:site_name" content="voidwest">
+    <meta name="twitter:card" content="summary">
+    <title>Ember security research · WIP</title>
+    <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
+    <link rel="stylesheet" href="/ember/security/security.css">
+    <script src="/theme.js"></script>
+</head>
+<body class="security-page">
+    <nav class="site-nav" aria-label="Primary">
+        <a class="brand" href="/">voidwest</a>
+        <div class="nav-links">
+            <a href="/ember/" aria-current="page">ember</a>
+            <a href="/research-notes/">research notes</a>
+            <a href="/tools/">tools</a>
+            <a href="/terms/">terms</a>
+            <a href="/cv/">cv</a>
+        </div>
+        <div class="nav-actions">
+            <a class="nav-lang" href="/ember/security/index.ar.html">عربي</a>
+            <button class="theme-toggle" type="button" aria-label="Switch theme" aria-pressed="true"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+        </div>
+    </nav>
+
+    <main>
+        <section class="security-stage" aria-labelledby="security-title">
+            <header class="security-rail">
+                <span>EMBER / SECURITY / THREAD 00</span>
+                <span class="security-status">scope forming</span>
+            </header>
+
+            <div class="security-center">
+                <div class="security-lockup">
+                    <h1 id="security-title">Security research for inference engines</h1>
+                    <div class="security-wip" role="img" aria-label="Work in progress">WIP</div>
+                    <p class="security-summary">
+                        An inference engine is a parser, runtime, memory system, and control plane—not just matrix multiplication. This thread will document where those boundaries fail and how to test them without hand-waving.
+                    </p>
+                </div>
+            </div>
+
+            <footer class="security-foot">
+                <h2>Initial surface</h2>
+                <div>
+                    <p>model-file trust boundaries · quantized-kernel safety · allocator and mmap behavior · artifact integrity · local control surfaces</p>
+                    <p class="security-note">No findings are implied by this placeholder. Threat models, reproducers, and fixes will land here when they are ready to review.</p>
+                </div>
+            </footer>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <span>© 2026 voidwest</span>
+        <span class="footer-social"><a href="/ember/">back to ember</a><a href="https://github.com/voidwest/ember">source</a></span>
+    </footer>
+</body>
+</html>

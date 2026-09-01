@@ -1,24 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<meta content="v0.4: plan-driven decode without sacrificing hooks" property="og:title"/>
-<meta content="Part 4 of Road to Ember 1.0: planning each token's work once, and the benchmark failures that almost hid the speedup." property="og:description"/>
-<meta content="article" property="og:type"/>
-<meta content="https://voidwest.dev/ember/road-to-ember-1.0/04-plan-driven-decode.html" property="og:url"/>
-<meta content="voidwest" property="og:site_name"/>
-<meta content="summary" name="twitter:card"/>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<meta content="v0.4: plan-driven decode without sacrificing hooks" property="og:title">
+<meta content="Part 4 of Road to Ember 1.0: planning each token's work once, and the benchmark failures that almost hid the speedup." property="og:description">
+<meta content="article" property="og:type">
+<meta content="https://voidwest.dev/ember/road-to-ember-1.0/04-plan-driven-decode.html" property="og:url">
+<meta content="voidwest" property="og:site_name">
+<meta content="summary" name="twitter:card">
 <title>v0.4: plan-driven decode without sacrificing hooks</title>
-<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml"/>
-        <link rel="stylesheet" href="/style.css?v=2203cc763d45" />
+<link href="/assets/voidwest/vw-mark.svg" rel="icon" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=69be4ee80eca">
         <!-- docs:og-image start -->
-        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
-        <meta property="og:image:width" content="1200" />
-        <meta property="og:image:height" content="630" />
-        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png" />
+        <meta property="og:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember-road-to-1.0.png">
         <!-- docs:og-image end -->
-        <link rel="stylesheet" href="series.css" />
+        <link rel="stylesheet" href="series.css">
         <!-- docs:theme-script start -->
         <script src="/theme.js"></script>
         <!-- docs:theme-script end -->
@@ -50,8 +50,8 @@
 </div>
 <h1>v0.4: plan-driven decode without sacrificing hooks</h1>
 <div class="meta">
-            draft · part 4 of the road to Ember 1.0 series · not yet published<br/>
-            mohammed al-thobaiti · 2026-08-04<br/>
+            draft · part 4 of the road to Ember 1.0 series · not yet published<br>
+            mohammed al-thobaiti · 2026-08-04<br>
 <span class="tag key">Ember</span>
 <span class="tag key">execution plans</span>
 <span class="tag key">fusion</span>
@@ -141,8 +141,8 @@ most of the work in decoding one token is deciding what to do, not doing it. v0.
                 a guess.</li>
 </ul>
 <figure class="chart-wrap">
-<img alt="The three execution concepts: reference, planned, and planned-fused pipelines from the same model tensors, with hook-driven de-fusion on the fused path" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram1.svg" width="1120" height="580" decoding="async" />
-<img alt="The three execution concepts (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram1_light.svg" width="1120" height="580" decoding="async" />
+<img alt="The three execution concepts: reference, planned, and planned-fused pipelines from the same model tensors, with hook-driven de-fusion on the fused path" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram1.svg" width="1120" height="580" decoding="async">
+<img alt="The three execution concepts (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram1_light.svg" width="1120" height="580" decoding="async">
 <figcaption>
                 figure 1, the three execution concepts: reference (readable oracle), planned (plan
                 interpreter), planned-fused (frozen fusion set with hook-driven de-fusion). all three
@@ -151,8 +151,8 @@ most of the work in decoding one token is deciding what to do, not doing it. v0.
             </figcaption>
 </figure>
 <figure class="chart-wrap">
-<img alt="Fusion and de-fusion on one layer: F1-F5 eliminate only non-hooked intermediates; F5 eliminates the after_attention tensor, so an active hook forces the unfused route" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram2.svg" width="1120" height="580" decoding="async" />
-<img alt="Fusion and de-fusion on one layer (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram2_light.svg" width="1120" height="580" decoding="async" />
+<img alt="Fusion and de-fusion on one layer: F1-F5 eliminate only non-hooked intermediates; F5 eliminates the after_attention tensor, so an active hook forces the unfused route" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram2.svg" width="1120" height="580" decoding="async">
+<img alt="Fusion and de-fusion on one layer (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram2_light.svg" width="1120" height="580" decoding="async">
 <figcaption>
                 figure 2, fusion and de-fusion on one layer. F1–F5 eliminate only intermediates that are
                 never hook sites; F5 eliminates the after_attention tensor o, so an active hook at that
@@ -219,8 +219,8 @@ most of the work in decoding one token is deciding what to do, not doing it. v0.
             semantic execution route are also validated.
         </p>
 <figure class="chart-wrap">
-<img alt="The six benchmark failures and the protocol fix for each: thermal noise, reference-path benchmark mode, fusion tests without route coverage, shadowed allocation gate, pinned cores, attention-dedup false allocation" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram3.svg" width="1120" height="700" decoding="async" />
-<img alt="The six benchmark failures and their fixes (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram3_light.svg" width="1120" height="700" decoding="async" />
+<img alt="The six benchmark failures and the protocol fix for each: thermal noise, reference-path benchmark mode, fusion tests without route coverage, shadowed allocation gate, pinned cores, attention-dedup false allocation" class="chart theme-chart-dark" loading="lazy" src="figures/part4-diagram3.svg" width="1120" height="700" decoding="async">
+<img alt="The six benchmark failures and their fixes (light theme)" class="chart theme-chart-light" loading="lazy" src="figures/part4-diagram3_light.svg" width="1120" height="700" decoding="async">
 <figcaption>
                 figure 3, when the CPU became an unreliable witness: the six failures and the protocol fix
                 for each (CHANGELOG v0.4 fixed; artifacts/benchmark-v04/2026-08-04/SUMMARY.md;

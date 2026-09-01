@@ -84,26 +84,42 @@
 
 html {
     min-block-size: 100%;
-    background-color: var(--outer-bg);
-    background-image:
-        radial-gradient(circle at 8% 12%, rgb(215 215 210 / 0.14) 0 1px, transparent 1.4px),
-        radial-gradient(circle at 91% 18%, rgb(237 240 245 / 0.16) 0 0.8px, transparent 1.2px),
-        radial-gradient(circle at 16% 81%, rgb(237 240 245 / 0.12) 0 0.7px, transparent 1.1px),
-        radial-gradient(circle at 82% 74%, rgb(170 173 178 / 0.1) 0 1px, transparent 1.5px),
-        radial-gradient(ellipse at 50% 0%, #15171a 0, var(--outer-bg) 62%);
-    background-size: 173px 211px, 251px 197px, 307px 283px, 389px 347px, 100% 100%;
+    background: var(--bg);
     scroll-behavior: smooth;
 }
 
+html::before {
+    position: fixed;
+    z-index: 0;
+    inset: 0;
+    background-image: url("/assets/voidwest/lab-field.svg");
+    background-position: 12px 12px;
+    background-size: 48px 48px;
+    content: "";
+    opacity: 0.56;
+    pointer-events: none;
+}
+
+:root[data-theme="dark"]::before {
+    background-image: url("/assets/voidwest/lab-field-dark.svg");
+    opacity: 0.48;
+}
+
+html:has(body.home)::before {
+    display: none;
+}
+
 body {
+    position: relative;
+    z-index: 1;
     inline-size: min(calc(100% - 48px), calc(var(--page-width) + 88px));
-    min-block-size: calc(100vh - 48px);
-    margin: 24px auto;
+    min-block-size: 100vh;
+    margin: 0 auto;
     padding: 0 44px 64px;
-    border: 1px solid rgb(255 255 255 / 0.08);
-    border-radius: 2px;
-    background: var(--bg);
-    box-shadow: 0 18px 70px rgb(0 0 0 / 0.3);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
     color: var(--text);
     font-family: var(--body-font);
     font-size: 16px;
@@ -652,6 +668,18 @@ hr {
 
 .project:hover .name a {
     color: var(--accent);
+}
+
+.wip-label {
+    display: inline-block;
+    margin-inline-start: 7px;
+    color: var(--accent-strong);
+    font-family: var(--mono-font);
+    font-size: 0.55em;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    vertical-align: 0.18em;
 }
 
 .project .desc {
