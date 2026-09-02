@@ -4,7 +4,7 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta property="og:title" content="ليش دقة ArabicMMLU تعتمد على موضع الإجابة؟">
-        <meta property="og:description" content="ملاحظة قياس صغيرة: صيغة الـ prompt وموضع الخيار الصحيح قد يغيرون دقة ArabicMMLU في نماذج decoder-only صغيرة.">
+        <meta property="og:description" content="ملاحظة قياس صغيرة: صيغة الـ prompt وموضع الخيار الصحيح ممكن يغيّرون دقة ArabicMMLU في نماذج decoder-only صغيرة.">
         <meta property="og:type" content="article">
         <meta property="og:url" content="https://voidwest.dev/research-notes/arabicmmlu-correct-answer-position.ar.html">
         <meta property="og:site_name" content="voidwest">
@@ -72,39 +72,39 @@
         </div>
 
         <p>
-            Arabic benchmarks مهمة. تعطينا طريقة نقارن الأنظمة ونسأل إذا
-            النماذج تتعامل مع العربي خارج التقييم الإنجليزي المعتاد. لكن رقم
+            Arabic benchmarks مهمة فعلًا. تعطينا طريقة نقارن الأنظمة ونسأل إذا
+            النماذج تتعامل مع العربي خارج التقييم الإنجليزي المعتاد. بس رقم
             accuracy واحد ممكن يخبي مشاكل في واجهة القياس نفسها.
         </p>
 
         <p>
-            هذه ملاحظة قياس صغيرة على <bdi>ArabicMMLU multiple-choice</bdi>.
-            السؤال مو: هل <bdi>ArabicMMLU</bdi> سيئ؟ السؤال: وش لازم نعرض مع
-            رقم الدقة، خصوصاً لما نقيم نماذج <bdi>decoder-only</bdi> صغيرة
+            هذي ملاحظة قياس صغيرة على <bdi>ArabicMMLU multiple-choice</bdi>.
+            السؤال مو هل <bdi>ArabicMMLU</bdi> سيئ؟ السؤال: وش لازم نعرض مع
+            رقم الدقة، خصوصاً وأنا أقيّم نماذج <bdi>decoder-only</bdi> صغيرة
             ومحلية؟
         </p>
 
         <p>
-            أوضح مثال: <bdi>Qwen3-0.6B</bdi> سجل 0.680 لما كانت الإجابة
-            الصحيحة تحت <bdi>A</bdi>، لكنه سجل 0.020 لما نفس الإعداد حط
-            الإجابة الصحيحة تحت <bdi>B</bdi>. هذا ما يبطل <bdi>ArabicMMLU</bdi>.
+            أوضح مثال عندي: <bdi>Qwen3-0.6B</bdi> سجل 0.680 لما كانت الإجابة
+            الصحيحة تحت <bdi>A</bdi>، بس سجل 0.020 لما نفس الإعداد حط
+            الإجابة الصحيحة تحت <bdi>B</bdi>. وهذا مو معناه إن <bdi>ArabicMMLU</bdi> خربان.
             بس يوضح ليش raw accuracy لوحده ما يكفي.
         </p>
 
         <div class="callout observation">
             <div class="label">status</div>
             <p>
-                هذه ملاحظة قياس، مو ranking للنماذج. العينة صغيرة،
+                هذي ملاحظة قياس، مو ranking للنماذج. العينة صغيرة،
                 والنماذج صغيرة ومحلية، وتشغيل <bdi>3B</bdi> هنا
                 <bdi>scale-check</bdi> فقط، مو scaling study كاملة.
             </p>
         </div>
 
         <p>
-            النتيجة الضيقة: في هالتشغيلات، صيغة الـ <bdi>prompt</bdi>،
+            الخلاصة الضيقة: في هالتشغيلات، صيغة الـ <bdi>prompt</bdi>،
             parsing، تفضيل وسوم الخيارات، وموضع الإجابة الصحيحة ارتبطوا
             بتغيرات كبيرة في الدقة المقاسة. الانتقال من <bdi>0.6B/1B</bdi>
-            إلى <bdi>3B</bdi> حسّن الوضع، لكنه ما شال حساسية موضع الخيار.
+            إلى <bdi>3B</bdi> حسّن الوضع، بس ما شال حساسية موضع الخيار.
         </p>
 
         <p>
@@ -115,20 +115,20 @@
         <h2><bdi>why multiple-choice evaluation can be fragile</bdi></h2>
 
         <p>
-            الشكل بسيط: سؤال، خيارات <bdi>A/B/C/D</bdi>، استخرج حرف، احسب
+            على الورق الشكل بسيط: سؤال، خيارات <bdi>A/B/C/D</bdi>، استخرج حرف، احسب
             accuracy. عملياً، واجهة القياس نفسها تدخل في النتيجة.
         </p>
 
         <ul>
             <li><strong>answer format</strong>: النموذج يشرح، ينسخ نص الخيار، يجاوب بوسوم عربية، أو يطلع جواب ما فيه حرف واضح.</li>
-            <li><strong>parse failures</strong>: الجواب ممكن يكون مفهوم للإنسان لكنه يفشل عند الـ <bdi>parser</bdi>، أو ينجح parsing رغم أن السلوك ضعيف.</li>
+            <li><strong>parse failures</strong>: الجواب ممكن يكون مفهوم للإنسان بس يفشل عند الـ <bdi>parser</bdi>، أو ينجح parsing رغم أن السلوك ضعيف.</li>
             <li><strong>label bias</strong>: النموذج يفضل <bdi>A</bdi> أو <bdi>C</bdi> بغض النظر عن المحتوى.</li>
             <li><strong>position sensitivity</strong>: نفس الإجابة الصحيحة تعطي accuracy مختلف إذا تغير موضعها.</li>
             <li><strong>semantic instability</strong>: تغييرات شكلية في الـ <bdi>prompt</bdi> تغير الاختيار الدلالي.</li>
         </ul>
 
         <p>
-            هذا مو سبب نرمي multiple-choice benchmarks. هو سبب نعرض diagnostics
+            وهذا مو سبب نرمي multiple-choice benchmarks. هو سبب نعرض diagnostics
             بجانب raw accuracy.
         </p>
 
@@ -138,7 +138,7 @@
             <bdi>pilot 1</bdi> استخدم 50 سؤال من <bdi>ArabicMMLU</bdi>،
             و6 صيغ <bdi>prompt</bdi> لكل سؤال: 300 <bdi>prompt</bdi> لكل نموذج.
             النماذج: <bdi>Qwen3-0.6B</bdi>، <bdi>Llama-3.2-1B</bdi>،
-            و<bdi>Llama-3.2-3B</bdi>. المقاييس كانت <bdi>accuracy_all</bdi>،
+            و<bdi>Llama-3.2-3B</bdi>. وقست <bdi>accuracy_all</bdi>،
             <bdi>accuracy_parseable</bdi>، <bdi>parse_failure_rate</bdi>،
             <bdi>semantic consistency</bdi>، <bdi>strict-output accuracy</bdi>،
             <bdi>strict-output parse failure</bdi>، وتوزيع وسوم التنبؤ.
@@ -170,9 +170,9 @@
         </table>
 
         <p>
-            <bdi>Qwen3-0.6B</bdi> كان عنده parse failures كثيرة في الصيغ
-            غير الصارمة. <bdi>strict-output</bdi> شال المشكلة في كل النماذج.
-            لكن إصلاح parsing ما حل robustness بالكامل. <bdi>Llama-3.2-3B</bdi>
+            <bdi>Qwen3-0.6B</bdi> واجه parse failures كثيرة في الصيغ
+            غير الصارمة. <bdi>strict-output</bdi> أزال المشكلة في كل النماذج.
+            بس إصلاح parsing ما حل robustness بالكامل. <bdi>Llama-3.2-3B</bdi>
             حسّن الدقة، وقابلية التحليل، والثبات، وهذا يوحي إن الحجم يساعد هنا. مع ذلك،
             <bdi>semantic consistency</bdi> بقي 0.340، يعني أغلب الأسئلة ما
             أخذت نفس الإجابة الدلالية عبر كل الصيغ.
@@ -181,7 +181,7 @@
         <p>
             في تشغيل <bdi>Llama-3.2-3B</bdi> لـ <bdi>pilot 1</bdi>، كان توزيع
             التنبؤات الكلي <bdi>A/B/C/D/E/PF = 59/87/92/58/2/2</bdi>. التوزيع
-            لا ينهار إلى وسم واحد، لكنه يظل سياقاً مهماً لتفسير الدقة.
+            لا ينهار إلى وسم واحد، بس يظل سياقاً مهماً لتفسير الدقة.
         </p>
 
         <h2><bdi>pilot 2: label and position bias</bdi></h2>
@@ -265,15 +265,15 @@
 
         <p>
             <bdi>strict-output</bdi> شال parse failures في كل النماذج. ممتاز،
-            لكنه خلى المشكلة الثانية أوضح. <bdi>Qwen3-0.6B</bdi> كان عنده
+            بس خلى المشكلة الثانية أوضح. <bdi>Qwen3-0.6B</bdi> كان عنده
             تفضيل قوي لـ <bdi>A</bdi>: 126 من 200 تنبؤ كانت <bdi>A</bdi>.
             وaccuracy تغيرت بقوة حسب الموضع: 0.680 لما الصحيح تحت <bdi>A</bdi>
             مقابل 0.020 لما الصحيح تحت <bdi>B</bdi>.
         </p>
 
         <p>
-            <bdi>Llama-3.2-1B</bdi> أقل حدة، لكنه مو ثابت. <bdi>Llama-3.2-3B</bdi>
-            حسّن الدقة وsemantic consistency، لكن بقي عنده label bias ومدى
+            <bdi>Llama-3.2-1B</bdi> أقل حدة، بس مو ثابت. <bdi>Llama-3.2-3B</bdi>
+            حسّن الدقة وsemantic consistency، بس بقي عنده label bias ومدى
             0.320 في accuracy حسب موضع الإجابة. في هذا الـ <bdi>pilot</bdi>،
             الحجم يساعد، بس raw accuracy ما زال يحتاج سياق.
         </p>
@@ -281,27 +281,27 @@
         <h2><bdi>what changed with Llama-3.2-3B?</bdi></h2>
 
         <p>
-            <bdi>Llama-3.2-3B</bdi> حسّن أكثر من شيء. في <bdi>pilot 1</bdi>،
+            <bdi>Llama-3.2-3B</bdi> حسّن أكثر من جانب. في <bdi>pilot 1</bdi>،
             كانت accuracy أعلى، وparse failures أقل، وsemantic consistency أفضل
             من النماذج الأصغر. في <bdi>pilot 2</bdi>، كانت accuracy والثبات
             الدلالي أفضل من <bdi>Llama-3.2-1B</bdi>.
         </p>
 
         <p>
-            لكن هذا مو scaling study. هو حجم واحد أكبر تحت نفس إعداد القياس.
+            بس هذا مو scaling study. هو حجم واحد أكبر تحت نفس إعداد القياس.
             ما يثبت كيف تتصرف النماذج الأكبر عموماً، ولا يغني عن تقييم نماذج
-            عربية أقوى. هذا عمل لاحق.
+            عربية أقوى. وهذا نخليه لشغل لاحق.
         </p>
 
         <p>
-            القراءة العملية حذرة: scaling حسّن robustness هنا، لكن
+            القراءة العملية هنا حذرة: scaling حسّن robustness هنا، بس
             option-position sensitivity بقيت واضحة حتى بعد ما strict formatting
             أزال parse failures.
         </p>
 
         <h2><bdi>what this does and does not show</bdi></h2>
 
-        <p>هذه الملاحظة تقول، بشكل محدود:</p>
+        <p>هذي الملاحظة تقول، بشكل محدود:</p>
 
         <ul>
             <li>واجهة القياس ممكن تغير الرقم المقاس،</li>
@@ -310,14 +310,14 @@
             <li>robustness metadata مفيدة بجانب raw accuracy.</li>
         </ul>
 
-        <p>ولا تقول:</p>
+        <p>وما تقول:</p>
 
         <ul>
             <li><bdi>ArabicMMLU</bdi> غير صالح،</li>
-            <li>هذه النماذج تمثل كل نماذج العربي،</li>
+            <li>هذي النماذج تمثل كل نماذج العربي،</li>
             <li>النماذج الأكبر ستتصرف بنفس الطريقة،</li>
             <li>multiple-choice benchmarks بلا فائدة،</li>
-            <li>هذه إطار تقييم عربي كامل.</li>
+            <li>هذي إطار تقييم عربي كامل.</li>
         </ul>
 
         <blockquote>
@@ -327,7 +327,7 @@
         <h2><bdi>proposed reporting checklist</bdi></h2>
 
         <p>
-            لما أقيم نماذج <bdi>decoder-only</bdi> صغيرة أو محلية، ما أبغى
+            لما أقيّم نماذج <bdi>decoder-only</bdi> صغيرة أو محلية، ما أبغى
             أعرض دقة <bdi>ArabicMMLU</bdi> الخام وحدها. التقرير الأفضل يشمل:
         </p>
 
@@ -350,20 +350,20 @@
             في مستودع <bdi>Ember</bdi> العام تحت
             <a href="https://github.com/voidwest/ember/tree/main/artifacts/benchmark-audit/arabicmmlu"><code>artifacts/benchmark-audit/arabicmmlu/</code></a>.
             التشغيل الفعلي صار في مجلد اختبار محلي خاص، ونسخة المستودع هي
-            <bdi>artifact bundle</bdi> منشورة لفحص الأرقام والجداول في هذه الملاحظة.
+            <bdi>artifact bundle</bdi> منشورة لفحص الأرقام والجداول في هذي الملاحظة.
         </p>
 
         <h2><bdi>closing</bdi></h2>
 
         <p>
-            الخلاصة مو إن نموذج أفضل من الثاني. ranking مو هدف هذه الملاحظة.
-            الهدف إن raw accuracy ممكن يخلط بين task competence وسلوك واجهة
+            الخلاصة مو إن نموذج أفضل من الثاني. ranking مو هدف هذي الملاحظة.
+            الفكرة إن raw accuracy ممكن يخلط بين task competence وسلوك واجهة
             الاختبار.
         </p>
 
         <p>
             التقييم العربي ما يكفي يسأل: هل النموذج جاب الإجابة الصحيحة؟
-            لازم يسأل أيضاً: هل نفس الإجابة تصمد بعد تغييرات شكلية في صيغة
+            لازم يسأل بعد: هل نفس الإجابة تصمد بعد تغييرات شكلية في صيغة
             الـ <bdi>prompt</bdi>، وlabels، وترتيب الخيارات، وتطبيع النص العربي؟
         </p>
         <!-- docs:footer start -->

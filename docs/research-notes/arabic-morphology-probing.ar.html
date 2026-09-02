@@ -59,26 +59,26 @@
 
         <div class="callout warning">
             <div class="label">توضيح منهجي · تدقيق 2026-08</div>
-            <p>ما يقدر الـ<bdi>probe</bdi> يختبر هل التمثيل استنتج الجذر أو الوزن إذا كان الـ<bdi>prompt</bdi> يذكر نفس الجذر أو الوزن صراحة. هذي الصياغة تصلح فقط كضابط موجب لقياس الاحتفاظ بمعلومة معطاة. التجربة الأساسية لازم تستخدم <bdi>prompt</bdi> يعرض الكلمة السطحية وحدها، وتفصل نتائج الضابط كتحليل مستقل.</p>
+            <p>الـ<bdi>probe</bdi> ما يقدر يثبت إن التمثيل استنتج الجذر أو الوزن إذا كان الـ<bdi>prompt</bdi> كاتب نفس الجذر أو الوزن بشكل صريح. هذي الصياغة تنفع كضابط موجب يقيس الاحتفاظ بمعلومة معطاة وبس. التجربة الأساسية لازم تستخدم <bdi>prompt</bdi> يعرض الكلمة السطحية لحالها، ونفصل نتائج الضابط في تحليل مستقل.</p>
         </div>
 
         <div class="callout open-question">
             <div class="label">Open Question</div>
-            <p>ورقة <em><bdi>morphemes without borders</bdi></em> وضّحت إن <bdi>GPT-4o</bdi> يوصل 97% على توليد <bdi>Arabic nonce roots</bdi> مع إن محاذاة الـ <bdi>tokenizer</bdi> حقه سيئة، بينما <bdi>ALLAM</bdi> ينهار لـ 20% مع إن محاذاته أفضل وعنده بيانات تدريب عربية أكثر. <bdi>GPT-4o</bdi> يتعلم الصرف <em>في مكان ما داخل النموذج</em>، و <bdi>ALLAM</bdi> لا. أين؟ وكيف تبدو التمثيلات؟</p>
+            <p>ورقة <em><bdi>morphemes without borders</bdi></em> وضّحت إن <bdi>GPT-4o</bdi> يوصل 97% في توليد <bdi>Arabic nonce roots</bdi>، رغم إن محاذاة الـ <bdi>tokenizer</bdi> عنده سيئة. بالمقابل، <bdi>ALLAM</bdi> ينهار لـ 20% مع إن محاذاته أفضل وعنده بيانات تدريب عربية أكثر. يعني <bdi>GPT-4o</bdi> متعلم الصرف <em>في مكان ما داخل النموذج</em>، و<bdi>ALLAM</bdi> لا. وين المكان؟ وكيف شكل التمثيلات؟</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2><bdi>motivation</bdi></h2>
 
-        <p>ورقة 2026 تترك سؤال مفتوح: الكفاءة الصرفية في الـ <bdi>LLMs</bdi> تنقاس بـ <bdi>productive generalization</bdi>، لا بمحاذاة الـ <bdi>tokenizer</bdi>، لكن ما نعرف <em>كيف</em> يحققها النموذج.</p>
-        <p>المؤلفون يقترحون "الاستدلال التركيبي + اتباع التعليمات" كآلية، لكن هذا وصف سلوكي، مو <bdi>mechanistic</bdi>.</p>
+        <p>ورقة 2026 تخلّي سؤال مفتوح: الكفاءة الصرفية في الـ <bdi>LLMs</bdi> تنقاس بـ <bdi>productive generalization</bdi>، مو بمحاذاة الـ <bdi>tokenizer</bdi>، بس لسه ما نعرف <em>كيف</em> النموذج يحققها.</p>
+        <p>المؤلفون يقترحون "الاستدلال التركيبي + اتباع التعليمات" كآلية، لكن هذا وصف للسلوك، مو شرح <bdi>mechanistic</bdi>.</p>
 
-        <p>ثلاث حقايق تخلي هذا ممكن الحين:</p>
+        <p>ثلاثة أشياء تخلي التجربة ممكنة دحين:</p>
 
         <ol>
-            <li><strong><bdi>ember</bdi> يعطي وصول مباشر للـ <bdi>hidden states</bdi>.</strong> بعد كل <bdi>transformer block</bdi>، أقدر أنادي <span class="mono">backend.data(&amp;x)</span> وأقرأ الـ <bdi>activations</bdi>. بدون <bdi>hooks</bdi>، بدون <bdi>CUDA synchronization</bdi>، بدون <bdi>framework overhead</bdi>.</li>
-            <li><strong>الـ behavioral probing رخيص.</strong> ما أحتاج أدرب probes على 100K مثال. مهمة الجذر والوزن المبتكرة من ورقة 2026 تعطي ground truth نظيف: أعطِ جذر + وزن، وتأكد إذا المخرج صحيح. probe في كل طبقة.</li>
-            <li><strong>المقارنة تكتب نفسها.</strong> شغّل نفس الـ <bdi>probe</bdi> على <bdi>GPT-2</bdi> (أسوأ محاذاة <bdi>tokenizer</bdi>، أداء عربي غير معروف)، <bdi>LLaMA 3</bdi> (أكبر، أفضل، محاذاة متوسطة)، ونماذج عربية. اللحظة اللي تنفصل فيها المنحنيات تقول لك بالضبط متى تظهر التمثيلات الصرفية.</li>
+            <li><strong><bdi>ember</bdi> يفتح وصول مباشر للـ <bdi>hidden states</bdi>.</strong> بعد كل <bdi>transformer block</bdi>، أقدر أنادي <span class="mono">backend.data(&amp;x)</span> وأقرأ الـ <bdi>activations</bdi>؛ بدون <bdi>hooks</bdi>، وبدون <bdi>CUDA synchronization</bdi>، وبدون <bdi>framework overhead</bdi>.</li>
+            <li><strong>الـ behavioral probing رخيص.</strong> ما يحتاج أدرب probes على 100K مثال. مهمة الجذر والوزن المبتكرة من ورقة 2026 تعطينا ground truth نظيف: نعطي جذر + وزن، ونشوف هل المخرج صحيح. ونسوي probe في كل طبقة.</li>
+            <li><strong>المقارنة شبه جاهزة.</strong> نشغّل نفس الـ <bdi>probe</bdi> على <bdi>GPT-2</bdi> (أسوأ محاذاة <bdi>tokenizer</bdi>، وأداء عربي غير معروف)، و<bdi>LLaMA 3</bdi> (أكبر وأفضل، بمحاذاة متوسطة)، ونماذج عربية. وقت ما تنفصل المنحنيات نعرف متى تطلع التمثيلات الصرفية.</li>
         </ol>
 
         <!-- ════════════════════════════════════════════════ -->
@@ -86,36 +86,36 @@
 
         <h3><bdi>hypothesis</bdi></h3>
 
-        <p><strong>النماذج اللي تولّد كلمات nonce بشكل صحيح تبني تمثيلات داخلية قابلة للفصل خطياً للجذر والوزن</strong>: وتظهر هالتمثيلات في طبقات transformer العميقة.</p>
-        <p>النماذج اللي تفشل في التوليد (مثل ALLAM) إما ما تبني هالتمثيلات أبداً، أو تبنيها في طبقات مبكرة وتفقدها في الطبقات العميقة حيث يُتخذ قرار الـ output.</p>
+        <p><strong>النماذج اللي تولّد كلمات nonce صح تبني تمثيلات داخلية نقدر نفصل فيها الجذر عن الوزن خطياً</strong>، وتبان هالتمثيلات في طبقات transformer العميقة.</p>
+        <p>النماذج اللي تفشل في التوليد (زي ALLAM) يا إنها ما تبني هالتمثيلات أصلاً، أو تبنيها بدري وبعدين تفقدها في الطبقات العميقة، وقت يتحدد الـ output.</p>
 
         <h3><bdi>models</bdi></h3>
 
         <ul>
-            <li><strong>GPT-2 small (124M)</strong>: baseline. ما تدرب على عربي كثير. هل يبني تمثيلات صرفية أصلاً؟</li>
-            <li><strong>LLaMA 3 1B</strong>: نقطة وسط. متعدد اللغات. هل تظهر التمثيلات هنا؟</li>
-            <li><strong>LLaMA 3 3B</strong>: هل النقلة بين 1B و 3B؟</li>
-            <li><em>إذا التوفر يسمح</em>: نموذج عربي مفتوح الأوزان (~1-3B). المقارنة المثالية.</li>
+            <li><strong>GPT-2 small (124M)</strong>: baseline. تدريبه على العربي محدود. هل يبني تمثيلات صرفية من الأساس؟</li>
+            <li><strong>LLaMA 3 1B</strong>: نقطة وسط ومتعدد اللغات. هل تطلع التمثيلات هنا؟</li>
+            <li><strong>LLaMA 3 3B</strong>: هل الفرق الحقيقي يظهر بين 1B و 3B؟</li>
+            <li><em>إذا التوفر يسمح</em>: نموذج عربي مفتوح الأوزان (~1-3B)، عشان تكتمل المقارنة.</li>
         </ul>
 
         <h3><bdi>stimuli</bdi></h3>
 
-        <p>من ورقة 2026: جذور nonce (مخترعة) + أوزان حقيقية. المهمة: بالنظر لجذر nonce مثل <em>q-l-b</em> مع وزن مثل <em>فَعَلَ</em>، ولّد الكلمة الصحيحة (<em>qalaba</em>).</p>
+        <p>من ورقة 2026: جذور nonce (مخترعة) + أوزان حقيقية. المهمة بسيطة: نعطي جذر nonce زي <em>q-l-b</em> مع وزن زي <em>فَعَلَ</em>، ونطلب الكلمة الصحيحة (<em>qalaba</em>).</p>
 
-        <p><strong>توسعة.</strong> dataset الورقة فيها 100 nonce root مع 5 أوزان. أوسع لـ 200 nonce root مع 10 أوزان (2,000 محفز) لطاقة إحصائية كافية للـ CCA والـ RSA.</p>
+        <p><strong>توسعة.</strong> dataset الورقة فيها 100 nonce root مع 5 أوزان؛ نوسّعها لـ 200 nonce root مع 10 أوزان (2,000 محفز) عشان تكون الطاقة الإحصائية كافية للـ CCA والـ RSA.</p>
 
         <h3><bdi>probe types</bdi></h3>
 
-        <p>كل probe يشتغل على hidden states النموذج من ember:</p>
+        <p>كل probe يشتغل على hidden states النموذج اللي يطلعها ember:</p>
 
         <ol>
-            <li><strong>behavioral probe</strong> (على مستوى logit). وهل ينتج النموذج الشكل الصحيح؟</li>
-            <li><strong>linear probe</strong> (على مستوى hidden state). درّب مصنف خطي على hidden state كل طبقة للتنبؤ بالوزن (binary classification: وزن X أو لا؟). هذا يكمّل الـ behavioral probe: إذا الـ linear probe يوصل لدقة عالية لكن السلوك ضعيف، النموذج <em>يمثل</em> المعلومات الصرفية من دون ما <em>يستخدمها</em> للتوليد. كود الـ probe يستخدم SGD من numpy، مو PyTorch، عشان يشتغل في نفس البيئة.</li>
+            <li><strong>behavioral probe</strong> (على مستوى logit): هل النموذج يطلع الشكل الصحيح؟</li>
+            <li><strong>linear probe</strong> (على مستوى hidden state): ندرب مصنف خطي على hidden state كل طبقة عشان يتنبأ بالوزن (binary classification: وزن X أو لا؟). هذا يكمل الـ behavioral probe: إذا الـ linear probe جاب دقة عالية لكن السلوك ضعيف، فالنموذج <em>يمثل</em> المعلومة الصرفية من غير ما <em>يستخدمها</em> في التوليد. كود الـ probe يستخدم SGD من numpy، مو PyTorch، عشان يشتغل في نفس البيئة.</li>
         </ol>
 
         <h3><bdi>pipeline</bdi></h3>
 
-        <p>خط الأنابيب الكامل:</p>
+        <p>خط الأنابيب كامل كالتالي:</p>
 
         <div class="pipeline-block">
  1. stimuli/generate_stimuli.py  →  nonce_root_pattern.json  (مجموعة المحفزات)<br>
@@ -141,34 +141,34 @@
 
         <h3><bdi>compute requirements</bdi></h3>
 
-        <p>لـ GPT-2 small (124M parameter): 12 طبقة × 12 رأس × 64 بعد = 768 بعد hidden state. 200 محفز × 12 طبقة = 2,400 activation vector لكل نموذج. تدريب probe على 4,800 عينة ياخذ ثواني في numpy. الـ pipeline كامل لـ GPT-2 يشتغل في أقل من دقيقة. LLaMA 3 8B بـ Q4_K quantization يحتاج حوالي 5GB RAM، ممكن على لابتوب.</p>
+        <p>بالنسبة لـ GPT-2 small (124M parameter): 12 طبقة × 12 رأس × 64 بعد = 768 بعد hidden state. و200 محفز × 12 طبقة = 2,400 activation vector لكل نموذج. تدريب probe على 4,800 عينة ياخذ ثواني في numpy، والـ pipeline كامل لـ GPT-2 يخلص في أقل من دقيقة. أما LLaMA 3 8B بـ Q4_K quantization فيحتاج حوالي 5GB RAM، يعني يشتغل على لابتوب.</p>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2><bdi>expected results &amp; interpretation</bdi></h2>
 
         <h3><bdi>if GPT-4 succeeds but we can't probe it</bdi></h3>
 
-        <p>أوزان GPT-4 مو متاحة. خطة الـ probing زي ما هي مكتوبة تشتغل على <em>نماذج مفتوحة الأوزان</em>. نتيجة ورقة 2026 (GPT-4o دقة 97% على nonce) تعطي الحد الأعلى. تجربة الـ probing تسأل: هل النماذج مفتوحة الأوزان بأحجام مختلفة تظهر نفس التنظيم الداخلي اللي يفسّر أداء GPT-4o؟ نبحث عن <em>نشوء</em> التمثيلات الصحيحة، مو عن تكرار GPT-4o.</p>
+        <p>أوزان GPT-4 مو متاحة، لكن خطة الـ probing المكتوبة تشتغل على <em>نماذج مفتوحة الأوزان</em>. نتيجة ورقة 2026 (GPT-4o بدقة 97% على nonce) تعطينا الحد الأعلى. سؤالنا: هل النماذج مفتوحة الأوزان، بأحجام مختلفة، تطلع نفس التنظيم الداخلي اللي يفسر أداء GPT-4o؟ ندور على <em>نشوء</em> التمثيلات الصحيحة، مو على إعادة نتيجة GPT-4o.</p>
 
         <h3><bdi>if probes are near chance everywhere</bdi></h3>
 
-        <p>هذا يعني إن المعلومات الصرفية غير قابلة للفك الخطي من activations الطبقات الفردية؛ يمكن تكون موزعة عبر الطبقات، أو غير خطية. المتابعة: probes غير خطية (MLP)، أو تحليل تشابه تمثيلي بين الطبقات (CKA).</p>
+        <p>هذا يعني إن المعلومة الصرفية ما تنفك خطياً من activations كل طبقة لوحدها؛ ممكن تكون موزعة بين الطبقات أو غير خطية. الخطوة بعدها: probes غير خطية (MLP)، أو تحليل تشابه تمثيلي بين الطبقات (CKA).</p>
 
         <h3><bdi>if root and pattern are in the same subspace</bdi></h3>
 
-        <p>يمكن النموذج مرمّز الجذر+الوزن <em>المدمجين</em> كتمثيل موحد بدل ما يفصلهم. هذا يعني إن النموذج تعلم جدول بحث بدل قاعدة تركيبية، وهذا متسق مع سلوك ALLAM (جيد على الجذور الحقيقية، ينهار على المبتكرة).</p>
+        <p>ممكن النموذج مشفّر الجذر+الوزن <em>مع بعض</em> كتمثيل واحد، بدل ما يفصل بينهم. وقتها يكون تعلم جدول بحث بدل قاعدة تركيبية، وهذا ينسجم مع سلوك ALLAM (جيد على الجذور الحقيقية، وينهار على المبتكرة).</p>
 
         <h3><bdi>if the inflection point is between 1B and 3B</bdi></h3>
 
-        <p>هذه أكثر نتيجة قابلة للتنفيذ. تعني إن الحقن الصرفي الصريح (على مستوى tokenizer أو embedding) يمكن يساعد فقط تحت حوالي 1B parameter. فوق هذا الحد، النموذج يتعلمه بنفسه. هذا يكمم المقايضة ويقول للباحثين متى يستثمرون في tokenization خاص باللغة ومتى يكبرون النموذج.</p>
+        <p>هذي أكثر نتيجة قابلة للتطبيق. معناها إن الحقن الصرفي الصريح (على مستوى tokenizer أو embedding) ممكن يفيد فقط تحت حوالي 1B parameter. فوق الحد هذا، النموذج يتعلمه بنفسه. كذا نقدر نكمّم المقايضة ونوضح للباحثين متى يستثمروا في tokenization خاص باللغة ومتى يكبّروا النموذج.</p>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2><bdi>related work to cite</bdi></h2>
 
         <ul>
-            <li>alakeel et al. (2026)، الورقة اللي تؤطر السؤال</li>
-            <li>alkaoud & syed (2020)، توضح إن الحقن الصرفي يساعد على النطاق الصغير</li>
-            <li>conneau et al. (2018)، "what you can cram into a single vector": probing تمثيلات الجمل</li>
+            <li>alakeel et al. (2026)، الورقة اللي حددت السؤال</li>
+            <li>alkaoud & syed (2020)، توضح إن الحقن الصرفي يفيد في النطاق الصغير</li>
+            <li>conneau et al. (2018)، "what you can cram into a single vector": probing لتمثيلات الجمل</li>
             <li>hewitt & manning (2019)، structural probe لأشجار الإعراب في BERT</li>
             <li>tenney et al. (2019)، BERT يعيد اكتشاف pipeline الـ NLP الكلاسيكي (probing عبر الطبقات)</li>
             <li>alain & bengio (2017)، linear classifier probes لفهم الطبقات الوسيطة</li>
@@ -178,11 +178,11 @@
         <h2><bdi>next steps</bdi></h2>
 
         <ol>
-            <li><strong>إضافة سحب الـ activation لـ ember</strong>، حوالي 30 سطر في <span class="mono">model.rs</span>. دالة جديدة <span class="mono">forward_with_activations</span> ترجع hidden states مع الـ logits.</li>
-            <li><strong>بناء مجموعة المحفزات</strong>، ابدأ بالـ dataset العامة من Alakeel et al.، فلتر للجذور المبتكرة فقط، وسّع لـ ~200 محفز مع +10 أوزان.</li>
-            <li><strong>شغّل probes GPT-2</strong>، baseline. عربية GPT-2 غالباً ضعيفة، لكن هيكل الـ probe يشتغل بغض النظر.</li>
-            <li><strong>شغّل probes LLaMA 3 1B/3B</strong>، المقارنة المثيرة. وين نقطة الانعطاف؟</li>
-            <li><strong>اكتب</strong>، إذا منحنى التحجيم واضح، هذه ورقة قصيرة (findings أو workshop). 6 صفحات، قصة نظيفة: "اللي وضّحته ورقة 2026 على المستوى السلوكي؛ واللي يصير داخل النموذج لتفسيره."</li>
+            <li><strong>إضافة سحب الـ activation لـ ember</strong>، تقريباً 30 سطر في <span class="mono">model.rs</span>. نضيف دالة <span class="mono">forward_with_activations</span> ترجع hidden states مع الـ logits.</li>
+            <li><strong>بناء مجموعة المحفزات</strong>، نبدأ بالـ dataset العامة من Alakeel et al.، ونفلتر الجذور المبتكرة فقط، ثم نوسّع لـ ~200 محفز مع +10 أوزان.</li>
+            <li><strong>نشغّل probes GPT-2</strong>، baseline. غالباً عربية GPT-2 ضعيفة، لكن هيكل الـ probe يشتغل في كل الأحوال.</li>
+            <li><strong>نشغّل probes LLaMA 3 1B/3B</strong>، وهنا المقارنة المهمة: وين نقطة الانعطاف؟</li>
+            <li><strong>نكتب</strong>، إذا كان منحنى التحجيم واضحاً، ورقة قصيرة (findings أو workshop). 6 صفحات بقصة نظيفة: "اللي وضحته ورقة 2026 على المستوى السلوكي، وإيش يصير داخل النموذج عشان يفسره."</li>
         </ol>
         <!-- docs:footer start -->
         <footer class="site-footer">

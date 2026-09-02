@@ -4,7 +4,7 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta property="og:title" content="الملف قال Q4. والـruntime قال f32.">
-        <meta property="og:description" content="خط أساس مجمّد في Ember: تُقرأ K-quants بشكل صحيح، ثم تتحول إلى أوزان f32 وتعمل عبر kernels عامة.">
+        <meta property="og:description" content="خط أساس مجمّد في Ember: نقرأ K-quants صح، وبعدين تتحول إلى أوزان f32 وتشتغل عبر kernels عامة.">
         <meta property="og:type" content="article">
         <meta property="og:url" content="https://voidwest.dev/research-notes/the-file-said-q4-runtime-said-f32.ar.html">
         <meta property="og:site_name" content="voidwest">
@@ -74,7 +74,7 @@
 
         <p>
             مسار <bdi>K-quant</bdi> الحالي في <bdi>Ember</bdi> يقرأ التمثيل
-            بشكل صحيح، لكنه يتخلص من فائدته وقت التشغيل. أوزان
+            بشكل صحيح، بس يتخلص من فائدته وقت التشغيل. أوزان
             <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi> تتحول من ملف <bdi>GGUF</bdi> إلى
             <bdi>f32</bdi> وتبقى في الذاكرة، ثم تمر عبر <bdi>generic f32
             kernels</bdi>. ما فيه حالياً <bdi>native K-quant matmul</bdi> أو
@@ -83,7 +83,7 @@
         </p>
 
         <p>
-            وهذا يخلي المسار الحالي غير مناسب كـ<bdi>deployment</bdi> منخفض
+            وعشان كذا المسار الحالي غير مناسب كـ<bdi>deployment</bdi> منخفض
             الذاكرة أو منخفض التأخير. الصفحة تثبت هذا الـ<bdi>baseline</bdi>
             قبل تنفيذ مسار <bdi>native K-quant</bdi>. النتيجة مو ادعاء أن
             <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> غير فعالة بطبيعتها؛ هي ناتجة
@@ -96,7 +96,7 @@
             <div class="label">الحالة</div>
             <p>
                 <bdi>pre-optimization engineering baseline</bdi> فقط. الجدول
-                يغطي عائلتين صغيرتين على جهاز محلي واحد. هذه مو نتيجة جديدة في
+                يغطي عائلتين صغيرتين على جهاز محلي واحد. هذي مو نتيجة جديدة في
                 <bdi>quantization</bdi>، ولا ادعاء <bdi>production deployment</bdi>،
                 ولا مقارنة تقول إن <bdi>Ember</bdi> أسرع من <bdi>llama.cpp</bdi>.
             </p>
@@ -144,7 +144,7 @@
 
         <p>
             في <bdi>Qwen</bdi>، ملف <bdi>Q4_K_M</bdi> أصغر من
-            <bdi>Q8_0</bdi> على القرص بنحو 41%، لكنه يستهلك تقريباً
+            <bdi>Q8_0</bdi> على القرص بنحو 41%، بس يستهلك تقريباً
             4.49× من <bdi>peak RSS</bdi> ويكون <bdi>decode</bdi> أبطأ بنحو
             15.6×. وفي <bdi>Llama</bdi>، يصغر الملف بنحو 39%، بينما ترتفع
             الذاكرة إلى 2.59× وتصبح السرعة أبطأ بنحو 46.8×.
@@ -153,12 +153,12 @@
         <p>
             عبر مقارنات <bdi>Q4/Q6</bdi> الأربع، يصبح <bdi>decode</bdi> أبطأ
             بين 15.6× و51.6×، وترتفع <bdi>peak RSS</bdi> بين 2.59× و4.49×.
-            الحد الأعلى 51.6× هو <bdi>Llama Q6_K</bdi>، والأدنى 15.6× هو
+            أعلى قيمة، 51.6×، هي <bdi>Llama Q6_K</bdi>، وأقل قيمة، 15.6×، هي
             <bdi>Qwen Q4_K_M</bdi>.
         </p>
 
         <p>
-            الصورة نفسها تتكرر في العائلتين: الشيء الوحيد الذي يصغر مع
+            نفس الصورة تتكرر في العائلتين: الشيء الوحيد اللي يصغر مع
             <bdi>Q6/Q4</bdi> هو الملف على القرص. ووقت التحميل يرتفع أيضاً من
             نحو ثانية أو ثانيتين في <bdi>Q8_0</bdi> إلى نحو 13–16 ثانية في
             <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi>.
@@ -168,7 +168,7 @@
 
         <p>
             <bdi>quantization</bdi> في الـ<bdi>checkpoint</bdi> تصف طريقة
-            ترميز الـ<bdi>tensors</bdi> داخل الملف. ما تصف تلقائياً كيف
+            ترميز الـ<bdi>tensors</bdi> داخل الملف. ما تقول تلقائياً كيف
             يخزنها الـ<bdi>runtime</bdi> أو أي <bdi>kernels</bdi> يشغلها.
             مسار <bdi>Q8_0</bdi> في <bdi>Ember</bdi> يبقي الـ<bdi>blocks</bdi>
             مكمّمة في الذاكرة ويستخدم مسار <bdi>packed Q8</bdi>.
@@ -181,7 +181,7 @@
             الموسعة، ثم يرسل العمل إلى تنفيذ <bdi>f32</bdi> عام. ما فيه
             <bdi>K-specific matmul</bdi> أو <bdi>packed kernel</bdi> حالياً في
             <bdi>Ember</bdi>. الملف ما زال <bdi>Q4</bdi> أو <bdi>Q6</bdi> على
-            القرص، لكن تمثيل الـ<bdi>deployment</bdi> داخل الذاكرة ليس كذلك.
+            القرص، بس تمثيل الـ<bdi>deployment</bdi> داخل الذاكرة مو كذلك.
         </p>
 
         <pre><code>Q8_0:
@@ -197,7 +197,7 @@ GGUF K-quant blocks
         <p>
             إذا بقي <bdi>compressed file mapping</bdi> موجوداً في الذاكرة،
             فقد يعكس <bdi>RSS</bdi> التمثيل الأصلي والـ<bdi>buffers</bdi>
-            الموسعة معاً. لذلك رقم <bdi>RSS</bdi> الواحد يحتاج تفكيكاً إلى
+            الموسعة معاً. عشان كذا رقم <bdi>RSS</bdi> الواحد يحتاج تفكيكاً إلى
             <bdi>file-backed</bdi> و<bdi>anonymous</bdi> قبل ما نعامله كتفسير
             كامل للإقامة في الذاكرة.
         </p>
@@ -208,7 +208,7 @@ GGUF K-quant blocks
             لاحقة <bdi>GGUF</bdi> أو اسم الملف ما تحدد وحدها ذاكرة العملية،
             تكلفة البداية، سرعة <bdi>decode</bdi>، الـ<bdi>workspace</bdi>
             المؤقت، سلوك الـ<bdi>kernels</bdi>، أو مدة بقاء الـ<bdi>source mapping</bdi>.
-            هذه قرارات يحددها الـ<bdi>loader</bdi> وتخطيط الـ<bdi>tensors</bdi>
+            هذي قرارات يحددها الـ<bdi>loader</bdi> وتخطيط الـ<bdi>tensors</bdi>
             وسياسة الـ<bdi>dispatch</bdi> والـ<bdi>backend</bdi>.
         </p>
 
@@ -217,11 +217,11 @@ GGUF K-quant blocks
         </blockquote>
 
         <p>
-            هذا هو الحد المفاهيمي في المراجعة. قول إن الملف <bdi>Q4</bdi> صحيح.
-            لكنه ما يكفي لوصف الـ<bdi>deployment</bdi> كله.
+            هذي هي النقطة المفاهيمية في المراجعة. قول إن الملف <bdi>Q4</bdi> صحيح.
+            بس ما يكفي لوصف الـ<bdi>deployment</bdi> كله.
         </p>
 
-        <h2>وش اللي تثبته هذه المراجعة؟</h2>
+        <h2>وش اللي تثبته هذي المراجعة؟</h2>
 
         <ul>
             <li>دعم <bdi>K-quant</bdi> الحالي في <bdi>Ember</bdi> مسار تحقق ومرجع، مو مسار <bdi>low-bit deployment</bdi> أصلي؛</li>
@@ -235,7 +235,7 @@ GGUF K-quant blocks
         <h2>وش اللي ما تثبته؟</h2>
 
         <ul>
-            <li>أن مسار فك التكميم في <bdi>K-quant</bdi> غير صحيح؛ هو مسار مرجعي متحقق منه، لكنه مو مسار تشغيل محسّن؛</li>
+            <li>إن مسار فك التكميم في <bdi>K-quant</bdi> غير صحيح؛ هو مسار مرجعي متحقق منه، بس مو مسار تشغيل محسّن؛</li>
             <li>أن <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> أبطأ بطبيعتها من <bdi>Q8_0</bdi>؛</li>
             <li>أن <bdi>low-bit quantization</bdi> غير فعالة؛</li>
             <li>أن <bdi>GGUF K-quants</bdi> غير كفؤة؛</li>
@@ -257,7 +257,7 @@ GGUF K-quant blocks
         </p>
 
         <p>
-            هذا هو الفرق المهم للمقارنة: الـ<bdi>reference</bdi> يحافظ على تمثيل
+            وهذا الفرق المهم في المقارنة: الـ<bdi>reference</bdi> يحافظ على تمثيل
             <bdi>low-bit</bdi> أثناء التشغيل، بينما مسار <bdi>K-quant</bdi>
             البحثي الحالي في <bdi>Ember</bdi> يحافظ على التخزين المكمّم ثم
             يحوله إلى أوزان <bdi>f32</bdi>.
@@ -269,15 +269,15 @@ GGUF K-quant blocks
             <li>الوقت المعلن يجمع التحميل مع <bdi>prefill</bdi>؛</li>
             <li><bdi>RSS</bdi> قد يشمل صفحات ملف مربوطة في الذاكرة و<bdi>buffers</bdi> موسعة مجهولة المصدر؛</li>
             <li><bdi>Q4_K_M</bdi> إعداد تكميم مختلط، مو نوعاً واحداً لكل <bdi>tensor</bdi>؛</li>
-            <li>الاختبار يغطي عائلتين صغيرتين وعلى جهاز محلي واحد؛</li>
-            <li>الادعاءات الأقوى عن الأنظمة تحتاج تكرار التشغيل وتفكيك الذاكرة؛</li>
+            <li>التجربة تغطي عائلتين صغيرتين وعلى جهاز محلي واحد؛</li>
+            <li>أي ادعاءات أقوى عن الأنظمة تحتاج تكرار التشغيل وتفكيك الذاكرة؛</li>
             <li>نحتاج <bdi>f32/f16 baseline</bdi> مضبوطاً لعزل تكلفة التمثيل عن جودة الـ<bdi>generic kernels</bdi>.</li>
         </ul>
 
         <p>
             استخدم الـ<bdi>benchmark</bdi> نفس <bdi>CPU affinity</bdi> وإعداد
-            الـ<bdi>threads</bdi> بين التهيئات. هذا يحسن المقارنة داخل الجدول،
-            لكنه ما يحول التشغيل إلى دراسة واسعة للأجهزة.
+            الـ<bdi>threads</bdi> بين التهيئات. وهذا يحسّن المقارنة داخل الجدول،
+            بس ما يحول التشغيل إلى دراسة واسعة للأجهزة.
         </p>
 
         <h2>وش لازم يظهر في المقارنات الجاية؟</h2>
@@ -310,7 +310,7 @@ GGUF K-quant blocks
         <p>
             المسارات المحسّنة لازم تحافظ أيضاً على دلالات <bdi>activation tracing</bdi>
             و<bdi>capture</bdi> و<bdi>patching</bdi> في <bdi>Ember</bdi>. الذاكرة
-            الأقل أو السرعة الأعلى ما تكفي إذا تغيّر الشيء الذي تقيسه أداة البحث
+            الأقل أو السرعة الأعلى ما تكفي إذا تغيّر الشيء اللي تقيسه أداة البحث
             أو تتدخل فيه.
         </p>
 
@@ -321,7 +321,7 @@ GGUF K-quant blocks
             موجودة محلياً في
             <code>research/pilots/arabic_quantization_001/deployment_benchmark.{json,csv}</code>
             على فرع <code>pilot-001</code> المحلي. هذا الفرع مو مساراً عاماً،
-            لذلك ما أضيف رابطاً يوحي بعكس ذلك.
+            عشان كذا ما أضيف رابطاً يوحي بعكس ذلك.
         </p>
 
         <p>

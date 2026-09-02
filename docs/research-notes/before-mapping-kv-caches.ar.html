@@ -3,7 +3,7 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta name="description" content="ليش خلّى Ember حالة KV cache قابلة للتحقق وإعادة التشغيل والقياس قبل تجربة ridge mapper بين نموذجين Qwen.">
+        <meta name="description" content="ليش خلّى Ember حالة KV cache قابلة للتحقق وإعادة التشغيل والقياس قبل ما نجرب ridge mapper بين نموذجين Qwen.">
         <meta property="og:title" content="قبل ما نربط ذاكرات KV بين النماذج، لازم نخليها قابلة للقياس">
         <meta property="og:description" content="حد واضح لحالة KV، وإعادة تشغيل مطابقة داخل النموذج نفسه، وتشخيصات سببية قبل أي ridge mapping بين نماذج Qwen.">
         <meta property="og:type" content="article">
@@ -75,15 +75,15 @@
         <h2>الملخص</h2>
 
         <p>
-            بدأت هذا العمل من خطوة مغرية: آخذ <bdi>KV cache</bdi> من نموذج،
+            بدأت هالشغل من خطوة مغرية: آخذ <bdi>KV cache</bdi> من نموذج،
             وأتعلم <bdi>linear map</bdi> صغير، ثم أختبر إذا كان نموذج ثاني يقدر
             يكمل منه من دون ما يعيد حساب الـ<bdi>prefix</bdi> كامل.
         </p>
 
-        <p>لكن ما بنيت الـ<bdi>mapper</bdi>.</p>
+        <p>بس ما بنيت الـ<bdi>mapper</bdi>.</p>
 
         <p>
-            بدل ذلك، قضيت اليوم أخلي حالة الـ<bdi>KV</bdi> شيئاً يقدر
+            بدل كذا، قضيت اليوم وأنا أخلي حالة الـ<bdi>KV</bdi> شي يقدر
             <bdi>Ember</bdi> يصدّره، ويتحقق منه، ويستورده، ويعيد تشغيله، ويقارنه،
             ويغيره تحت عقد واضح. النتيجة هي <bdi>snapshot</bdi> من ثلاثة ملفات،
             وإعادة تشغيل مطابقة داخل النموذج نفسه، ومقاييس على مستوى كل طبقة
@@ -92,7 +92,7 @@
         </p>
 
         <p>
-            هذا أقل إثارة من عرض <bdi>transfer</bdi>. لكنه الشغل اللي يخلي أي
+            هذا أقل إثارة من عرض <bdi>transfer</bdi>. بس الشغل اللي يخلي أي
             نتيجة نقل لاحقة قابلة للفهم.
         </p>
 
@@ -100,7 +100,7 @@
             <div class="label">الحالة</div>
             <p>
                 يقدر <bdi>Ember</bdi> الآن يقيس حالة <bdi>KV</bdi> المتوافقة
-                ويطبق عليها تغييراً سببياً مضبوطاً. هذه مو نتيجة نقل بين
+                ويطبق عليها تغييراً سببياً مضبوطاً. هذي مو نتيجة نقل بين
                 نموذجين، ومو دليل إن <bdi>ridge mapper</bdi> راح ينجح، ومو
                 ادعاء تسريع.
             </p>
@@ -126,13 +126,13 @@
         </p>
 
         <p>
-            لذلك صار السؤال الأول أضيق: هل يقدر <bdi>Ember</bdi> يجمّد حالة
+            عشان كذا صار السؤال الأول أضيق: هل يقدر <bdi>Ember</bdi> يجمّد حالة
             <bdi>KV</bdi> الأصلية ويثبت إن استيرادها ما يغير شيئاً تحت عقد صارم
             داخل النموذج نفسه؟
         </p>
 
         <p>
-            بعدها يجي السؤال الثاني: لما نغير الحالة عمداً، وين يظهر الفرق
+            وبعدها يجي السؤال الثاني: لما نغير الحالة عمداً، وين يظهر الفرق
             أول مرة؟ في إعادة بناء <bdi>K/V</bdi>؟ أو في
             <bdi>attention output</bdi>؟ أو في الـ<bdi>logits</bdi>؟ أو في مسار
             التوليد الجشع؟
@@ -142,7 +142,7 @@
 
         <p>
             الأثر الجديد له إصدار مستقل باسم
-            <code>ember.kv-snapshot.v1</code>. ما غيّر عقد خطة التنفيذ المجمّد،
+            <code>ember.kv-snapshot.v1</code>. وما غيّر عقد خطة التنفيذ المجمّد،
             ولا صيغة حزم التجارب في <bdi>Ember</bdi>.
         </p>
 
@@ -152,7 +152,7 @@
 └── values.f16le</code></pre>
 
         <p>
-            تُخزّن <bdi>K</bdi> و<bdi>V</bdi> كبتات <bdi>f16</bdi> مضغوطة
+            تنحفظ <bdi>K</bdi> و<bdi>V</bdi> كبتات <bdi>f16</bdi> مضغوطة
             بالترتيب
             <code>[layer][kv_head][position][dimension]</code>. ما نحفظ المساحة
             غير المستخدمة من الـ<bdi>cache</bdi>. ويسجل الـ<bdi>manifest</bdi>
@@ -164,9 +164,9 @@
         </p>
 
         <p>
-            الاستيراد صارم عمداً. ما فيه خيار «قريب بما يكفي». أي اختلاف في
+            خلّيت الاستيراد صارم عن قصد. ما فيه خيار اسمه «قريب بما يكفي». أي اختلاف في
             هوية النموذج، أو الـ<bdi>tokenizer</bdi>، أو الهندسة، أو دلالة
-            المواقع والتمثيل، أو مصدر التنفيذ العددي يُرفض قبل
+            المواقع والتمثيل، أو مصدر التنفيذ العددي ينرفض قبل
             <bdi>decode</bdi>.
         </p>
 
@@ -177,7 +177,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         <h2>فرق الموقع الواحد اللي لازم يظل واضح</h2>
 
         <p>
-            الـ<bdi>snapshot</bdi> يغطي الـ<bdi>prefix</bdi> المكتمل، لكن
+            الـ<bdi>snapshot</bdi> يغطي الـ<bdi>prefix</bdi> المكتمل، بس
             الـ<bdi>token</bdi> المختار من <bdi>prefix-boundary logits</bdi> ما
             دخل الـ<bdi>cache</bdi> إلى الآن. إذا كان طول الـ<bdi>prefix</bdi>
             هو <code>P</code>، فالـ<bdi>resume token</bdi> مكانه المطلق
@@ -193,12 +193,12 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         </p>
 
         <p>
-            هذا يبدو مثل محاسبة بسيطة للمواقع. لكنه بالضبط نوع الخطأ اللي ممكن
+            على الورق هذا مجرد حساب بسيط للمواقع. بس بالضبط نوع الخطأ اللي ممكن
             يخلي تجربة <bdi>transfer</bdi> تبدو فاشلة بينما المشكلة الحقيقية هي
             محاذاة التسلسل.
         </p>
 
-        <h2>كيف تحققنا من إعادة التشغيل المطابقة؟</h2>
+        <h2>طيب كيف تأكدنا من إعادة التشغيل المطابقة؟</h2>
 
         <p>
             التحقق بين العمليات ما قارن النص المفكوك، وما استخدم تسامح
@@ -209,7 +209,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         <pre><code>native[N,V] == concatenate(export_boundary[1,V], replay[N-1,V])</code></pre>
 
         <p>
-            المساواة هنا تعني تطابق بتات <bdi>f32</bdi>. المصفوفة المكتملة شملت
+            وهنا التطابق يعني نفس بتات <bdi>f32</bdi>. المصفوفة المكتملة شملت
             <bdi>Llama-3.2-1B</bdi> و<bdi>Qwen2.5-1.5B</bdi>، وثلاثة مسارات
             <bdi>Q8_0/Q6_K/Q4_K_M</bdi>، و<bdi>prompts</bdi> ثابتة بالإنجليزي
             والعربي.
@@ -226,7 +226,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         </div>
 
         <p>
-            هذا يثبت حد الـ<bdi>snapshot/replay</bdi> في الحالات المختبرة. ما
+            وهذا يثبت حد الـ<bdi>snapshot/replay</bdi> في الحالات المختبرة. ما
             يثبت صحة المرجع لكل نموذج، وأرقام التوقيت المسجلة ملاحظات فقط، مو
             ادعاء تسريع.
         </p>
@@ -235,7 +235,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
 
         <p>
             إعادة التشغيل المطابقة هي حالة الضبط. بعدها أضفت
-            <code>ember kv compare</code>، وهو ما يقارن حالتين إلا إذا ثبت إن
+            <code>ember kv compare</code>، وهو ما يقارن حاللين إلا إذا ثبت إن
             إحداثيات النموذج والـ<bdi>prefix</bdi> متطابقة.
         </p>
 
@@ -250,7 +250,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         </ul>
 
         <p>
-            الحدود الاختيارية تنتج قائمة فشل ثابتة وأول تجاوز. وتقرير
+            الحدود الاختيارية تعطينا قائمة فشل ثابتة وأول تجاوز. وتقرير
             <bdi>JSON</bdi> ما يحتوي توقيت، أو اسم جهاز، أو
             <bdi>process ID</bdi>، أو حقول غير مرتبة.
         </p>
@@ -258,7 +258,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         <pre><code>ember kv compare LEFT RIGHT --json --r2   --max-abs 0.001 --min-cosine 0.999</code></pre>
 
         <p>
-            ومع تحميل النموذج الهدف نفسه، يقدر الأمر يدخل مسار
+            ولما نحمّل النموذج الهدف نفسه، يقدر الأمر يدخل مسار
             <bdi>reference-greedy</bdi> مشترك إلى الـ<bdi>caches</bdi>. بعدها
             يقارن ناتج <bdi>attention O-projection</bdi> الدلالي في كل طبقة،
             والـ<bdi>full logits</bdi>، واتفاق <bdi>top-1</bdi>، وأول اختلاف في
@@ -266,22 +266,22 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         </p>
 
         <p>
-            مرحلة منفصلة تعيد استيراد حالتين نظيفتين وتترك كل فرع يتبع
-            <bdi>argmax</bdi> الخاص به. بهذا نحصل على اتفاق التسلسل وأول اختلاف
+            مرحلة منفصلة تعيد استيراد حاللين نظيفتين وتترك كل فرع يتبع
+            <bdi>argmax</bdi> الخاص به. كذا نحصل على اتفاق التسلسل وأول اختلاف
             من دون ما نفسر تنشيطات ما بعد الاختلاف كأنها ناتجة عن نفس الإدخال.
         </p>
 
         <h2>ضابط سببي من دون <bdi>mapper provenance</bdi> وهمي</h2>
 
         <p>
-            احتجت أتأكد إن مسار التشخيص يكتشف تغييراً حقيقياً في
+            كان لازم أتأكد إن مسار التشخيص يكتشف تغييراً حقيقياً في
             الـ<bdi>cache</bdi> قبل ما أعطيه ناتج <bdi>mapper</bdi>. الضابط
             الضيق يصفّر أو يضرب بقيمة ثابتة رأس <bdi>K/V</bdi> واحد عبر
             الـ<bdi>prefix</bdi> داخل الذاكرة.
         </p>
 
         <p>
-            العملية لها إيصال مكتوب يحدد الـ<bdi>snapshot</bdi> الأصلي،
+            العملية معها إيصال مكتوب يحدد الـ<bdi>snapshot</bdi> الأصلي،
             والطبقة، والرأس، واختيار <bdi>K/V</bdi>، وبتات معامل الضرب، وعدد
             العناصر المتأثرة. ما نقدر نحفظها كـ<code>ember.kv-snapshot.v1</code>،
             وما نحط قيمة وهمية في حقل بصمة الـ<bdi>mapper</bdi>. وإعادة التشغيل
@@ -301,7 +301,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         <div class="callout observation">
             <div class="label">كيف نقرأ هذا الـ<bdi>smoke</bdi>؟</div>
             <p>
-                التشغيل المعدّل يثبت إن الأداة تقدر تحدد تغيير <bdi>KV</bdi>
+                التشغيل المعدّل يورّي إن الأداة تقدر تحدد تغيير <bdi>KV</bdi>
                 مضبوط وتتابع انتقال أثره. عدم انقلاب الـ<bdi>token</bdi> خلال
                 توقع واحد مو دليل متانة، وقيم الـ<bdi>cosine</bdi> مو دليل على
                 جودة نقل بين نموذجين.
@@ -318,8 +318,8 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         </ul>
 
         <p>
-            هذي نتائج عن صلاحية أداة القياس. تخلي تجربة <bdi>mapper</bdi> لاحقة
-            أسهل في التشخيص؛ لكنها مو دليل على نجاح الـ<bdi>mapper</bdi>.
+            هذي نتائج عن صلاحية أداة القياس، تخلي تجربة <bdi>mapper</bdi> لاحقة
+            أسهل في التشخيص؛ بسا مو دليل على نجاح الـ<bdi>mapper</bdi>.
         </p>
 
         <h2>وش ما يثبته هذا العمل؟</h2>
@@ -329,15 +329,15 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             <li>ما تم بناء أو تشغيل <bdi>cross-model cache</bdi>،</li>
             <li>ما ثبت إن تحويل متعلم يحسن إعادة البناء على بيانات محجوبة،</li>
             <li>ما ثبت احتفاظ الانتباه أو التوليد بعد النقل،</li>
-            <li>ما تم قياس فائدة زمنية تحت <bdi>benchmark</bdi> مضبوط،</li>
+            <li>ما قسنا فائدة زمنية تحت <bdi>benchmark</bdi> مضبوط،</li>
             <li>وما زالت دلالة <bdi>Gemma</bdi> غير المتجانسة خارج النطاق.</li>
         </ul>
 
         <p>
-            <bdi>attention-output cosine</bdi> مفيد، لكنه مو احتمال انتباه، ومو
+            <bdi>attention-output cosine</bdi> مفيد، بس مو احتمال انتباه، ومو
             تفسير سببي لوحده. و<bdi>K/V R²</bdi> إحصاء لإعادة البناء، مو دليل إن
             النموذج الهدف يستخدم الـ<bdi>cache</bdi> المعاد بناؤه. واتفاق
-            التوليد لفترة قصيرة سلوك فعلي، لكنه يظل مقياساً محدود الأفق ويعتمد
+            التوليد لفترة قصيرة سلوك فعلي، بس يظل مقياساً محدود الأفق ويعتمد
             على الـ<bdi>prompt</bdi>.
         </p>
 
@@ -349,18 +349,18 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         </p>
 
         <p>
-            النطاق المقترح الآن زوج واحد ثابت من <bdi>Qwen</bdi> إلى
+            النطاق المقترح حالياً زوج واحد ثابت من <bdi>Qwen</bdi> إلى
             <bdi>Qwen</bdi>، بنفس الـ<bdi>tokenizer</bdi> وهندسة
-            <bdi>KV</bdi> متطابقة. تُحوّل المفاتيح في فضاء المحتوى المعلن بعد
-            التطبيع وقبل <bdi>RoPE</bdi>، وتُحوّل القيم في حالتها المعلنة. لكل
+            <bdi>KV</bdi> متطابقة. نحوّل المفاتيح في فضاء المحتوى المعلن بعد
+            التطبيع وقبل <bdi>RoPE</bdi>، ونحوّل القيم في حالتها المعلنة. لكل
             طبقة ورأس هدف <bdi>ridge map</bdi> مغلق وثابت، مع تقسيم معايرة
             مجمّد، وقيمة <bdi>lambda</bdi> واحدة، ومن دون بحث عن الطبقات.
         </p>
 
         <p>
-            التجربة تقارن <bdi>identity baseline</bdi> مع إعادة بناء
+            التجربة بتقارن <bdi>identity baseline</bdi> مع إعادة بناء
             <bdi>ridge</bdi> أولاً، ثم تستخدم تشخيصات الانتباه والـ<bdi>logits</bdi>
-            على نفس الإدخال، وبعدها المسار الجشع المستقل. ما نعمم الهندسة، وما
+            على نفس الإدخال، وبعدها المسار الجشع المستقل. ما راح نعمم الهندسة، وما
             نحسن مسار التشغيل، وما نضبط <bdi>kernels</bdi>، وما ننشئ صيغة إنتاج
             لـ<bdi>transformed snapshots</bdi>.
         </p>
@@ -368,7 +368,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
         <p>
             وإذا بقيت الملفات المحلية الحالية هي الزوج الوحيد، فالمسار من
             <bdi>Q4_K_M</bdi> إلى <bdi>Q8_0</bdi> بيكون تجربة على حد التكميم في
-            نفس النموذج الأساسي، مو دليلاً على نقل بين حجمين مختلفين. لازم هذا
+            نفس النموذج الأساسي، مو دليل على نقل بين حجمين مختلفين. لازم هذا
             الفرق يظل واضحاً في العنوان، والـ<bdi>metadata</bdi>، والخلاصة.
         </p>
 
