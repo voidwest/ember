@@ -1,0 +1,10 @@
+[package]
+name = "sweep"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ember = { path = "/home/west/ember" }
+
+[profile.dev]
+opt-level = 2

@@ -4,6 +4,17 @@
 are from the hermetic, deterministic test harness (synthetic seeded blocks :
 no model files required).
 
+> **Post-freeze correction (2026-09-03, §3):** the frozen headline — eight
+> scale-bit block hits producing non-finite logits — was measured at synthetic
+> `d = 1.0` and does not generalize to production scales. A real-distribution
+> sweep (136,307,712 scale words across 7 production files; 576 real-kernel
+> trials) finds the single-bit non-finite scale fault has population rate 0
+> and reframes the operational risk as finite-but-catastrophic drift. The
+> pushed freeze tag is left immutable as the historical record; this document
+> carries the correction. Evidence and repro sources are vendored in
+> `docs/embersec/phase5-correction-2026-09-03/` (`sweep.jsonl` per-trial rows,
+> `d_distribution.json`, `gguf_d_scan.py`, `analyze_sweep.py`, `sweep/`).
+
 ---
 
 ## 1. Surface map
@@ -45,24 +56,39 @@ determines the damage:
 | Q4_K payload (bit 3 of every nibble byte) | 1024 | 0.0011 | 0.0098 / 0.32 | 5748 | never |
 | Q6_K payload (bit 3 of every quant byte) | 1536 | 0.0104 | 0.085 / 0.16 | 797 | never |
 | Q8_0 payload (bit 5 of one quant byte/block) | 8 | 0.0405 | 0.052 | 0.67 | never |
-| Q4_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | n/a | n/a | n/a | 8 block hits (bit 14) |
-| Q6_K f16 `d`, exponent bits 10–14 | 40 attempts (8 blocks; early-stop per block) | n/a | n/a | n/a | 8 block hits (bit 14) |
+| Q4_K f16 `d`, all 16 bits × 11 real d + 1.0 control | 192 trials (176 real + 16 control) | bit-dependent; see below | max rel-L2 4.98e3, max abs Δ 6.26e4 (bit 14) | top-1 11/11 at bit 14 | 0/176 at real d; 1/16 control (bit 14 → +Inf) |
+| Q6_K f16 `d`, all 16 bits × 10 real d + ±1.0 controls | 192 trials (160 real + 32 control) | bit-dependent; see below | max rel-L2 3.08e4, max abs Δ 5.79e4 (bit 14) | top-1 5/10 at bit 14 | 0/160 at real d; 2/32 controls (bit 14 → ±Inf) |
+| Q8_0 f16 `d`, all 16 bits × 11 real d + 1.0 control | 192 trials (176 real + 16 control) | bit-dependent; see below | max rel-L2 6.3e3, max abs Δ 9.39e5 (bit 14) | top-1 0/11 at bit 14 (geometry-dependent) | 0/176 at real d; 1/16 control (bit 14 → +Inf) |
 
 **Interpretation.** Payload faults are graceful degradation: median logit
 drift is ~0.1-4% relative, top-1 flips only when the pristine margin is
 small (the same near-threshold-flip mechanism documented in the Arabic
 quantization pilots).
 
-The scale check is an analytical FP16 layout finding, not a percentage
-estimate. IEEE-754 binary16 stores its exponent in bits 10–14. The current
-test uses `d = 1.0`, probes those five positions, and stops after the first
-non-finite result in each block. With eight synthetic blocks per dtype, that
-is 5 × 8 = 40 attempted flips per dtype; bit 14 sets the exponent to the
-all-ones value and produces `Inf`, giving eight block hits. The test does not
-sweep all 16 bits, vary the starting `d`, or estimate a population hit rate.
-There is no confidence interval or per-trial result artifact; this is one
-repeatable deterministic unit-test invocation. Q8_0's `d` header is covered
-by integrity testing, not this exponent sweep.
+The scale check was originally an analytical FP16 layout finding, not a
+percentage estimate: IEEE-754 binary16 stores its exponent in bits 10–14, the
+test used `d = 1.0`, probed those five positions, and stopped after the first
+non-finite result in each block (5 × 8 = 40 attempts per dtype; bit 14 sets
+the all-ones exponent → `Inf`, eight block hits). That mechanism reproduces
+exactly (`0x3C00`^bit14 → `0x7C00`; `−1.0` → `−Inf`) but the rate does not
+generalize: production scales are tiny. A post-freeze sweep scanned 136,307,712
+`d` words across 7 production files (Llama-3.2-1B and Qwen2.5-1.5B in Q8_0 /
+Q4_K_M / Q6_K, plus Qwen3-0.6B Q8_0; `d_distribution.json` in the vendored
+directory): global max `d` 0.093, K-quant medians ≈ 1e-4, zero non-finite
+headers in the population. The full 16-bit sweep over quantile-anchored real
+`d` values (576 trials through the real decode kernels; per-trial rows in
+`sweep.jsonl`) produced non-finite logits in 4/576 trials — all bit 14, all on
+the ±1.0 controls; 0/512 at real `d`. Stronger than sampling: the maximum
+observed f16 exponent is 11, from which no single-bit flip can reach exponent
+31, so the single-bit non-finite scale fault has population rate 0 on the
+scanned corpus. The operational scale-fault risk is finite-but-catastrophic
+drift — bit-14 flips at real `d` reach rel-L2 of 5e3 (Q4_K), 3e4 (Q6_K),
+6e3 (Q8_0) with frequent top-1 flips — not crashes. Drift magnitudes and flip
+counts were measured under synthetic activations and are geometry-dependent;
+finiteness results are exact. Repro: `python3 gguf_d_scan.py <model.gguf>`
+for the distribution; the sweep drives the in-repo harness entry points
+`quant_fault::{k_decode, q8_decode, measure_impact}` (vendored `sweep/`
+sources; point its `ember` path dependency at the checkout).
 
 Downstream behavior on non-finite logits:
 - the CLI's logit validation **bails with a structured error** (safe);
