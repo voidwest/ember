@@ -254,11 +254,19 @@ fn is_executable(path: &Path) -> bool {
 /// - candle reference (`reference/candle/main.rs`): `candle-gguf-check
 ///   <file>`; exit 0 = parse OK, 1 = structured reject, 101 = panic.
 ///
-/// UNVERIFIED: neither adapter has been validated against a real built
-/// binary yet — the contracts above come from reading the reference
-/// sources, not from executing them. Until that validation lands, every
-/// external classification this layer produces is provisional and must
-/// not feed Phase I result tables.
+/// VALIDATED 2026-09-03 against real built binaries (llama.cpp b7999
+/// `0c1f39a9`, Release GGML_NATIVE=OFF; candle-core 0.11.0 crates.io,
+/// `--locked` build): `binary <file>` holds for both; exit 0 = accept,
+/// exit 1 = structured reject (llama: incl. missing file via
+/// `HARNESS: LOAD_REJECT`; candle: `HARNESS: GGUF_REJECT`), exit 101 =
+/// panic (candle S4 `div_ceil(0)` at `gguf_file.rs:560`; candle IO errors
+/// also panic via `.expect()`, so unreadable files read as PANIC, not
+/// HarnessError), llama exit 2 = usage (unreachable via this adapter,
+/// which always passes exactly one argv), S1/S2/S5 assert-class inputs
+/// die by signal (SIGFPE/SIGABRT → PROCESS_CRASH, never exit 1), S3
+/// string-hang stays alive past a 4 s deadline (→ TIMEOUT on harness
+/// kill). Zero exit==1+assert-text cases live and across all three frozen
+/// result sets, so there is no GGML_ASSERT stderr sniff by design.
 ///
 /// Both references are single-process load-check harnesses (no
 /// generation), which is what makes kill-and-reap a complete termination
