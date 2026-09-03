@@ -1114,7 +1114,7 @@ fn run_trace_native(
         execution_plan_hash,
         snapshot_hash: None,
         prompt_sha256: Some(sha256_bytes(command.prompt.as_bytes())),
-        prefix_token_ids_sha256: Some(hash_prefix_token_ids(&token_ids)),
+        prefix_token_ids_sha256: Some(ember::kv_snapshot::hash_token_ids(&token_ids)),
         prefix_length: token_ids.len(),
         cache_capacity: capacity,
         max_tokens: command.max_tokens,
@@ -1244,30 +1244,8 @@ fn ensure_outputs_outside_snapshot(
     Ok(())
 }
 
-fn normalize_absolute(path: &Path) -> anyhow::Result<PathBuf> {
-    use std::path::Component;
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(part) => normalized.push(part),
-        }
-    }
-    Ok(normalized)
-}
-
 fn resolved_absolute(path: &Path) -> anyhow::Result<PathBuf> {
-    let absolute = normalize_absolute(path)?;
+    let absolute = ember::kv_snapshot::normalize_path(path)?;
     let mut existing = absolute.as_path();
     let mut suffix = Vec::new();
     while !existing.exists() {
@@ -1383,17 +1361,6 @@ fn directory_regular_file_bytes(path: &Path) -> anyhow::Result<u64> {
     Ok(total)
 }
 
-fn hash_prefix_token_ids(tokens: &[u32]) -> String {
-    let mut bytes = Vec::with_capacity(
-        b"ember.kv-prefix-token-ids.v1\0".len() + tokens.len().saturating_mul(4),
-    );
-    bytes.extend_from_slice(b"ember.kv-prefix-token-ids.v1\0");
-    for token in tokens {
-        bytes.extend_from_slice(&token.to_le_bytes());
-    }
-    sha256_bytes(&bytes)
-}
-
 fn validate_loader_architecture(
     loader: &ember::loader::GgufLoader,
     requested: &str,
@@ -1502,8 +1469,10 @@ mod tests {
 
     #[test]
     fn prefix_token_trace_hash_is_domain_separated_and_little_endian() {
+        // The shared hasher lives in kv_snapshot; this test locks in that the
+        // contract observed here matches the single source of truth.
         assert_eq!(
-            hash_prefix_token_ids(&[1, 2, u32::MAX]),
+            ember::kv_snapshot::hash_token_ids(&[1, 2, u32::MAX]),
             "7ba3fbe5e313572a9a6ee56956380b6a07a48019956aaf835c5d441babe7924e"
         );
     }

@@ -1,4 +1,5 @@
 mod cli_experiment;
+mod cli_inspect;
 mod cli_support;
 mod gui;
 #[cfg(feature = "gui")]
@@ -316,6 +317,10 @@ pub(crate) enum Commands {
     InspectPlan(InspectPlanCommand),
     /// export, inspect, verify, replay, and trace first-class KV snapshots
     Kv(cli_kv::KvCommand),
+
+    /// inspect any file: auto-detect GGUF / tokenizer / KV snapshot,
+    /// validate structure, print a human-readable digest (--json for machines)
+    Inspect(cli_inspect::InspectCommand),
 
     /// image-conditioned generation + validation dumps (multimodal foundation)
     Multimodal(cli_multimodal::MultimodalCommand),
@@ -734,6 +739,7 @@ fn main() -> anyhow::Result<()> {
             Commands::Kv(command) => {
                 cli_kv::run_kv_command(command, k_strategy, args.k_allow_fallback)
             }
+            Commands::Inspect(command) => cli_inspect::run_inspect_command(command),
             Commands::Multimodal(command) => cli_multimodal::run_multimodal_command(command, &args),
             Commands::Audio(command) => cli_audio::run_audio_command(command, &args),
             Commands::Tts(command) => cli_tts::run_tts_command(command, &args),

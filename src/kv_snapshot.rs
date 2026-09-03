@@ -1324,7 +1324,18 @@ fn manifest_hash(manifest: &KvSnapshotManifest) -> anyhow::Result<String> {
     Ok(sha256_hex(&serde_json::to_vec(&value)?))
 }
 
-fn hash_token_ids(tokens: &[u32]) -> String {
+/// Domain-separated SHA-256 of a token-ID prefix (little-endian u32 per token).
+///
+/// The fixed domain separator ties the hash to this exact schema so a prefix
+/// hashed by one producer (e.g. [`KvSnapshot::export_native`]) compares
+/// correctly against a prefix hashed elsewhere. Do not change the separator
+/// without a schema bump.
+///
+/// Internal implementation helper: `#[doc(hidden)]` keeps it source-visible to
+/// the binary target without a compatibility promise (see
+/// `docs/api-stability.md`, "Internal implementation").
+#[doc(hidden)]
+pub fn hash_token_ids(tokens: &[u32]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"ember.kv-prefix-token-ids.v1\0");
     for token in tokens {
@@ -1590,7 +1601,19 @@ fn create_staging_directory(parent: &Path, name: &str) -> anyhow::Result<PathBuf
     anyhow::bail!("could not allocate a unique snapshot staging directory")
 }
 
-fn reject_dangerous_snapshot_output(path: &Path) -> anyhow::Result<()> {
+/// Normalize a user-supplied path to an absolute, component-collapsed form.
+///
+/// Resolves against the working directory for relative inputs and collapses
+/// `.`/`..` without touching the filesystem (no symlink resolution). This is
+/// the shared primitive behind snapshot-output placement checks and
+/// trace-output path resolution — keep it pure so both consumers stay
+/// consistent.
+///
+/// Internal implementation helper: `#[doc(hidden)]` keeps it source-visible to
+/// the binary target without a compatibility promise (see
+/// `docs/api-stability.md`, "Internal implementation").
+#[doc(hidden)]
+pub fn normalize_path(path: &Path) -> anyhow::Result<PathBuf> {
     use std::path::Component;
     let absolute = if path.is_absolute() {
         path.to_path_buf()
@@ -1609,6 +1632,11 @@ fn reject_dangerous_snapshot_output(path: &Path) -> anyhow::Result<()> {
             Component::Normal(part) => normalized.push(part),
         }
     }
+    Ok(normalized)
+}
+
+fn reject_dangerous_snapshot_output(path: &Path) -> anyhow::Result<()> {
+    let normalized = normalize_path(path)?;
     let cwd = std::env::current_dir()?.canonicalize()?;
     anyhow::ensure!(
         !cwd.starts_with(&normalized),
@@ -1927,6 +1955,72 @@ mod tests {
         assert!(reject_dangerous_snapshot_output(Path::new("..")).is_err());
     }
 
+    #[test]
+    fn normalize_path_collapses_dots_and_uses_cwd_for_relative() {
+        let cwd = std::env::current_dir().unwrap();
+        // Relative path with a self-dot collapses cleanly.
+        assert_eq!(
+            normalize_path(Path::new("foo/./bar")).unwrap(),
+            cwd.join("foo/bar")
+        );
+        // Parent traversal collapses without touching the filesystem.
+        assert_eq!(
+            normalize_path(Path::new("foo/../baz")).unwrap(),
+            cwd.join("baz")
+        );
+    }
+
+    /// Adversarial path-normalization cases. The security contract is that
+    /// `normalize_path` collapses traversal so the downstream
+    /// `reject_dangerous_snapshot_output` / `ensure_outputs_outside_snapshot`
+    /// prefix checks are meaningful. These cases probe the boundaries.
+    #[test]
+    fn normalize_path_adversarial_traversal_is_collapsed() {
+        let cwd = std::env::current_dir().unwrap();
+        // Surplus `..` walk the path back toward (but never past) root. The
+        // result is a clean absolute path with no `.`/`..` remnants — so the
+        // downstream prefix check against the canonical cwd is meaningful.
+        let escaped = format!("{}/a/b/c/../../../../../etc/passwd", cwd.display());
+        let normalized = normalize_path(Path::new(&escaped)).unwrap();
+        assert!(!normalized.to_string_lossy().contains(".."));
+        assert!(!normalized.to_string_lossy().contains("/./"));
+        // A non-existent deep base normalizes identically to a real one — the
+        // function never touches the filesystem.
+        let deep = format!("{}/a/b/c", cwd.display());
+        assert_eq!(
+            normalize_path(Path::new(&deep)).unwrap(),
+            normalize_path(Path::new(&format!("{}/a/b/c/./", cwd.display()))).unwrap()
+        );
+        // Self-dot is a no-op.
+        assert_eq!(
+            normalize_path(Path::new(&format!("{}/a/b/c", cwd.display()))).unwrap(),
+            normalize_path(Path::new(&format!("{}/a/./b/./c", cwd.display()))).unwrap()
+        );
+    }
+
+    #[test]
+    fn normalize_path_rejects_cwd_and_ancestor_outputs() {
+        // The whole point of the normalization: after collapse, the dangerous
+        // output check must see the cwd (or an ancestor) and refuse.
+        assert!(reject_dangerous_snapshot_output(Path::new(".")).is_err());
+        assert!(reject_dangerous_snapshot_output(Path::new("./")).is_err());
+        assert!(reject_dangerous_snapshot_output(Path::new("././.")).is_err());
+        // A path that traverses up and back to cwd still resolves to cwd.
+        assert!(reject_dangerous_snapshot_output(Path::new("foo/..")).is_err());
+        // A path that tries to escape then land on an ancestor of cwd.
+        let cwd = std::env::current_dir().unwrap();
+        let parent = cwd.parent().unwrap();
+        let via_traversal = format!("{}/sub/..", parent.display());
+        assert!(reject_dangerous_snapshot_output(Path::new(&via_traversal)).is_err());
+    }
+
+    #[test]
+    fn normalize_path_accepts_non_ancestor_outputs() {
+        // Sibling and descendant-of-cwd-but-not-cwd paths are allowed.
+        assert!(reject_dangerous_snapshot_output(Path::new("snapshots/out")).is_ok());
+        assert!(reject_dangerous_snapshot_output(Path::new("./artifacts/x")).is_ok());
+    }
+
     fn incompatible(mutator: impl FnOnce(&mut KvCompatibilityTarget), reason: &str) {
         let snapshot = snapshot(3, 5);
         let mut candidate = target(5);
@@ -1986,5 +2080,40 @@ mod tests {
         let mut snapshot = snapshot(1, 2);
         snapshot.manifest.provenance.resume_token_id = Some(123);
         assert!(snapshot.verify().is_err());
+    }
+
+    #[test]
+    fn token_id_hash_is_domain_separated_and_little_endian() {
+        // Mirrors the contract asserted in cli_kv::tests so the single
+        // source of truth here stays cross-checked against its former clone.
+        assert_eq!(
+            hash_token_ids(&[1, 2, u32::MAX]),
+            "7ba3fbe5e313572a9a6ee56956380b6a07a48019956aaf835c5d441babe7924e"
+        );
+        // Empty prefix hashes the separator alone.
+        let empty = hash_token_ids(&[]);
+        assert_ne!(empty, hash_token_ids(&[0]));
+        assert_eq!(empty.len(), 64);
+    }
+
+    #[test]
+    fn exported_native_prefix_hash_matches_token_id_hasher() {
+        // End-to-end: the hash recorded into provenance by export_native must
+        // equal the standalone hasher applied to the same token IDs.
+        let tokens: Vec<u32> = (0..5).collect();
+        let mut cache = KVCache::new(2, 2, 4, 8);
+        for position in 0..5 {
+            for layer in 0..2 {
+                let keys: Vec<f32> = (0..8).map(|i| (position * 8 + i) as f32).collect();
+                cache.append(layer, position, &keys, &[0.0; 8]);
+            }
+            cache.advance_cursor();
+        }
+        let exported =
+            KvSnapshot::export_native(&cache, target(8), Some(&tokens), Some(99)).unwrap();
+        assert_eq!(
+            exported.manifest().provenance.prefix_token_ids_sha256,
+            Some(hash_token_ids(&tokens))
+        );
     }
 }
