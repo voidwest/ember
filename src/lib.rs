@@ -37,6 +37,7 @@ pub mod backend;
 pub mod compare;
 #[doc(hidden)]
 pub mod decode_profile;
+pub mod diff_outcome;
 pub mod duplex;
 // (device bindings live in duplex::device behind the "audio" feature)
 pub mod embedding;
@@ -75,6 +76,7 @@ pub mod sampler;
 pub mod simd;
 pub mod smolvlm;
 pub mod smolvlm_video;
+pub mod subprocess;
 pub mod tensor;
 pub mod tokenizer;
 pub mod trace;

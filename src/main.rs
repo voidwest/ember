@@ -1,3 +1,4 @@
+mod cli_diff;
 mod cli_experiment;
 mod cli_inspect;
 mod cli_support;
@@ -321,6 +322,10 @@ pub(crate) enum Commands {
     /// inspect any file: auto-detect GGUF / tokenizer / KV snapshot,
     /// validate structure, print a human-readable digest (--json for machines)
     Inspect(cli_inspect::InspectCommand),
+
+    /// differential evaluation: Ember vs external runtimes on one file,
+    /// with per-runtime outcome, timing, and bounded diagnostics
+    Diff(cli_diff::DiffCommand),
 
     /// image-conditioned generation + validation dumps (multimodal foundation)
     Multimodal(cli_multimodal::MultimodalCommand),
@@ -740,6 +745,7 @@ fn main() -> anyhow::Result<()> {
                 cli_kv::run_kv_command(command, k_strategy, args.k_allow_fallback)
             }
             Commands::Inspect(command) => cli_inspect::run_inspect_command(command),
+            Commands::Diff(command) => cli_diff::run_diff_command(command),
             Commands::Multimodal(command) => cli_multimodal::run_multimodal_command(command, &args),
             Commands::Audio(command) => cli_audio::run_audio_command(command, &args),
             Commands::Tts(command) => cli_tts::run_tts_command(command, &args),
