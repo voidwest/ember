@@ -332,6 +332,10 @@ impl ChatModelEngine for LlamaChatModel<'_> {
                 cancelled = true;
                 break;
             }
+            if ids.len() >= params.max_new_tokens {
+                stop_hit = Some(TurnStop::MaxTokens);
+                break;
+            }
             let logit_data = self.backend.data(&logits);
             let last_logits = &logit_data[..vocab_size];
             let next = if params.temperature == 0.0 {
@@ -413,8 +417,8 @@ impl ChatModelEngine for LlamaChatModel<'_> {
         // -- terminal policy (mirrors VoiceSession) ---------------------
         self.resync_committed_to_cursor();
         let suffix_ids = self.encode(suffix_rendered)?;
-        let terminal: Vec<u32> = if matches!(stop_hit, Some(TurnStop::Eos)) && ids.len() == 1 {
-            vec![ids[0]]
+        let terminal: Vec<u32> = if matches!(stop_hit, Some(TurnStop::Eos)) {
+            vec![*ids.last().expect("EOS requires a generated token")]
         } else if ids.is_empty() {
             suffix_ids.clone()
         } else {
@@ -423,17 +427,21 @@ impl ChatModelEngine for LlamaChatModel<'_> {
             v.extend_from_slice(&suffix_ids);
             v
         };
-        let _ = self.model.forward_last_logits_with_cache(
-            self.backend,
-            &terminal,
-            &mut self.cache,
-            self.committed_len,
-        )?;
-        self.committed_len += terminal.len();
+        if !terminal.is_empty() {
+            let _ = self.model.forward_last_logits_with_cache(
+                self.backend,
+                &terminal,
+                &mut self.cache,
+                self.committed_len,
+            )?;
+            self.committed_len += terminal.len();
+        }
         debug_assert_eq!(self.cache.cursor(), self.committed_len);
 
         let mut full_ids = prefix_ids;
+        full_ids.extend_from_slice(&ids[..ids.len().saturating_sub(1)]);
         full_ids.extend_from_slice(&terminal);
+        debug_assert_eq!(full_ids.len(), self.committed_len - reply_start);
         let text = match bounded_text {
             Some(t) => t,
             None => self.tokenizer.decode(&ids)?,
@@ -486,5 +494,196 @@ impl LlamaChatModel<'_> {
 
     fn resync_committed_to_cursor(&mut self) {
         self.committed_len = self.cache.cursor();
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::backend::CpuBackend;
+    use crate::loader::{GgufLoader, GgufValue, LoadedTensor};
+    use crate::tensor::CpuTensor;
+    use std::collections::HashMap;
+
+    // One real transformer block with an identity residual path. Its head
+    // deterministically emits p -> a -> b -> EOS, while nonzero K/V rows
+    // let the tests compare the live cache with independent full prefills.
+    pub(crate) fn fixture() -> (Llama<CpuBackend>, EmberTokenizer, ModelIdentity) {
+        let mut metadata = HashMap::from([(
+            "general.architecture".into(),
+            GgufValue::Str("llama".into()),
+        )]);
+        for (name, value) in [
+            ("block_count", 1),
+            ("attention.head_count", 1),
+            ("attention.head_count_kv", 1),
+            ("embedding_length", 8),
+            ("context_length", 64),
+            ("vocab_size", 8),
+        ] {
+            metadata.insert(format!("llama.{name}"), GgufValue::U32(value));
+        }
+        let identity_matrix: Vec<f32> = (0..64)
+            .map(|i| if i / 8 == i % 8 { 1.0 } else { 0.0 })
+            .collect();
+        let mut tensors = HashMap::new();
+        for name in [
+            "token_embd.weight",
+            "blk.0.attn_k.weight",
+            "blk.0.attn_v.weight",
+        ] {
+            tensors.insert(
+                name.into(),
+                LoadedTensor::F32(CpuTensor::from_data(vec![8, 8], identity_matrix.clone())),
+            );
+        }
+        for name in [
+            "output_norm.weight",
+            "blk.0.attn_norm.weight",
+            "blk.0.ffn_norm.weight",
+        ] {
+            tensors.insert(
+                name.into(),
+                LoadedTensor::F32(CpuTensor::from_data(vec![8], vec![1.0; 8])),
+            );
+        }
+        for name in ["attn_q", "attn_output", "ffn_gate", "ffn_up", "ffn_down"] {
+            tensors.insert(
+                format!("blk.0.{name}.weight"),
+                LoadedTensor::F32(CpuTensor::from_data(vec![8, 8], vec![0.0; 64])),
+            );
+        }
+        let mut head = vec![0.0; 64];
+        for (input, output) in [(0, 1), (1, 2), (2, 3)] {
+            head[output * 8 + input] = 1.0;
+        }
+        tensors.insert(
+            "output.weight".into(),
+            LoadedTensor::F32(CpuTensor::from_data(vec![8, 8], head)),
+        );
+        let model = Llama::from_loader(GgufLoader {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        })
+        .unwrap();
+        let tokenizer = EmberTokenizer::from_bytes(r#"{
+            "version":"1.0", "truncation":null, "padding":null,
+            "added_tokens":[], "normalizer":null, "pre_tokenizer":null,
+            "post_processor":null, "decoder":null,
+            "model":{"type":"WordLevel","vocab":{"p":0,"a":1,"b":2,"<|eot_id|>":3,"s":4,"x":5,"y":6,"[UNK]":7},"unk_token":"[UNK]"}
+        }"#).unwrap();
+        let identity = ModelIdentity {
+            model_path: "synthetic".into(),
+            model_sha256: None,
+            architecture: "llama".into(),
+            quantization: None,
+            n_layers: 1,
+            embed_dim: 8,
+            vocab_size: 8,
+            tokenizer_sha256: None,
+            context_len: 64,
+        };
+        (model, tokenizer, identity)
+    }
+
+    #[test]
+    fn native_turn_ids_and_cache_cover_every_generated_token() {
+        let (model, tokenizer, identity) = fixture();
+        let backend = CpuBackend;
+        for (prefix, budget, expected, stop) in [
+            ("p", 8, vec![0, 1, 2, 3], TurnStop::Eos),
+            ("b", 8, vec![2, 3], TurnStop::Eos),
+            ("p", 2, vec![0, 1, 2, 4], TurnStop::MaxTokens),
+            ("p", 1, vec![0, 1, 4], TurnStop::MaxTokens),
+            ("p", 0, vec![0, 4], TurnStop::MaxTokens),
+        ] {
+            let mut engine =
+                LlamaChatModel::new(&model, &backend, &tokenizer, 64, identity.clone());
+            let mut emitted = Vec::new();
+            let turn = engine
+                .generate_turn(
+                    prefix,
+                    "s",
+                    &GenerationParams {
+                        max_new_tokens: budget,
+                        ..Default::default()
+                    },
+                    &CancelFlag::new(),
+                    &mut |id, _| emitted.push(id),
+                )
+                .unwrap();
+            assert_eq!(turn.stop, Some(stop));
+            assert_eq!(turn.committed_ids, expected);
+            assert_eq!(turn.committed_ids.len(), engine.committed_len());
+            assert_eq!(
+                emitted.len(),
+                turn.decode_evaluations + usize::from(budget > 0)
+            );
+            let mut reference = model.create_cache(&backend, expected.len());
+            model
+                .forward_last_logits_with_cache(&backend, &expected, &mut reference, 0)
+                .unwrap();
+            assert_eq!(
+                engine.cache.export_compact_prefix(expected.len()).unwrap(),
+                reference.export_compact_prefix(expected.len()).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn native_stop_string_keeps_generated_ids_and_truncation_restores_boundary() {
+        let (model, tokenizer, identity) = fixture();
+        let backend = CpuBackend;
+        let mut engine = LlamaChatModel::new(&model, &backend, &tokenizer, 64, identity);
+        engine.commit_message("x").unwrap();
+        let boundary = engine.committed_len();
+        let before = engine.cache.export_compact_prefix(boundary).unwrap();
+        let turn = engine
+            .generate_turn(
+                "p",
+                "s",
+                &GenerationParams {
+                    stop_strings: vec!["a".into()],
+                    ..Default::default()
+                },
+                &CancelFlag::new(),
+                &mut |_, _| {},
+            )
+            .unwrap();
+        assert_eq!(turn.stop, Some(TurnStop::StopString("a".into())));
+        assert_eq!(turn.committed_ids, vec![0, 1, 4]);
+        assert!(turn.text.is_empty());
+        assert_eq!(turn.committed_ids.len(), engine.committed_len() - boundary);
+        engine.truncate_to(boundary).unwrap();
+        assert_eq!(
+            engine.cache.export_compact_prefix(boundary).unwrap(),
+            before
+        );
+    }
+
+    #[test]
+    fn native_cancellation_discards_partial_token_bookkeeping() {
+        let (model, tokenizer, identity) = fixture();
+        let backend = CpuBackend;
+        let mut engine = LlamaChatModel::new(&model, &backend, &tokenizer, 64, identity);
+        engine.commit_message("x").unwrap();
+        let before = engine.cache.export_compact_prefix(1).unwrap();
+        let cancel = CancelFlag::new();
+        let turn = engine
+            .generate_turn(
+                "p",
+                "s",
+                &GenerationParams::default(),
+                &cancel,
+                &mut |_, _| cancel.cancel(),
+            )
+            .unwrap();
+        assert!(turn.cancelled);
+        assert!(turn.committed_ids.is_empty());
+        assert_eq!(engine.committed_len(), 1);
+        assert_eq!(engine.cache.export_compact_prefix(1).unwrap(), before);
     }
 }

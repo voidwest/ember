@@ -108,6 +108,9 @@ fn multiturn_session_reuses_kv_without_rebuild() {
         .unwrap();
     assert!(!cancelled);
     assert!(!text1.is_empty());
+    let reply = session.turns().last().unwrap();
+    assert_eq!(reply.token_ids.len(), reply.span.1 - reply.span.0);
+    assert_eq!(reply.embeddings.shape()[0], reply.token_ids.len());
 
     // turn 2: KV must grow incrementally — no re-prefill of turn 1
     let after_turn1 = session.committed_len();

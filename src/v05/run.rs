@@ -306,8 +306,8 @@ pub fn write_bundle(
         materials.resolved.output.overwrite,
         retain_incomplete,
     );
-    for (relative, bytes) in &assembled.files {
-        writer.add(relative, bytes.clone());
+    for (relative, bytes) in assembled.files {
+        writer.add(&relative, bytes);
     }
     writer.finalize(assembled.semantic_manifest, assembled.runtime_json)
 }
@@ -341,7 +341,9 @@ fn build_capture_payload(materials: &BundleMaterials) -> Result<CapturePayload, 
             let shape = vec![capture.positions.len(), capture.columns];
             let (route, fusion) = hook_route(materials, capture);
             let provenance = selection_provenance(materials, result, &capture.capture_id);
-            owned_payloads.push((name.clone(), bytes.clone(), shape.clone(), dtype));
+            let byte_length = bytes.len();
+            let checksum = sha256_hex(&bytes);
+            owned_payloads.push((name.clone(), bytes, shape.clone(), dtype));
             index_entries.push(CaptureIndexEntry {
                 capture_id: capture.capture_id.clone(),
                 input_id: capture.input_id.clone(),
@@ -351,8 +353,8 @@ fn build_capture_payload(materials: &BundleMaterials) -> Result<CapturePayload, 
                 tensor_name: name,
                 shape,
                 dtype: dtype.name().to_string(),
-                byte_length: bytes.len(),
-                checksum: sha256_hex(&bytes),
+                byte_length,
+                checksum,
                 model_sha256: materials.model_meta.sha256.clone(),
                 plan_hash: materials.plan.plan_hash.clone(),
                 hook_route: route.clone(),

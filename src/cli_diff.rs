@@ -294,62 +294,79 @@ mod tests {
         assert!(error.contains("unknown runtime"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn externals_evaluate_concurrently_not_sequentially() {
-        // Two 3-second sleeps as fake runtimes must complete in well under
-        // 6 seconds wall time; sequential evaluation would stack them.
-        // Uses the lib evaluators directly (no CLI, no real binaries).
-        use ember::diff_outcome::ExternalRuntime;
-        use std::time::Instant;
-        let dir = std::env::temp_dir().join(format!("ember-diff-conc-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let sleeper = dir.join("sleeper.sh");
-        std::fs::write(&sleeper, b"#!/bin/sh\nsleep 3\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&sleeper, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        // SAFETY: same single-threaded-env reasoning as diff_outcome tests;
-        // no other thread reads env here.
-        unsafe {
-            std::env::set_var(ExternalRuntime::LlamaCpp.env_override(), &sleeper);
-            std::env::set_var(ExternalRuntime::Candle.env_override(), &sleeper);
-        }
-        let file = dir.join("junk.gguf");
-        std::fs::write(&file, b"junk").unwrap();
-        let start = Instant::now();
-        let timeout = std::time::Duration::from_secs(20);
+        const CHILD_INPUT: &str = "EMBER_DIFF_CONCURRENCY_TEST_INPUT";
+        let file = match std::env::var_os(CHILD_INPUT) {
+            Some(file) => PathBuf::from(file),
+            None => {
+                // Other CLI tests change the same runtime overrides. Run
+                // this test alone in a child with its own environment;
+                // mutating the parallel test process races those tests.
+                use std::os::unix::fs::PermissionsExt;
+                let dir = std::env::temp_dir().join(format!(
+                    "ember-diff-conc-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos(),
+                ));
+                std::fs::create_dir_all(&dir).unwrap();
+                let file = dir.join("junk.gguf");
+                std::fs::write(&file, b"junk").unwrap();
+                // Each runtime waits for BOTH start markers. Sequential
+                // evaluation necessarily times out; concurrent evaluation
+                // succeeds without a scheduler-sensitive wall-time bound.
+                let script = b"#!/bin/sh\nset -eu\ntouch \"$1.$(basename \"$0\").started\"\nwhile [ ! -f \"$1.llama.sh.started\" ] || [ ! -f \"$1.candle.sh.started\" ]; do sleep 0.01; done\n";
+                let llama = dir.join("llama.sh");
+                let candle = dir.join("candle.sh");
+                for path in [&llama, &candle] {
+                    std::fs::write(path, script).unwrap();
+                    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+                }
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "cli_diff::tests::externals_evaluate_concurrently_not_sequentially",
+                        "--nocapture",
+                    ])
+                    .env(CHILD_INPUT, &file)
+                    .env(ExternalRuntime::LlamaCpp.env_override(), &llama)
+                    .env(ExternalRuntime::Candle.env_override(), &candle)
+                    .output();
+                let peers_started = ["llama.sh", "candle.sh"]
+                    .into_iter()
+                    .all(|name| dir.join(format!("junk.gguf.{name}.started")).is_file());
+                std::fs::remove_dir_all(&dir).unwrap();
+                let output = output.expect("failed to start isolated concurrency test");
+                assert!(
+                    output.status.success() && peers_started,
+                    "isolated concurrency test failed (both peers started: {peers_started}): {}\nstdout:\n{}\nstderr:\n{}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr),
+                );
+                return;
+            }
+        };
+        let timeout = Duration::from_secs(10);
         let reports = std::thread::scope(|scope| {
             [ExternalRuntime::LlamaCpp, ExternalRuntime::Candle]
                 .into_iter()
                 .map(|runtime| {
                     let file = file.clone();
-                    scope.spawn(move || {
-                        ember::diff_outcome::evaluate_external(runtime, &file, timeout)
-                    })
+                    scope.spawn(move || evaluate_external(runtime, &file, timeout))
                 })
                 .collect::<Vec<_>>()
                 .into_iter()
                 .map(|h| h.join().expect("worker panicked"))
                 .collect::<Vec<_>>()
         });
-        let wall = start.elapsed();
         for report in &reports {
-            assert_eq!(report.outcome, ember::diff_outcome::DiffOutcome::Accept);
+            assert_eq!(report.outcome, DiffOutcome::Accept, "{report:#?}");
         }
-        // Sequential would take >= 6 s; concurrent takes ~3 s. Generous
-        // ceiling keeps loaded CI honest while still catching regression
-        // to sequential evaluation.
-        assert!(
-            wall < std::time::Duration::from_secs(5),
-            "externals ran sequentially: {wall:?}"
-        );
-        unsafe {
-            std::env::remove_var(ExternalRuntime::LlamaCpp.env_override());
-            std::env::remove_var(ExternalRuntime::Candle.env_override());
-        }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

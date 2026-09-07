@@ -42,17 +42,18 @@ pub fn sample_token(
     }
 
     let mut logits: Vec<f32> = logits.to_vec();
+    let mut scratch = Vec::new();
 
     for l in &mut logits {
         *l /= temperature;
     }
 
     if let Some(k) = top_k {
-        top_k_filter(&mut logits, k);
+        top_k_filter(&mut logits, k, &mut scratch);
     }
 
     if let Some(p) = top_p {
-        top_p_filter(&mut logits, p);
+        top_p_filter(&mut logits, p, &mut scratch);
     }
 
     // single softmax at the end - top_p_filter uses its own internal softmax
@@ -83,21 +84,21 @@ pub fn argmax_token(logits: &[f32]) -> usize {
 
 /// set all values below the k-th largest logit to `-inf`.
 ///
-/// sorts a copy of the logits in descending order, finds the k-th largest value
-/// (0-indexed, so `indexed[k - 1]`), and masks every logit below that threshold.
+/// selects the k-th largest value in scratch space without sorting the full
+/// vocabulary, then masks every logit below it, retaining all threshold ties.
 /// a no-op when `k >= len` or `k == 0`.
-fn top_k_filter(logits: &mut [f32], k: usize) {
+fn top_k_filter(logits: &mut [f32], k: usize, scratch: &mut Vec<f32>) {
     if k >= logits.len() || k == 0 {
         return;
     }
 
-    let mut indexed: Vec<(usize, f32)> = logits.iter().cloned().enumerate().collect();
-    indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(core::cmp::Ordering::Equal));
-
-    // zero out everything below the k-th largest logit (0-indexed, so k-1)
-    let threshold = indexed[k - 1].1;
+    scratch.clear();
+    scratch.extend_from_slice(logits);
+    let (_, threshold, _) = scratch.select_nth_unstable_by(k - 1, |a, b| {
+        b.partial_cmp(a).unwrap_or(core::cmp::Ordering::Equal)
+    });
     for l in logits.iter_mut() {
-        if *l < threshold {
+        if *l < *threshold {
             *l = f32::NEG_INFINITY;
         }
     }
@@ -109,10 +110,10 @@ fn top_k_filter(logits: &mut [f32], k: usize) {
 /// computes softmax on the current logits to find the cutoff threshold,
 /// then masks logits whose softmax probability falls below that threshold.
 /// the caller is responsible for computing the final softmax on the
-/// filtered logits - this avoids computing softmax twice.
-fn top_p_filter(logits: &mut [f32], p: f32) {
+/// filtered logits, retaining the existing floating-point normalization order.
+fn top_p_filter(logits: &mut [f32], p: f32, scratch: &mut Vec<f32>) {
     let soft = softmax_1d(logits);
-    let cutoff = nucleus_cutoff(&soft, p);
+    let cutoff = nucleus_cutoff(&soft, p, scratch);
     for (i, s) in soft.iter().enumerate() {
         if *s < cutoff {
             logits[i] = f32::NEG_INFINITY;
@@ -154,9 +155,12 @@ pub fn softmax_1d(logits: &[f32]) -> Vec<f32> {
         let uniform = 1.0 / logits.len() as f32;
         return vec![uniform; logits.len()];
     }
-    let exps: Vec<f32> = logits.iter().map(|x| (x - max).exp()).collect();
+    let mut exps: Vec<f32> = logits.iter().map(|x| (x - max).exp()).collect();
     let sum: f32 = exps.iter().sum();
-    exps.iter().map(|x| x / sum).collect()
+    for value in &mut exps {
+        *value /= sum;
+    }
+    exps
 }
 
 /// find the probability threshold for nucleus sampling.
@@ -165,18 +169,15 @@ pub fn softmax_1d(logits: &[f32]) -> Vec<f32> {
 /// the smallest probability value in the set whose cumulative sum reaches `p`.
 /// returns `0.0` if the cumulative sum never reaches `p` (shouldn't happen
 /// for a valid probability distribution).
-fn nucleus_cutoff(sorted_probs: &[f32], p: f32) -> f32 {
-    let mut indexed: Vec<(f32, usize)> = sorted_probs
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| (v, i))
-        .collect();
-    indexed.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal));
+fn nucleus_cutoff(probs: &[f32], p: f32, scratch: &mut Vec<f32>) -> f32 {
+    scratch.clear();
+    scratch.extend_from_slice(probs);
+    scratch.sort_unstable_by(|a, b| b.partial_cmp(a).unwrap_or(core::cmp::Ordering::Equal));
     let mut cum = 0.0;
-    for (prob, _) in &indexed {
+    for &prob in scratch.iter() {
         cum += prob;
         if cum >= p {
-            return *prob;
+            return prob;
         }
     }
     0.0
@@ -207,6 +208,107 @@ fn categorical_sample(dist: &[f32], rng: &mut impl Rng) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    fn reference_softmax(logits: &[f32]) -> Vec<f32> {
+        let positive_infinities = logits
+            .iter()
+            .filter(|&&value| value == f32::INFINITY)
+            .count();
+        if positive_infinities > 0 {
+            return logits
+                .iter()
+                .map(|&value| {
+                    if value == f32::INFINITY {
+                        1.0 / positive_infinities as f32
+                    } else {
+                        0.0
+                    }
+                })
+                .collect();
+        }
+        let max = logits.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        if max == f32::NEG_INFINITY {
+            return vec![1.0 / logits.len() as f32; logits.len()];
+        }
+        let exps: Vec<f32> = logits.iter().map(|x| (x - max).exp()).collect();
+        let sum: f32 = exps.iter().sum();
+        exps.iter().map(|x| x / sum).collect()
+    }
+
+    /// Original full-sort pipeline, kept as an oracle for the selection path.
+    fn reference_distribution(logits: &[f32], temperature: f32, k: usize, p: f32) -> Vec<f32> {
+        let mut logits: Vec<f32> = logits.iter().map(|value| value / temperature).collect();
+        let descending = |a: &f32, b: &f32| b.partial_cmp(a).unwrap_or(core::cmp::Ordering::Equal);
+        if k > 0 && k < logits.len() {
+            let mut sorted = logits.clone();
+            sorted.sort_by(descending);
+            for value in &mut logits {
+                if *value < sorted[k - 1] {
+                    *value = f32::NEG_INFINITY;
+                }
+            }
+        }
+        let probabilities = reference_softmax(&logits);
+        let mut sorted = probabilities.clone();
+        sorted.sort_by(descending);
+        let mut cumulative = 0.0;
+        let cutoff = sorted
+            .into_iter()
+            .find(|value| {
+                cumulative += value;
+                cumulative >= p
+            })
+            .unwrap_or(0.0);
+        for (value, probability) in logits.iter_mut().zip(probabilities) {
+            if probability < cutoff {
+                *value = f32::NEG_INFINITY;
+            }
+        }
+        reference_softmax(&logits)
+    }
+
+    #[test]
+    fn selection_preserves_seeded_full_sort_sampling_and_ties() {
+        let cases = [
+            vec![0.0, -0.0, 1.0, 1.0, -1.0],
+            vec![f32::NEG_INFINITY; 9],
+            vec![f32::INFINITY, 0.0, f32::INFINITY, f32::NEG_INFINITY],
+            (0..257)
+                .map(|i| ((i * 71 % 113) as f32 - 56.0) / 7.0)
+                .collect(),
+        ];
+        for logits in cases {
+            for temperature in [0.1, 0.7, 1.0, 2.0] {
+                for k in [0, 1, 2, logits.len(), logits.len() + 1] {
+                    for p in [0.0, 0.1, 0.5, 0.9, 1.0] {
+                        let distribution = reference_distribution(&logits, temperature, k, p);
+                        let mut filtered: Vec<f32> =
+                            logits.iter().map(|v| v / temperature).collect();
+                        let mut scratch = Vec::new();
+                        top_k_filter(&mut filtered, k, &mut scratch);
+                        top_p_filter(&mut filtered, p, &mut scratch);
+                        assert_eq!(softmax_1d(&filtered), distribution);
+                        let mut expected_rng = StdRng::seed_from_u64(41);
+                        let mut actual_rng = StdRng::seed_from_u64(41);
+                        for _ in 0..32 {
+                            assert_eq!(
+                                sample_token(
+                                    &logits,
+                                    temperature,
+                                    Some(k),
+                                    Some(p),
+                                    &mut actual_rng
+                                ),
+                                categorical_sample(&distribution, &mut expected_rng),
+                                "temperature={temperature}, k={k}, p={p}",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn softmax_shares_probability_across_positive_infinities() {

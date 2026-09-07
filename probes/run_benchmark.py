@@ -25,7 +25,6 @@ The manifest is intentionally simple JSON. Example:
 """
 
 import argparse
-import hashlib
 import json
 import math
 import re
@@ -38,11 +37,13 @@ from typing import Callable
 import numpy as np
 
 try:
+    from .artifact_io import atomic_write_text, sha256_file
     from .benchmark_summary import summarize_run
-    from .train_linear_probe import atomic_write_text, metadata_path_for_activations
+    from .train_linear_probe import metadata_path_for_activations
 except ImportError:  # direct script execution
+    from artifact_io import atomic_write_text, sha256_file
     from benchmark_summary import summarize_run
-    from train_linear_probe import atomic_write_text, metadata_path_for_activations
+    from train_linear_probe import metadata_path_for_activations
 
 
 PYTHON = sys.executable
@@ -83,14 +84,6 @@ def strict_json(path: str | Path):
     return json.loads(
         Path(path).read_text(encoding="utf-8"), parse_constant=reject_constant
     )
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def require_bool(value, field: str) -> bool:

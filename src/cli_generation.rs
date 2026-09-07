@@ -1094,7 +1094,7 @@ where
         .max_seq_len
         .unwrap_or_else(|| model.max_seq_len(backend));
     ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
-    let mut cache = model.create_cache(backend, context_limit);
+    let mut cache = model.create_cache(backend, token_ids.len());
     let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
     validate_last_logits(backend, &logits, model_vocab_size)?;
     let shape = backend.shape(&logits);
@@ -1181,7 +1181,7 @@ where
         .max_seq_len
         .unwrap_or_else(|| model.max_seq_len(backend));
     ensure_sequence_fits(token_ids.len(), 0, context_limit)?;
-    let mut cache = model.create_cache(backend, context_limit);
+    let mut cache = model.create_cache(backend, token_ids.len());
     let (layer_states, logits) =
         model.forward_last_logits_with_layer_dump(backend, &token_ids, &mut cache, 0)?;
     let embed_dim = model.config.embed_dim;

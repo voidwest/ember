@@ -2507,7 +2507,7 @@ impl Llama<CpuBackend> {
                     // row-major; the linear needs [embed, vocab], so a real
                     // transpose (data reorder) is required — not the raw-GGUF
                     // helper, which would double-transpose.
-                    Linear::<CpuBackend>::new(tensor.clone().transpose(), None)
+                    Linear::<CpuBackend>::new(tensor.transpose(), None)
                 }
             },
         };

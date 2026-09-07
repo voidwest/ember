@@ -13,7 +13,7 @@
 //! - argv is passed directly to [`std::process::Command`]; there is no shell.
 //! - stdin is always null; stdout/stderr are captured with hard byte caps.
 //! - deadlines are enforced by kill + reap, never by merely "stop waiting".
-//! - every failure mode has its own [`SupervisedOutcome`] variant; harness
+//! - every failure mode has its own [`crate::diff_outcome::DiffOutcome`] variant; harness
 //!   problems are never mislabeled as runtime crashes.
 //!
 //! Platform notes: Unix signal numbers are reported where

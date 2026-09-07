@@ -450,6 +450,44 @@ fn gguf_to_hf_layout(t: &CpuTensor) -> CpuTensor {
 }
 
 impl AudioModel {
+    /// Unused audio storage for hermetic text-only VoiceSession tests.
+    /// This deliberately omits encoder layers: it is not an audio fixture.
+    #[cfg(test)]
+    pub(crate) fn text_only_fixture(output_width: usize) -> Self {
+        Self {
+            encoder: AudioEncoder {
+                config: AudioEncoderConfig {
+                    num_mel_bins: 1,
+                    d_model: 1,
+                    n_layers: 0,
+                    n_heads: 1,
+                    ffn_dim: 1,
+                    max_source_positions: 1,
+                    layer_norm_eps: 1e-5,
+                },
+                conv1_weight: CpuTensor::zeroes(&[1, 1, 3]),
+                conv1_bias: CpuTensor::zeroes(&[1]),
+                conv2_weight: CpuTensor::zeroes(&[1, 1, 3]),
+                conv2_bias: CpuTensor::zeroes(&[1]),
+                pos_embed: CpuTensor::zeroes(&[1, 1]),
+                layers: Vec::new(),
+                final_norm: LayerNorm::new(
+                    CpuTensor::from_data(vec![1], vec![1.0]),
+                    CpuTensor::zeroes(&[1]),
+                    1e-5,
+                ),
+            },
+            projector: UltravoxProjector {
+                stack_factor: 1,
+                ln_pre_weight: CpuTensor::from_data(vec![1], vec![1.0]),
+                linear_1: Linear::new(CpuTensor::zeroes(&[1, 2]), None),
+                ln_mid_weight: CpuTensor::from_data(vec![1], vec![1.0]),
+                linear_2: Linear::new(CpuTensor::zeroes(&[1, output_width]), None),
+                rms_eps: 1e-5,
+            },
+        }
+    }
+
     /// Load from an audio mmproj GGUF (see `tools/convert_ultravox_audio.py`).
     pub fn from_mmproj_loader(loader: &mut GgufLoader) -> Result<Self> {
         use crate::loader::{try_gguf_to_row_major_f32, GgufValue};

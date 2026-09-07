@@ -57,12 +57,17 @@ def span_token_indices(offsets, start: int, end: int) -> list[int]:
 
 def pool(hidden_states, token_indices: list[int], content_indices: list[int], mode: str):
     stacked = np.stack([h[0].detach().cpu().numpy() for h in hidden_states], axis=0)
+    return _pool_stacked(stacked, token_indices, content_indices, mode)
+
+
+def _pool_stacked(stacked, token_indices, content_indices, mode):
+    """Pool once and own the result so a selected token cannot retain its sentence."""
     if mode == "cls":
-        return stacked[:, 0, :]
+        return stacked[:, 0, :].copy()
     if mode == "last":
         if not content_indices:
             raise ValueError("tokenized input has no non-special content tokens")
-        return stacked[:, content_indices[-1], :]
+        return stacked[:, content_indices[-1], :].copy()
     if mode == "mean":
         if not content_indices:
             raise ValueError("tokenized input has no non-special content tokens")
@@ -74,12 +79,112 @@ def pool(hidden_states, token_indices: list[int], content_indices: list[int], mo
     if mode == "target_first":
         if not token_indices:
             raise ValueError("target span did not align to any tokenizer offsets")
-        return stacked[:, token_indices[0], :]
+        return stacked[:, token_indices[0], :].copy()
     if mode == "target_last":
         if not token_indices:
             raise ValueError("target span did not align to any tokenizer offsets")
-        return stacked[:, token_indices[-1], :]
+        return stacked[:, token_indices[-1], :].copy()
     raise ValueError(f"unknown pooling mode: {mode}")
+
+
+def extract_rows(rows, row_ids, tokenizer, model, mode, device):
+    """Encode each exact text once; retain the input order for outputs and metadata.
+
+    The caller puts the model in eval mode and disables gradients. Reuse changes
+    neither tokenization inputs nor per-target NumPy pooling/reduction order.
+    """
+    if not rows or len(rows) != len(row_ids):
+        raise ValueError("extraction requires non-empty rows with matching row IDs")
+    text_groups = {}
+    for i, row in enumerate(rows):
+        text = row.get("text")
+        if not isinstance(text, str) or not text:
+            raise ValueError(f"benchmark row {i} has no non-empty text")
+        text_groups.setdefault(text, []).append(i)
+
+    activations = None
+    token_selections = [None] * len(rows)
+    completed = 0
+    for text, indices in text_groups.items():
+        first = indices[0]
+        encoded = tokenizer(
+            text,
+            return_tensors="pt",
+            return_offsets_mapping=True,
+            return_special_tokens_mask=True,
+            truncation=True,
+        )
+        offsets = encoded.pop("offset_mapping")[0].tolist()
+        special_mask = encoded.pop("special_tokens_mask")[0].tolist()
+        if len(offsets) != len(special_mask):
+            raise ValueError(f"tokenizer returned inconsistent fields for row {first}")
+        for token_index, offset in enumerate(offsets):
+            if (
+                not isinstance(offset, list)
+                or len(offset) != 2
+                or any(isinstance(value, bool) or not isinstance(value, int) for value in offset)
+                or offset[0] < 0
+                or offset[1] < offset[0]
+                or offset[1] > len(text)
+            ):
+                raise ValueError(
+                    f"tokenizer returned invalid offset for row {first}, token "
+                    f"{token_index}: {offset!r}"
+                )
+        attention_mask = encoded.get("attention_mask")
+        active = attention_mask[0].tolist() if attention_mask is not None else [1] * len(offsets)
+        if len(active) != len(offsets):
+            raise ValueError(f"tokenizer returned inconsistent attention mask for row {first}")
+        content_indices = [
+            index
+            for index, (special, attended) in enumerate(zip(special_mask, active))
+            if not special and attended
+        ]
+        covered_end = max((offsets[index][1] for index in content_indices), default=0)
+        if text[covered_end:].strip():
+            raise ValueError(f"benchmark row {first} was truncated by the tokenizer/model limit")
+        for i in indices:
+            span = rows[i].get("target_span")
+            if span is not None and (
+                not isinstance(span, list)
+                or len(span) != 2
+                or any(isinstance(value, bool) or not isinstance(value, int) for value in span)
+                or not 0 <= span[0] < span[1] <= len(text)
+            ):
+                raise ValueError(f"benchmark row {i} has invalid target_span {span!r}")
+            if mode.startswith("target_") and span is None:
+                raise ValueError(f"benchmark row {i} requires target_span for pool={mode}")
+            token_indices = span_token_indices(offsets, span[0], span[1]) if span else []
+            if any(index not in content_indices for index in token_indices):
+                raise ValueError(f"benchmark row {i} target span mapped to a special/padded token")
+            token_selections[i] = {
+                "index": i,
+                "row_id": row_ids[i],
+                "target_span": span,
+                "token_indices": token_indices,
+                "token_count": len(offsets),
+                "content_token_count": len(content_indices),
+            }
+
+        encoded = {k: v.to(device) for k, v in encoded.items()}
+        outputs = model(**encoded, output_hidden_states=True)
+        if not outputs.hidden_states:
+            raise RuntimeError("model did not return hidden states")
+        stacked = np.stack([h[0].detach().cpu().numpy() for h in outputs.hidden_states], axis=0)
+        for i in indices:
+            pooled = _pool_stacked(
+                stacked, token_selections[i]["token_indices"], content_indices, mode
+            )
+            if activations is None:
+                activations = np.empty((len(rows), *pooled.shape), dtype=np.float32)
+            if pooled.shape != activations.shape[1:]:
+                raise ValueError(f"model returned inconsistent hidden-state shape for row {i}")
+            activations[i] = pooled
+            completed += 1
+            if completed % 100 == 0 or completed == len(rows):
+                print(f"[{completed}/{len(rows)}] extracted")
+        del outputs, stacked
+    return activations, token_selections
 
 
 def main() -> None:
@@ -146,86 +251,10 @@ def main() -> None:
     ).to(args.device)
     model.eval()
 
-    activations = []
-    token_selections = []
     with torch.no_grad():
-        for i, row in enumerate(rows):
-            text = row.get("text")
-            if not isinstance(text, str) or not text:
-                raise ValueError(f"benchmark row {i} has no non-empty text")
-            encoded = tokenizer(
-                text,
-                return_tensors="pt",
-                return_offsets_mapping=True,
-                return_special_tokens_mask=True,
-                truncation=True,
-            )
-            offsets = encoded.pop("offset_mapping")[0].tolist()
-            special_mask = encoded.pop("special_tokens_mask")[0].tolist()
-            if len(offsets) != len(special_mask):
-                raise ValueError(f"tokenizer returned inconsistent fields for row {i}")
-            for token_index, offset in enumerate(offsets):
-                if (
-                    not isinstance(offset, list)
-                    or len(offset) != 2
-                    or any(
-                        isinstance(value, bool) or not isinstance(value, int)
-                        for value in offset
-                    )
-                    or offset[0] < 0
-                    or offset[1] < offset[0]
-                    or offset[1] > len(text)
-                ):
-                    raise ValueError(
-                        f"tokenizer returned invalid offset for row {i}, token "
-                        f"{token_index}: {offset!r}"
-                    )
-            attention_mask = encoded.get("attention_mask")
-            active = attention_mask[0].tolist() if attention_mask is not None else [1] * len(offsets)
-            content_indices = [
-                index
-                for index, (special, attended) in enumerate(zip(special_mask, active))
-                if not special and attended
-            ]
-            covered_end = max((offsets[index][1] for index in content_indices), default=0)
-            if text[covered_end:].strip():
-                raise ValueError(
-                    f"benchmark row {i} was truncated by the tokenizer/model limit"
-                )
-            span = row.get("target_span")
-            if span is not None and (
-                not isinstance(span, list)
-                or len(span) != 2
-                or any(isinstance(value, bool) or not isinstance(value, int) for value in span)
-                or not 0 <= span[0] < span[1] <= len(text)
-            ):
-                raise ValueError(f"benchmark row {i} has invalid target_span {span!r}")
-            if args.pool.startswith("target_") and span is None:
-                raise ValueError(f"benchmark row {i} requires target_span for pool={args.pool}")
-            token_indices = span_token_indices(offsets, span[0], span[1]) if span else []
-            if any(index not in content_indices for index in token_indices):
-                raise ValueError(f"benchmark row {i} target span mapped to a special/padded token")
-            encoded = {k: v.to(args.device) for k, v in encoded.items()}
-            outputs = model(**encoded, output_hidden_states=True)
-            if not outputs.hidden_states:
-                raise RuntimeError("model did not return hidden states")
-            activations.append(
-                pool(outputs.hidden_states, token_indices, content_indices, args.pool)
-            )
-            token_selections.append(
-                {
-                    "index": i,
-                    "row_id": row_ids[i],
-                    "target_span": span,
-                    "token_indices": token_indices,
-                    "token_count": len(offsets),
-                    "content_token_count": len(content_indices),
-                }
-            )
-            if (i + 1) % 100 == 0 or i + 1 == len(rows):
-                print(f"[{i + 1}/{len(rows)}] extracted")
-
-    arr = np.stack(activations, axis=0).astype(np.float32)
+        arr, token_selections = extract_rows(
+            rows, row_ids, tokenizer, model, args.pool, args.device
+        )
     validate_activation_tensor(arr, args.output, expected_rows=len(rows))
     atomic_save_npy(args.output, arr)
     print(f"wrote {args.output} shape={arr.shape}")

@@ -322,7 +322,7 @@ where
             );
         }
 
-        let mut cache = model.create_cache(backend, context_limit);
+        let mut cache = model.create_cache(backend, token_ids.len());
         let logits = model.forward_last_logits_with_cache(backend, &token_ids, &mut cache, 0)?;
         validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
         let vocab_size = model_vocab_size;

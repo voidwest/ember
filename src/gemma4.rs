@@ -837,7 +837,6 @@ impl<B: Backend> Gemma4Block<B> {
         gemma_dump!(layer, "x_in", backend, *x);
 
         // 1. Self-attention
-        let residual = x.clone();
         let input_norm_span = gemma_trace_span!(
             "attn_rms_norm",
             layer,
@@ -871,12 +870,11 @@ impl<B: Backend> Gemma4Block<B> {
             hidden_bytes * 2,
             trace::flops_residual_add(seq_len * embed_dim),
         );
-        let x = backend.add(&residual, &attn_out)?;
+        let x = backend.add(x, &attn_out)?;
         finish_trace_span(attn_add_span, backend, &x);
         gemma_dump!(layer, "post_attn_add", backend, x);
 
         // 2. Feed-forward network
-        let residual = x.clone();
         let pre_ffn_norm_span = gemma_trace_span!(
             "ffn_rms_norm",
             layer,
@@ -908,7 +906,7 @@ impl<B: Backend> Gemma4Block<B> {
             hidden_bytes * 2,
             trace::flops_residual_add(seq_len * embed_dim),
         );
-        let mut x = backend.add(&residual, &mlp_out)?;
+        let mut x = backend.add(&x, &mlp_out)?;
         finish_trace_span(ffn_add_span, backend, &x);
         gemma_dump!(layer, "ffn_add", backend, x);
 
@@ -2314,9 +2312,7 @@ impl<B: Backend> Gemma4<B> {
         let mut out = Vec::with_capacity(self.config.n_layers);
         let combine_scale: f32 = 2.0_f32.sqrt().recip(); // 1/sqrt(2)
 
-        for (layer, raw_row) in raw_ple.iter().enumerate() {
-            let mut data = raw_row.clone();
-
+        for (layer, mut data) in raw_ple.into_iter().enumerate() {
             if let Some(ref proj) = proj {
                 let proj_data = backend.data(proj);
                 let layer_offset = layer * per_layer_dim;
