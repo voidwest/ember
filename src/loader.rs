@@ -45,6 +45,34 @@ const GGUF_MAGIC: u32 = 0x46554747;
 const GGUF_VERSION: u32 = 3;
 const DEFAULT_ALIGNMENT: u64 = 32;
 
+const FLOAT_READ_BUFFER_BYTES: usize = 8 * 1024;
+
+/// Decode floating-point tensors without retaining a second full raw payload.
+/// Tensor dimensions and byte limits are validated by the GGUF loader first.
+fn read_float_values<const WIDTH: usize>(
+    reader: &mut impl Read,
+    count: usize,
+    decode: impl Fn([u8; WIDTH]) -> f32,
+) -> Result<Vec<f32>> {
+    count
+        .checked_mul(WIDTH)
+        .ok_or_else(|| LoaderError::overflow("floating-point tensor byte size overflow"))?;
+    let mut values = Vec::new();
+    values.try_reserve_exact(count).map_err(|error| {
+        LoaderError::reservation(format!("failed to reserve floating-point tensor: {error}"))
+    })?;
+    values.resize(count, 0.0);
+    let mut raw = [0u8; FLOAT_READ_BUFFER_BYTES];
+    for chunk in values.chunks_mut(FLOAT_READ_BUFFER_BYTES / WIDTH) {
+        let raw = &mut raw[..chunk.len() * WIDTH];
+        reader.read_exact(raw)?;
+        for (value, encoded) in chunk.iter_mut().zip(raw.chunks_exact(WIDTH)) {
+            *value = decode(encoded.try_into().expect("fixed-width float chunk"));
+        }
+    }
+    Ok(values)
+}
+
 /// Limits for values that cross from GGUF metadata into model construction.
 ///
 /// These bounds are deliberately generous for supported models, but keep
@@ -147,8 +175,8 @@ pub fn try_gguf_to_row_major_f32(
             "GGUF row-major conversion requires a 2D tensor, got shape {shape:?}"
         )));
     }
-    let reordered =
-        crate::tensor::CpuTensor::from_data(vec![shape[1], shape[0]], tensor.data().to_vec());
+    let reordered_shape = [shape[1], shape[0]];
+    let reordered = tensor.into_reshape(&reordered_shape);
     Ok(reordered.transpose())
 }
 
@@ -814,41 +842,14 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         );
         let loaded = match info.dtype {
             0 => {
-                // f32: read directly, no dim reversal
-                let mut data = vec![0.0f32; element_count];
-                let byte_len = element_count.checked_mul(4).ok_or_else(|| {
-                    LoaderError::overflow(format!("tensor '{}' f32 byte size overflow", info.name))
-                })?;
-                let mut buf = vec![0u8; byte_len];
-                reader.read_exact(&mut buf)?;
-                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
-                    let start = i * 4;
-                    let bytes: [u8; 4] = buf[start..start + 4].try_into().map_err(|_| {
-                        LoaderError::malformed(format!("failed to read f32 at index {i}"))
-                    })?;
-                    *dst = f32::from_le_bytes(bytes);
-                }
+                let data = read_float_values(reader, element_count, f32::from_le_bytes)?;
                 LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             1 => {
-                // f16: read and convert to f32. Keep the logical GGUF shape
-                // unchanged; model builders handle any linear-weight transpose
-                // the same way they do for native f32 tensors.
-                use half::f16;
-                let byte_len = element_count.checked_mul(2).ok_or_else(|| {
-                    LoaderError::overflow(format!("tensor '{}' f16 byte size overflow", info.name))
+                // Keep the logical GGUF shape; model builders transpose weights.
+                let data = read_float_values(reader, element_count, |bytes| {
+                    half::f16::from_bits(u16::from_le_bytes(bytes)).to_f32()
                 })?;
-                let mut buf = vec![0u8; byte_len];
-                reader.read_exact(&mut buf)?;
-                let mut data = vec![0.0f32; element_count];
-                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
-                    let start = i * 2;
-                    let bits =
-                        u16::from_le_bytes(buf[start..start + 2].try_into().map_err(|_| {
-                            LoaderError::malformed(format!("failed to read f16 at index {i}"))
-                        })?);
-                    *dst = f16::from_bits(bits).to_f32();
-                }
                 LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             8 => {
@@ -1001,21 +1002,9 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 }
             }
             30 => {
-                // bf16: brain floating point — upper 16 bits of f32.
-                let byte_len = element_count.checked_mul(2).ok_or_else(|| {
-                    LoaderError::overflow(format!("tensor '{}' bf16 byte size overflow", info.name))
+                let data = read_float_values(reader, element_count, |bytes| {
+                    f32::from_bits(u32::from(u16::from_le_bytes(bytes)) << 16)
                 })?;
-                let mut buf = vec![0u8; byte_len];
-                reader.read_exact(&mut buf)?;
-                let mut data = vec![0.0f32; element_count];
-                for (i, dst) in data.iter_mut().enumerate().take(element_count) {
-                    let start = i * 2;
-                    let bits =
-                        u16::from_le_bytes(buf[start..start + 2].try_into().map_err(|_| {
-                            LoaderError::malformed(format!("failed to read bf16 at index {i}"))
-                        })?);
-                    *dst = f32::from_bits((bits as u32) << 16);
-                }
                 LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
             }
             _ => {
@@ -1573,6 +1562,86 @@ fn read_gguf_value_inner<R: Read + Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn floating_tensor_reads_are_bounded_and_preserve_bits() {
+        struct BoundedReader<'a> {
+            cursor: std::io::Cursor<&'a [u8]>,
+            largest_read: usize,
+        }
+        impl Read for BoundedReader<'_> {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                assert!(buffer.len() <= FLOAT_READ_BUFFER_BYTES);
+                self.largest_read = self.largest_read.max(buffer.len());
+                self.cursor.read(buffer)
+            }
+        }
+        let expected: Vec<u32> = [
+            0,
+            0x8000_0000,
+            1,
+            0x3f80_0001,
+            0x7f80_0000,
+            0xff80_0000,
+            0x7fc0_1234,
+        ]
+        .into_iter()
+        .cycle()
+        .take(5_003)
+        .collect();
+        let raw: Vec<_> = expected
+            .iter()
+            .flat_map(|bits| bits.to_le_bytes())
+            .collect();
+        let mut reader = BoundedReader {
+            cursor: std::io::Cursor::new(&raw),
+            largest_read: 0,
+        };
+        let values = read_float_values(&mut reader, expected.len(), f32::from_le_bytes).unwrap();
+        assert_eq!(
+            values
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            expected
+        );
+        assert_eq!(reader.largest_read, FLOAT_READ_BUFFER_BYTES);
+        assert_eq!(reader.cursor.position(), raw.len() as u64);
+        for truncated in [raw.len() - 1, FLOAT_READ_BUFFER_BYTES - 1] {
+            let error = read_float_values(
+                &mut std::io::Cursor::new(&raw[..truncated]),
+                expected.len(),
+                f32::from_le_bytes,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, LoaderError::Io(ref error) if error.kind() == std::io::ErrorKind::UnexpectedEof)
+            );
+        }
+    }
+
+    #[test]
+    fn floating_tensor_reads_preserve_all_half_encodings() {
+        let raw: Vec<_> = (u16::MIN..=u16::MAX).flat_map(u16::to_le_bytes).collect();
+        let half_values = read_float_values(&mut std::io::Cursor::new(&raw), 65_536, |bytes| {
+            half::f16::from_bits(u16::from_le_bytes(bytes)).to_f32()
+        })
+        .unwrap();
+        let brain_values = read_float_values(&mut std::io::Cursor::new(&raw), 65_536, |bytes| {
+            f32::from_bits(u32::from(u16::from_le_bytes(bytes)) << 16)
+        })
+        .unwrap();
+        for bits in u16::MIN..=u16::MAX {
+            assert_eq!(
+                half_values[usize::from(bits)].to_bits(),
+                half::f16::from_bits(bits).to_f32().to_bits()
+            );
+            assert_eq!(
+                brain_values[usize::from(bits)].to_bits(),
+                u32::from(bits) << 16
+            );
+        }
+    }
 
     #[test]
     fn checked_row_major_conversion_rejects_non_2d_tensors() {

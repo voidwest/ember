@@ -28,6 +28,7 @@ use crate::plan::{
 };
 use crate::tensor::CpuTensor;
 use alloc::vec::Vec;
+use rayon::prelude::*;
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -794,19 +795,17 @@ pub(crate) fn planned_causal_attention(
     debug_assert_eq!(out.len(), n_heads * head_dim);
     debug_assert!(scores.len() >= n_heads * total_seq_len);
     out.fill(0.0);
-    for h in 0..n_heads {
+    let compute_head = |h: usize, score_row: &mut [f32], head_out: &mut [f32]| {
         let kv_h = h / n_repeat;
         let q_head = &q[h * head_dim..(h + 1) * head_dim];
         let k_head = &cached_k[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
         let v_head = &cached_v[kv_h * cache_head_stride..(kv_h + 1) * cache_head_stride];
-        let score_row = &mut scores[h * total_seq_len..(h + 1) * total_seq_len];
         // scores: q · k_j for each cached position
         for (j, slot) in score_row.iter_mut().enumerate() {
             let k_j = &k_head[j * head_dim..(j + 1) * head_dim];
             *slot = crate::simd::dot_product_f16(q_head, k_j) * scale;
         }
         crate::backend::softmax_prefix(score_row, total_seq_len);
-        let head_out = &mut out[h * head_dim..(h + 1) * head_dim];
         // weighted V sum; the zero-weight skip mirrors the reference and
         // keeps the accumulation bit-identical
         for (j, &weight) in score_row.iter().enumerate() {
@@ -816,6 +815,20 @@ pub(crate) fn planned_causal_attention(
             let v_j = &v_head[j * head_dim..(j + 1) * head_dim];
             crate::simd::weighted_add_f16(head_out, v_j, weight);
         }
+    };
+    if crate::backend::should_parallel_attention(n_heads, 1, total_seq_len, head_dim) {
+        out.par_chunks_mut(head_dim)
+            .zip(scores[..n_heads * total_seq_len].par_chunks_mut(total_seq_len))
+            .enumerate()
+            .for_each(|(h, (head_out, score_row))| compute_head(h, score_row, head_out));
+    } else {
+        for (h, (head_out, score_row)) in out
+            .chunks_mut(head_dim)
+            .zip(scores[..n_heads * total_seq_len].chunks_mut(total_seq_len))
+            .enumerate()
+        {
+            compute_head(h, score_row, head_out);
+        }
     }
     Ok(())
 }
@@ -823,6 +836,29 @@ pub(crate) fn planned_causal_attention(
 /// Arena errors as `CpuError` (the arena reports `String` diagnostics).
 fn arena_err(message: String) -> CpuError {
     CpuError::ShapeMismatch(format!("decode arena: {message}"))
+}
+
+fn k_quantization(dtype: crate::quant_k::KQuantDtype) -> &'static str {
+    match dtype {
+        crate::quant_k::KQuantDtype::Q4K => "Q4_K",
+        crate::quant_k::KQuantDtype::Q6K => "Q6_K",
+    }
+}
+
+fn linear_quantization(linear: &Linear<CpuBackend>) -> &'static str {
+    match linear.weight_kind() {
+        WeightKindView::F32(_) => "F32",
+        WeightKindView::Q8_0(_) => "Q8_0",
+        WeightKindView::KQuant(weight) => k_quantization(weight.dtype()),
+    }
+}
+
+fn embedding_quantization(embedding: &LlamaEmbedding<CpuBackend>) -> &'static str {
+    match embedding {
+        LlamaEmbedding::F32(_) => "F32",
+        LlamaEmbedding::Q8_0(_) => "Q8_0",
+        LlamaEmbedding::KQuant(weight) => k_quantization(weight.dtype()),
+    }
 }
 
 /// One planned op's profile event: created when operator profiling is
@@ -835,6 +871,7 @@ struct OpTimer {
     output_dimension: usize,
     start: std::time::Instant,
     _mode: crate::decode_profile::DecodeExecutionMode,
+    quantization: &'static str,
 }
 
 impl OpTimer {
@@ -845,6 +882,24 @@ impl OpTimer {
         output_dimension: usize,
         mode: crate::decode_profile::DecodeExecutionMode,
     ) -> Option<Self> {
+        Self::quantized(
+            layer,
+            operator,
+            input_dimension,
+            output_dimension,
+            mode,
+            "not_applicable",
+        )
+    }
+
+    fn quantized(
+        layer: usize,
+        operator: &'static str,
+        input_dimension: usize,
+        output_dimension: usize,
+        mode: crate::decode_profile::DecodeExecutionMode,
+        quantization: &'static str,
+    ) -> Option<Self> {
         crate::decode_profile::is_enabled().then(|| Self {
             layer,
             operator,
@@ -852,6 +907,7 @@ impl OpTimer {
             output_dimension,
             start: std::time::Instant::now(),
             _mode: mode,
+            quantization,
         })
     }
 }
@@ -861,12 +917,13 @@ impl Drop for OpTimer {
         if !crate::decode_profile::is_enabled() {
             return;
         }
-        crate::decode_profile::record(
+        crate::decode_profile::record_quantized(
             self.layer,
             self.operator,
             self.input_dimension,
             self.output_dimension,
             self._mode,
+            self.quantization,
             self.start.elapsed(),
         );
     }
@@ -912,7 +969,7 @@ fn fused_residual_rmsnorm_into(a: &[f32], b: &[f32], weight: &[f32], eps: f32, o
 }
 
 /// Plan-driven single-token decode: walks the resolved ops against the
-/// scratch arena. Zero heap allocation in the steady state. When `hooks` is
+/// scratch arena and allocates the returned logits tensor. When `hooks` is
 /// `Some`, the six semantic hook sites fire against the arena regions at the
 /// same call sites as the reference path (contract section 12); the plan is
 /// built with the matching hook mode and active stages.
@@ -921,10 +978,42 @@ pub(crate) fn forward_last_logits_planned(
     token_ids: &[u32],
     cache: &mut crate::kv_cache::KVCache,
     start_pos: usize,
-    mut hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
+    hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
     hook_mode: HookMode,
     active_stages: &[&str],
 ) -> Result<CpuTensor, CpuError> {
+    let mut output = CpuTensor::zeroes(&[1, model.config.vocab_size]);
+    forward_last_logits_planned_into(
+        model,
+        token_ids,
+        cache,
+        start_pos,
+        hooks,
+        hook_mode,
+        active_stages,
+        output.data_mut(),
+    )?;
+    Ok(output)
+}
+
+/// Decode directly into caller-owned logits, retaining the arena and output
+/// allocation across tokens. Hook sites and the serialized plan stay identical.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn forward_last_logits_planned_into(
+    model: &Llama<CpuBackend>,
+    token_ids: &[u32],
+    cache: &mut crate::kv_cache::KVCache,
+    start_pos: usize,
+    mut hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
+    hook_mode: HookMode,
+    active_stages: &[&str],
+    output: &mut [f32],
+) -> Result<(), CpuError> {
+    if output.len() != model.config.vocab_size {
+        return Err(CpuError::ShapeMismatch(
+            "planned logits output has the wrong size".into(),
+        ));
+    }
     if token_ids.len() != 1 {
         return Err(CpuError::ShapeMismatch(
             "planned decode requires exactly one token".into(),
@@ -982,12 +1071,13 @@ pub(crate) fn forward_last_logits_planned(
                     )));
                 }
                 let dst = arena.region_f32(*out).map_err(arena_err)?;
-                let _timer = OpTimer::new(
+                let _timer = OpTimer::quantized(
                     0,
                     "embedding",
                     1,
                     dst.len(),
                     crate::decode_profile::DecodeExecutionMode::Serial,
+                    embedding_quantization(&model.embed_tokens),
                 );
                 embed_row_into(&model.embed_tokens, token_ids[0], dst)?;
             }
@@ -1020,12 +1110,13 @@ pub(crate) fn forward_last_logits_planned(
                         NormRole::MlpIn => "ffn_norm",
                         NormRole::Output => "output_norm",
                     };
-                    let _timer = OpTimer::new(
+                    let _timer = OpTimer::quantized(
                         layer,
                         operator,
                         x.len(),
                         dst.len(),
                         crate::decode_profile::DecodeExecutionMode::Serial,
+                        "F32",
                     );
                     let weight = match role {
                         NormRole::AttnIn => block.input_layernorm.data(),
@@ -1075,12 +1166,13 @@ pub(crate) fn forward_last_logits_planned(
                     // release builds if the resident weight no longer matches
                     // the kernel identity resolved when the plan was built.
                     ensure_planned_kernel(*kernel, linear, operator)?;
-                    let _timer = OpTimer::new(
+                    let _timer = OpTimer::quantized(
                         layer,
                         operator,
                         src.len(),
                         dst.len(),
                         planned_scheduler(linear, parallel_matvec),
+                        linear_quantization(linear),
                     );
                     // The quantized kernels accumulate into dst (must be
                     // zero-initialized). The reference allocates a fresh
@@ -1170,7 +1262,16 @@ pub(crate) fn forward_last_logits_planned(
                         "attention",
                         q_data.len(),
                         out_data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
+                        if crate::backend::should_parallel_attention(
+                            model.config.n_heads,
+                            1,
+                            start_pos + 1,
+                            model.config.head_dim,
+                        ) {
+                            crate::decode_profile::DecodeExecutionMode::ColumnParallelRayon
+                        } else {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        },
                     );
                     // fusion F4: the Q rope (and optional qk-norm) runs
                     // inside the attention op; the K rope stays a separate
@@ -1217,12 +1318,13 @@ pub(crate) fn forward_last_logits_planned(
                     // the norm and each projection separately because their
                     // shape gates can select different schedulers.
                     {
-                        let _timer = OpTimer::new(
+                        let _timer = OpTimer::quantized(
                             layer,
                             "fused_qkv_norm",
                             model.config.embed_dim,
                             model.config.embed_dim,
                             crate::decode_profile::DecodeExecutionMode::Serial,
+                            "F32",
                         );
                         let (x, n1) =
                             two_regions(arena.regions_f32([*input, *scaled]).map_err(arena_err)?);
@@ -1246,12 +1348,13 @@ pub(crate) fn forward_last_logits_planned(
                                 .map_err(arena_err)?,
                         );
                         out.fill(0.0);
-                        let _timer = OpTimer::new(
+                        let _timer = OpTimer::quantized(
                             layer,
                             operation,
                             n1.len(),
                             out.len(),
                             planned_scheduler(linear, parallel_matvec),
+                            linear_quantization(linear),
                         );
                         planned_linear_into(linear, n1, out, parallel_matvec, false)?;
                         if let Some(bias) = linear.bias() {
@@ -1273,12 +1376,13 @@ pub(crate) fn forward_last_logits_planned(
                             .map_err(arena_err)?,
                     );
                     ensure_planned_kernel(*kernel, &block.self_attn.o_proj, "fused_o")?;
-                    let _timer = OpTimer::new(
+                    let _timer = OpTimer::quantized(
                         layer,
                         "fused_o_proj",
                         attn_data.len(),
                         out_data.len(),
                         planned_scheduler(&block.self_attn.o_proj, parallel_matvec),
+                        linear_quantization(&block.self_attn.o_proj),
                     );
                     // fusion F5: out starts as the residual; the matvec
                     // kernel accumulates W·attn on top (one pass, no
@@ -1300,12 +1404,13 @@ pub(crate) fn forward_last_logits_planned(
                     record_fused_execution(|counts| counts.f2_residual_rmsnorm += 1);
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(
+                    let _timer = OpTimer::quantized(
                         layer,
                         "fused_residual_norm",
                         a_data.len(),
                         out_data.len(),
                         crate::decode_profile::DecodeExecutionMode::Serial,
+                        "F32",
                     );
                     fused_residual_rmsnorm_into(
                         a_data,
@@ -1395,7 +1500,7 @@ pub(crate) fn forward_last_logits_planned(
     cache.advance_cursor();
 
     // final ops: output norm + LM head
-    let mut logits: Option<CpuTensor> = None;
+    let mut produced_logits = false;
     for op in &ops.final_ops {
         match op {
             ResolvedOp::RmsNorm {
@@ -1404,12 +1509,13 @@ pub(crate) fn forward_last_logits_planned(
                 out,
             } => {
                 let (x, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
-                let _timer = OpTimer::new(
+                let _timer = OpTimer::quantized(
                     usize::MAX,
                     "output_norm",
                     x.len(),
                     dst.len(),
                     crate::decode_profile::DecodeExecutionMode::Serial,
+                    "F32",
                 );
                 crate::simd::rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
                 // before_logits fires on the final-norm output.
@@ -1430,33 +1536,29 @@ pub(crate) fn forward_last_logits_planned(
                     ));
                 }
                 ensure_planned_kernel(*kernel, &model.head, "lm_head")?;
-                let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
+                // Retain the serialized arena layout for plan compatibility;
+                // write logits straight into the caller's reusable buffer.
+                let (src, reserved_logits) =
+                    two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
+                debug_assert_eq!(reserved_logits.len(), output.len());
                 {
-                    let _timer = OpTimer::new(
+                    let _timer = OpTimer::quantized(
                         usize::MAX,
                         "lm_head",
                         src.len(),
-                        dst.len(),
+                        output.len(),
                         planned_scheduler(&model.head, parallel_matvec),
+                        linear_quantization(&model.head),
                     );
-                    dst.fill(0.0);
-                    planned_linear_into(&model.head, src, dst, parallel_matvec, false)?;
+                    output.fill(0.0);
+                    planned_linear_into(&model.head, src, output, parallel_matvec, false)?;
                 }
-                let mut logits_tensor = {
-                    let _materialize_timer = OpTimer::new(
-                        usize::MAX,
-                        "logits_materialize",
-                        dst.len(),
-                        dst.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
-                    CpuTensor::from_data(vec![1, model.config.vocab_size], dst.to_vec())
-                };
                 // after_logits fires on the final logits tensor.
                 if let Some((hooks, _)) = hooks.as_mut() {
-                    hooks.after_logits(&mut logits_tensor)?;
+                    let mut activation = SliceActivation::new(1, model.config.vocab_size, output);
+                    hooks.after_logits(&mut activation)?;
                 }
-                logits = Some(logits_tensor);
+                produced_logits = true;
             }
             other => {
                 return Err(CpuError::ShapeMismatch(format!(
@@ -1465,5 +1567,53 @@ pub(crate) fn forward_last_logits_planned(
             }
         }
     }
-    logits.ok_or_else(|| CpuError::ShapeMismatch("planned final ops produced no logits".into()))
+    if produced_logits {
+        Ok(())
+    } else {
+        Err(CpuError::ShapeMismatch(
+            "planned final ops produced no logits".into(),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod profile_metadata_tests {
+    use super::*;
+    use crate::quant::QuantizedWeight;
+    use crate::quant_k::{KQuantDtype, KQuantWeight};
+
+    #[test]
+    fn operator_metadata_uses_each_resident_weight_kind() {
+        let f32_weight = crate::tensor::CpuTensor::from_data(vec![1, 256], vec![0.0; 256]);
+        assert_eq!(
+            linear_quantization(&Linear::new(f32_weight.clone(), None)),
+            "F32"
+        );
+        assert_eq!(
+            embedding_quantization(&LlamaEmbedding::F32(f32_weight)),
+            "F32"
+        );
+
+        let q8_weight = QuantizedWeight::new(vec![0; 34 * 8], vec![1, 256]);
+        assert_eq!(
+            linear_quantization(&Linear::new_q8_0(q8_weight.clone(), None)),
+            "Q8_0"
+        );
+        assert_eq!(
+            embedding_quantization(&LlamaEmbedding::Q8_0(q8_weight)),
+            "Q8_0"
+        );
+
+        for (dtype, label) in [(KQuantDtype::Q4K, "Q4_K"), (KQuantDtype::Q6K, "Q6_K")] {
+            let weight = KQuantWeight::new(vec![0; dtype.block_bytes()], [1, 256], dtype);
+            assert_eq!(
+                linear_quantization(&Linear::new_k(weight.clone(), None)),
+                label
+            );
+            assert_eq!(
+                embedding_quantization(&LlamaEmbedding::KQuant(weight)),
+                label
+            );
+        }
+    }
 }

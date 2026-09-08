@@ -1,9 +1,7 @@
 # Isolated cargo-fuzz package. It is intentionally not a workspace member, so
 # the stable CI build/test jobs do not compile libFuzzer instrumentation.
-# Install cargo-fuzz and the pinned nightly-2026-05-26 toolchain, then run:
-#
-#     CARGOFLAGS=--locked cargo +nightly-2026-05-26 fuzz run gguf_loader -- -max_total_time=60
-#
+# See scripts/run_parser_fuzz.sh for the pinned-toolchain build and bounded
+# campaigns with dependency-lock checks.
 [package]
 name = "ember-fuzz"
 version = "0.0.0"

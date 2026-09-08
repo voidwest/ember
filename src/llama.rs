@@ -6,7 +6,9 @@ use crate::experiments::{
 };
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::plan::{ExecutionMode, ExecutionPlan, HookMode};
-use crate::planned_decode::{forward_last_logits_planned, PlannedDecodeState};
+use crate::planned_decode::{
+    forward_last_logits_planned, forward_last_logits_planned_into, PlannedDecodeState,
+};
 use crate::tensor::CpuTensor;
 use crate::workspace::Workspace;
 use alloc::vec::Vec;
@@ -595,19 +597,19 @@ fn apply_headwise_rms_norm(
 
 fn apply_rope_and_qk_norm<B: Backend>(
     backend: &B,
-    x: &B::Tensor,
+    x: B::Tensor,
     rope_cos: &B::Tensor,
     rope_sin: &B::Tensor,
     spec: RopeQkNormSpec,
     norm: Option<&B::Tensor>,
     block_boundaries: Option<&[usize]>,
 ) -> Result<B::Tensor, B::Error> {
-    let seq_len = backend.shape(x)[0];
+    let seq_len = backend.shape(&x)[0];
     let width = spec.n_heads * spec.head_dim;
     let half = spec.head_dim / 2;
     let cos_data = backend.data(rope_cos);
     let sin_data = backend.data(rope_sin);
-    let mut data = backend.data(x).to_vec();
+    let mut data = backend.into_cpu_data(x);
 
     if spec.qk_norm_order == QkNormOrder::BeforeRope
         && let Some(norm) = norm
@@ -731,7 +733,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         let q = apply_rope_and_qk_norm(
             backend,
-            &q,
+            q,
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
@@ -747,7 +749,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         let k = apply_rope_and_qk_norm(
             backend,
-            &k,
+            k,
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
@@ -792,7 +794,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         let q = apply_rope_and_qk_norm(
             backend,
-            &q,
+            q,
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
@@ -808,7 +810,7 @@ impl<B: Backend> LlamaAttention<B> {
 
         let k = apply_rope_and_qk_norm(
             backend,
-            &k,
+            k,
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
@@ -923,7 +925,7 @@ impl<B: Backend> LlamaAttention<B> {
         );
         let q = apply_rope_and_qk_norm(
             backend,
-            &q,
+            q,
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
@@ -955,7 +957,7 @@ impl<B: Backend> LlamaAttention<B> {
         );
         let k = apply_rope_and_qk_norm(
             backend,
-            &k,
+            k,
             &self.rope_cos,
             &self.rope_sin,
             RopeQkNormSpec {
@@ -1400,6 +1402,38 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
     ) -> Result<CpuTensor, CpuError> {
         self.forward_last_logits_with_cache_cpu(backend, token_ids, cache, start_pos)
     }
+    fn forward_last_logits_with_cache_reusing(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        output: &mut CpuTensor,
+    ) -> Result<(), CpuError> {
+        // Preserve native Q8 dispatch precedence and reference fallback.
+        if let Some(result) = self.forward_decode_fast(backend, token_ids, cache, start_pos) {
+            *output = result?;
+            return Ok(());
+        }
+        if self.planned_decode_eligible(token_ids) {
+            if output.shape() != [1, self.config.vocab_size] {
+                *output = CpuTensor::zeroes(&[1, self.config.vocab_size]);
+            }
+            return forward_last_logits_planned_into(
+                self,
+                token_ids,
+                cache,
+                start_pos,
+                None,
+                HookMode::Disabled,
+                &[],
+                output.data_mut(),
+            );
+        }
+        *output =
+            Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)?;
+        Ok(())
+    }
     fn forward_embeddings_with_cache(
         &self,
         backend: &CpuBackend,
@@ -1783,6 +1817,9 @@ impl Llama<CpuBackend> {
         // path pays nothing extra.
         macro_rules! profile_op {
             ($layer:expr_2021, $name:expr_2021, $in_dim:expr_2021, $out_dim:expr_2021, $body:block) => {{
+                profile_op!($layer, $name, $in_dim, $out_dim, "not_applicable", $body)
+            }};
+            ($layer:expr_2021, $name:expr_2021, $in_dim:expr_2021, $out_dim:expr_2021, $quantization:expr_2021, $body:block) => {{
                 let start = if profile_operators {
                     Some(std::time::Instant::now())
                 } else {
@@ -1790,12 +1827,13 @@ impl Llama<CpuBackend> {
                 };
                 let result = $body;
                 if let Some(start) = start {
-                    crate::decode_profile::record(
+                    crate::decode_profile::record_quantized(
                         $layer,
                         $name,
                         $in_dim,
                         $out_dim,
                         crate::decode_profile::DecodeExecutionMode::Serial,
+                        $quantization,
                         start.elapsed(),
                     );
                 }
@@ -1817,39 +1855,60 @@ impl Llama<CpuBackend> {
             ..
         } = workspace;
         let x = &mut residual_out[..embed_dim];
-        profile_op!(usize::MAX, "embedding", 1, embed_dim, {
+        let embedding_quantization = if profile_operators {
             match &self.embed_tokens {
-                LlamaEmbedding::F32(table) => {
-                    if token_id as usize >= table.shape()[0] {
-                        return Err(CpuError::ShapeMismatch(format!(
-                            "embedding token {} out of bounds for vocabulary {}",
-                            token_id,
-                            table.shape()[0]
-                        )));
+                LlamaEmbedding::F32(_) => "F32",
+                LlamaEmbedding::Q8_0(_) => "Q8_0",
+                LlamaEmbedding::KQuant(weight) => match weight.dtype() {
+                    crate::quant_k::KQuantDtype::Q4K => "Q4_K",
+                    crate::quant_k::KQuantDtype::Q6K => "Q6_K",
+                },
+            }
+        } else {
+            "not_applicable"
+        };
+        profile_op!(
+            usize::MAX,
+            "embedding",
+            1,
+            embed_dim,
+            embedding_quantization,
+            {
+                match &self.embed_tokens {
+                    LlamaEmbedding::F32(table) => {
+                        if token_id as usize >= table.shape()[0] {
+                            return Err(CpuError::ShapeMismatch(format!(
+                                "embedding token {} out of bounds for vocabulary {}",
+                                token_id,
+                                table.shape()[0]
+                            )));
+                        }
+                        let embedding_start = token_id as usize * embed_dim;
+                        x.copy_from_slice(
+                            &table.data()[embedding_start..embedding_start + embed_dim],
+                        );
                     }
-                    let embedding_start = token_id as usize * embed_dim;
-                    x.copy_from_slice(&table.data()[embedding_start..embedding_start + embed_dim]);
-                }
-                LlamaEmbedding::Q8_0(table) => {
-                    if token_id as usize >= table.out_features() {
-                        return Err(CpuError::ShapeMismatch(format!(
-                            "embedding token {} out of bounds for vocabulary {}",
-                            token_id,
-                            table.out_features()
-                        )));
+                    LlamaEmbedding::Q8_0(table) => {
+                        if token_id as usize >= table.out_features() {
+                            return Err(CpuError::ShapeMismatch(format!(
+                                "embedding token {} out of bounds for vocabulary {}",
+                                token_id,
+                                table.out_features()
+                            )));
+                        }
+                        table.dequantize_row(token_id as usize, x);
                     }
-                    table.dequantize_row(token_id as usize, x);
-                }
-                // Fast decode is ineligible for K-quant models (checked at
-                // construction); this arm exists for match exhaustiveness and
-                // must never fire.
-                LlamaEmbedding::KQuant(_) => {
-                    return Err(CpuError::ShapeMismatch(
-                        "fast decode path is ineligible for K-quant embeddings".into(),
-                    ));
+                    // Fast decode is ineligible for K-quant models (checked at
+                    // construction); this arm exists for match exhaustiveness and
+                    // must never fire.
+                    LlamaEmbedding::KQuant(_) => {
+                        return Err(CpuError::ShapeMismatch(
+                            "fast decode path is ineligible for K-quant embeddings".into(),
+                        ));
+                    }
                 }
             }
-        });
+        );
 
         let norm = &mut norm_out[..embed_dim];
         let q = &mut q_out[..q_dim];
@@ -1866,7 +1925,7 @@ impl Llama<CpuBackend> {
                 let mut hidden = SliceActivation::new(1, embed_dim, x);
                 hooks.before_layer(layer, &mut hidden)?;
             }
-            profile_op!(layer, "attn_rms_norm", embed_dim, embed_dim, {
+            profile_op!(layer, "attn_rms_norm", embed_dim, embed_dim, "F32", {
                 crate::simd::rms_norm_into(x, block.input_layernorm.data(), block.norm_eps, norm)
             });
 
@@ -1980,7 +2039,7 @@ impl Llama<CpuBackend> {
                 crate::simd::add_assign(x, projected)
             });
 
-            profile_op!(layer, "ffn_rms_norm", embed_dim, embed_dim, {
+            profile_op!(layer, "ffn_rms_norm", embed_dim, embed_dim, "F32", {
                 crate::simd::rms_norm_into(
                     x,
                     block.post_attention_layernorm.data(),
@@ -2060,7 +2119,7 @@ impl Llama<CpuBackend> {
         }
         cache.advance_cursor();
 
-        profile_op!(usize::MAX, "final_rms_norm", embed_dim, embed_dim, {
+        profile_op!(usize::MAX, "final_rms_norm", embed_dim, embed_dim, "F32", {
             crate::simd::rms_norm_into(x, self.norm.data(), self.config.norm_eps, norm)
         });
         {
@@ -2086,7 +2145,7 @@ impl Llama<CpuBackend> {
             if profile_operators {
                 let elapsed =
                     backend.matmul_q8_0_interleaved_into_timed(norm, interleaved, &mut logits);
-                crate::decode_profile::record(
+                crate::decode_profile::record_quantized(
                     usize::MAX,
                     "lm_head",
                     interleaved.in_features(),
@@ -2096,6 +2155,7 @@ impl Llama<CpuBackend> {
                     } else {
                         crate::decode_profile::DecodeExecutionMode::InterleavedSerial
                     },
+                    "Q8_0",
                     elapsed,
                 );
             } else {
@@ -2397,10 +2457,8 @@ impl Llama<CpuBackend> {
                     // only the dims need swapping for the row lookup.
                     let shape = tensor.shape();
                     anyhow::ensure!(shape.len() == 2, "token_embd.weight must be 2D");
-                    LlamaEmbedding::F32(crate::tensor::CpuTensor::from_data(
-                        vec![shape[1], shape[0]],
-                        tensor.data().to_vec(),
-                    ))
+                    let embedding_shape = [shape[1], shape[0]];
+                    LlamaEmbedding::F32(tensor.into_reshape(&embedding_shape))
                 }
                 LoadedTensor::Q8_0(weight) => LlamaEmbedding::Q8_0(weight),
                 LoadedTensor::KQuant(weight) => LlamaEmbedding::KQuant(weight),
@@ -2859,12 +2917,13 @@ fn record_profiled_q8(
         } else {
             crate::decode_profile::DecodeExecutionMode::Serial
         };
-    crate::decode_profile::record(
+    crate::decode_profile::record_quantized(
         layer,
         operator,
         weight.in_features(),
         weight.out_features(),
         execution_mode,
+        "Q8_0",
         elapsed,
     );
 }
@@ -2876,12 +2935,13 @@ fn record_profiled_packed(
     weight: &crate::quant::QuantizedWeightVnni,
     elapsed: std::time::Duration,
 ) {
-    crate::decode_profile::record(
+    crate::decode_profile::record_quantized(
         layer,
         operator,
         weight.in_features(),
         weight.out_features(),
         crate::decode_profile::DecodeExecutionMode::PackedRowParallelRayon,
+        "Q8_0",
         elapsed,
     );
 }
@@ -4736,6 +4796,79 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reusable_planned_logits_preserve_results_without_allocating() {
+        let backend = CpuBackend;
+        for mode in [ExecutionMode::Planned, ExecutionMode::PlannedFused] {
+            let mut model = test_llama_model_with_layers(2);
+            model.fast_decode_inter_dim = None;
+            model.set_execution_mode(mode);
+            let mut cache = model.create_cache(&backend, 64);
+            let mut output = ForwardModel::forward_last_logits_with_cache(
+                &model,
+                &backend,
+                &[3, 1, 7],
+                &mut cache,
+                0,
+            )
+            .unwrap();
+            let mut reference_cache = cache.clone();
+            let pointer = output.data().as_ptr();
+            for (position, token) in [(3, 3), (4, 5), (5, 2)] {
+                let expected = ForwardModel::forward_last_logits_with_cache(
+                    &model,
+                    &backend,
+                    &[token],
+                    &mut reference_cache,
+                    position,
+                )
+                .unwrap();
+                let (result, allocations) = crate::alloc_counter::count_allocations(|| {
+                    ForwardModel::forward_last_logits_with_cache_reusing(
+                        &model,
+                        &backend,
+                        &[token],
+                        &mut cache,
+                        position,
+                        &mut output,
+                    )
+                });
+                result.unwrap();
+                assert_eq!(allocations, 0, "{mode:?}: reusable logits allocated");
+                assert_eq!(output.data().as_ptr(), pointer);
+                assert_eq!(output.data(), expected.data());
+                assert_eq!(
+                    cache.export_compact_prefix(position + 1).unwrap(),
+                    reference_cache.export_compact_prefix(position + 1).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn planned_logits_reject_wrong_output_size_before_cache_mutation() {
+        let mut model = test_llama_model();
+        model.fast_decode_inter_dim = None;
+        model.set_execution_mode(ExecutionMode::Planned);
+        let mut cache = model.create_cache(&CpuBackend, 64);
+        let before = cache.export_compact_prefix(0).unwrap();
+        let mut output = [0.0];
+        let error = forward_last_logits_planned_into(
+            &model,
+            &[3],
+            &mut cache,
+            0,
+            None,
+            HookMode::Disabled,
+            &[],
+            &mut output,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("wrong size"));
+        assert_eq!(cache.cursor(), 0);
+        assert_eq!(cache.export_compact_prefix(0).unwrap(), before);
+    }
+
     /// Gate C (contract section 12): the planned path with an initialized
     /// hook system but a no-op experiment must be bit-identical to the
     /// plain planned path (hooks disabled).
@@ -4959,7 +5092,7 @@ mod tests {
     #[test]
     fn planned_attention_matches_reference_single_token() {
         let backend = CpuBackend;
-        let (n_heads, n_kv_heads, head_dim, max_seq_len) = (8, 4, 32, 64);
+        let (n_heads, n_kv_heads, head_dim, max_seq_len) = (8, 4, 32, 2048);
         let mut cache = crate::kv_cache::KVCache::new(1, n_kv_heads, head_dim, max_seq_len);
         // deterministic fill (xorshift-style LCG)
         let mut state = 0x1234_5678u64;
@@ -4969,7 +5102,7 @@ mod tests {
                 .wrapping_add(1442695040888963407);
             (state >> 33) as f32 / (1u64 << 31) as f32
         };
-        for pos in 0..8 {
+        for pos in 0..1025 {
             let k: Vec<f32> = (0..n_kv_heads * head_dim).map(|_| next()).collect();
             let v: Vec<f32> = (0..n_kv_heads * head_dim).map(|_| next()).collect();
             cache.append_with_layout(0, pos, &k, &v, n_kv_heads, head_dim);
@@ -4978,42 +5111,56 @@ mod tests {
         let q = CpuTensor::from_data(vec![1, n_heads * head_dim], q_data.clone());
         let (cached_k, cached_v) = cache.get(0);
         let mut qk_scratch = Vec::new();
-        for total_seq_len in [1usize, 2, 3, 5, 8] {
-            let reference = backend
-                .cached_causal_attention_with_scratch(
-                    &q,
-                    cached_k,
-                    cached_v,
-                    CachedAttentionSpec {
+        let serial = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        for total_seq_len in [1usize, 2, 3, 5, 8, 129, 1025] {
+            let reference = serial.install(|| {
+                backend
+                    .cached_causal_attention_with_scratch(
+                        &q,
+                        cached_k,
+                        cached_v,
+                        CachedAttentionSpec {
+                            n_heads,
+                            n_kv_heads,
+                            head_dim,
+                            max_seq_len,
+                            total_seq_len,
+                        },
+                        &mut qk_scratch,
+                    )
+                    .unwrap()
+            });
+            for threads in [1, 2, 4] {
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads)
+                    .build()
+                    .unwrap();
+                let mut scores = vec![0.0f32; n_heads * max_seq_len];
+                let mut out = vec![0.0f32; n_heads * head_dim];
+                pool.install(|| {
+                    planned_causal_attention(
+                        &q_data,
+                        cached_k,
+                        cached_v,
                         n_heads,
                         n_kv_heads,
                         head_dim,
                         max_seq_len,
                         total_seq_len,
-                    },
-                    &mut qk_scratch,
-                )
-                .unwrap();
-            let mut scores = vec![0.0f32; n_heads * max_seq_len];
-            let mut out = vec![0.0f32; n_heads * head_dim];
-            planned_causal_attention(
-                &q_data,
-                cached_k,
-                cached_v,
-                n_heads,
-                n_kv_heads,
-                head_dim,
-                max_seq_len,
-                total_seq_len,
-                &mut scores,
-                &mut out,
-            )
-            .unwrap();
-            assert_eq!(
+                        &mut scores,
+                        &mut out,
+                    )
+                    .unwrap()
+                });
+                assert_eq!(
                 reference.data(),
                 &out[..],
-                "planned attention diverged from reference at total_seq_len {total_seq_len}"
+                "planned attention diverged from reference at total_seq_len {total_seq_len}, threads {threads}"
             );
+            }
         }
     }
 

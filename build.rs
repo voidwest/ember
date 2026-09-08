@@ -4,6 +4,8 @@
 //! Consumers use explicit `EMBER_*` names so Cargo/build-script-only variables
 //! are never mistaken for variables available to crate compilation.
 
+use std::path::Path;
+
 fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
     let output = std::process::Command::new(program)
         .args(args)
@@ -21,15 +23,24 @@ fn command_stdout(program: &str, args: &[&str]) -> Option<String> {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     if let Some(head_path) = command_stdout("git", &["rev-parse", "--git-path", "HEAD"]) {
-        println!("cargo:rerun-if-changed={head_path}");
+        watch_existing(Path::new(&head_path));
     }
     if let Some(head_ref) = command_stdout("git", &["symbolic-ref", "-q", "HEAD"])
         && let Some(ref_path) = command_stdout("git", &["rev-parse", "--git-path", &head_ref])
     {
-        println!("cargo:rerun-if-changed={ref_path}");
+        // Packed/unborn branches have no loose ref file. Watch its nearest
+        // existing parent so the next commit creating that ref invalidates us.
+        // An existing loose ref is watched directly; packing/removing it also
+        // invalidates this build and refreshes the watch list.
+        if let Some(path) = Path::new(&ref_path).ancestors().find(|path| path.exists()) {
+            watch_existing(path);
+        }
     }
     if let Some(packed_refs) = command_stdout("git", &["rev-parse", "--git-path", "packed-refs"]) {
-        println!("cargo:rerun-if-changed={packed_refs}");
+        // Cargo treats a watched missing file as perpetually dirty. If this
+        // optional file is absent, HEAD/its loose ref already track the current
+        // identity; packing that ref removes a watched file and reruns us.
+        watch_existing(Path::new(&packed_refs));
     }
 
     if let Some(version) = command_stdout("rustc", &["--version"]) {
@@ -59,5 +70,11 @@ fn main() {
         if clean {
             println!("cargo:rustc-env=EMBER_GIT_DIRTY=false");
         }
+    }
+}
+
+fn watch_existing(path: &Path) {
+    if path.exists() {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
 }

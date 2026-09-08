@@ -187,6 +187,12 @@ pub trait Backend {
     fn slice_cols(&self, x: &Self::Tensor, start: usize, end: usize) -> Self::Tensor;
     fn shape<'a>(&self, x: &'a Self::Tensor) -> &'a [usize];
     fn data<'a>(&self, x: &'a Self::Tensor) -> &'a [f32];
+    /// Consume a tensor's host payload. CPU storage moves without a copy;
+    /// the default keeps alternate backends source-compatible.
+    #[allow(clippy::wrong_self_convention)]
+    fn into_cpu_data(&self, x: Self::Tensor) -> Vec<f32> {
+        self.data(&x).to_vec()
+    }
     fn scale_in_place(&self, x: &mut Self::Tensor, scale: f32);
     /// Apply Gemma-style final-logit softcapping.
     ///
@@ -875,6 +881,8 @@ impl CpuBackend {
             n_repeat,
             scale,
             cache_head_stride,
+            spec.head_dim,
+            None,
             qk_row,
             out,
         );
@@ -1198,6 +1206,10 @@ impl Backend for CpuBackend {
     fn load_from_cpu(&self, data: Vec<f32>, shape: &[usize]) -> Result<CpuTensor, Self::Error> {
         Ok(CpuTensor::from_data(shape.to_vec(), data))
     }
+
+    fn into_cpu_data(&self, x: CpuTensor) -> Vec<f32> {
+        x.data
+    }
     fn add_broadcast(&self, x: &CpuTensor, bias: &CpuTensor) -> Result<CpuTensor, CpuError> {
         Ok(x.add_broadcast(bias))
     }
@@ -1403,6 +1415,8 @@ impl Backend for CpuBackend {
             n_repeat,
             scale,
             cache_head_stride,
+            spec.head_dim,
+            None,
             qk_row,
             &mut out,
         );
@@ -1628,12 +1642,12 @@ pub(crate) fn cached_attention_row_head(
     }
 }
 
-/// The three-way cached-attention dispatch shared by
-/// `cached_causal_attention_into` and `cached_causal_attention_with_scratch`:
+/// Cached-attention dispatch shared by the ordinary and Gemma paths:
 /// parallel over rows (seq > 1), parallel over heads (seq == 1), serial.
-/// Each branch computes the identical per-(row, head) values.
+/// Each branch computes identical per-(row, head) values, with optional
+/// sliding-window masking and an independent physical KV head width.
 #[allow(clippy::too_many_arguments)]
-fn cached_attention_dispatch(
+pub(crate) fn cached_attention_dispatch(
     q: &[f32],
     cached_k: &[f16],
     cached_v: &[f16],
@@ -1643,38 +1657,46 @@ fn cached_attention_dispatch(
     n_repeat: usize,
     scale: f32,
     cache_head_stride: usize,
+    cache_head_dim: usize,
+    sliding_window: Option<usize>,
     qk_row: &mut Vec<f32>,
     out: &mut [f32],
 ) {
+    let compute_head = |i: usize, h: usize, scores: &mut Vec<f32>, head_out: &mut [f32]| {
+        let max_j = spec.total_seq_len - seq_len + i;
+        let min_j = sliding_window.map_or(0, |window| (max_j + 1).saturating_sub(window));
+        scores.resize(max_j + 1, 0.0);
+        cached_attention_row_head(
+            q,
+            cached_k,
+            cached_v,
+            i,
+            h,
+            embed_dim,
+            spec.head_dim,
+            cache_head_dim,
+            n_repeat,
+            scale,
+            cache_head_stride,
+            max_j,
+            min_j,
+            scores,
+            head_out,
+        );
+    };
+    let attended =
+        sliding_window.map_or(spec.total_seq_len, |window| window.min(spec.total_seq_len));
     let parallel_attention =
-        should_parallel_attention(spec.n_heads, seq_len, spec.total_seq_len, spec.head_dim);
+        should_parallel_attention(spec.n_heads, seq_len, attended, spec.head_dim);
     if parallel_attention && seq_len > 1 {
         out.par_chunks_mut(embed_dim)
             .enumerate()
             .for_each(|(i, out_row)| {
                 ATTENTION_SCORE_SCRATCH.with(|qk_row| {
                     let mut qk_row = qk_row.borrow_mut();
-                    let max_j = spec.total_seq_len - seq_len + i;
-                    qk_row.resize(max_j + 1, 0.0);
                     for h in 0..spec.n_heads {
                         let head_out = &mut out_row[h * spec.head_dim..(h + 1) * spec.head_dim];
-                        cached_attention_row_head(
-                            q,
-                            cached_k,
-                            cached_v,
-                            i,
-                            h,
-                            embed_dim,
-                            spec.head_dim,
-                            spec.head_dim,
-                            n_repeat,
-                            scale,
-                            cache_head_stride,
-                            max_j,
-                            0,
-                            qk_row.as_mut_slice(),
-                            head_out,
-                        );
+                        compute_head(i, h, &mut qk_row, head_out);
                     }
                 });
             });
@@ -1687,25 +1709,7 @@ fn cached_attention_dispatch(
             .for_each(|(h, head_out)| {
                 ATTENTION_SCORE_SCRATCH.with(|qk_row| {
                     let mut qk_row = qk_row.borrow_mut();
-                    let max_j = spec.total_seq_len - 1;
-                    qk_row.resize(max_j + 1, 0.0);
-                    cached_attention_row_head(
-                        q,
-                        cached_k,
-                        cached_v,
-                        0,
-                        h,
-                        embed_dim,
-                        spec.head_dim,
-                        spec.head_dim,
-                        n_repeat,
-                        scale,
-                        cache_head_stride,
-                        max_j,
-                        0,
-                        qk_row.as_mut_slice(),
-                        head_out,
-                    );
+                    compute_head(0, h, &mut qk_row, head_out);
                 });
             });
         return;
@@ -1715,24 +1719,11 @@ fn cached_attention_dispatch(
     }
     for h in 0..spec.n_heads {
         for i in 0..seq_len {
-            let max_j = spec.total_seq_len - seq_len + i;
-            qk_row.resize(max_j + 1, 0.0);
             let out_offset = i * embed_dim + h * spec.head_dim;
-            cached_attention_row_head(
-                q,
-                cached_k,
-                cached_v,
+            compute_head(
                 i,
                 h,
-                embed_dim,
-                spec.head_dim,
-                spec.head_dim,
-                n_repeat,
-                scale,
-                cache_head_stride,
-                max_j,
-                0,
-                qk_row.as_mut_slice(),
+                qk_row,
                 &mut out[out_offset..out_offset + spec.head_dim],
             );
         }
@@ -1781,7 +1772,7 @@ pub(crate) fn prefill_attention_row_head(
     }
 }
 
-fn should_parallel_attention(
+pub(crate) fn should_parallel_attention(
     n_heads: usize,
     seq_len: usize,
     total_seq_len: usize,

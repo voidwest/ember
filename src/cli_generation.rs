@@ -338,6 +338,7 @@ where
         let mut generated = Vec::with_capacity(max_tokens);
         let mut decode_evaluations = 0usize;
         let eos_ids = tokenizer.eos_token_ids();
+        let mut stream_decoder = tokenizer.incremental_decoder();
 
         // print prompt card
         println!();
@@ -367,14 +368,10 @@ where
 
             generated.push(next as u32);
 
-            // stream this single token now, before computing the next.
-            // individual subword tokens may decode to replacement characters
-            // (U+FFFD) when they're part of a multi-token UTF-8 sequence;
-            // filter those out so the typewriter effect stays clean.
-            let token_text = tokenizer.decode(&[next as u32])?;
-            let cleaned: String = token_text.chars().filter(|c| *c != '\u{FFFD}').collect();
-            if !cleaned.is_empty() {
-                print_flush!("{}", cleaned);
+            // Keep byte fragments until they form complete UTF-8 text.
+            let piece = stream_decoder.push(next as u32)?;
+            if !piece.is_empty() {
+                print_flush!("{}", piece);
             }
 
             if delay_ms > 0 {
@@ -391,6 +388,10 @@ where
                 prompt_len + step,
             )?;
             decode_evaluations += 1;
+        }
+        let tail = stream_decoder.finish()?;
+        if !tail.is_empty() {
+            print_flush!("{}", tail);
         }
         // reset color after completion
         println!("{RST}");
@@ -528,6 +529,23 @@ where
         phase: ExecutionPhase,
     ) -> Result<B::Tensor, B::Error>;
 
+    /// Preserve custom execution hooks by default; standard execution can
+    /// ask the model to write directly into the existing logits allocation.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_last_logits_reusing(
+        &mut self,
+        backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        phase: ExecutionPhase,
+        output: &mut B::Tensor,
+    ) -> Result<(), B::Error> {
+        *output = self.forward_last_logits(backend, model, token_ids, cache, start_pos, phase)?;
+        Ok(())
+    }
+
     fn generation_complete(
         &mut self,
         prompt_token_count: usize,
@@ -591,6 +609,20 @@ where
         _phase: ExecutionPhase,
     ) -> Result<B::Tensor, B::Error> {
         model.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)
+    }
+
+    #[inline(always)]
+    fn forward_last_logits_reusing(
+        &mut self,
+        backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        _phase: ExecutionPhase,
+        output: &mut B::Tensor,
+    ) -> Result<(), B::Error> {
+        model.forward_last_logits_with_cache_reusing(backend, token_ids, cache, start_pos, output)
     }
 
     #[inline(always)]
@@ -965,13 +997,14 @@ where
             if trace_ops && !trace::enable_tracing("decode", step) {
                 anyhow::bail!("cannot start decode trace because a trace is already active");
             }
-            logits = execution.forward_last_logits(
+            execution.forward_last_logits_reusing(
                 backend,
                 model,
                 &[next_token],
                 &mut cache,
                 prompt_len + step, // absolute position offset
                 ExecutionPhase::Decode,
+                &mut logits,
             )?;
             validate_last_logits(backend, &logits, model_vocab_size)?;
             decode_evaluations += 1;
@@ -1420,6 +1453,180 @@ mod tests {
     use crate::cli_support::{build_run_manifest, default_tokenizer_for_arch};
     use crate::{Commands, LifecycleModeArg, PackedSelectionArg};
     use clap::Parser;
+
+    #[test]
+    fn generation_reuses_standard_logits_without_bypassing_custom_execution() {
+        use ember::{backend::CpuError, kv_cache::KVCache, tensor::CpuTensor};
+        use std::cell::RefCell;
+
+        #[derive(Default)]
+        struct DispatchModel(RefCell<Vec<&'static str>>);
+        impl ForwardModel<CpuBackend> for DispatchModel {
+            fn create_cache(&self, _: &CpuBackend, capacity: usize) -> KVCache {
+                KVCache::new(1, 1, 1, capacity)
+            }
+            fn max_seq_len(&self, _: &CpuBackend) -> usize {
+                64
+            }
+            fn n_layers(&self) -> usize {
+                1
+            }
+            fn embed_dim(&self) -> usize {
+                1
+            }
+            fn vocab_size(&self, _: &CpuBackend) -> usize {
+                4
+            }
+            fn forward_with_cache(
+                &self,
+                _: &CpuBackend,
+                _: &[u32],
+                _: &mut KVCache,
+                _: usize,
+            ) -> Result<CpuTensor, CpuError> {
+                panic!("generation should request last-position logits")
+            }
+            fn forward_last_logits_with_cache(
+                &self,
+                _: &CpuBackend,
+                ids: &[u32],
+                cache: &mut KVCache,
+                start: usize,
+            ) -> Result<CpuTensor, CpuError> {
+                self.0.borrow_mut().push("allocated");
+                cache.validate_start_pos(start);
+                for _ in ids {
+                    cache.advance_cursor();
+                }
+                Ok(CpuTensor::from_data(vec![1, 4], vec![0.0, 2.0, 1.0, -10.0]))
+            }
+            fn forward_last_logits_with_cache_reusing(
+                &self,
+                _: &CpuBackend,
+                ids: &[u32],
+                cache: &mut KVCache,
+                start: usize,
+                output: &mut CpuTensor,
+            ) -> Result<(), CpuError> {
+                self.0.borrow_mut().push("reused");
+                cache.validate_start_pos(start);
+                for _ in ids {
+                    cache.advance_cursor();
+                }
+                output.data_mut().copy_from_slice(&[0.0, 1.0, 2.0, -10.0]);
+                Ok(())
+            }
+            fn forward_with_activations(
+                &self,
+                _: &CpuBackend,
+                _: &[u32],
+            ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
+                panic!("generation should not capture activations")
+            }
+        }
+
+        #[derive(Default)]
+        struct CustomExecution(Vec<ExecutionPhase>);
+        impl GenerationExecution<CpuBackend, DispatchModel> for CustomExecution {
+            fn before_prefill(&mut self, _: &[u32]) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn forward_last_logits(
+                &mut self,
+                backend: &CpuBackend,
+                model: &DispatchModel,
+                ids: &[u32],
+                cache: &mut KVCache,
+                start: usize,
+                phase: ExecutionPhase,
+            ) -> Result<CpuTensor, CpuError> {
+                self.0.push(phase);
+                let mut output =
+                    model.forward_last_logits_with_cache(backend, ids, cache, start)?;
+                // This models a custom execution hook that changes the logits.
+                output.data_mut().copy_from_slice(&[0.0, 1.0, 2.0, -10.0]);
+                Ok(output)
+            }
+            fn generation_complete(
+                &mut self,
+                prompt: usize,
+                generated: usize,
+                evaluations: usize,
+                _: &[u32],
+                _: &[u32],
+            ) -> anyhow::Result<()> {
+                assert_eq!((prompt, generated, evaluations), (1, 3, 2));
+                Ok(())
+            }
+        }
+
+        let tokenizer = ember::tokenizer::EmberTokenizer::from_bytes(
+            r#"{
+            "version":"1.0", "truncation":null, "padding":null,
+            "added_tokens":[], "normalizer":null, "pre_tokenizer":null,
+            "post_processor":null, "decoder":null,
+            "model":{"type":"WordLevel","vocab":{"p":0,"a":1,"b":2,"[UNK]":3},"unk_token":"[UNK]"}
+        }"#,
+        )
+        .unwrap();
+        let model = DispatchModel::default();
+        // Top-k=1 makes the test deterministic without consulting the optional
+        // fused-greedy environment setting or mutating process-global state.
+        let output = generate_with_execution(
+            &CpuBackend,
+            &model,
+            &mut StandardGeneration,
+            &tokenizer,
+            "p",
+            3,
+            1.0,
+            Some(1),
+            None,
+            false,
+            false,
+            None,
+            false,
+            false,
+            1,
+            64,
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(output, "a b b");
+        assert_eq!(*model.0.borrow(), ["allocated", "reused", "reused"]);
+        model.0.borrow_mut().clear();
+        let mut custom = CustomExecution::default();
+        let output = generate_with_execution(
+            &CpuBackend,
+            &model,
+            &mut custom,
+            &tokenizer,
+            "p",
+            3,
+            1.0,
+            Some(1),
+            None,
+            false,
+            false,
+            None,
+            false,
+            false,
+            1,
+            64,
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(output, "b b b");
+        assert_eq!(*model.0.borrow(), ["allocated", "allocated", "allocated"]);
+        assert_eq!(
+            custom.0,
+            [
+                ExecutionPhase::Prefill,
+                ExecutionPhase::Decode,
+                ExecutionPhase::Decode
+            ]
+        );
+    }
 
     #[test]
     fn final_requested_token_needs_no_followup_evaluation() {

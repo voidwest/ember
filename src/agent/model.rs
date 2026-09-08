@@ -3,7 +3,7 @@
 //!
 //! [`ChatModelEngine`] is deliberately narrow: commit rendered messages
 //! into persistent context, run ONE assistant generation as an atomic
-//! transaction (speculative scaffold rolled back on cancellation), report
+//! transaction (speculative scaffold rolled back on cancellation or error), report
 //! timings. Implementations:
 //!
 //! - [`LlamaChatModel`] — real inference over `crate::llama::Llama` with
@@ -21,8 +21,8 @@
 //!   terminal (nothing was decoded from it) and is forwarded alone;
 //!   otherwise the last generated token plus the protocol suffix are
 //!   forwarded together. A zero-token turn commits just the suffix.
-//! - **Cancellation** truncates the KV cursor back to the pre-turn
-//!   boundary — a cancelled generation never leaves half-committed state.
+//! - **Cancellation or error** truncates the KV cursor back to the pre-turn
+//!   boundary, so failed generation never leaves half-committed state.
 
 use anyhow::{ensure, Context as _, Result};
 use rand::SeedableRng;
@@ -152,6 +152,9 @@ pub trait ChatModelEngine {
     /// 4. on cancellation roll back to the boundary and return
     ///    `cancelled: true` with nothing committed.
     ///
+    /// Any returned error also restores that boundary. Already delivered
+    /// streaming callbacks are speculative and cannot be retracted.
+    ///
     /// `on_token(id, piece)` observes each generated token (streaming);
     /// pieces may be empty for mid-codepoint fragments.
     fn generate_turn(
@@ -263,13 +266,7 @@ impl<'m> LlamaChatModel<'m> {
     fn prefill_ids(&mut self, ids: &[u32]) -> Result<()> {
         ensure!(!ids.is_empty(), "cannot commit an empty rendered message");
         let start = self.committed_len;
-        ensure!(
-            start + ids.len() <= self.cache.max_seq_len(),
-            "agent conversation exceeds KV capacity {}: committed {start} + new {}; \
-             recreate the session with a larger capacity",
-            self.cache.max_seq_len(),
-            ids.len()
-        );
+        self.ensure_capacity(ids.len())?;
         self.model
             .forward_last_logits_with_cache(self.backend, ids, &mut self.cache, start)?;
         self.committed_len += ids.len();
@@ -304,159 +301,172 @@ impl ChatModelEngine for LlamaChatModel<'_> {
     ) -> Result<GeneratedTurn> {
         let reply_start = self.committed_len;
 
-        // -- speculative scaffold --------------------------------------
+        // Resolve immutable inputs before touching conversation state.
         let prefix_ids = self.encode(prefix_rendered)?;
-        let scaffold_rows = prefix_ids.len();
-        let t_prefill = Instant::now();
-        let logits = self.prefill_keep_logits(&prefix_ids)?;
-        let prefill_ms = t_prefill.elapsed().as_secs_f64() * 1e3;
-        let vocab_size = self.backend.shape(&logits)[1];
-        let mut logits = logits;
-
+        let suffix_ids = self.encode(suffix_rendered)?;
         let eos_ids = self.resolve_eos_ids(&params.extra_eos_tokens)?;
-        let mut stream_decoder = self.tokenizer.incremental_decoder();
-        let mut text_acc = String::new();
-        let mut ids: Vec<u32> = Vec::new();
-        let mut cancelled = false;
-        let mut stop_hit: Option<TurnStop> = None;
-        let mut bounded_text: Option<String> = None;
-        let mut decode_ms = 0f64;
-        let mut decode_evaluations = 0usize;
-        let mut rng = match params.seed {
-            Some(seed) => AgentRng::Std(Box::new(rand::rngs::StdRng::seed_from_u64(seed))),
-            None => AgentRng::Thread(rand::thread_rng()),
-        };
+        let result = (|| -> Result<GeneratedTurn> {
+            // -- speculative scaffold --------------------------------------
+            let scaffold_rows = prefix_ids.len();
+            let t_prefill = Instant::now();
+            let logits = self.prefill_keep_logits(&prefix_ids)?;
+            let prefill_ms = t_prefill.elapsed().as_secs_f64() * 1e3;
+            let vocab_size = self.backend.shape(&logits)[1];
+            let mut logits = logits;
 
-        loop {
-            if control.is_cancelled() {
-                cancelled = true;
-                break;
-            }
-            if ids.len() >= params.max_new_tokens {
-                stop_hit = Some(TurnStop::MaxTokens);
-                break;
-            }
-            let logit_data = self.backend.data(&logits);
-            let last_logits = &logit_data[..vocab_size];
-            let next = if params.temperature == 0.0 {
-                crate::sampler::argmax_token(last_logits)
-            } else {
-                crate::sampler::sample_token(
-                    last_logits,
-                    params.temperature,
-                    params.top_k,
-                    params.top_p,
-                    &mut rng,
-                )
+            let mut stream_decoder = self.tokenizer.incremental_decoder();
+            let mut text_acc = String::new();
+            let mut ids: Vec<u32> = Vec::new();
+            let mut cancelled = false;
+            let mut stop_hit: Option<TurnStop> = None;
+            let mut bounded_text: Option<String> = None;
+            let mut decode_ms = 0f64;
+            let mut decode_evaluations = 0usize;
+            let mut rng = match params.seed {
+                Some(seed) => AgentRng::Std(Box::new(rand::rngs::StdRng::seed_from_u64(seed))),
+                None => AgentRng::Thread(rand::thread_rng()),
             };
-            let next = u32::try_from(next).context("token id exceeds u32")?;
-            ids.push(next);
 
-            let piece = stream_decoder.push(next)?;
-            text_acc.push_str(&piece);
-            on_token(next, &piece);
-
-            if eos_ids.contains(&next) {
-                stop_hit = Some(TurnStop::Eos);
-                break;
-            }
-
-            // Stop strings bound the PARSED text, not the committed ids.
-            let mut matched: Option<(&String, usize)> = None;
-            for s in &params.stop_strings {
-                if let Some(pos) = text_acc.find(s.as_str())
-                    && matched.is_none_or(|(_, p)| pos < p)
-                {
-                    matched = Some((s, pos));
+            loop {
+                if control.is_cancelled() {
+                    cancelled = true;
+                    break;
                 }
-            }
-            if let Some((stop, byte_pos)) = matched {
-                bounded_text = Some(text_acc[..byte_pos].to_string());
-                stop_hit = Some(TurnStop::StopString(stop.clone()));
-                break;
+                if ids.len() >= params.max_new_tokens {
+                    stop_hit = Some(TurnStop::MaxTokens);
+                    break;
+                }
+                let logit_data = self.backend.data(&logits);
+                let last_logits = &logit_data[..vocab_size];
+                let next = if params.temperature == 0.0 {
+                    crate::sampler::argmax_token(last_logits)
+                } else {
+                    crate::sampler::sample_token(
+                        last_logits,
+                        params.temperature,
+                        params.top_k,
+                        params.top_p,
+                        &mut rng,
+                    )
+                };
+                let next = u32::try_from(next).context("token id exceeds u32")?;
+                ids.push(next);
+
+                let mut piece = stream_decoder.push(next)?;
+                if eos_ids.contains(&next) || ids.len() >= params.max_new_tokens {
+                    // Deliver pending EOF text with the final token's callback,
+                    // preserving exactly one callback per generated token.
+                    piece.push_str(&stream_decoder.finish()?);
+                }
+                text_acc.push_str(&piece);
+                on_token(next, &piece);
+
+                if control.is_cancelled() {
+                    cancelled = true;
+                    break;
+                }
+                if eos_ids.contains(&next) {
+                    stop_hit = Some(TurnStop::Eos);
+                    break;
+                }
+
+                // Stop strings bound the PARSED text, not the committed ids.
+                let mut matched: Option<(&String, usize)> = None;
+                for s in &params.stop_strings {
+                    if let Some(pos) = text_acc.find(s.as_str())
+                        && matched.is_none_or(|(_, p)| pos < p)
+                    {
+                        matched = Some((s, pos));
+                    }
+                }
+                if let Some((stop, byte_pos)) = matched {
+                    bounded_text = Some(text_acc[..byte_pos].to_string());
+                    stop_hit = Some(TurnStop::StopString(stop.clone()));
+                    break;
+                }
+
+                if ids.len() >= params.max_new_tokens {
+                    stop_hit = Some(TurnStop::MaxTokens);
+                    break;
+                }
+                let t1 = Instant::now();
+                self.ensure_capacity(1)?;
+                logits = self.model.forward_last_logits_with_cache(
+                    self.backend,
+                    &[next],
+                    &mut self.cache,
+                    reply_start + scaffold_rows + ids.len() - 1,
+                )?;
+                decode_ms += t1.elapsed().as_secs_f64() * 1e3;
+                decode_evaluations += 1;
             }
 
-            if ids.len() >= params.max_new_tokens {
-                stop_hit = Some(TurnStop::MaxTokens);
-                break;
+            if cancelled {
+                return Ok(GeneratedTurn {
+                    text: String::new(),
+                    committed_ids: Vec::new(),
+                    stop: None,
+                    cancelled: true,
+                    prompt_tokens_prefilled: scaffold_rows,
+                    decode_evaluations,
+                    prefill_ms,
+                    decode_ms,
+                });
             }
-            if control.is_cancelled() {
-                cancelled = true;
-                break;
-            }
-            let t1 = Instant::now();
-            logits = self.model.forward_last_logits_with_cache(
-                self.backend,
-                &[next],
-                &mut self.cache,
-                reply_start + scaffold_rows + ids.len() - 1,
-            )?;
-            decode_ms += t1.elapsed().as_secs_f64() * 1e3;
-            decode_evaluations += 1;
-        }
 
-        if cancelled {
-            self.cache.truncate_to(reply_start);
-            self.committed_len = reply_start;
-            debug_assert_eq!(self.cache.cursor(), reply_start);
-            return Ok(GeneratedTurn {
-                text: String::new(),
-                committed_ids: Vec::new(),
-                stop: None,
-                cancelled: true,
+            // flush held-back bytes (a split code point at the very end)
+            let _tail = stream_decoder.finish()?;
+
+            // -- terminal policy (mirrors VoiceSession) ---------------------
+            self.resync_committed_to_cursor();
+            let terminal: Vec<u32> = if matches!(stop_hit, Some(TurnStop::Eos)) {
+                vec![*ids.last().expect("EOS requires a generated token")]
+            } else if ids.is_empty() {
+                suffix_ids.clone()
+            } else {
+                let mut v = Vec::with_capacity(suffix_ids.len() + 1);
+                v.push(*ids.last().unwrap());
+                v.extend_from_slice(&suffix_ids);
+                v
+            };
+            if !terminal.is_empty() {
+                self.ensure_capacity(terminal.len())?;
+                let _ = self.model.forward_last_logits_with_cache(
+                    self.backend,
+                    &terminal,
+                    &mut self.cache,
+                    self.committed_len,
+                )?;
+                self.committed_len += terminal.len();
+            }
+            debug_assert_eq!(self.cache.cursor(), self.committed_len);
+
+            let mut full_ids = prefix_ids;
+            full_ids.extend_from_slice(&ids[..ids.len().saturating_sub(1)]);
+            full_ids.extend_from_slice(&terminal);
+            debug_assert_eq!(full_ids.len(), self.committed_len - reply_start);
+            let text = match bounded_text {
+                Some(t) => t,
+                None => self.tokenizer.decode(&ids)?,
+            };
+
+            Ok(GeneratedTurn {
+                text,
+                committed_ids: full_ids,
+                stop: stop_hit,
+                cancelled: false,
                 prompt_tokens_prefilled: scaffold_rows,
                 decode_evaluations,
                 prefill_ms,
                 decode_ms,
-            });
-        }
-
-        // flush held-back bytes (a split code point at the very end)
-        let _tail = stream_decoder.finish()?;
-
-        // -- terminal policy (mirrors VoiceSession) ---------------------
-        self.resync_committed_to_cursor();
-        let suffix_ids = self.encode(suffix_rendered)?;
-        let terminal: Vec<u32> = if matches!(stop_hit, Some(TurnStop::Eos)) {
-            vec![*ids.last().expect("EOS requires a generated token")]
-        } else if ids.is_empty() {
-            suffix_ids.clone()
-        } else {
-            let mut v = Vec::with_capacity(suffix_ids.len() + 1);
-            v.push(*ids.last().unwrap());
-            v.extend_from_slice(&suffix_ids);
-            v
-        };
-        if !terminal.is_empty() {
-            let _ = self.model.forward_last_logits_with_cache(
-                self.backend,
-                &terminal,
-                &mut self.cache,
-                self.committed_len,
-            )?;
-            self.committed_len += terminal.len();
+            })
+        })();
+        if result.is_err() || matches!(&result, Ok(turn) if turn.cancelled) {
+            self.cache.truncate_to(reply_start);
+            self.committed_len = reply_start;
         }
         debug_assert_eq!(self.cache.cursor(), self.committed_len);
-
-        let mut full_ids = prefix_ids;
-        full_ids.extend_from_slice(&ids[..ids.len().saturating_sub(1)]);
-        full_ids.extend_from_slice(&terminal);
-        debug_assert_eq!(full_ids.len(), self.committed_len - reply_start);
-        let text = match bounded_text {
-            Some(t) => t,
-            None => self.tokenizer.decode(&ids)?,
-        };
-
-        Ok(GeneratedTurn {
-            text,
-            committed_ids: full_ids,
-            stop: stop_hit,
-            cancelled: false,
-            prompt_tokens_prefilled: scaffold_rows,
-            decode_evaluations,
-            prefill_ms,
-            decode_ms,
-        })
+        result
     }
 
     fn truncate_to(&mut self, len: usize) -> Result<()> {
@@ -473,18 +483,23 @@ impl ChatModelEngine for LlamaChatModel<'_> {
 }
 
 impl LlamaChatModel<'_> {
+    fn ensure_capacity(&self, new_rows: usize) -> Result<()> {
+        ensure!(
+            new_rows <= self.cache.max_seq_len().saturating_sub(self.cache.cursor()),
+            "agent conversation exceeds KV capacity {}: cached {} + new {new_rows}; \
+             recreate the session with a larger capacity",
+            self.cache.max_seq_len(),
+            self.cache.cursor(),
+        );
+        Ok(())
+    }
+
     /// Prefill that keeps the last-position logits (single forward pass;
     /// no double-counting of rows).
     fn prefill_keep_logits(&mut self, ids: &[u32]) -> Result<crate::tensor::CpuTensor> {
         ensure!(!ids.is_empty(), "cannot prefill zero tokens");
         let start = self.committed_len;
-        ensure!(
-            start + ids.len() <= self.cache.max_seq_len(),
-            "agent conversation exceeds KV capacity {}: committed {start} + new {}; \
-             recreate the session with a larger capacity",
-            self.cache.max_seq_len(),
-            ids.len()
-        );
+        self.ensure_capacity(ids.len())?;
         let logits =
             self.model
                 .forward_last_logits_with_cache(self.backend, ids, &mut self.cache, start)?;
@@ -665,25 +680,132 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn native_cancellation_discards_partial_token_bookkeeping() {
+    fn native_stop_string_spanning_tokens_stops_before_eos() {
         let (model, tokenizer, identity) = fixture();
         let backend = CpuBackend;
         let mut engine = LlamaChatModel::new(&model, &backend, &tokenizer, 64, identity);
-        engine.commit_message("x").unwrap();
-        let before = engine.cache.export_compact_prefix(1).unwrap();
-        let cancel = CancelFlag::new();
+        let mut streamed = String::new();
         let turn = engine
             .generate_turn(
                 "p",
                 "s",
-                &GenerationParams::default(),
-                &cancel,
-                &mut |_, _| cancel.cancel(),
+                &GenerationParams {
+                    stop_strings: vec!["a b".into()],
+                    ..Default::default()
+                },
+                &CancelFlag::new(),
+                &mut |_, piece| streamed.push_str(piece),
             )
             .unwrap();
-        assert!(turn.cancelled);
-        assert!(turn.committed_ids.is_empty());
-        assert_eq!(engine.committed_len(), 1);
-        assert_eq!(engine.cache.export_compact_prefix(1).unwrap(), before);
+        assert_eq!(streamed, "a b");
+        assert_eq!(turn.stop, Some(TurnStop::StopString("a b".into())));
+        assert_eq!(turn.committed_ids, vec![0, 1, 2, 4]);
+        assert!(turn.text.is_empty());
+    }
+
+    #[test]
+    fn native_errors_restore_state_and_allow_clean_retry() {
+        let (model, tokenizer, identity) = fixture();
+        let backend = CpuBackend;
+        for (capacity, params, expected_callbacks, retry_budget, error_text) in [
+            (
+                4,
+                GenerationParams {
+                    extra_eos_tokens: vec!["<missing>".into()],
+                    ..Default::default()
+                },
+                0,
+                1,
+                "missing from tokenizer",
+            ),
+            // Exhaust the decode capacity after a successful speculative step.
+            (3, GenerationParams::default(), 2, 0, "KV capacity"),
+            // Allow both tokens, but fail to fit the final token plus suffix.
+            (
+                4,
+                GenerationParams {
+                    max_new_tokens: 2,
+                    ..Default::default()
+                },
+                2,
+                1,
+                "KV capacity",
+            ),
+        ] {
+            let mut engine =
+                LlamaChatModel::new(&model, &backend, &tokenizer, capacity, identity.clone());
+            engine.commit_message("x").unwrap();
+            let before = engine.cache.export_compact_prefix(1).unwrap();
+            let mut callbacks = 0;
+            let error = engine
+                .generate_turn("p", "s", &params, &CancelFlag::new(), &mut |_, _| {
+                    callbacks += 1
+                })
+                .unwrap_err();
+            assert!(error.to_string().contains(error_text), "{error:#}");
+            assert_eq!(callbacks, expected_callbacks);
+            assert_eq!(engine.committed_len(), 1);
+            assert_eq!(engine.cache.cursor(), 1);
+            assert_eq!(engine.cache.export_compact_prefix(1).unwrap(), before);
+
+            let mut clean =
+                LlamaChatModel::new(&model, &backend, &tokenizer, capacity, identity.clone());
+            clean.commit_message("x").unwrap();
+            let retry_params = GenerationParams {
+                max_new_tokens: retry_budget,
+                ..Default::default()
+            };
+            let retry = engine
+                .generate_turn("p", "s", &retry_params, &CancelFlag::new(), &mut |_, _| {})
+                .unwrap();
+            let reference = clean
+                .generate_turn("p", "s", &retry_params, &CancelFlag::new(), &mut |_, _| {})
+                .unwrap();
+            assert_eq!(retry.committed_ids, reference.committed_ids);
+            assert_eq!(retry.text, reference.text);
+            assert_eq!(retry.stop, reference.stop);
+            assert_eq!(engine.committed_len(), clean.committed_len());
+            assert_eq!(
+                engine
+                    .cache
+                    .export_compact_prefix(engine.committed_len())
+                    .unwrap(),
+                clean
+                    .cache
+                    .export_compact_prefix(clean.committed_len())
+                    .unwrap(),
+            );
+        }
+    }
+
+    #[test]
+    fn native_cancellation_discards_partial_token_bookkeeping() {
+        let (model, tokenizer, identity) = fixture();
+        let backend = CpuBackend;
+        // Cancellation from the final callback must also win over max-tokens
+        // and EOS termination, not just ordinary continuation steps.
+        for (prefix, max_new_tokens) in [("p", 8), ("p", 1), ("b", 8)] {
+            let mut engine =
+                LlamaChatModel::new(&model, &backend, &tokenizer, 64, identity.clone());
+            engine.commit_message("x").unwrap();
+            let before = engine.cache.export_compact_prefix(1).unwrap();
+            let cancel = CancelFlag::new();
+            let turn = engine
+                .generate_turn(
+                    prefix,
+                    "s",
+                    &GenerationParams {
+                        max_new_tokens,
+                        ..Default::default()
+                    },
+                    &cancel,
+                    &mut |_, _| cancel.cancel(),
+                )
+                .unwrap();
+            assert!(turn.cancelled);
+            assert!(turn.committed_ids.is_empty());
+            assert_eq!(engine.committed_len(), 1);
+            assert_eq!(engine.cache.export_compact_prefix(1).unwrap(), before);
+        }
     }
 }

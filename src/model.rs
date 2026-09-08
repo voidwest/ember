@@ -31,6 +31,20 @@ pub trait ForwardModel<B: Backend> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error>;
 
+    /// Compute last-token logits, reusing `output` when the model supports it.
+    /// The default retains the allocating implementation for other backends.
+    fn forward_last_logits_with_cache_reusing(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        output: &mut B::Tensor,
+    ) -> Result<(), B::Error> {
+        *output = self.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)?;
+        Ok(())
+    }
+
     /// Run the transformer body directly on precomputed input embeddings.
     ///
     /// `embeddings` is a `[seq_len, embed_dim]` tensor of *fully formed*
@@ -1207,10 +1221,8 @@ fn take_gpt2_embedding(
         LoadedTensor::F32(tensor) => {
             anyhow::ensure!(tensor.ndim() == 2, "{name} must be 2D");
             let shape = tensor.shape();
-            Ok(CpuTensor::from_data(
-                vec![shape[1], shape[0]],
-                tensor.data().to_vec(),
-            ))
+            let embedding_shape = [shape[1], shape[0]];
+            Ok(tensor.into_reshape(&embedding_shape))
         }
         LoadedTensor::Q8_0(weight) => {
             crate::loader::check_f32_dequantization_size(

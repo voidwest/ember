@@ -42,25 +42,94 @@ use std::time::Instant;
 
 struct DecodeProfileSession {
     active: bool,
+    architecture: String,
 }
 
 impl DecodeProfileSession {
-    fn start() -> Self {
+    fn start(architecture: &str) -> Self {
         ember::decode_profile::start();
-        Self { active: true }
+        Self {
+            active: true,
+            architecture: architecture.to_owned(),
+        }
     }
 
     fn finish(&mut self) -> Vec<ember::decode_profile::DecodeOpSummary> {
         self.active = false;
-        ember::decode_profile::finish()
+        ember::decode_profile::finish_for_architecture(&self.architecture)
     }
 }
 
 impl Drop for DecodeProfileSession {
     fn drop(&mut self) {
         if self.active {
-            let _ = ember::decode_profile::finish();
+            let _ = ember::decode_profile::finish_for_architecture(&self.architecture);
         }
+    }
+}
+
+#[derive(Default)]
+struct DecodeAllocationSamples {
+    token_alloc_events: Vec<usize>,
+    token_alloc_bytes: Vec<usize>,
+    global_alloc_events: Vec<usize>,
+    global_alloc_bytes: Vec<usize>,
+}
+
+impl DecodeAllocationSamples {
+    fn into_report(self, tokens: usize, repetitions: usize) -> anyhow::Result<serde_json::Value> {
+        let Self {
+            token_alloc_events,
+            token_alloc_bytes,
+            global_alloc_events,
+            global_alloc_bytes,
+        } = self;
+        let token_count = tokens
+            .checked_mul(repetitions)
+            .filter(|count| *count > 0)
+            .context("allocation report requires a positive, representable measured token count")?;
+        anyhow::ensure!(
+            token_alloc_events.len() == token_count
+                && token_alloc_bytes.len() == token_count
+                && global_alloc_events.len() == repetitions
+                && global_alloc_bytes.len() == repetitions,
+            "allocation sample counts do not match tokens and repetitions"
+        );
+        let median = |values: &[usize]| -> Option<usize> {
+            let mut sorted = values.to_vec();
+            sorted.sort_unstable();
+            sorted.get(sorted.len() / 2).copied()
+        };
+        let sum = |values: &[usize]| -> usize { values.iter().sum() };
+        let events_total = sum(&token_alloc_events);
+        let bytes_total = sum(&token_alloc_bytes);
+        let global_events_total = sum(&global_alloc_events);
+        let global_bytes_total = sum(&global_alloc_bytes);
+        Ok(serde_json::json!({
+            "schema_version": 2,
+            "method": "counting allocator; caller-thread per-token counts via count_allocations_with_bytes, process-global deltas across the timed loop",
+            "tokens": tokens,
+            "repetitions": repetitions,
+            "measured_tokens": token_count,
+            "caller_thread_alloc_events_total": events_total,
+            "caller_thread_alloc_events_per_token": events_total as f64 / token_count as f64,
+            "caller_thread_alloc_bytes_total": bytes_total,
+            "caller_thread_alloc_bytes_per_token": bytes_total as f64 / token_count as f64,
+            "caller_thread_alloc_events_median": median(&token_alloc_events),
+            "caller_thread_alloc_bytes_median": median(&token_alloc_bytes),
+            "caller_thread_alloc_events_min": token_alloc_events.iter().copied().min(),
+            "caller_thread_alloc_events_max": token_alloc_events.iter().copied().max(),
+            "caller_thread_alloc_bytes_min": token_alloc_bytes.iter().copied().min(),
+            "caller_thread_alloc_bytes_max": token_alloc_bytes.iter().copied().max(),
+            "per_token_alloc_events": token_alloc_events,
+            "per_token_alloc_bytes": token_alloc_bytes,
+            "global_alloc_events_total": global_events_total,
+            "global_alloc_events_per_token": global_events_total as f64 / token_count as f64,
+            "global_alloc_bytes_total": global_bytes_total,
+            "global_alloc_bytes_per_token": global_bytes_total as f64 / token_count as f64,
+            "global_alloc_events_median": median(&global_alloc_events),
+            "global_alloc_bytes_median": median(&global_alloc_bytes),
+        }))
     }
 }
 
@@ -1026,7 +1095,14 @@ pub(crate) fn run_bench_decode_command(
     match architecture.as_str() {
         "gpt2" => {
             let model = Gpt2::from_loader(loader)?;
-            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
+            bench_decode_model(
+                &backend,
+                &model,
+                command,
+                &architecture,
+                k_strategy,
+                &execution_inventory,
+            )
         }
         "llama" | "qwen3" => {
             let model =
@@ -1034,11 +1110,25 @@ pub(crate) fn run_bench_decode_command(
             let execution = ember::plan::ExecutionMode::from_cli(&command.execution)
                 .map_err(anyhow::Error::msg)?;
             model.set_execution_mode(execution);
-            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
+            bench_decode_model(
+                &backend,
+                &model,
+                command,
+                &architecture,
+                k_strategy,
+                &execution_inventory,
+            )
         }
         "gemma4" => {
             let model = ember::gemma4::Gemma4::from_loader(loader)?;
-            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
+            bench_decode_model(
+                &backend,
+                &model,
+                command,
+                &architecture,
+                k_strategy,
+                &execution_inventory,
+            )
         }
         architecture => anyhow::bail!("unsupported architecture: {architecture}"),
     }
@@ -1419,6 +1509,7 @@ pub(crate) fn bench_decode_model<B: Backend>(
     backend: &B,
     model: &impl ForwardModel<B>,
     command: &BenchDecodeCommand,
+    architecture: &str,
     k_strategy: ember::quant_k::KStrategy,
     execution_inventory: &ember::artifact::ExecutionInventory,
 ) -> anyhow::Result<()>
@@ -1450,10 +1541,7 @@ where
     // via the counting allocator, plus process-global deltas across the
     // timed loop (includes worker-thread allocations). Only collected on
     // measured repetitions, never warmups.
-    let mut token_alloc_events: Vec<usize> = Vec::new();
-    let mut token_alloc_bytes: Vec<usize> = Vec::new();
-    let mut global_alloc_events: Vec<usize> = Vec::new();
-    let mut global_alloc_bytes: Vec<usize> = Vec::new();
+    let mut allocation_samples = DecodeAllocationSamples::default();
 
     let mut run_once = |profile_operators: bool, track_allocations: bool| -> anyhow::Result<u64> {
         if profile_operators {
@@ -1487,8 +1575,8 @@ where
             let logits = logits?;
             std::hint::black_box(backend.data(&logits));
             if track_allocations {
-                token_alloc_events.push(events);
-                token_alloc_bytes.push(bytes);
+                allocation_samples.token_alloc_events.push(events);
+                allocation_samples.token_alloc_bytes.push(bytes);
             }
             final_logits = Some(logits);
         }
@@ -1512,8 +1600,8 @@ where
             global_bytes_after.saturating_sub(global_bytes_before),
         );
         if track_allocations {
-            global_alloc_events.push(delta_events);
-            global_alloc_bytes.push(delta_bytes);
+            allocation_samples.global_alloc_events.push(delta_events);
+            allocation_samples.global_alloc_bytes.push(delta_bytes);
         }
         Ok(elapsed_ns)
     };
@@ -1521,7 +1609,9 @@ where
     for _ in 0..command.warmups {
         run_once(false, false)?;
     }
-    let mut profile_session = command.profile_operators.then(DecodeProfileSession::start);
+    let mut profile_session = command
+        .profile_operators
+        .then(|| DecodeProfileSession::start(architecture));
     let mut samples_ns = Vec::with_capacity(command.repetitions);
     for _ in 0..command.repetitions {
         samples_ns.push(run_once(command.profile_operators, command.allocations)?);
@@ -1532,44 +1622,10 @@ where
             "operator profiling produced no events; this model does not use the instrumented packed Q8 decode path or the planned interpreter"
         );
     }
-    let allocation_report = if command.allocations {
-        let token_count = command.tokens.max(1);
-        let median = |values: &[usize]| -> Option<usize> {
-            let mut sorted = values.to_vec();
-            sorted.sort_unstable();
-            sorted.get(sorted.len() / 2).copied()
-        };
-        let sum = |values: &[usize]| -> usize { values.iter().sum() };
-        let events_total = sum(&token_alloc_events);
-        let bytes_total = sum(&token_alloc_bytes);
-        let global_events_total = sum(&global_alloc_events);
-        let global_bytes_total = sum(&global_alloc_bytes);
-        Some(serde_json::json!({
-            "schema_version": 1,
-            "method": "counting allocator; caller-thread per-token counts via count_allocations_with_bytes, process-global deltas across the timed loop",
-            "tokens": command.tokens,
-            "caller_thread_alloc_events_total": events_total,
-            "caller_thread_alloc_events_per_token": events_total as f64 / token_count as f64,
-            "caller_thread_alloc_bytes_total": bytes_total,
-            "caller_thread_alloc_bytes_per_token": bytes_total as f64 / token_count as f64,
-            "caller_thread_alloc_events_median": median(&token_alloc_events),
-            "caller_thread_alloc_bytes_median": median(&token_alloc_bytes),
-            "caller_thread_alloc_events_min": token_alloc_events.iter().copied().min(),
-            "caller_thread_alloc_events_max": token_alloc_events.iter().copied().max(),
-            "caller_thread_alloc_bytes_min": token_alloc_bytes.iter().copied().min(),
-            "caller_thread_alloc_bytes_max": token_alloc_bytes.iter().copied().max(),
-            "per_token_alloc_events": token_alloc_events,
-            "per_token_alloc_bytes": token_alloc_bytes,
-            "global_alloc_events_total": global_events_total,
-            "global_alloc_events_per_token": global_events_total as f64 / token_count as f64,
-            "global_alloc_bytes_total": global_bytes_total,
-            "global_alloc_bytes_per_token": global_bytes_total as f64 / token_count as f64,
-            "global_alloc_events_median": median(&global_alloc_events),
-            "global_alloc_bytes_median": median(&global_alloc_bytes),
-        }))
-    } else {
-        None
-    };
+    let allocation_report = command
+        .allocations
+        .then(|| allocation_samples.into_report(command.tokens, command.repetitions))
+        .transpose()?;
     let mut sorted = samples_ns.clone();
     sorted.sort_unstable();
     let median_ns = sorted[sorted.len() / 2];
@@ -1584,7 +1640,7 @@ where
         "benchmark": "decode",
         "model": command.model,
         "model_file_size_bytes": fs::metadata(&command.model).ok().map(|metadata| metadata.len()),
-        "architecture": command.arch,
+        "architecture": architecture,
         "git_commit": git_commit(),
         "k_strategy": k_strategy.name(),
         "k_tensor_count": execution_inventory.summary.tensor_count,
@@ -1607,4 +1663,42 @@ where
     });
     println!("{}", serde_json::to_string_pretty(&output)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod benchmark_report_tests {
+    use super::DecodeAllocationSamples;
+
+    #[test]
+    fn per_token_allocations_are_invariant_to_repetition_count() {
+        for repetitions in [1, 3, 5] {
+            let report = DecodeAllocationSamples {
+                token_alloc_events: vec![2; 4 * repetitions],
+                token_alloc_bytes: vec![32; 4 * repetitions],
+                global_alloc_events: vec![12; repetitions],
+                global_alloc_bytes: vec![192; repetitions],
+            }
+            .into_report(4, repetitions)
+            .unwrap();
+            assert_eq!(report["caller_thread_alloc_events_per_token"], 2.0);
+            assert_eq!(report["caller_thread_alloc_bytes_per_token"], 32.0);
+            assert_eq!(report["global_alloc_events_per_token"], 3.0);
+            assert_eq!(report["global_alloc_bytes_per_token"], 48.0);
+            assert_eq!(report["measured_tokens"], 4 * repetitions);
+            assert_eq!(report["caller_thread_alloc_events_total"], 8 * repetitions);
+        }
+    }
+
+    #[test]
+    fn allocation_report_rejects_incomplete_or_overflowed_samples() {
+        assert!(DecodeAllocationSamples::default()
+            .into_report(4, 3)
+            .is_err());
+        assert!(DecodeAllocationSamples::default()
+            .into_report(0, 1)
+            .is_err());
+        assert!(DecodeAllocationSamples::default()
+            .into_report(usize::MAX, 2)
+            .is_err());
+    }
 }
