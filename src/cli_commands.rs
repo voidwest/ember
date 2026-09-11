@@ -984,7 +984,14 @@ fn validate_logits_tensor<B: Backend>(
     let expected_len = expected_rows
         .checked_mul(expected_vocab_size)
         .context("logits shape product overflow")?;
-    let values = backend.data(logits);
+    validate_logits_values(backend.data(logits), expected_len, require_finite)
+}
+
+fn validate_logits_values(
+    values: &[f32],
+    expected_len: usize,
+    require_finite: bool,
+) -> anyhow::Result<()> {
     if values.len() != expected_len {
         anyhow::bail!(
             "logits payload has {} values, expected {expected_len}",
@@ -1454,6 +1461,10 @@ where
     let mut token_alloc_bytes: Vec<usize> = Vec::new();
     let mut global_alloc_events: Vec<usize> = Vec::new();
     let mut global_alloc_bytes: Vec<usize> = Vec::new();
+    // One persistent logits buffer for the whole timed loop: the decoders that
+    // support it write the caller's buffer directly, so steady-state decode
+    // performs no logits allocation.
+    let mut logits_buf = vec![0.0f32; model_vocab_size];
 
     let mut run_once = |profile_operators: bool, track_allocations: bool| -> anyhow::Result<u64> {
         if profile_operators {
@@ -1469,41 +1480,32 @@ where
         let global_events_before = ember::alloc_counter::total_allocations();
         let global_bytes_before = ember::alloc_counter::total_allocated_bytes();
         let start = Instant::now();
-        let mut final_logits = None;
         for position in 0..command.tokens {
             let mut forward = |position: usize| {
-                model.forward_last_logits_with_cache(
+                model.forward_last_logits_with_cache_into(
                     backend,
                     &[command.token_id],
                     &mut cache,
                     position + 1,
+                    &mut logits_buf,
                 )
             };
-            let (logits, events, bytes) = if track_allocations {
+            let (result, events, bytes) = if track_allocations {
                 ember::alloc_counter::count_allocations_with_bytes(|| forward(position))
             } else {
                 (forward(position), 0, 0)
             };
-            let logits = logits?;
-            std::hint::black_box(backend.data(&logits));
+            result?;
+            std::hint::black_box(logits_buf.as_slice());
             if track_allocations {
                 token_alloc_events.push(events);
                 token_alloc_bytes.push(bytes);
             }
-            final_logits = Some(logits);
         }
         let elapsed_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
         let global_events_after = ember::alloc_counter::total_allocations();
         let global_bytes_after = ember::alloc_counter::total_allocated_bytes();
-        validate_logits_tensor(
-            backend,
-            final_logits
-                .as_ref()
-                .expect("positive token count guarantees final logits"),
-            1,
-            model_vocab_size,
-            true,
-        )?;
+        validate_logits_values(&logits_buf, model_vocab_size, true)?;
         if elapsed_ns == 0 {
             anyhow::bail!("decode benchmark timer resolution produced a zero-duration sample");
         }

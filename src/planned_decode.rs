@@ -977,11 +977,62 @@ fn fused_residual_rmsnorm_into(a: &[f32], b: &[f32], weight: &[f32], eps: f32, o
 }
 
 /// Plan-driven single-token decode: walks the resolved ops against the
-/// scratch arena. Zero heap allocation in the steady state. When `hooks` is
-/// `Some`, the six semantic hook sites fire against the arena regions at the
-/// same call sites as the reference path (contract section 12); the plan is
-/// built with the matching hook mode and active stages.
+/// scratch arena. When `hooks` is `Some`, the six semantic hook sites fire
+/// against the arena regions at the same call sites as the reference path
+/// (contract section 12); the plan is built with the matching hook mode and
+/// active stages.
 pub(crate) fn forward_last_logits_planned(
+    model: &Llama<CpuBackend>,
+    token_ids: &[u32],
+    cache: &mut crate::kv_cache::KVCache,
+    start_pos: usize,
+    hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
+    hook_mode: HookMode,
+    active_stages: &[&str],
+) -> Result<CpuTensor, CpuError> {
+    forward_last_logits_planned_impl(
+        model,
+        token_ids,
+        cache,
+        start_pos,
+        hooks,
+        hook_mode,
+        active_stages,
+        None,
+    )?
+    .ok_or_else(|| CpuError::Kernel("planned decode produced no logits tensor".into()))
+}
+
+/// As [`forward_last_logits_planned`], but writes the `[vocab]` logits into
+/// `logits_out` instead of materializing a `CpuTensor`. The final LM-head
+/// matvec writes the caller's buffer directly, so the steady-state decode
+/// loop performs no logits allocation or copy.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn forward_last_logits_planned_into(
+    model: &Llama<CpuBackend>,
+    token_ids: &[u32],
+    cache: &mut crate::kv_cache::KVCache,
+    start_pos: usize,
+    hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
+    hook_mode: HookMode,
+    active_stages: &[&str],
+    logits_out: &mut [f32],
+) -> Result<(), CpuError> {
+    forward_last_logits_planned_impl(
+        model,
+        token_ids,
+        cache,
+        start_pos,
+        hooks,
+        hook_mode,
+        active_stages,
+        Some(logits_out),
+    )?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn forward_last_logits_planned_impl(
     model: &Llama<CpuBackend>,
     token_ids: &[u32],
     cache: &mut crate::kv_cache::KVCache,
@@ -989,7 +1040,8 @@ pub(crate) fn forward_last_logits_planned(
     mut hooks: Option<(&mut ActiveHooks<'_, '_>, &ExecutionContext<'_>)>,
     hook_mode: HookMode,
     active_stages: &[&str],
-) -> Result<CpuTensor, CpuError> {
+    mut logits_out: Option<&mut [f32]>,
+) -> Result<Option<CpuTensor>, CpuError> {
     if token_ids.len() != 1 {
         return Err(CpuError::ShapeMismatch(
             "planned decode requires exactly one token".into(),
@@ -1449,6 +1501,7 @@ pub(crate) fn forward_last_logits_planned(
 
     // final ops: output norm + LM head
     let mut logits: Option<CpuTensor> = None;
+    let mut wrote_logits_out = false;
     for op in &ops.final_ops {
         match op {
             ResolvedOp::RmsNorm {
@@ -1479,6 +1532,37 @@ pub(crate) fn forward_last_logits_planned(
                     ));
                 }
                 ensure_planned_kernel(*kernel, &model.head, "lm_head")?;
+                if let Some(out_buf) = logits_out.as_deref_mut() {
+                    if out_buf.len() != model.config.vocab_size {
+                        return Err(CpuError::ShapeMismatch(format!(
+                            "logits buffer has {} values, expected {}",
+                            out_buf.len(),
+                            model.config.vocab_size
+                        )));
+                    }
+                    let src = arena.region_f32(*input).map_err(arena_err)?;
+                    {
+                        let _timer =
+                            OpTimer::new(usize::MAX, "lm_head", src.len(), out_buf.len(), || {
+                                planned_scheduler(&model.head, parallel_matvec)
+                            });
+                        out_buf.fill(0.0);
+                        planned_linear_into(&model.head, src, out_buf, parallel_matvec, false)?;
+                    }
+                    // Hooks observe an owned tensor; the caller-buffer route is
+                    // only taken by hook-free decode loops, but keep the hook
+                    // contract intact if one is active.
+                    if let Some((hooks, _)) = hooks.as_mut() {
+                        let mut logits_tensor = CpuTensor::from_data(
+                            vec![1, model.config.vocab_size],
+                            out_buf.to_vec(),
+                        );
+                        hooks.after_logits(&mut logits_tensor)?;
+                        out_buf.copy_from_slice(logits_tensor.data());
+                    }
+                    wrote_logits_out = true;
+                    continue;
+                }
                 let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                 {
                     let _timer = OpTimer::new(usize::MAX, "lm_head", src.len(), dst.len(), || {
@@ -1510,5 +1594,10 @@ pub(crate) fn forward_last_logits_planned(
             }
         }
     }
-    logits.ok_or_else(|| CpuError::ShapeMismatch("planned final ops produced no logits".into()))
+    if wrote_logits_out {
+        return Ok(None);
+    }
+    logits
+        .map(Some)
+        .ok_or_else(|| CpuError::ShapeMismatch("planned final ops produced no logits".into()))
 }

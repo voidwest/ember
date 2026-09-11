@@ -6,7 +6,9 @@ use crate::experiments::{
 };
 use crate::model::{pool_layer_activation, ForwardModel, Linear};
 use crate::plan::{ExecutionMode, ExecutionPlan, HookMode};
-use crate::planned_decode::{forward_last_logits_planned, PlannedDecodeState};
+use crate::planned_decode::{
+    forward_last_logits_planned, forward_last_logits_planned_into, PlannedDecodeState,
+};
 use crate::tensor::CpuTensor;
 use crate::workspace::Workspace;
 use alloc::vec::Vec;
@@ -1400,6 +1402,16 @@ impl ForwardModel<CpuBackend> for Llama<CpuBackend> {
     ) -> Result<CpuTensor, CpuError> {
         self.forward_last_logits_with_cache_cpu(backend, token_ids, cache, start_pos)
     }
+    fn forward_last_logits_with_cache_into(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        out: &mut [f32],
+    ) -> Result<(), CpuError> {
+        self.forward_last_logits_with_cache_cpu_into(backend, token_ids, cache, start_pos, out)
+    }
     fn forward_embeddings_with_cache(
         &self,
         backend: &CpuBackend,
@@ -1517,10 +1529,13 @@ impl ExperimentalForwardModel for Llama<CpuBackend> {
         // Q8_0's native hooked fast path retains precedence over v0.4 plans.
         // It records `Fast` only if the concrete route succeeds.
         if fast_eligible
-            && let Some(result) =
-                self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+            && let Some(result) = self
+                .forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks, None)
         {
-            return result;
+            // Experiment execution always materializes logits for the hooks.
+            return result.map(|logits| {
+                logits.expect("fast decode without a caller buffer materializes logits")
+            });
         }
 
         // K-quant models are fast-path ineligible and reach the v0.4 plan.
@@ -1629,7 +1644,36 @@ impl Llama<CpuBackend> {
         start_pos: usize,
     ) -> Option<Result<CpuTensor, CpuError>> {
         let mut hooks = DisabledHooks;
-        self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks)
+        self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks, None)
+            .map(|result| {
+                result.map(|logits| {
+                    logits.expect("fast decode without a caller buffer materializes logits")
+                })
+            })
+    }
+
+    /// Fast-path decode writing the `[vocab]` logits into `out`.
+    ///
+    /// `None` means the fast path is ineligible and the caller must fall back
+    /// to another route; `Some(Ok(()))` means `out` holds the logits.
+    fn forward_decode_fast_into(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        out: &mut [f32],
+    ) -> Option<Result<(), CpuError>> {
+        let mut hooks = DisabledHooks;
+        self.forward_decode_fast_hooked(backend, token_ids, cache, start_pos, &mut hooks, Some(out))
+            .map(|result| {
+                result.and_then(|logits| match logits {
+                    None => Ok(()),
+                    Some(_) => Err(CpuError::Kernel(
+                        "fast decode materialized logits despite a caller buffer".into(),
+                    )),
+                })
+            })
     }
 
     /// Single-token greedy decode via the fast workspace path with the
@@ -1674,15 +1718,18 @@ impl Llama<CpuBackend> {
                     self.config.head_dim,
                 ));
             }
-            let result = self.forward_decode_with_workspace(
-                backend,
-                token_ids[0],
-                cache,
-                start_pos,
-                workspace.as_mut().expect("decode workspace initialized"),
-                &mut hooks,
-                Some(&norms),
-            )?;
+            let result = self
+                .forward_decode_with_workspace(
+                    backend,
+                    token_ids[0],
+                    cache,
+                    start_pos,
+                    workspace.as_mut().expect("decode workspace initialized"),
+                    &mut hooks,
+                    Some(&norms),
+                    None,
+                )?
+                .expect("greedy fast path materializes a token/logit pair");
             let data = result.data();
             if data.len() != 2
                 || !data[0].is_finite()
@@ -1712,7 +1759,8 @@ impl Llama<CpuBackend> {
         cache: &mut crate::kv_cache::KVCache,
         start_pos: usize,
         hooks: &mut H,
-    ) -> Option<Result<CpuTensor, CpuError>>
+        logits_out: Option<&mut [f32]>,
+    ) -> Option<Result<Option<CpuTensor>, CpuError>>
     where
         H: for<'a> LayerHooks<SliceActivation<'a>, CpuError>,
     {
@@ -1753,6 +1801,7 @@ impl Llama<CpuBackend> {
                 workspace.as_mut().expect("decode workspace initialized"),
                 hooks,
                 None,
+                logits_out,
             )
         }))
     }
@@ -1767,7 +1816,8 @@ impl Llama<CpuBackend> {
         workspace: &mut Workspace,
         hooks: &mut H,
         greedy_norms: Option<&crate::quant::Q8TopkNorms>,
-    ) -> Result<CpuTensor, CpuError>
+        logits_out: Option<&mut [f32]>,
+    ) -> Result<Option<CpuTensor>, CpuError>
     where
         H: for<'a> LayerHooks<SliceActivation<'a>, CpuError>,
     {
@@ -2079,13 +2129,33 @@ impl Llama<CpuBackend> {
             crate::quant::quantize_q8_0_into(norm, &mut encoded);
             let (token, logit) =
                 crate::simd::matmul_q8_0_decode_argmax(&encoded, head_weight, norms, 1.001);
-            return Ok(CpuTensor::from_data(vec![1, 2], vec![token as f32, logit]));
+            return Ok(Some(CpuTensor::from_data(
+                vec![1, 2],
+                vec![token as f32, logit],
+            )));
         }
-        let mut logits = vec![0.0; head_weight.out_features()];
+        let mut owned_logits = Vec::new();
+        let wrote_caller_logits = logits_out.is_some();
+        let logits: &mut [f32] = match logits_out {
+            Some(out) => {
+                if out.len() != head_weight.out_features() {
+                    return Err(CpuError::ShapeMismatch(format!(
+                        "logits buffer has {} values, expected {}",
+                        out.len(),
+                        head_weight.out_features()
+                    )));
+                }
+                out.fill(0.0);
+                out
+            }
+            None => {
+                owned_logits = vec![0.0; head_weight.out_features()];
+                &mut owned_logits
+            }
+        };
         if let Some(interleaved) = self.head.interleaved.as_ref() {
             if profile_operators {
-                let elapsed =
-                    backend.matmul_q8_0_interleaved_into_timed(norm, interleaved, &mut logits);
+                let elapsed = backend.matmul_q8_0_interleaved_into_timed(norm, interleaved, logits);
                 crate::decode_profile::record(
                     usize::MAX,
                     "lm_head",
@@ -2099,22 +2169,25 @@ impl Llama<CpuBackend> {
                     elapsed,
                 );
             } else {
-                backend.matmul_q8_0_interleaved_into(norm, interleaved, &mut logits);
+                backend.matmul_q8_0_interleaved_into(norm, interleaved, logits);
             }
         } else if profile_operators {
-            let elapsed = backend.matmul_q8_0_into_timed(norm, head_weight, &mut logits);
+            let elapsed = backend.matmul_q8_0_into_timed(norm, head_weight, logits);
             record_profiled_q8(usize::MAX, "lm_head", head_weight, elapsed);
         } else {
-            backend.matmul_q8_0_into(norm, 1, head_weight, &mut logits);
+            backend.matmul_q8_0_into(norm, 1, head_weight, logits);
         }
         {
-            let mut output = SliceActivation::new(1, head_weight.out_features(), &mut logits);
+            let mut output = SliceActivation::new(1, head_weight.out_features(), logits);
             hooks.after_logits(&mut output)?;
         }
-        Ok(CpuTensor::from_data(
+        if wrote_caller_logits {
+            return Ok(None);
+        }
+        Ok(Some(CpuTensor::from_data(
             vec![1, head_weight.out_features()],
-            logits,
-        ))
+            owned_logits,
+        )))
     }
 
     /// build a llama model from a gguf loader.
@@ -3372,6 +3445,57 @@ impl Llama<CpuBackend> {
             );
         }
         Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)
+    }
+
+    /// Single-token logits written into `out` (the `[1, vocab]` payload).
+    ///
+    /// Mirrors [`Self::forward_last_logits_with_cache_cpu`]'s route order
+    /// (fast path, planned interpreter, reference) but avoids materializing a
+    /// `CpuTensor` for the two allocation-free routes. `out` must be exactly
+    /// `vocab_size` long.
+    pub(crate) fn forward_last_logits_with_cache_cpu_into(
+        &self,
+        backend: &CpuBackend,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        out: &mut [f32],
+    ) -> Result<(), CpuError> {
+        if out.len() != self.config.vocab_size {
+            return Err(CpuError::ShapeMismatch(format!(
+                "logits buffer has {} values, expected {}",
+                out.len(),
+                self.config.vocab_size
+            )));
+        }
+        if let Some(result) =
+            self.forward_decode_fast_into(backend, token_ids, cache, start_pos, out)
+        {
+            return result;
+        }
+        if self.planned_decode_eligible(token_ids) {
+            return forward_last_logits_planned_into(
+                self,
+                token_ids,
+                cache,
+                start_pos,
+                None,
+                HookMode::Disabled,
+                &[],
+                out,
+            );
+        }
+        let logits =
+            Llama::forward_last_logits_with_cache(self, backend, token_ids, cache, start_pos)?;
+        if logits.data().len() != out.len() {
+            return Err(CpuError::ShapeMismatch(format!(
+                "logits payload has {} values, expected {}",
+                logits.data().len(),
+                out.len()
+            )));
+        }
+        out.copy_from_slice(logits.data());
+        Ok(())
     }
 }
 

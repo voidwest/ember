@@ -85,14 +85,17 @@ fn validate_last_logits<B: Backend>(
     if shape != [1, expected_vocab_size] {
         anyhow::bail!("expected last logits shape [1, {expected_vocab_size}], got {shape:?}");
     }
-    let data = backend.data(logits);
-    if data.len() != expected_vocab_size {
+    validate_last_logits_values(backend.data(logits), expected_vocab_size)
+}
+
+fn validate_last_logits_values(logits: &[f32], expected_vocab_size: usize) -> anyhow::Result<()> {
+    if logits.len() != expected_vocab_size {
         anyhow::bail!(
             "last-logits payload has {} values, expected {expected_vocab_size}",
-            data.len()
+            logits.len()
         );
     }
-    if let Some((index, value)) = data
+    if let Some((index, value)) = logits
         .iter()
         .enumerate()
         .find(|(_, value)| !value.is_finite())
@@ -528,6 +531,29 @@ where
         phase: ExecutionPhase,
     ) -> Result<B::Tensor, B::Error>;
 
+    /// Write the decode logits into `out` (row major, length = vocab size).
+    ///
+    /// Default: materialize through [`Self::forward_last_logits`] and copy —
+    /// experiment execution needs the owned tensor for hooks. The standard
+    /// (hook-free) execution overrides this with the model's allocation-free
+    /// route.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_last_logits_into(
+        &mut self,
+        backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        phase: ExecutionPhase,
+        out: &mut [f32],
+    ) -> Result<(), B::Error> {
+        let logits =
+            self.forward_last_logits(backend, model, token_ids, cache, start_pos, phase)?;
+        out.copy_from_slice(backend.data(&logits));
+        Ok(())
+    }
+
     fn generation_complete(
         &mut self,
         prompt_token_count: usize,
@@ -591,6 +617,21 @@ where
         _phase: ExecutionPhase,
     ) -> Result<B::Tensor, B::Error> {
         model.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)
+    }
+
+    #[inline(always)]
+    #[allow(clippy::too_many_arguments)]
+    fn forward_last_logits_into(
+        &mut self,
+        backend: &B,
+        model: &M,
+        token_ids: &[u32],
+        cache: &mut ember::kv_cache::KVCache,
+        start_pos: usize,
+        _phase: ExecutionPhase,
+        out: &mut [f32],
+    ) -> Result<(), B::Error> {
+        model.forward_last_logits_with_cache_into(backend, token_ids, cache, start_pos, out)
     }
 
     #[inline(always)]
@@ -877,7 +918,7 @@ where
             anyhow::bail!("cannot start prefill trace because a trace is already active");
         }
     }
-    let mut logits = execution.forward_last_logits(
+    let logits = execution.forward_last_logits(
         backend,
         model,
         &all_tokens,
@@ -894,6 +935,10 @@ where
         }
     }
     let vocab_size = model_vocab_size;
+    // One persistent logits buffer for the decode loop: the standard execution
+    // writes it directly, so steady-state decoding allocates no logits.
+    // Seeded with the prefill logits (the first generated token scores those).
+    let mut decode_logits = backend.data(&logits).to_vec();
 
     // -- 2. decode loop: one new token at a time --------------------------
     let decode_start = if benchmark {
@@ -934,8 +979,7 @@ where
                 next_token
             );
         } else {
-            let logit_data = backend.data(&logits);
-            let last_logits = &logit_data[..vocab_size];
+            let last_logits = &decode_logits[..vocab_size];
 
             next_token = if temperature == 0.0 {
                 argmax_token(last_logits)
@@ -965,15 +1009,16 @@ where
             if trace_ops && !trace::enable_tracing("decode", step) {
                 anyhow::bail!("cannot start decode trace because a trace is already active");
             }
-            logits = execution.forward_last_logits(
+            execution.forward_last_logits_into(
                 backend,
                 model,
                 &[next_token],
                 &mut cache,
                 prompt_len + step, // absolute position offset
                 ExecutionPhase::Decode,
+                &mut decode_logits,
             )?;
-            validate_last_logits(backend, &logits, model_vocab_size)?;
+            validate_last_logits_values(&decode_logits, model_vocab_size)?;
             decode_evaluations += 1;
             if trace_ops && let Some(report) = trace::disable_tracing() {
                 decode_traces.push(report);

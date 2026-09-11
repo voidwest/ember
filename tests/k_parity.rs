@@ -735,3 +735,65 @@ fn v04_planned_zero_steady_state_allocation_real_model() {
         "planned decode allocated {allocations} times per token on the real model; expected at most 5 (3 logits + up to 2 rayon jobs under pool contention)"
     );
 }
+
+/// The into-buffer decode route must produce bit-identical logits while
+/// avoiding the per-token logits allocation entirely (only rayon job
+/// structures may allocate, under pool contention).
+#[test]
+fn v04_planned_into_route_is_bit_identical_and_allocation_free() {
+    let Some((model_path, tokenizer_path, _, _)) = parity_env() else {
+        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
+        return;
+    };
+    let (model, tokenizer, _) = load_llama(
+        &model_path,
+        &tokenizer_path,
+        configured_compressed_strategy(),
+    );
+    use ember::plan::ExecutionMode;
+    let backend = CpuBackend;
+    let ids = tokenizer.encode(FROZEN_PROMPTS[0]).expect("encode");
+    model.set_execution_mode(ExecutionMode::Planned);
+    let mut cache_ref = model.create_cache(&backend, 2048);
+    let mut cache_into = model.create_cache(&backend, 2048);
+    let prefill =
+        ForwardModel::forward_last_logits_with_cache(&model, &backend, &ids, &mut cache_ref, 0)
+            .expect("prefill");
+    ForwardModel::forward_last_logits_with_cache(&model, &backend, &ids, &mut cache_into, 0)
+        .expect("prefill");
+    let vocab = prefill.data().len();
+
+    // Warm the plan session through the allocating route, then compare the
+    // two routes on identical sequences (independent caches, same prefix).
+    let token = ids[0];
+    let reference = ForwardModel::forward_last_logits_with_cache(
+        &model,
+        &backend,
+        &[token],
+        &mut cache_ref,
+        ids.len(),
+    )
+    .expect("reference decode");
+    let mut buffer = vec![0.0f32; vocab];
+    let (result, allocations) = ember::alloc_counter::count_allocations(|| {
+        ForwardModel::forward_last_logits_with_cache_into(
+            &model,
+            &backend,
+            &[token],
+            &mut cache_into,
+            ids.len(),
+            &mut buffer,
+        )
+    });
+    result.expect("into-buffer decode");
+    assert_eq!(
+        reference.data(),
+        &buffer[..],
+        "into-buffer logits must be bit-identical to the materialized route"
+    );
+    eprintln!("gate-e into-route allocation count: {allocations}");
+    assert!(
+        allocations <= 2,
+        "into-buffer decode allocated {allocations} times; rayon job structures (<=2) are the only documented allocation"
+    );
+}

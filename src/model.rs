@@ -31,6 +31,25 @@ pub trait ForwardModel<B: Backend> {
         start_pos: usize,
     ) -> Result<B::Tensor, B::Error>;
 
+    /// Decode one token and write the `[1, vocab]` logits into `out` (row
+    /// major, `out.len()` must equal the vocabulary size).
+    ///
+    /// Default: materialize the tensor and copy. Models with an
+    /// allocation-free decode route override this (Llama's fast and planned
+    /// paths write the caller's buffer directly).
+    fn forward_last_logits_with_cache_into(
+        &self,
+        backend: &B,
+        token_ids: &[u32],
+        cache: &mut crate::kv_cache::KVCache,
+        start_pos: usize,
+        out: &mut [f32],
+    ) -> Result<(), B::Error> {
+        let logits = self.forward_last_logits_with_cache(backend, token_ids, cache, start_pos)?;
+        out.copy_from_slice(backend.data(&logits));
+        Ok(())
+    }
+
     /// Run the transformer body directly on precomputed input embeddings.
     ///
     /// `embeddings` is a `[seq_len, embed_dim]` tensor of *fully formed*
