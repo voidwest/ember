@@ -26,6 +26,7 @@ use ember::experiments::ExperimentalForwardModel;
 use ember::loader::{load_gguf_with_k_strategy, GgufLoader};
 use ember::model::ForwardModel;
 use ember::quant_k::{KExecution, KQuantDtype, KStrategy};
+use ember::tensor::CpuTensor;
 use ember::tokenizer::EmberTokenizer;
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -774,9 +775,9 @@ fn v04_planned_into_route_is_bit_identical_and_allocation_free() {
         ids.len(),
     )
     .expect("reference decode");
-    let mut buffer = vec![0.0f32; vocab];
+    let mut buffer = CpuTensor::zeroes(&[1, vocab]);
     let (result, allocations) = ember::alloc_counter::count_allocations(|| {
-        ForwardModel::forward_last_logits_with_cache_into(
+        ForwardModel::forward_last_logits_with_cache_reusing(
             &model,
             &backend,
             &[token],
@@ -785,11 +786,11 @@ fn v04_planned_into_route_is_bit_identical_and_allocation_free() {
             &mut buffer,
         )
     });
-    result.expect("into-buffer decode");
+    result.expect("reusing decode");
     assert_eq!(
         reference.data(),
-        &buffer[..],
-        "into-buffer logits must be bit-identical to the materialized route"
+        buffer.data(),
+        "reused-buffer logits must be bit-identical to the materialized route"
     );
     eprintln!("gate-e into-route allocation count: {allocations}");
     assert!(
