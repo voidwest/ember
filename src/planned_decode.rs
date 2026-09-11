@@ -215,17 +215,80 @@ struct ResolvedHookSites {
 }
 
 /// The mutable half of a planned decode session: the arena plus the
-/// resolved op table. Rebuilt only when the plan hash changes (arena size
+/// resolved op table. Rebuilt only when the session key changes (arena size
 /// or structure depends on the plan).
 pub(crate) struct PlannedDecodeState {
-    plan_hash: String,
+    session: PlannedSession,
     arena: DecodeArena,
     ops: ResolvedOps,
 }
 
+/// The plan inputs that select the decode session. Stored alongside the
+/// arena so a per-token decode validates reuse without re-entering the plan
+/// cache (mutex + map probe + key construction) on every token.
+struct PlannedSession {
+    mode: ExecutionMode,
+    hook_mode: HookMode,
+    active_stages: Vec<String>,
+    capacity: usize,
+    threads: usize,
+    model_sha256: Option<String>,
+    tokenizer_sha256: Option<String>,
+    /// Precomputed from `dispatch.thread_strategy`; the decode loop must not
+    /// compare strategy strings per token.
+    parallel_matvec: bool,
+}
+
+impl PlannedSession {
+    #[allow(clippy::too_many_arguments)]
+    fn matches(
+        &self,
+        mode: ExecutionMode,
+        hook_mode: HookMode,
+        active_stages: &[&str],
+        capacity: usize,
+        threads: usize,
+        model_sha256: Option<&str>,
+        tokenizer_sha256: Option<&str>,
+    ) -> bool {
+        if self.mode != mode
+            || self.hook_mode != hook_mode
+            || self.capacity != capacity
+            || self.threads != threads
+            || self.model_sha256.as_deref() != model_sha256
+            || self.tokenizer_sha256.as_deref() != tokenizer_sha256
+            || self.active_stages.len() != active_stages.len()
+        {
+            return false;
+        }
+        if self
+            .active_stages
+            .iter()
+            .zip(active_stages)
+            .all(|(stored, incoming)| stored.as_str() == *incoming)
+        {
+            return true;
+        }
+        // Same set, different order: the plan cache canonicalizes the site
+        // list, so the session must too. Allocation only on this rare path.
+        let mut canonical: Vec<&str> = active_stages.to_vec();
+        canonical.sort_unstable();
+        canonical.dedup();
+        self.active_stages.len() == canonical.len()
+            && self
+                .active_stages
+                .iter()
+                .zip(&canonical)
+                .all(|(stored, incoming)| stored.as_str() == *incoming)
+    }
+}
+
 /// Resolve a plan into region indices and role discriminants. Runs once per
 /// session; the decode loop then walks [`ResolvedOps`] with no lookups.
-fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuError> {
+fn build_planned_state(
+    plan: &ExecutionPlan,
+    session: PlannedSession,
+) -> Result<PlannedDecodeState, CpuError> {
     // ---- phase 1: plan integrity (structural validation + hash) ----
     plan.validate()
         .map_err(|error| CpuError::Kernel(format!("invalid execution plan: {error}")))?;
@@ -570,7 +633,7 @@ fn build_planned_state(plan: &ExecutionPlan) -> Result<PlannedDecodeState, CpuEr
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(PlannedDecodeState {
-        plan_hash: plan.plan_hash.clone(),
+        session,
         arena,
         ops: ResolvedOps {
             preamble,
@@ -838,12 +901,14 @@ struct OpTimer {
 }
 
 impl OpTimer {
+    /// `mode` is a closure so that profiling-only work (scheduler
+    /// resolution) is not evaluated when operator profiling is disabled.
     fn new(
         layer: usize,
         operator: &'static str,
         input_dimension: usize,
         output_dimension: usize,
-        mode: crate::decode_profile::DecodeExecutionMode,
+        mode: impl FnOnce() -> crate::decode_profile::DecodeExecutionMode,
     ) -> Option<Self> {
         crate::decode_profile::is_enabled().then(|| Self {
             layer,
@@ -851,7 +916,7 @@ impl OpTimer {
             input_dimension,
             output_dimension,
             start: std::time::Instant::now(),
-            _mode: mode,
+            _mode: mode(),
         })
     }
 }
@@ -947,26 +1012,53 @@ pub(crate) fn forward_last_logits_planned(
             execution_mode.name()
         )));
     }
-    let (model_sha256, tokenizer_sha256, canonical_capacity) = model.plan_provenance();
-    let plan = model
-        .execution_plan(
+    let provenance = model.plan_provenance();
+    let (model_sha256, tokenizer_sha256, canonical_capacity) = &*provenance;
+    let capacity = canonical_capacity.unwrap_or(runtime_cache_capacity);
+    let threads = rayon::current_num_threads();
+
+    let mut state = model.decode_state.borrow_mut();
+    let session_valid = state.as_ref().is_some_and(|s| {
+        s.session.matches(
             execution_mode,
             hook_mode,
             active_stages,
-            canonical_capacity.unwrap_or(runtime_cache_capacity),
+            capacity,
+            threads,
             model_sha256.as_deref(),
             tokenizer_sha256.as_deref(),
         )
-        .map_err(|error| {
-            CpuError::ShapeMismatch(format!("execution plan build failed: {error}"))
-        })?;
-    let parallel_matvec = plan.dispatch.thread_strategy == "column-parallel-rayon";
-
-    let mut state = model.decode_state.borrow_mut();
-    if state.as_ref().is_none_or(|s| s.plan_hash != plan.plan_hash) {
-        *state = Some(build_planned_state(&plan)?);
+    });
+    if !session_valid {
+        let plan = model
+            .execution_plan(
+                execution_mode,
+                hook_mode,
+                active_stages,
+                capacity,
+                model_sha256.as_deref(),
+                tokenizer_sha256.as_deref(),
+            )
+            .map_err(|error| {
+                CpuError::ShapeMismatch(format!("execution plan build failed: {error}"))
+            })?;
+        let session = PlannedSession {
+            mode: execution_mode,
+            hook_mode,
+            active_stages: active_stages
+                .iter()
+                .map(|stage| (*stage).to_string())
+                .collect(),
+            capacity,
+            threads,
+            model_sha256: model_sha256.clone(),
+            tokenizer_sha256: tokenizer_sha256.clone(),
+            parallel_matvec: plan.dispatch.thread_strategy == "column-parallel-rayon",
+        };
+        *state = Some(build_planned_state(&plan, session)?);
     }
     let state = state.as_mut().expect("decode state initialized");
+    let parallel_matvec = state.session.parallel_matvec;
     let PlannedDecodeState { arena, ops, .. } = state;
 
     // preamble: embedding lookup
@@ -982,13 +1074,9 @@ pub(crate) fn forward_last_logits_planned(
                     )));
                 }
                 let dst = arena.region_f32(*out).map_err(arena_err)?;
-                let _timer = OpTimer::new(
-                    0,
-                    "embedding",
-                    1,
-                    dst.len(),
-                    crate::decode_profile::DecodeExecutionMode::Serial,
-                );
+                let _timer = OpTimer::new(0, "embedding", 1, dst.len(), || {
+                    crate::decode_profile::DecodeExecutionMode::Serial
+                });
                 embed_row_into(&model.embed_tokens, token_ids[0], dst)?;
             }
             other => {
@@ -1020,13 +1108,9 @@ pub(crate) fn forward_last_logits_planned(
                         NormRole::MlpIn => "ffn_norm",
                         NormRole::Output => "output_norm",
                     };
-                    let _timer = OpTimer::new(
-                        layer,
-                        operator,
-                        x.len(),
-                        dst.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer = OpTimer::new(layer, operator, x.len(), dst.len(), || {
+                        crate::decode_profile::DecodeExecutionMode::Serial
+                    });
                     let weight = match role {
                         NormRole::AttnIn => block.input_layernorm.data(),
                         NormRole::MlpIn => block.post_attention_layernorm.data(),
@@ -1075,13 +1159,9 @@ pub(crate) fn forward_last_logits_planned(
                     // release builds if the resident weight no longer matches
                     // the kernel identity resolved when the plan was built.
                     ensure_planned_kernel(*kernel, linear, operator)?;
-                    let _timer = OpTimer::new(
-                        layer,
-                        operator,
-                        src.len(),
-                        dst.len(),
-                        planned_scheduler(linear, parallel_matvec),
-                    );
+                    let _timer = OpTimer::new(layer, operator, src.len(), dst.len(), || {
+                        planned_scheduler(linear, parallel_matvec)
+                    });
                     // The quantized kernels accumulate into dst (must be
                     // zero-initialized). The reference allocates a fresh
                     // zeroed Vec per projection; the arena reuses regions
@@ -1123,13 +1203,9 @@ pub(crate) fn forward_last_logits_planned(
                         let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
                         (data,)
                     };
-                    let _timer = OpTimer::new(
-                        layer,
-                        "rope",
-                        data.len(),
-                        data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer = OpTimer::new(layer, "rope", data.len(), data.len(), || {
+                        crate::decode_profile::DecodeExecutionMode::Serial
+                    });
                     let (n_heads, qk_norm) = match role {
                         RopeRole::Q => (model.config.n_heads, block.self_attn.q_norm.as_ref()),
                         RopeRole::K => (model.config.n_kv_heads, block.self_attn.k_norm.as_ref()),
@@ -1141,13 +1217,10 @@ pub(crate) fn forward_last_logits_planned(
                 ResolvedOp::KvStore { k, v } => {
                     let (k_data, v_data) =
                         two_regions(arena.regions_f32([*k, *v]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(
-                        layer,
-                        "kv_store",
-                        k_data.len(),
-                        v_data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer =
+                        OpTimer::new(layer, "kv_store", k_data.len(), v_data.len(), || {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        });
                     cache.append_with_layout(
                         layer,
                         start_pos,
@@ -1165,13 +1238,10 @@ pub(crate) fn forward_last_logits_planned(
                 } => {
                     let (q_data, out_data, scores_data) =
                         three_regions(arena.regions_f32([*q, *out, *scores]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(
-                        layer,
-                        "attention",
-                        q_data.len(),
-                        out_data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer =
+                        OpTimer::new(layer, "attention", q_data.len(), out_data.len(), || {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        });
                     // fusion F4: the Q rope (and optional qk-norm) runs
                     // inside the attention op; the K rope stays a separate
                     // op because the stored K must be roped before the store.
@@ -1222,7 +1292,7 @@ pub(crate) fn forward_last_logits_planned(
                             "fused_qkv_norm",
                             model.config.embed_dim,
                             model.config.embed_dim,
-                            crate::decode_profile::DecodeExecutionMode::Serial,
+                            || crate::decode_profile::DecodeExecutionMode::Serial,
                         );
                         let (x, n1) =
                             two_regions(arena.regions_f32([*input, *scaled]).map_err(arena_err)?);
@@ -1246,13 +1316,9 @@ pub(crate) fn forward_last_logits_planned(
                                 .map_err(arena_err)?,
                         );
                         out.fill(0.0);
-                        let _timer = OpTimer::new(
-                            layer,
-                            operation,
-                            n1.len(),
-                            out.len(),
-                            planned_scheduler(linear, parallel_matvec),
-                        );
+                        let _timer = OpTimer::new(layer, operation, n1.len(), out.len(), || {
+                            planned_scheduler(linear, parallel_matvec)
+                        });
                         planned_linear_into(linear, n1, out, parallel_matvec, false)?;
                         if let Some(bias) = linear.bias() {
                             add_bias_into(out, bias.data());
@@ -1278,7 +1344,7 @@ pub(crate) fn forward_last_logits_planned(
                         "fused_o_proj",
                         attn_data.len(),
                         out_data.len(),
-                        planned_scheduler(&block.self_attn.o_proj, parallel_matvec),
+                        || planned_scheduler(&block.self_attn.o_proj, parallel_matvec),
                     );
                     // fusion F5: out starts as the residual; the matvec
                     // kernel accumulates W·attn on top (one pass, no
@@ -1305,7 +1371,7 @@ pub(crate) fn forward_last_logits_planned(
                         "fused_residual_norm",
                         a_data.len(),
                         out_data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
+                        || crate::decode_profile::DecodeExecutionMode::Serial,
                     );
                     fused_residual_rmsnorm_into(
                         a_data,
@@ -1318,13 +1384,10 @@ pub(crate) fn forward_last_logits_planned(
                 ResolvedOp::ResidualAdd3 { a, b, c, out } => {
                     let (a_data, b_data, c_data, out_data) =
                         four_regions(arena.regions_f32([*a, *b, *c, *out]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(
-                        layer,
-                        "residual_add3",
-                        a_data.len(),
-                        out_data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer =
+                        OpTimer::new(layer, "residual_add3", a_data.len(), out_data.len(), || {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        });
                     for i in 0..out_data.len() {
                         out_data[i] = (a_data[i] + b_data[i]) + c_data[i];
                     }
@@ -1334,13 +1397,9 @@ pub(crate) fn forward_last_logits_planned(
                         let [data] = arena.regions_f32([*target]).map_err(arena_err)?;
                         (data,)
                     };
-                    let _timer = OpTimer::new(
-                        layer,
-                        "silu",
-                        data.len(),
-                        data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer = OpTimer::new(layer, "silu", data.len(), data.len(), || {
+                        crate::decode_profile::DecodeExecutionMode::Serial
+                    });
                     // in-place silu: x / (1 + exp(-x)), matching the
                     // reference `CpuTensor::silu` formula
                     for x in data.iter_mut() {
@@ -1350,25 +1409,19 @@ pub(crate) fn forward_last_logits_planned(
                 ResolvedOp::Elemul { a, b, out } => {
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(
-                        layer,
-                        "elemul",
-                        a_data.len(),
-                        out_data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer =
+                        OpTimer::new(layer, "elemul", a_data.len(), out_data.len(), || {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        });
                     crate::simd::elemul(a_data, b_data, out_data);
                 }
                 ResolvedOp::ResidualAdd { a, b, out } => {
                     let (a_data, b_data, out_data) =
                         three_regions(arena.regions_f32([*a, *b, *out]).map_err(arena_err)?);
-                    let _timer = OpTimer::new(
-                        layer,
-                        "residual_add",
-                        a_data.len(),
-                        out_data.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
-                    );
+                    let _timer =
+                        OpTimer::new(layer, "residual_add", a_data.len(), out_data.len(), || {
+                            crate::decode_profile::DecodeExecutionMode::Serial
+                        });
                     add_into(a_data, b_data, out_data);
                 }
                 ResolvedOp::Logits { .. } => {
@@ -1404,13 +1457,9 @@ pub(crate) fn forward_last_logits_planned(
                 out,
             } => {
                 let (x, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
-                let _timer = OpTimer::new(
-                    usize::MAX,
-                    "output_norm",
-                    x.len(),
-                    dst.len(),
-                    crate::decode_profile::DecodeExecutionMode::Serial,
-                );
+                let _timer = OpTimer::new(usize::MAX, "output_norm", x.len(), dst.len(), || {
+                    crate::decode_profile::DecodeExecutionMode::Serial
+                });
                 crate::simd::rms_norm_into(x, model.norm.data(), model.config.norm_eps, dst);
                 // before_logits fires on the final-norm output.
                 if let Some((hooks, _)) = hooks.as_mut() {
@@ -1432,13 +1481,9 @@ pub(crate) fn forward_last_logits_planned(
                 ensure_planned_kernel(*kernel, &model.head, "lm_head")?;
                 let (src, dst) = two_regions(arena.regions_f32([*input, *out]).map_err(arena_err)?);
                 {
-                    let _timer = OpTimer::new(
-                        usize::MAX,
-                        "lm_head",
-                        src.len(),
-                        dst.len(),
-                        planned_scheduler(&model.head, parallel_matvec),
-                    );
+                    let _timer = OpTimer::new(usize::MAX, "lm_head", src.len(), dst.len(), || {
+                        planned_scheduler(&model.head, parallel_matvec)
+                    });
                     dst.fill(0.0);
                     planned_linear_into(&model.head, src, dst, parallel_matvec, false)?;
                 }
@@ -1448,7 +1493,7 @@ pub(crate) fn forward_last_logits_planned(
                         "logits_materialize",
                         dst.len(),
                         dst.len(),
-                        crate::decode_profile::DecodeExecutionMode::Serial,
+                        || crate::decode_profile::DecodeExecutionMode::Serial,
                     );
                     CpuTensor::from_data(vec![1, model.config.vocab_size], dst.to_vec())
                 };

@@ -3324,8 +3324,12 @@ impl Llama<CpuBackend> {
             (Some(model), Some(tokenizer), Some(canonical_capacity));
     }
 
-    pub(crate) fn plan_provenance(&self) -> (Option<String>, Option<String>, Option<usize>) {
-        self.plan_provenance.borrow().clone()
+    /// Borrowed provenance: the planned decode validates a cached session
+    /// against it per token, so this must not clone the hash strings.
+    pub(crate) fn plan_provenance(
+        &self,
+    ) -> std::cell::Ref<'_, (Option<String>, Option<String>, Option<usize>)> {
+        self.plan_provenance.borrow()
     }
 
     /// The active v0.4 execution mode.
