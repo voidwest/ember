@@ -24,7 +24,7 @@ use ember::extraction::{
     CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME,
     SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
-use ember::loader::load_gguf_with_k_strategy;
+use ember::loader::{load_gguf_with_k_strategy, load_gguf_with_k_strategy_report};
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use ember::model_backend::compare_backend_artifacts;
@@ -1021,7 +1021,12 @@ pub(crate) fn run_bench_decode_command(
         anyhow::bail!("--repetitions must be greater than 0");
     }
 
-    let loader = load_gguf_with_k_strategy(&command.model, k_strategy, k_allow_fallback)?;
+    // Load-phase instrumentation: phase timings from the loader plus
+    // residency/fault snapshots at the phase boundaries.
+    let mut residency = ember::residency::ResidencyRecorder::new();
+    residency.capture("load_start")?;
+    let (loader, load_timings) =
+        load_gguf_with_k_strategy_report(&command.model, k_strategy, k_allow_fallback)?;
     let execution_inventory = ember::artifact::ExecutionInventory::from_loader(&loader);
     let architecture = resolve_generation_architecture(&command.arch, &loader)?;
     if command.profile_operators && !matches!(architecture.as_str(), "llama" | "qwen3") {
@@ -1032,23 +1037,87 @@ pub(crate) fn run_bench_decode_command(
     let backend = CpuBackend;
     match architecture.as_str() {
         "gpt2" => {
+            let build_start = Instant::now();
             let model = Gpt2::from_loader(loader)?;
-            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
+            let model_build_ns = elapsed_ns(build_start);
+            residency.capture("model_built")?;
+            let load_report =
+                bench_load_report(&load_timings, model_build_ns, None, None, &residency);
+            bench_decode_model(
+                &backend,
+                &model,
+                command,
+                k_strategy,
+                &execution_inventory,
+                &load_report,
+            )
         }
         "llama" | "qwen3" => {
+            let build_start = Instant::now();
             let model =
                 ember::llama::Llama::from_loader_with_max_seq_len(loader, command.max_seq_len)?;
+            let model_build_ns = elapsed_ns(build_start);
+            residency.capture("model_built")?;
             let execution = ember::plan::ExecutionMode::from_cli(&command.execution)
                 .map_err(anyhow::Error::msg)?;
             model.set_execution_mode(execution);
-            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
+            let load_report = bench_load_report(
+                &load_timings,
+                model_build_ns,
+                Some(model.packing_ns()),
+                Some(model.packing_interleaved_ns()),
+                &residency,
+            );
+            bench_decode_model(
+                &backend,
+                &model,
+                command,
+                k_strategy,
+                &execution_inventory,
+                &load_report,
+            )
         }
         "gemma4" => {
+            let build_start = Instant::now();
             let model = ember::gemma4::Gemma4::from_loader(loader)?;
-            bench_decode_model(&backend, &model, command, k_strategy, &execution_inventory)
+            let model_build_ns = elapsed_ns(build_start);
+            residency.capture("model_built")?;
+            let load_report =
+                bench_load_report(&load_timings, model_build_ns, None, None, &residency);
+            bench_decode_model(
+                &backend,
+                &model,
+                command,
+                k_strategy,
+                &execution_inventory,
+                &load_report,
+            )
         }
         architecture => anyhow::bail!("unsupported architecture: {architecture}"),
     }
+}
+
+fn elapsed_ns(start: Instant) -> u64 {
+    start.elapsed().as_nanos().min(u64::MAX as u128) as u64
+}
+
+/// Compose the bench-decode `load_report`: loader phase timings, model build
+/// time, packed-layout build times (llama-family only), and the residency
+/// snapshots captured at the phase boundaries.
+fn bench_load_report(
+    timings: &ember::loader::LoadTimings,
+    model_build_ns: u64,
+    packing_ns: Option<u64>,
+    packing_interleaved_ns: Option<u64>,
+    residency: &ember::residency::ResidencyRecorder,
+) -> serde_json::Value {
+    serde_json::json!({
+        "loader": timings,
+        "model_build_ns": model_build_ns,
+        "packing_ns": packing_ns,
+        "packing_interleaved_ns": packing_interleaved_ns,
+        "residency": residency.snapshots(),
+    })
 }
 
 pub(crate) fn run_inspect_plan_command(
@@ -1428,6 +1497,7 @@ pub(crate) fn bench_decode_model<B: Backend>(
     command: &BenchDecodeCommand,
     k_strategy: ember::quant_k::KStrategy,
     execution_inventory: &ember::artifact::ExecutionInventory,
+    load_report: &serde_json::Value,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -1466,13 +1536,21 @@ where
     // performs no logits allocation.
     let mut logits_buf = vec![0.0f32; model_vocab_size];
 
-    let mut run_once = |profile_operators: bool, track_allocations: bool| -> anyhow::Result<u64> {
+    // Returns (steady-state decode ns, prefill ns, first decode-token ns).
+    // The prefill and first-token figures are reported separately so
+    // time-to-first-token costs stay visible without entering the decode
+    // median.
+    let mut run_once = |profile_operators: bool,
+                        track_allocations: bool|
+     -> anyhow::Result<(u64, u64, u64)> {
         if profile_operators {
             ember::decode_profile::pause();
         }
         let mut cache = model.create_cache(backend, required_context);
+        let prefill_start = Instant::now();
         let prefill_logits =
             model.forward_last_logits_with_cache(backend, &[command.token_id], &mut cache, 0)?;
+        let prefill_ns = prefill_start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
         validate_logits_tensor(backend, &prefill_logits, 1, model_vocab_size, true)?;
         if profile_operators {
             ember::decode_profile::resume();
@@ -1480,7 +1558,9 @@ where
         let global_events_before = ember::alloc_counter::total_allocations();
         let global_bytes_before = ember::alloc_counter::total_allocated_bytes();
         let start = Instant::now();
+        let mut first_token_ns = 0u64;
         for position in 0..command.tokens {
+            let first_token_start = (position == 0).then(Instant::now);
             let mut forward = |position: usize| {
                 model.forward_last_logits_with_cache_into(
                     backend,
@@ -1496,6 +1576,9 @@ where
                 (forward(position), 0, 0)
             };
             result?;
+            if let Some(first_start) = first_token_start {
+                first_token_ns = first_start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+            }
             std::hint::black_box(logits_buf.as_slice());
             if track_allocations {
                 token_alloc_events.push(events);
@@ -1517,7 +1600,7 @@ where
             global_alloc_events.push(delta_events);
             global_alloc_bytes.push(delta_bytes);
         }
-        Ok(elapsed_ns)
+        Ok((elapsed_ns, prefill_ns, first_token_ns))
     };
 
     for _ in 0..command.warmups {
@@ -1525,9 +1608,21 @@ where
     }
     let mut profile_session = command.profile_operators.then(DecodeProfileSession::start);
     let mut samples_ns = Vec::with_capacity(command.repetitions);
+    let mut prefill_ns_samples = Vec::with_capacity(command.repetitions);
+    let mut first_token_ns_samples = Vec::with_capacity(command.repetitions);
     for _ in 0..command.repetitions {
-        samples_ns.push(run_once(command.profile_operators, command.allocations)?);
+        let (decode_ns, prefill_ns, first_token_ns) =
+            run_once(command.profile_operators, command.allocations)?;
+        samples_ns.push(decode_ns);
+        prefill_ns_samples.push(prefill_ns);
+        first_token_ns_samples.push(first_token_ns);
     }
+    let median_u64 = |values: &mut Vec<u64>| -> u64 {
+        values.sort_unstable();
+        values[values.len() / 2]
+    };
+    let prefill_ns = median_u64(&mut prefill_ns_samples);
+    let first_token_ns = median_u64(&mut first_token_ns_samples);
     let operator_profile = profile_session.as_mut().map(DecodeProfileSession::finish);
     if operator_profile.as_ref().is_some_and(Vec::is_empty) {
         anyhow::bail!(
@@ -1599,6 +1694,9 @@ where
         "token_id": command.token_id,
         "threads": rayon_current_num_threads(),
         "timing_excludes": ["model_load", "prefill", "tokenization", "sampling"],
+        "prefill_ns": prefill_ns,
+        "first_token_ns": first_token_ns,
+        "load_report": load_report,
         "median_ns": median_ns,
         "median_tokens_per_second": median_ts,
         "samples_ns": samples_ns,

@@ -35,11 +35,39 @@ impl LoaderError {
 
 type Result<T> = std::result::Result<T, LoaderError>;
 use anyhow::Context as _;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
+
+/// Phase timings captured while loading a GGUF. Diagnostic only: timings are
+/// never part of a plan, bundle, or cache identity.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LoadTimings {
+    /// Wall time to open the file and create the read-only mapping
+    /// (0 for reader-based loads).
+    pub mmap_ns: u64,
+    /// Header, metadata, and tensor-table parsing up to the first tensor read.
+    pub parse_ns: u64,
+    /// The per-tensor materialization loop (reads, range slicing, dtype setup).
+    pub tensor_materialize_ns: u64,
+    /// Subset of the materialization loop spent converting encodings to f32
+    /// (f16/bf16 reads and eager-f32 K dequantization).
+    pub eager_dequant_ns: u64,
+    /// Total wall time of the load call.
+    pub total_ns: u64,
+    /// Number of tensors materialized.
+    pub tensors: usize,
+    /// Number of tensors converted to f32 during load.
+    pub eager_tensors: usize,
+}
+
+fn ns_since(start: Instant) -> u64 {
+    start.elapsed().as_nanos().min(u64::MAX as u128) as u64
+}
 
 const GGUF_MAGIC: u32 = 0x46554747;
 const GGUF_VERSION: u32 = 3;
@@ -419,6 +447,17 @@ pub fn load_gguf_with_k_strategy<P: AsRef<Path>>(
     strategy: crate::quant_k::KStrategy,
     allow_fallback: bool,
 ) -> Result<GgufLoader> {
+    load_gguf_with_k_strategy_report(path, strategy, allow_fallback).map(|(loader, _)| loader)
+}
+
+/// As [`load_gguf_with_k_strategy`], returning phase timings for load
+/// instrumentation. The loader itself is unchanged.
+pub fn load_gguf_with_k_strategy_report<P: AsRef<Path>>(
+    path: P,
+    strategy: crate::quant_k::KStrategy,
+    allow_fallback: bool,
+) -> Result<(GgufLoader, LoadTimings)> {
+    let total_start = Instant::now();
     let f = File::open(&path).map_err(|error| {
         LoaderError::malformed(format!(
             "failed to open {}: {error}",
@@ -444,14 +483,19 @@ pub fn load_gguf_with_k_strategy<P: AsRef<Path>>(
     //
     // Pass the checked length explicitly rather than letting memmap2 infer it;
     // this keeps the parser's byte slice boundary tied to the preflight check.
+    let mmap_start = Instant::now();
     let mmap = Arc::new(unsafe { memmap2::MmapOptions::new().len(map_len).map(&f)? });
+    let mmap_ns = ns_since(mmap_start);
     let mut cursor = std::io::Cursor::new(&mmap[..]);
-    load_gguf_from_reader_impl(
+    let (loader, mut timings) = load_gguf_from_reader_impl(
         &mut cursor,
         Some(Arc::clone(&mmap)),
         strategy,
         allow_fallback,
-    )
+    )?;
+    timings.mmap_ns = mmap_ns;
+    timings.total_ns = ns_since(total_start);
+    Ok((loader, timings))
 }
 
 /// Stream-hash a GGUF file into a 64-bit content identity for feature-cache
@@ -546,6 +590,7 @@ pub(crate) fn gguf_content_identity(path: &Path) -> anyhow::Result<u64> {
 /// Uses the eager-f32 K strategy (reference behavior).
 pub fn load_gguf_from_reader<R: Read + Seek>(reader: &mut R) -> Result<GgufLoader> {
     load_gguf_from_reader_impl(reader, None, crate::quant_k::KStrategy::EagerF32, true)
+        .map(|(loader, _)| loader)
 }
 
 /// reader variant of [`load_gguf_with_k_strategy`]; see its docs.
@@ -554,7 +599,7 @@ pub fn load_gguf_from_reader_with_k_strategy<R: Read + Seek>(
     strategy: crate::quant_k::KStrategy,
     allow_fallback: bool,
 ) -> Result<GgufLoader> {
-    load_gguf_from_reader_impl(reader, None, strategy, allow_fallback)
+    load_gguf_from_reader_impl(reader, None, strategy, allow_fallback).map(|(loader, _)| loader)
 }
 
 fn load_gguf_from_reader_impl<R: Read + Seek>(
@@ -562,7 +607,8 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     mmap: Option<Arc<memmap2::Mmap>>,
     k_strategy: crate::quant_k::KStrategy,
     allow_fallback: bool,
-) -> Result<GgufLoader> {
+) -> Result<(GgufLoader, LoadTimings)> {
+    let load_start = Instant::now();
     let initial_position = reader.stream_position()?;
     let file_len = reader.seek(SeekFrom::End(0))?;
     reader.seek(SeekFrom::Start(initial_position))?;
@@ -789,6 +835,10 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         }
     }
 
+    let parse_ns = ns_since(load_start);
+    let materialize_start = Instant::now();
+    let mut eager_dequant_ns = 0u64;
+    let mut eager_tensors = 0usize;
     let mut tensors = HashMap::new();
     tensors.try_reserve(tensor_info.len()).map_err(|error| {
         LoaderError::reservation(format!("failed to reserve GGUF tensor table: {error}"))
@@ -812,6 +862,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             info.dtype,
             info.dims
         );
+        let tensor_start = Instant::now();
         let loaded = match info.dtype {
             0 => {
                 // f32: read directly, no dim reversal
@@ -1025,6 +1076,17 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 )));
             }
         };
+        // f16/bf16 tensors and eager-f32 K tensors are read and converted
+        // here; the conversion share is reported separately from the
+        // resident/mmap-backed tensors.
+        let eager = matches!(info.dtype, 1 | 30)
+            || k_decisions
+                .get(&info.name)
+                .is_some_and(|decision| decision.execution == crate::quant_k::KExecution::EagerF32);
+        if eager {
+            eager_dequant_ns = eager_dequant_ns.saturating_add(ns_since(tensor_start));
+            eager_tensors += 1;
+        }
         if tensors.insert(info.name.clone(), loaded).is_some() {
             return Err(LoaderError::malformed(format!(
                 "duplicate GGUF tensor name '{}'",
@@ -1032,13 +1094,26 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             )));
         }
     }
-    Ok(GgufLoader {
-        metadata,
-        tensors,
-        k_strategy,
-        k_decisions,
-        tensor_meta,
-    })
+    let tensor_materialize_ns = ns_since(materialize_start);
+    let timings = LoadTimings {
+        mmap_ns: 0,
+        parse_ns,
+        tensor_materialize_ns,
+        eager_dequant_ns,
+        total_ns: ns_since(load_start),
+        tensors: tensors.len(),
+        eager_tensors,
+    };
+    Ok((
+        GgufLoader {
+            metadata,
+            tensors,
+            k_strategy,
+            k_decisions,
+            tensor_meta,
+        },
+        timings,
+    ))
 }
 
 /// Decide the per-tensor K-family execution path under the requested

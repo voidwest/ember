@@ -1319,6 +1319,11 @@ pub struct Llama<B: Backend> {
     /// Lazily computed suffix-norm table for the fused greedy lm_head
     /// (only present when the head is Q8_0).
     head_topk_norms: std::sync::OnceLock<Option<std::sync::Arc<crate::quant::Q8TopkNorms>>>,
+    /// Diagnostics: wall time spent building packed decode representations
+    /// (Q8_0 VNNI tiles) during load.
+    packing_ns: u64,
+    /// Diagnostics: wall time spent building the interleaved lm-head layout.
+    packing_interleaved_ns: u64,
 }
 
 /// Existing Llama projection groups that can receive the packed Q8_0 decode
@@ -2479,6 +2484,7 @@ impl Llama<CpuBackend> {
                 LoadedTensor::KQuant(weight) => LlamaEmbedding::KQuant(weight),
             };
 
+        let mut packing_ns = 0u64;
         let mut blocks = Vec::with_capacity(n_layers);
         for i in 0..n_layers {
             // optionally load qk norm weights (qwen3, etc.)
@@ -2493,24 +2499,28 @@ impl Llama<CpuBackend> {
                     &format!("blk.{}.attn_q.weight", i),
                     Some(&format!("blk.{}.attn_q.bias", i)),
                     packed_decode_enabled,
+                    &mut packing_ns,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.attn_k.weight", i),
                     Some(&format!("blk.{}.attn_k.bias", i)),
                     packed_decode_enabled,
+                    &mut packing_ns,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.attn_v.weight", i),
                     Some(&format!("blk.{}.attn_v.bias", i)),
                     packed_decode_enabled,
+                    &mut packing_ns,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.attn_output.weight", i),
                     None,
                     packed_decode_enabled,
+                    &mut packing_ns,
                 )?,
                 Arc::clone(&rope_cos),
                 Arc::clone(&rope_sin),
@@ -2529,18 +2539,21 @@ impl Llama<CpuBackend> {
                     &format!("blk.{}.ffn_gate.weight", i),
                     None,
                     packed_decode_enabled,
+                    &mut packing_ns,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.ffn_up.weight", i),
                     None,
                     packed_decode_enabled,
+                    &mut packing_ns,
                 )?,
                 take_llama_linear(
                     &mut loader,
                     &format!("blk.{}.ffn_down.weight", i),
                     None,
                     packed_decode_enabled,
+                    &mut packing_ns,
                 )?,
             );
 
@@ -2584,7 +2597,10 @@ impl Llama<CpuBackend> {
                 }
             },
         };
+        let interleaved_start = std::time::Instant::now();
         head.prepare_interleaved(INTERLEAVED_MIN_OUT_FEATURES);
+        let packing_interleaved_ns =
+            interleaved_start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
 
         let mut model = Self {
             embed_tokens,
@@ -2600,6 +2616,8 @@ impl Llama<CpuBackend> {
             execution_mode: RefCell::new(ExecutionMode::Reference),
             decode_state: RefCell::new(None),
             head_topk_norms: std::sync::OnceLock::new(),
+            packing_ns,
+            packing_interleaved_ns,
         };
         model.validate_loaded_shapes()?;
         model.fast_decode_inter_dim = model.eligible_fast_decode_inter_dim();
@@ -2837,6 +2855,7 @@ fn take_llama_linear(
     name: &str,
     bias_name: Option<&str>,
     prepare_packed: bool,
+    packing_ns: &mut u64,
 ) -> anyhow::Result<Linear<CpuBackend>> {
     use crate::loader::LoadedTensor;
 
@@ -2857,7 +2876,10 @@ fn take_llama_linear(
         LoadedTensor::KQuant(weight) => Linear::new_k(weight, bias),
     };
     if prepare_packed {
+        let pack_start = std::time::Instant::now();
         linear.prepare_packed_decode();
+        *packing_ns =
+            packing_ns.saturating_add(pack_start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     }
     Ok(linear)
 }
@@ -3410,6 +3432,16 @@ impl Llama<CpuBackend> {
         *self.execution_mode.borrow()
     }
 
+    /// Diagnostics: wall time spent packing decode representations at load.
+    pub fn packing_ns(&self) -> u64 {
+        self.packing_ns
+    }
+
+    /// Diagnostics: wall time spent building the interleaved lm-head layout.
+    pub fn packing_interleaved_ns(&self) -> u64 {
+        self.packing_interleaved_ns
+    }
+
     /// Whether the plan-driven single-token decode path applies: mode is
     /// `Planned` or `PlannedFused`, exactly one token, and tracing is off.
     fn planned_decode_eligible(&self, token_ids: &[u32]) -> bool {
@@ -3626,7 +3658,8 @@ mod tests {
             k_decisions: HashMap::new(),
             tensor_meta: HashMap::new(),
         };
-        let linear_err = take_llama_linear(&mut loader, "bad.weight", None, false)
+        let mut packing_ns = 0u64;
+        let linear_err = take_llama_linear(&mut loader, "bad.weight", None, false, &mut packing_ns)
             .err()
             .expect("non-2D linear weights must be rejected");
         assert!(
@@ -3775,6 +3808,8 @@ mod tests {
             execution_mode: RefCell::new(ExecutionMode::Reference),
             decode_state: RefCell::new(None),
             head_topk_norms: std::sync::OnceLock::new(),
+            packing_ns: 0,
+            packing_interleaved_ns: 0,
         }
     }
 

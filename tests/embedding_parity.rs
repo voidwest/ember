@@ -16,7 +16,9 @@ use ember::backend::{Backend, CpuBackend};
 use ember::kv_cache::KVCache;
 use ember::llama::Llama;
 use ember::loader::load_gguf;
+use ember::loader::load_gguf_with_k_strategy_report;
 use ember::model::{ForwardModel, Gpt2};
+use ember::quant_k::KStrategy;
 use ember::tensor::CpuTensor;
 
 // ---------------------------------------------------------------------------
@@ -234,6 +236,36 @@ fn load_tiny_llama(tag: &str) -> Llama<CpuBackend> {
     std::fs::write(&path, &bytes).unwrap();
     let loader = load_gguf(&path).expect("tiny llama GGUF must load");
     Llama::from_loader(loader).expect("tiny llama model must build")
+}
+
+/// Load instrumentation: the report separates mapping, parsing,
+/// materialization and eager conversion, and the phases fit inside the total.
+#[test]
+fn load_report_separates_phases() {
+    let bytes = tiny_llama_gguf();
+    let dir = std::env::temp_dir().join("ember_parity_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("tiny_llama_timings.gguf");
+    std::fs::write(&path, &bytes).unwrap();
+    let (loader, timings) = load_gguf_with_k_strategy_report(&path, KStrategy::EagerF32, true)
+        .expect("tiny llama GGUF must load with timings");
+    assert_eq!(timings.tensors, loader.tensors.len());
+    assert!(timings.tensors > 0);
+    assert!(timings.total_ns > 0);
+    assert!(
+        timings.total_ns >= timings.parse_ns + timings.tensor_materialize_ns,
+        "phase timings must fit inside the total: {timings:?}"
+    );
+    assert!(timings.tensor_materialize_ns >= timings.eager_dequant_ns);
+    // The tiny GGUF is f32-only: nothing converts during load.
+    assert_eq!(timings.eager_tensors, 0);
+    let json = serde_json::to_value(&timings).unwrap();
+    for field in ["mmap_ns", "parse_ns", "tensor_materialize_ns", "total_ns"] {
+        assert!(
+            json.get(field).is_some(),
+            "missing load_report field {field}"
+        );
+    }
 }
 
 /// Look up token embeddings exactly the way the model does internally
