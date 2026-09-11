@@ -257,10 +257,21 @@ fn load_report_separates_phases() {
         "phase timings must fit inside the total: {timings:?}"
     );
     assert!(timings.tensor_materialize_ns >= timings.eager_dequant_ns);
+    assert!(
+        timings.parse_ns >= timings.metadata_parse_ns + timings.tensor_table_ns,
+        "parse sub-phases must fit inside the parse phase: {timings:?}"
+    );
     // The tiny GGUF is f32-only: nothing converts during load.
     assert_eq!(timings.eager_tensors, 0);
     let json = serde_json::to_value(&timings).unwrap();
-    for field in ["mmap_ns", "parse_ns", "tensor_materialize_ns", "total_ns"] {
+    for field in [
+        "mmap_ns",
+        "parse_ns",
+        "metadata_parse_ns",
+        "tensor_table_ns",
+        "tensor_materialize_ns",
+        "total_ns",
+    ] {
         assert!(
             json.get(field).is_some(),
             "missing load_report field {field}"

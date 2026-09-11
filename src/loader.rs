@@ -52,6 +52,12 @@ pub struct LoadTimings {
     pub mmap_ns: u64,
     /// Header, metadata, and tensor-table parsing up to the first tensor read.
     pub parse_ns: u64,
+    /// Subset of `parse_ns`: GGUF metadata key/value decoding (tokenizer
+    /// arrays dominate on real models).
+    pub metadata_parse_ns: u64,
+    /// Subset of `parse_ns`: tensor info table, metadata index, and the
+    /// per-tensor allocation/range accounting.
+    pub tensor_table_ns: u64,
     /// The per-tensor materialization loop (reads, range slicing, dtype setup).
     pub tensor_materialize_ns: u64,
     /// Subset of the materialization loop spent converting encodings to f32
@@ -684,6 +690,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         ))
     })?;
 
+    let metadata_start = Instant::now();
     let mut metadata = HashMap::new();
     metadata.try_reserve(metadata_kv_count).map_err(|error| {
         LoaderError::reservation(format!("failed to reserve GGUF metadata table: {error}"))
@@ -706,6 +713,8 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
         }
     }
 
+    let metadata_parse_ns = ns_since(metadata_start);
+    let tensor_table_start = Instant::now();
     let mut tensor_info = read_tensor_info(reader, tensor_count)?;
     let mut tensor_meta = HashMap::new();
     tensor_meta
@@ -836,6 +845,7 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     }
 
     let parse_ns = ns_since(load_start);
+    let tensor_table_ns = ns_since(tensor_table_start);
     let materialize_start = Instant::now();
     let mut eager_dequant_ns = 0u64;
     let mut eager_tensors = 0usize;
@@ -1098,6 +1108,8 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
     let timings = LoadTimings {
         mmap_ns: 0,
         parse_ns,
+        metadata_parse_ns,
+        tensor_table_ns,
         tensor_materialize_ns,
         eager_dequant_ns,
         total_ns: ns_since(load_start),
