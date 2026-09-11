@@ -254,6 +254,65 @@ Throughput is unchanged within the ±2% noise band; the deterministic
 allocation counts and the packed-cache phase timings are the milestone's
 measured wins.
 
+## Follow-up milestone (2026-09-11, same session)
+
+Commits `92e8dfb9`, `7d000ad7`, `674b95b2`.
+
+### Default decode mode flipped to `planned` (`92e8dfb9`)
+
+The planned interpreter was already the leaner route at equal throughput;
+the CLI defaulted to `reference` for historical reasons. Parity evidence
+before the flip:
+
+- 24 decode steps x 6 frozen prompts on Q4_K_M: greedy tokens identical,
+  per-step logits inside the frozen 1e-3 Gate B envelope
+  (`v04_planned_matches_reference_real_model`, extended run);
+- 18/18 greedy runs byte-identical between modes across Q4_K_M / Q6_K /
+  Q8_0 (English, code-ish and Arabic prompts);
+- end-to-end: `bench-decode` with no `--execution` flag now reports
+  2 allocations/token on Q4_K_M (was 833); `--execution reference` still
+  selects the oracle path.
+
+`planned-fused` still awaits its gates; KV snapshot commands keep their
+explicit defaults. The execution concept is now part of the run-manifest
+execution identity (`mode.execution`), closing a provenance gap: two runs
+differing only in decode mode previously produced the same identity digest.
+Recorded as the D1 amendment in `docs/v04-execution-contract.md`.
+
+### Packed cache extended to the interleaved head, format v2 (`7d000ad7`)
+
+With only VNNI cached, the interleaved lm-head repack became the dominant
+load cost. The cache now stores both layouts in one file (entries carry a
+kind and an optional second byte range), both as zero-copy mapped ranges:
+
+| scenario | model build | VNNI pack | interleaved pack | entries |
+|---|---:|---:|---:|---|
+| no cache | 890 ms | 646 ms | 140 ms | — |
+| first run (writes ~1.3 GiB) | 1221–2116 ms | 909–1624 ms | 209–376 ms | 0 hits / 113 misses |
+| cache hit | **110–134 ms** | **0.07 ms** | **0.01 ms** | **113 hits** |
+
+Validation additionally checks per-kind expected lengths, full payload
+coverage and non-overlap; a v1 file is treated as stale and rebuilt.
+Deterministic greedy output is byte-identical to the uncached path.
+`Linear.interleaved` is boxed (one load-time allocation) because the packed
+struct pushed `Linear` past clippy's `large_enum_variant` threshold in
+Gemma-4's head enum.
+
+### Parse phase measured (`674b95b2`)
+
+Split into metadata vs tensor table: **parse 52.0 ms = metadata 51.6 ms +
+tensor table 0.09 ms** on Llama-3.2-1B. Metadata decoding is the tokenizer
+arrays (~128k tokens + ~280k merges, each an owned UTF-8-validated String);
+the array reader already reserves exact capacity with O(1) budget checks, so
+there is no cheap win — cutting it needs lazy key-on-demand metadata or
+borrowed string ranges, which changes `GgufValue` for every consumer.
+
+### Still deferred
+
+The bounded packed/tiled K-quant layout experiment needs a cool host with a
+stable clock: this session ran at 93–94 °C with a browser holding a core, so
+any kernel-level A/B would have been noise (per the phase-2 standard).
+
 ## Remaining bottlenecks
 
 1. **K-quant decode kernels** — 87% of cycles in `q4_k_dot_q8_k` /
@@ -263,28 +322,31 @@ measured wins.
 2. **No packed layout for K-quant** — Q8_0 has VNNI tiles/interleaved head;
    Q4_K/Q6_K stream row-contiguous blocks with no repack. A packed K layout
    is a new-layout project and must beat the bit-identical x4 path.
-3. **Load parse phase ~30–42 ms** — now visible; includes metadata parsing
-   and the per-tensor allocation-accounting loop for 147 tensors.
-4. **Reference path remains the CLI default for K-quant** — 833 allocs/token
-   at the same throughput; the planned path is the leaner route.
-5. **Arena score scratch sized by context** — 16 MiB at 128k context for a
+3. **GGUF metadata decoding ~51.6 ms** — the tokenizer arrays dominate
+   (~128k tokens + ~280k merges as owned UTF-8-validated strings). Fixing it
+   needs lazy key-on-demand metadata or borrowed string ranges into the
+   mapping, which changes `GgufValue` for every consumer (inspect, manifests,
+   probes). Not a cheap win; measured in this milestone.
+4. **Arena score scratch sized by context** — 16 MiB at 128k context for a
    single decode token.
-6. **Shared global rayon pool across GUI requests/agent tools** — real
+5. **Shared global rayon pool across GUI requests/agent tools** — real
    oversubscription risk, out of scope here.
-7. **Packed cache policy** — opt-in, writes ~1 GiB per model, first write
-   costs ~+0.5 s; interleaved head not cached.
+6. **Packed cache policy** — still opt-in; a first run writes ~1.3 GiB and
+   costs ~+0.4 s over no cache. `reference`-mode runs also cache (the packing
+   is mode-independent), and gemma4's gate/up packing is not covered yet.
 
 ## Next milestone recommendation
 
-1. Flip the default execution mode to planned for llama/qwen3 K-quant after
-   a full parity pass (identical outputs expected; removes ~830 allocations
-   per token on the default path, and makes the allocation contract uniform).
-2. Extend the packed cache to the interleaved head and gemma4 gate/up packing,
-   then decide a default-on policy with a read-mostly hit path.
-3. On a cool host: one bounded packed/tiled K-quant layout experiment measured
+1. Decide the packed-cache default: with both layouts cached, build drops to
+   ~110 ms; weigh that against the ~1.3 GiB per model and the cold-write cost
+   (a size/mtime/inode key is cheap, so a policy like "cache when the target
+   dir is writable and has room" is viable). Extend it to gemma4 gate/up.
+2. On a cool host: one bounded packed/tiled K-quant layout experiment measured
    against the bit-identical x4 path, plus a fresh llama.cpp comparison.
-4. Investigate the ~30–40 ms parse phase (accounting loop) once load
-   instrumentation is the only source of truth for startup numbers.
+3. Lazy GGUF metadata (decode keys on demand) — the only remaining
+   startup-scale win on the load path.
+4. Consider `planned-fused` for the default once its gates land; `planned` is
+   now the default and the identity records it.
 
 ## Reproduction
 
