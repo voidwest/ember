@@ -44,6 +44,7 @@ docs/plots/root_probe_scale_comparison.png
 !docs/v06-gui.md
 !docs/performance-baseline-dossier.md
 !docs/phase2-optimization-report.md
+!docs/phase3-optimization-report.md
 !docs/api-stability.md
 !docs/fuzzing.md
 !docs/k-quant-gemv-design.md
