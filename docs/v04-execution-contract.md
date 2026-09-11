@@ -42,8 +42,18 @@ Out of scope (hard constraints, from the release spec):
   oracle), `planned` (plan-driven dispatch, identical operation sequence,
   scratch arena, no fusion), or `planned-fused` (the frozen fusion set with
   per-layer de-fusion driven by active hooks). During development the
-  default is `reference`; release default becomes `planned-fused` only after
+  default was `reference`; release default becomes `planned-fused` only after
   every gate in section 13 passes.
+  - Amendment (2026-09-11): the default for llama/qwen3 decode (generate and
+    `bench-decode`) is now `planned`. Evidence: Gate B holds at 24 decode
+    steps x 6 frozen prompts on the Q4_K_M rung (greedy tokens identical,
+    per-step logits within the frozen 1e-3 envelope) and 18/18 greedy runs
+    are byte-identical between `reference` and `planned` across the Q4_K_M,
+    Q6_K and Q8_0 rungs; `planned` also removes ~830 caller-thread
+    allocations per decoded token on the default path. `reference` remains
+    reachable explicitly and stays the readable oracle; `planned-fused`
+    still awaits its gates. The decode execution concept is now part of the
+    run-manifest execution identity (`mode.execution`).
 - D2: the execution plan is an immutable value built once, immediately after
   model loading and validation, by the model backend itself (it owns the
   tensors). The plan stores stable indices and validated metadata, never raw

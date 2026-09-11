@@ -344,6 +344,9 @@ pub(crate) fn execution_identity_canonical(
     canonical.insert("env".to_string(), serde_json::json!(env_knobs));
 
     let mut mode: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+    // The decode execution concept changes accumulation order (and therefore
+    // logits), so it is part of the output-affecting identity.
+    mode.insert("execution".to_string(), serde_json::json!(args.execution));
     mode.insert("probe".to_string(), serde_json::json!(args.probe));
     mode.insert(
         "probe_stimuli".to_string(),
@@ -668,6 +671,55 @@ mod tests {
         assert_ne!(b, temp);
         assert_ne!(b, seed);
         assert_ne!(b, arch);
+    }
+
+    #[test]
+    fn execution_identity_is_sensitive_to_the_execution_mode() {
+        let base = args_with(&["--arch", "llama", "--model", "m.gguf"]);
+        // The decode execution concept is output-affecting, so the identity
+        // must distinguish it (including the default).
+        let reference = execution_identity_digest(&canonical_for(
+            &args_with(&[
+                "--arch",
+                "llama",
+                "--model",
+                "m.gguf",
+                "--execution",
+                "reference",
+            ]),
+            "hello",
+        ));
+        let planned = execution_identity_digest(&canonical_for(
+            &args_with(&[
+                "--arch",
+                "llama",
+                "--model",
+                "m.gguf",
+                "--execution",
+                "planned",
+            ]),
+            "hello",
+        ));
+        let default = execution_identity_digest(&canonical_for(&base, "hello"));
+        assert_ne!(reference, planned);
+        assert_eq!(default, planned, "default execution mode must be planned");
+        assert_ne!(default, reference);
+    }
+
+    #[test]
+    fn decode_execution_defaults_to_planned() {
+        use clap::Parser;
+        // Generate and bench-decode must both default to the planned
+        // interpreter; the reference path stays reachable explicitly.
+        let args = Args::try_parse_from(["ember", "--model", "m.gguf"]).unwrap();
+        assert_eq!(args.execution, "planned");
+        let bench = Args::try_parse_from(["ember", "bench-decode", "--model", "m.gguf"]).unwrap();
+        match bench.command {
+            Some(crate::Commands::BenchDecode(command)) => {
+                assert_eq!(command.execution, "planned")
+            }
+            _ => panic!("expected the bench-decode subcommand"),
+        }
     }
 
     #[test]

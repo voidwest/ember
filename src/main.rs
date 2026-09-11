@@ -291,10 +291,11 @@ pub(crate) struct Args {
     #[arg(long)]
     k_allow_fallback: bool,
 
-    /// v0.4 execution concept: reference (v0.3 generic path), planned
-    /// (execution-plan interpreter), or planned-fused (fused plan; lands
-    /// with the fusion phase)
-    #[arg(long, default_value = "reference")]
+    /// v0.4 execution concept: planned (execution-plan interpreter, the
+    /// default for llama/qwen3 decode), reference (the v0.3 generic path,
+    /// kept as the oracle), or planned-fused (fused plan; lands with the
+    /// fusion phase)
+    #[arg(long, default_value = "planned")]
     execution: String,
 }
 
@@ -411,9 +412,9 @@ pub(crate) struct BenchDecodeCommand {
     #[arg(long)]
     allocations: bool,
 
-    /// v0.4 execution concept for the benchmarked decode (reference |
-    /// planned | planned-fused)
-    #[arg(long, default_value = "reference")]
+    /// v0.4 execution concept for the benchmarked decode (planned |
+    /// reference | planned-fused; planned is the default)
+    #[arg(long, default_value = "planned")]
     execution: String,
 }
 
