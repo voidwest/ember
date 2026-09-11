@@ -397,12 +397,55 @@ fn run_inspect_plan(file: &Path, args: &InspectPlanArgs) -> anyhow::Result<()> {
     let max_seq_len = model.config.max_seq_len;
     let plan = model.execution_plan(execution, HookMode::Disabled, &[], max_seq_len, None, None)?;
     print!("{}", plan.to_summary_text());
+    print_plan_details(&plan);
     if let Some(output) = &args.output {
         let json = serde_json::to_string_pretty(&*plan)?;
         std::fs::write(output, json)?;
         eprintln!("wrote execution plan to {output}");
     }
     Ok(())
+}
+
+/// Print the derived detail the terse summary omits: the host-dependent
+/// runtime schedule (kernel/thread selection), scratch-region lifetimes, and
+/// the per-tensor kernel/ownership map. None of this is serialized into the
+/// plan or its hash.
+fn print_plan_details(plan: &ember::plan::ExecutionPlan) {
+    println!();
+    let schedule = ember::runtime_schedule::RuntimeSchedule::from_plan(plan);
+    print!("{}", schedule.to_summary_text());
+    println!();
+    println!(
+        "scratch regions ({} bytes, alignment {}, seq capacity {}):",
+        plan.scratch.total_bytes, plan.scratch.alignment, plan.scratch.seq_capacity
+    );
+    for region in &plan.scratch.regions {
+        println!(
+            "  {:<28} offset {:>9}  size {:>8}  ops {:>4}..{:<4}{}",
+            region.name,
+            region.offset,
+            region.size,
+            region.first_op,
+            region.last_op,
+            region
+                .shared_with
+                .as_deref()
+                .map(|shared| format!("  shared with {shared}"))
+                .unwrap_or_default()
+        );
+    }
+    println!();
+    println!("tensors ({}):", plan.tensor_table.len());
+    for record in &plan.tensor_table {
+        println!(
+            "  {:<44} {:<8} {:<24} {:>12} B  {}",
+            record.name,
+            record.gguf_dtype,
+            record.kernel.name(),
+            record.resident_bytes,
+            if record.mmap { "mmap" } else { "resident" }
+        );
+    }
 }
 
 #[cfg(test)]

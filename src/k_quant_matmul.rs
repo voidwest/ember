@@ -182,6 +182,20 @@ pub fn x86_k_supported() -> bool {
     }
 }
 
+/// Whether the opt-in AVX-512 K-quant dot tier is active for this process
+/// (`EMBER_K_AVX512=1` plus runtime feature checks). Diagnostics only.
+#[inline]
+pub fn k_avx512_opt_in() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        x86::k_avx512_enabled()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 /// llama.cpp-compatible Q8_K row quantization.
 fn quantize_q8_k_into_scalar(src: &[f32], dst: &mut Vec<Q8KBlock>) -> Result<(), &'static str> {
     debug_assert!(src.len().is_multiple_of(QK_K));
@@ -1445,15 +1459,35 @@ fn parallel_body(input: &[Q8KBlock], rows: usize, w: &KQuantWeight, dst: &mut [f
     );
 }
 
+/// Whether a `[out_features, in_features]` decode matvec takes the
+/// column-parallel route under a pool of `threads` workers.
+///
+/// This is the exact shape predicate `should_use_parallel` applies to a
+/// resident weight; the runtime schedule reports it, so the thresholds live
+/// in one place.
+#[inline]
+pub fn parallel_for_shape(
+    rows: usize,
+    in_features: usize,
+    out_features: usize,
+    threads: usize,
+    requested: bool,
+) -> bool {
+    let macs = rows
+        .saturating_mul(in_features)
+        .saturating_mul(out_features);
+    requested && threads > 1 && out_features > PARALLEL_LEAF_OUTPUTS && macs >= PARALLEL_MIN_MACS
+}
+
 #[inline]
 fn should_use_parallel(rows: usize, w: &KQuantWeight, requested: bool) -> bool {
-    let macs = rows
-        .saturating_mul(w.in_features())
-        .saturating_mul(w.out_features());
-    requested
-        && rayon::current_num_threads() > 1
-        && w.out_features() > PARALLEL_LEAF_OUTPUTS
-        && macs >= PARALLEL_MIN_MACS
+    parallel_for_shape(
+        rows,
+        w.in_features(),
+        w.out_features(),
+        rayon::current_num_threads(),
+        requested,
+    )
 }
 
 /// Report the scheduler that this call would actually use in the current
@@ -2209,6 +2243,44 @@ mod tests {
             0
         );
         route_probe::finish();
+    }
+
+    /// `parallel_for_shape` (the runtime schedule's predicate) must agree with
+    /// the kernel's own `scheduler_name` at every threshold boundary.
+    #[test]
+    fn parallel_for_shape_matches_scheduler_name_at_thresholds() {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let threads = rayon::current_num_threads();
+            assert_eq!(threads, 2);
+            for (out_features, in_features) in [
+                (PARALLEL_LEAF_OUTPUTS, 8192usize),
+                (PARALLEL_LEAF_OUTPUTS * 2, 8192),
+                (512, 1024),
+                (512, 512),
+                (512, 768),
+                (2048, 2048),
+            ] {
+                let weight = weight(KQuantDtype::Q4K, out_features, in_features, 0x77);
+                let decision = parallel_for_shape(1, in_features, out_features, threads, true);
+                let scheduled = scheduler_name(1, &weight, true);
+                assert_eq!(
+                    scheduled,
+                    if decision {
+                        "column-parallel-rayon"
+                    } else {
+                        "serial"
+                    },
+                    "shape {out_features}x{in_features}"
+                );
+            }
+            // The request flag and worker count short-circuit before shape.
+            assert!(!parallel_for_shape(1, 2048, 2048, threads, false));
+            assert!(!parallel_for_shape(1, 2048, 2048, 1, true));
+        });
     }
 
     #[test]

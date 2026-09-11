@@ -71,6 +71,7 @@ pub mod quant_fault;
 pub mod quant_k;
 #[doc(hidden)]
 pub mod residency;
+pub mod runtime_schedule;
 pub mod sampler;
 #[doc(hidden)]
 pub mod simd;
