@@ -768,8 +768,18 @@ mod tests {
             .expect("cache opens")
     }
 
+    /// The packed layouts are only usable on AVX-512 VNNI hosts; elsewhere the
+    /// constructor is inert (`None`) and the disk-format tests below would
+    /// panic on `open_cache`, so they skip instead.
+    fn vnni_host() -> bool {
+        crate::simd::packed_q8_0_vnni_supported()
+    }
+
     #[test]
     fn vnni_round_trip_is_byte_identical() {
+        if !vnni_host() {
+            return;
+        }
         let (loader, _) = loader_fixture();
         let (dir, model) = temp_cache_path("roundtrip");
         let cache = open_cache(&model, &loader, &dir);
@@ -793,6 +803,9 @@ mod tests {
 
     #[test]
     fn interleaved_round_trip_is_byte_identical() {
+        if !vnni_host() {
+            return;
+        }
         let (loader, _) = loader_fixture();
         let (dir, model) = temp_cache_path("interleaved");
         let cache = open_cache(&model, &loader, &dir);
@@ -820,6 +833,9 @@ mod tests {
 
     #[test]
     fn both_layouts_share_one_file() {
+        if !vnni_host() {
+            return;
+        }
         let (loader, _) = loader_fixture();
         let (dir, model) = temp_cache_path("both-kinds");
         let cache = open_cache(&model, &loader, &dir);
@@ -852,6 +868,9 @@ mod tests {
 
     #[test]
     fn shape_or_identity_changes_miss() {
+        if !vnni_host() {
+            return;
+        }
         let (mut loader, _) = loader_fixture();
         let (dir, model) = temp_cache_path("invalidate");
         let cache = open_cache(&model, &loader, &dir);
@@ -876,6 +895,9 @@ mod tests {
 
     #[test]
     fn corrupt_file_falls_back_to_packing() {
+        if !vnni_host() {
+            return;
+        }
         let (loader, _) = loader_fixture();
         let (dir, model) = temp_cache_path("corrupt");
         // A file at the exact key path with a valid header but truncated payload.
@@ -899,6 +921,9 @@ mod tests {
 
     #[test]
     fn concurrent_writers_publish_a_valid_file() {
+        if !vnni_host() {
+            return;
+        }
         let (loader, _) = loader_fixture();
         let (dir, model) = temp_cache_path("concurrent");
         let source = QuantizedWeight::try_new(q8_bytes(128, 256), vec![128, 256]).unwrap();
