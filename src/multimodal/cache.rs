@@ -19,6 +19,7 @@
 use crate::multimodal::request::{MediaId, MediaKind};
 use crate::tensor::CpuTensor;
 use std::collections::HashMap;
+use std::sync::{Arc, Condvar, Mutex};
 
 /// Hash of everything about a preprocessing recipe that affects output.
 ///
@@ -70,7 +71,7 @@ pub struct FeatureCacheKey {
 
 /// One cached entry plus its byte cost.
 struct Entry {
-    features: CpuTensor,
+    features: Arc<CpuTensor>,
     bytes: usize,
 }
 
@@ -99,24 +100,20 @@ impl MediaFeatureCache {
     }
 
     pub fn get(&self, key: &FeatureCacheKey) -> Option<&CpuTensor> {
-        match self.map.get(key) {
-            Some((e, _)) => {
-                // interior mutability not needed for stats; callers count
-                Some(&e.features)
-            }
-            None => None,
-        }
+        self.map.get(key).map(|(e, _)| e.features.as_ref())
     }
 
     /// Like [`MediaFeatureCache::get`] but records a hit/miss.
     pub fn lookup(&mut self, key: &FeatureCacheKey) -> Option<&CpuTensor> {
-        if self.map.contains_key(key) {
+        self.lookup_shared(key).map(Arc::as_ref)
+    }
+
+    fn lookup_shared(&mut self, key: &FeatureCacheKey) -> Option<&Arc<CpuTensor>> {
+        if let Some((entry, touched)) = self.map.get_mut(key) {
             self.hits += 1;
-            if let Some((_, t)) = self.map.get_mut(key) {
-                self.clock += 1;
-                *t = self.clock;
-            }
-            self.map.get(key).map(|(e, _)| &e.features)
+            self.clock += 1;
+            *touched = self.clock;
+            Some(&entry.features)
         } else {
             self.misses += 1;
             None
@@ -124,14 +121,18 @@ impl MediaFeatureCache {
     }
 
     pub fn insert(&mut self, key: FeatureCacheKey, features: CpuTensor) {
+        self.insert_shared(key, Arc::new(features));
+    }
+
+    fn insert_shared(&mut self, key: FeatureCacheKey, features: Arc<CpuTensor>) {
         let bytes = features.len() * std::mem::size_of::<f32>();
         if bytes > self.max_bytes {
             return; // single entry larger than the whole cache
         }
-        if let Some(old) = self.map.get(&key) {
+        if let Some(old) = self.map.remove(&key) {
             self.used_bytes -= old.0.bytes;
         }
-        while self.used_bytes + bytes > self.max_bytes {
+        while self.used_bytes > self.max_bytes - bytes {
             // evict least-recently-touched
             let victim = self
                 .map
@@ -185,8 +186,6 @@ pub fn media_id_of_tensor(t: &CpuTensor) -> MediaId {
 // Phase 5 Track F: concurrency-safe wrapper with per-key coalescing
 // ---------------------------------------------------------------------------
 
-use std::collections::HashMap as StdHashMap;
-use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 /// Aggregate telemetry for [`SharedFeatureCache`].
@@ -212,6 +211,38 @@ struct InFlight {
     state: Mutex<InFlightState>,
 }
 
+struct SharedCacheState {
+    resident: MediaFeatureCache,
+    inflight: HashMap<FeatureCacheKey, Arc<InFlight>>,
+}
+
+/// Wake waiters even when the encoder unwinds before publishing a result.
+struct EncodeLeader<'a> {
+    cache: &'a SharedFeatureCache,
+    key: &'a FeatureCacheKey,
+    entry: Arc<InFlight>,
+    completed: bool,
+}
+
+impl Drop for EncodeLeader<'_> {
+    fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
+        let mut state = self.cache.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state
+            .inflight
+            .get(self.key)
+            .is_some_and(|entry| Arc::ptr_eq(entry, &self.entry))
+        {
+            state.inflight.remove(self.key);
+            let mut flight = self.entry.state.lock().unwrap_or_else(|e| e.into_inner());
+            flight.outcome = Some(Err(()));
+            self.entry.cv.notify_all();
+        }
+    }
+}
+
 /// Process-wide shared feature cache: safe under concurrent use and free of
 /// stampedes. Two requests for the same uncached media run the encoder
 /// exactly once; the second waits (`coalesced`) instead of duplicating a
@@ -221,16 +252,17 @@ struct InFlight {
 /// see `Failed`, and ONE of them retries as the new leader — a cancelled or
 /// failed producer never poisons the key for others.
 pub struct SharedFeatureCache {
-    inner: Mutex<MediaFeatureCache>,
-    inflight: Mutex<StdHashMap<FeatureCacheKey, Arc<InFlight>>>,
+    state: Mutex<SharedCacheState>,
     metrics: Mutex<SharedCacheMetrics>,
 }
 
 impl SharedFeatureCache {
     pub fn new(max_bytes: usize) -> Self {
         Self {
-            inner: Mutex::new(MediaFeatureCache::new(max_bytes)),
-            inflight: Mutex::new(StdHashMap::new()),
+            state: Mutex::new(SharedCacheState {
+                resident: MediaFeatureCache::new(max_bytes),
+                inflight: HashMap::new(),
+            }),
             metrics: Mutex::new(SharedCacheMetrics::default()),
         }
     }
@@ -248,9 +280,10 @@ impl SharedFeatureCache {
     }
 
     pub fn used_bytes(&self) -> usize {
-        self.inner
+        self.state
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .resident
             .used_bytes()
     }
 
@@ -261,27 +294,21 @@ impl SharedFeatureCache {
         key: &FeatureCacheKey,
         encode: impl FnOnce() -> anyhow::Result<CpuTensor>,
     ) -> anyhow::Result<Arc<CpuTensor>> {
-        // fast path: warm hit
-        {
-            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(t) = inner.lookup(key) {
-                let arc = Arc::new(t.clone());
-                drop(inner);
-                self.record(|m| {
-                    m.hits += 1;
-                    // saved time is tracked by the leader's measurement below
-                });
-                return Ok(arc);
-            }
-        }
         loop {
-            // join-or-become-leader
+            // Lookup and leader registration are atomic: an encode cannot
+            // fill the cache between a stale miss and a new registration.
             let entry = {
-                let mut inflight = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(e) = inflight.get(key) {
+                let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(t) = state.resident.lookup_shared(key) {
+                    let t = Arc::clone(t);
+                    drop(state);
+                    self.record(|m| m.hits += 1);
+                    return Ok(t);
+                }
+                if let Some(e) = state.inflight.get(key) {
                     let e = e.clone();
+                    drop(state);
                     let mut st = e.state.lock().unwrap_or_else(|er| er.into_inner());
-                    drop(inflight);
                     self.record(|m| {
                         m.in_flight_waits += 1;
                         m.misses += 1;
@@ -308,19 +335,21 @@ impl SharedFeatureCache {
                     cv: Condvar::new(),
                     state: Mutex::new(InFlightState { outcome: None }),
                 });
-                inflight.insert(key.clone(), e.clone());
+                state.inflight.insert(key.clone(), e.clone());
                 e
             }; // locks released before encode
+            let mut leader = EncodeLeader {
+                cache: self,
+                key,
+                entry,
+                completed: false,
+            };
 
             // we are the leader: run the encoder OUTSIDE any lock
             let t0 = Instant::now();
             let result = encode();
             let elapsed_ms = t0.elapsed().as_secs_f64() * 1e3;
-            let shared = result.map(|t| {
-                let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-                inner.insert(key.clone(), t.clone());
-                Arc::new(t)
-            });
+            let shared = result.map(Arc::new);
 
             self.record(|m| {
                 m.misses += 1;
@@ -329,33 +358,26 @@ impl SharedFeatureCache {
                 }
             });
 
-            // publish outcome to waiters, then drop the in-flight entry
+            // Fill the cache and remove the registered leader under the
+            // same lock used by lookups. Waiters retain their entry Arc.
             {
-                let mut st = entry.state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+                if let Ok(t) = &shared {
+                    state.resident.insert_shared(key.clone(), Arc::clone(t));
+                }
+                let mut st = leader.entry.state.lock().unwrap_or_else(|e| e.into_inner());
                 st.outcome = Some(match &shared {
                     Ok(t) => Ok(t.clone()),
                     Err(_) => Err(()),
                 });
-                entry.cv.notify_all();
+                state.inflight.remove(key);
+                leader.entry.cv.notify_all();
+                self.record(|m| {
+                    m.resident_bytes = state.resident.used_bytes();
+                    m.evictions = state.resident.evictions();
+                });
             }
-            let mut inflight = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
-            // only remove if we are still the registered leader
-            if inflight
-                .get(key)
-                .map(|e| Arc::ptr_eq(e, &entry))
-                .unwrap_or(false)
-            {
-                inflight.remove(key);
-            }
-
-            self.record(|m| {
-                m.resident_bytes = self.used_bytes();
-                m.evictions = self
-                    .inner
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .evictions();
-            });
+            leader.completed = true;
             return shared;
         }
     }

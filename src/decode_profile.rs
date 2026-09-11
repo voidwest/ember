@@ -37,13 +37,14 @@ struct DecodeOpEvent {
     pub output_dimension: usize,
     pub macs: u64,
     pub execution_mode: DecodeExecutionMode,
+    pub quantization: &'static str,
     pub thread_count: usize,
     pub elapsed_ns: u64,
 }
 
 #[derive(Debug, Serialize)]
 pub struct DecodeOpSummary {
-    pub architecture: &'static str,
+    pub architecture: String,
     pub layer: usize,
     pub operator: &'static str,
     pub input_dimension: usize,
@@ -69,6 +70,7 @@ struct SummaryKey {
     output_dimension: usize,
     macs: u64,
     execution_mode: DecodeExecutionMode,
+    quantization: &'static str,
     thread_count: usize,
 }
 
@@ -101,8 +103,8 @@ pub fn is_enabled() -> bool {
     ENABLED.load(Ordering::Relaxed)
 }
 
-/// Record one completed projection. Callers must guard this with
-/// [`is_enabled`] so normal decode never touches thread-local profiling state.
+/// Legacy Llama/Q8-only recorder. New callers should record the resident weight
+/// kind with [`record_quantized`], including `"not_applicable"` for non-weight ops.
 #[inline]
 pub fn record(
     layer: usize,
@@ -110,6 +112,29 @@ pub fn record(
     input_dimension: usize,
     output_dimension: usize,
     execution_mode: DecodeExecutionMode,
+    elapsed: Duration,
+) {
+    record_quantized(
+        layer,
+        operator,
+        input_dimension,
+        output_dimension,
+        execution_mode,
+        "Q8_0",
+        elapsed,
+    );
+}
+
+/// Record one completed operation with its actual resident weight kind.
+/// Callers guard this with [`is_enabled`] so normal decode avoids profiling state.
+#[inline]
+pub fn record_quantized(
+    layer: usize,
+    operator: &'static str,
+    input_dimension: usize,
+    output_dimension: usize,
+    execution_mode: DecodeExecutionMode,
+    quantization: &'static str,
     elapsed: Duration,
 ) {
     let macs = input_dimension.saturating_mul(output_dimension) as u64;
@@ -121,16 +146,26 @@ pub fn record(
             output_dimension,
             macs,
             execution_mode,
+            quantization,
             thread_count: rayon::current_num_threads().max(1),
             elapsed_ns: elapsed.as_nanos().min(u64::MAX as u128) as u64,
         });
     });
 }
 
-/// Stop profiling and aggregate events by stable operator shape.
+/// Legacy Llama-only summary. Use [`finish_for_architecture`] for other models.
 pub fn finish() -> Vec<DecodeOpSummary> {
+    finish_for_architecture("llama")
+}
+
+/// Stop profiling and aggregate by operator shape and actual weight kind.
+pub fn finish_for_architecture(architecture: &str) -> Vec<DecodeOpSummary> {
     ENABLED.store(false, Ordering::Release);
     let events = EVENTS.with(|events| std::mem::take(&mut *events.borrow_mut()));
+    summarize_events(events, architecture)
+}
+
+fn summarize_events(events: Vec<DecodeOpEvent>, architecture: &str) -> Vec<DecodeOpSummary> {
     let mut grouped = BTreeMap::<SummaryKey, Vec<u64>>::new();
     for event in events {
         grouped
@@ -141,6 +176,7 @@ pub fn finish() -> Vec<DecodeOpSummary> {
                 output_dimension: event.output_dimension,
                 macs: event.macs,
                 execution_mode: event.execution_mode,
+                quantization: event.quantization,
                 thread_count: event.thread_count,
             })
             .or_default()
@@ -156,14 +192,14 @@ pub fn finish() -> Vec<DecodeOpSummary> {
                 .saturating_sub(1)
                 .min(samples - 1);
             DecodeOpSummary {
-                architecture: "llama",
+                architecture: architecture.to_owned(),
                 layer: key.layer,
                 operator: key.operator,
                 input_dimension: key.input_dimension,
                 output_dimension: key.output_dimension,
                 approximate_macs: key.macs,
                 approximate_flops: key.macs.saturating_mul(2),
-                quantization: "Q8_0",
+                quantization: key.quantization,
                 execution_mode: key.execution_mode,
                 thread_count: key.thread_count,
                 samples,
@@ -175,4 +211,48 @@ pub fn finish() -> Vec<DecodeOpSummary> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summaries_preserve_architecture_and_mixed_operator_weight_kinds() {
+        let event = |quantization, elapsed_ns| DecodeOpEvent {
+            layer: 2,
+            operator: "q",
+            input_dimension: 256,
+            output_dimension: 64,
+            macs: 256 * 64,
+            execution_mode: DecodeExecutionMode::ColumnParallelRayon,
+            quantization,
+            thread_count: 4,
+            elapsed_ns,
+        };
+        let summaries = summarize_events(
+            vec![
+                event("Q4_K", 10),
+                event("Q6_K", 20),
+                event("Q4_K", 30),
+                event("F32", 5),
+            ],
+            "qwen3",
+        );
+        assert_eq!(summaries.len(), 3);
+        assert!(summaries
+            .iter()
+            .all(|summary| summary.architecture == "qwen3"));
+        let q4 = summaries
+            .iter()
+            .find(|summary| summary.quantization == "Q4_K")
+            .unwrap();
+        assert_eq!(q4.samples, 2);
+        assert_eq!(q4.total_elapsed_ns, 40);
+        assert_eq!(q4.min_elapsed_ns, 10);
+        assert_eq!(q4.max_elapsed_ns, 30);
+        let json = serde_json::to_value(&summaries).unwrap();
+        assert_eq!(json[0]["quantization"], "F32");
+        assert_eq!(json[0]["architecture"], "qwen3");
+    }
 }

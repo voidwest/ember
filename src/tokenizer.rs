@@ -218,9 +218,9 @@ impl EmberTokenizer {
     /// multi-byte code point (the first bytes of an Arabic word, an emoji,
     /// any non-ASCII text). Decoding such a token in isolation yields
     /// U+FFFD replacement characters — per-token streaming corrupts every
-    /// non-Latin script. This decoder accumulates ids, decodes the running
-    /// sequence (prefix-stable for concat-style decoders), and releases
-    /// only text up to the last complete character boundary.
+    /// non-Latin script. The upstream stream decoder retains only the token
+    /// window needed to resolve byte fragments and decoder context; completed
+    /// text does not get decoded again on every subsequent token.
     ///
     /// Contract: concatenating the returned pieces over a push sequence
     /// equals `decode(&all_ids)` up to trailing bytes not yet released;
@@ -229,8 +229,10 @@ impl EmberTokenizer {
         IncrementalDecoder {
             tokenizer: self,
             ids: Vec::new(),
-            released_chars: 0,
-            prev: String::new(),
+            prefix: String::new(),
+            prefix_index: 0,
+            read_index: 0,
+            token_count: 0,
         }
     }
 
@@ -372,102 +374,216 @@ fn parse_tokenizer(bytes: &[u8]) -> Result<Tokenizer> {
 /// Streaming detokenizer: see [`EmberTokenizer::incremental_decoder`].
 pub struct IncrementalDecoder<'t> {
     tokenizer: &'t EmberTokenizer,
+    /// Upstream decode window, including enough previously emitted context
+    /// to preserve whitespace/byte-decoder behavior at the left boundary.
     ids: Vec<u32>,
-    /// characters already handed to the consumer
-    released_chars: usize,
-    /// last full decode of all ids so far
-    prev: String,
+    prefix: String,
+    prefix_index: usize,
+    read_index: usize,
+    token_count: usize,
 }
 
 impl<'t> IncrementalDecoder<'t> {
     /// Push one generated token; returns the text newly available as
     /// complete characters (possibly empty — e.g. mid-code-point tokens).
     ///
-    /// A trailing run of U+FFFD in the running decode marks an INCOMPLETE
-    /// multi-byte sequence, not real text, so it is never released; once
-    /// later tokens complete the sequence the true characters flow out.
+    /// A trailing U+FFFD may represent an incomplete byte sequence or literal
+    /// text. It stays pending until more tokens disambiguate it or `finish()`
+    /// flushes the final decode; literal replacement characters are preserved.
     pub fn push(&mut self, id: u32) -> Result<String> {
-        self.ids.push(id);
-        let new = self.tokenizer.decode(&self.ids)?;
-        let piece = advance_released(&mut self.released_chars, &self.prev, &new);
-        self.prev = new;
-        Ok(piece)
+        // Use the public stateful helper rather than DecodeStream itself:
+        // DecodeStream keeps its pending IDs private and has no EOF flush.
+        let previous_prefix_end = self.prefix_index;
+        let discarded_tokens = self.read_index;
+        let piece = tokenizers::tokenizer::step_decode_stream(
+            &self.tokenizer.inner,
+            id,
+            true,
+            &mut self.ids,
+            &mut self.prefix,
+            &mut self.prefix_index,
+            &mut self.read_index,
+        )
+        .map_err(anyhow::Error::msg)
+        .context("incremental decode failed")?;
+        if piece.is_some() {
+            // tokenizers 0.20.4 updates these indices in pre-drain coordinates,
+            // which can underflow after repeated emissions. Rebase both to the
+            // retained window: old prefix end becomes the new chunk's start;
+            // the whole window now belongs to the emitted prefix.
+            self.read_index = previous_prefix_end - discarded_tokens;
+            self.prefix_index = self.ids.len();
+        }
+        self.token_count += 1;
+        Ok(piece.unwrap_or_default())
     }
 
     /// Flush any remainder (call once the generation is over). A trailing
     /// U+FFFD at cut-off is emitted as-is: there is nothing better to send.
     pub fn finish(&mut self) -> Result<String> {
-        let total = self.prev.chars().count();
-        if total > self.released_chars {
-            let start_idx = split_at_char(&self.prev, self.released_chars).len();
-            self.released_chars = total;
-            Ok(self.prev[start_idx..].to_string())
-        } else {
-            Ok(String::new())
-        }
+        let decoded = self.tokenizer.decode(&self.ids)?;
+        let tail = decoded
+            .strip_prefix(&self.prefix)
+            .context("incremental decode changed already emitted text")?
+            .to_string();
+        self.prefix = decoded;
+        Ok(tail)
     }
 
     /// Ids pushed so far.
     pub fn len(&self) -> usize {
-        self.ids.len()
+        self.token_count
     }
 
     /// True when no ids have been pushed.
     pub fn is_empty(&self) -> bool {
-        self.ids.is_empty()
+        self.token_count == 0
     }
 }
-
-/// Length in chars of the longest common character prefix.
-fn common_prefix_chars(a: &str, b: &str) -> usize {
-    a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count()
-}
-
-fn split_at_char(s: &str, chars: usize) -> &str {
-    match s.char_indices().nth(chars) {
-        Some((idx, _)) => &s[..idx],
-        None => s,
-    }
-}
-
-fn ends_with_replacement(s: &str) -> bool {
-    s.ends_with('\u{FFFD}')
-}
-
-/// Release newly stable characters between the previous and current full
-/// decodes.
-///
-/// Concat-style byte decoders evolve by appending bytes or resolving a
-/// trailing U+FFFD into the completed code points — interiors never change.
-/// A character is releasable once (a) it is not part of a trailing U+FFFD
-/// run (incomplete-sequence placeholder) and (b) it agrees with the previous
-/// decode (the first push has no history, so `safe` alone gates it).
-fn advance_released(released: &mut usize, prev: &str, new: &str) -> String {
-    let mut safe = new.chars().count();
-    while safe > *released && ends_with_replacement(split_at_char(new, safe)) {
-        safe -= 1;
-    }
-    let confirmed = if prev.is_empty() {
-        safe
-    } else {
-        common_prefix_chars(prev, new)
-    };
-    let upto = safe.min(confirmed).max(*released);
-    if upto > *released {
-        let start_idx = split_at_char(new, *released).len();
-        let end_idx = split_at_char(new, upto).len();
-        *released = upto;
-        new[start_idx..end_idx].to_string()
-    } else {
-        String::new()
-    }
-}
-
-// (incremental-detokenizer behavior is covered by tests/arabic_streaming.rs)
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn byte_tokenizer() -> EmberTokenizer {
+        use tokenizers::{models::bpe::BPE, pre_tokenizers::byte_level::ByteLevel, AddedToken};
+
+        let mut alphabet: Vec<_> = ByteLevel::alphabet().into_iter().collect();
+        alphabet.sort_unstable();
+        let vocab = alphabet
+            .into_iter()
+            .enumerate()
+            .map(|(id, character)| (character.to_string(), id as u32))
+            .collect();
+        let model = BPE::builder()
+            .vocab_and_merges(vocab, vec![])
+            .build()
+            .unwrap();
+        let mut inner = Tokenizer::new(model);
+        inner.with_pre_tokenizer(Some(ByteLevel::new(false, false, false)));
+        inner.with_decoder(Some(ByteLevel::new(false, false, false)));
+        inner.add_special_tokens(&[AddedToken::from("<eos>", true)]);
+        EmberTokenizer { inner }
+    }
+
+    #[test]
+    fn incremental_decode_preserves_unicode_special_tokens_and_every_eof_boundary() {
+        let tokenizer = byte_tokenizer();
+        for text in ["الْعَرَبِيَّةُ 👋🌟", "a\u{fffd}b\u{fffd}", " hello  world! "]
+        {
+            let mut ids = tokenizer.encode_no_special(text).unwrap();
+            // A skipped special token must not split a pending UTF-8 sequence.
+            ids.insert(1, tokenizer.token_to_id("<eos>").unwrap());
+            for end in 0..=ids.len() {
+                let mut decoder = tokenizer.incremental_decoder();
+                let mut actual = String::new();
+                for &id in &ids[..end] {
+                    actual.push_str(&decoder.push(id).unwrap());
+                }
+                assert_eq!(decoder.len(), end);
+                assert_eq!(decoder.is_empty(), end == 0);
+                actual.push_str(&decoder.finish().unwrap());
+                assert_eq!(
+                    actual,
+                    tokenizer.decode(&ids[..end]).unwrap(),
+                    "{text:?} at {end}"
+                );
+                assert!(
+                    decoder.finish().unwrap().is_empty(),
+                    "EOF flush is idempotent"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn incremental_decode_emits_complete_characters_without_growing_history() {
+        let tokenizer = byte_tokenizer();
+        let text = "لغة 👋 abc ".repeat(1024);
+        let ids = tokenizer.encode_no_special(&text).unwrap();
+        let mut decoder = tokenizer.incremental_decoder();
+        let mut actual = String::new();
+        for &id in &ids {
+            let piece = decoder.push(id).unwrap();
+            assert!(
+                !piece.contains('\u{fffd}'),
+                "incomplete UTF-8 escaped: {piece:?}"
+            );
+            actual.push_str(&piece);
+            assert!(
+                decoder.ids.len() < 32,
+                "completed text retained in decode window"
+            );
+        }
+        actual.push_str(&decoder.finish().unwrap());
+        assert_eq!(actual, text);
+
+        let mut decoder = tokenizer.incremental_decoder();
+        for (id, expected) in tokenizer
+            .encode_no_special("abc")
+            .unwrap()
+            .into_iter()
+            .zip(["a", "b", "c"])
+        {
+            assert_eq!(
+                decoder.push(id).unwrap(),
+                expected,
+                "ASCII must stream immediately"
+            );
+        }
+    }
+
+    #[test]
+    fn incremental_decode_preserves_wordpiece_cleanup_and_metaspace_context() {
+        for (decoder, tokens, expected) in [
+            (
+                serde_json::json!({"type":"WordPiece", "prefix":"##", "cleanup":true}),
+                vec!["I", "'m", "play", "##ing", "."],
+                "I'm playing.",
+            ),
+            (
+                serde_json::json!({"type":"Metaspace", "replacement":"▁", "prepend_scheme":"always", "split":true}),
+                vec!["▁This", "▁is", "▁a", "▁test", "!"],
+                "This is a test!",
+            ),
+        ] {
+            let vocab: serde_json::Map<_, _> = tokens
+                .iter()
+                .enumerate()
+                .map(|(id, token)| (token.to_string(), serde_json::json!(id)))
+                .chain(std::iter::once((
+                    "[UNK]".into(),
+                    serde_json::json!(tokens.len()),
+                )))
+                .collect();
+            let tokenizer = EmberTokenizer::from_bytes(
+                serde_json::to_vec(&serde_json::json!({
+                    "version":"1.0", "truncation":null, "padding":null,
+                    "added_tokens":[], "normalizer":null, "pre_tokenizer":null,
+                    "post_processor":null, "decoder":decoder,
+                    "model":{"type":"WordLevel", "vocab":vocab, "unk_token":"[UNK]"},
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let ids: Vec<_> = (0..tokens.len() as u32).collect();
+            assert_eq!(tokenizer.decode(&ids).unwrap(), expected);
+            let ids = ids.repeat(8);
+            for end in 0..=ids.len() {
+                let mut stream = tokenizer.incremental_decoder();
+                let mut actual = String::new();
+                for &id in &ids[..end] {
+                    actual.push_str(&stream.push(id).unwrap());
+                }
+                actual.push_str(&stream.finish().unwrap());
+                assert_eq!(
+                    actual,
+                    tokenizer.decode(&ids[..end]).unwrap(),
+                    "{tokens:?} at {end}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn from_file_rejects_symlinks_and_keeps_path_identity() {

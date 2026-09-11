@@ -1,9 +1,27 @@
 use alloc::vec::Vec;
 use half::{f16, slice::HalfFloatSliceExt};
 
+/// Physical storage requested by one model layer. Shared layers read an
+/// earlier layer's owner slab and never write a second copy.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum KvLayerLayout {
+    Owned { n_kv_heads: usize, head_dim: usize },
+    Shared { source_layer: usize },
+}
+
+#[derive(Clone, Copy)]
+struct LayerAllocation {
+    offset: usize,
+    owner: usize,
+    n_kv_heads: usize,
+    head_dim: usize,
+}
+
 /// a flat, pre-allocated key/value cache for transformer attention.
 ///
-/// memory layout: `[layer][head][seq_position][head_dim]`.
+/// Each owner slab is `[head][seq_position][head_dim]`. Ordinary models
+/// use uniform `[layer][head][seq_position][head_dim]` storage; heterogeneous
+/// models can allocate different slab shapes and alias earlier owners.
 /// wired into `Attention::forward_with_cache` - during prefill the full
 /// k/v projection is cached; subsequent decode steps read from the cache
 /// instead of recomputing against the full sequence each pass.
@@ -14,12 +32,15 @@ use half::{f16, slice::HalfFloatSliceExt};
 /// never read (see [`KVCache::truncate_to`]).
 #[derive(Clone)]
 pub struct KVCache {
-    /// key cache, flat layout: [layer][head][pos][head_dim]
+    /// Key owner slabs, each laid out as [head][pos][head_dim].
     k: Vec<f16>,
-    /// value cache, flat layout: [layer][head][pos][head_dim]
+    /// Value owner slabs with the same offsets and shapes as the keys.
     v: Vec<f16>,
     /// number of cache layers
     n_layers: usize,
+    /// Absent for the original uniform layout. Heterogeneous models retain
+    /// one small descriptor per logical layer, including shared aliases.
+    layers: Option<Vec<LayerAllocation>>,
     /// pre-allocated scratch buffer for attention score rows.
     /// reused across all heads and tokens during a decode step
     /// so the hot path never allocates.
@@ -70,6 +91,81 @@ impl KVCache {
             .try_fold(1usize, |count, dim| count.checked_mul(dim))
             .ok_or_else(|| "kv cache shape product overflow".to_string())?;
 
+        Self::allocate(n_layers, n_kv_heads, head_dim, max_seq_len, len, None)
+    }
+
+    pub(crate) fn try_new_per_layer(
+        layouts: &[KvLayerLayout],
+        max_seq_len: usize,
+    ) -> Result<Self, String> {
+        if layouts.is_empty() || max_seq_len == 0 {
+            return Err("KV cache requires layers and a positive sequence length".into());
+        }
+        let mut layers: Vec<LayerAllocation> = Vec::new();
+        layers
+            .try_reserve_exact(layouts.len())
+            .map_err(|error| format!("cannot allocate KV layer metadata: {error}"))?;
+        let mut len = 0usize;
+        let mut max_heads = 0;
+        let mut max_dim = 0;
+        for (layer, layout) in layouts.iter().enumerate() {
+            let allocation = match *layout {
+                KvLayerLayout::Owned {
+                    n_kv_heads,
+                    head_dim,
+                } => {
+                    if n_kv_heads == 0 || head_dim == 0 {
+                        return Err(format!("KV layer {layer} requires positive head geometry"));
+                    }
+                    let offset = len;
+                    len = n_kv_heads
+                        .checked_mul(max_seq_len)
+                        .and_then(|count| count.checked_mul(head_dim))
+                        .and_then(|count| len.checked_add(count))
+                        .ok_or_else(|| "KV layer allocation size overflow".to_string())?;
+                    LayerAllocation {
+                        offset,
+                        owner: layer,
+                        n_kv_heads,
+                        head_dim,
+                    }
+                }
+                KvLayerLayout::Shared { source_layer } => {
+                    if source_layer >= layer {
+                        return Err(format!("KV layer {layer} must share an earlier layer"));
+                    }
+                    layers[source_layer]
+                }
+            };
+            max_heads = max_heads.max(allocation.n_kv_heads);
+            max_dim = max_dim.max(allocation.head_dim);
+            layers.push(allocation);
+        }
+        if layers.iter().enumerate().all(|(layer, allocation)| {
+            allocation.owner == layer
+                && allocation.n_kv_heads == max_heads
+                && allocation.head_dim == max_dim
+        }) {
+            return Self::try_new(layouts.len(), max_heads, max_dim, max_seq_len);
+        }
+        Self::allocate(
+            layouts.len(),
+            max_heads,
+            max_dim,
+            max_seq_len,
+            len,
+            Some(layers),
+        )
+    }
+
+    fn allocate(
+        n_layers: usize,
+        n_kv_heads: usize,
+        head_dim: usize,
+        max_seq_len: usize,
+        len: usize,
+        layers: Option<Vec<LayerAllocation>>,
+    ) -> Result<Self, String> {
         let allocate_f16 = |name: &str| -> Result<Vec<f16>, String> {
             let mut values = Vec::new();
             values.try_reserve_exact(len).map_err(|error| {
@@ -88,6 +184,7 @@ impl KVCache {
             k: allocate_f16("key")?,
             v: allocate_f16("value")?,
             n_layers,
+            layers,
             n_kv_heads,
             qk_scratch,
             head_dim,
@@ -97,7 +194,7 @@ impl KVCache {
     }
 
     pub fn append(&mut self, layer: usize, pos: usize, k_new: &[f32], v_new: &[f32]) {
-        self.append_with_head_dim(layer, pos, k_new, v_new, self.head_dim);
+        self.append_with_head_dim(layer, pos, k_new, v_new, self.layer_head_dim(layer));
     }
 
     pub fn append_with_head_dim(
@@ -108,7 +205,14 @@ impl KVCache {
         v_new: &[f32],
         active_head_dim: usize,
     ) {
-        self.append_with_layout(layer, pos, k_new, v_new, self.n_kv_heads, active_head_dim);
+        self.append_with_layout(
+            layer,
+            pos,
+            k_new,
+            v_new,
+            self.layer_n_kv_heads(layer),
+            active_head_dim,
+        );
     }
 
     /// Append K/V values when a layer uses fewer heads and/or a narrower head
@@ -122,17 +226,21 @@ impl KVCache {
         active_kv_heads: usize,
         active_head_dim: usize,
     ) {
-        assert!(layer < self.n_layers, "kv cache layer out of bounds");
+        let allocation = self.layer_allocation(layer);
+        assert_eq!(
+            allocation.owner, layer,
+            "shared KV layers cannot be written"
+        );
         assert!(
             active_kv_heads > 0,
             "kv cache requires at least one active head"
         );
-        assert!(active_kv_heads <= self.n_kv_heads);
+        assert!(active_kv_heads <= allocation.n_kv_heads);
         assert!(
             active_head_dim > 0,
             "kv cache requires a non-zero head dimension"
         );
-        assert!(active_head_dim <= self.head_dim);
+        assert!(active_head_dim <= allocation.head_dim);
         let source_len = active_kv_heads
             .checked_mul(active_head_dim)
             .expect("kv cache append shape product overflow");
@@ -145,15 +253,15 @@ impl KVCache {
             self.max_seq_len
         );
 
-        let layer_offset = self.layer_offset(layer);
+        let layer_offset = allocation.offset;
         let seq_offset = pos
-            .checked_mul(self.head_dim)
+            .checked_mul(allocation.head_dim)
             .expect("kv cache sequence offset overflow");
 
         for h in 0..active_kv_heads {
             let head_offset = h
                 .checked_mul(self.max_seq_len)
-                .and_then(|offset| offset.checked_mul(self.head_dim))
+                .and_then(|offset| offset.checked_mul(allocation.head_dim))
                 .expect("kv cache head offset overflow");
             let dst = layer_offset + head_offset + seq_offset;
             let src = h * active_head_dim;
@@ -174,6 +282,7 @@ impl KVCache {
         &self,
         sequence_length: usize,
     ) -> Result<(Vec<f16>, Vec<f16>), String> {
+        self.require_uniform_snapshot()?;
         if sequence_length != self.cursor {
             return Err(format!(
                 "snapshot sequence length {sequence_length} does not match cache cursor {}",
@@ -224,6 +333,7 @@ impl KVCache {
         keys: &[f16],
         values: &[f16],
     ) -> Result<(), String> {
+        self.require_uniform_snapshot()?;
         if sequence_length > self.max_seq_len {
             return Err(format!(
                 "snapshot sequence length {sequence_length} exceeds cache capacity {}",
@@ -262,8 +372,9 @@ impl KVCache {
     }
 
     pub fn get(&self, layer: usize) -> (&[f16], &[f16]) {
-        let layer_offset = self.layer_offset(layer);
-        let len = self.layer_stride();
+        let allocation = self.layer_allocation(layer);
+        let layer_offset = allocation.offset;
+        let len = allocation.n_kv_heads * self.max_seq_len * allocation.head_dim;
         (
             &self.k[layer_offset..layer_offset + len],
             &self.v[layer_offset..layer_offset + len],
@@ -271,8 +382,9 @@ impl KVCache {
     }
 
     pub fn get_with_scratch(&mut self, layer: usize) -> (&[f16], &[f16], &mut Vec<f32>) {
-        let layer_offset = self.layer_offset(layer);
-        let len = self.layer_stride();
+        let allocation = self.layer_allocation(layer);
+        let layer_offset = allocation.offset;
+        let len = allocation.n_kv_heads * self.max_seq_len * allocation.head_dim;
         (
             &self.k[layer_offset..layer_offset + len],
             &self.v[layer_offset..layer_offset + len],
@@ -280,13 +392,23 @@ impl KVCache {
         )
     }
 
-    /// Number of layer slabs in the cache.
+    /// Number of logical model layers, including layers sharing storage.
     pub fn n_layers(&self) -> usize {
         self.n_layers
     }
 
+    /// Uniform head dimension, or the maximum for a heterogeneous cache.
     pub fn head_dim(&self) -> usize {
         self.head_dim
+    }
+
+    /// Physical head width used by this layer's cache slab.
+    pub fn layer_head_dim(&self, layer: usize) -> usize {
+        self.layer_allocation(layer).head_dim
+    }
+
+    pub fn layer_n_kv_heads(&self, layer: usize) -> usize {
+        self.layer_allocation(layer).n_kv_heads
     }
 
     pub fn cursor(&self) -> usize {
@@ -310,8 +432,7 @@ impl KVCache {
     }
 
     /// bytes reserved for K and V storage, excluding the small score scratch.
-    #[cfg(test)]
-    fn storage_bytes(&self) -> usize {
+    pub fn storage_bytes(&self) -> usize {
         self.k
             .capacity()
             .saturating_add(self.v.capacity())
@@ -350,7 +471,7 @@ impl KVCache {
         self.cursor = pos;
     }
 
-    /// number of kv heads stored in the cache.
+    /// Uniform KV head count, or the maximum for a heterogeneous cache.
     /// for gpt-2 this equals n_heads; for llama with gqa it may be less.
     #[inline]
     pub fn n_kv_heads(&self) -> usize {
@@ -365,16 +486,144 @@ impl KVCache {
     }
 
     fn layer_offset(&self, layer: usize) -> usize {
+        self.layer_allocation(layer).offset
+    }
+
+    fn layer_allocation(&self, layer: usize) -> LayerAllocation {
         assert!(layer < self.n_layers, "kv cache layer out of bounds");
-        layer
-            .checked_mul(self.layer_stride())
-            .expect("kv cache layer offset overflow")
+        if let Some(layers) = &self.layers {
+            return layers[layer];
+        }
+        LayerAllocation {
+            offset: layer
+                .checked_mul(self.layer_stride())
+                .expect("kv cache layer offset overflow"),
+            owner: layer,
+            n_kv_heads: self.n_kv_heads,
+            head_dim: self.head_dim,
+        }
+    }
+
+    fn require_uniform_snapshot(&self) -> Result<(), String> {
+        if self.layers.is_some() {
+            return Err("KV snapshot v1 requires uniform non-shared geometry; per-layer caches need a future schema".into());
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn heterogeneous_cache(capacity: usize) -> KVCache {
+        KVCache::try_new_per_layer(
+            &[
+                KvLayerLayout::Owned {
+                    n_kv_heads: 2,
+                    head_dim: 4,
+                },
+                KvLayerLayout::Owned {
+                    n_kv_heads: 1,
+                    head_dim: 8,
+                },
+                KvLayerLayout::Shared { source_layer: 0 },
+            ],
+            capacity,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn heterogeneous_storage_aliases_owners_and_preserves_rollback_and_clone() {
+        let mut cache = heterogeneous_cache(5);
+        assert_eq!(cache.storage_bytes(), (2 * 4 + 8) * 5 * 4);
+        assert_eq!(cache.n_layers(), 3);
+        assert_eq!(cache.layer_head_dim(0), 4);
+        assert_eq!(cache.layer_head_dim(1), 8);
+        assert_eq!(cache.layer_n_kv_heads(1), 1);
+        for pos in 0..3 {
+            cache.append(0, pos, &[pos as f32 + 1.0; 8], &[2.0; 8]);
+            cache.append(1, pos, &[pos as f32 + 10.0; 8], &[20.0; 8]);
+            cache.advance_cursor();
+        }
+        assert_eq!(cache.get(0).0.as_ptr(), cache.get(2).0.as_ptr());
+        assert_eq!(cache.get(0).1.as_ptr(), cache.get(2).1.as_ptr());
+        let original = cache.clone();
+        assert_ne!(cache.get(0).0.as_ptr(), original.get(0).0.as_ptr());
+        cache.truncate_to(1);
+        cache.append(0, 1, &[9.0; 8], &[8.0; 8]);
+        cache.append(1, 1, &[7.0; 8], &[6.0; 8]);
+        cache.advance_cursor();
+        assert_eq!(cache.get(2).0[4].to_f32(), 9.0);
+        assert_eq!(cache.get(1).0[8].to_f32(), 7.0);
+        assert_eq!(original.get(0).0[4].to_f32(), 2.0);
+        assert_eq!(original.cursor(), 3);
+        assert_eq!(cache.cursor(), 2);
+        cache.reset();
+        assert_eq!(cache.cursor(), 0);
+    }
+
+    #[test]
+    fn heterogeneous_geometry_rejects_malformed_owners_and_uniform_snapshots() {
+        for layouts in [
+            vec![],
+            vec![KvLayerLayout::Shared { source_layer: 0 }],
+            vec![KvLayerLayout::Owned {
+                n_kv_heads: 0,
+                head_dim: 4,
+            }],
+            vec![KvLayerLayout::Owned {
+                n_kv_heads: 1,
+                head_dim: 0,
+            }],
+            vec![KvLayerLayout::Owned {
+                n_kv_heads: usize::MAX,
+                head_dim: 4,
+            }],
+        ] {
+            assert!(KVCache::try_new_per_layer(&layouts, 2).is_err());
+        }
+        let mut cache = heterogeneous_cache(2);
+        cache.append(0, 0, &[1.0; 8], &[2.0; 8]);
+        cache.append(1, 0, &[3.0; 8], &[4.0; 8]);
+        cache.advance_cursor();
+        let before = cache.get(0).0.to_vec();
+        assert!(cache
+            .export_compact_prefix(1)
+            .unwrap_err()
+            .contains("uniform non-shared"));
+        assert!(cache
+            .import_compact_prefix(1, &[], &[])
+            .unwrap_err()
+            .contains("uniform non-shared"));
+        assert_eq!(cache.get(0).0, before);
+        assert_eq!(cache.cursor(), 1);
+    }
+
+    #[test]
+    fn uniform_layer_layouts_retain_snapshot_roundtrip() {
+        let layouts = [KvLayerLayout::Owned {
+            n_kv_heads: 2,
+            head_dim: 4,
+        }; 2];
+        let mut cache = KVCache::try_new_per_layer(&layouts, 3).unwrap();
+        assert!(cache.layers.is_none());
+        for layer in 0..2 {
+            cache.append(layer, 0, &[layer as f32 + 1.0; 8], &[3.0; 8]);
+        }
+        cache.advance_cursor();
+        let (keys, values) = cache.export_compact_prefix(1).unwrap();
+        let mut imported = KVCache::new(2, 2, 4, 5);
+        imported.import_compact_prefix(1, &keys, &values).unwrap();
+        assert_eq!(imported.export_compact_prefix(1).unwrap(), (keys, values));
+    }
+
+    #[test]
+    #[should_panic(expected = "shared KV layers cannot be written")]
+    fn shared_layers_reject_duplicate_writes() {
+        heterogeneous_cache(2).append(2, 0, &[0.0; 8], &[0.0; 8]);
+    }
 
     #[test]
     fn test_kv_cache() {

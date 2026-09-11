@@ -9,11 +9,8 @@ supports:
 """
 
 import argparse
-import hashlib
 import json
 import math
-import os
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +21,16 @@ from sklearn.metrics import confusion_matrix
 from sklearn.model_selection import GroupKFold, StratifiedGroupKFold, StratifiedKFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.pipeline import make_pipeline
+
+
+try:
+    from .artifact_io import (
+        atomic_save_figure, atomic_save_npy, atomic_savez, atomic_write_text, sha256_file,
+    )
+except ImportError:  # direct script execution
+    from artifact_io import (
+        atomic_save_figure, atomic_save_npy, atomic_savez, atomic_write_text, sha256_file,
+    )
 
 
 SPLIT_ALIASES = {
@@ -889,89 +896,6 @@ def export_linear_parameters(probe) -> tuple[np.ndarray, np.ndarray, np.ndarray]
     raw_weights = standard_weights / scale[None, :]
     raw_intercept = intercept - np.sum(standard_weights * mean[None, :] / scale[None, :], axis=1)
     return standard_weights, raw_weights, raw_intercept
-
-
-def atomic_savez(path: str | Path, **arrays) -> None:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            np.savez(handle, **arrays)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, output)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def atomic_save_npy(path: str | Path, array: np.ndarray) -> None:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            np.save(handle, array, allow_pickle=False)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, output)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def atomic_write_text(path: str | Path, content: str) -> None:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{output.name}.", suffix=".tmp", dir=output.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, output)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def atomic_save_figure(figure, path: str | Path, **savefig_kwargs) -> None:
-    """Write a Matplotlib-like figure without exposing a partial destination."""
-    output = Path(path)
-    if not output.suffix:
-        raise ValueError("figure output path requires a file extension")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{output.stem}.", suffix=output.suffix, dir=output.parent
-    )
-    os.close(descriptor)
-    temporary = Path(temporary_name)
-    try:
-        figure.savefig(temporary, **savefig_kwargs)
-        with temporary.open("rb") as handle:
-            os.fsync(handle.fileno())
-        os.replace(temporary, output)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def main():

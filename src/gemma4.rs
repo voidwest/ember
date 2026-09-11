@@ -653,7 +653,7 @@ impl<B: Backend> Gemma4Attention<B> {
         );
         q = apply_rope_and_qk_norm(
             backend,
-            &q,
+            q,
             &self.q_norm,
             &self.rope_cos,
             &self.rope_sin,
@@ -679,7 +679,7 @@ impl<B: Backend> Gemma4Attention<B> {
             );
             let k = apply_rope_and_qk_norm(
                 backend,
-                &k,
+                k,
                 &self.k_norm,
                 &self.rope_cos,
                 &self.rope_sin,
@@ -691,7 +691,7 @@ impl<B: Backend> Gemma4Attention<B> {
             finish_trace_span(rope_k_span, backend, &k);
             // llama.cpp applies a plain per-head RMS norm to V (no learned
             // weights, using f_norm_rms_eps) before storing it in the cache.
-            let v = apply_v_rms_norm(backend, &v, self.n_kv_heads, self.head_dim, self.norm_eps)?;
+            let v = apply_v_rms_norm(backend, v, self.n_kv_heads, self.head_dim, self.norm_eps)?;
             gemma_dump!(layer, "q_post", backend, q);
             gemma_dump!(layer, "k_post", backend, k);
             gemma_dump!(layer, "v_post", backend, v);
@@ -724,7 +724,7 @@ impl<B: Backend> Gemma4Attention<B> {
         };
 
         let total_seq_len = cache.cursor() + seq_len;
-        let cache_head_dim = cache.head_dim();
+        let cache_head_dim = cache.layer_head_dim(source_layer);
         let max_seq_len = cache.max_seq_len();
         let attention_span = gemma_trace_span!(
             "attention_score",
@@ -837,7 +837,6 @@ impl<B: Backend> Gemma4Block<B> {
         gemma_dump!(layer, "x_in", backend, *x);
 
         // 1. Self-attention
-        let residual = x.clone();
         let input_norm_span = gemma_trace_span!(
             "attn_rms_norm",
             layer,
@@ -871,12 +870,11 @@ impl<B: Backend> Gemma4Block<B> {
             hidden_bytes * 2,
             trace::flops_residual_add(seq_len * embed_dim),
         );
-        let x = backend.add(&residual, &attn_out)?;
+        let x = backend.add(x, &attn_out)?;
         finish_trace_span(attn_add_span, backend, &x);
         gemma_dump!(layer, "post_attn_add", backend, x);
 
         // 2. Feed-forward network
-        let residual = x.clone();
         let pre_ffn_norm_span = gemma_trace_span!(
             "ffn_rms_norm",
             layer,
@@ -908,7 +906,7 @@ impl<B: Backend> Gemma4Block<B> {
             hidden_bytes * 2,
             trace::flops_residual_add(seq_len * embed_dim),
         );
-        let mut x = backend.add(&residual, &mlp_out)?;
+        let mut x = backend.add(&x, &mlp_out)?;
         finish_trace_span(ffn_add_span, backend, &x);
         gemma_dump!(layer, "ffn_add", backend, x);
 
@@ -1041,12 +1039,23 @@ pub struct Gemma4<B: Backend> {
 
 impl<B: Backend> ForwardModel<B> for Gemma4<B> {
     fn create_cache(&self, _backend: &B, max_seq_len: usize) -> KVCache {
-        let max_kv_heads = self
-            .config
-            .n_local_kv_heads
-            .max(self.config.n_global_kv_heads);
-        let max_head_dim = self.config.local_head_dim.max(self.config.global_head_dim);
-        KVCache::new(self.blocks.len(), max_kv_heads, max_head_dim, max_seq_len)
+        use crate::kv_cache::KvLayerLayout;
+        let layouts: Vec<_> = self
+            .blocks
+            .iter()
+            .map(|block| {
+                let attention = &block.attn;
+                match attention.shared_source_layer {
+                    Some(source_layer) => KvLayerLayout::Shared { source_layer },
+                    None => KvLayerLayout::Owned {
+                        n_kv_heads: attention.n_kv_heads,
+                        head_dim: attention.head_dim,
+                    },
+                }
+            })
+            .collect();
+        KVCache::try_new_per_layer(&layouts, max_seq_len)
+            .expect("invalid or unallocatable Gemma KV cache geometry")
     }
 
     fn max_seq_len(&self, _backend: &B) -> usize {
@@ -2314,9 +2323,7 @@ impl<B: Backend> Gemma4<B> {
         let mut out = Vec::with_capacity(self.config.n_layers);
         let combine_scale: f32 = 2.0_f32.sqrt().recip(); // 1/sqrt(2)
 
-        for (layer, raw_row) in raw_ple.iter().enumerate() {
-            let mut data = raw_row.clone();
-
+        for (layer, mut data) in raw_ple.into_iter().enumerate() {
             if let Some(ref proj) = proj {
                 let proj_data = backend.data(proj);
                 let layer_offset = layer * per_layer_dim;
@@ -2427,7 +2434,7 @@ fn softcap_logits<B: Backend>(
 #[allow(clippy::too_many_arguments)]
 fn apply_rope_and_qk_norm<B: Backend>(
     backend: &B,
-    x: &B::Tensor,
+    x: B::Tensor,
     norm: &B::Tensor,
     rope_cos: &B::Tensor,
     rope_sin: &B::Tensor,
@@ -2436,10 +2443,10 @@ fn apply_rope_and_qk_norm<B: Backend>(
     head_dim: usize,
     norm_eps: f32,
 ) -> Result<B::Tensor, B::Error> {
-    let seq_len = backend.shape(x)[0];
+    let seq_len = backend.shape(&x)[0];
     let width = n_heads * head_dim;
     let half = head_dim / 2;
-    let mut data = backend.data(x).to_vec();
+    let mut data = backend.into_cpu_data(x);
     let cos = backend.data(rope_cos);
     let sin = backend.data(rope_sin);
     let norm_data = backend.data(norm);
@@ -2478,14 +2485,14 @@ fn apply_rope_and_qk_norm<B: Backend>(
 /// normalizes V with `ggml_rms_norm(eps)` before caching it.
 fn apply_v_rms_norm<B: Backend>(
     backend: &B,
-    x: &B::Tensor,
+    x: B::Tensor,
     n_heads: usize,
     head_dim: usize,
     norm_eps: f32,
 ) -> Result<B::Tensor, B::Error> {
-    let seq_len = backend.shape(x)[0];
+    let seq_len = backend.shape(&x)[0];
     let width = n_heads * head_dim;
-    let mut data = backend.data(x).to_vec();
+    let mut data = backend.into_cpu_data(x);
     for s in 0..seq_len {
         for h in 0..n_heads {
             let base = s * width + h * head_dim;
@@ -2594,39 +2601,28 @@ fn cached_attention_with_scratch<B: Backend>(
     let n_repeat = spec.n_heads / spec.n_kv_heads;
     let q_data = backend.data(q);
     let mut out = vec![0.0; seq_len * q_width];
-    if scores.capacity() < spec.max_seq_len {
-        scores.reserve(spec.max_seq_len - scores.capacity());
-    }
     let cache_head_stride = spec.max_seq_len * spec.cache_head_dim;
-
-    for h in 0..spec.n_heads {
-        for i in 0..seq_len {
-            let max_j = spec.total_seq_len - seq_len + i;
-            scores.resize(max_j + 1, 0.0);
-            let min_j = spec
-                .sliding_window
-                .map(|w| (max_j + 1).saturating_sub(w))
-                .unwrap_or(0);
-            let out_idx = i * q_width + h * spec.head_dim;
-            crate::backend::cached_attention_row_head(
-                q_data,
-                cached_k,
-                cached_v,
-                i,
-                h,
-                q_width,
-                spec.head_dim,
-                spec.cache_head_dim,
-                n_repeat,
-                spec.scale,
-                cache_head_stride,
-                max_j,
-                min_j,
-                scores.as_mut_slice(),
-                &mut out[out_idx..out_idx + spec.head_dim],
-            );
-        }
-    }
+    crate::backend::cached_attention_dispatch(
+        q_data,
+        cached_k,
+        cached_v,
+        &crate::backend::CachedAttentionSpec {
+            n_heads: spec.n_heads,
+            n_kv_heads: spec.n_kv_heads,
+            head_dim: spec.head_dim,
+            max_seq_len: spec.max_seq_len,
+            total_seq_len: spec.total_seq_len,
+        },
+        seq_len,
+        q_width,
+        n_repeat,
+        spec.scale,
+        cache_head_stride,
+        spec.cache_head_dim,
+        spec.sliding_window,
+        scores,
+        &mut out,
+    );
     backend.load_from_cpu(out, &[seq_len, q_width])
 }
 
@@ -2947,6 +2943,296 @@ mod tests {
         .unwrap()
     }
 
+    fn tiny_heterogeneous_gemma4_model() -> Gemma4<CpuBackend> {
+        let mut metadata = HashMap::new();
+        for (name, value) in [
+            ("block_count", 4),
+            ("embedding_length", 4),
+            ("attention.head_count", 4),
+            ("attention.local_head_count_kv", 1),
+            ("attention.global_head_count_kv", 2),
+            ("attention.key_length_swa", 2),
+            ("attention.global_key_length", 4),
+            ("attention.sliding_window", 2),
+            ("attention.shared_kv_layers", 2),
+            ("feed_forward_length", 4),
+            ("vocab_size", 4),
+            ("context_length", 16),
+        ] {
+            metadata.insert(format!("gemma4.{name}"), GgufValue::U32(value));
+        }
+        metadata.insert(
+            "gemma4.attention.sliding_window_pattern".into(),
+            GgufValue::Array(
+                [true, false, true, false]
+                    .into_iter()
+                    .map(GgufValue::Bool)
+                    .collect(),
+            ),
+        );
+        let weight = |input: usize, output: usize, phase: f32| {
+            LoadedTensor::F32(CpuTensor::from_data(
+                vec![input, output],
+                (0..input * output)
+                    .map(|index| (index as f32 * 0.37 + phase).sin() * 0.125)
+                    .collect(),
+            ))
+        };
+        let mut tensors = HashMap::from([
+            ("token_embd.weight".into(), weight(4, 4, 0.0)),
+            ("output.weight".into(), weight(4, 4, 0.25)),
+            ("output_norm.weight".into(), tiny_tensor(&[4], 1.0)),
+        ]);
+        for layer in 0..4 {
+            let (head_dim, kv_heads) = if layer % 2 == 0 { (2, 1) } else { (4, 2) };
+            for (name, input, output) in [
+                ("attn_q", 4, 4 * head_dim),
+                ("attn_output", 4 * head_dim, 4),
+                ("ffn_gate", 4, 4),
+                ("ffn_up", 4, 4),
+                ("ffn_down", 4, 4),
+            ] {
+                tensors.insert(
+                    format!("blk.{layer}.{name}.weight"),
+                    weight(input, output, layer as f32),
+                );
+            }
+            if layer < 2 {
+                for name in ["attn_k", "attn_v"] {
+                    tensors.insert(
+                        format!("blk.{layer}.{name}.weight"),
+                        weight(4, kv_heads * head_dim, 0.5 + layer as f32),
+                    );
+                }
+            }
+            for (name, width) in [
+                ("attn_q_norm", head_dim),
+                ("attn_k_norm", head_dim),
+                ("attn_norm", 4),
+                ("attn_post_norm", 4),
+                ("ffn_norm", 4),
+                ("ffn_post_norm", 4),
+            ] {
+                tensors.insert(
+                    format!("blk.{layer}.{name}.weight"),
+                    tiny_tensor(&[width], 1.0),
+                );
+            }
+        }
+        let mut loader = loader_with(metadata);
+        loader.tensors = tensors;
+        Gemma4::from_loader(loader).unwrap()
+    }
+
+    #[test]
+    fn heterogeneous_shared_cache_matches_padded_prefill_decode_and_rollback() {
+        let backend = CpuBackend;
+        let model = tiny_heterogeneous_gemma4_model();
+        let mut compact = model.create_cache(&backend, 16);
+        let mut padded = KVCache::new(4, 2, 4, 16);
+        assert_eq!(compact.storage_bytes(), (2 + 2 * 4) * 16 * 4);
+        assert_eq!(padded.storage_bytes(), 4 * 2 * 4 * 16 * 4);
+        assert_eq!(compact.get(0).0.as_ptr(), compact.get(2).0.as_ptr());
+        assert_eq!(compact.get(1).1.as_ptr(), compact.get(3).1.as_ptr());
+
+        let assert_active_equal = |compact: &KVCache, padded: &KVCache| {
+            assert_eq!(compact.cursor(), padded.cursor());
+            for (layer, block) in model.blocks.iter().enumerate() {
+                let source = block.attn.shared_source_layer.unwrap_or(layer);
+                let (actual_k, actual_v) = compact.get(layer);
+                let (expected_k, expected_v) = padded.get(source);
+                for head in 0..block.attn.n_kv_heads {
+                    for pos in 0..compact.cursor() {
+                        let actual = (head * 16 + pos) * compact.layer_head_dim(layer);
+                        let expected = (head * 16 + pos) * padded.layer_head_dim(source);
+                        let width = block.attn.head_dim;
+                        assert_eq!(
+                            &actual_k[actual..actual + width],
+                            &expected_k[expected..expected + width]
+                        );
+                        assert_eq!(
+                            &actual_v[actual..actual + width],
+                            &expected_v[expected..expected + width]
+                        );
+                    }
+                }
+            }
+        };
+        for tokens in [&[0, 1, 2, 3, 0][..], &[1][..], &[2][..]] {
+            let start = compact.cursor();
+            let actual = model
+                .forward_with_cache(&backend, tokens, &mut compact, start)
+                .unwrap();
+            let expected = model
+                .forward_with_cache(&backend, tokens, &mut padded, start)
+                .unwrap();
+            assert_eq!(actual, expected);
+            assert!(actual.data.iter().any(|value| *value != 0.0));
+            assert_active_equal(&compact, &padded);
+        }
+        compact.truncate_to(3);
+        padded.truncate_to(3);
+        let actual = model
+            .forward_with_cache(&backend, &[2, 1], &mut compact, 3)
+            .unwrap();
+        let expected = model
+            .forward_with_cache(&backend, &[2, 1], &mut padded, 3)
+            .unwrap();
+        assert_eq!(actual, expected);
+        assert_active_equal(&compact, &padded);
+        let mut fresh = model.create_cache(&backend, 16);
+        let replay = model
+            .forward_with_cache(&backend, &[0, 1, 2, 2, 1], &mut fresh, 0)
+            .unwrap();
+        assert_eq!(actual.data, replay.data[3 * 4..]);
+        assert_active_equal(&fresh, &padded);
+    }
+
+    #[test]
+    fn gemma_cached_attention_parallel_matches_serial_with_window_and_padding() {
+        let serial = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        let parallel = rayon::ThreadPoolBuilder::new()
+            .num_threads(4)
+            .build()
+            .unwrap();
+        let max_seq_len = 1540;
+        let total_seq_len = 1536;
+        let n_heads = 4;
+        let n_kv_heads = 2;
+        let head_dim = 8;
+        let cache_head_dim = 12;
+        let keys: Vec<_> = (0..n_kv_heads * max_seq_len * cache_head_dim)
+            .map(|index| f16::from_f32((index as f32 * 0.07).sin()))
+            .collect();
+        let values: Vec<_> = (0..keys.len())
+            .map(|index| f16::from_f32((index as f32 * 0.03).cos()))
+            .collect();
+        for seq_len in [1, 5] {
+            let query = CpuTensor::from_data(
+                vec![seq_len, n_heads * head_dim],
+                (0..seq_len * n_heads * head_dim)
+                    .map(|index| (index as f32 * 0.13).sin())
+                    .collect(),
+            );
+            let mut full_output = None;
+            for sliding_window in [None, Some(1024)] {
+                let attended = sliding_window.unwrap_or(total_seq_len);
+                assert!(
+                    !serial.install(|| crate::backend::should_parallel_attention(
+                        n_heads, seq_len, attended, head_dim
+                    ))
+                );
+                assert!(
+                    parallel.install(|| crate::backend::should_parallel_attention(
+                        n_heads, seq_len, attended, head_dim
+                    ))
+                );
+                let run = || {
+                    cached_attention_with_scratch(
+                        &CpuBackend,
+                        &query,
+                        &keys,
+                        &values,
+                        Gemma4CachedAttentionSpec {
+                            n_heads,
+                            n_kv_heads,
+                            head_dim,
+                            cache_head_dim,
+                            max_seq_len,
+                            total_seq_len,
+                            sliding_window,
+                            scale: 0.5,
+                        },
+                        &mut Vec::new(),
+                    )
+                    .unwrap()
+                };
+                let expected = serial.install(run);
+                assert_eq!(parallel.install(run), expected);
+                if let Some(full) = &full_output {
+                    assert_ne!(
+                        &expected, full,
+                        "window must actually exclude visible values"
+                    );
+                } else {
+                    full_output = Some(expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cached_local_attention_masks_prefix_and_future_with_padded_heads() {
+        let query = CpuTensor::zeroes(&[2, 8]);
+        let keys = vec![f16::ZERO; 2 * 5 * 4];
+        let mut values = vec![f16::from_f32(-999.0); keys.len()];
+        for head in 0..2 {
+            for (pos, value) in [1.0, 2.0, 4.0, 8.0].into_iter().enumerate() {
+                let offset = (head * 5 + pos) * 4;
+                values[offset..offset + 2].fill(f16::from_f32(value + head as f32 * 16.0));
+            }
+        }
+        let actual = cached_attention_with_scratch(
+            &CpuBackend,
+            &query,
+            &keys,
+            &values,
+            Gemma4CachedAttentionSpec {
+                n_heads: 4,
+                n_kv_heads: 2,
+                head_dim: 2,
+                cache_head_dim: 4,
+                max_seq_len: 5,
+                total_seq_len: 4,
+                sliding_window: Some(2),
+                scale: 1.0,
+            },
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            actual.data,
+            [
+                3.0, 3.0, 3.0, 3.0, 19.0, 19.0, 19.0, 19.0, 6.0, 6.0, 6.0, 6.0, 22.0, 22.0, 22.0,
+                22.0
+            ]
+        );
+    }
+
+    #[test]
+    fn owned_qkv_normalization_reuses_cpu_payloads() {
+        let query = CpuTensor::from_data(vec![1, 4], vec![1.0, 2.0, 3.0, 4.0]);
+        let pointer = query.data.as_ptr();
+        let norm = CpuTensor::from_data(vec![2], vec![1.0, 0.5]);
+        let cos = CpuTensor::from_data(vec![1, 1], vec![0.0]);
+        let sin = CpuTensor::from_data(vec![1, 1], vec![1.0]);
+        let output =
+            apply_rope_and_qk_norm(&CpuBackend, query, &norm, &cos, &sin, 0, 2, 2, 1e-6).unwrap();
+        assert_eq!(pointer, output.data.as_ptr());
+        let mut expected = Vec::new();
+        for (a, b) in [(1.0_f32, 2.0_f32), (3.0, 4.0)] {
+            let rstd = ((a * a + b * b) / 2.0 + 1e-6).sqrt().recip();
+            expected.extend([-b * rstd * 0.5, a * rstd]);
+        }
+        assert_eq!(output.data, expected);
+        let value = CpuTensor::from_data(vec![1, 4], vec![1.0, 2.0, 3.0, 4.0]);
+        let pointer = value.data.as_ptr();
+        let output = apply_v_rms_norm(&CpuBackend, value, 2, 2, 1e-6).unwrap();
+        assert_eq!(pointer, output.data.as_ptr());
+        assert_eq!(
+            output.data,
+            vec![
+                expected[1],
+                -expected[0] * 2.0,
+                expected[3],
+                -expected[2] * 2.0
+            ]
+        );
+    }
+
     #[test]
     fn gemma4_config_rejects_moe() {
         let mut metadata = HashMap::new();
@@ -3127,8 +3413,8 @@ mod tests {
         let norm = CpuTensor::from_data(vec![4], vec![1.0, 2.0, 3.0, 4.0]);
         let rope_cos = CpuTensor::from_data(vec![1, 2], vec![0.0, 1.0]);
         let rope_sin = CpuTensor::from_data(vec![1, 2], vec![1.0, 0.0]);
-        let out = apply_rope_and_qk_norm(&backend, &x, &norm, &rope_cos, &rope_sin, 0, 1, 4, 0.0)
-            .unwrap();
+        let out =
+            apply_rope_and_qk_norm(&backend, x, &norm, &rope_cos, &rope_sin, 0, 1, 4, 0.0).unwrap();
         // RMSNorm first: rstd = 1 / sqrt(mean([1, 4, 9, 16])).
         // RoPE then rotates the first/second half pairs with cos=[0,1],
         // sin=[1,0].

@@ -19,7 +19,7 @@ const PAR_ELEMENTWISE_CHUNK: usize = 64 * 1024;
 /// shape is [d0, d1, d2, ...] with strides computed for efficient
 /// indexing. the data is always contiguous - strides are used only
 /// for bounds-aware access, not for views into other storage.
-/// all pure operations return a new allocation; nothing mutates in place.
+/// Borrowing operations return new storage; consuming operations can reuse it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CpuTensor {
     /// dimensions of the tensor
@@ -124,6 +124,11 @@ impl CpuTensor {
         &mut self.data
     }
 
+    /// Consume the tensor and return its existing data allocation.
+    pub fn into_data(self) -> Vec<f32> {
+        self.data
+    }
+
     pub fn ndim(&self) -> usize {
         self.shape.len()
     }
@@ -148,7 +153,7 @@ impl CpuTensor {
         self.data[idx]
     }
 
-    /// reshape a tensor without copying data.
+    /// Return a reshaped copy, preserving the original tensor.
     /// panics if the new shape has a different total element count.
     #[must_use]
     #[inline]
@@ -156,6 +161,18 @@ impl CpuTensor {
         let new_len = Self::checked_element_count(new_shape);
         assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
         Self::from_data(new_shape.into(), self.data.clone())
+    }
+
+    /// Consume a tensor and reshape it without copying its data.
+    /// Panics if the new shape has a different total element count.
+    #[must_use]
+    pub fn into_reshape(mut self, new_shape: &[usize]) -> Self {
+        let new_len = Self::checked_element_count(new_shape);
+        assert_eq!(new_len, self.len(), "reshape: total elements gotta match");
+        self.strides = Self::compute_strides(new_shape);
+        self.shape.clear();
+        self.shape.extend_from_slice(new_shape);
+        self
     }
 
     /// element-wise addition. panics if shapes differ.
@@ -846,6 +863,30 @@ pub fn compute_rope_freqs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn consuming_reshape_reuses_data_and_updates_indexing() {
+        let values = vec![0.0, -0.0, f32::from_bits(0x7fc0_1234), 3.0, 4.0, 5.0];
+        let bits: Vec<_> = values.iter().map(|value| value.to_bits()).collect();
+        let tensor = CpuTensor::from_data(vec![2, 3], values);
+        let allocation = tensor.data().as_ptr();
+        let reshaped = tensor.into_reshape(&[3, 2]);
+        assert_eq!(reshaped.shape(), &[3, 2]);
+        assert_eq!(reshaped.data().as_ptr(), allocation);
+        assert_eq!(reshaped.get(&[1, 1]), 3.0);
+        let data = reshaped.into_data();
+        assert_eq!(data.as_ptr(), allocation);
+        assert_eq!(
+            data.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+            bits
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "total elements gotta match")]
+    fn consuming_reshape_rejects_different_element_count() {
+        let _ = CpuTensor::zeroes(&[2, 3]).into_reshape(&[7]);
+    }
 
     #[test]
     fn test_add() {

@@ -8,7 +8,6 @@ still encode the same relational structure.
 """
 
 import argparse
-import json
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
 
@@ -20,56 +19,52 @@ except ImportError:  # direct script execution
     from train_linear_probe import atomic_savez, load_activations, sha256_file
 
 
-def rsa_matrix(activations: np.ndarray, metric: str = "correlation") -> np.ndarray:
-    """compute a representational similarity matrix for a set of activations.
-
-    activations: (n_stimuli, hidden_dim)
-    returns: (n_stimuli, n_stimuli) rsm (0=identical, 1=orthogonal, etc.)
-    """
+def _rsa_distances(activations: np.ndarray, metric: str) -> np.ndarray:
     activations = np.asarray(activations)
     if activations.ndim != 2 or activations.shape[0] < 3 or activations.shape[1] == 0:
         raise ValueError(f"RSA requires a [samples>=3, features>0] matrix, got {activations.shape}")
     if not np.isfinite(activations).all():
         raise ValueError("RSA inputs contain non-finite values")
-    rdm = squareform(pdist(activations, metric=metric))
-    if not np.isfinite(rdm).all():
+    distances = pdist(activations, metric=metric)
+    if not np.isfinite(distances).all():
         raise ValueError(
             f"RSA metric {metric!r} produced non-finite distances (for example from constant rows)"
         )
-    return 1 - rdm  # distance → similarity
+    return distances
+
+
+def rsa_matrix(activations: np.ndarray, metric: str = "correlation") -> np.ndarray:
+    """Return the full [samples, samples] representational similarity matrix."""
+    return 1 - squareform(_rsa_distances(activations, metric))
+
+
+def _normalized_rsa_vectors(activations: np.ndarray, metric: str) -> np.ndarray:
+    """Keep only condensed distances, centering/normalizing each layer once."""
+    activations = np.asarray(activations)
+    if activations.ndim != 3 or any(size == 0 for size in activations.shape):
+        raise ValueError(f"RSA requires a non-empty rank-3 tensor, got {activations.shape}")
+    n_stimuli, n_layers, _ = activations.shape
+    vectors = np.empty((n_layers, n_stimuli * (n_stimuli - 1) // 2))
+    for layer in range(n_layers):
+        vectors[layer] = 1 - _rsa_distances(activations[:, layer, :], metric)
+    vectors -= vectors.mean(axis=1, keepdims=True)
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    if np.any(norms == 0) or not np.isfinite(norms).all():
+        raise ValueError("RSA produced non-finite correlations (constant distance vectors)")
+    vectors /= norms
+    return vectors
 
 
 def rsa_layer_matrix(activations: np.ndarray,
                      metric: str = "correlation") -> np.ndarray:
-    """compute pairwise RSA between every pair of layers.
-
-    activations: (n_stimuli, n_layers, hidden_dim)
-    returns: (n_layers, n_layers) matrix of RSA correlations.
-    """
-    n_stimuli, n_layers, _ = activations.shape
-
-    # compute RSM for each layer
-    rsms = np.zeros((n_layers, n_stimuli, n_stimuli))
-    for layer in range(n_layers):
-        rsms[layer] = rsa_matrix(activations[:, layer, :], metric)
-
-    # compare upper triangles
-    triu_idx = np.triu_indices(n_stimuli, k=1)
-    vecs = rsms[:, triu_idx[0], triu_idx[1]]  # (n_layers, n_pairs)
-
-    sim = np.atleast_2d(np.corrcoef(vecs))
-    if not np.isfinite(sim).all():
-        raise ValueError("layer RSA produced non-finite correlations")
-    return sim
+    """Return layer correlations without materializing square distance matrices."""
+    vectors = _normalized_rsa_vectors(activations, metric)
+    return np.clip(vectors @ vectors.T, -1.0, 1.0)
 
 
 def rsa_cross_model(mat_a: np.ndarray, mat_b: np.ndarray,
                     metric: str = "correlation") -> np.ndarray:
-    """compute RSA between layers of two different models.
-
-    mat_a, mat_b: (n_stimuli, n_layers, hidden_dim)
-    returns: (n_layers_a, n_layers_b) RSA similarity matrix.
-    """
+    """Return RSA correlations between layers of two aligned activation tensors."""
     mat_a = np.asarray(mat_a)
     mat_b = np.asarray(mat_b)
     if mat_a.ndim != 3 or mat_b.ndim != 3:
@@ -80,33 +75,9 @@ def rsa_cross_model(mat_a: np.ndarray, mat_b: np.ndarray,
         raise ValueError(
             f"cross-model RSA requires equal aligned sample counts, got {mat_a.shape[0]} and {mat_b.shape[0]}"
         )
-    n_stimuli = mat_a.shape[0]
-    n_layers_a, n_layers_b = mat_a.shape[1], mat_b.shape[1]
-
-    # compute RSMs
-    triu_idx = np.triu_indices(n_stimuli, k=1)
-    n_pairs = len(triu_idx[0])
-
-    rsm_vecs_a = np.zeros((n_layers_a, n_pairs))
-    rsm_vecs_b = np.zeros((n_layers_b, n_pairs))
-
-    for i in range(n_layers_a):
-        rsm = rsa_matrix(mat_a[:n_stimuli, i, :], metric)
-        rsm_vecs_a[i] = rsm[triu_idx]
-
-    for j in range(n_layers_b):
-        rsm = rsa_matrix(mat_b[:n_stimuli, j, :], metric)
-        rsm_vecs_b[j] = rsm[triu_idx]
-
-    # correlation between each pair of RSM vectors
-    sim = np.zeros((n_layers_a, n_layers_b))
-    for i in range(n_layers_a):
-        for j in range(n_layers_b):
-            sim[i, j] = np.corrcoef(rsm_vecs_a[i], rsm_vecs_b[j])[0, 1]
-    if not np.isfinite(sim).all():
-        raise ValueError("cross-model RSA produced non-finite correlations")
-
-    return sim
+    vectors_a = _normalized_rsa_vectors(mat_a, metric)
+    vectors_b = _normalized_rsa_vectors(mat_b, metric)
+    return np.clip(vectors_a @ vectors_b.T, -1.0, 1.0)
 
 
 def main():

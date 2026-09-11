@@ -7,7 +7,6 @@ and partial benchmark runs remain inspectable.
 """
 
 import argparse
-import hashlib
 import json
 import math
 import sys
@@ -18,9 +17,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from .train_linear_probe import atomic_write_text
+    from .artifact_io import atomic_write_text, sha256_file as _sha256
 except ImportError:  # direct script execution
-    from train_linear_probe import atomic_write_text
+    from artifact_io import atomic_write_text, sha256_file as _sha256
 
 
 def _jsonable(value: Any) -> Any:
@@ -62,14 +61,6 @@ def _strict_json_text(value: str, context: str):
         return json.loads(value, parse_constant=reject_constant)
     except (TypeError, json.JSONDecodeError) as error:
         raise ValueError(f"invalid JSON in {context}") from error
-
-
-def _sha256(path: str) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _scalar(data: dict, key: str):

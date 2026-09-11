@@ -755,6 +755,9 @@ impl<'m> VoiceSession<'m> {
                 cancelled = true;
                 break;
             }
+            if ids.len() >= max_tokens {
+                break;
+            }
             let best = crate::sampler::argmax_token(self.backend.data(&logits));
             let best = u32::try_from(best)?;
             ids.push(best);
@@ -840,11 +843,12 @@ impl<'m> VoiceSession<'m> {
 
         // retain this turn's assembled embeddings so a rebuild never needs
         // the tokenizer or speculative state
-        let gen_emb = lookup_embeddings_for(self.model, self.backend, &terminal)?;
-        let embeddings = concat_tensors(&[scaffold_emb, gen_emb])?;
-
-        let mut full_ids = scaffold_ids.clone();
+        let mut full_ids = scaffold_ids;
+        full_ids.extend_from_slice(&ids[..ids.len().saturating_sub(1)]);
         full_ids.extend_from_slice(&terminal);
+        let embeddings = lookup_embeddings_for(self.model, self.backend, &full_ids)?;
+        debug_assert_eq!(full_ids.len(), self.committed_len - reply_start);
+        debug_assert_eq!(embeddings.shape()[0], full_ids.len());
         let text = self.tokenizer.decode(&ids)?;
         self.turns.push(TurnRecord {
             role: Role::Assistant,
@@ -1057,6 +1061,138 @@ impl<'a> VoiceLoop<'a> {
 #[cfg(test)]
 mod session_scaffold_tests {
     use super::*;
+
+    #[test]
+    fn native_voice_turns_retain_all_tokens_and_rebuild_the_same_cache() {
+        let backend = CpuBackend;
+        // Whole scaffolding strings are single tokens; the shared native
+        // model emits assistant-open(0) -> a(1) -> b(2) -> EOT(3).
+        let vocab: serde_json::Map<String, serde_json::Value> = [
+            (ScaffoldTokens::assistant_open(), 0),
+            ("a".into(), 1),
+            ("b".into(), 2),
+            (ScaffoldTokens::EOT.into(), 3),
+            (ScaffoldTokens::system_prefix(), 4),
+            (ScaffoldTokens::user_open(), 5),
+            ("x".into(), 6),
+            ("[UNK]".into(), 7),
+        ]
+        .into_iter()
+        .map(|(token, id)| (token, serde_json::json!(id)))
+        .collect();
+        let tokenizer = EmberTokenizer::from_bytes(
+            serde_json::to_vec(&serde_json::json!({
+                "version": "1.0", "truncation": null, "padding": null,
+                "added_tokens": [], "normalizer": null, "pre_tokenizer": null,
+                "post_processor": null, "decoder": null,
+                "model": {"type": "WordLevel", "vocab": vocab, "unk_token": "[UNK]"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        for (budget, immediate_eos, expected_generated, expected_reply) in [
+            (0, false, vec![], vec![0, 3]),
+            (1, false, vec![1], vec![0, 1, 3]),
+            (2, false, vec![1, 2], vec![0, 1, 2, 3]),
+            (8, false, vec![1, 2, 3], vec![0, 1, 2, 3]),
+            (8, true, vec![3], vec![0, 3]),
+        ] {
+            let (mut llm, _, _) = crate::agent::model::tests::fixture();
+            if immediate_eos {
+                let mut head = vec![0.0; 64];
+                head[3] = 1.0;
+                llm.head = crate::model::Linear::new(CpuTensor::from_data(vec![8, 8], head), None);
+            }
+            let model = Ultravox {
+                llm,
+                audio: crate::multimodal::audio_encoder::AudioModel::text_only_fixture(8),
+                assembler: Default::default(),
+                audio_identity: 0,
+            };
+            let mut session = VoiceSession::new(&model, &backend, &tokenizer, 64, 0).unwrap();
+            session.begin_user_turn();
+            session.set_turn_prompt("x".into()).unwrap();
+            session.commit_user_turn().unwrap();
+            let reply_start = session.committed_len();
+            let mut emitted = Vec::new();
+            let (text, cancelled) = session
+                .generate_reply(
+                    &GenerationControl::new(),
+                    budget,
+                    |event| {
+                        if let OutputEvent::TextDelta { token_id, piece } = event {
+                            emitted.push((token_id, piece));
+                        }
+                    },
+                    || false,
+                )
+                .unwrap();
+            assert!(!cancelled);
+            // Each sampled token produces an event, including empty pieces.
+            // finish() may emit one more nonempty text flush attributed to
+            // the final token; that event does not represent another sample.
+            let generated_count = expected_generated.len();
+            assert!((generated_count..=generated_count + 1).contains(&emitted.len()));
+            assert_eq!(
+                emitted
+                    .iter()
+                    .take(generated_count)
+                    .map(|(id, _)| *id)
+                    .collect::<Vec<_>>(),
+                expected_generated,
+            );
+            if let Some((token_id, piece)) = emitted.get(generated_count) {
+                assert_eq!(Some(token_id), expected_generated.last());
+                assert!(!piece.is_empty());
+            }
+            let streamed: String = emitted.iter().map(|(_, piece)| piece.as_str()).collect();
+            assert_eq!(streamed, text);
+            if budget == 0 {
+                assert!(text.is_empty());
+            }
+            let reply = session.turns().last().unwrap();
+            assert_eq!(reply.token_ids, expected_reply);
+            assert_eq!(
+                reply.span,
+                (reply_start, reply_start + expected_reply.len())
+            );
+            assert_eq!(reply.embeddings.shape(), &[expected_reply.len(), 8]);
+            let expected_embeddings =
+                lookup_embeddings_for(&model, &backend, &expected_reply).unwrap();
+            assert_eq!(reply.embeddings, expected_embeddings);
+
+            // Rebuild from the retained turn records, independently of the
+            // incremental generation path and its live cache cursor.
+            let retained: Vec<_> = session
+                .turns()
+                .iter()
+                .map(|turn| turn.embeddings.clone())
+                .collect();
+            let rebuilt_embeddings = concat_tensors(&retained).unwrap();
+            assert_eq!(rebuilt_embeddings.shape()[0], session.committed_len());
+            let mut rebuilt = model.llm.create_cache(&backend, 64);
+            model
+                .llm
+                .forward_last_logits_embeddings_with_cache(
+                    &backend,
+                    &rebuilt_embeddings,
+                    &mut rebuilt,
+                    0,
+                )
+                .unwrap();
+            assert_eq!(
+                session
+                    .cache
+                    .export_compact_prefix(session.committed_len())
+                    .unwrap(),
+                rebuilt
+                    .export_compact_prefix(session.committed_len())
+                    .unwrap(),
+                "budget={budget}, immediate_eos={immediate_eos}",
+            );
+        }
+    }
 
     #[test]
     fn scaffold_pieces_compose_to_the_reference_single_turn_template() {

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
 
 import numpy as np
+
+try:
+    from .artifact_io import sha256_file
+except ImportError:  # direct script execution
+    from artifact_io import sha256_file
 
 
 SHA256_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -24,14 +28,6 @@ UNVERIFIABLE_PROMPT_AUDIT_STATUSES = {
     "unverifiable_missing_probe_leakage_audit",
     "unverifiable_missing_prompt_audit",
 }
-
-
-def sha256_file(path: str | Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def activation_metadata_path(path: str | Path) -> Path:

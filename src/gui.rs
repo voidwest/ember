@@ -1060,10 +1060,8 @@ pub(crate) fn run_gui_command(
     let limiter = Arc::new(SlotLimiter::new());
     for request in server.incoming_requests() {
         let session = Arc::clone(&session);
-        let limiter = Arc::clone(&limiter);
         let token = token.clone();
-        std::thread::spawn(move || {
-            let _slot = limiter.acquire();
+        limiter.spawn(move || {
             if let Err(error) = handle_request(request, &session, &token, strict_origin) {
                 log::error!("gui request failed: {error:#}");
             }
@@ -1333,6 +1331,19 @@ impl SlotLimiter {
             limiter: Arc::clone(self),
         }
     }
+
+    fn spawn(
+        self: &Arc<Self>,
+        work: impl FnOnce() + Send + 'static,
+    ) -> std::thread::JoinHandle<()> {
+        // Reserve on the accept loop, so excess requests cannot create
+        // unbounded worker threads that only wait for a slot.
+        let slot = self.acquire();
+        std::thread::spawn(move || {
+            let _slot = slot;
+            work();
+        })
+    }
 }
 
 struct SlotGuard {
@@ -1516,6 +1527,56 @@ pub(crate) fn discover_models() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_limiter_reserves_a_slot_before_spawning() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let limiter = Arc::new(SlotLimiter::new());
+        let mut occupied: Vec<_> = (0..8).map(|_| limiter.acquire()).collect();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (spawned_tx, spawned_rx) = mpsc::channel();
+        let producer_limiter = Arc::clone(&limiter);
+        let producer = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let worker = producer_limiter.spawn(|| {});
+            spawned_tx.send(worker).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let blocked = matches!(
+            spawned_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        assert_eq!(*limiter.active.lock().unwrap(), 8);
+        drop(occupied.pop());
+        if blocked {
+            spawned_rx
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap()
+                .join()
+                .unwrap();
+        }
+        producer.join().unwrap();
+        drop(occupied);
+        assert_eq!(*limiter.active.lock().unwrap(), 0);
+        assert!(
+            blocked,
+            "spawning must wait until a worker slot is available"
+        );
+    }
+
+    #[test]
+    fn request_limiter_releases_a_slot_when_a_worker_panics() {
+        let limiter = Arc::new(SlotLimiter::new());
+        assert!(limiter
+            .spawn(|| panic!("test handler panic"))
+            .join()
+            .is_err());
+        assert_eq!(*limiter.active.lock().unwrap(), 0);
+        limiter.spawn(|| {}).join().unwrap();
+        assert_eq!(*limiter.active.lock().unwrap(), 0);
+    }
 
     #[test]
     fn host_allowlist_accepts_loopback_forms_only() {
