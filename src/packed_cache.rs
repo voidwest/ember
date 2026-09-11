@@ -20,7 +20,7 @@
 //! shape mismatch) degrades to the in-memory packing path.
 
 use crate::loader::GgufLoader;
-use crate::quant::QuantizedWeightVnni;
+use crate::quant::{QuantizedWeightInterleaved, QuantizedWeightVnni};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
@@ -30,9 +30,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 const MAGIC: &[u8; 8] = b"EMBERPK1";
-const VERSION: u32 = 1;
-/// Layout id of the 16-output VNNI Q8_0 packing (`quant.rs`).
+/// Format revision: 1 stored VNNI tiles only; 2 adds the interleaved lm-head
+/// layout (entries carry a kind and an optional second byte range).
+const VERSION: u32 = 2;
+/// Layout ids of the packed representations (`quant.rs`).
 pub const LAYOUT_VNNI_TILE16: &str = "q8-vnni-tile16-v1";
+pub const LAYOUT_INTERLEAVED_4ROW: &str = "q8-interleaved-4row-v1";
+/// Header format tag (both layouts share one file).
+const FORMAT_TAG: &str = "ember-packed-q8-v2";
 /// Bytes reserved between the fixed prefix and the payload for the header.
 /// The header is small (one entry per packed tensor) and rewritten in place
 /// once the payload is complete, so payload entries stream to disk without a
@@ -43,20 +48,37 @@ const PAYLOAD_START: u64 = PREFIX_LEN + HEADER_RESERVE;
 /// Sanity cap for a cache file (the largest supported GGUF is 16 GiB).
 const MAX_CACHE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
 
+/// Which packed layout an entry stores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum EntryKind {
+    /// 16-output VNNI tiles (`QuantizedWeightVnni`).
+    Vnni,
+    /// 4-row interleaved quants + scales (`QuantizedWeightInterleaved`).
+    Interleaved,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HeaderEntry {
     name: String,
+    kind: EntryKind,
     out_features: usize,
     in_features: usize,
     blocks_per_row: usize,
-    /// Offset relative to the payload start.
+    /// Offset relative to the payload start (VNNI payload, or quants).
     offset: u64,
     len: u64,
+    /// Second range (interleaved scales); zero for VNNI entries.
+    #[serde(default)]
+    aux_offset: u64,
+    #[serde(default)]
+    aux_len: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Header {
-    layout: String,
+    /// Format tag; both layouts share one file.
+    format: String,
     payload_len: u64,
     #[serde(default)]
     payload_sha256: Option<String>,
@@ -150,13 +172,39 @@ impl PackedCache {
         self.misses.load(Ordering::Relaxed)
     }
 
-    /// Whether a validated entry exists for `name` with the expected shape.
-    pub fn has_vnni(&self, name: &str, out_features: usize, in_features: usize) -> bool {
-        self.entries.iter().any(|entry| {
+    fn find(
+        &self,
+        name: &str,
+        kind: EntryKind,
+        out_features: usize,
+        in_features: usize,
+    ) -> Option<&HeaderEntry> {
+        self.entries.iter().find(|entry| {
             entry.name == name
+                && entry.kind == kind
                 && entry.out_features == out_features
                 && entry.in_features == in_features
         })
+    }
+
+    /// Whether a validated entry exists for `name` with the expected shape.
+    pub fn has_vnni(&self, name: &str, out_features: usize, in_features: usize) -> bool {
+        self.find(name, EntryKind::Vnni, out_features, in_features)
+            .is_some()
+    }
+
+    /// Whether a validated interleaved entry exists for `name`.
+    pub fn has_interleaved(&self, name: &str, out_features: usize, in_features: usize) -> bool {
+        self.find(name, EntryKind::Interleaved, out_features, in_features)
+            .is_some()
+    }
+
+    fn range(entry: &HeaderEntry, offset: u64, len: u64) -> Option<std::ops::Range<usize>> {
+        let absolute_start = PAYLOAD_START.checked_add(offset)?;
+        let start = usize::try_from(absolute_start).ok()?;
+        let end = usize::try_from(absolute_start.checked_add(len)?).ok()?;
+        debug_assert!(end > start, "entry range must be non-empty: {entry:?}");
+        Some(start..end)
     }
 
     /// Load one packed VNNI tensor as a zero-copy view of the mapped cache
@@ -167,15 +215,41 @@ impl PackedCache {
         out_features: usize,
         in_features: usize,
     ) -> Option<QuantizedWeightVnni> {
-        let entry = self.entries.iter().find(|entry| {
-            entry.name == name
-                && entry.out_features == out_features
-                && entry.in_features == in_features
-        })?;
+        let entry = self.find(name, EntryKind::Vnni, out_features, in_features)?;
         let mmap = self.mapped()?;
-        let start = usize::try_from(PAYLOAD_START + entry.offset).ok()?;
-        let end = usize::try_from(PAYLOAD_START + entry.offset + entry.len).ok()?;
-        match QuantizedWeightVnni::from_mapped(mmap, start..end, out_features, in_features) {
+        let range = Self::range(entry, entry.offset, entry.len)?;
+        match QuantizedWeightVnni::from_mapped(mmap, range, out_features, in_features) {
+            Ok(weight) => {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(weight)
+            }
+            Err(error) => {
+                log::warn!("packed cache entry '{name}' rejected: {error}");
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
+    }
+
+    /// Load one interleaved Q8_0 lm-head weight as a zero-copy view of the
+    /// mapped cache file.
+    pub fn get_interleaved(
+        &self,
+        name: &str,
+        out_features: usize,
+        in_features: usize,
+    ) -> Option<QuantizedWeightInterleaved> {
+        let entry = self.find(name, EntryKind::Interleaved, out_features, in_features)?;
+        let mmap = self.mapped()?;
+        let quants = Self::range(entry, entry.offset, entry.len)?;
+        let scales = Self::range(entry, entry.aux_offset, entry.aux_len)?;
+        match QuantizedWeightInterleaved::from_mapped_parts(
+            mmap,
+            quants,
+            scales,
+            out_features,
+            in_features,
+        ) {
             Ok(weight) => {
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 Some(weight)
@@ -201,12 +275,45 @@ impl PackedCache {
         guard.clone()
     }
 
-    /// Record a freshly packed tensor for the next write.
+    /// Record a freshly packed VNNI tensor for the next write.
     ///
     /// Bytes are streamed to the temporary file immediately; nothing is
     /// buffered in memory.
     pub fn record_vnni(&self, name: &str, weight: &QuantizedWeightVnni) {
         self.misses.fetch_add(1, Ordering::Relaxed);
+        self.record(
+            name,
+            EntryKind::Vnni,
+            weight.out_features(),
+            weight.in_features(),
+            weight.blocks_per_row(),
+            &[weight.packed_bytes()],
+        );
+    }
+
+    /// Record a freshly packed interleaved Q8_0 weight (quants + scales).
+    pub fn record_interleaved(&self, name: &str, weight: &QuantizedWeightInterleaved) {
+        self.misses.fetch_add(1, Ordering::Relaxed);
+        self.record(
+            name,
+            EntryKind::Interleaved,
+            weight.out_features(),
+            weight.in_features(),
+            weight.blocks_per_row,
+            &[weight.quants(), weight.scales()],
+        );
+    }
+
+    /// Stream one entry (`sections[0]` plus an optional `sections[1]`).
+    fn record(
+        &self,
+        name: &str,
+        kind: EntryKind,
+        out_features: usize,
+        in_features: usize,
+        blocks_per_row: usize,
+        sections: &[&[u8]],
+    ) {
         if !self.write_enabled.load(Ordering::Relaxed) {
             return;
         }
@@ -229,22 +336,37 @@ impl PackedCache {
         }
         let write_result = {
             let state = guard.as_mut().expect("writer initialized above");
-            let bytes = weight.packed_bytes();
-            let offset = state.payload_written;
-            if let Some(hasher) = state.hasher.as_mut() {
-                hasher.update(bytes);
-            }
-            state.file.write_all(bytes).map(|()| {
+            let mut ranges = [(0u64, 0u64); 2];
+            let mut failed = None;
+            for (index, bytes) in sections.iter().enumerate() {
+                if let Some(hasher) = state.hasher.as_mut() {
+                    hasher.update(bytes);
+                }
+                let offset = state.payload_written;
+                if let Err(error) = state.file.write_all(bytes) {
+                    failed = Some(error);
+                    break;
+                }
                 state.payload_written += bytes.len() as u64;
-                state.entries.push(HeaderEntry {
-                    name: name.to_string(),
-                    out_features: weight.out_features(),
-                    in_features: weight.in_features(),
-                    blocks_per_row: weight.blocks_per_row(),
-                    offset,
-                    len: bytes.len() as u64,
-                });
-            })
+                ranges[index] = (offset, bytes.len() as u64);
+            }
+            match failed {
+                Some(error) => Err(error),
+                None => {
+                    state.entries.push(HeaderEntry {
+                        name: name.to_string(),
+                        kind,
+                        out_features,
+                        in_features,
+                        blocks_per_row,
+                        offset: ranges[0].0,
+                        len: ranges[0].1,
+                        aux_offset: ranges[1].0,
+                        aux_len: ranges[1].1,
+                    });
+                    Ok(())
+                }
+            }
         };
         if let Err(error) = write_result {
             log::warn!("packed cache write failed ({error}); caching disabled for this run");
@@ -328,7 +450,7 @@ impl PackedCache {
     fn publish(mut state: WriterState) -> std::io::Result<()> {
         state.entries.sort_by(|a, b| a.name.cmp(&b.name));
         let header = Header {
-            layout: LAYOUT_VNNI_TILE16.to_string(),
+            format: FORMAT_TAG.to_string(),
             payload_len: state.payload_written,
             payload_sha256: state.hasher.map(|hasher| hex(&hasher.finalize())),
             entries: state.entries,
@@ -385,9 +507,11 @@ impl PackedCache {
         }
         let version = u32::from_le_bytes(prefix[8..12].try_into().expect("4 bytes"));
         if version != VERSION {
+            // A stale file from an older format revision is rebuilt, not an
+            // error worth surfacing.
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "unsupported version",
+                "stale packed-cache format revision",
             ));
         }
         let header_len = u32::from_le_bytes(prefix[12..16].try_into().expect("4 bytes")) as u64;
@@ -409,10 +533,10 @@ impl PackedCache {
         }
         let header: Header = serde_json::from_slice(&header_json)
             .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-        if header.layout != LAYOUT_VNNI_TILE16 {
+        if header.format != FORMAT_TAG {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "layout id mismatch",
+                "format tag mismatch",
             ));
         }
         let payload_len = file_len - PAYLOAD_START;
@@ -431,21 +555,27 @@ impl PackedCache {
                     "duplicate entry name",
                 ));
             }
-            let expected = expected_vnni_len(entry.out_features, entry.in_features);
-            if Some(entry.len) != expected {
+            let (expected, expected_aux) = expected_entry_lens(entry);
+            if Some(entry.len) != expected || Some(entry.aux_len) != expected_aux {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    "entry length does not match its shape",
+                    "entry length does not match its shape and kind",
                 ));
             }
-            if entry.offset.saturating_add(entry.len) > payload_len {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "entry extends past the payload",
-                ));
+            for (offset, len) in [(entry.offset, entry.len), (entry.aux_offset, entry.aux_len)] {
+                if offset.saturating_add(len) > payload_len {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "entry extends past the payload",
+                    ));
+                }
+                if len > 0 {
+                    ranges.push((offset, offset + len));
+                }
             }
-            ranges.push((entry.offset, entry.offset + entry.len));
         }
+        // Entries are written contiguously by a single writer, so any overlap
+        // means the header and payload disagree.
         ranges.sort_unstable();
         for pair in ranges.windows(2) {
             if pair[1].0 < pair[0].1 {
@@ -454,6 +584,17 @@ impl PackedCache {
                     "entries overlap",
                 ));
             }
+        }
+        let covered: u64 = header
+            .entries
+            .iter()
+            .map(|entry| entry.len + entry.aux_len)
+            .sum();
+        if covered != payload_len {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "payload is not fully covered by entries",
+            ));
         }
         if verify && let Some(expected) = &header.payload_sha256 {
             let mut hasher = Sha256::new();
@@ -474,6 +615,26 @@ impl PackedCache {
             }
         }
         Ok(Some((header, payload_len)))
+    }
+}
+
+/// Expected `(primary, auxiliary)` payload lengths for an entry, or `(None,
+/// None)` when the shape is not block-aligned.
+fn expected_entry_lens(entry: &HeaderEntry) -> (Option<u64>, Option<u64>) {
+    match entry.kind {
+        EntryKind::Vnni => (
+            expected_vnni_len(entry.out_features, entry.in_features),
+            Some(0),
+        ),
+        EntryKind::Interleaved => {
+            match QuantizedWeightInterleaved::expected_lengths(
+                entry.out_features,
+                entry.in_features,
+            ) {
+                Ok((_, quants, scales)) => (Some(quants as u64), Some(scales as u64)),
+                Err(_) => (None, None),
+            }
+        }
     }
 }
 
@@ -511,7 +672,7 @@ fn cache_key(model_path: &Path, loader: &GgufLoader) -> String {
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
     let mut hasher = Sha256::new();
-    hasher.update(b"ember-packed-cache-v1");
+    hasher.update(b"ember-packed-cache-v2");
     hasher.update(
         model_path
             .canonicalize()
@@ -628,6 +789,65 @@ mod tests {
             .expect("cache hit");
         assert_eq!(loaded.packed_bytes(), expected.as_slice());
         assert_eq!(cache.hits(), 1);
+    }
+
+    #[test]
+    fn interleaved_round_trip_is_byte_identical() {
+        let (loader, _) = loader_fixture();
+        let (dir, model) = temp_cache_path("interleaved");
+        let cache = open_cache(&model, &loader, &dir);
+        assert!(!cache.has_interleaved("output.weight", 4096, 2048));
+
+        let source = QuantizedWeight::try_new(q8_bytes(4096, 2048), vec![4096, 2048]).unwrap();
+        let packed = QuantizedWeightInterleaved::from_quantized(&source);
+        let expected_quants = packed.quants().to_vec();
+        let expected_scales = packed.scales().to_vec();
+        cache.record_interleaved("output.weight", &packed);
+        cache.finish_write();
+
+        let cache = open_cache(&model, &loader, &dir);
+        assert!(cache.has_interleaved("output.weight", 4096, 2048));
+        let loaded = cache
+            .get_interleaved("output.weight", 4096, 2048)
+            .expect("cache hit");
+        assert_eq!(loaded.quants(), expected_quants.as_slice());
+        assert_eq!(loaded.scales(), expected_scales.as_slice());
+        // Shape mismatches and the wrong kind do not match.
+        assert!(cache.get_interleaved("output.weight", 2048, 2048).is_none());
+        assert!(cache.get_interleaved("output.weight", 4096, 1024).is_none());
+        assert!(!cache.has_vnni("output.weight", 4096, 2048));
+    }
+
+    #[test]
+    fn both_layouts_share_one_file() {
+        let (loader, _) = loader_fixture();
+        let (dir, model) = temp_cache_path("both-kinds");
+        let cache = open_cache(&model, &loader, &dir);
+        let q8 = QuantizedWeight::try_new(q8_bytes(512, 1024), vec![512, 1024]).unwrap();
+        let vnni = QuantizedWeightVnni::from_quantized(&q8);
+        let head = QuantizedWeight::try_new(q8_bytes(256, 256), vec![256, 256]).unwrap();
+        let interleaved = QuantizedWeightInterleaved::from_quantized(&head);
+        let expected_vnni = vnni.packed_bytes().to_vec();
+        let expected_quants = interleaved.quants().to_vec();
+        let expected_scales = interleaved.scales().to_vec();
+
+        cache.record_vnni("blk.0.attn_q.weight", &vnni);
+        cache.record_interleaved("output.weight", &interleaved);
+        cache.finish_write();
+
+        let cache = open_cache(&model, &loader, &dir);
+        assert_eq!(
+            cache
+                .get_vnni("blk.0.attn_q.weight", 512, 1024)
+                .expect("vnni hit")
+                .packed_bytes(),
+            expected_vnni.as_slice()
+        );
+        let loaded = cache
+            .get_interleaved("output.weight", 256, 256)
+            .expect("interleaved hit");
+        assert_eq!(loaded.quants(), expected_quants.as_slice());
+        assert_eq!(loaded.scales(), expected_scales.as_slice());
     }
 
     #[test]

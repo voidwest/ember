@@ -427,9 +427,9 @@ pub const INTERLEAVE: usize = 4;
 #[derive(Clone, Debug)]
 pub struct QuantizedWeightInterleaved {
     /// Interleaved quants, grouped by stripe.
-    pub(crate) quants: alloc::vec::Vec<u8>,
+    pub(crate) quants: PackedStorage,
     /// Interleaved scales, grouped by stripe.
-    pub(crate) scales: alloc::vec::Vec<u8>,
+    pub(crate) scales: PackedStorage,
     /// Logical shape [out_features, in_features].
     pub(crate) shape: Vec<usize>,
     /// Blocks per row = in_features / 32.
@@ -485,8 +485,8 @@ impl QuantizedWeightInterleaved {
         }
 
         Self {
-            quants,
-            scales,
+            quants: PackedStorage::Owned(quants),
+            scales: PackedStorage::Owned(scales),
             shape: vec![out_features, in_features],
             blocks_per_row,
         }
@@ -500,6 +500,99 @@ impl QuantizedWeightInterleaved {
     #[inline]
     pub fn in_features(&self) -> usize {
         self.shape[1]
+    }
+
+    /// Interleaved quant bytes (kernel input).
+    #[inline]
+    pub(crate) fn quants(&self) -> &[u8] {
+        self.quants.as_slice()
+    }
+
+    /// Interleaved scale bytes (kernel input).
+    #[inline]
+    pub(crate) fn scales(&self) -> &[u8] {
+        self.scales.as_slice()
+    }
+
+    /// Stripe counts and expected byte lengths for the interleaved layout.
+    pub(crate) fn expected_lengths(
+        out_features: usize,
+        in_features: usize,
+    ) -> Result<(usize, usize, usize), alloc::string::String> {
+        if in_features == 0 || !in_features.is_multiple_of(Q8_0_BLOCK_SIZE) {
+            return Err(alloc::format!(
+                "in_features {in_features} is not Q8_0 block-aligned"
+            ));
+        }
+        let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
+        let stripes = out_features.div_ceil(INTERLEAVE);
+        let quants_len = stripes * blocks_per_row * INTERLEAVE * Q8_0_BLOCK_SIZE;
+        let scales_len = stripes * blocks_per_row * INTERLEAVE * 2;
+        Ok((blocks_per_row, quants_len, scales_len))
+    }
+
+    fn validate_parts(
+        quants_len: usize,
+        scales_len: usize,
+        out_features: usize,
+        in_features: usize,
+    ) -> Result<usize, alloc::string::String> {
+        let (blocks_per_row, expected_quants, expected_scales) =
+            Self::expected_lengths(out_features, in_features)?;
+        if quants_len != expected_quants || scales_len != expected_scales {
+            return Err(alloc::format!(
+                "interleaved Q8_0 payload has {quants_len} quant + {scales_len} scale bytes, \
+                 expected {expected_quants} + {expected_scales}"
+            ));
+        }
+        Ok(blocks_per_row)
+    }
+
+    /// Rebuild from serialized interleaved bytes, validating both lengths
+    /// against the shape (on-disk packed-layout cache round-trip).
+    pub fn from_packed_parts(
+        quants: alloc::vec::Vec<u8>,
+        scales: alloc::vec::Vec<u8>,
+        out_features: usize,
+        in_features: usize,
+    ) -> Result<Self, alloc::string::String> {
+        let blocks_per_row =
+            Self::validate_parts(quants.len(), scales.len(), out_features, in_features)?;
+        Ok(Self {
+            quants: PackedStorage::Owned(quants),
+            scales: PackedStorage::Owned(scales),
+            shape: alloc::vec![out_features, in_features],
+            blocks_per_row,
+        })
+    }
+
+    /// Zero-copy view of two packed ranges inside a read-only mapping (the
+    /// on-disk packed-layout cache).
+    pub(crate) fn from_mapped_parts(
+        mmap: alloc::sync::Arc<memmap2::Mmap>,
+        quants: core::ops::Range<usize>,
+        scales: core::ops::Range<usize>,
+        out_features: usize,
+        in_features: usize,
+    ) -> Result<Self, alloc::string::String> {
+        let blocks_per_row = Self::validate_parts(
+            quants.end - quants.start,
+            scales.end - scales.start,
+            out_features,
+            in_features,
+        )?;
+        Ok(Self {
+            quants: PackedStorage::Mapped {
+                mmap: alloc::sync::Arc::clone(&mmap),
+                range: quants,
+            },
+            scales: PackedStorage::Mapped {
+                mmap,
+                range: scales,
+            },
+            shape: alloc::vec![out_features, in_features],
+            blocks_per_row,
+        })
     }
 }
 
@@ -519,11 +612,11 @@ pub const VNNI_OUT_TILE: usize = 16;
 pub const VNNI_BLOCK_RECORD_SIZE: usize =
     VNNI_OUT_TILE * (Q8_0_BLOCK_SIZE + core::mem::size_of::<u16>());
 
-/// Backing bytes for a packed VNNI weight: freshly packed in memory, or a
-/// range of the read-only on-disk packed-layout cache (`packed_cache.rs`).
-/// The mapped form avoids copying ~1 GiB of packed weights per process.
+/// Backing bytes for a packed weight: freshly packed in memory, or a range of
+/// the read-only on-disk packed-layout cache (`packed_cache.rs`). The mapped
+/// form avoids copying ~1 GiB of packed weights per process.
 #[derive(Clone, Debug)]
-pub(crate) enum VnniStorage {
+pub(crate) enum PackedStorage {
     Owned(alloc::vec::Vec<u8>),
     Mapped {
         mmap: alloc::sync::Arc<memmap2::Mmap>,
@@ -531,7 +624,7 @@ pub(crate) enum VnniStorage {
     },
 }
 
-impl VnniStorage {
+impl PackedStorage {
     #[inline]
     pub(crate) fn as_slice(&self) -> &[u8] {
         match self {
@@ -544,7 +637,7 @@ impl VnniStorage {
 #[derive(Clone, Debug)]
 pub struct QuantizedWeightVnni {
     /// Tile-major packed records described above.
-    pub(crate) storage: VnniStorage,
+    pub(crate) storage: PackedStorage,
     /// Logical shape `[out_features, in_features]`.
     pub(crate) shape: Vec<usize>,
     /// Blocks per row = `in_features / 32`.
@@ -618,7 +711,7 @@ impl QuantizedWeightVnni {
         }
 
         Self {
-            storage: VnniStorage::Owned(data),
+            storage: PackedStorage::Owned(data),
             shape: vec![out_features, in_features],
             blocks_per_row,
         }
@@ -686,7 +779,7 @@ impl QuantizedWeightVnni {
     ) -> Result<Self, alloc::string::String> {
         let blocks_per_row = Self::validate_packed_len(data.len(), out_features, in_features)?;
         Ok(Self {
-            storage: VnniStorage::Owned(data),
+            storage: PackedStorage::Owned(data),
             shape: alloc::vec![out_features, in_features],
             blocks_per_row,
         })
@@ -703,7 +796,7 @@ impl QuantizedWeightVnni {
         let blocks_per_row =
             Self::validate_packed_len(range.end - range.start, out_features, in_features)?;
         Ok(Self {
-            storage: VnniStorage::Mapped { mmap, range },
+            storage: PackedStorage::Mapped { mmap, range },
             shape: alloc::vec![out_features, in_features],
             blocks_per_row,
         })

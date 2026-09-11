@@ -2617,7 +2617,18 @@ impl Llama<CpuBackend> {
             },
         };
         let interleaved_start = std::time::Instant::now();
-        head.prepare_interleaved(INTERLEAVED_MIN_OUT_FEATURES);
+        // Stable cache entry name: the source tensor backing the head (tied
+        // heads reuse the embedding tensor).
+        let head_entry_name = if has_output_weight {
+            "output.weight"
+        } else {
+            "token_embd.weight"
+        };
+        head.prepare_interleaved_cached(
+            INTERLEAVED_MIN_OUT_FEATURES,
+            packed_cache,
+            head_entry_name,
+        );
         let packing_interleaved_ns =
             interleaved_start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
 

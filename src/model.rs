@@ -384,8 +384,12 @@ pub struct Linear<B: Backend> {
     weight: WeightKind<B>,
     /// optional bias vector, shape [out_features]
     bias: Option<B::Tensor>,
-    /// optional interleaved Q8_0 weight for fast decode path
-    pub interleaved: Option<QuantizedWeightInterleaved>,
+    /// optional interleaved Q8_0 weight for fast decode path.
+    ///
+    /// Boxed: the packed layout carries two byte buffers plus shape metadata,
+    /// and `Linear` is embedded in enums (e.g. Gemma-4's head) that clippy
+    /// keeps size-balanced. Only built for the lm head, never read per token.
+    pub interleaved: Option<Box<QuantizedWeightInterleaved>>,
     /// optional 16-output packed Q8_0 weight for batch-1 decode
     pub packed_decode: Option<QuantizedWeightVnni>,
 }
@@ -657,13 +661,37 @@ impl Linear<CpuBackend> {
     /// Keeping this opt-in avoids duplicating every projection in memory. In
     /// practice only the LM head is wide enough to benefit.
     pub fn prepare_interleaved(&mut self, min_out_features: usize) {
+        self.prepare_interleaved_cached(min_out_features, None, "");
+    }
+
+    /// As [`Self::prepare_interleaved`], consulting an optional on-disk
+    /// packed-layout cache: a validated `entry_name` replaces the repack,
+    /// otherwise the freshly packed layout is recorded for the next run.
+    pub fn prepare_interleaved_cached(
+        &mut self,
+        min_out_features: usize,
+        cache: Option<&crate::packed_cache::PackedCache>,
+        entry_name: &str,
+    ) {
         if self.interleaved.is_some() || !crate::simd::interleaved_q8_0_supported() {
             return;
         }
         if let WeightKind::Q8_0(weight) = &self.weight
             && weight.out_features() >= min_out_features
         {
-            self.interleaved = Some(QuantizedWeightInterleaved::from_quantized(weight));
+            let cached = cache.and_then(|cache| {
+                cache.get_interleaved(entry_name, weight.out_features(), weight.in_features())
+            });
+            match cached {
+                Some(interleaved) => self.interleaved = Some(Box::new(interleaved)),
+                None => {
+                    let packed = QuantizedWeightInterleaved::from_quantized(weight);
+                    if let Some(cache) = cache {
+                        cache.record_interleaved(entry_name, &packed);
+                    }
+                    self.interleaved = Some(Box::new(packed));
+                }
+            }
         }
     }
 }

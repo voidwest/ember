@@ -2319,8 +2319,8 @@ pub(crate) fn matmul_q8_0_decode_interleaved(
             unsafe {
                 return x86_64::matmul_q8_0_decode_interleaved_avx512_vnni(
                     x,
-                    &w.quants,
-                    &w.scales,
+                    w.quants(),
+                    w.scales(),
                     out_rows,
                     w.blocks_per_row,
                     out,
@@ -2335,8 +2335,8 @@ pub(crate) fn matmul_q8_0_decode_interleaved(
         let stripe = global_row / crate::quant::INTERLEAVE;
         let lane = global_row % crate::quant::INTERLEAVE;
         let q_stripe =
-            &w.quants[stripe * w.blocks_per_row * crate::quant::INTERLEAVE * Q8_0_BLOCK_SIZE..];
-        let s_stripe = &w.scales[stripe * w.blocks_per_row * crate::quant::INTERLEAVE * 2..];
+            &w.quants()[stripe * w.blocks_per_row * crate::quant::INTERLEAVE * Q8_0_BLOCK_SIZE..];
+        let s_stripe = &w.scales()[stripe * w.blocks_per_row * crate::quant::INTERLEAVE * 2..];
         let mut sum = 0.0f32;
         for b in 0..w.blocks_per_row {
             let q_off = b * crate::quant::INTERLEAVE * Q8_0_BLOCK_SIZE + lane * Q8_0_BLOCK_SIZE;
