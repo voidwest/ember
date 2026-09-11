@@ -1042,7 +1042,7 @@ pub(crate) fn run_bench_decode_command(
             let model_build_ns = elapsed_ns(build_start);
             residency.capture("model_built")?;
             let load_report =
-                bench_load_report(&load_timings, model_build_ns, None, None, &residency);
+                bench_load_report(&load_timings, model_build_ns, None, None, &residency, None);
             bench_decode_model(
                 &backend,
                 &model,
@@ -1053,9 +1053,16 @@ pub(crate) fn run_bench_decode_command(
             )
         }
         "llama" | "qwen3" => {
+            let packed_cache = ember::packed_cache::PackedCache::for_loader(
+                std::path::Path::new(&command.model),
+                &loader,
+            );
             let build_start = Instant::now();
-            let model =
-                ember::llama::Llama::from_loader_with_max_seq_len(loader, command.max_seq_len)?;
+            let model = ember::llama::Llama::from_loader_with_max_seq_len_cached(
+                loader,
+                command.max_seq_len,
+                packed_cache.as_ref(),
+            )?;
             let model_build_ns = elapsed_ns(build_start);
             residency.capture("model_built")?;
             let execution = ember::plan::ExecutionMode::from_cli(&command.execution)
@@ -1067,6 +1074,7 @@ pub(crate) fn run_bench_decode_command(
                 Some(model.packing_ns()),
                 Some(model.packing_interleaved_ns()),
                 &residency,
+                packed_cache.as_ref(),
             );
             bench_decode_model(
                 &backend,
@@ -1083,7 +1091,7 @@ pub(crate) fn run_bench_decode_command(
             let model_build_ns = elapsed_ns(build_start);
             residency.capture("model_built")?;
             let load_report =
-                bench_load_report(&load_timings, model_build_ns, None, None, &residency);
+                bench_load_report(&load_timings, model_build_ns, None, None, &residency, None);
             bench_decode_model(
                 &backend,
                 &model,
@@ -1110,12 +1118,17 @@ fn bench_load_report(
     packing_ns: Option<u64>,
     packing_interleaved_ns: Option<u64>,
     residency: &ember::residency::ResidencyRecorder,
+    packed_cache: Option<&ember::packed_cache::PackedCache>,
 ) -> serde_json::Value {
     serde_json::json!({
         "loader": timings,
         "model_build_ns": model_build_ns,
         "packing_ns": packing_ns,
         "packing_interleaved_ns": packing_interleaved_ns,
+        "packed_cache": packed_cache.map(|cache| serde_json::json!({
+            "hits": cache.hits(),
+            "misses": cache.misses(),
+        })),
         "residency": residency.snapshots(),
     })
 }

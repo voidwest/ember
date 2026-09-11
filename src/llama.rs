@@ -2231,7 +2231,18 @@ impl Llama<CpuBackend> {
         loader: crate::loader::GgufLoader,
         max_seq_len: Option<usize>,
     ) -> anyhow::Result<Self> {
-        Self::from_loader_impl(loader, max_seq_len, true)
+        Self::from_loader_impl(loader, max_seq_len, true, None)
+    }
+
+    /// As [`Self::from_loader_with_max_seq_len`], consulting an optional
+    /// on-disk cache for the packed Q8_0 VNNI decode layout (see
+    /// [`crate::packed_cache`]). Cache problems degrade to in-memory packing.
+    pub fn from_loader_with_max_seq_len_cached(
+        loader: crate::loader::GgufLoader,
+        max_seq_len: Option<usize>,
+        packed_cache: Option<&crate::packed_cache::PackedCache>,
+    ) -> anyhow::Result<Self> {
+        Self::from_loader_impl(loader, max_seq_len, true, packed_cache)
     }
 
     /// Build a Llama-family model without consulting the automatic packed
@@ -2241,13 +2252,14 @@ impl Llama<CpuBackend> {
         loader: crate::loader::GgufLoader,
         max_seq_len: Option<usize>,
     ) -> anyhow::Result<Self> {
-        Self::from_loader_impl(loader, max_seq_len, false)
+        Self::from_loader_impl(loader, max_seq_len, false, None)
     }
 
     fn from_loader_impl(
         mut loader: crate::loader::GgufLoader,
         max_seq_len: Option<usize>,
         allow_automatic_packing: bool,
+        packed_cache: Option<&crate::packed_cache::PackedCache>,
     ) -> anyhow::Result<Self> {
         use crate::loader::LoadedTensor;
         use crate::tensor::compute_rope_freqs;
@@ -2500,6 +2512,7 @@ impl Llama<CpuBackend> {
                     Some(&format!("blk.{}.attn_q.bias", i)),
                     packed_decode_enabled,
                     &mut packing_ns,
+                    packed_cache,
                 )?,
                 take_llama_linear(
                     &mut loader,
@@ -2507,6 +2520,7 @@ impl Llama<CpuBackend> {
                     Some(&format!("blk.{}.attn_k.bias", i)),
                     packed_decode_enabled,
                     &mut packing_ns,
+                    packed_cache,
                 )?,
                 take_llama_linear(
                     &mut loader,
@@ -2514,6 +2528,7 @@ impl Llama<CpuBackend> {
                     Some(&format!("blk.{}.attn_v.bias", i)),
                     packed_decode_enabled,
                     &mut packing_ns,
+                    packed_cache,
                 )?,
                 take_llama_linear(
                     &mut loader,
@@ -2521,6 +2536,7 @@ impl Llama<CpuBackend> {
                     None,
                     packed_decode_enabled,
                     &mut packing_ns,
+                    packed_cache,
                 )?,
                 Arc::clone(&rope_cos),
                 Arc::clone(&rope_sin),
@@ -2540,6 +2556,7 @@ impl Llama<CpuBackend> {
                     None,
                     packed_decode_enabled,
                     &mut packing_ns,
+                    packed_cache,
                 )?,
                 take_llama_linear(
                     &mut loader,
@@ -2547,6 +2564,7 @@ impl Llama<CpuBackend> {
                     None,
                     packed_decode_enabled,
                     &mut packing_ns,
+                    packed_cache,
                 )?,
                 take_llama_linear(
                     &mut loader,
@@ -2554,6 +2572,7 @@ impl Llama<CpuBackend> {
                     None,
                     packed_decode_enabled,
                     &mut packing_ns,
+                    packed_cache,
                 )?,
             );
 
@@ -2629,6 +2648,14 @@ impl Llama<CpuBackend> {
                 "unavailable (mixed or unsupported weight shapes)"
             }
         );
+        if let Some(cache) = packed_cache {
+            log::debug!(
+                "packed cache: {} hits, {} misses",
+                cache.hits(),
+                cache.misses()
+            );
+            cache.finish_write();
+        }
         Ok(model)
     }
 
@@ -2850,12 +2877,14 @@ impl Llama<CpuBackend> {
 /// qwen2/qwen2.5 attention projections carry `blk.{i}.attn_q.bias` /
 /// `attn_k.bias` / `attn_v.bias`; llama and qwen3 GGUFs do not, and pass
 /// through with no bias.
+#[allow(clippy::too_many_arguments)]
 fn take_llama_linear(
     loader: &mut crate::loader::GgufLoader,
     name: &str,
     bias_name: Option<&str>,
     prepare_packed: bool,
     packing_ns: &mut u64,
+    packed_cache: Option<&crate::packed_cache::PackedCache>,
 ) -> anyhow::Result<Linear<CpuBackend>> {
     use crate::loader::LoadedTensor;
 
@@ -2877,7 +2906,21 @@ fn take_llama_linear(
     };
     if prepare_packed {
         let pack_start = std::time::Instant::now();
-        linear.prepare_packed_decode();
+        // A validated on-disk entry replaces the repack; otherwise pack and
+        // record the result for the next run.
+        let cached = packed_cache.and_then(|cache| {
+            let weight = linear.q8_weight_without_bias()?;
+            cache.get_vnni(name, weight.out_features(), weight.in_features())
+        });
+        match cached {
+            Some(packed) => linear.packed_decode = Some(packed),
+            None => {
+                linear.prepare_packed_decode();
+                if let (Some(cache), Some(packed)) = (packed_cache, linear.packed_decode.as_ref()) {
+                    cache.record_vnni(name, packed);
+                }
+            }
+        }
         *packing_ns =
             packing_ns.saturating_add(pack_start.elapsed().as_nanos().min(u64::MAX as u128) as u64);
     }
@@ -3659,9 +3702,16 @@ mod tests {
             tensor_meta: HashMap::new(),
         };
         let mut packing_ns = 0u64;
-        let linear_err = take_llama_linear(&mut loader, "bad.weight", None, false, &mut packing_ns)
-            .err()
-            .expect("non-2D linear weights must be rejected");
+        let linear_err = take_llama_linear(
+            &mut loader,
+            "bad.weight",
+            None,
+            false,
+            &mut packing_ns,
+            None,
+        )
+        .err()
+        .expect("non-2D linear weights must be rejected");
         assert!(
             linear_err.to_string().contains("2D linear weight"),
             "{linear_err}"

@@ -935,7 +935,17 @@ fn main() -> anyhow::Result<()> {
         }
         "llama" | "qwen3" => {
             use ember::llama::Llama;
-            let model = Llama::from_loader_with_max_seq_len(loader, args.max_seq_len)?;
+            // Opt-in (EMBER_PACKED_CACHE=1): reuse the packed Q8_0 decode
+            // layout from disk instead of repacking it on every process start.
+            let packed_cache = ember::packed_cache::PackedCache::for_loader(
+                std::path::Path::new(&args.model),
+                &loader,
+            );
+            let model = Llama::from_loader_with_max_seq_len_cached(
+                loader,
+                args.max_seq_len,
+                packed_cache.as_ref(),
+            )?;
             model.set_execution_mode(execution);
             validate_tokenizer_model_contract(&backend, &model, &tokenizer)?;
             log::info!("loading model from {}", args.model);

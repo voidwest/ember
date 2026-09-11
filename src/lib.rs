@@ -61,6 +61,7 @@ pub mod model_backend;
 pub mod multimodal;
 #[doc(hidden)]
 pub mod npy;
+pub mod packed_cache;
 pub mod plan;
 mod plan_build;
 #[doc(hidden)]

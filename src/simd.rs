@@ -2270,7 +2270,7 @@ pub(crate) fn matmul_q8_0_decode_packed16_parallel(
                 // complete record for every output chunk addressed here.
                 x86_64::matmul_q8_0_decode_packed16_avx512_vnni(
                     x,
-                    &weight.data,
+                    weight.data(),
                     weight.blocks_per_row,
                     out_chunk,
                     global_row_offset,

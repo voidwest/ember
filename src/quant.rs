@@ -519,10 +519,32 @@ pub const VNNI_OUT_TILE: usize = 16;
 pub const VNNI_BLOCK_RECORD_SIZE: usize =
     VNNI_OUT_TILE * (Q8_0_BLOCK_SIZE + core::mem::size_of::<u16>());
 
+/// Backing bytes for a packed VNNI weight: freshly packed in memory, or a
+/// range of the read-only on-disk packed-layout cache (`packed_cache.rs`).
+/// The mapped form avoids copying ~1 GiB of packed weights per process.
+#[derive(Clone, Debug)]
+pub(crate) enum VnniStorage {
+    Owned(alloc::vec::Vec<u8>),
+    Mapped {
+        mmap: alloc::sync::Arc<memmap2::Mmap>,
+        range: core::ops::Range<usize>,
+    },
+}
+
+impl VnniStorage {
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Owned(data) => data,
+            Self::Mapped { mmap, range } => &mmap[range.clone()],
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct QuantizedWeightVnni {
     /// Tile-major packed records described above.
-    pub(crate) data: alloc::vec::Vec<u8>,
+    pub(crate) storage: VnniStorage,
     /// Logical shape `[out_features, in_features]`.
     pub(crate) shape: Vec<usize>,
     /// Blocks per row = `in_features / 32`.
@@ -596,7 +618,7 @@ impl QuantizedWeightVnni {
         }
 
         Self {
-            data,
+            storage: VnniStorage::Owned(data),
             shape: vec![out_features, in_features],
             blocks_per_row,
         }
@@ -614,7 +636,77 @@ impl QuantizedWeightVnni {
 
     #[inline]
     pub fn byte_len(&self) -> usize {
-        self.data.len()
+        self.storage.as_slice().len()
+    }
+
+    /// Packed tile-major bytes (kernel input).
+    #[inline]
+    pub(crate) fn data(&self) -> &[u8] {
+        self.storage.as_slice()
+    }
+
+    /// Packed tile-major bytes (on-disk cache round-trip).
+    #[inline]
+    pub fn packed_bytes(&self) -> &[u8] {
+        self.storage.as_slice()
+    }
+
+    #[inline]
+    pub fn blocks_per_row(&self) -> usize {
+        self.blocks_per_row
+    }
+
+    fn validate_packed_len(
+        len: usize,
+        out_features: usize,
+        in_features: usize,
+    ) -> Result<usize, alloc::string::String> {
+        if in_features == 0 || !in_features.is_multiple_of(Q8_0_BLOCK_SIZE) {
+            return Err(alloc::format!(
+                "in_features {in_features} is not Q8_0 block-aligned"
+            ));
+        }
+        let blocks_per_row = in_features / Q8_0_BLOCK_SIZE;
+        let expected =
+            out_features.div_ceil(VNNI_OUT_TILE) * blocks_per_row * VNNI_BLOCK_RECORD_SIZE;
+        if len != expected {
+            return Err(alloc::format!(
+                "packed Q8_0 payload has {len} bytes, expected {expected}"
+            ));
+        }
+        Ok(blocks_per_row)
+    }
+
+    /// Rebuild from serialized packed bytes, validating the encoded length
+    /// against the shape.
+    pub fn from_packed_bytes(
+        data: alloc::vec::Vec<u8>,
+        out_features: usize,
+        in_features: usize,
+    ) -> Result<Self, alloc::string::String> {
+        let blocks_per_row = Self::validate_packed_len(data.len(), out_features, in_features)?;
+        Ok(Self {
+            storage: VnniStorage::Owned(data),
+            shape: alloc::vec![out_features, in_features],
+            blocks_per_row,
+        })
+    }
+
+    /// Zero-copy view of a packed range inside a read-only mapping (the
+    /// on-disk packed-layout cache).
+    pub(crate) fn from_mapped(
+        mmap: alloc::sync::Arc<memmap2::Mmap>,
+        range: core::ops::Range<usize>,
+        out_features: usize,
+        in_features: usize,
+    ) -> Result<Self, alloc::string::String> {
+        let blocks_per_row =
+            Self::validate_packed_len(range.end - range.start, out_features, in_features)?;
+        Ok(Self {
+            storage: VnniStorage::Mapped { mmap, range },
+            shape: alloc::vec![out_features, in_features],
+            blocks_per_row,
+        })
     }
 }
 
@@ -658,7 +750,7 @@ mod tests {
         );
         let sequential = QuantizedWeightVnni::from_quantized_with_mode(&weight, false);
         let parallel = QuantizedWeightVnni::from_quantized_with_mode(&weight, true);
-        assert_eq!(parallel.data, sequential.data);
+        assert_eq!(parallel.data(), sequential.data());
         assert_eq!(parallel.shape, sequential.shape);
         assert_eq!(parallel.blocks_per_row, sequential.blocks_per_row);
     }
