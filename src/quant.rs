@@ -732,13 +732,7 @@ impl QuantizedWeightVnni {
         self.storage.as_slice().len()
     }
 
-    /// Packed tile-major bytes (kernel input).
-    #[inline]
-    pub(crate) fn data(&self) -> &[u8] {
-        self.storage.as_slice()
-    }
-
-    /// Packed tile-major bytes (on-disk cache round-trip).
+    /// Packed tile-major bytes (kernel input, on-disk cache round-trip).
     #[inline]
     pub fn packed_bytes(&self) -> &[u8] {
         self.storage.as_slice()
@@ -843,7 +837,7 @@ mod tests {
         );
         let sequential = QuantizedWeightVnni::from_quantized_with_mode(&weight, false);
         let parallel = QuantizedWeightVnni::from_quantized_with_mode(&weight, true);
-        assert_eq!(parallel.data(), sequential.data());
+        assert_eq!(parallel.packed_bytes(), sequential.packed_bytes());
         assert_eq!(parallel.shape, sequential.shape);
         assert_eq!(parallel.blocks_per_row, sequential.blocks_per_row);
     }
