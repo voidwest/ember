@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="where the time goes before the first token">
+        <meta property="og:description" content="Packed-weight caching, GGUF metadata parsing, and decode allocations: the measured startup work in Ember.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/ember/engineering/where-the-time-goes-before-the-first-token/">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
+        <title>where the time goes before the first token</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png">
+        <!-- docs:og-image end -->
+    <link rel="stylesheet" href="figures.css">
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/" aria-current="page">ember</a>
+                <a href="/research-notes/">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+                <a href="/cv/">cv</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/engineering/where-the-time-goes-before-the-first-token/index.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+            <a href="/">← voidwest</a>
+            <a href="/ember/">ember</a>
+            <a href="/ember/engineering/">engineering</a>
+        </div>
+<h1>where the time goes before the first token</h1>
+<div class="meta">2026-09-12 · Ember · startup phases and measurement boundaries</div>
+
+<p>Ember&#x27;s warm Llama-3.2-1B Q8_0 model build went from 670 ms to 83–84 ms with a persistent packed-weight cache. Steady-state decode throughput stayed within measurement noise. Separating startup from decode made the useful optimization visible.</p>
+<p>This week&#x27;s changes also reduced GGUF metadata parsing and per-token allocation work. The measurements below come from the <a href="https://github.com/voidwest/ember/blob/main/docs/phase3-optimization-report.md">Phase 3 runtime report</a>, including its September 12 follow-ups. They describe different phases and comparisons; their speedups cannot be multiplied into an end-to-end claim.</p>
+<h2>measurement boundary</h2>
+<p>The test host was an Intel Core i5-1135G7 running Arch Linux, with four Rayon workers pinned to CPUs 0–3. The report records warmups, repeated measurements and interleaved comparisons. Thermal throttling made small throughput deltas unreliable, so changes inside the roughly 3% noise band were not counted as decode wins.</p>
+<p><code dir="ltr">bench-decode</code> measures decode separately from loading and prefill. Its load report now separates mapping, metadata parsing, tensor-table parsing, tensor materialization and model construction, with packing timings and residency snapshots. Prefill and first-token timings are reported separately too.</p>
+<p>The roughly 8x result below is <strong>warm model-build latency</strong>. It is not a measurement of full time to first token, cold startup or token throughput.</p>
+<figure class="startup-figure"><div class="startup-grid"><section class="startup-panel"><h3>Model build</h3><div class="bar-row"><div class="bar-label">Cache off<bdi>670 ms</bdi></div><div class="track"><div class="bar before value-670"></div></div></div><div class="bar-row"><div class="bar-label">First cache write<bdi>749 ms</bdi></div><div class="track"><div class="bar write value-749"></div></div></div><div class="bar-row"><div class="bar-label">Warm cache hit<bdi>83 ms</bdi></div><div class="track"><div class="bar after value-83"></div></div></div><div class="axis" dir="ltr"><span>0</span><span>900 ms</span></div></section><section class="startup-panel"><h3>GGUF metadata parse</h3><div class="bar-row"><div class="bar-label">Before<bdi>37.7 ms</bdi></div><div class="track"><div class="bar before value-37-7"></div></div></div><div class="bar-row"><div class="bar-label">Validate + skip<bdi>10.8 ms</bdi></div><div class="track"><div class="bar after value-10-8"></div></div></div><div class="axis" dir="ltr"><span>0</span><span>48 ms</span></div></section></div><figcaption>Lower is better · Independent scales · Not full time to first token</figcaption></figure>
+<p>Figure 1. Lower is better. Each panel has its own millisecond scale. Model build uses the September 12 cache measurements: cache-off median 670 ms; first-write samples 746/749/751 ms; warm-hit samples 83/84/83 ms. Metadata parsing uses the separate five-run interleaved comparison. These are reported phase measurements, not components of one timed run.</p>
+<h2>packing once, reusing across processes</h2>
+<p>Q8_0 weights arrive in a row-contiguous representation. Ember&#x27;s decode kernels use packed layouts, so constructing the model includes transforming those weights. An earlier profile attributed 478 ms of a 663 ms model build to VNNI packing, with another 99 ms in the interleaved output head.</p>
+<p>That work was repeated on each process start. The persistent cache stores both layouts and maps their byte ranges on a validated hit. The ordinary generation and decode-benchmark paths now enable it by default; <code dir="ltr">EMBER_PACKED_CACHE=0</code> selects the uncached path.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Llama-3.2-1B Q8_0 configuration</th><th scope="col">Model build</th><th scope="col">Cache behavior</th></tr></thead><tbody>
+<tr><td>Cache off</td><td>670 ms median</td><td>Pack in memory</td></tr>
+<tr><td>First run</td><td>746–751 ms</td><td>Write 1.31 GiB; 113 misses</td></tr>
+<tr><td>Warm hit</td><td>83–84 ms</td><td>Map packed layouts; 113 hits</td></tr>
+</tbody></table></div>
+<p>The first write costs time and disk space. On this NVMe host, spaced runs added about 80 ms over the uncached build. Back-to-back fresh writes under dirty-writeback pressure took 5–20 seconds. The first-run cost depends on I/O conditions.</p>
+<p>The cache validates identity, layout, bounds and entry lengths. Files are published by rename after writing a temporary file; cache failures fall back to in-memory packing. Tests cover byte identity, invalidation, corruption, truncation and concurrent writers. The measured deterministic Llama output matches across generic, packed and cached paths.</p>
+<p>Directory cleanup uses an 8 GiB default budget, configurable through <code dir="ltr">EMBER_PACKED_CACHE_BYTES</code>, with least-recently-used eviction after successful publication. The newest file is retained even if it alone exceeds the budget. There is no free-space pre-check; failed writes degrade to ordinary packing.</p>
+<p>Gemma 4 E2B gives a useful second case. After fixing loader limits and tensor geometry checks, caching its gate/up layouts reduced model build from 2.06–2.28 seconds to 1.54–1.60 seconds. Packing accounts for less of that constructor, so removing it saves roughly a quarter of the build rather than the roughly eightfold improvement measured on Llama.</p>
+<h2>validating metadata without keeping unused values</h2>
+<p>Once packing was cached, metadata processing became more visible. Splitting the parse timer showed that almost all parsing time was in metadata rather than the tensor table.</p>
+<p>The GGUF tokenizer arrays contained hundreds of thousands of entries that were being materialized as owned values. Ember loads its tokenizer from <code dir="ltr">tokenizer.json</code>; those four GGUF arrays had no consumers.</p>
+<p>The loader now checks element types, counts, string limits, aggregate budgets and UTF-8 in place, then records <code dir="ltr">SkippedArray { element_type, elements }</code>. It retains the metadata keys and reports the skipped array&#x27;s type and count through inspection.</p>
+<p>On Llama-1B Q8_0, metadata parsing fell from 37.7 ms to 10.8 ms. In that comparison, warm command wall time fell from 295 ms to 210 ms. The remaining parse cost includes walking the individual string lengths.</p>
+<p>There was a second source of metadata work: generating the packed-cache key Debug-formatted every metadata value. Bounding that work reduced warm command wall time from 342 ms to 274 ms on Llama and from 2,340 ms to 1,927 ms on Gemma in a separate comparison. These wall-time measurements use different before/after revisions from the array-skipping comparison.</p>
+<h2>fewer allocations at the same decode speed</h2>
+<p>The decode work removed repeated plan-cache lookups when the session configuration is unchanged and made the caller reuse its logits buffer. The planned Q4 path went from five allocation events and 515,716 allocated bytes per token to two events and 3,040 bytes. The remaining events were Rayon job structures under pool contention.</p>
+<p>Changing the Llama/Qwen3 CLI decode default from <code dir="ltr">reference</code> to <code dir="ltr">planned</code> also made that leaner path the ordinary route. On the measured Llama Q4 workload, the old default used 833 allocations per token; the new default used two. That larger comparison combines the default change with buffer reuse. It is not the effect of buffer reuse alone.</p>
+<p>The throughput result remained within noise. The final interleaved matrix measured Q4 planned decode at 27.19 versus 26.90 tokens/s and Q8 at 22.17 versus 22.62 tokens/s. Allocation counts improved substantially without establishing a throughput improvement.</p>
+<p>The default change followed numerical gates: Q4 greedy tokens matched across 24 steps and six frozen prompts, with logits inside the fixed 1e-3 envelope; 18 greedy runs across Q4, Q6 and Q8 also matched byte for byte. The <a href="https://github.com/voidwest/ember/blob/main/docs/v04-execution-contract.md">execution contract</a> records the decision and keeps the reference path available. <code dir="ltr">planned-fused</code> remains explicit because its measured throughput advantage over <code dir="ltr">planned</code> was also within noise.</p>
+<h2>what remains</h2>
+<p>The decode profile still places about 87% of sampled cycles in the two K-quant dot kernels. The startup changes do not remove that work. Further kernel experiments need stable host conditions and a fresh comparison against the existing path.</p>
+<p>The practical gain this week is that repeated launches reuse expensive packing, the loader avoids retaining unused metadata, and ordinary decode uses fewer allocations. Each result has a separate measurement boundary and correctness check. Keeping those boundaries visible makes the next bottleneck easier to identify.</p>
+<h2>sources and figure reproduction</h2>
+<ul>
+<li><a href="https://github.com/voidwest/ember/blob/main/docs/phase3-optimization-report.md">Phase 3 runtime report</a>: measurements, protocols, correctness checks and September 12 follow-ups.</li>
+</ul>
+<ul>
+<li><a href="https://github.com/voidwest/ember/blob/main/docs/v04-execution-contract.md">Execution contract</a>: planned-default and planned-fused decision amendments.</li>
+</ul>
+<p>The HTML figure uses the reported values directly and follows the shared site theme. Rebuild both language pages without running inference:</p>
+<pre dir="ltr"><code>python docs/assets/build_startup_post.py</code></pre>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

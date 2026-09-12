@@ -1,0 +1,19 @@
+/* Figure-only layout; all colors and typography come from /style.css. */
+.startup-figure{padding:20px;direction:inherit}
+.startup-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px}
+.startup-panel h3{margin:0 0 24px}
+.startup-figure .bar-row{margin:22px 0}
+.startup-figure .bar-label{display:flex;justify-content:space-between;gap:10px;font-size:13px;margin-bottom:8px}
+.startup-figure bdi{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--heading)}
+.startup-figure .track{height:22px;background:var(--surface-2);direction:ltr}
+.startup-figure .bar{height:100%;background:var(--muted)}
+.startup-figure .bar.after{background:var(--accent)}
+.startup-figure .bar.write{background:var(--subtle)}
+.startup-figure .axis{display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:6px;font-family:var(--mono-font);font-size:11px;color:var(--muted)}
+.startup-figure figcaption{margin-top:24px;color:var(--muted);font-size:12px}
+@media(max-width:600px){.startup-grid{grid-template-columns:1fr;gap:28px}.startup-figure{padding:16px}}
+.startup-figure .value-670{width:74.44444444444444%}
+.startup-figure .value-749{width:83.22222222222221%}
+.startup-figure .value-83{width:9.222222222222221%}
+.startup-figure .value-37-7{width:78.54166666666667%}
+.startup-figure .value-10-8{width:22.5%}

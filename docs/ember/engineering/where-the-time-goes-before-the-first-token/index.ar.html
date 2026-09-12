@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:title" content="فين يروح الوقت قبل أول توكن؟">
+        <meta property="og:description" content="تخزين الأوزان المعاد ترتيبها، وقراءة بيانات GGUF الوصفية، وتقليل تخصيص الذاكرة أثناء التوليد.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/ember/engineering/where-the-time-goes-before-the-first-token/index.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary">
+        <title>فين يروح الوقت قبل أول توكن؟</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/ember.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/ember.png">
+        <!-- docs:og-image end -->
+    <link rel="stylesheet" href="figures.css">
+        <!-- docs:head-scripts start -->
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
+        <script defer src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+        <script defer>
+            document.addEventListener('DOMContentLoaded', function() {
+                document.querySelectorAll('pre code').forEach(function(el) {
+                    hljs.highlightElement(el);
+                });
+            });
+        </script>
+        <!-- docs:head-scripts end -->
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html" aria-current="page">ember</a>
+                <a href="/research-notes/index.ar.html">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/ember/engineering/where-the-time-goes-before-the-first-token/">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            <a href="/ember/index.ar.html"><bdi>ember</bdi></a>
+            <a href="/ember/engineering/index.ar.html"><bdi>engineering</bdi></a>
+        </div>
+<h1>فين يروح الوقت قبل أول توكن؟</h1>
+<div class="meta">2026-09-12 · Ember · أزمنة بدء التشغيل وحدود القياس</div>
+
+<p>هذا الأسبوع، وقت بناء <bdi>Llama-3.2-1B</bdi> بصيغة <bdi>Q8_0</bdi> في <bdi>Ember</bdi> نزل من <bdi>670</bdi> إلى <bdi>83–84</bdi> مللي ثانية مع <bdi>cache</bdi> يحفظ الأوزان بعد ترتيبها ويعيد استخدامها بين التشغيلات. بس سرعة الـ<bdi>decode</bdi> نفسها بقيت تقريباً زي ما هي؛ الفرق كان داخل ضوضاء القياس. المكسب بان لما فصلت وقت بداية التشغيل عن وقت الـ<bdi>decode.</bdi></p>
+<p>وفيه شغل ثاني قلّل وقت قراءة بيانات <bdi>GGUF</bdi> الوصفية وعدد تخصيصات الذاكرة لكل توكن. الأرقام هنا من <a href="https://github.com/voidwest/ember/blob/main/docs/phase3-optimization-report.md">تقرير المرحلة الثالثة</a>، مع إضافات <bdi>12</bdi> سبتمبر. كل مقارنة هنا تقيس جزء مختلف، فما ينفع نضرب نسب التحسن في بعض ونطلع منها بنسبة للتشغيل كامل.</p>
+<h2>إيش بالضبط قاعدين نقيس؟</h2>
+<p>القياسات على <bdi>Intel Core i5-1135G7</bdi> بنظام <bdi>Arch Linux</bdi>، مع أربعة <bdi>threads</bdi> من <bdi>Rayon</bdi>، مثبتة على <bdi>CPUs 0–3.</bdi> التقرير يسجل الـ<bdi>warmups</bdi> وتكرار القياسات والتبديل بين النسختين أثناء المقارنة. الجهاز كان يخفّض تردده بسبب الحرارة، أو <bdi>thermal throttling.</bdi> عشان كذا، أي فرق داخل نطاق ضوضاء القياس، حوالي <bdi>3%</bdi>، ما حسبته تحسناً في سرعة الـ<bdi>decode.</bdi></p>
+<p>أمر <code dir="ltr">bench-decode</code> يقيس الـ<bdi>decode</bdi> لحاله، بدون ما يدخل معاه وقت التحميل والـ<bdi>prefill.</bdi> تقرير التحميل صار يفصل ربط الملف بالذاكرة، وقراءة الـ<bdi>metadata</bdi>، وقراءة جدول الـ<bdi>tensors</bdi>، وتجهيزها، وبناء النموذج. كمان يسجل وقت الـ<bdi>packing</bdi> وقد إيش من البيانات مقيم في الذاكرة. وللـ<bdi>prefill</bdi> وأول توكن قياسات لحالها.</p>
+<p>يعني <strong>مرحلة بناء النموذج صارت أسرع بحوالي ثمانية أضعاف لما الـ<bdi>cache</bdi> جاهز ودافئ</strong>. الرقم هذا ما يقيس الانتظار كامل لأول توكن، ولا الـ<bdi>cold start</bdi>، ولا سرعة إنتاج التوكنات.</p>
+<figure class="startup-figure"><div class="startup-grid"><section class="startup-panel"><h3>بناء النموذج</h3><div class="bar-row"><div class="bar-label">التخزين معطل<bdi>670 مللي ثانية</bdi></div><div class="track"><div class="bar before value-670"></div></div></div><div class="bar-row"><div class="bar-label">الكتابة الأولى<bdi>749 مللي ثانية</bdi></div><div class="track"><div class="bar write value-749"></div></div></div><div class="bar-row"><div class="bar-label">إصابة دافئة<bdi>83 مللي ثانية</bdi></div><div class="track"><div class="bar after value-83"></div></div></div><div class="axis" dir="ltr"><span><bdi>0</bdi></span><span><bdi>900</bdi> مللي ثانية</span></div></section><section class="startup-panel"><h3>قراءة بيانات <bdi>GGUF</bdi> الوصفية</h3><div class="bar-row"><div class="bar-label">قبل التغيير<bdi>37.7 مللي ثانية</bdi></div><div class="track"><div class="bar before value-37-7"></div></div></div><div class="bar-row"><div class="bar-label">تحقق وتجاوز<bdi>10.8 مللي ثانية</bdi></div><div class="track"><div class="bar after value-10-8"></div></div></div><div class="axis" dir="ltr"><span><bdi>0</bdi></span><span><bdi>48</bdi> مللي ثانية</span></div></section></div><figcaption>القيمة الأقل أفضل · مقياسان مستقلان · لا يمثل الرسم الزمن الكلي حتى أول توكن</figcaption></figure>
+<p>الشكل <bdi>1.</bdi> الأقل أفضل، وكل رسم له مقياس مستقل بالمللي ثانية. أرقام بناء النموذج من قياسات <bdi>12</bdi> سبتمبر: الوسيط بدون <bdi>cache</bdi> هو <bdi>670</bdi>؛ تشغيلات الكتابة الأولى <bdi>746/749/751</bdi>؛ وتشغيلات الـ<bdi>warm hit</bdi> هي <bdi>83/84/83.</bdi> أرقام الـ<bdi>metadata</bdi> من مقارنة ثانية بخمسة تشغيلات متداخلة. هذي قياسات منفصلة، مو أجزاء من نفس التشغيلة.</p>
+<h2>ليش أعيد ترتيب نفس الأوزان كل مرة؟</h2>
+<p>أوزان <bdi>Q8_0</bdi> تجي بترتيب صفوف متجاورة. نوى الـ<bdi>decode</bdi> في <bdi>Ember</bdi> تستخدم <bdi>packed layouts</bdi>، فبناء النموذج يشمل إعادة ترتيب الأوزان عشان تناسبها. في قياس سابق، من أصل <bdi>663</bdi> مللي ثانية لبناء النموذج، <bdi>478</bdi> راحت على <bdi>VNNI packing</bdi> و<bdi>99</bdi> مللي ثانية على ترتيب الـ<bdi>output head</bdi> المتداخل.</p>
+<p>وهذا الشغل كان يتكرر كل ما تبدأ <bdi>process</bdi> جديدة. الـ<bdi>cache</bdi> الدائم يحفظ الترتيبين، وبعد ما يتأكد إن النسخة المحفوظة صالحة، يربط نطاقات البايتات بالذاكرة مباشرة. صار شغال افتراضياً في التوليد العادي وقياس الـ<bdi>decode</bdi>؛ ولو تبغى المسار بدون <bdi>cache</bdi> تستخدم <code dir="ltr">EMBER_PACKED_CACHE=0</code>.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">إعداد <bdi>Llama-3.2-1B Q8_0</bdi></th><th scope="col">وقت بناء النموذج</th><th scope="col">إيش يصير في الـ<bdi>cache</bdi>؟</th></tr></thead><tbody>
+<tr><td>بدون <bdi>cache</bdi></td><td>الوسيط <bdi>670</bdi> مللي ثانية</td><td>ترتيب الأوزان في الذاكرة</td></tr>
+<tr><td>أول تشغيل</td><td><bdi>746–751</bdi> مللي ثانية</td><td>كتابة <bdi>1.31 GiB</bdi>؛ <bdi>113 misses</bdi></td></tr>
+<tr><td><bdi>Warm hit</bdi></td><td><bdi>83–84</bdi> مللي ثانية</td><td>ربط الترتيبات المحفوظة؛ <bdi>113 hits</bdi></td></tr>
+</tbody></table></div>
+<p>طبعاً أول كتابة تاخذ وقت ومساحة على القرص. على قرص <bdi>NVMe</bdi> في هذا الجهاز، لما باعدت بين التشغيلات، الكتابة أضافت حوالي <bdi>80</bdi> مللي ثانية فوق وقت البناء بدون <bdi>cache.</bdi> بس لما شغلت كتابات جديدة ورا بعض، والـ<bdi>writeback</bdi> كان لسه يصرف البيانات المتراكمة من الذاكرة للقرص، وصلت أزمنة التشغيل إلى <bdi>5–20</bdi> ثانية. يعني كلفة أول تشغيل تعتمد على وضع الـ<bdi>I/O</bdi> وقتها.</p>
+<p>الـ<bdi>cache</bdi> يتحقق من الهوية والـ<bdi>layout</bdi> والحدود وأطوال الإدخالات. يكتب في ملف مؤقت، وبعد ما يخلص ينشره بإعادة التسمية. لو فشل يرجع يرتب الأوزان في الذاكرة. الاختبارات تغطي تطابق البايتات، وإبطال الإدخالات، والملفات التالفة أو المقطوعة، والكتابة المتزامنة. وفي التشغيل الحتمي المقاس، خرج <bdi>Llama</bdi> طلع مطابق بين المسار العام، والـ<bdi>packed</bdi>، والـ<bdi>cached.</bdi></p>
+<p>الحد الافتراضي لحجم مجلد الـ<bdi>cache</bdi> هو <bdi>8 GiB</bdi>، وتقدر تغيره من <code dir="ltr">EMBER_PACKED_CACHE_BYTES</code>. بعد ما يحفظ ملف جديد بنجاح، ينظف المجلد ويبدأ بالملفات اللي مرّ أطول وقت من آخر استخدام لها. بس أحدث ملف يبقى، حتى لو لحاله أكبر من الحد. وما فيه فحص مسبق للمساحة الفاضية؛ لو الكتابة فشلت، يرجع للـ<bdi>packing</bdi> العادي.</p>
+<p><bdi>Gemma 4 E2B</bdi> يوضح ليش النسبة تختلف من نموذج لنموذج. بعد إصلاح حدود الـ<bdi>loader</bdi> وفحوص أشكال الـ<bdi>tensors</bdi>، تخزين ترتيبات <bdi>gate/up</bdi> نزل وقت البناء من <bdi>2.06–2.28</bdi> ثانية إلى <bdi>1.54–1.60</bdi> ثانية. إعادة الـ<bdi>packing</bdi> تاخذ حصة أصغر من وقت بناء <bdi>Gemma</bdi>، فعشان كذا تجاوزها وفّر تقريباً ربع الوقت. نفس الفكرة، بس حجم المكسب يعتمد على فين يروح وقت النموذج أصلاً.</p>
+<h2>أتحقق من الـ<bdi>metadata</bdi>، بس ليش أحتفظ بشي ما أستخدمه؟</h2>
+<p>بعد ما صرنا نعيد استخدام الـ<bdi>packing</bdi> المحفوظ، وقت قراءة الـ<bdi>metadata</bdi> صار أوضح. ولما فصلت قياسها عن قراءة جدول الـ<bdi>tensors</bdi>، طلع تقريباً كل وقت القراءة رايح عليها.</p>
+<p>مصفوفات الـ<bdi>tokenizer</bdi> داخل <bdi>GGUF</bdi> فيها مئات الآلاف من الإدخالات، وكان الـ<bdi>loader</bdi> ينشئ لها قيماً ونصوصاً منفصلة في الذاكرة. بس <bdi>Ember</bdi> أصلاً يقرأ الـ<bdi>tokenizer</bdi> من <code dir="ltr">tokenizer.json</code>. المصفوفات الأربع هذي ما كان فيه شي يستخدمها.</p>
+<p>الـ<bdi>loader</bdi> الآن يتحقق من نوع العناصر وعددها، وحدود أطوال النصوص والحدود الإجمالية، وصحة <bdi>UTF-8</bdi>، وهو يمر عليها مباشرة في الملف. بعدها يسجل <code dir="ltr">SkippedArray { element_type, elements }</code>. مفاتيح الـ<bdi>metadata</bdi> تبقى موجودة، والـ<bdi>inspect</bdi> يعرض نوع المصفوفة اللي تجاوزها وعدد عناصرها.</p>
+<p>في <bdi>Llama-1B Q8_0</bdi>، وقت قراءة الـ<bdi>metadata</bdi> نزل من <bdi>37.7</bdi> إلى <bdi>10.8</bdi> مللي ثانية. وفي نفس المقارنة، وقت تشغيل الأمر كامل في الحالة الدافئة نزل من <bdi>295</bdi> إلى <bdi>210</bdi> مللي ثانية. باقي لازم يمر على طول كل نص لحاله، وهذا له كلفة.</p>
+<p>وكان فيه شغل زيادة في مكان ثاني: بناء مفتاح الـ<bdi>cache</bdi> كان يحوّل كل قيمة <bdi>metadata</bdi> إلى نص بصيغة <bdi>Debug.</bdi> لما حطيت حدود لهذا الشغل، وقت تشغيل الأمر كامل في الحالة الدافئة نزل من <bdi>342</bdi> إلى <bdi>274</bdi> مللي ثانية في <bdi>Llama</bdi>، ومن <bdi>2,340</bdi> إلى <bdi>1,927</bdi> في <bdi>Gemma</bdi>، في مقارنة مستقلة. مقارنة مفتاح الـ<bdi>cache</bdi> ومقارنة تجاوز المصفوفات كل وحدة لها نسختها قبل التعديل وبعده. عشان كذا ما نخلط أرقامها كأنها قياس واحد.</p>
+<h2>تخصيصات أقل، بس الـ<bdi>decode</bdi> بنفس السرعة تقريباً</h2>
+<p>في مسار الـ<bdi>decode</bdi>، ما عاد فيه داعي نرجع نبحث في <bdi>cache</bdi> خطط التنفيذ عند كل توكن إذا إعداد الجلسة ما تغير. وكمان صار الكود اللي يستدعي النموذج يعيد استخدام نفس <bdi>buffer</bdi> الـ<bdi>logits.</bdi> مسار <bdi>Q4</bdi> المخطط نزل من خمسة تخصيصات و<bdi>515,716</bdi> بايت لكل توكن إلى تخصيصين و<bdi>3,040</bdi> بايت. التخصيصات اللي بقيت كانت لهياكل مهام <bdi>Rayon</bdi> وقت التنافس داخل الـ<bdi>thread pool.</bdi></p>
+<p>وكمان تغير وضع الـ<bdi>decode</bdi> الافتراضي في <bdi>CLI</bdi> لـ<bdi>Llama/Qwen3</bdi> من <code dir="ltr">reference</code> إلى <code dir="ltr">planned</code>، فصار المسار الأقل تخصيصاً هو اللي تستخدمه عادة. في اختبار <bdi>Llama Q4</bdi> هذا، الافتراضي القديم كان يسوي <bdi>833</bdi> تخصيصاً لكل توكن؛ الجديد يسوي اثنين. بس المقارنة الكبيرة هذي تجمع تغيير الافتراضي مع إعادة استخدام الـ<bdi>buffer.</bdi> مو كلها مكسب من الـ<bdi>buffer</bdi> لحاله.</p>
+<p>السرعة بقيت داخل ضوضاء القياس. في المقارنة المتداخلة النهائية، <bdi>Q4</bdi> المخطط سجل <bdi>27.19</bdi> مقابل <bdi>26.90</bdi> توكن في الثانية، و<bdi>Q8</bdi> سجل <bdi>22.17</bdi> مقابل <bdi>22.62.</bdi> عدد التخصيصات نزل كثير، بس هذي الأرقام ما تثبت إن الـ<bdi>decode</bdi> صار أسرع.</p>
+<p>وقبل ما أغير الافتراضي، المسار الجديد عدّى الفحوص العددية. توكنات <bdi>Q4</bdi> مع <bdi>greedy decoding</bdi> تطابقت عبر <bdi>24</bdi> خطوة وستة <bdi>prompts</bdi> ثابتة مسبقاً، والـ<bdi>logits</bdi> بقيت داخل هامش <bdi>1e-3</bdi> المحدد. وكمان مخرجات <bdi>18</bdi> تشغيلة بـ<bdi>greedy decoding</bdi> عبر <bdi>Q4</bdi> و<bdi>Q6</bdi> و<bdi>Q8</bdi> تطابقت بايت ببايت. <a href="https://github.com/voidwest/ember/blob/main/docs/v04-execution-contract.md">عقد التنفيذ</a> يسجل القرار، والمسار المرجعي لسه متاح. أما <code dir="ltr">planned-fused</code> فبقي خيار تشغله بنفسك، لأن فرق سرعته عن <code dir="ltr">planned</code> كان برضه داخل ضوضاء القياس.</p>
+<h2>إيش باقي؟</h2>
+<p>الـ<bdi>profile</bdi> لسه يبين إن حوالي <bdi>87%</bdi> من دورات المعالج المأخوذة بالعينة تروح لنواتي الضرب النقطي لـ<bdi>K-quant.</bdi> شغل بداية التشغيل ما يشيل هذي الكلفة. عشان نجرب تحسينات جديدة على النوى، نحتاج ظروف تشغيل مستقرة ومقارنة جديدة مع المسار الموجود.</p>
+<p>المكسب العملي هذا الأسبوع: التشغيلات الجديدة تستفيد من ترتيب الأوزان المحفوظ، والـ<bdi>loader</bdi> ما يحتفظ بـ<bdi>metadata</bdi> ما يستخدمها، والـ<bdi>decode</bdi> العادي يخصص ذاكرة أقل. كل نتيجة هنا لها قياسها وفحص صحتها. لما نعرف بالضبط إيش تحسن وإيش بقي زي ما هو، يصير أسهل نحدد فين نشتغل بعدها.</p>
+<h2>المصادر والرسم</h2>
+<ul>
+<li><a href="https://github.com/voidwest/ember/blob/main/docs/phase3-optimization-report.md">تقرير المرحلة الثالثة</a>: الأرقام، وطريقة القياس، وفحوص الصحة، وإضافات <bdi>12</bdi> سبتمبر.</li>
+<li><a href="https://github.com/voidwest/ember/blob/main/docs/v04-execution-contract.md">عقد التنفيذ</a>: قرارات <code dir="ltr">planned</code> و<code dir="ltr">planned-fused</code> والافتراضي الحالي.</li>
+</ul>
+<p>الرسم يستخدم الأرقام الموثقة مباشرة، وألوانه تتغير مع مظهر الموقع. تقدر تعيد بناء صفحتي العربي والإنجليزي محلياً بدون تشغيل <bdi>inference</bdi>:</p>
+<pre dir="ltr"><code>python docs/assets/build_startup_post.py</code></pre>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">GitHub</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">LinkedIn</a>
+                <a href="mailto:mthobaiti@outlook.com">البريد</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
