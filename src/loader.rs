@@ -130,8 +130,13 @@ pub mod limits {
     pub const MAX_SLIDING_WINDOW: usize = 16 * 1024 * 1024;
     /// Conservative maximum for the `context * head_dim` RoPE allocation
     /// product. `compute_rope_freqs` stores half as many values per table;
-    /// this cap keeps the cosine+sine pair near 128 MiB at worst.
-    pub const MAX_ROPE_TABLE_ELEMENTS: usize = 1 << 25;
+    /// this cap keeps one cosine+sine pair at or below ~512 MiB.
+    ///
+    /// Calibrated against the real model set: Gemma 4 declares a 131,072-token
+    /// context with a 512-wide global head (2^26, a 268 MiB pair), and also
+    /// allocates a smaller local pair; Llama/Qwen stay under 2^24. 2^27 admits
+    /// Gemma 4 with 2x headroom.
+    pub const MAX_ROPE_TABLE_ELEMENTS: usize = 1 << 27;
     /// Maximum number of tensor records accepted from one GGUF header.
     /// Real model files are orders of magnitude smaller; this bound prevents
     /// sparse headers from forcing unbounded hash-map reservations.
@@ -142,7 +147,14 @@ pub mod limits {
     pub const MAX_METADATA_ARRAY_ELEMENTS: usize = 1_000_000;
     /// Aggregate cap on materialized metadata values. This includes array
     /// containers and scalar elements, not just top-level key/value records.
-    pub const MAX_METADATA_VALUES: usize = 1_000_000;
+    ///
+    /// Calibrated against the real model set: the largest observed headers are
+    /// the Gemma 4 tokenizers at ~1.30M values (tokens + scores + token_type +
+    /// merges), while Llama/Qwen headers stay under 0.54M. 4M leaves ~3x
+    /// headroom and bounds worst-case materialization to
+    /// `size_of::<GgufValue>() * 4M` (~128 MiB; enforced by the footprint
+    /// test below), alongside the separate 64 MiB metadata-string budget.
+    pub const MAX_METADATA_VALUES: usize = 4_000_000;
     /// Maximum bytes in an individual GGUF string (keys, names, and values).
     pub const MAX_STRING_BYTES: usize = 1 << 20;
     /// Aggregate bytes available to metadata strings in one GGUF header.
@@ -150,7 +162,13 @@ pub mod limits {
     /// Aggregate bytes available to tensor names in one GGUF header.
     pub const MAX_TENSOR_NAME_BYTES: usize = 64 << 20;
     /// Maximum encoded payload bytes declared by one tensor.
-    pub const MAX_TENSOR_BYTES: u64 = 1 << 30;
+    ///
+    /// Calibrated against the real model set: the largest observed tensor is
+    /// Gemma 4's `per_layer_token_embd.weight` at 2,495,610,880 bytes (Q8_0,
+    /// 262,144 x 8,960). 4 GiB admits it with headroom and stays well below
+    /// the 16 GiB whole-file bound; per-tensor and aggregate *allocation*
+    /// budgets remain the memory guard (mapped Q8_0 tensors stay zero-copy).
+    pub const MAX_TENSOR_BYTES: u64 = 4 << 30;
     /// Maximum transient/final bytes the loader may materialize for one
     /// tensor. Mapped packed tensors count only anonymous allocations here.
     pub const MAX_TENSOR_ALLOCATION_BYTES: u64 = 1 << 30;
@@ -1961,7 +1979,7 @@ mod tests {
         assert!(error.to_string().contains("tensor count"), "{error}");
         assert!(error.to_string().contains("record limit"), "{error}");
 
-        let mut cursor = std::io::Cursor::new(gguf_one_tensor(&[1u64 << 30], 0));
+        let mut cursor = std::io::Cursor::new(gguf_one_tensor(&[1u64 << 31], 0));
         let error = load_gguf_from_reader(&mut cursor)
             .err()
             .expect("a sparse f32 tensor declaration must not allocate");
@@ -2007,6 +2025,76 @@ mod tests {
             .expect("a sparse metadata array must be bounded before reserve");
         assert!(error.to_string().contains("metadata array"), "{error}");
         assert!(error.to_string().contains("element limit"), "{error}");
+    }
+
+    #[test]
+    fn metadata_budget_admits_gemma4_scale_tokenizer_arrays() {
+        // Gemma 4 tokenizers total ~1.30M metadata values (three 262,144-value
+        // arrays plus a 514,906-entry merges array and the scalar keys). The
+        // aggregate cap must admit that with headroom: this is the calibration
+        // evidence for MAX_METADATA_VALUES.
+        let mut budget = MetadataBudget::new();
+        for _ in 0..1_301_500 {
+            budget.consume_value().unwrap();
+        }
+        assert!(budget.consume_value().is_ok());
+    }
+
+    #[test]
+    fn metadata_value_budget_is_bounded_and_enforced() {
+        let footprint = std::mem::size_of::<GgufValue>() * limits::MAX_METADATA_VALUES;
+        assert!(
+            footprint <= 256 << 20,
+            "metadata envelope grows past 256 MiB: {footprint} bytes"
+        );
+        let mut budget = MetadataBudget::new();
+        for _ in 0..limits::MAX_METADATA_VALUES {
+            budget.consume_value().unwrap();
+        }
+        assert!(budget.consume_value().is_err());
+    }
+
+    #[test]
+    fn tensor_byte_cap_admits_gemma4_ple_and_stays_below_the_file_bound() {
+        const {
+            // per_layer_token_embd.weight (Gemma 4) declares 2,495,610,880
+            // encoded bytes; the cap must admit it and stay under the file
+            // bound.
+            assert!(limits::MAX_TENSOR_BYTES >= 2_495_610_880);
+            assert!(limits::MAX_TENSOR_BYTES < limits::MAX_GGUF_FILE_BYTES);
+        }
+    }
+
+    #[test]
+    fn rope_table_cap_fits_the_documented_envelope() {
+        const {
+            // One f32 cosine+sine pair at the cap; Gemma 4 E2B needs
+            // 131,072 x 512 for its global pair.
+            let pair_bytes = limits::MAX_ROPE_TABLE_ELEMENTS * std::mem::size_of::<f32>();
+            assert!(pair_bytes <= 512 << 20);
+            assert!(limits::MAX_ROPE_TABLE_ELEMENTS >= 131_072 * 512);
+        }
+    }
+
+    #[test]
+    fn gemma4_scale_header_parses_end_to_end() {
+        // Two 700k-value arrays (the Gemma 4 pattern: several tokenizer arrays
+        // whose total exceeds the old 1M aggregate cap) must parse.
+        let mut bytes = gguf_header(0, 2);
+        for key in [b"tokens".as_slice(), b"merges".as_slice()] {
+            push_gguf_string(&mut bytes, key);
+            bytes.extend_from_slice(&9u32.to_le_bytes()); // array value
+            bytes.extend_from_slice(&0u32.to_le_bytes()); // u8 elements
+            bytes.extend_from_slice(&700_000u64.to_le_bytes());
+            bytes.resize(bytes.len() + 700_000, 0);
+        }
+        let mut cursor = std::io::Cursor::new(bytes);
+        let loader = load_gguf_from_reader(&mut cursor).expect("gemma4-scale metadata must parse");
+        assert_eq!(loader.metadata.len(), 2);
+        match loader.metadata.get("tokens") {
+            Some(GgufValue::Array(values)) => assert_eq!(values.len(), 700_000),
+            other => panic!("expected a 700k-element array, got {other:?}"),
+        }
     }
 
     /// Build a minimal GGUF v3 file with one K-family tensor

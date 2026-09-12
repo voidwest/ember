@@ -331,9 +331,9 @@ any kernel-level A/B would have been noise (per the phase-2 standard).
    single decode token.
 5. **Shared global rayon pool across GUI requests/agent tools** — real
    oversubscription risk, out of scope here.
-6. **Packed cache policy** — still opt-in; a first run writes ~1.3 GiB and
-   costs ~+0.4 s over no cache. `reference`-mode runs also cache (the packing
-   is mode-independent), and gemma4's gate/up packing is not covered yet.
+6. **Packed cache policy** — addressed in the 2026-09-12 follow-up below (on by
+   default; gemma4 gate/up covered). Open items there: no eviction, no
+   free-space pre-check.
 
 ## Next milestone recommendation
 
@@ -363,3 +363,63 @@ EMBER_CACHE_DIR=/tmp/ember-packed EMBER_PACKED_CACHE=1 RAYON_NUM_THREADS=4 \
   taskset -c 0-3 target/release/ember bench-decode \
   --model models/v03-ladder/llama-3.2-1b-q8_0.gguf --arch llama --tokens 2 --warmups 0 --repetitions 1
 ```
+
+## Follow-up milestone (2026-09-12): packed cache on by default
+
+The first next-milestone recommendation is implemented.
+
+### Decision: enabled by default
+
+`PackedCache::for_loader` now enables the cache unless `EMBER_PACKED_CACHE=0`
+(any other value, or unset, enables). Rationale: the repack is paid on every
+process start, a validated hit removes essentially all of it, and every failure
+path already degrades to in-memory packing. Writability and free space are not
+probed up front: an unwritable or full cache directory disables writes for that
+run with one warning, removes the partial temp file, and continues. The
+per-model cost is ~1.3 GiB for a 1B Q8_0 model, written once.
+
+### Gemma gate/up coverage
+
+`Linear::prepare_packed_decode_cached` (`model.rs`) mirrors the llama helper: a
+validated entry replaces the repack, otherwise the freshly packed layout is
+recorded. `Gemma4::from_loader_cached` uses it for `ffn_gate`/`ffn_up`, and the
+CLI generation and bench-decode gemma4 arms open the cache. The public
+`from_loader` stays cache-free.
+
+### Measurements (Llama-3.2-1B Q8_0, `RAYON_NUM_THREADS=4`, taskset 0-3, tokens=2)
+
+| configuration | model build | cache state |
+|---|---:|---|
+| cache off (`EMBER_PACKED_CACHE=0`) | 670 ms median (n=3) | — |
+| first run, fresh cache dir | 746 / 749 / 751 ms | 113 misses; writes 1.31 GiB |
+| warm cache (second+ run) | 83 / 84 / 83 ms | 113 hits |
+
+First-run overhead over no-cache is ~80 ms on this NVMe host; the warm win is
+~590 ms (~8x). Back-to-back fresh writes once measured 5-20 s when dirty
+writeback throttled the device; spacing runs with `sync` removes that, so the
+write cost is IO-pressure dependent, not a fixed surcharge.
+
+### Gemma 4: measured after the loader fixes
+
+The loader-cap issues recorded in the first version of this section were fixed
+as a follow-up: aggregate metadata values 1M -> 4M, per-tensor encoded bytes
+1 GiB -> 4 GiB, RoPE `context * head_dim` 2^25 -> 2^27, plus two Gemma 4
+geometry fixes (double-wide MLP on KV-shared layers; packed 2D Q8_0 PLE
+tensor) and the missing `finish_write` call on this path. See the changelog.
+`gemma-4-E2B-it-Q8_0.gguf` now loads, generates coherently, and uses the
+cache; the 12B variant (no PLE tensors) passes the loader checks.
+
+| configuration | model build | cache state |
+|---|---:|---|
+| cache off | 2,062 / 2,279 ms | — |
+| first run, fresh cache dir | 2,184 ms | 70 misses; writes 1.10 GiB |
+| warm cache | 1,542 / 1,593 / 1,601 ms | 70 hits |
+
+That is ~0.5-0.7 s (~25%) off a build dominated by non-packing work — not the
+~8x seen on Llama, where the repack is the dominant term.
+
+### Remaining
+
+- Cache eviction/staleness: files are keyed by model identity but never pruned;
+  a replaced model orphans its cache.
+- No free-space pre-check (write failures degrade, per the module docs).

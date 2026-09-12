@@ -50,6 +50,21 @@ API.
   cached layouts are actually reused; Gemma 4 E2B model build measured
   2.06-2.28 s off -> 1.54-1.60 s warm.
 
+### Fixed
+
+- Gemma 4 GGUFs failed to load (`GGUF metadata arrays exceed the 1000000-value
+  limit`, then the per-tensor and RoPE caps, then two geometry checks). Fixed
+  by calibrating three conservative loader caps against the real model set and
+  by accepting Gemma 4's actual layouts:
+  aggregate metadata values 1M -> 4M (~128 MiB envelope, 2x the largest
+  observed header), per-tensor encoded bytes 1 GiB -> 4 GiB (Gemma 4's PLE
+  tensor declares 2.50 GB; stays below the 16 GiB file bound), RoPE
+  `context * head_dim` 2^25 -> 2^27 (Gemma 4 needs 2^26; documented 512 MiB
+  pair envelope).
+- Gemma 4 geometry: the per-layer validation now accepts the double-wide MLP
+  that KV-shared layers carry, and the packed 2D Q8_0 `per_layer_token_embd`
+  form (the pre-materialization check demanded the 3D hidden form).
+
 ### Documentation
 
 - Added the API stability policy covering SemVer, MSRV, compatibility tiers,

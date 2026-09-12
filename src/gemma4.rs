@@ -1403,15 +1403,30 @@ impl Gemma4<CpuBackend> {
                 };
                 check_tensor_dims(&name, &[config.embed_dim])?;
             }
+            // KV-shared layers may carry the double-wide MLP variant
+            // (`use_double_wide_mlp`); the builder reads the real tensor
+            // widths, so accept either architectural width there and require
+            // gate/up/down to agree.
+            let ffn_width = if is_shared {
+                let doubled = config
+                    .intermediate_dim
+                    .checked_mul(2)
+                    .ok_or_else(|| anyhow::anyhow!("Gemma 4 layer {layer} MLP width overflow"))?;
+                let gate = tensor_dims(&format!("{prefix}ffn_gate.weight"))?;
+                if gate == [config.embed_dim, doubled] {
+                    doubled
+                } else {
+                    config.intermediate_dim
+                }
+            } else {
+                config.intermediate_dim
+            };
             for suffix in ["ffn_gate.weight", "ffn_up.weight"] {
-                check_tensor_dims(
-                    &format!("{prefix}{suffix}"),
-                    &[config.embed_dim, config.intermediate_dim],
-                )?;
+                check_tensor_dims(&format!("{prefix}{suffix}"), &[config.embed_dim, ffn_width])?;
             }
             check_tensor_dims(
                 &format!("{prefix}ffn_down.weight"),
-                &[config.intermediate_dim, config.embed_dim],
+                &[ffn_width, config.embed_dim],
             )?;
             let has_ple = loader.tensors.contains_key(&format!("{prefix}proj.weight"));
             if has_ple {
@@ -1455,11 +1470,17 @@ impl Gemma4<CpuBackend> {
             "per_layer_embd.weight",
         ] {
             if let Some(meta) = loader.tensor_meta.get(name) {
+                // A packed Q8_0 PLE tensor is 2D in GGUF
+                // ([n_layers * per_layer_dim, vocab]) and is validated after
+                // materialization; only the 3D hidden form is checked here
+                // before allocation.
+                let packed_q8 = crate::loader::ggml_dtype_name(meta.dtype) == Some("q8_0");
                 anyhow::ensure!(
-                    meta.dims.len() == 3
-                        && meta.dims[0] == config.n_layers
-                        && meta.dims[1] >= config.vocab_size
-                        && meta.dims[2] == per_layer_dim,
+                    packed_q8
+                        || (meta.dims.len() == 3
+                            && meta.dims[0] == config.n_layers
+                            && meta.dims[1] >= config.vocab_size
+                            && meta.dims[2] == per_layer_dim),
                     "tensor '{name}' must have shape [layers={}, vocab>={}, dim={}], got {:?}",
                     config.n_layers,
                     config.vocab_size,
@@ -3725,6 +3746,47 @@ mod tests {
         let mut tensors = HashMap::new();
         insert_tiny_gemma4_tensors(&mut tensors);
         insert_tiny_gemma4_block_tensors(&mut tensors, 1, false);
+        let loader = GgufLoader {
+            metadata,
+            tensors,
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: HashMap::new(),
+            tensor_meta: HashMap::new(),
+        };
+        let model = Gemma4::from_loader(loader).unwrap();
+
+        assert_eq!(model.blocks.len(), 2);
+        assert_eq!(model.blocks[1].attn.shared_source_layer, Some(0));
+    }
+
+    #[test]
+    fn loader_accepts_double_wide_mlp_on_shared_layers() {
+        let mut metadata = HashMap::new();
+        metadata.insert("gemma4.block_count".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.embedding_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.attention.head_count".to_string(), GgufValue::U32(1));
+        metadata.insert(
+            "gemma4.attention.head_count_kv".to_string(),
+            GgufValue::U32(1),
+        );
+        metadata.insert("gemma4.attention.key_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.feed_forward_length".to_string(), GgufValue::U32(2));
+        metadata.insert("gemma4.vocab_size".to_string(), GgufValue::U32(4));
+        metadata.insert("gemma4.context_length".to_string(), GgufValue::U32(8));
+        metadata.insert(
+            "gemma4.attention.shared_kv_layers".to_string(),
+            GgufValue::U32(1),
+        );
+
+        let mut tensors = HashMap::new();
+        insert_tiny_gemma4_tensors(&mut tensors);
+        insert_tiny_gemma4_block_tensors(&mut tensors, 0, true);
+        insert_tiny_gemma4_block_tensors(&mut tensors, 1, false);
+        // The KV-shared layer carries the doubled MLP (intermediate 2 -> 4).
+        tensors.insert("blk.1.ffn_gate.weight".into(), tiny_weight(&[2, 4]));
+        tensors.insert("blk.1.ffn_up.weight".into(), tiny_weight(&[2, 4]));
+        tensors.insert("blk.1.ffn_down.weight".into(), tiny_weight(&[4, 2]));
+
         let loader = GgufLoader {
             metadata,
             tensors,
