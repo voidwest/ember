@@ -475,10 +475,9 @@ pub enum GgufValue {
     Array(Vec<GgufValue>),
     /// A metadata array that was validated (element type, counts, string
     /// bounds, aggregate budgets, UTF-8) but not materialized. Only the
-    /// tokenizer arrays listed in [`SKIPPED_METADATA_ARRAYS`] take this shape:
-    /// Ember reads tokenizers from `tokenizer.json`, so the GGUF tokenizer
-    /// arrays have no consumers and would otherwise allocate ~10^5-10^6
-    /// short-lived values on every load.
+    /// `tokenizer.ggml.*` tokenizer arrays take this shape: Ember reads
+    /// tokenizers from `tokenizer.json`, so those values have no consumers and
+    /// would otherwise allocate ~10^5-10^6 short-lived values on every load.
     SkippedArray {
         element_type: u32,
         elements: u64,
