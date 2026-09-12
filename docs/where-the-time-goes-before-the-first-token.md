@@ -43,7 +43,9 @@ phase measurements, not components of one timed run.
 Q8_0 weights arrive in a row-contiguous representation. Ember's decode kernels
 use packed layouts, so constructing the model includes transforming those
 weights. An earlier profile attributed 478 ms of a 663 ms model build to VNNI
-packing, with another 99 ms in the interleaved output head.
+packing, with another 99 ms in the interleaved output head. This profile and
+the 670 ms cache-off median below come from separate measurement rounds;
+the packing breakdown is not a decomposition of that later median.
 
 That work was repeated on each process start. The persistent cache stores both
 layouts and maps their byte ranges on a validated hit. The ordinary generation
@@ -70,6 +72,8 @@ matches across generic, packed and cached paths.
 Directory cleanup uses an 8 GiB default budget, configurable through
 `EMBER_PACKED_CACHE_BYTES`, with least-recently-used eviction after successful
 publication. The newest file is retained even if it alone exceeds the budget.
+This is an eviction target, not a hard disk-usage cap. Cleanup happens after
+publication, so writing a new entry can also temporarily exceed the target.
 There is no free-space pre-check; failed writes degrade to ordinary packing.
 
 Gemma 4 E2B gives a useful second case. After fixing loader limits and tensor
