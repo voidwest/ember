@@ -18,6 +18,10 @@ This policy covers:
 - Rust source APIs (modules, types, traits, functions, constants, and feature
   flags);
 - the command-line interface documented in `README.md` and `docs/usage.md`;
+- the optional Python binding (`bindings/python`): the
+  `inspect`/`plan`/`diff`/`diff_corpus` function signatures and their returned
+  dict schemas follow the same pre-1.0 rules as the CLI/JSON contracts above;
+  the extension itself remains outside the Rust-only install path;
 - serialized research contracts such as `ember.experiment.v1`,
   `ember.bundle.v1`, `ember.kv-snapshot.v1`, and `ember.agent.trace.v1`.
 

@@ -13,6 +13,16 @@ API.
 
 ### Added
 
+- Optional Python bindings (`bindings/python`, PyO3 + maturin): `ember.inspect`,
+  `ember.plan`, `ember.diff`, and `ember.diff_corpus` return the same report
+  dictionaries as the CLI (`--json` / `--output` output). The extension is abi3
+  (CPython >= 3.11), is never built by root cargo commands, and is never
+  required by the CLI/headless path.
+- Library entry points shared by the CLI and the binding (experimental Rust
+  API): `ember::inspect::{inspect_path, inspect_plan}`,
+  `ember::diff_outcome::evaluate_diff`, `ember::diff_corpus::run_diff_corpus`,
+  and `ember::loader::resolve_generation_architecture` own the logic the CLI
+  renders.
 - `--seed` for stochastic sampling: same seed + inputs reproduce the same
   token sequence.
 - Run-manifest execution identity (schema v2): canonical SHA-256 over all

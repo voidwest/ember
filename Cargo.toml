@@ -1,3 +1,9 @@
+[workspace]
+# Optional PyO3 layer; never built by root cargo commands (default-members)
+# and never required for the CLI/headless install path.
+members = ["bindings/python"]
+default-members = ["."]
+
 [package]
 name = "ember"
 version = "0.6.8"

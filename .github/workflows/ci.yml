@@ -73,6 +73,9 @@ jobs:
       - name: clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      - name: clippy (python bindings)
+        run: cargo clippy --locked -p ember-python -- -D warnings
+
       - name: fmt
         run: cargo fmt --all -- --check
 
@@ -90,6 +93,11 @@ jobs:
           python -m compileall -q python probes stimuli scripts tests
           python probes/run_probe_matrix.py --model smoke:dummy.gguf --generate-tokens 1 --dry-run
           bash -n bench_compare.sh probes/run_all_5k.sh scripts/research_example_capture_patch.sh scripts/conference_demo.sh scripts/validate_k_parity.sh tools/crossover_sweep.sh tools/verify_k_quant_llamacpp.sh
+
+      - name: python bindings
+        # Optional PyO3 layer over the same core. The binding tests
+        # importorskip without a build; install it so CI exercises them.
+        run: python -m pip install ./bindings/python
 
       - name: python tests
         run: |

@@ -743,6 +743,27 @@ of `0.915` for `labels.upos`, `0.862` for `labels.Gender`, `0.900` for
 smoke result; publishable claims need the full encoder suite and trusted
 golden/reference checks.
 
+## python bindings
+
+```bash
+python -m pip install maturin
+maturin develop -m bindings/python/Cargo.toml
+```
+
+The optional `ember` Python module exposes the investigate surface over the
+same core as the CLI:
+
+```python
+import ember
+ember.inspect("model.gguf", sha256=True)          # == ember inspect model.gguf --json
+ember.plan("model.gguf")                          # == ember inspect model.gguf plan
+ember.diff("model.gguf", against=["llama.cpp"])   # == ember diff model.gguf --against llama.cpp --json
+ember.diff_corpus(n=100, out_dir=".cache/run")    # == ember diff-corpus --n 100 --out-dir .cache/run
+```
+
+See `bindings/python/README.md`. The extension is optional: root cargo commands
+and the CLI/headless install path never build or require it.
+
 ## testing
 
 ```bash
