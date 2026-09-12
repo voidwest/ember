@@ -298,7 +298,7 @@ fn run_export(
 
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
-    let architecture = crate::cli_support::resolve_generation_architecture(&command.arch, &loader)?;
+    let architecture = ember::loader::resolve_generation_architecture(&command.arch, &loader)?;
     validate_loader_architecture(&loader, &architecture)?;
     let model = ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(cache_capacity))?;
     timings.insert("model_load".into(), elapsed_ms(model_start));
@@ -569,8 +569,7 @@ fn run_compare(
         let tokenizer_sha256 = sha256_file_result(tokenizer_path)
             .with_context(|| format!("failed to hash tokenizer '{tokenizer_path}'"))?;
         let loader = load_gguf_with_k_strategy(model_path, k_strategy, allow_fallback)?;
-        let architecture =
-            crate::cli_support::resolve_generation_architecture(architecture, &loader)?;
+        let architecture = ember::loader::resolve_generation_architecture(architecture, &loader)?;
         validate_loader_architecture(&loader, &architecture)?;
         let model = ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(capacity))?;
         model.set_execution_mode(execution);
@@ -807,7 +806,7 @@ fn run_replay(
 
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
-    let architecture = crate::cli_support::resolve_generation_architecture(&command.arch, &loader)?;
+    let architecture = ember::loader::resolve_generation_architecture(&command.arch, &loader)?;
     validate_loader_architecture(&loader, &architecture)?;
     let model =
         ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(requested_capacity))?;
@@ -1027,7 +1026,7 @@ fn run_trace_native(
 
     let model_start = Instant::now();
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, allow_fallback)?;
-    let architecture = crate::cli_support::resolve_generation_architecture(&command.arch, &loader)?;
+    let architecture = ember::loader::resolve_generation_architecture(&command.arch, &loader)?;
     validate_loader_architecture(&loader, &architecture)?;
     let model =
         ember::llama::Llama::from_loader_with_max_seq_len(loader, Some(requested_capacity))?;

@@ -1416,6 +1416,39 @@ pub fn ggml_dtype_name(dtype: u32) -> Option<&'static str> {
     }
 }
 
+/// Resolve the generation architecture for a loader: map the GGUF's
+/// `general.architecture` to the engine family (`gpt2`, `llama`, `qwen3`,
+/// `gemma4`) and fail closed when an explicit `requested` value conflicts.
+/// `requested == "auto"` accepts the detected family.
+///
+/// Error strings mirror the CLI flags (`--arch`) so the CLI and the Python
+/// binding report the same remediation.
+pub fn resolve_generation_architecture(
+    requested: &str,
+    loader: &GgufLoader,
+) -> anyhow::Result<String> {
+    let declared = match loader.metadata.get("general.architecture") {
+        Some(GgufValue::Str(value)) => value.as_str(),
+        Some(_) => anyhow::bail!("GGUF general.architecture must be a string"),
+        None => anyhow::bail!("GGUF is missing required general.architecture metadata"),
+    };
+    let detected = match declared {
+        "gpt2" => "gpt2",
+        "llama" => "llama",
+        "qwen2" | "qwen3" => "qwen3",
+        "gemma3" | "gemma4" => "gemma4",
+        other => anyhow::bail!(
+            "GGUF architecture '{other}' is not supported by generation; expected gpt2, llama, qwen2/qwen3, or gemma3/gemma4"
+        ),
+    };
+    if requested != "auto" && requested != detected {
+        anyhow::bail!(
+            "--arch {requested} conflicts with GGUF general.architecture='{declared}' (use --arch {detected} or omit --arch)"
+        );
+    }
+    Ok(detected.to_string())
+}
+
 fn read_u8<R: Read>(f: &mut R) -> Result<u8> {
     let mut buf = [0u8; 1];
     f.read_exact(&mut buf)?;
@@ -1649,6 +1682,33 @@ fn read_gguf_value_inner<R: Read + Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn loader_with_arch(architecture: &str) -> GgufLoader {
+        GgufLoader {
+            metadata: std::collections::HashMap::from([(
+                "general.architecture".to_string(),
+                GgufValue::Str(architecture.to_string()),
+            )]),
+            tensors: std::collections::HashMap::new(),
+            k_strategy: crate::quant_k::KStrategy::EagerF32,
+            k_decisions: std::collections::HashMap::new(),
+            tensor_meta: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn generation_architecture_is_detected_and_aliases_match_engine_families() {
+        assert_eq!(
+            resolve_generation_architecture("auto", &loader_with_arch("qwen2")).unwrap(),
+            "qwen3"
+        );
+        assert_eq!(
+            resolve_generation_architecture("auto", &loader_with_arch("gemma3")).unwrap(),
+            "gemma4"
+        );
+        assert!(resolve_generation_architecture("gpt2", &loader_with_arch("llama")).is_err());
+        assert!(resolve_generation_architecture("auto", &loader_with_arch("nope")).is_err());
+    }
 
     #[test]
     fn floating_tensor_reads_are_bounded_and_preserve_bits() {

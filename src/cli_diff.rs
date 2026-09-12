@@ -1,8 +1,5 @@
 use clap::{Args as ClapArgs, Subcommand};
-use ember::diff_outcome::{
-    evaluate_ember, evaluate_external, DiffOutcome, ExternalRuntime, SideReport,
-};
-use serde::Serialize;
+use ember::diff_outcome::{evaluate_diff, DiffOutcome, DiffReport, ExternalRuntime};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -32,51 +29,6 @@ pub(crate) struct DiffCommand {
 pub(crate) enum DiffSubcommand {
     /// List the external runtimes this binary knows how to resolve.
     Runtimes,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DiffReport {
-    schema: String,
-    file: String,
-    ember: SideReport,
-    externals: Vec<SideReport>,
-    agreement: Agreement,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct Agreement {
-    /// True when every evaluated side shares one outcome category.
-    all_agree: bool,
-    /// Distinct outcome tokens observed, in evaluation order.
-    distinct_outcomes: Vec<String>,
-    /// Human sentence describing the comparison.
-    summary: String,
-}
-
-fn agreement(ember: &SideReport, externals: &[SideReport]) -> Agreement {
-    let mut distinct = vec![ember.outcome.token().to_string()];
-    for side in externals {
-        let token = side.outcome.token().to_string();
-        if !distinct.contains(&token) {
-            distinct.push(token);
-        }
-    }
-    let all_agree = distinct.len() == 1;
-    let summary = if all_agree {
-        format!("all runtimes agree: {}", distinct[0])
-    } else {
-        let parts = std::iter::once((&ember.runtime, &ember.outcome))
-            .chain(externals.iter().map(|side| (&side.runtime, &side.outcome)))
-            .map(|(runtime, outcome)| format!("{runtime}={}", outcome.token()))
-            .collect::<Vec<_>>()
-            .join(" ");
-        format!("DISAGREE: {parts}")
-    };
-    Agreement {
-        all_agree,
-        distinct_outcomes: distinct,
-        summary,
-    }
 }
 
 fn render_human(report: &DiffReport) -> String {
@@ -140,37 +92,11 @@ pub(crate) fn run_diff_command(command: &DiffCommand) -> anyhow::Result<()> {
             ),
         }
     }
-    let timeout = Duration::from_secs(command.timeout_secs);
-    // Ember first (in-process, same trust boundary as `inspect`); external
-    // runtimes after, evaluated CONCURRENTLY on scoped threads. Sequential
-    // evaluation would stack per-runtime timeouts (2 runtimes x 30 s hangs
-    // = 60 s per file; x62 corpus files = over an hour of pure waiting),
-    // so parallelism is load-bearing for corpus use, not an optimization.
-    // Each evaluation owns its pipes, timeout, and report — no shared
-    // mutable state — so thread scope is sound; a panicking worker would
-    // propagate via join (evaluators never panic by contract, but scope
-    // makes even that a loud failure, not a silent hang).
-    let ember = evaluate_ember(&command.file);
-    let externals = std::thread::scope(|scope| {
-        runtimes
-            .iter()
-            .map(|runtime| scope.spawn(move || evaluate_external(*runtime, &command.file, timeout)))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .expect("diff worker panicked; evaluators must not panic")
-            })
-            .collect::<Vec<_>>()
-    });
-    let report = DiffReport {
-        schema: "ember.diff.v1".to_string(),
-        file: command.file.display().to_string(),
-        agreement: agreement(&ember, &externals),
-        ember,
-        externals,
-    };
+    let report = evaluate_diff(
+        &command.file,
+        &runtimes,
+        Duration::from_secs(command.timeout_secs),
+    );
     if command.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -183,6 +109,7 @@ pub(crate) fn run_diff_command(command: &DiffCommand) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use ember::diff_outcome::evaluate_external;
 
     #[derive(Parser)]
     struct TestDiffParser {
@@ -221,52 +148,6 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(parsed.diff.against, vec!["llama.cpp", "candle"]);
-    }
-
-    #[test]
-    fn agreement_all_same_is_trivially_true() {
-        let ember = SideReport {
-            runtime: "ember".to_string(),
-            outcome: DiffOutcome::StructuredReject,
-            termination: Some("in-process".to_string()),
-            wall_ms: Some(1.0),
-            stderr_tail: String::new(),
-            stdout_truncated: false,
-            stderr_truncated: false,
-            harness_detail: None,
-        };
-        let other = SideReport {
-            runtime: "llama.cpp".to_string(),
-            outcome: DiffOutcome::StructuredReject,
-            ..ember.clone()
-        };
-        let agreement = agreement(&ember, &[other]);
-        assert!(agreement.all_agree);
-        assert_eq!(agreement.distinct_outcomes, vec!["STRUCTURED_REJECT"]);
-    }
-
-    #[test]
-    fn agreement_detects_divergence() {
-        let ember = SideReport {
-            runtime: "ember".to_string(),
-            outcome: DiffOutcome::Accept,
-            termination: Some("in-process".to_string()),
-            wall_ms: Some(1.0),
-            stderr_tail: String::new(),
-            stdout_truncated: false,
-            stderr_truncated: false,
-            harness_detail: None,
-        };
-        let other = SideReport {
-            runtime: "candle".to_string(),
-            outcome: DiffOutcome::ProcessCrash,
-            ..ember.clone()
-        };
-        let agreement = agreement(&ember, &[other]);
-        assert!(!agreement.all_agree);
-        assert!(agreement.summary.contains("DISAGREE"));
-        assert!(agreement.summary.contains("ember=ACCEPT"));
-        assert!(agreement.summary.contains("candle=PROCESS_CRASH"));
     }
 
     #[test]

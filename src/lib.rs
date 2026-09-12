@@ -18,8 +18,9 @@ extern crate alloc;
 // `main.rs` would make those measurements silently meaningless (always 0).
 // The cost is one relaxed atomic pair per allocation, and steady-state
 // planned decode performs no allocations at all (see `alloc_counter` module
-// docs), so the hot path pays nothing. The ember lib is not consumed as an
-// external dependency today; revisit if that changes.
+// docs), so the hot path pays nothing. The optional Python binding
+// (`bindings/python`) links this crate headless and inherits this allocator,
+// which counts Rust-side allocations only.
 #[global_allocator]
 static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 
@@ -37,6 +38,7 @@ pub mod backend;
 pub mod compare;
 #[doc(hidden)]
 pub mod decode_profile;
+pub mod diff_corpus;
 pub mod diff_outcome;
 pub mod duplex;
 // (device bindings live in duplex::device behind the "audio" feature)
@@ -44,6 +46,7 @@ pub mod embedding;
 pub mod experiments;
 pub mod extraction;
 pub mod gemma4;
+pub mod inspect;
 #[doc(hidden)]
 pub mod k_matmul;
 #[doc(hidden)]

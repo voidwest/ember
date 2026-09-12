@@ -364,7 +364,7 @@ pub(crate) fn prepare_run(
     // -- model --
     let loader = load_gguf_with_k_strategy(&resolved.model.path, k_strategy, k_allow_fallback)?;
     let architecture =
-        crate::cli_support::resolve_generation_architecture(&resolved.model.arch, &loader)?;
+        ember::loader::resolve_generation_architecture(&resolved.model.arch, &loader)?;
     if !matches!(architecture.as_str(), "llama" | "qwen3") {
         anyhow::bail!(
             "experiments support llama-family models (llama/qwen3); got architecture \
@@ -1102,7 +1102,7 @@ pub(crate) fn run_tokenize_command(
     k_allow_fallback: bool,
 ) -> anyhow::Result<()> {
     let loader = load_gguf_with_k_strategy(&command.model, k_strategy, k_allow_fallback)?;
-    let architecture = crate::cli_support::resolve_generation_architecture(&command.arch, &loader)?;
+    let architecture = ember::loader::resolve_generation_architecture(&command.arch, &loader)?;
     let tokenizer_path = command
         .tokenizer
         .clone()

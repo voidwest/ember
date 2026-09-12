@@ -408,6 +408,88 @@ fn termination_string(termination: &Termination) -> String {
     }
 }
 
+/// `ember diff` report (schema `ember.diff.v1`): Ember's in-process side plus
+/// every requested external runtime, classified by the same taxonomy.
+#[derive(Debug, Clone, Serialize)]
+pub struct DiffReport {
+    pub schema: String,
+    pub file: String,
+    pub ember: SideReport,
+    pub externals: Vec<SideReport>,
+    pub agreement: Agreement,
+}
+
+/// Cross-runtime agreement summary attached to [`DiffReport`].
+#[derive(Debug, Clone, Serialize)]
+pub struct Agreement {
+    /// True when every evaluated side shares one outcome category.
+    pub all_agree: bool,
+    /// Distinct outcome tokens observed, in evaluation order.
+    pub distinct_outcomes: Vec<String>,
+    /// Human sentence describing the comparison.
+    pub summary: String,
+}
+
+fn agreement(ember: &SideReport, externals: &[SideReport]) -> Agreement {
+    let mut distinct = vec![ember.outcome.token().to_string()];
+    for side in externals {
+        let token = side.outcome.token().to_string();
+        if !distinct.contains(&token) {
+            distinct.push(token);
+        }
+    }
+    let all_agree = distinct.len() == 1;
+    let summary = if all_agree {
+        format!("all runtimes agree: {}", distinct[0])
+    } else {
+        let parts = std::iter::once((&ember.runtime, &ember.outcome))
+            .chain(externals.iter().map(|side| (&side.runtime, &side.outcome)))
+            .map(|(runtime, outcome)| format!("{runtime}={}", outcome.token()))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("DISAGREE: {parts}")
+    };
+    Agreement {
+        all_agree,
+        distinct_outcomes: distinct,
+        summary,
+    }
+}
+
+/// Evaluate `file` with Ember in-process and with every external runtime,
+/// returning the `ember.diff.v1` report. External runtimes are evaluated
+/// CONCURRENTLY on scoped threads: sequential evaluation would stack
+/// per-runtime timeouts (2 runtimes x 30 s hangs = 60 s per file; x62 corpus
+/// files = over an hour of pure waiting), so parallelism is load-bearing for
+/// corpus use, not an optimization. Each evaluation owns its pipes, timeout,
+/// and report — no shared mutable state — so the scope is sound; a panicking
+/// worker propagates via join (evaluators never panic by contract, but scope
+/// makes even that a loud failure, not a silent hang).
+pub fn evaluate_diff(file: &Path, runtimes: &[ExternalRuntime], timeout: Duration) -> DiffReport {
+    let ember = evaluate_ember(file);
+    let externals = std::thread::scope(|scope| {
+        runtimes
+            .iter()
+            .map(|runtime| scope.spawn(move || evaluate_external(*runtime, file, timeout)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .expect("diff worker panicked; evaluators must not panic")
+            })
+            .collect::<Vec<_>>()
+    });
+    let agreement = agreement(&ember, &externals);
+    DiffReport {
+        schema: "ember.diff.v1".to_string(),
+        file: file.display().to_string(),
+        ember,
+        externals,
+        agreement,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -554,5 +636,51 @@ mod tests {
             let detail = report.harness_detail.unwrap();
             assert!(detail.contains("candle runtime not found"));
         }
+    }
+
+    #[test]
+    fn agreement_all_same_is_trivially_true() {
+        let ember = SideReport {
+            runtime: "ember".to_string(),
+            outcome: DiffOutcome::StructuredReject,
+            termination: Some("in-process".to_string()),
+            wall_ms: Some(1.0),
+            stderr_tail: String::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            harness_detail: None,
+        };
+        let other = SideReport {
+            runtime: "llama.cpp".to_string(),
+            outcome: DiffOutcome::StructuredReject,
+            ..ember.clone()
+        };
+        let agreement = agreement(&ember, &[other]);
+        assert!(agreement.all_agree);
+        assert_eq!(agreement.distinct_outcomes, vec!["STRUCTURED_REJECT"]);
+    }
+
+    #[test]
+    fn agreement_detects_divergence() {
+        let ember = SideReport {
+            runtime: "ember".to_string(),
+            outcome: DiffOutcome::Accept,
+            termination: Some("in-process".to_string()),
+            wall_ms: Some(1.0),
+            stderr_tail: String::new(),
+            stdout_truncated: false,
+            stderr_truncated: false,
+            harness_detail: None,
+        };
+        let other = SideReport {
+            runtime: "candle".to_string(),
+            outcome: DiffOutcome::ProcessCrash,
+            ..ember.clone()
+        };
+        let agreement = agreement(&ember, &[other]);
+        assert!(!agreement.all_agree);
+        assert!(agreement.summary.contains("DISAGREE"));
+        assert!(agreement.summary.contains("ember=ACCEPT"));
+        assert!(agreement.summary.contains("candle=PROCESS_CRASH"));
     }
 }

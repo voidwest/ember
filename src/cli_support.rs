@@ -52,32 +52,6 @@ pub(crate) fn default_tokenizer_for_arch(arch: &str) -> &'static str {
     }
 }
 
-pub(crate) fn resolve_generation_architecture(
-    requested: &str,
-    loader: &GgufLoader,
-) -> anyhow::Result<String> {
-    let declared = match loader.metadata.get("general.architecture") {
-        Some(GgufValue::Str(value)) => value.as_str(),
-        Some(_) => anyhow::bail!("GGUF general.architecture must be a string"),
-        None => anyhow::bail!("GGUF is missing required general.architecture metadata"),
-    };
-    let detected = match declared {
-        "gpt2" => "gpt2",
-        "llama" => "llama",
-        "qwen2" | "qwen3" => "qwen3",
-        "gemma3" | "gemma4" => "gemma4",
-        other => anyhow::bail!(
-            "GGUF architecture '{other}' is not supported by generation; expected gpt2, llama, qwen2/qwen3, or gemma3/gemma4"
-        ),
-    };
-    if requested != "auto" && requested != detected {
-        anyhow::bail!(
-            "--arch {requested} conflicts with GGUF general.architecture='{declared}' (use --arch {detected} or omit --arch)"
-        );
-    }
-    Ok(detected.to_string())
-}
-
 pub(crate) fn resolve_tokenizer(path: &str) -> ResolvedTokenizer {
     if Path::new(path).exists() {
         return ResolvedTokenizer::File(path.to_string());
@@ -586,20 +560,6 @@ pub(crate) fn token_audit_json(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
-    fn loader_with_arch(architecture: &str) -> GgufLoader {
-        GgufLoader {
-            metadata: HashMap::from([(
-                "general.architecture".to_string(),
-                GgufValue::Str(architecture.to_string()),
-            )]),
-            tensors: HashMap::new(),
-            k_strategy: ember::quant_k::KStrategy::EagerF32,
-            k_decisions: HashMap::new(),
-            tensor_meta: HashMap::new(),
-        }
-    }
 
     fn args_with(extra: &[&str]) -> Args {
         use clap::Parser;
@@ -765,19 +725,6 @@ mod tests {
         assert_eq!(reparsed["schema_version"], 2);
         assert_eq!(reparsed["execution"]["seed"], 42);
         assert_eq!(reparsed["execution"]["prompt"], "hello");
-    }
-
-    #[test]
-    fn generation_architecture_is_detected_and_aliases_match_engine_families() {
-        assert_eq!(
-            resolve_generation_architecture("auto", &loader_with_arch("qwen2")).unwrap(),
-            "qwen3"
-        );
-        assert_eq!(
-            resolve_generation_architecture("auto", &loader_with_arch("gemma3")).unwrap(),
-            "gemma4"
-        );
-        assert!(resolve_generation_architecture("gpt2", &loader_with_arch("llama")).is_err());
     }
 
     #[test]

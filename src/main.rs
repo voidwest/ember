@@ -38,8 +38,7 @@ use anyhow::Context;
 use clap::{Args as ClapArgs, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 use cli_support::{
     build_run_manifest, default_tokenizer_for_arch, gguf_metadata_json, parse_max_seq_len,
-    parse_temperature, parse_top_k, parse_top_p, resolve_generation_architecture,
-    resolve_tokenizer, write_json_file,
+    parse_temperature, parse_top_k, parse_top_p, resolve_tokenizer, write_json_file,
 };
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
@@ -48,7 +47,7 @@ use ember::experiments::{
     PatchTarget, ZeroLayerOutput, ZeroLayerOutputSpec,
 };
 use ember::extraction::{sha256_file_result, ExecutionBackendName};
-use ember::loader::load_gguf_with_k_strategy;
+use ember::loader::{load_gguf_with_k_strategy, resolve_generation_architecture};
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
 use std::fs;

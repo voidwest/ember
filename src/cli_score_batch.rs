@@ -21,10 +21,9 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 
 use crate::cli_commands::ensure_sequence_fits;
-use crate::cli_support::{
-    default_tokenizer_for_arch, resolve_generation_architecture, validate_token_ids_for_model,
-};
+use crate::cli_support::{default_tokenizer_for_arch, validate_token_ids_for_model};
 use crate::rayon_current_num_threads;
+use ember::loader::resolve_generation_architecture;
 
 #[derive(ClapArgs)]
 pub(crate) struct ScoreBatchCommand {

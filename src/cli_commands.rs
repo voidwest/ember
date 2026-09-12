@@ -3,7 +3,7 @@
 
 use crate::cli_support::{
     default_tokenizer_for_arch, gguf_metadata_json, parse_layers_list,
-    resolve_generation_architecture, validate_token_ids_for_model, write_json_file,
+    validate_token_ids_for_model, write_json_file,
 };
 use crate::{
     rayon_current_num_threads, Args, BenchDecodeCommand, BenchLifecycleCommand,
@@ -24,6 +24,7 @@ use ember::extraction::{
     CONFIG_FILENAME, LOGITS_FILENAME, MANIFEST_FILENAME, POSITIONS_FILENAME, REPORT_FILENAME,
     SAMPLES_FILENAME, TOKENIZATION_FILENAME,
 };
+use ember::loader::resolve_generation_architecture;
 use ember::loader::{load_gguf_with_k_strategy, load_gguf_with_k_strategy_report};
 use ember::model::ForwardModel;
 use ember::model::Gpt2;
