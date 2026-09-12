@@ -1,11 +1,13 @@
 //! On-disk cache for the packed Q8_0 decode layouts built at model load.
 //!
-//! Building the 16-output VNNI layout costs ~0.5 s for Llama-3.2-1B and is
-//! paid on every process start. This module persists those packed bytes and
-//! serves them back when the source model is unchanged, so a warm deployment
-//! can skip the repack.
+//! Building the 16-output VNNI layout costs ~0.5 s for Llama-3.2-1B (and
+//! comparable work for Gemma gate/up projections) and is paid on every
+//! process start. This module persists those packed bytes and serves them
+//! back when the source model is unchanged, so a warm deployment can skip
+//! the repack.
 //!
-//! Opt-in via `EMBER_PACKED_CACHE=1`. Trust model: the cache is derived data
+//! Enabled by default; `EMBER_PACKED_CACHE=0` disables it (any other value,
+//! or unset, enables). Trust model: the cache is derived data
 //! whose identity binds the source path, size, mtime and the GGUF
 //! metadata/tensor-table fingerprint; structural validation (magic, version,
 //! header digest, entry bounds, expected shapes and lengths) runs on every
@@ -14,6 +16,12 @@
 //! roughly the repack it would save — the same trust the model file itself
 //! receives (no content hash). Torn writes cannot be observed: the payload is
 //! streamed into a sibling temporary file and published by rename.
+//!
+//! The first run for a model writes the cache (roughly the size of the
+//! packed tensors; ~1.3 GiB for a 1B Q8_0 model). Writability and free space
+//! are not probed up front: an unwritable or full cache directory disables
+//! writes for that run with one warning, leaves no partial file behind, and
+//! degrades to in-memory packing.
 //!
 //! Cache directory: `$EMBER_CACHE_DIR`, else `$XDG_CACHE_HOME/ember`, else
 //! `$HOME/.cache/ember`. Any failure (unwritable directory, corrupt file,
@@ -111,11 +119,12 @@ pub struct PackedCache {
 impl PackedCache {
     /// Open (or prepare to write) the cache for a source model.
     ///
-    /// Returns `None` when the cache is disabled, the directory cannot be
-    /// resolved, or the file is structurally invalid (a missing file simply
-    /// yields an empty cache that will be written on `finish_write`).
+    /// Enabled unless `EMBER_PACKED_CACHE=0`. Returns `None` when the cache
+    /// is disabled, the directory cannot be resolved, or the file is
+    /// structurally invalid (a missing file simply yields an empty cache
+    /// that will be written on `finish_write`).
     pub fn for_loader(model_path: &Path, loader: &GgufLoader) -> Option<Self> {
-        let enabled = std::env::var_os("EMBER_PACKED_CACHE").is_some_and(|value| value == "1");
+        let enabled = env_enabled(std::env::var_os("EMBER_PACKED_CACHE").as_deref());
         Self::for_loader_with(model_path, loader, enabled)
     }
 
@@ -664,6 +673,13 @@ fn cache_dir() -> Option<PathBuf> {
     )
 }
 
+/// Environment policy: `EMBER_PACKED_CACHE=0` disables; unset or any other
+/// value enables. Pure so it can be tested without mutating the process
+/// environment.
+fn env_enabled(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_none_or(|value| value != "0")
+}
+
 fn cache_key(model_path: &Path, loader: &GgufLoader) -> String {
     let metadata = std::fs::metadata(model_path).ok();
     let file_len = metadata.as_ref().map_or(0, |meta| meta.len());
@@ -947,5 +963,62 @@ mod tests {
         let (loader, _) = loader_fixture();
         let (_dir, model) = temp_cache_path("disabled");
         assert!(PackedCache::for_loader_with(&model, &loader, false).is_none());
+    }
+
+    #[test]
+    fn env_policy_defaults_on_and_0_disables() {
+        use std::ffi::OsStr;
+        assert!(env_enabled(None));
+        assert!(env_enabled(Some(OsStr::new("1"))));
+        assert!(!env_enabled(Some(OsStr::new("0"))));
+    }
+
+    #[test]
+    fn cached_vnni_replaces_the_repack_for_a_linear() {
+        if !vnni_host() {
+            return;
+        }
+        use crate::backend::CpuBackend;
+        use crate::model::Linear;
+
+        let (loader, _) = loader_fixture();
+        let (dir, model) = temp_cache_path("linear-cache");
+        let build = || {
+            Linear::<CpuBackend>::new_q8_0(
+                QuantizedWeight::try_new(q8_bytes(128, 256), vec![128, 256]).unwrap(),
+                None,
+            )
+        };
+        let reference = QuantizedWeightVnni::from_quantized(
+            &QuantizedWeight::try_new(q8_bytes(128, 256), vec![128, 256]).unwrap(),
+        )
+        .packed_bytes()
+        .to_vec();
+
+        // First run packs and records the entry.
+        let cache = open_cache(&model, &loader, &dir);
+        let mut linear = build();
+        linear.prepare_packed_decode_cached(Some(&cache), "blk.0.ffn_gate.weight");
+        assert!(linear.has_packed_decode());
+        cache.finish_write();
+
+        // Second run is served from disk and is byte-identical.
+        let cache = open_cache(&model, &loader, &dir);
+        let mut linear = build();
+        linear.prepare_packed_decode_cached(Some(&cache), "blk.0.ffn_gate.weight");
+        assert_eq!(cache.hits(), 1);
+        assert_eq!(
+            linear
+                .packed_q8_weight_without_bias()
+                .expect("cache hit")
+                .packed_bytes(),
+            reference.as_slice()
+        );
+
+        // An unknown entry packs in memory and is recorded for the next run.
+        let mut other = build();
+        other.prepare_packed_decode_cached(Some(&cache), "blk.1.ffn_up.weight");
+        assert!(other.has_packed_decode());
+        assert_eq!(cache.misses(), 1);
     }
 }

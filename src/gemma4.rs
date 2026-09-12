@@ -1138,7 +1138,25 @@ impl ExperimentalForwardModel for Gemma4<CpuBackend> {
 }
 
 impl Gemma4<CpuBackend> {
-    pub fn from_loader(mut loader: GgufLoader) -> anyhow::Result<Self> {
+    /// Build a Gemma-family model from a GGUF loader.
+    pub fn from_loader(loader: GgufLoader) -> anyhow::Result<Self> {
+        Self::from_loader_impl(loader, None)
+    }
+
+    /// As [`Self::from_loader`], consulting an optional on-disk cache for the
+    /// packed Q8_0 gate/up decode layouts (see [`crate::packed_cache`]).
+    /// Cache problems degrade to in-memory packing.
+    pub fn from_loader_cached(
+        loader: GgufLoader,
+        packed_cache: Option<&crate::packed_cache::PackedCache>,
+    ) -> anyhow::Result<Self> {
+        Self::from_loader_impl(loader, packed_cache)
+    }
+
+    fn from_loader_impl(
+        mut loader: GgufLoader,
+        packed_cache: Option<&crate::packed_cache::PackedCache>,
+    ) -> anyhow::Result<Self> {
         if let Some(architecture) = loader.metadata.get("general.architecture") {
             match architecture {
                 GgufValue::Str(architecture) => anyhow::ensure!(
@@ -1626,12 +1644,13 @@ impl Gemma4<CpuBackend> {
                 None
             };
 
-            let mut gate_proj =
-                take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_gate.weight", i))?;
-            let mut up_proj = take_gemma4_linear(&mut loader, &format!("blk.{}.ffn_up.weight", i))?;
+            let gate_name = format!("blk.{i}.ffn_gate.weight");
+            let up_name = format!("blk.{i}.ffn_up.weight");
+            let mut gate_proj = take_gemma4_linear(&mut loader, &gate_name)?;
+            let mut up_proj = take_gemma4_linear(&mut loader, &up_name)?;
             if pack_gate_up {
-                gate_proj.prepare_packed_decode();
-                up_proj.prepare_packed_decode();
+                gate_proj.prepare_packed_decode_cached(packed_cache, &gate_name);
+                up_proj.prepare_packed_decode_cached(packed_cache, &up_name);
             }
 
             blocks.push(Gemma4Block {
@@ -1752,6 +1771,14 @@ impl Gemma4<CpuBackend> {
             config,
         };
         model.validate_loaded_shapes()?;
+        if let Some(cache) = packed_cache {
+            log::debug!(
+                "packed cache: {} hits, {} misses",
+                cache.hits(),
+                cache.misses()
+            );
+            cache.finish_write();
+        }
         Ok(model)
     }
 
@@ -2943,7 +2970,7 @@ mod tests {
         .unwrap()
     }
 
-    fn tiny_heterogeneous_gemma4_model() -> Gemma4<CpuBackend> {
+    fn tiny_heterogeneous_gemma4_loader() -> GgufLoader {
         let mut metadata = HashMap::new();
         for (name, value) in [
             ("block_count", 4),
@@ -3021,7 +3048,19 @@ mod tests {
         }
         let mut loader = loader_with(metadata);
         loader.tensors = tensors;
-        Gemma4::from_loader(loader).unwrap()
+        loader
+    }
+
+    fn tiny_heterogeneous_gemma4_model() -> Gemma4<CpuBackend> {
+        Gemma4::from_loader(tiny_heterogeneous_gemma4_loader()).unwrap()
+    }
+
+    #[test]
+    fn cached_constructor_without_a_cache_builds_the_same_model() {
+        // The tiny fixture is f32, so no packing occurs; this covers the
+        // cached-constructor wrapper and the absent-cache path.
+        let model = Gemma4::from_loader_cached(tiny_heterogeneous_gemma4_loader(), None).unwrap();
+        assert_eq!(model.blocks.len(), 4);
     }
 
     #[test]

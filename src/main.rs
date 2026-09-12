@@ -935,8 +935,9 @@ fn main() -> anyhow::Result<()> {
         }
         "llama" | "qwen3" => {
             use ember::llama::Llama;
-            // Opt-in (EMBER_PACKED_CACHE=1): reuse the packed Q8_0 decode
-            // layout from disk instead of repacking it on every process start.
+            // Default on (EMBER_PACKED_CACHE=0 disables): reuse the packed
+            // Q8_0 decode layout from disk instead of repacking it on every
+            // process start.
             let packed_cache = ember::packed_cache::PackedCache::for_loader(
                 std::path::Path::new(&args.model),
                 &loader,
@@ -1035,7 +1036,13 @@ fn main() -> anyhow::Result<()> {
         }
         "gemma4" => {
             use ember::gemma4::Gemma4;
-            let model = Gemma4::from_loader(loader)?;
+            // Default on (EMBER_PACKED_CACHE=0 disables): the gate/up Q8_0
+            // VNNI layouts are cached like the llama-family projections.
+            let packed_cache = ember::packed_cache::PackedCache::for_loader(
+                std::path::Path::new(&args.model),
+                &loader,
+            );
+            let model = Gemma4::from_loader_cached(loader, packed_cache.as_ref())?;
             validate_tokenizer_model_contract(&backend, &model, &tokenizer)?;
             log::info!("loading model from {}", args.model);
             log::info!("loaded {} tensors", n_tensors);

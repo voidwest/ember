@@ -1158,12 +1158,22 @@ pub(crate) fn run_bench_decode_command(
             )
         }
         "gemma4" => {
+            let packed_cache = ember::packed_cache::PackedCache::for_loader(
+                std::path::Path::new(&command.model),
+                &loader,
+            );
             let build_start = Instant::now();
-            let model = ember::gemma4::Gemma4::from_loader(loader)?;
+            let model = ember::gemma4::Gemma4::from_loader_cached(loader, packed_cache.as_ref())?;
             let model_build_ns = elapsed_ns(build_start);
             residency.capture("model_built")?;
-            let load_report =
-                bench_load_report(&load_timings, model_build_ns, None, None, &residency, None);
+            let load_report = bench_load_report(
+                &load_timings,
+                model_build_ns,
+                None,
+                None,
+                &residency,
+                packed_cache.as_ref(),
+            );
             bench_decode_model(
                 &backend,
                 &model,

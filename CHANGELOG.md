@@ -38,6 +38,18 @@ API.
   `validate_integrity()` on quantized weights (block layout + finite
   headers), and the `EMBER_VERIFY_QUANT=1` load-time integrity hook.
 
+### Changed
+
+- The packed Q8_0 decode cache is now on by default: the first run writes the
+  packed VNNI + interleaved-head layouts once (~1.3 GiB for a 1B Q8_0 model, in
+  `$EMBER_CACHE_DIR` or `$XDG_CACHE_HOME/ember/packed`) and later runs skip the
+  repack (Llama-3.2-1B Q8_0 model build 670 ms -> 83 ms measured).
+  `EMBER_PACKED_CACHE=0` disables; an unwritable or full cache directory
+  degrades to in-memory packing. Gemma4 gate/up Q8_0 layouts are cached too,
+  and the Gemma 4 load path now publishes the cache (`finish_write`), so the
+  cached layouts are actually reused; Gemma 4 E2B model build measured
+  2.06-2.28 s off -> 1.54-1.60 s warm.
+
 ### Documentation
 
 - Added the API stability policy covering SemVer, MSRV, compatibility tiers,

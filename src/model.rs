@@ -592,6 +592,32 @@ impl Linear<CpuBackend> {
         }
     }
 
+    /// As [`Self::prepare_packed_decode`], consulting an optional on-disk
+    /// packed-layout cache: a validated `entry_name` replaces the repack,
+    /// otherwise the freshly packed layout is recorded for the next run.
+    pub fn prepare_packed_decode_cached(
+        &mut self,
+        cache: Option<&crate::packed_cache::PackedCache>,
+        entry_name: &str,
+    ) {
+        if self.packed_decode.is_some() || !crate::simd::packed_q8_0_vnni_supported() {
+            return;
+        }
+        let cached = cache.and_then(|cache| {
+            let weight = self.q8_weight_without_bias()?;
+            cache.get_vnni(entry_name, weight.out_features(), weight.in_features())
+        });
+        match cached {
+            Some(packed) => self.packed_decode = Some(packed),
+            None => {
+                self.prepare_packed_decode();
+                if let (Some(cache), Some(packed)) = (cache, self.packed_decode.as_ref()) {
+                    cache.record_vnni(entry_name, packed);
+                }
+            }
+        }
+    }
+
     /// Build the packed decode representation while leaving source residency
     /// unchanged. Returns the new packed byte count, or `None` when the layer
     /// was already packed or is ineligible.
