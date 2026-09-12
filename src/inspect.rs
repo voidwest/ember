@@ -179,6 +179,9 @@ fn gguf_value_summary(value: &GgufValue) -> String {
             }
         }
         GgufValue::Array(items) => format!("<array of {}>", items.len()),
+        GgufValue::SkippedArray { elements, .. } => {
+            format!("<{elements} values, not materialized>")
+        }
     }
 }
 

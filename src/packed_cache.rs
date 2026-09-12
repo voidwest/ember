@@ -8,8 +8,10 @@
 //!
 //! Enabled by default; `EMBER_PACKED_CACHE=0` disables it (any other value,
 //! or unset, enables). Trust model: the cache is derived data
-//! whose identity binds the source path, size, mtime and the GGUF
-//! metadata/tensor-table fingerprint; structural validation (magic, version,
+//! whose identity binds the source path, size, mtime and a compact
+//! metadata/tensor-table fingerprint (scalar metadata values exactly; array
+//! and string contents bounded, since packed layouts depend only on tensor
+//! bytes and shapes). Structural validation (magic, version,
 //! header digest, entry bounds, expected shapes and lengths) runs on every
 //! read. A full payload digest is stored and checked only when
 //! `EMBER_PACKED_CACHE_VERIFY=1`, because hashing a ~1 GiB payload costs
@@ -18,16 +20,20 @@
 //! streamed into a sibling temporary file and published by rename.
 //!
 //! The first run for a model writes the cache (roughly the size of the
-//! packed tensors; ~1.3 GiB for a 1B Q8_0 model). Writability and free space
-//! are not probed up front: an unwritable or full cache directory disables
-//! writes for that run with one warning, leaves no partial file behind, and
-//! degrades to in-memory packing.
+//! packed tensors; ~1.3 GiB for a 1B Q8_0 model). After each successful
+//! publish the directory is pruned to `EMBER_PACKED_CACHE_BYTES` (an integer
+//! with an optional `K`/`M`/`G`/`T` binary-unit suffix; default 8 GiB, `0`
+//! disables eviction): least-recently-used cache files are evicted and
+//! temporary files left by crashed writers (older than a day) are removed.
+//! Writability and free space are not probed up front: an unwritable or full
+//! cache directory disables writes for that run with one warning, leaves no
+//! partial file behind, and degrades to in-memory packing.
 //!
 //! Cache directory: `$EMBER_CACHE_DIR`, else `$XDG_CACHE_HOME/ember`, else
 //! `$HOME/.cache/ember`. Any failure (unwritable directory, corrupt file,
 //! shape mismatch) degrades to the in-memory packing path.
 
-use crate::loader::GgufLoader;
+use crate::loader::{GgufLoader, GgufValue};
 use crate::quant::{QuantizedWeightInterleaved, QuantizedWeightVnni};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -36,6 +42,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 const MAGIC: &[u8; 8] = b"EMBERPK1";
 /// Format revision: 1 stored VNNI tiles only; 2 adds the interleaved lm-head
@@ -55,6 +62,12 @@ const PREFIX_LEN: u64 = 16; // magic + version + header_len
 const PAYLOAD_START: u64 = PREFIX_LEN + HEADER_RESERVE;
 /// Sanity cap for a cache file (the largest supported GGUF is 16 GiB).
 const MAX_CACHE_BYTES: u64 = 20 * 1024 * 1024 * 1024;
+/// Default retention for the whole cache directory: roughly six 1B-Q8_0
+/// models, or seven Gemma 4 E2B caches.
+pub const DEFAULT_CACHE_BUDGET_BYTES: u64 = 8 << 30;
+/// Temporary files older than this are leftovers from a crashed writer (a
+/// live publish takes seconds, not hours) and are removed during pruning.
+const STALE_TEMP_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Which packed layout an entry stores.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +124,8 @@ pub struct PackedCache {
     writer: Mutex<Option<WriterState>>,
     entries: Vec<HeaderEntry>,
     verify: bool,
+    /// Eviction budget for the cache directory, in bytes (`0` disables).
+    budget: u64,
     hits: AtomicUsize,
     misses: AtomicUsize,
     write_enabled: std::sync::atomic::AtomicBool,
@@ -132,7 +147,18 @@ impl PackedCache {
     pub fn for_loader_with(model_path: &Path, loader: &GgufLoader, enabled: bool) -> Option<Self> {
         let verify =
             std::env::var_os("EMBER_PACKED_CACHE_VERIFY").is_some_and(|value| value == "1");
-        Self::for_loader_in(model_path, loader, enabled, cache_dir(), verify)
+        let budget = match std::env::var_os("EMBER_PACKED_CACHE_BYTES") {
+            Some(value) => env_budget(Some(&value)).unwrap_or_else(|| {
+                log::warn!(
+                    "ignoring invalid EMBER_PACKED_CACHE_BYTES value {:?}; using the {}-byte default",
+                    value,
+                    DEFAULT_CACHE_BUDGET_BYTES
+                );
+                DEFAULT_CACHE_BUDGET_BYTES
+            }),
+            None => DEFAULT_CACHE_BUDGET_BYTES,
+        };
+        Self::for_loader_in(model_path, loader, enabled, cache_dir(), verify, budget)
     }
 
     fn for_loader_in(
@@ -141,6 +167,7 @@ impl PackedCache {
         enabled: bool,
         dir: Option<PathBuf>,
         verify: bool,
+        budget: u64,
     ) -> Option<Self> {
         if !enabled || !crate::simd::packed_q8_0_vnni_supported() {
             return None;
@@ -165,6 +192,7 @@ impl PackedCache {
             writer: Mutex::new(None),
             entries,
             verify,
+            budget,
             hits: AtomicUsize::new(0),
             misses: AtomicUsize::new(0),
             write_enabled: std::sync::atomic::AtomicBool::new(true),
@@ -386,7 +414,8 @@ impl PackedCache {
         }
     }
 
-    /// Publish the cache file (no-op when nothing was recorded).
+    /// Publish the cache file (no-op when nothing was recorded) and prune the
+    /// cache directory to its budget.
     pub fn finish_write(&self) {
         let mut guard = match self.writer.lock() {
             Ok(guard) => guard,
@@ -399,9 +428,17 @@ impl PackedCache {
             let _ = std::fs::remove_file(&state.temp_path);
             return;
         }
-        if let Err(error) = Self::publish(state) {
-            log::warn!("packed cache publish failed: {error}");
+        match Self::publish(state) {
+            Ok(()) => self.prune_cache_dir(),
+            Err(error) => log::warn!("packed cache publish failed: {error}"),
         }
+    }
+
+    fn prune_cache_dir(&self) {
+        let Some(dir) = self.path.parent() else {
+            return;
+        };
+        prune_dir(dir, &self.path, self.budget, SystemTime::now());
     }
 
     fn open_writer(dest: &Path, verify: bool) -> std::io::Result<WriterState> {
@@ -680,6 +717,130 @@ fn env_enabled(value: Option<&std::ffi::OsStr>) -> bool {
     value.is_none_or(|value| value != "0")
 }
 
+/// Parse `EMBER_PACKED_CACHE_BYTES`: a byte count with an optional binary
+/// unit suffix (`K`/`M`/`G`/`T`, optionally followed by `iB` or `B`). `None`
+/// means unset or unparsable (the caller falls back to the default); `0`
+/// disables eviction. Pure so it can be tested without mutating the process
+/// environment.
+fn env_budget(value: Option<&std::ffi::OsStr>) -> Option<u64> {
+    let text = value?.to_str()?.trim();
+    let digits_end = text
+        .find(|character: char| !character.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (digits, suffix) = text.split_at(digits_end);
+    if digits.is_empty() {
+        return None;
+    }
+    let amount = digits.parse::<u64>().ok()?;
+    let multiplier = match suffix.trim().to_ascii_uppercase().as_str() {
+        "" | "B" => 1,
+        "K" | "KB" | "KIB" => 1 << 10,
+        "M" | "MB" | "MIB" => 1 << 20,
+        "G" | "GB" | "GIB" => 1 << 30,
+        "T" | "TB" | "TIB" => 1 << 40,
+        _ => return None,
+    };
+    Some(amount.saturating_mul(multiplier))
+}
+
+/// Evict least-recently-used `*.bin` files until `dir` holds at most `budget`
+/// bytes, and remove stale `.tmp-*` files left behind by crashed writers.
+///
+/// `keep` is the file just published: it counts toward the budget (so a
+/// directory holding only an oversized entry stays as it is) but is never
+/// evicted. Deleting a file that another process has mapped is safe on the
+/// platforms this runs on; a failed removal (for example a file held open by
+/// Windows) is logged and skipped.
+fn prune_dir(dir: &Path, keep: &Path, budget: u64, now: SystemTime) {
+    let Ok(listing) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut entries: Vec<(PathBuf, u64, Option<SystemTime>)> = Vec::new();
+    let mut total = 0u64;
+    for entry in listing.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.contains(".tmp-") {
+            let stale = meta
+                .modified()
+                .ok()
+                .and_then(|modified| now.duration_since(modified).ok())
+                .is_some_and(|age| age > STALE_TEMP_AGE);
+            if stale {
+                let _ = std::fs::remove_file(&path);
+            }
+            continue;
+        }
+        if !name.ends_with(".bin") {
+            continue;
+        }
+        total = total.saturating_add(meta.len());
+        if path != keep {
+            entries.push((path, meta.len(), meta.modified().ok()));
+        }
+    }
+    if budget == 0 || total <= budget {
+        return;
+    }
+    entries.sort_by_key(|(_, _, modified)| *modified); // oldest first
+    for (path, len, _) in entries {
+        if total <= budget {
+            break;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                total = total.saturating_sub(len);
+                log::debug!("packed cache evicted {}", path.display());
+            }
+            Err(error) => log::debug!("packed cache could not evict {}: {error}", path.display()),
+        }
+    }
+}
+
+/// Hash one metadata value into the cache key without materializing its
+/// `Debug` rendering.
+///
+/// Tokenizer arrays carry hundreds of thousands of owned strings; formatting
+/// them costs ~200 ms per load on Gemma-scale headers. The packed layouts
+/// depend only on tensor bytes and shapes, which the tensor-table fingerprint
+/// in [`cache_key`] already binds, so scalars are hashed exactly while strings
+/// use a length plus bounded prefix and arrays use only their shape (length,
+/// or element type plus count for skipped arrays).
+fn hash_metadata_value(hasher: &mut Sha256, value: &GgufValue) {
+    match value {
+        GgufValue::Array(items) => {
+            hasher.update(b"a");
+            hasher.update((items.len() as u64).to_le_bytes());
+        }
+        GgufValue::SkippedArray {
+            element_type,
+            elements,
+        } => {
+            hasher.update(b"A");
+            hasher.update(element_type.to_le_bytes());
+            hasher.update(elements.to_le_bytes());
+        }
+        GgufValue::Str(text) => {
+            hasher.update(b"s");
+            hasher.update((text.len() as u64).to_le_bytes());
+            hasher.update(&text.as_bytes()[..text.len().min(32)]);
+        }
+        scalar => {
+            hasher.update(b"v");
+            hasher.update(format!("{scalar:?}").as_bytes());
+        }
+    }
+}
+
 fn cache_key(model_path: &Path, loader: &GgufLoader) -> String {
     let metadata = std::fs::metadata(model_path).ok();
     let file_len = metadata.as_ref().map_or(0, |meta| meta.len());
@@ -688,7 +849,9 @@ fn cache_key(model_path: &Path, loader: &GgufLoader) -> String {
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or(0, |duration| duration.as_nanos());
     let mut hasher = Sha256::new();
-    hasher.update(b"ember-packed-cache-v2");
+    // v4: tokenizer metadata arrays are `SkippedArray` (count only) instead of
+    // materialized arrays; old-key files are ignored and re-derived.
+    hasher.update(b"ember-packed-cache-v4");
     hasher.update(
         model_path
             .canonicalize()
@@ -702,7 +865,7 @@ fn cache_key(model_path: &Path, loader: &GgufLoader) -> String {
     keys.sort_unstable();
     for key in keys {
         hasher.update(key.as_bytes());
-        hasher.update(format!("{:?}", loader.metadata[key]).as_bytes());
+        hash_metadata_value(&mut hasher, &loader.metadata[key]);
     }
     let mut names: Vec<&String> = loader.tensor_meta.keys().collect();
     names.sort_unstable();
@@ -726,7 +889,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::loader::{GgufLoader, TensorMeta};
+    use crate::loader::{GgufLoader, GgufValue, TensorMeta};
     use crate::quant::QuantizedWeight;
     use std::collections::HashMap;
 
@@ -780,7 +943,16 @@ mod tests {
     }
 
     fn open_cache(model: &Path, loader: &GgufLoader, dir: &Path) -> PackedCache {
-        PackedCache::for_loader_in(model, loader, true, Some(dir.join("cache")), false)
+        open_cache_with_budget(model, loader, dir, DEFAULT_CACHE_BUDGET_BYTES)
+    }
+
+    fn open_cache_with_budget(
+        model: &Path,
+        loader: &GgufLoader,
+        dir: &Path,
+        budget: u64,
+    ) -> PackedCache {
+        PackedCache::for_loader_in(model, loader, true, Some(dir.join("cache")), false, budget)
             .expect("cache opens")
     }
 
@@ -971,6 +1143,141 @@ mod tests {
         assert!(env_enabled(None));
         assert!(env_enabled(Some(OsStr::new("1"))));
         assert!(!env_enabled(Some(OsStr::new("0"))));
+    }
+
+    #[test]
+    fn budget_env_policy_parses_units_and_zero_disables() {
+        use std::ffi::OsStr;
+        assert_eq!(env_budget(None), None);
+        assert_eq!(env_budget(Some(OsStr::new("0"))), Some(0));
+        assert_eq!(env_budget(Some(OsStr::new("1024"))), Some(1024));
+        assert_eq!(env_budget(Some(OsStr::new("512M"))), Some(512 << 20));
+        assert_eq!(env_budget(Some(OsStr::new("8G"))), Some(8 << 30));
+        assert_eq!(env_budget(Some(OsStr::new("8GiB"))), Some(8 << 30));
+        assert_eq!(env_budget(Some(OsStr::new(" 2 KiB "))), Some(2 << 10));
+        assert_eq!(env_budget(Some(OsStr::new("1T"))), Some(1 << 40));
+        assert_eq!(env_budget(Some(OsStr::new("nope"))), None);
+        assert_eq!(env_budget(Some(OsStr::new("12X"))), None);
+        assert_eq!(env_budget(Some(OsStr::new("GiB"))), None);
+    }
+
+    #[test]
+    fn prune_evicts_oldest_entries_and_removes_stale_temps() {
+        let dir = std::env::temp_dir().join(format!("ember-packed-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = SystemTime::now();
+        let write = |name: &str, bytes: usize, age_secs: u64| {
+            let path = dir.join(name);
+            std::fs::write(&path, vec![0u8; bytes]).unwrap();
+            let times = std::fs::FileTimes::new().set_modified(now - Duration::from_secs(age_secs));
+            File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_times(times)
+                .unwrap();
+            path
+        };
+        let old = write("aaaaaaaa.bin", 100, 300);
+        let middle = write("bbbbbbbb.bin", 100, 200);
+        let published = write("cccccccc.bin", 100, 100);
+        let stale_temp = write(".dddddddd.bin.tmp-77", 20, 2 * 24 * 60 * 60);
+        let live_temp = write(".eeeeeeee.bin.tmp-78", 20, 60);
+
+        prune_dir(&dir, &published, 250, now);
+        assert!(!old.exists(), "the oldest entry is evicted first");
+        assert!(middle.exists() && published.exists());
+        assert!(
+            !stale_temp.exists(),
+            "a crashed writer's temp file is removed"
+        );
+        assert!(live_temp.exists(), "a live writer's temp file is kept");
+
+        prune_dir(&dir, &published, 1, now);
+        assert!(published.exists(), "the published file is never evicted");
+        assert!(!middle.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finish_write_prunes_older_entries_to_the_budget() {
+        if !vnni_host() {
+            return;
+        }
+        let (loader, _) = loader_fixture();
+        let (dir, model) = temp_cache_path("prune-wiring");
+        let source = QuantizedWeight::try_new(q8_bytes(64, 64), vec![64, 64]).unwrap();
+        let packed = QuantizedWeightVnni::from_quantized(&source);
+
+        let first = open_cache_with_budget(&model, &loader, &dir, 6000);
+        first.record_vnni("blk.0.attn_q.weight", &packed);
+        first.finish_write();
+        let cache_dir = dir.join("cache");
+        let files: Vec<PathBuf> = std::fs::read_dir(&cache_dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        assert_eq!(files.len(), 1, "one entry, plus no leftover temp file");
+        let times =
+            std::fs::FileTimes::new().set_modified(SystemTime::now() - Duration::from_secs(3600));
+        File::options()
+            .write(true)
+            .open(&files[0])
+            .unwrap()
+            .set_times(times)
+            .unwrap();
+
+        // A different source key writes a second entry; the budget only fits
+        // one, so the older file is evicted.
+        let (mut second_loader, _) = loader_fixture();
+        second_loader
+            .metadata
+            .insert("llama.block_count".to_string(), GgufValue::U32(16));
+        let second = open_cache_with_budget(&model, &second_loader, &dir, 6000);
+        second.record_vnni("blk.0.attn_q.weight", &packed);
+        second.finish_write();
+
+        assert!(!files[0].exists(), "the older cache entry is evicted");
+        let remaining: Vec<PathBuf> = std::fs::read_dir(&cache_dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        assert_eq!(remaining.len(), 1);
+    }
+
+    #[test]
+    fn cache_key_bounds_large_metadata_arrays() {
+        let (mut loader, _) = loader_fixture();
+        let (_dir, model) = temp_cache_path("key-arrays");
+        loader.metadata.insert(
+            "tokenizer.ggml.tokens".to_string(),
+            GgufValue::Array(
+                (0..200_000)
+                    .map(|_| GgufValue::Str("a".to_string()))
+                    .collect(),
+            ),
+        );
+        let first = cache_key(&model, &loader);
+        // Same array length, different element contents: the packed layouts
+        // depend only on tensor bytes/shapes (bound by the tensor-table hash),
+        // so the key stays stable and the huge array is never Debug-formatted.
+        loader.metadata.insert(
+            "tokenizer.ggml.tokens".to_string(),
+            GgufValue::Array(
+                (0..200_000)
+                    .map(|_| GgufValue::Str("b".to_string()))
+                    .collect(),
+            ),
+        );
+        assert_eq!(cache_key(&model, &loader), first);
+        // Scalar metadata changes still select a different key.
+        loader
+            .metadata
+            .insert("llama.block_count".to_string(), GgufValue::U32(16));
+        assert_ne!(cache_key(&model, &loader), first);
     }
 
     #[test]

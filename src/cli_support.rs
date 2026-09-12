@@ -175,6 +175,14 @@ fn gguf_value_json(value: &GgufValue) -> serde_json::Value {
         GgufValue::Array(values) => {
             serde_json::Value::Array(values.iter().map(gguf_value_json).collect())
         }
+        GgufValue::SkippedArray {
+            element_type,
+            elements,
+        } => serde_json::json!({
+            "skipped_array": true,
+            "element_type": element_type,
+            "elements": elements,
+        }),
     }
 }
 

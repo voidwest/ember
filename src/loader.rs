@@ -473,6 +473,33 @@ pub enum GgufValue {
     Str(String),
     /// nested array of gguf values (val_type 9)
     Array(Vec<GgufValue>),
+    /// A metadata array that was validated (element type, counts, string
+    /// bounds, aggregate budgets, UTF-8) but not materialized. Only the
+    /// tokenizer arrays listed in [`SKIPPED_METADATA_ARRAYS`] take this shape:
+    /// Ember reads tokenizers from `tokenizer.json`, so the GGUF tokenizer
+    /// arrays have no consumers and would otherwise allocate ~10^5-10^6
+    /// short-lived values on every load.
+    SkippedArray {
+        element_type: u32,
+        elements: u64,
+    },
+}
+
+/// Metadata arrays that are validated but never materialized.
+///
+/// These are the bulk of metadata parsing on real models (Llama-1B: ~665k of
+/// ~700k values; Gemma 4 E2B: ~1.3M). No code in this crate reads them: the
+/// tokenizer comes from a separate `tokenizer.json` payload, and `inspect`
+/// reports the key with its element count.
+const SKIPPED_METADATA_ARRAYS: &[&str] = &[
+    "tokenizer.ggml.tokens",
+    "tokenizer.ggml.merges",
+    "tokenizer.ggml.scores",
+    "tokenizer.ggml.token_type",
+];
+
+fn is_skipped_metadata_array(key: &str) -> bool {
+    SKIPPED_METADATA_ARRAYS.contains(&key)
 }
 
 /// Load a GGUF file from disk using memory-mapped I/O.
@@ -751,7 +778,12 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
             ));
         }
         let val_type = read_u32(reader)?;
-        let value = read_gguf_value(reader, val_type, &mut metadata_budget)?;
+        let value = read_gguf_value(
+            reader,
+            val_type,
+            &mut metadata_budget,
+            is_skipped_metadata_array(&key),
+        )?;
         if metadata.insert(key.clone(), value).is_some() {
             return Err(LoaderError::malformed(format!(
                 "duplicate GGUF metadata key '{key}'"
@@ -1558,10 +1590,16 @@ impl MetadataBudget {
     }
 }
 
-fn read_gguf_string_with_budget<R: Read + Seek>(
+/// Read one GGUF string into `scratch`, enforcing every string limit.
+///
+/// Shared by the materializing reader and the skipping reader so both paths
+/// apply the identical bounds (declared length, aggregate string budget,
+/// bytes remaining in the file) and UTF-8 validation.
+fn read_gguf_string_bytes<R: Read + Seek>(
     f: &mut R,
     remaining_string_bytes: &mut usize,
-) -> Result<String> {
+    scratch: &mut Vec<u8>,
+) -> Result<()> {
     let declared_len = read_u64(f)?;
     if declared_len > limits::MAX_STRING_BYTES as u64 {
         return Err(LoaderError::malformed(format!(
@@ -1585,13 +1623,75 @@ fn read_gguf_string_with_budget<R: Read + Seek>(
         )));
     }
     *remaining_string_bytes -= len;
-    let mut buf = Vec::new();
-    buf.try_reserve_exact(len).map_err(|error| {
+    scratch.clear();
+    scratch.try_reserve_exact(len).map_err(|error| {
         LoaderError::reservation(format!("failed to reserve GGUF string buffer: {error}"))
     })?;
-    buf.resize(len, 0);
-    f.read_exact(&mut buf)?;
-    String::from_utf8(buf)
+    scratch.resize(len, 0);
+    f.read_exact(scratch)?;
+    std::str::from_utf8(scratch)
+        .map_err(|error| LoaderError::malformed(format!("invalid utf8 in string: {error}")))?;
+    Ok(())
+}
+
+/// Walk `count` GGUF strings, enforcing every limit enforced by
+/// [`read_gguf_string_bytes`] (declared length, aggregate string budget, bytes
+/// remaining in the file, UTF-8) without materializing them.
+///
+/// The bytes remaining in the file are tracked by subtraction so the
+/// `remaining_bytes` seek dance is paid once per array instead of once per
+/// string; tokenizer arrays hold ~10^5-10^6 strings.
+fn skip_gguf_strings<R: Read + Seek>(
+    f: &mut R,
+    count: usize,
+    remaining_string_bytes: &mut usize,
+    scratch: &mut Vec<u8>,
+) -> Result<()> {
+    let mut file_remaining = remaining_bytes(f)?;
+    for _ in 0..count {
+        let declared_len = read_u64(f)?;
+        file_remaining = file_remaining.saturating_sub(8);
+        if declared_len > limits::MAX_STRING_BYTES as u64 {
+            return Err(LoaderError::malformed(format!(
+                "GGUF string length {declared_len} exceeds the {}-byte limit",
+                limits::MAX_STRING_BYTES
+            )));
+        }
+        let len = usize::try_from(declared_len).map_err(|error| {
+            LoaderError::overflow(format!("GGUF string length exceeds address space: {error}"))
+        })?;
+        if len > *remaining_string_bytes {
+            return Err(LoaderError::malformed(format!(
+                "GGUF strings exceed the aggregate byte limit ({} bytes)",
+                limits::MAX_METADATA_STRING_BYTES
+            )));
+        }
+        if declared_len > file_remaining {
+            return Err(LoaderError::malformed(format!(
+                "GGUF string length {len} exceeds the {file_remaining} bytes remaining in the file"
+            )));
+        }
+        *remaining_string_bytes -= len;
+        file_remaining -= declared_len;
+        scratch.clear();
+        scratch.try_reserve_exact(len).map_err(|error| {
+            LoaderError::reservation(format!("failed to reserve GGUF string buffer: {error}"))
+        })?;
+        scratch.resize(len, 0);
+        f.read_exact(scratch)?;
+        std::str::from_utf8(scratch)
+            .map_err(|error| LoaderError::malformed(format!("invalid utf8 in string: {error}")))?;
+    }
+    Ok(())
+}
+
+fn read_gguf_string_with_budget<R: Read + Seek>(
+    f: &mut R,
+    remaining_string_bytes: &mut usize,
+) -> Result<String> {
+    let mut bytes = Vec::new();
+    read_gguf_string_bytes(f, remaining_string_bytes, &mut bytes)?;
+    String::from_utf8(bytes)
         .map_err(|error| LoaderError::malformed(format!("invalid utf8 in string: {error}")))
 }
 
@@ -1613,8 +1713,9 @@ fn read_gguf_value<R: Read + Seek>(
     f: &mut R,
     val_type: u32,
     budget: &mut MetadataBudget,
+    skip_array: bool,
 ) -> Result<GgufValue> {
-    read_gguf_value_inner(f, val_type, 0, budget)
+    read_gguf_value_inner(f, val_type, 0, budget, skip_array)
 }
 
 fn read_gguf_value_inner<R: Read + Seek>(
@@ -1622,6 +1723,7 @@ fn read_gguf_value_inner<R: Read + Seek>(
     val_type: u32,
     depth: usize,
     budget: &mut MetadataBudget,
+    skip_array: bool,
 ) -> Result<GgufValue> {
     if depth > 16 {
         return Err(LoaderError::malformed(
@@ -1655,7 +1757,8 @@ fn read_gguf_value_inner<R: Read + Seek>(
         12 => Ok(GgufValue::F64(read_f64(f)?)),
         9 => {
             let element_type = read_u32(f)?;
-            let count = usize::try_from(read_u64(f)?).map_err(|error| {
+            let declared = read_u64(f)?;
+            let count = usize::try_from(declared).map_err(|error| {
                 LoaderError::overflow(format!("GGUF array length exceeds address space: {error}"))
             })?;
             if count > limits::MAX_METADATA_ARRAY_ELEMENTS {
@@ -1681,12 +1784,44 @@ fn read_gguf_value_inner<R: Read + Seek>(
                     "GGUF array of {count} type-{element_type} values requires at least {minimum_bytes} bytes but only {remaining} remain"
                 )));
             }
+            if skip_array && element_type != 9 {
+                // Declared unused by the caller: keep the same validation and
+                // budget accounting, but no values. The per-element budget
+                // check is equivalent to consuming `count` values here.
+                budget.remaining_values -= count;
+                if element_type == 8 {
+                    let mut scratch = Vec::new();
+                    skip_gguf_strings(f, count, &mut budget.remaining_string_bytes, &mut scratch)?;
+                } else {
+                    let stride = minimum_value_size(element_type)?;
+                    let bytes = stride
+                        .checked_mul(declared)
+                        .ok_or_else(|| LoaderError::overflow("GGUF array byte size overflow"))?;
+                    f.seek(SeekFrom::Current(i64::try_from(bytes).map_err(
+                        |error| {
+                            LoaderError::overflow(format!(
+                                "GGUF array length exceeds seek range: {error}"
+                            ))
+                        },
+                    )?))?;
+                }
+                return Ok(GgufValue::SkippedArray {
+                    element_type,
+                    elements: declared,
+                });
+            }
             let mut elements = Vec::new();
             elements.try_reserve_exact(count).map_err(|error| {
                 LoaderError::reservation(format!("failed to reserve GGUF metadata array: {error}"))
             })?;
             for _ in 0..count {
-                elements.push(read_gguf_value_inner(f, element_type, depth + 1, budget)?);
+                elements.push(read_gguf_value_inner(
+                    f,
+                    element_type,
+                    depth + 1,
+                    budget,
+                    false,
+                )?);
             }
             Ok(GgufValue::Array(elements))
         }
@@ -2095,6 +2230,99 @@ mod tests {
             Some(GgufValue::Array(values)) => assert_eq!(values.len(), 700_000),
             other => panic!("expected a 700k-element array, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn tokenizer_arrays_are_validated_but_not_materialized() {
+        let mut bytes = gguf_header(0, 3);
+        // String array under a skipped key.
+        push_gguf_string(&mut bytes, b"tokenizer.ggml.tokens");
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&8u32.to_le_bytes()); // string elements
+        bytes.extend_from_slice(&3u64.to_le_bytes());
+        for token in [b"a".as_slice(), b"bb".as_slice(), b"ccc".as_slice()] {
+            push_gguf_string(&mut bytes, token);
+        }
+        // Numeric array under a skipped key.
+        push_gguf_string(&mut bytes, b"tokenizer.ggml.scores");
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&6u32.to_le_bytes()); // f32 elements
+        bytes.extend_from_slice(&2u64.to_le_bytes());
+        bytes.extend_from_slice(&0.5f32.to_le_bytes());
+        bytes.extend_from_slice(&1.5f32.to_le_bytes());
+        // A key outside the skip list is still materialized.
+        push_gguf_string(&mut bytes, b"custom.values");
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&5u32.to_le_bytes()); // u32 elements
+        bytes.extend_from_slice(&2u64.to_le_bytes());
+        bytes.extend_from_slice(&7u32.to_le_bytes());
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+
+        let mut cursor = std::io::Cursor::new(bytes);
+        let loader = load_gguf_from_reader(&mut cursor).expect("metadata parses");
+        assert_eq!(loader.metadata.len(), 3, "keys are preserved, not dropped");
+        match loader.metadata.get("tokenizer.ggml.tokens") {
+            Some(GgufValue::SkippedArray {
+                element_type,
+                elements,
+            }) => {
+                assert_eq!(*element_type, 8);
+                assert_eq!(*elements, 3);
+            }
+            other => panic!("expected a skipped tokenizer array, got {other:?}"),
+        }
+        match loader.metadata.get("tokenizer.ggml.scores") {
+            Some(GgufValue::SkippedArray {
+                element_type,
+                elements,
+            }) => {
+                assert_eq!(*element_type, 6);
+                assert_eq!(*elements, 2);
+            }
+            other => panic!("expected a skipped numeric array, got {other:?}"),
+        }
+        match loader.metadata.get("custom.values") {
+            Some(GgufValue::Array(values)) => assert_eq!(values.len(), 2),
+            other => panic!("expected a materialized array, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn malformed_skipped_tokenizer_arrays_still_fail() {
+        // A truncated string element inside a skipped array is a hard error.
+        let mut bytes = gguf_header(0, 1);
+        push_gguf_string(&mut bytes, b"tokenizer.ggml.tokens");
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&8u32.to_le_bytes());
+        bytes.extend_from_slice(&2u64.to_le_bytes());
+        push_gguf_string(&mut bytes, b"ok");
+        bytes.extend_from_slice(&64u64.to_le_bytes()); // declares 64 bytes; none follow
+        let mut cursor = std::io::Cursor::new(bytes);
+        let error = match load_gguf_from_reader(&mut cursor) {
+            Ok(_) => panic!("truncated string must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            format!("{error}").contains("remaining"),
+            "unexpected error: {error}"
+        );
+
+        // Invalid UTF-8 inside a skipped array is a hard error too.
+        let mut bytes = gguf_header(0, 1);
+        push_gguf_string(&mut bytes, b"tokenizer.ggml.tokens");
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&8u32.to_le_bytes());
+        bytes.extend_from_slice(&1u64.to_le_bytes());
+        push_gguf_string(&mut bytes, &[0xff]);
+        let mut cursor = std::io::Cursor::new(bytes);
+        let error = match load_gguf_from_reader(&mut cursor) {
+            Ok(_) => panic!("invalid utf8 must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            format!("{error}").contains("utf8"),
+            "unexpected error: {error}"
+        );
     }
 
     /// Build a minimal GGUF v3 file with one K-family tensor

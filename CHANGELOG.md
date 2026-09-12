@@ -48,10 +48,20 @@ API.
   degrades to in-memory packing. Gemma4 gate/up Q8_0 layouts are cached too,
   and the Gemma 4 load path now publishes the cache (`finish_write`), so the
   cached layouts are actually reused; Gemma 4 E2B model build measured
-  2.06-2.28 s off -> 1.54-1.60 s warm.
+  2.06-2.28 s off -> 1.54-1.60 s warm. The directory is pruned after every
+  publish to `EMBER_PACKED_CACHE_BYTES` (an integer with a `K`/`M`/`G`/`T`
+  suffix; default 8 GiB, `0` disables): least-recently-used entries are evicted
+  and stale temp files from crashed writers are removed.
 
 ### Fixed
 
+- The packed-cache key no longer `Debug`-formats every metadata value: on
+  tokenizer-scale headers (Gemma 4) that formatted ~1.3M values per
+  cache-enabled load. The key now hashes scalar metadata exactly and bounds
+  string/array contents (packed layouts depend only on tensor bytes and
+  shapes, which the tensor-table fingerprint still binds). Measured warm-run
+  wall time: Llama-3.2-1B 342 -> 274 ms, Gemma 4 E2B 2340 -> 1927 ms. Cache
+  files from the previous key derivation are ignored (rebuilt on next write).
 - Gemma 4 GGUFs failed to load (`GGUF metadata arrays exceed the 1000000-value
   limit`, then the per-tensor and RoPE caps, then two geometry checks). Fixed
   by calibrating three conservative loader caps against the real model set and
@@ -64,6 +74,16 @@ API.
 - Gemma 4 geometry: the per-layer validation now accepts the double-wide MLP
   that KV-shared layers carry, and the packed 2D Q8_0 `per_layer_token_embd`
   form (the pre-materialization check demanded the 3D hidden form).
+
+- GGUF metadata parsing no longer materializes the tokenizer arrays
+  (`tokenizer.ggml.tokens`/`merges`/`scores`/`token_type`). Ember reads
+  tokenizers from `tokenizer.json`, so those ~10^5-10^6 values per load were
+  dead weight; they are still validated (element types, counts, string limits,
+  aggregate budgets, UTF-8) and reported by `inspect` with their element count
+  as `GgufValue::SkippedArray`. Metadata parse: Llama-1B 37.7 -> 10.8 ms,
+  Gemma 4 E2B ~20 ms; warm run wall 0.295 -> 0.21 s (Llama-1B Q8_0, packed
+  cache warm). Packed-cache keys bind skipped arrays by type/count (key domain
+  v4); caches from earlier key derivations are ignored and rebuilt.
 
 ### Documentation
 
