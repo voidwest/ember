@@ -3,6 +3,15 @@
 # and never required for the CLI/headless install path.
 members = ["bindings/python"]
 default-members = ["."]
+# Standalone nested projects that predate this workspace and must keep their
+# own toolchains/lockfiles (fuzz is a cargo-fuzz project on a pinned nightly;
+# the others are frozen artifacts). Without this they resolve the root
+# workspace and refuse to build.
+exclude = [
+    "fuzz",
+    "docs/embersec/phase5-correction-2026-09-03/sweep",
+    "research/embersec/comparative/reference/candle",
+]
 
 [package]
 name = "ember"
