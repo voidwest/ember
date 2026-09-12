@@ -343,10 +343,21 @@ any kernel-level A/B would have been noise (per the phase-2 standard).
    dir is writable and has room" is viable). Extend it to gemma4 gate/up.
 2. On a cool host: one bounded packed/tiled K-quant layout experiment measured
    against the bit-identical x4 path, plus a fresh llama.cpp comparison.
-3. Lazy GGUF metadata (decode keys on demand) — the only remaining
-   startup-scale win on the load path.
-4. Consider `planned-fused` for the default once its gates land; `planned` is
-   now the default and the identity records it.
+3. Lazy GGUF metadata — **closed (2026-09-12)** with a smaller change than the
+   lazy-key design: no consumer reads the tokenizer arrays (tokenizers come
+   from `tokenizer.json`), so the loader now validates them in place and
+   stores `GgufValue::SkippedArray { element_type, elements }` instead of
+   ~10^5-10^6 owned values. Measured (5 interleaved runs, taskset 0-3):
+   metadata parse 37.7 -> 10.8 ms on Llama-1B Q8_0 (loader total 34 -> 17 ms),
+   warm run wall 0.295 -> 0.21 s; Gemma 4 E2B metadata ~20 ms (no pre-change
+   binary could load the file). Open: the remaining ~11 ms is the per-string
+   length walk — bulk chunked parsing would be needed to go lower.
+4. `planned-fused` for the default — **measured and closed (2026-09-12)**:
+   fused decode is within noise of `planned` on current kernels (llama-1B
+   Q4_K_M 36.6 -> 36.3 t/s at 4 threads; Q6_K 27.5 -> 28.3; median of 2
+   interleaved 48-token runs), with identical greedy output on all four
+   primary models. The default stays `planned`; see the contract amendment in
+   `docs/v04-execution-contract.md`.
 
 ## Reproduction
 
@@ -418,8 +429,31 @@ cache; the 12B variant (no PLE tensors) passes the loader checks.
 That is ~0.5-0.7 s (~25%) off a build dominated by non-packing work — not the
 ~8x seen on Llama, where the repack is the dominant term.
 
+### Cache-key cost
+
+The first version of this follow-up hashed every metadata value with `{:?}`
+when building the cache key; Gemma-scale headers formatted ~1.3M values per
+cache-enabled load. The key now hashes scalars exactly and bounds string/array
+contents (packed layouts depend only on tensor bytes and shapes, still bound by
+the tensor-table fingerprint). Warm-run wall time, same protocol:
+
+| model | before | after |
+|---|---:|---:|
+| Llama-3.2-1B Q8_0 | 342 ms | 274 ms |
+| Gemma 4 E2B | 2,340 ms | 1,927 ms |
+
+### Eviction
+
+The directory is pruned after every successful publish, so default-on caching
+cannot grow without bound: entries are evicted least-recently-used first until
+the directory fits `EMBER_PACKED_CACHE_BYTES` (default 8 GiB, `0` disables),
+and `.tmp-*` files older than a day (left by crashed writers) are removed.
+The file just published counts toward the budget but is never evicted, so a
+single oversized entry stays rather than being deleted and immediately
+rewritten. Verified end to end: a 1.31 GiB Llama cache was evicted by a Qwen
+run with a 1 GiB budget, leaving only the new 248 MB entry.
+
 ### Remaining
 
-- Cache eviction/staleness: files are keyed by model identity but never pruned;
-  a replaced model orphans its cache.
-- No free-space pre-check (write failures degrade, per the module docs).
+- No free-space pre-check (write failures degrade lazily, per the module docs);
+  eviction bounds the directory but not the disk's free space.

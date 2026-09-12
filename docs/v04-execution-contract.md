@@ -54,6 +54,22 @@ Out of scope (hard constraints, from the release spec):
     reachable explicitly and stays the readable oracle; `planned-fused`
     still awaits its gates. The decode execution concept is now part of the
     run-manifest execution identity (`mode.execution`).
+  - Amendment (2026-09-12): the `planned-fused` default flip is **deferred**,
+    because Gate F's premise — that the fusion set is the performance lever —
+    does not hold on current kernels. Interleaved A/B (48 tokens, 1 warmup,
+    `RAYON=taskset` width, taskset 0-3/0-7, median of 2 runs): Llama-1B
+    Q4_K_M 36.6 -> 36.3 t/s at 4 threads and 37.3 -> 36.6 at 8; Q6_K
+    27.5 -> 28.3 and 29.7 -> 29.3. The same ~1.0x ratio appears in the
+    2026-08-10 baseline (0.96-1.08x), i.e. across both kernel eras: fusion
+    removes dispatch overhead (~5% of cycles) but not kernel work, and the
+    measured deltas are inside run-to-run noise. Functionally the fused path
+    is qualified: greedy output is identical to `planned` on all four primary
+    models (24 tokens, temperature 0). `planned-fused` stays explicitly
+    reachable via `--execution planned-fused`; the default remains `planned`
+    (which already meets Gate F: ~2x the v0.3 baseline in the frozen
+    2026-08-10 artifact, ~12x on current kernels). Revisit only if profiling
+    shows dispatch overhead became material or a fusion reaches kernel work;
+    an amendment must carry measurements as this one does.
 - D2: the execution plan is an immutable value built once, immediately after
   model loading and validation, by the model backend itself (it owns the
   tensors). The plan stores stable indices and validated metadata, never raw
