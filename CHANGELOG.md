@@ -809,3 +809,27 @@ the `experiment` subcommand runs.
   comparable breadth or throughput.
 
 [0.1.0]: https://github.com/voidwest/ember/releases/tag/v0.1.0
+
+## Historical capability milestones
+
+- **v0.3**: compressed-resident Q4_K/Q6_K execution; packed tensors stay
+  mmap-backed with scalar/AVX2 kernels; the Q8_0 native path is untouched.
+- **v0.4**: immutable per-model execution plans; plan-driven single-token
+  decode (`--execution reference|planned|planned-fused`), aligned scratch
+  arena, frozen fusion set F1-F5, column-parallel K-quant matvec
+  (~2.0-2.7x the v0.3 reference). Gates A-G:
+  [docs/v04-execution-contract.md](docs/v04-execution-contract.md).
+- **v0.5**: deterministic experiment bundles; `ember.experiment.v1` specs
+  producing `ember.bundle.v1` bundles with semantic/payload identity and
+  offline verification (introduced in v0.5.0; current patch release v0.5.1).
+  Gates A-I: [docs/v05-research-contract.md](docs/v05-research-contract.md).
+- **v0.6**: experiment consoles - `ember gui` (native gpui/Vulkan window,
+  dark theme with light/dark toggle) and `ember web-gui` (single-page
+  browser console with a light/dark toggle); the v0.5 run path was split
+  into `prepare_run` / `execute_prepared` so one resident model serves
+  repeated runs. [docs/v06-gui.md](docs/v06-gui.md).
+- **v0.6.7**: agentic execution layer - structured tool calls behind a
+  model-family protocol boundary (Qwen2.5, Llama 3.x), strict validation,
+  approval gating, crash-tolerant research traces with provenance and
+  hashed artifacts, `ember agent` / `ember trace` CLI.
+  [docs/agent-runtime.md](docs/agent-runtime.md).

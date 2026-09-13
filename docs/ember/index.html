@@ -3,13 +3,13 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta property="og:title" content="ember, a GGUF hidden-state research layer">
+        <meta property="og:title" content="ember, inspect and replay GGUF on CPU">
         <meta property="og:description" content="Inspectable CPU inference for reproducible LLM systems research.">
         <meta property="og:type" content="article">
         <meta property="og:url" content="https://voidwest.dev/ember/">
         <meta property="og:site_name" content="voidwest">
         <meta name="twitter:card" content="summary">
-        <title>ember, a GGUF hidden-state research layer</title>
+        <title>ember, inspect and replay GGUF on CPU</title>
         <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
         <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
         <!-- docs:og-image start -->
@@ -59,32 +59,36 @@
                 <span>&#9679;</span>
                 <span>mit</span>
                 <span>&#9679;</span>
-                <span>backend-ready</span>
+                <span>capture · intervene · verify</span>
             </div>
         </div>
 
         <p>
-            ember is a research layer over GGUF models. it owns dataset
-            handling, prompt construction, token-position selection,
-            hidden-state artifacts, probes, baselines, metrics, reports, and
-            validation. it is not trying to replace llama.cpp; ember uses
-            llama.cpp when scale and model coverage matter, while keeping a
-            native rust backend for inspectability and validation.
+            Ember runs GGUF on CPU in a way you can inspect and replay. Capture
+            states, patch them, and pack the run into a bundle you can verify
+            later. It is not a llama.cpp replacement: llama.cpp remains the
+            external performance and correctness reference.
         </p>
-
+        <p><strong>Inspectable forward pass → artifacts with checksums →
+            replayable probes and interventions.</strong></p>
         <p>
-            the extraction artifact contract is backend-neutral: native ember
-            and future llama.cpp extractors write the same manifest, samples,
-            tokenization, positions, layer shards, checksums, and report files.
-            downstream probes read that contract instead of backend-specific
-            output.
+            <strong>Golden path: Llama-3.2-1B-Instruct Q8_0.</strong>
+            Start with the <a href="https://github.com/voidwest/ember#five-minute-workflow">five-minute CLI workflow</a>:
+            the pinned model and tokenizer produce a bundle with captures across
+            all 16 layers, ready for verification and intervention comparison.
         </p>
-
         <p>
-            the first llama.cpp integration point is deliberately narrow:
-            ember can spawn a `llama-cpp-external` extractor through a request
-            file and validate the resulting tokenization/logits artifact
-            skeleton before any intermediate hidden-state patch is required.
+            A probe can read a feature that the model's answer path does not use;
+            more fitting can even make transfer worse. That distinction is why
+            this instrument exists. Read
+            <a href="/research-notes/the-probe-can-read-it.html">the probe can read it. can the model use it?</a>
+            for the diagnostic evidence and its limits.
+        </p>
+        <p>
+            The 1.0 priority is capture, intervention, bundles, and verification
+            on a short, explicitly validated model list. Consoles, agent traces,
+            and EmberSEC are related tools and research tracks; follow their
+            <a href="https://github.com/voidwest/ember#related-tools-and-research">separate documentation</a>.
         </p>
 
         <h2>start here</h2>
