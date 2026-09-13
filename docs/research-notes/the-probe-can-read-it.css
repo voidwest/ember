@@ -1,0 +1,16 @@
+/* Layout only: chart colors follow the shared site theme. */
+.probe-use-figure{padding:20px;direction:inherit}
+.probe-use-figure h3{margin:0 0 24px}
+.probe-use-figure .metric{margin:22px 0}
+.probe-use-figure .metric-label{display:flex;justify-content:space-between;gap:12px;font-size:14px;margin-bottom:8px}
+.probe-use-figure .metric-label>bdi{white-space:nowrap;font-family:var(--mono-font)}
+.probe-use-figure .metric-track{height:20px;background:var(--surface-2);direction:ltr;border-inline-start:1px solid var(--border)}
+.probe-use-figure .metric-bar{height:100%;background:var(--accent)}
+.probe-use-figure figcaption{color:var(--muted);font-size:13px;margin-top:22px}
+.probe-use-figure .continuation-0,.probe-use-figure .continuation-1{background:var(--muted)}
+.probe-use-figure .probe-0{width:87.5%}
+.probe-use-figure .probe-1{width:75.0%}
+.probe-use-figure .continuation-0{width:68.30357142857143%}
+.probe-use-figure .continuation-1{width:100%}
+.probe-use-figure .continuation-2{width:12.5%}
+.probe-use-figure .continuation-3{width:0%}

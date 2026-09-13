@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="Why Ember made KV cache state verifiable, replayable, and measurable before attempting a Qwen-to-Qwen ridge mapper.">
+        <meta property="og:title" content="the probe can read it. can the model use it?">
+        <meta property="og:description" content="Probe recovery and native transfer in a controlled identity task: completed diagnostic results and their limits.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/the-probe-can-read-it.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary_large_image">
+        <title>the probe can read it. can the model use it?</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png">
+        <!-- docs:og-image end -->
+    <link rel="stylesheet" href="the-probe-can-read-it.css">
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="Primary">
+            <a class="brand" href="/">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/">ember</a>
+                <a href="/research-notes/" aria-current="page">research notes</a>
+                <a href="/tools/">tools</a>
+                <a href="/terms/">terms</a>
+                <a href="/cv/">cv</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/the-probe-can-read-it.ar.html">عربي</a>
+                <button class="theme-toggle" type="button" aria-label="Switch to light theme" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+            <a href="/">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/">research notes</a>
+        </div>
+<h1>the probe can read it. can the model use it?</h1>
+<div class="meta">2026-09-13 · completed September 11 experiments · eight-ID diagnostic bank</div>
+<p>My Arabic morphology work keeps coming back to a measurement problem: when a probe predicts a label from hidden states, what have I actually learned about the model? A careful split can rule out some shortcuts. It still does not establish that the model uses the decoded feature to produce its answer.</p>
+<p>The recent latent-binding experiments put that distinction under a different kind of pressure. A training-only probe could recover most of the diagnostic identities from a source representation. A learned interface into a frozen receiver transferred only one of them. Continuing the same training improved the training fit and removed that one success.</p>
+<div class="callout observation">
+<div class="label">claim boundary</div>
+<p>Completed diagnostic results, not robust transfer. This is a controlled letter–digit identity task, not an Arabic-language evaluation. The eight diagnostic IDs have prior evaluation and design exposure; they are not a pristine test set.</p>
+</div>
+<h2>three questions that need different tests</h2>
+<p>The task uses IDs made from a letter and a digit, such as M3. Training uses 56 IDs, with four existing queries per ID. The diagnostic bank contains eight whole-ID combinations absent from that positive training set. Four query variants for each identity give 32 scored cases per condition, but still only eight distinct identities.</p>
+<p>A sender supplies hidden-state features. A compressed, 64-dimensional representation carries source information to a reader that conditions a frozen receiver. The selected-ID memories used here are development fixtures: they do not demonstrate binding over a complete source table or fresh source capture.</p>
+<p>This separates three questions: can a fitted probe recover an ID from the features; can the existing receiver interface support the desired answer under supervised oracle fitting; and can a mapping trained on the 56 IDs make the receiver answer correctly for diagnostic IDs? A positive answer to one does not settle the others.</p>
+<h2>recoverable by a probe</h2>
+<p>A fixed ridge probe trained on the 56 IDs decoded seven of the eight diagnostic IDs from the two sender states. The corresponding probe on the compressed representation decoded six. Neither fit used diagnostic labels or oracle codes as training targets.</p>
+<figure class="probe-use-figure">
+<h3>ID recovery by the probe</h3>
+<div class="metric">
+<div class="metric-label">Two sender states<bdi>7/8</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar probe-0">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">Compressed representation<bdi>6/8</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar probe-1">
+</div>
+</div>
+</div>
+<figcaption>Same diagnostic bank: eight distinct IDs. Probe comparison, not a native-transfer measurement.</figcaption>
+</figure>
+<p>Leave-one-whole-ID-out checks on the training IDs were 56/56 for the two sender states and 44/56 for the compressed representation. Shifted-training-label nulls recovered 1/8 and 0/8 diagnostic IDs respectively. Independent NumPy and Torch implementations agreed within the registered numerical tolerances, with identical primary predictions.</p>
+<p>A0 was correctly decoded from sender states and missed after compression. A2 was already wrong in the sender-state probe. That describes where this particular linear decoding method loses generalization. It does not prove that compression erased the identity, or that another decoder could not recover it.</p>
+<h2>usable through the receiver</h2>
+<p>The alignment experiment changed only the existing reader.value.weight matrix. It kept the sender, receiver, routing, other bridge entries, and parameter count fixed. There was no inference codebook or diagnostic-ID oracle lookup. Training used the 56 IDs and their 224 query rows for 200 fixed Adam steps.</p>
+<p>The exported matrix was loaded into the native reader. Familiar controls passed: 32/32 original cases, 32/32 donor-following cases, and 31/32 changed-binding cases. On diagnostic IDs, the result was 4/32 in each condition. All four successes belonged to M3. The other seven identities failed.</p>
+<p>Joint scoring and candidate-constrained sequential scoring agreed. This is not unrestricted generation: the sequential procedure selects among 16 prefixes and eight digits. The preregistered count and paired gates still failed. The result is limited source-driven transfer, not a successful general binding system.</p>
+<p>The probe’s 6/8 and the receiver’s one successful identity are different measurements, not a controlled causal ablation. They establish a gap between this probe’s recoverability and this mapping’s downstream behavior. They do not identify a unique failing circuit or prove that receiver-side repair is impossible.</p>
+<h2>better training fit, worse transfer</h2>
+<p>A separately frozen continuation loaded the step-200 parameters and Adam moments, reproduced the starting candidate exactly, and ran 400 more identical updates. Familiar performance stayed 32/32/31. Diagnostic performance fell from 4/4/4 to 0/0/0.</p>
+<figure class="probe-use-figure">
+<h3>Two endpoints on the same training trajectory</h3>
+<div class="metric">
+<div class="metric-label">Training digits · near 200<bdi>153/224</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-0">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">Training digits · near 600<bdi>224/224</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-1">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">Diagnostic cases · 200<bdi>4/32</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-2">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">Diagnostic cases · 600<bdi>0/32</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-3">
+</div>
+</div>
+</div>
+<figcaption>Bars are proportions within each metric. Training: pre-update teacher forcing. Diagnostic: original native scoring, eight IDs × four queries. All successes belong to M3.</figcaption>
+</figure>
+<p>The recorded pre-update training loss fell from 0.5465 to 0.0954. Teacher-forced letters were already 224/224; digits rose from 153/224 to 224/224. These are training diagnostics near the endpoints, not native evaluation scores or proof of mathematical convergence.</p>
+<p>The receiver’s held-out margins fell for six of the eight IDs between the two checkpoints. M3’s small positive margin crossed below zero. More optimization of this same objective along this trajectory did not improve transfer, even as training classification became exact.</p>
+<p>These two endpoints do not locate the best possible stopping point. Picking a new checkpoint by this diagnostic bank would use the test results for selection. Configuration choice needs training-ID-only validation. The separate four-fold work is still running at this note’s cutoff and contributes no aggregate result here.</p>
+<h2>why the negative result is interpretable</h2>
+<p>The starting checkpoint replayed bitwise. Historical scores and repeated arms replayed exactly; native/render parity, direct scoring, routing, and the saved reader-state contract passed. The frozen receiver hash stayed unchanged and its state was restored. Independent score and weight reconstruction checks passed too.</p>
+<p>Those checks matter because a broken interface could produce the same headline failure. Here they support interpreting the result as poor transfer under the tested mapping and objective. They do not make the small, historically exposed diagnostic bank representative of language understanding.</p>
+<h2>back to the morphology question</h2>
+<p>In morphology probing, a stricter split asks whether a decoder generalizes beyond familiar lexical material. This experiment adds another boundary: a generalizing decoder is still a decoder we trained. Its success is not evidence that the model’s own answer mechanism uses the representation in the same way.</p>
+<p>The useful connection is methodological, not a new claim about Arabic. Probe recovery, supervised reachability, and source-driven receiver behavior deserve separate evidence. Here recovery was fairly strong, native transfer was narrow, and more fitting made it worse. Keeping those results separate gives the next experiment a question it can actually answer.</p>
+<h2>related work on this site</h2>
+<ul>
+<li>
+<a href="/research-notes/when-the-result-gets-less-flashy-but-more-real.html">When the Result Gets Less Flashy but More Real</a>
+</li>
+<li>
+<a href="/research-notes/before-mapping-kv-caches.html">Before Mapping KV Caches, Make Them Measurable</a>
+</li>
+</ul>
+<h2>evidence record</h2>
+<p>This note draws on the completed local reports below. These research artifacts are not bundled with the page or presented as public download links. The figures summarize recorded diagnostic results without a new run or checkpoint selection.</p>
+<ul>
+<li>Training-only wire probe: <code dir="ltr">research/latent_binding_training_feature_probe_20260911/REPORT.md</code>
+</li>
+<li>Sender-state comparison: <code dir="ltr">research/latent_binding_sender_feature_probe_ties_20260911/REPORT.md</code>
+</li>
+<li>Native training-only alignment: <code dir="ltr">research/latent_binding_training_alignment_20260911/REPORT.md</code>
+</li>
+<li>Fixed continuation: <code dir="ltr">research/latent_binding_convergence_fixed_20260911/REPORT.md</code>
+</li>
+</ul>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">github</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">linkedin</a>
+                <a href="mailto:mthobaiti@outlook.com">email</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>

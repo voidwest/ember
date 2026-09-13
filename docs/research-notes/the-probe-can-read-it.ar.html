@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description" content="ليش خلّى Ember حالة KV cache قابلة للتحقق وإعادة التشغيل والقياس قبل ما نجرب ridge mapper بين نموذجين Qwen.">
+        <meta property="og:title" content="الـprobe يقدر يقرأها، بس النموذج يقدر يستخدمها؟">
+        <meta property="og:description" content="استرجاع الهوية بالـprobe مقابل استخدامها عند الـreceiver: نتائج تشخيصية مكتملة وحدودها.">
+        <meta property="og:type" content="article">
+        <meta property="og:url" content="https://voidwest.dev/research-notes/the-probe-can-read-it.ar.html">
+        <meta property="og:site_name" content="voidwest">
+        <meta name="twitter:card" content="summary_large_image">
+        <title>الـprobe يقدر يقرأها، بس النموذج يقدر يستخدمها؟</title>
+        <link rel="icon" href="/assets/voidwest/vw-mark.svg" type="image/svg+xml">
+        <link rel="stylesheet" href="/style.css?v=0e05f6e4a099">
+        <!-- docs:og-image start -->
+        <meta property="og:image" content="https://voidwest.dev/og/research-notes.png">
+        <meta property="og:image:width" content="1200">
+        <meta property="og:image:height" content="630">
+        <meta name="twitter:image" content="https://voidwest.dev/og/research-notes.png">
+        <!-- docs:og-image end -->
+    <link rel="stylesheet" href="the-probe-can-read-it.css">
+        <!-- docs:theme-script start -->
+        <script src="/theme.js"></script>
+        <!-- docs:theme-script end -->
+    </head>
+    <body>
+        <!-- docs:nav start -->
+        <nav class="site-nav" aria-label="التنقل الرئيسي">
+            <a class="brand" href="/index.ar.html">voidwest</a>
+            <div class="nav-links">
+                <a href="/ember/index.ar.html">ember</a>
+                <a href="/research-notes/index.ar.html" aria-current="page">ملاحظات</a>
+                <a href="/tools/index.ar.html">أدوات</a>
+                <a href="/terms/index.ar.html">مصطلحات</a>
+                <a href="/cv/index.ar.html">السيرة</a>
+            </div>
+            <div class="nav-actions">
+                <a class="nav-lang" href="/research-notes/the-probe-can-read-it.html">EN</a>
+                <button class="theme-toggle" type="button" aria-label="التبديل إلى الوضع الفاتح" aria-pressed="false"><svg class="theme-icon theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z"/></svg><svg class="theme-icon theme-icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7"/></svg></button>
+            </div>
+        </nav>
+        <!-- docs:nav end -->
+
+<div class="back">
+            <a href="/index.ar.html" class="ltr">← voidwest</a>
+            &nbsp;&nbsp;
+            <a href="/research-notes/index.ar.html">
+<bdi>research notes</bdi>
+</a>
+        </div>
+<h1>الـ<bdi>probe</bdi> يقدر يقرأها، بس النموذج يقدر يستخدمها؟</h1>
+<div class="meta">
+<bdi>2026-09-13</bdi> · تجارب مكتملة من <bdi>11</bdi> سبتمبر · بنك تشخيصي من ثمانية <bdi>IDs</bdi>
+</div>
+<p>في شغلي على الـ<bdi>Arabic morphology</bdi>، فيه سؤال يرجع كل مرة: لما الـ<bdi>probe</bdi> يقدر يتوقع <bdi>label</bdi> من الـ<bdi>hidden states</bdi>، إيش عرفت فعلاً عن النموذج؟ تقسيم البيانات بعناية يقدر يستبعد بعض الاختصارات. بس لسه ما يثبت إن النموذج يستخدم نفس المعلومة عشان يطلع جوابه.</p>
+<p>تجارب الـ<bdi>latent binding</bdi> الأخيرة اختبرت الفرق هذا من جهة ثانية. <bdi>Probe</bdi> متدرّب على بيانات التدريب بس قدر يسترجع أغلب الـ<bdi>IDs</bdi> التشخيصية من تمثيل المصدر. لكن الـ<bdi>mapping</bdi> المتعلم إلى <bdi>receiver</bdi> ثابت نجح في <bdi>ID</bdi> واحد بس. ولما كملت نفس التدريب، تحسن الأداء على بيانات التدريب واختفى حتى النجاح الوحيد هذا.</p>
+<div class="callout observation">
+<div class="label">حدود النتيجة</div>
+<p>هذي نتائج تشخيصية مكتملة، مو نقل قوي يعمم على <bdi>IDs</bdi> جديدة. المهمة مضبوطة على <bdi>IDs</bdi> من حرف ورقم، مو تقييم للغة العربية. والـ<bdi>IDs</bdi> الثمانية سبق دخلت في التقييم والتصميم؛ مو <bdi>test set</bdi> بكر.</p>
+</div>
+<h2>ثلاثة أسئلة، وكل واحد له اختباره</h2>
+<p>المهمة تستخدم <bdi>IDs</bdi> من حرف ورقم، زي <bdi>M3.</bdi> التدريب على <bdi>56 ID</bdi>، ولكل واحد أربعة استعلامات موجودة مسبقاً. البنك التشخيصي فيه ثمانية تركيبات <bdi>ID</bdi> كاملة ما دخلت ضمن مجموعة التدريب الإيجابية. أربعة استعلامات لكل <bdi>ID</bdi> تعطينا <bdi>32</bdi> حالة مقاسة في كل شرط، بس لسه عندنا ثماني هويات مختلفة، مو <bdi>32.</bdi>
+</p>
+<p>الـ<bdi>sender</bdi> يوفر <bdi>features</bdi> من الـ<bdi>hidden states.</bdi> تمثيل مضغوط من <bdi>64</bdi> بُعد ينقل معلومات المصدر إلى <bdi>reader</bdi> يكيّف <bdi>receiver</bdi> ثابت. الذاكرة المجمعة للـ<bdi>IDs</bdi> المختارة هنا تجهيزات للتطوير؛ ما تثبت <bdi>binding</bdi> على جدول مصدر كامل، ولا التقاط جديد من المصدر.</p>
+<p>هنا نفصل ثلاثة أسئلة: هل <bdi>probe</bdi> ندرّبه يقدر يسترجع الـ<bdi>ID</bdi> من الـ<bdi>features</bdi>؟ هل واجهة الـ<bdi>receiver</bdi> الحالية تقدر تنتج الجواب المطلوب لما نستخدم <bdi>supervised oracle fitting</bdi>؟ وهل <bdi>mapping</bdi> متدرّب على الـ<bdi>56 ID</bdi> يقدر يخلي الـ<bdi>receiver</bdi> يجاوب صح على الـ<bdi>IDs</bdi> التشخيصية؟ نجاح واحد منها ما يحسم الباقي.</p>
+<h2>الـ<bdi>probe</bdi> يقدر يسترجعها</h2>
+<p>
+<bdi>Ridge probe</bdi> ثابت، متدرّب على الـ<bdi>56 ID</bdi>، فك سبعة من الثمانية من حالتي الـ<bdi>sender.</bdi> والـ<bdi>probe</bdi> المقابل على التمثيل المضغوط فك ستة. ولا واحد من التدريبين استخدم <bdi>labels</bdi> الـ<bdi>IDs</bdi> التشخيصية أو <bdi>oracle codes</bdi> كأهداف تدريب.</p>
+<figure class="probe-use-figure">
+<h3>استرجاع الـ<bdi>ID</bdi> بالـ<bdi>probe</bdi>
+</h3>
+<div class="metric">
+<div class="metric-label">حالتي الـ<bdi>sender</bdi>
+<bdi>7/8</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar probe-0">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">التمثيل المضغوط<bdi>6/8</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar probe-1">
+</div>
+</div>
+</div>
+<figcaption>نفس البنك التشخيصي: ثماني هويات مختلفة. مقارنة <bdi>probe</bdi>، مو قياس نقل فعلي.</figcaption>
+</figure>
+<p>في فحص <bdi>leave-one-whole-ID-out</bdi> على بيانات التدريب، النتيجة كانت <bdi>56/56</bdi> لحالتي الـ<bdi>sender</bdi> و<bdi>44/56</bdi> للتمثيل المضغوط. ومع إزاحة <bdi>labels</bdi> التدريب كـ<bdi>null control</bdi>، النتائج التشخيصية كانت <bdi>1/8</bdi> و<bdi>0/8</bdi> بالترتيب. تطبيقان مستقلان بـ<bdi>NumPy</bdi> و<bdi>Torch</bdi> اتفقوا ضمن حدود الخطأ المسجلة، ونفس التوقعات الأساسية طلعت من الاثنين.</p>
+<p>
+<bdi>A0</bdi> انقرأ صح من حالات الـ<bdi>sender</bdi> وانفقد عند هذا الـ<bdi>probe</bdi> بعد الضغط. أما <bdi>A2</bdi> فكان غلط من الـ<bdi>sender</bdi> أصلاً. هذا يحدد فين طريقة القراءة الخطية هذي خسرت تعميمها. ما يثبت إن الضغط مسح الهوية، ولا إن <bdi>decoder</bdi> ثاني ما يقدر يسترجعها.</p>
+<h2>طيب، الـ<bdi>receiver</bdi> يقدر يستخدمها؟</h2>
+<p>تجربة الـ<bdi>alignment</bdi> غيرت مصفوفة <bdi>reader.value.weight</bdi> الموجودة بس. الـ<bdi>sender</bdi> والـ<bdi>receiver</bdi> والـ<bdi>routing</bdi> وباقي مدخلات الجسر وعدد المعاملات كلها بقيت ثابتة. ما فيه <bdi>codebook</bdi> وقت الاستدلال ولا <bdi>oracle lookup</bdi> للـ<bdi>IDs</bdi> التشخيصية. التدريب استخدم الـ<bdi>56 ID</bdi> واستعلاماتها الـ<bdi>224</bdi>، على <bdi>200</bdi> خطوة <bdi>Adam</bdi> محددة مسبقاً.</p>
+<p>المصفوفة المصدّرة انحملت في الـ<bdi>native reader.</bdi> الضوابط المألوفة عدّت: <bdi>32/32</bdi> للحالات الأصلية، و<bdi>32/32</bdi> لاتباع المصدر المنقول، و<bdi>31/32</bdi> عند تغيير الربط. في الـ<bdi>IDs</bdi> التشخيصية، النتيجة كانت <bdi>4/32</bdi> في كل شرط. بس النجاحات الأربعة كلها كانت <bdi>M3.</bdi> السبعة الباقين فشلوا.</p>
+<p>الـ<bdi>joint scoring</bdi> والـ<bdi>candidate-constrained sequential scoring</bdi> اتفقوا. هذا مو توليد حر: الإجراء التسلسلي يختار من <bdi>16</bdi> بادئة وثمانية أرقام. وبوابات النجاح المسجلة مسبقاً، العددية والمقارنات المزدوجة، لسه فشلت. فيه نقل محدود من المصدر، بس ما عندنا نظام <bdi>binding</bdi> ناجح يعمم.</p>
+<p>نتيجة الـ<bdi>probe</bdi>، ستة من ثمانية، ونجاح هوية واحدة عند الـ<bdi>receiver</bdi> قياسان مختلفان، مو <bdi>causal ablation</bdi> مضبوطة. يبينوا الفجوة بين اللي الـ<bdi>probe</bdi> هذا يقدر يسترجعه واللي الـ<bdi>mapping</bdi> هذا يقدر يخلي الـ<bdi>receiver</bdi> يسويه. ما يحددوا دائرة واحدة مسؤولة عن الفشل، ولا يثبتوا إن إصلاح جهة الـ<bdi>receiver</bdi> مستحيل.</p>
+<h2>تدريب أحسن، ونقل أسوأ</h2>
+<p>في <bdi>continuation</bdi> تجمّدت لحالها، حمّلت معاملات الخطوة <bdi>200</bdi> وحالة <bdi>Adam</bdi>، وأعدت إنتاج نقطة البداية بالضبط، ثم كملت <bdi>400</bdi> تحديث بنفس الإعدادات. الأداء المألوف بقي <bdi>32/32/31.</bdi> الأداء التشخيصي نزل من <bdi>4/4/4</bdi> إلى <bdi>0/0/0.</bdi>
+</p>
+<figure class="probe-use-figure">
+<h3>نقطتان على نفس مسار التدريب</h3>
+<div class="metric">
+<div class="metric-label">أرقام التدريب · قرب <bdi>200</bdi>
+<bdi>153/224</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-0">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">أرقام التدريب · قرب <bdi>600</bdi>
+<bdi>224/224</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-1">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">حالات تشخيصية · <bdi>200</bdi>
+<bdi>4/32</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-2">
+</div>
+</div>
+</div>
+<div class="metric">
+<div class="metric-label">حالات تشخيصية · <bdi>600</bdi>
+<bdi>0/32</bdi>
+</div>
+<div class="metric-track">
+<div class="metric-bar continuation-3">
+</div>
+</div>
+</div>
+<figcaption>الأشرطة نسب داخل كل مقياس. التدريب: <bdi>teacher forcing</bdi> قبل التحديث. التشخيص: <bdi>original native scoring</bdi>، ثماني هويات × أربعة استعلامات. كل النجاحات تخص <bdi>M3.</bdi>
+</figcaption>
+</figure>
+<p>الـ<bdi>training loss</bdi> المسجل قبل التحديث نزل من <bdi>0.5465</bdi> إلى <bdi>0.0954.</bdi> مع <bdi>teacher forcing</bdi>، الحروف كانت أصلاً <bdi>224/224</bdi>؛ والأرقام طلعت من <bdi>153/224</bdi> إلى <bdi>224/224.</bdi> هذي مؤشرات تدريب قرب نقطتي النهاية، مو درجات تقييم <bdi>native</bdi>، ولا إثبات تقارب رياضي.</p>
+<p>هوامش الإجابة عند الـ<bdi>receiver</bdi> نزلت لستة من الثمانية بين النقطتين. هامش <bdi>M3</bdi> الموجب الصغير صار سالب. زيادة التدريب على نفس الهدف، في المسار هذا، ما حسّنت النقل، حتى مع وصول تصنيف بيانات التدريب للدقة الكاملة.</p>
+<p>النقطتين هذي ما تحدد أفضل مكان ممكن نوقف فيه. لو اخترنا <bdi>checkpoint</bdi> جديد بناءً على البنك التشخيصي، نكون استخدمنا نتائج الاختبار للاختيار. اختيار الإعدادات يحتاج <bdi>validation</bdi> من <bdi>IDs</bdi> التدريب نفسها بس. شغل الـ<bdi>four-fold</bdi> المنفصل لسه شغال عند كتابة الملاحظة، وما فيه أي نتيجة مجمعة منه مستخدمة هنا.</p>
+<h2>ليش نقدر نفسر النتيجة السلبية؟</h2>
+<p>نقطة البداية رجعت مطابقة بت ببت. الدرجات التاريخية والحالات المكررة رجعت بالضبط؛ وفحوص <bdi>native/render parity</bdi> والتقييم المباشر والـ<bdi>routing</bdi> وعقد حالة الـ<bdi>reader</bdi> المحفوظة كلها عدّت. <bdi>Hash</bdi> الـ<bdi>receiver</bdi> الثابت ما تغير، وحالته رجعت كما كانت. فحوص إعادة بناء الأوزان والدرجات المستقلة عدّت كمان.</p>
+<p>الفحوص هذي مهمة لأن واجهة مكسورة ممكن تعطينا نفس عنوان الفشل. هنا تساعدنا نفسر النتيجة كضعف نقل تحت الـ<bdi>mapping</bdi> والهدف اللي اختبرناهم. بس ما تخلي البنك التشخيصي الصغير، اللي سبق استخدمناه، ممثلاً لفهم اللغة عموماً.</p>
+<h2>نرجع لسؤال الـ<bdi>morphology</bdi>
+</h2>
+<p>في <bdi>morphology probing</bdi>، التقسيم الأصعب يسأل إذا الـ<bdi>decoder</bdi> يعمم خارج الكلمات المألوفة. التجربة هذي تضيف حد ثاني: حتى الـ<bdi>decoder</bdi> اللي يعمم، لسه هو <bdi>decoder</bdi> إحنا درّبناه. نجاحه ما يثبت إن آلية الإجابة عند النموذج تستخدم التمثيل بنفس الطريقة.</p>
+<p>الرابط المفيد هنا في طريقة الاختبار، مو نتيجة جديدة عن العربي. استرجاع المعلومة بالـ<bdi>probe</bdi>، وإمكانية الوصول للجواب بتدريب <bdi>oracle</bdi>، وسلوك الـ<bdi>receiver</bdi> انطلاقاً من المصدر، كل واحد يحتاج دليله. هنا الاسترجاع كان قوي نسبياً، والنقل الفعلي محدود، وزيادة التدريب خلّته أسوأ. لما نفصل النتائج، نقدر نسأل في التجربة الجاية سؤال له جواب واضح.</p>
+<h2>صلة بالشغل السابق</h2>
+<ul>
+<li>
+<a href="/research-notes/when-the-result-gets-less-flashy-but-more-real.ar.html">لما النتيجة تصير أقل استعراضاً وأكثر واقعية</a>
+</li>
+<li>
+<a href="/research-notes/before-mapping-kv-caches.ar.html">قبل ما ننقل <bdi>KV caches</bdi>، نخليها قابلة للقياس</a>
+</li>
+</ul>
+<h2>سجل الأدلة</h2>
+<p>الملاحظة مبنية على التقارير المحلية المكتملة أدناه. ملفات البحث هذي مو مرفقة بالصفحة ولا مقدمة هنا كروابط عامة. الأرقام تلخص نتائج التشخيص، بدون تشغيل جديد أو اختيار <bdi>checkpoint</bdi> جديد.</p>
+<ul>
+<li>
+<bdi>Probe</bdi> على التمثيل المضغوط: <code dir="ltr">research/latent_binding_training_feature_probe_20260911/REPORT.md</code>
+</li>
+<li>مقارنة حالات الـ<bdi>sender</bdi>: <code dir="ltr">research/latent_binding_sender_feature_probe_ties_20260911/REPORT.md</code>
+</li>
+<li>الـ<bdi>alignment</bdi> الفعلي من بيانات التدريب: <code dir="ltr">research/latent_binding_training_alignment_20260911/REPORT.md</code>
+</li>
+<li>تكملة التدريب بنفس الإعدادات: <code dir="ltr">research/latent_binding_convergence_fixed_20260911/REPORT.md</code>
+</li>
+</ul>
+        <!-- docs:footer start -->
+        <footer class="site-footer">
+            <span>© 2026 voidwest</span>
+            <span class="footer-social">
+                <a href="https://github.com/voidwest">GitHub</a>
+                <a href="https://www.linkedin.com/in/mthobaiti/" rel="me">LinkedIn</a>
+                <a href="mailto:mthobaiti@outlook.com">البريد</a>
+            </span>
+        </footer>
+        <!-- docs:footer end -->
+
+    </body>
+</html>
