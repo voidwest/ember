@@ -138,9 +138,6 @@ def main():
         body+='<h2>'+('صلة بالشغل السابق' if ar else 'related work on this site')+'</h2><ul>'
         for slug,en,arabic in [('when-the-result-gets-less-flashy-but-more-real','When the Result Gets Less Flashy but More Real','لما النتيجة تصير أقل استعراضاً وأكثر واقعية'),('before-mapping-kv-caches','Before Mapping KV Caches, Make Them Measurable','قبل ما ننقل KV caches، نخليها قابلة للقياس')]:
             body+='<li><a href="/research-notes/'+slug+suffix+'">'+text(arabic if ar else en,ar)+'</a></li>'
-        body+='</ul><h2>'+('سجل الأدلة' if ar else 'evidence record')+'</h2><p>'+text('الملاحظة مبنية على التقارير المحلية المكتملة أدناه. ملفات البحث هذي مو مرفقة بالصفحة ولا مقدمة هنا كروابط عامة. الأرقام تلخص نتائج التشخيص، بدون تشغيل جديد أو اختيار checkpoint جديد.' if ar else 'This note draws on the completed local reports below. These research artifacts are not bundled with the page or presented as public download links. The figures summarize recorded diagnostic results without a new run or checkpoint selection.',ar)+'</p><ul>'
-        for tree,en,arabic in REPORTS:
-            body+='<li>'+text(arabic if ar else en,ar)+': <code dir="ltr">research/'+tree+'/REPORT.md</code></li>'
         body+='</ul>'+footer
         path=folder/(SLUG+suffix);path.write_text((head+'<body>\n'+body+'\n</body>\n</html>\n').replace('><', '>\n<'))
         _,new=normalizer['render_file'](path);path.write_text(new)
