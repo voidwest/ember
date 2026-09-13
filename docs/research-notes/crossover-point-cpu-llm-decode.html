@@ -63,6 +63,8 @@
             <p>the measurements below remain a historical kernel sweep, but the statement that Ember's current gate activates near 32 MFLOPs is stale. the present Q8×Q8 decode path uses a 1,048,576-MAC gate (about 2.1 MFLOPs). the measured “crossover” is also thread-count-specific: two and eight threads first exceed 1× between the 14.2 and 25.2 MFLOP test points, while four threads are only marginally above 1× at the first point. these are observed medians, not a universal hardware threshold.</p>
         </div>
 
+
+        <div class="callout observation"><div class="label">historical context</div><p>The setup, estimates, and next steps below belong to the date of this note. The recorded results are retained; this editorial update is not a rerun or a claim that the historical implementation is still current.</p></div>
         <h1>When Does Multithreading Help LLM Decode? Finding the CPU Crossover Point in Ember</h1>
 
         <div class="meta">
@@ -75,10 +77,7 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>
-            most LLM inference engines give you one knob for parallelism: a
-            thread count. set it to 4 or 8 or 16 and hope.
-        </p>
+        <p>Thread count is often the main parallelism setting exposed by an inference engine. Increasing it helps only when the work per operation pays for the scheduling overhead.</p>
 
         <p>but does single-token decode actually benefit from more threads?</p>
 

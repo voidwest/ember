@@ -62,15 +62,7 @@
 
         <h2>summary</h2>
 
-        <p>
-            this project asks whether layers selected from morphology-sensitive
-            representational evidence can become better adaptation targets than
-            parameter-matched random layers. before renting GPUs or building a
-            real training backend, i wanted a smaller local check: do layer
-            groups ranked using development-only evidence carry stronger
-            held-out Arabic part-of-speech signal than non-overlapping random
-            groups of the same size?
-        </p>
+        <p>The question is whether layers selected using a morphology-related representation signal make better adaptation targets than parameter-matched random layers. This local pilot tests an earlier requirement: whether development-selected layer groups carry stronger held-out Arabic POS signal in frozen features.</p>
 
         <p>
             this run does not test LoRA. it trains deterministic linear controls
@@ -167,10 +159,10 @@
         </table>
 
         <figure class="chart-wrap">
-            <img class="chart theme-chart-dark" src="figures/k4_geometry_vs_random_accuracy.svg"
+            <img class="chart theme-chart-dark" src="figures/k4_geometry_vs_random_accuracy.png"
                  alt="Grouped bar chart showing K=4 geometry-selected held-out POS accuracy above the mean of five non-overlapping random layer controls for Qwen3-0.6B and Llama-3.2-1B"
                  loading="lazy">
-            <img class="chart theme-chart-light" src="figures/k4_geometry_vs_random_accuracy_light.svg"
+            <img class="chart theme-chart-light" src="figures/k4_geometry_vs_random_accuracy_light.png"
                  alt="Grouped bar chart showing K=4 geometry-selected held-out POS accuracy above the mean of five non-overlapping random layer controls for Qwen3-0.6B and Llama-3.2-1B"
                  loading="lazy">
             <figcaption>
@@ -216,10 +208,10 @@
         </table>
 
         <figure class="chart-wrap">
-            <img class="chart theme-chart-dark" src="figures/k4_class_f1_deltas.svg"
+            <img class="chart theme-chart-dark" src="figures/k4_class_f1_deltas.png"
                  alt="Horizontal bars showing positive K=4 F1 differences for ADJ, NOUN, and VERB in both Qwen3-0.6B and Llama-3.2-1B"
                  loading="lazy">
-            <img class="chart theme-chart-light" src="figures/k4_class_f1_deltas_light.svg"
+            <img class="chart theme-chart-light" src="figures/k4_class_f1_deltas_light.png"
                  alt="Horizontal bars showing positive K=4 F1 differences for ADJ, NOUN, and VERB in both Qwen3-0.6B and Llama-3.2-1B"
                  loading="lazy">
             <figcaption>

@@ -55,14 +55,14 @@
             <span class="tag key">LLM evaluation</span>
             <span class="tag">arXiv:2603.15773</span>
         </div>
-        <h2><bdi>the core claim</bdi></h2>
+        <h2>النتيجة الأساسية</h2>
         <p>محاذاة الـ <bdi>token</bdi> مع الـ <bdi>morpheme</bdi> ما تضمن إن النموذج يقدر يولّد أشكال الجذر والوزن العربي.</p>
         <p>الـ <bdi>tokenizer</bdi> اللي يقطّع الـ <bdi>morphemes</bdi> بشكل نظيف مو شرط يطلع توليد كويس، والـ <bdi>tokenizer</bdi> اللي يقطّع زيادة (<bdi>GPT-4</bdi>) مو شرط يعيقه.</p>
-        <h2><bdi>why Arabic morphology is a good test</bdi></h2>
+        <h2>ليش نختبر الصرف العربي؟</h2>
         <p>العربي عنده <strong>نظام الجذر والوزن</strong>. الجذور الساكنة تندمج مع قوالب صوتية وتكوّن الكلمات.</p>
         <p>مثلًا: الجذر <em><bdi>ktb</bdi></em> (كتب) + الوزن <em><bdi>maf&#x16B;l</bdi></em> → <em><bdi>makt&#x16B;b</bdi></em> (مكتوب). الجذر والوزن متداخلين؛ مو جايين وراء بعض زي <bdi>prefix+stem+suffix</bdi> في الإنجليزي. عشان كذا العربي <bdi>stress test</bdi> قوي للـ <bdi>subword tokenizers</bdi> (<bdi>BPE</bdi>، <bdi>Unigram</bdi>، <bdi>WordPiece</bdi>) المصممة للصرف المتسلسل.</p>
-        <h2><bdi>experimental design</bdi></h2>
-        <h3><bdi>part 1: tokenizer morphological alignment</bdi></h3>
+        <h2>إعداد التجربة</h2>
+        <h3>الجزء الأول: محاذاة التقطيع مع الصرف</h3>
         <p>قاسوا قد إيش تتطابق قطع الـ tokenizer مع حدود الـ morpheme المرجعية من محللات CAMEL و Farasa، على الفصحى (ATB3) واللهجات (BOLT). والمقاييس كانت:</p>
         <ul>
             <li><strong>fertility</strong>: عدد الـ tokens لكل كلمة</li>
@@ -70,28 +70,28 @@
             <li><strong>boundary F<sub>1</sub></strong>: دقة واستدعاء اكتشاف الحدود</li>
             <li><strong>MCR</strong>: معدل تغطية المورفيم (يتفادى التقطيع من الداخل)</li>
         </ul>
-        <h3><bdi>part 2: morphological generation</bdi></h3>
+        <h3>الجزء الثاني: التوليد الصرفي</h3>
         <p>ثلاث مهام probing باستخدام جذور حقيقية و nonce roots:</p>
         <ul>
             <li><strong>root-pattern real</strong>: طبّق وزن على جذر حقيقي من ثلاثة أحرف</li>
             <li><strong>root-pattern nonce</strong>: نفس المهمة بجذور مخترعة (تختبر التعميم، مو الحفظ)</li>
             <li><strong>affix-build</strong>: ترتيب لواحق متسلسلة على كلمة أساس</li>
         </ul>
-        <h3><bdi>models evaluated</bdi></h3>
+        <h3>النماذج المقاسة</h3>
         <p>النماذج كانت ALLAM، FANAR، GPT-4، GPT-4o، LLaMA-3، Qwen-3، وCohere. FANAR يستخدم MorphBPE (morph-aware tokenization)؛ والباقي يستخدم BPE/Unigram/WordPiece عادي. اختبروها بـ zero-shot و one-shot، بالعربي والإنجليزي.</p>
         <hr>
-        <h2><bdi>key findings</bdi></h2>
+        <h2>النتائج الأساسية</h2>
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
             <p><strong>ما فيه علاقة بين محاذاة الـ <bdi>tokenizer</bdi> وأداء التوليد.</strong> <bdi>GPT-4o</bdi> جاب أعلى درجة في كل المهام (97% دقة <bdi>nonce</bdi>) رغم إن محاذاته من <em>أسوأ</em> المحاذاة (17% <bdi>boundary precision</bdi>). أما <bdi>ALLAM</bdi> فعنده أفضل <bdi>MCR</bdi> (83-86%)، لكنه نزل لـ 20% مع <bdi>nonce words</bdi>.</p>
         </div>
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
-            <p><strong>النماذج المخصصة للعربية ما تعرف تتعامل مع <bdi>nonce words</bdi>.</strong> <bdi>ALLAM</bdi> و <bdi>FANAR</bdi> ينهار أداؤهم بشدة على <bdi>nonce roots</bdi>. يعني حافظين <bdi>lexemes</bdi>، مو متعلمين قواعد منتجة. والـ <bdi>tokenizer</bdi> الصرفي لـ <bdi>FANAR</bdi> ما ساعده يعمّم.</p>
+            <p>أداء <bdi>ALLAM</bdi> و<bdi>FANAR</bdi> نزل كثير على مهام الـ<bdi>nonce roots</bdi> في الدراسة. هذا يوضح فجوة في التعميم تحت الإعدادات هذي، بس ما يثبت إن اللي يسووه من جوّا مجرد حفظ كلمات. والـ<bdi>tokenizer</bdi> الصرفي عند <bdi>FANAR</bdi> ما ضمن له أداء قوي على الكلمات المبتكرة.</p>
         </div>
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
-            <p><strong>الـ <bdi>prompts</bdi> بالإنجليزي أحسن من العربي.</strong> أغلب النماذج أداؤها نزل لما كانت التعليمات بالعربي. غالبًا هذا أثر جانبي لبيانات <bdi>instruction-tuning</bdi> اللي أغلبها إنجليزي.</p>
+            <p>أغلب النماذج المقاسة أداؤها كان أحسن مع التعليمات بالإنجليزي. توزيع لغات التدريب ممكن يفسر جزء من الفرق، بس المقارنة هذي ما تعزل أثره.</p>
         </div>
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
@@ -102,23 +102,23 @@
             <p><strong>خمسة أنماط من الأخطاء.</strong> تطبيق الوزن غلط (الجذر صحيح والقالب غلط)، تشويه الجذر (تغيّرت الحروف الساكنة)، استبدال بكلمة حقيقية (يطلع كلمة صحيحة بدل ما يطبّق الوزن)، ترتيب اللواحق غلط، واقتطاع جزئي.</p>
         </div>
         <hr>
-        <h2><bdi>what this means for Arabic NLP research</bdi></h2>
-        <h3>1. morphology-aware tokenizers may not be worth the complexity</h3>
-        <p>الـ tokenizers المخصصة للغة (MorphBPE، Splinter، إلخ) مكلفة في بنائها. ويبدو إن التدريب المسبق على نطاق واسع و instruction tuning يعوّضوا عنها، أو حتى يتفوّقوا عليها. tokenizer GPT-4o يقطّع العربي زيادة (fertility أكبر من 3، وboundary precision 17%)، ومع كذا يصيب أنماط nonce في 97% من الحالات.</p>
-        <h3>2. instruction-following matters more than tokenizer design</h3>
-        <p>قدرة النموذج على اتباع التعليمات تحل محل التحليل الصرفي الصريح. النماذج اللي تعرف تتبع التعليمات تطبّق القواعد الصرفية بثبات، واللي ما تقدر تتبعها تفشل مهما كانت جودة الـ tokenizer.</p>
-        <h3>3. Arabic-centric models have room to grow</h3>
-        <p>أداء ALLAM وFANAR كان أقل من GPT-4 وGPT-4o في كل مهمة، رغم إن عندهم بيانات تدريب عربية أكثر. يبدو إن الحجم ومنهجية الـ tuning يتغلبوا على ميزة البيانات الخاصة باللغة في الـ LLMs الحالية.</p>
-        <h3>4. real-word-only benchmarks hide failure modes</h3>
-        <p>سجّل ALLAM نسبة 67% على الجذور الحقيقية و20% على nonce: فرق 47 نقطة. nonce probes هي الطريقة الوحيدة عشان تفرّق بين الحفظ وgenuine productivity. الـ benchmarks اللي ما فيها شرط nonce تعطيك صورة ناقصة.</p>
-        <h3>5. future directions</h3>
+        <h2>إيش يعني هذا لأبحاث العربي؟</h2>
+        <h3>1. نقيس تغيير الـtokenizer على المهمة نفسها</h3>
+        <p>الـ<bdi>tokenizers</bdi> الصرفية تضيف اختيارات هندسية تحتاج تقييم حسب المهمة. <bdi>GPT-4o</bdi> سجل <bdi>fertility</bdi> أكبر من <bdi>3</bdi> و<bdi>boundary precision</bdi> قدرها <bdi>17%</bdi>، ومع كذا وصل <bdi>97%</bdi> في <bdi>nonce.</bdi> ضعف المحاذاة ما منعه ينجح هنا، بس هذي مو تجربة تغير الـ<bdi>tokenizer</bdi> لحاله وتقيس فائدته.</p>
+        <h3>2. اتباع التعليمات تفسير يحتاج اختبار</h3>
+        <p>المؤلفون يقترحوا الاستدلال التركيبي واتباع التعليمات كتفسير. النتائج السلوكية تدعم اختبار الفكرة، بس ما تعزل آلية داخل النموذج ولا تثبت إن التحليل الصرفي الصريح ما له فائدة في كل إعداد.</p>
+        <h3>3. مقارنة النماذج ما تعزل اختيارات التدريب</h3>
+        <p><bdi>ALLAM</bdi> و<bdi>FANAR</bdi> جابوا نتائج أقل من <bdi>GPT-4</bdi> و<bdi>GPT-4o</bdi> في المهام المعروضة. بس البنية وبيانات التدريب والحجم والـ<bdi>tuning</bdi> تتغير مع بعض، فما نقدر ننسب الفجوة لعامل واحد من المقارنة هذي.</p>
+        <h3>4. الكلمات المبتكرة تكشف فجوة التعميم</h3>
+        <p><bdi>ALLAM</bdi> سجل <bdi>67%</bdi> على الجذور الحقيقية و<bdi>20%</bdi> على المبتكرة: فرق <bdi>47</bdi> نقطة. شرط الـ<bdi>nonce</bdi> أظهر فشلاً ما يبان لو اختبرنا كلمات حقيقية بس. هذا اختبار مفيد للتعميم، مو الطريقة الوحيدة لفحص الحفظ.</p>
+        <h3>5. أسئلة لتجربة متابعة مضبوطة</h3>
         <ul>
             <li><strong>تعلم الصرف بدون tokenization مخصصة</strong>: علّم الـ LLMs الصرف من البيانات والـ tuning، بدل tokenizers مخصصة</li>
             <li><strong>tokenization تكيفي/هجين</strong>: خلّ المعالجة على مستوى الحرف بس لما تحتاجها الصرف</li>
             <li><strong>تجارب مضبوطة</strong>: افصل تصميم الـ tokenizer عن المعمارية والبيانات والـ tuning</li>
         </ul>
         <hr>
-        <h2><bdi>limitations</bdi></h2>
+        <h2>القيود</h2>
         <ul>
             <li>مهمة التوليد تخلط الصرف باتباع التعليمات؛ النماذج اللي ما تقدر تتبع تنسيق التعليمات تسجّل أقل، مهما كانت كفاءتها الصرفية</li>
             <li>الارتباط ما يثبت السببية: المعماريات والبيانات والـ tuning متداخلة</li>

@@ -65,11 +65,7 @@
             <p>الـ <bdi>prompts</bdi> الأصلية كاتبة الجذر والوزن الهدف بوضوح. عشان كذا، كل دقات الجذر والوزن هنا ضوابط تقيس الاحتفاظ بمعلومات مكتوبة في الـ <bdi>prompt</bdi>، مو دليل إن النموذج استنتج الصرف من الصيغة السطحية. خلّينا المنحنيات للتوثيق بس إلى ما نعيد التشغيل بـ <bdi>surface-only prompts</bdi>، ومقارنة <bdi>Gemma</bdi> عليها كمان تحذير تحقق قديم، من قبل إصلاح اتجاه أوزان <bdi>f32</bdi>.</p>
         </div>
 
-        <p>
-            هذي ملاحظة قياس أولية على محفزات صرف عربي من نوع
-            <bdi>nonce root-pattern</bdi>. السؤال محدود: هل نقدر نسترجع
-            هوية الجذر والوزن خطياً من <bdi>hidden states</bdi> المحفوظة؟
-        </p>
+        <p>هذا تشغيل أولي مؤرشف على محفزات <bdi>nonce root-pattern.</bdi> السؤال اللي يقدر يجاوبه: هل الـ<bdi>probe</bdi> يسترجع الجذر والوزن المكتوبين في الـ<bdi>prompt</bdi> من الـ<bdi>hidden states</bdi> المحفوظة؟</p>
 
         <p>
             النتائج وصفية بس. الـ <bdi>probes</bdi> تقيس قد إيش نقدر نسترجع المعلومة
@@ -119,7 +115,7 @@
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_root_layerwise.png"
-             alt="Root probe accuracy across layers for seven completed models"
+             alt="دقة استرجاع الجذر المكتوب عبر الطبقات؛ نتائج مؤرشفة من prompts تكشف التسميات"
              loading="lazy">
         </figure>
 
@@ -132,18 +128,13 @@
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_root_final_drop.png"
-             alt="Final-layer minus peak-layer root probe accuracy"
+             alt="فرق دقة الجذر بين القمة والطبقة الأخيرة في التشغيل المؤرشف"
              loading="lazy">
         </figure>
 
         <div class="callout observation">
             <div class="label">observation</div>
-            <p>
-                فرق الطبقة الأخيرة بين <bdi>LLaMA</bdi> و<bdi>Qwen</bdi>
-                هو أوضح إشارة عائلية في الجدول، لكنه يظل ملاحظة لتوليد
-                فرضيات بس. التشغيل الحالي ما يثبت سبب الفرق ولا يضمن إنه يصمد
-                بعد الإعادة والضوابط.
-            </p>
+            <p>الفرق بين <bdi>LLaMA</bdi> و<bdi>Qwen</bdi> في الطبقة الأخيرة ظاهر في الجدول، بس تحت <bdi>prompts</bdi> تكشف الـ<bdi>labels.</bdi> نحتفظ به كوصف للتشغيل، مو كفرق مثبت في الصرف أو سبب عائلي.</p>
         </div>
 
         <h2><bdi>Gemma E2B</bdi></h2>
@@ -163,7 +154,7 @@
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_peak_layer_summary.png"
-             alt="First peak layer for root and pattern probe accuracy by model"
+             alt="طبقة أعلى دقة لكل نموذج ومهمة في التشغيل المؤرشف"
              loading="lazy">
         </figure>
 
@@ -186,19 +177,19 @@
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_gemma_rsa.png"
-             alt="Within-model RSA layer-by-layer similarity heatmap for Gemma E2B"
+             alt="خريطة RSA استكشافية داخل Gemma؛ مع تحفظ التحقق العددي المذكور في النص"
              loading="lazy">
         </figure>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_llama8b_cca.png"
-             alt="Within-model CCA layer-by-layer similarity heatmap for LLaMA 8B"
+             alt="خريطة CCA استكشافية داخل LLaMA 8B"
              loading="lazy">
         </figure>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_gemma_pca_root.png"
-             alt="PCA projection of Gemma E2B layer 14 hidden states colored by root label"
+             alt="إسقاط PCA داخل Gemma ملون حسب الجذر المكتوب في المحفز"
              loading="lazy">
         </figure>
 

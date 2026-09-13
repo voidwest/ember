@@ -76,11 +76,11 @@
             <p>كل النتائج هنا طالعة من <bdi>prompts</bdi> كاتبة الجذر والوزن الهدف صراحة. عشان كذا، الدرجات هذي هي <strong><bdi>label-revealed positive controls</bdi></strong>: تثبت إن تمثيل آخر رمز يحتفظ بمتغيرات مكتوبة في النص، مو إن النموذج استنتج الصرف العربي. الرسوم محفوظة كتاريخ تشخيصي؛ المشغّل الحالي يرفض الإعداد هذا افتراضياً، وأي دعوى صرفية تحتاج <bdi>surface-only prompts</bdi> الجديدة.</p>
         </div>
 
-        <h2><bdi>motivation</bdi></h2>
+        <h2>ليش هذا السؤال؟</h2>
 
         <p>ورقة <a href="/research-notes/morphemes-without-borders.ar.html"><bdi>Alakeel et al.</bdi> (2026)</a> خلّت سؤال مفتوح: <bdi>GPT-4o</bdi> يوصل 97% في توليد الجذر والوزن العربي على <bdi>nonce roots</bdi>، مع إنه عنده أسوأ محاذاة <bdi>tokenizer</bdi> في الدراسة (17% <bdi>boundary precision</bdi>). بالمقابل، <bdi>ALLAM</bdi> عنده أفضل محاذاة <bdi>tokenizer</bdi>، لكنه ينهار لـ 20% في نفس المهمة. جودة الـ <bdi>tokenizer</bdi> ما تكفي تتنبأ بالكفاءة الصرفية. طيب إيش اللي يتنبأ؟</p>
 
-        <p>المؤلفون اقترحوا "الاستدلال التركيبي + اتباع التعليمات" كآلية، بس هذا وصف للسلوك. التجربة هذي تسأل السؤال الـ <bdi>mechanistic</bdi>: <strong>كيف شكل التمثيلات الداخلية فعلاً؟</strong></p>
+        <p>الورقة السلوكية تحفزنا نفحص التمثيلات الداخلية. بس التشغيل المؤرشف هنا يجاوب سؤال أضيق: إيش يقدر الـ<bdi>probe</bdi> يسترجع من متغيرات مكتوبة في الـ<bdi>prompt</bdi>؟ بما إن الـ<bdi>labels</bdi> مكشوفة، ما نقدر نعتبره تفسير لآلية الصرف.</p>
 
         <p>استخدمت <a href="/ember/index.ar.html"><bdi>ember</bdi></a>، وهو <bdi>inference engine</bdi> مكتوب من الصفر ويعطي وصول مباشر للـ <bdi>hidden states</bdi> بعد كل <bdi>transformer block</bdi>، عشان أفحص <bdi>LLaMA 3.2 1B</bdi> و <bdi>LLaMA 3.2 3B</bdi> على مهمة <bdi>nonce root-pattern</bdi>. عندنا 20 جذر ثلاثي مخترع من بيانات <bdi>Alakeel</bdi> × 10 أوزان عربية = 200 محفز، وكلها مكتوبة بحروف لاتينية عشان يكون الـ <bdi>probing</bdi> آمن مع <bdi>ASCII</bdi>. نتائج <bdi>8B</bdi> من التشغيل الأول مؤرشفة تحت إلى أن نعيدها على جهاز أقوى. استخدمت أربع طرق تحليل:</p>
 
@@ -98,7 +98,7 @@
             <p>التشغيل المصحح لـ <bdi>1B</bdi> و <bdi>3B</bdi> لسه يطلع <code><bdi>The</bdi></code> لكل محفز: <bdi>0/200</bdi>. الـ <bdi>hidden states</bdi> تحتفظ بمتغيرات الجذر والوزن المكتوبة صراحة في الـ <bdi>prompt</bdi>، بس هذا لسه مو دليل كافي على صرف عربي داخلي. الخطوة الجاية لازم تفرق بين استرجاع متغيرات الـ <bdi>prompt</bdi> وبين الحساب الصرفي فعلاً.</p>
         </div>
 
-        <h2><bdi>the pipeline</bdi></h2>
+        <h2>مسار التجربة</h2>
 
         <div class="pipeline-block">
 <pre><code>generate_stimuli.py        → stimuli/nonce_root_pattern.json  (200 stimuli)
@@ -113,7 +113,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>كل الكود موجود في <a href="https://github.com/voidwest/ember">مستودع <bdi>ember</bdi></a>. التشغيل المصحح لـ <bdi>1B</bdi> و <bdi>3B</bdi> صار محلياً. رسم <bdi>8B</bdi> باقي كأرشيف للمقارنة، بس ما أعدناه بالتقسيم المصحح لأن الجهاز المحلي ما يشغله بثبات.</p>
 
-        <h2><bdi>results</bdi></h2>
+        <h2>النتائج</h2>
 
         <h3><bdi>LLaMA 3.2 1B</bdi> (16 طبقة، <bdi>hidden dim</bdi> 2048)</h3>
 
@@ -164,7 +164,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <hr>
 
-        <h3><bdi>LLaMA 3.1 8B</bdi> (تشغيل أول مؤرشف، لم يُعد)</h3>
+        <h3><bdi>LLaMA 3.1 8B</bdi> (تشغيل أول مؤرشف، ينتظر إعادة التشغيل)</h3>
 
         <figure class="chart-wrap">
         <img class="chart theme-chart-dark" src="/plots/llama8b_probe_results.png"
@@ -192,7 +192,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <hr>
 
-        <h3><bdi>side-by-side</bdi></h3>
+        <h3>المقارنة جنب بعض</h3>
 
         <div class="comparison">
             <div class="col">
@@ -238,7 +238,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p class="punchline">التشغيل المصحح لـ <bdi>1B/3B</bdi>: <bdi>0/200</bdi> صحيحة. متغيرات الـ <bdi>prompt</bdi> نقدر نسترجعها؛ والسلوك لسه مكسور.</p>
 
-        <h2><bdi>discussion</bdi></h2>
+        <h2>قراءة النتائج</h2>
 
         <h3>1. فجوة التمثيل والسلوك</h3>
 
@@ -246,7 +246,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>مع ذلك، كل نموذج يرجع نفس المخرج الموحد لكل محفز: <code><bdi>The</bdi></code>. نقدر نسترجع متغيرات الجذر والوزن من الـ <bdi>hidden states</bdi>، لكنها ما تتحول إلى <bdi>output tokens</bdi> المطلوبة في الإعداد هذا.</p>
 
-        <p>هذا يضيّق سؤال <bdi>Alakeel et al.</bdi> كثير. الفشل مو ببساطة إن "متغيرات الـ <bdi>prompt</bdi> غايبة عن الـ <bdi>hidden states</bdi>"؛ هي موجودة. السؤال اللي ما انحسم: هل تعكس هذي المتغيرات حساباً صرفياً، أو مجرد احتفاظ مباشر بنص التعليمات؟ دقة <bdi>GPT-4o</bdi> البالغة 97% في نفس المهمة، وبنفس أو أسوأ <bdi>tokenizer</bdi>، تلمّح إن الفرق ممكن يكون في <bdi>instruction-tuning</bdi>: قد إيش التدريب شكّل مسار التمثيل إلى المخرج.</p>
+        <p>متغيرات الـ<bdi>prompt</bdi> المكتوبة نقدر نسترجعها في الإعداد هذا. بس لسه ما فصلنا بين حساب صرفي واحتفاظ بنص التعليمات. نتيجة <bdi>GPT-4o</bdi> المنشورة، <bdi>97%</bdi>، نتيجة سلوكية منفصلة؛ ما تعزل الـ<bdi>instruction tuning</bdi> كسبب لفشل المخرج هنا.</p>
 
         <p>ورقة <bdi>Alakeel</bdi> خلصت إلى أن "الاستدلال التركيبي + اتباع التعليمات يعوض التحليل الصرفي الصريح." نتائجنا تمشي مع صياغة أدق: <strong>اتباع التعليمات ممكن يكون اللي يربط متغيرات المهمة القابلة للاسترجاع بسلوك المخرج.</strong> عشان نخلي الدعوى الصرفية أقوى، نحتاج <bdi>prompt ablations</bdi>، واستخراجاً من مواضع الجذر والوزن، وتجارب نحذف أو نستبدل فيها نص الجذر أو الوزن.</p>
 
@@ -255,10 +255,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <p>"الأكبر أفضل" ما يصف فحص الجذر هنا. منحنى الدقة المصحح محلياً ينتقل من شبه مسطح (<bdi>1B</bdi>) إلى شكل <bdi>U</bdi> (<bdi>3B</bdi>). التشغيل القديم لـ <bdi>8B</bdi> ممكن يعمّق النمط، بس مو داخل المقارنة المصححة إلى الآن. وهذا ينسجم مع فرضية <a href="/research-notes/arabic-morphology-probing.ar.html">الخطة البحثية الأصلية</a>:</p>
 
         <blockquote>
-            <p><em>"إذا نقطة الانعطاف بين <bdi>1B</bdi> و <bdi>3B</bdi>، فهذا يعني إن الحقن الصرفي الصريح ممكن يفيد فقط تحت حوالي <bdi>1B</bdi> معامل. فوق ذلك، النموذج يمكن يطوّر القدرة داخلياً، بس يمكن بصيغة ما تقدر الـ <bdi>linear probes</bdi> توصل لها."</em></p>
+            <p>الخطة الأصلية اقترحت إن الفرق بين <bdi>1B</bdi> و<bdi>3B</bdi> ممكن يحدد حجم يفيد عنده إدخال الصرف صراحة. التشغيل هذا ما يختبر التدخل، وكشف الـ<bdi>labels</bdi> في الـ<bdi>prompt</bdi> يمنعنا نفسر المنحنيات كدليل على حد للحجم.</p>
         </blockquote>
 
-        <p>البيانات تقول إن نقطة الانعطاف مو عن <em>هل</em> البنية الصرفية قابلة للاسترجاع، بل عن <strong>كيف</strong> مرتبة. عند <bdi>1B</bdi>، هوية الجذر قابلة للوصول الخطي في كل طبقة. عند <bdi>3B</bdi>، شكلها موزع أو متحوّل في الطبقات الوسطى إلى صيغة يسترجعها <bdi>logistic regression</bdi> بدقة أضعف، بس المعلومة ممكن تكون لسه موجودة لأن الدقة تتعافى جزئياً في الطبقات الأعمق. هذا يبدو كتغير نوعي في ترتيب التمثيل، مو فشل من النموذج في التقاط الفرق. هذي النتائج خاصة بـ <bdi>LLaMA</bdi> حالياً؛ تشغيل <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> يختبر هل النمط يعمم.</p>
+        <p>تشغيلتا <bdi>1B</bdi> و<bdi>3B</bdi> المصححتان تختلف في استرجاع الجذر المكتوب عبر الطبقات. هذا فرق وصفي تحت الـ<bdi>probe</bdi> والـ<bdi>prompt</bdi> المستخدمين هنا. ما يثبت انتقال نوعي في حساب الصرف، ولا إن المعلومة ضاعت ورجعت داخل الشبكة.</p>
 
         <h3>3. الوزن متغير واضح في الـ <bdi>prompt</bdi></h3>
 
@@ -276,9 +276,9 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>منحنى <bdi>root-pattern CCA</bdi> في <bdi>8B</bdi> (يصعد إلى 0.345 عند الطبقة 4 ثم ينزل إلى 0.078) يطلع بنمط ينسجم مع تنظيم على مرحلتين: الطبقات المبكرة فيها تداخل أعلى بين فضاءات أوزان <bdi>probe</bdi> للجذر والوزن، والطبقات الأعمق فيها فضاءات أكثر انفصالاً. شكل القمة ثم الهبوط مو موجود عند الحجمين الأصغر.</p>
 
-        <p>إذا صمد النمط هذا بعد إعادة تشغيل <bdi>8B</bdi> بالتقسيم المصحح، وتكرر عبر عوائل نماذج ثانية (<bdi>Qwen</bdi>، <bdi>Mistral</bdi>)، ممكن يكون توقيعاً لتنظيم صرفي تركيبي يطلع عند حجم أكبر: صيغة وسيطة بتداخل فضاء فرعي أعلى، وبعدها تنظيم أكثر انفصالاً في الطبقات العميقة. النمط ثنائي المرحلة غايب عند الحجمين الأصغر.</p>
+        <p>حتى لو الشكل هذا صمد بعد إعادة <bdi>8B</bdi> وتكرر في <bdi>Qwen</bdi> أو <bdi>Mistral</bdi>، كشف الـ<bdi>labels</bdi> يخليه نتيجة عن الاحتفاظ بمعلومات الـ<bdi>prompt.</bdi> ادعاء عن التركيب الصرفي يحتاج مدخلات <bdi>surface-only</bdi> ودليل سلوكي أو تدخل مستقل.</p>
 
-        <h2 id="caveats"><bdi>caveats</bdi></h2>
+        <h2 id="caveats">حدود القياس</h2>
 
         <div class="callout hypothesis">
             <div class="label">prompts</div>
@@ -290,7 +290,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <p>200 محفز لتصنيف من 20 فئة = 10 عينات لكل فئة قبل <bdi>cross-validation</bdi>. منطق التقسيم المصحح يتفادى الطيات المستحيلة، بس لسه نحتاج محفزات أكثر وفواصل ثقة.</p>
         </div>
 
-        <h2><bdi>next steps</bdi></h2>
+        <h2>الخطوات التالية وقت كتابة الملاحظة</h2>
 
         <ol>
             <li><strong>ضوابط الـ <bdi>prompt</bdi> والمواضع.</strong> نضيف <code>--probe-template</code>، واستخراجاً من موضع الجذر والوزن، وتجارب نحجب فيها الجذر أو الوزن. هذا العائق الأساسي قبل ما نقدر نطرح دعوى صرفية أقوى.</li>
@@ -299,7 +299,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
             <li><strong>نكرر على نماذج ثانية.</strong> نشغّل نفس الـ <bdi>pipeline</bdi> على <bdi>Qwen</bdi> أو <bdi>Mistral</bdi> بأحجام مشابهة.</li>
         </ol>
 
-        <h2><bdi>references</bdi></h2>
+        <h2>المراجع</h2>
 
         <ol>
             <li>alakeel, qwaider, aldarmaki, alqahtani. "morphemes without borders: evaluating root-pattern morphology in Arabic tokenizers and LLMs." LREC 2026. <a href="https://arxiv.org/abs/2603.15773">arXiv:2603.15773</a></li>

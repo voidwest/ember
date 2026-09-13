@@ -81,7 +81,7 @@
 
         <p>the <a href="/research-notes/morphemes-without-borders.html">Alakeel et al. (2026)</a> paper left an open question: GPT-4o gets 97% on nonce Arabic root-pattern generation despite having the worst tokenizer alignment in the study (17% boundary precision). ALLAM, with the best tokenizer alignment, collapses to 20% on the same task. tokenizer quality doesn't predict morphological competence ,  so what does?</p>
 
-        <p>the authors suggested "compositional reasoning + instruction-following" as the mechanism. but that's a behavioral description. this experiment asks the mechanistic question: <strong>what do the internal representations actually look like?</strong></p>
+        <p>The behavioral paper motivates looking at internal representations. This archived run answers a narrower question: which supplied prompt variables can a fitted probe recover? Its label-revealed prompts cannot establish a mechanism for morphology.</p>
 
         <p>i used <a href="/ember/">ember</a>, a from-scratch inference engine that gives direct access to hidden states at every transformer block, to probe LLaMA 3.2 1B and LLaMA 3.2 3B on a nonce root-pattern task. 20 invented triliteral roots (from the Alakeel dataset) crossed with 10 Arabic morphological patterns = 200 stimuli, all Latin-transliterated for ASCII-safe probing. 8B results from the first pass are archived below as stale until they can be rerun off-machine. four analysis methods:</p>
 
@@ -254,7 +254,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>yet every model outputs <code>"The"</code> for every stimulus. the root and pattern variables are recoverable from hidden states but never translate into the requested output tokens under this prompt setup.</p>
 
-        <p>this narrows the Alakeel et al. question considerably. the failure mode is not simply "the prompt variables are absent from hidden states." they are present. the unresolved question is whether those variables reflect morphology-like computation or direct retention of the instruction text. GPT-4o's 97% accuracy on the same task, with the same (or worse) tokenizer, suggests the difference may be in instruction-tuning: how strongly the representation-to-output pathway is shaped during training.</p>
+        <p>The explicit prompt variables are recoverable in this setup. Whether the states encode a morphological computation or retain the instruction text remains unresolved. GPT-4o’s reported 97% is a separate behavioral result; it does not isolate instruction tuning as the cause of this run’s output failure.</p>
 
         <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results are consistent with a refinement: <strong>instruction-following may be what connects recoverable task variables to output behavior.</strong> to upgrade that into a morphology claim, the next run needs prompt ablations, span-specific extraction, and controls where root or pattern text is removed or replaced.</p>
 
@@ -263,10 +263,10 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
         <p>"bigger is better" doesn't describe root probing. the corrected local accuracy curve goes from nearly flat (1B) to U-shaped (3B). the older 8B run may deepen the pattern, but it is not part of the corrected comparison yet. this is consistent with the hypothesis from the <a href="/research-notes/arabic-morphology-probing.html">original research plan</a>:</p>
 
         <blockquote>
-            <p><em>"if the inflection point is between 1B and 3B, this means explicit morphological injection might only help below ~1B parameters. above that, the model may develop the capability internally ,  but possibly in a form that linear probes can't access."</em></p>
+            <p>The original plan suggested that a difference between 1B and 3B might identify a useful scale for morphological injection. This run does not test that intervention, and the exposed labels prevent interpreting its curves as evidence for that threshold.</p>
         </blockquote>
 
-        <p>the data suggests the inflection point isn't about <em>whether</em> morphological structure is recoverable, but <strong>how</strong> it is organized. at 1B, root identity is linearly accessible at every layer. at 3B, root identity appears distributed or transformed in mid-layers into a format that logistic regression recovers less cleanly, but the information may still be present since accuracy partially recovers in deeper layers. this looks like a qualitative change in representational organization, not a failure of the model to capture the distinction. (these results are LLaMA-only; a Qwen or Mistral run would test whether the pattern generalizes.)</p>
+        <p>The corrected 1B and 3B runs differ in the layerwise recoverability of supplied root labels. This is a descriptive difference under the probe and prompt used here. It does not establish a qualitative transition in morphological computation or show that information was lost and recovered inside the network.</p>
 
         <h3>3. pattern is a prompt-level variable</h3>
 
@@ -284,7 +284,7 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>the 8B root-pattern CCA curve (rise to 0.345 at layer 4, then decline to 0.078) shows a pattern consistent with two-phase organization: early layers show increased subspace overlap between root and pattern probe weights, while deeper layers show increasingly separable subspaces. this hump-and-decline shape is absent at both smaller scales.</p>
 
-        <p>if this pattern survives a corrected 8B rerun and replicates across model families (Qwen, Mistral), it could be a signature of compositional morphological organization that emerges at larger scale: an intermediate format with higher probe subspace overlap, followed by more separable organization in deeper layers ,  a two-phase organizational pattern absent at both smaller scales.</p>
+        <p>Even if this shape survives a corrected 8B rerun and repeats in Qwen or Mistral, label-revealed prompts would still make it a prompt-retention result. A claim about compositional morphology needs surface-only inputs and separate behavioral or intervention evidence.</p>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2 id="caveats">caveats</h2>

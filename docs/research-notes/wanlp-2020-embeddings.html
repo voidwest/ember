@@ -58,7 +58,7 @@
         </div>
 
         <h2>the claim</h2>
-        <p>morphology-aware tokenization at the embedding layer improves Arabic NLP performance without retraining. the authors modified Word2Vec and BERT to use morpheme-level tokens instead of surface-word or BPE tokens, then evaluated on NER, sentiment, and POS tagging.</p>
+        <p>This study evaluates morphology-aware tokens at the embedding interface of Word2Vec and BERT on NER, sentiment, and POS tagging. The reported gains belong to those experimental settings; they are not a guarantee for every architecture or task.</p>
 
         <h2>results</h2>
         <ul>
@@ -73,7 +73,7 @@
         <div class="callout hypothesis">
             <div class="label">Hypothesis</div>
             <p><strong>why this matters alongside the 2026 results</strong></p>
-            <p>the 2020 result (morphological injection helps) and the 2026 result (tokenizer alignment doesn't predict generation quality) are consistent if the key variable is <strong>model scale</strong>. at Word2Vec/mBERT scale, explicit morphological structure at the embedding layer compensates for the model's limited capacity to learn it implicitly. at GPT-4 scale, compositional reasoning and instruction-following substitute for explicit morphological parsing. the question that remains: where is the inflection point, and can you reach it without GPT-4's compute?</p>
+            <p>The 2020 embedding study and the 2026 generation study ask different questions. Their results can coexist: an explicit morphology intervention can help particular embedding tasks while tokenizer alignment alone fails to predict generation. Scale is one hypothesis to test, alongside task, architecture, and training differences; neither comparison identifies a transition point.</p>
         </div>
         <!-- docs:footer start -->
         <footer class="site-footer">

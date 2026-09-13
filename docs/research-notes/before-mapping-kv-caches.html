@@ -59,6 +59,8 @@
             <a href="/research-notes/">research notes</a>
         </div>
 
+
+        <div class="callout observation"><div class="label">historical context</div><p>The setup, estimates, and next steps below belong to the date of this note. The recorded results are retained; this editorial update is not a rerun or a claim that the historical implementation is still current.</p></div>
         <h1>Before Mapping KV Caches, Make Them Measurable</h1>
 
         <div class="meta">
@@ -74,11 +76,7 @@
 
         <h2>summary</h2>
 
-        <p>
-            i started this work with a tempting next step: take a KV cache from
-            one model, learn a small linear map, and test whether another model
-            can continue from it without repeating the full prefix.
-        </p>
+        <p>I wanted to take a KV cache from one model, learn a small linear map, and test whether another model could continue from it without recomputing the prefix. First, I needed a boundary I could measure and replay.</p>
 
         <p>i did not build the mapper.</p>
 

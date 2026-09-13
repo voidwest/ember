@@ -55,7 +55,7 @@
             <span class="tag key">morphology</span>
         </div>
         <h2>the idea</h2>
-        <p>a modular, finite-state tokenizer for Arabic built on top of the XFST platform (Beesley &amp; Karttunen, 2003). unlike statistical tokenizers that learn from data, this is a hand-engineered system with explicit rules for clitic detection, morphological analysis, and token disambiguation.</p>
+        <p>This Arabic tokenizer uses hand-written finite-state rules on the XFST platform (Beesley &amp; Karttunen, 2003). The useful design question is how to separate clitic detection, lexical analysis, and ambiguity filtering while handling words outside the lexicon.</p>
         <h2>architecture</h2>
         <h3>three tokenization models</h3>
         <p><strong>model 1: tokenization without a morphological analyzer.</strong> uses a clitic guesser, a finite-state transducer with hand-written patterns for proclitic prefixes and enclitic suffixes. strips all possible clitic combinations. a separate small-scale lexc transducer handles detached clitic forms. this is <strong>robust</strong>, works on any word regardless of dictionary coverage, and <strong>modular</strong>, tokenization and morphology are independent components. the tradeoff: the guesser is non-deterministic, producing combinatorial ambiguity (a three-word sentence can yield 8 tokenization paths).</p>

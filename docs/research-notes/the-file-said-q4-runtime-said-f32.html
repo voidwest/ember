@@ -58,6 +58,8 @@
             <a href="/research-notes/">research notes</a>
         </div>
 
+
+        <div class="callout observation"><div class="label">historical context</div><p>The setup, estimates, and next steps below belong to the date of this note. The recorded results are retained; this editorial update is not a rerun or a claim that the historical implementation is still current.</p></div>
         <h1>The File Said Q4. The Runtime Said f32.</h1>
 
         <div class="meta">
@@ -72,14 +74,7 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>
-            Ember currently loads K-quants correctly, then discards their
-            deployment advantage. Q6_K and Q4_K_M are decoded from the GGUF
-            file into resident f32 weights and sent through generic f32
-            kernels; Ember has no native K-quant matmul or packed execution
-            path for them yet. this is a reference loader, not a low-memory
-            K-quant deployment.
-        </p>
+        <p>In this pre-optimization snapshot, Ember loaded K-quants correctly but expanded Q6_K and Q4_K_M into resident f32 weights for generic f32 kernels. Native K-quant matmul was not yet implemented in that version. The measurements below describe that historical loader policy, not the current runtime.</p>
 
         <p>
             that makes the current path unsuitable as a low-memory or

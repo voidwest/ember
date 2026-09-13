@@ -53,7 +53,7 @@
             mohammed al-thobaiti · 2026-05-16
         </div>
 
-        <p>i built an inference engine in rust, shipped it, then said in a linkedin post i wanted to look into Arabic tokenization. so i actually did. what follows is what i found, and it wasn't what i expected.</p>
+        <p>After building Ember, I started reading about Arabic tokenization. I expected better morphological segmentation to explain better generation. The papers reviewed here make that relationship less straightforward.</p>
 
         <h2>why Arabic is a real stress test for tokenizers</h2>
 
@@ -61,7 +61,7 @@
 
         <p>a single Arabic word can encode what would be 4 separate tokens in English. <em>fasayaktubūnahā</em> (فسيكتبونها) = "and they will write it", one word with proclitics, stem, and enclitic fused together.</p>
 
-        <p>BPE was designed for frequency-based merging of contiguous character sequences. Arabic's meaning lives in non-contiguous root-pattern interleaving. these are structurally incompatible. add optional diacritics, no consistent spacing, and diglossia (MSA vs Egyptian vs Gulf vs Levantine), and you have a genuinely hard problem.</p>
+        <p>BPE merges contiguous character sequences by frequency; Arabic root-pattern structure can be non-contiguous. Token boundaries therefore need not follow morphological structure. Optional diacritics, spacing variation, and dialect differences add further complications.</p>
 
         <h2>the obvious hypothesis: fix the tokenizer</h2>
 
@@ -88,7 +88,7 @@
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
             <p><strong>alignment doesn't predict competence</strong></p>
-            <p><strong>ALLAM</strong> had the best tokenizer morphological alignment (MCR 83-86%) but collapsed on nonce words: 20% accuracy. it's memorizing, not generalizing.</p>
+            <p>ALLAM had the best reported morphological alignment (MCR 83-86%) but reached only 20% accuracy on nonce words. Better alignment did not ensure generalization on this task; that alone does not prove a memorization mechanism.</p>
             <p><strong>GPT-4</strong> had the <em>worst</em> tokenizer alignment (fertility 4× higher than ideal, boundary precision 17%) but scored 92% on nonce root-pattern generation. second best overall.</p>
             <p><strong>GPT-4o</strong> scored 97% on nonce words despite similarly bad tokenizer alignment.</p>
             <p><strong>no correlation</strong> between tokenizer alignment metrics and morphological generation performance. morpheme F1 and MCR have zero or weak negative correlation with generation accuracy.</p>
@@ -96,13 +96,13 @@
 
         <p>FANAR, which has a morphologically-informed tokenizer (MorphBPE), performed consistently but didn't dominate. its steadier performance might be instruction-following, not tokenizer quality.</p>
 
-        <p>English prompts outperformed Arabic prompts on most models, instruction-tuning data is overwhelmingly English.</p>
+        <p>English prompts performed better for most models in the reported comparison. Instruction-tuning language is a plausible contributor, but the experiment does not isolate training-language composition.</p>
 
-        <p>the paper's conclusion: <strong>morphological competence should be defined by productive generalization, not surface segmentation alignment.</strong> compositional reasoning + instruction-following substitutes for explicit morphological parsing.</p>
+        <p>The paper argues for testing productive generalization directly instead of treating segmentation alignment as a proxy. Compositional reasoning and instruction-following are proposed explanations, not mechanisms isolated by these scores.</p>
 
         <h2>what this means</h2>
 
-        <p>the 2020 result (morphology-aware tokenization helps) and the 2026 result (tokenizer alignment doesn't predict generation) aren't fully contradictory. they're scale-dependent:</p>
+        <p>The 2020 embedding results and the 2026 generation results measure different tasks, models, and interventions. Scale is a hypothesis for part of the difference, not an explanation isolated by comparing the two papers.</p>
 
         <ul>
             <li>at <strong>Word2Vec/mBERT scale</strong> (~100M params), explicit morphological injection at the embedding layer compensates for limited capacity to learn it implicitly</li>
@@ -118,7 +118,7 @@
 
         <p>i'm going to look at the internal activation angle, <a href="/research-notes/arabic-morphology-probing.html">what do the representations actually look like</a> inside models that succeed vs fail on nonce Arabic words?</p>
 
-        <p>colab + small Arabic models is feasible on CPU hardware. behavioral probing (logit-level) doesn't require loading full weights. and i built an inference engine that gives me direct access to hidden states at every layer.</p>
+        <p>Small open-weight models make a local activation study feasible. Local logit measurement still requires a working model or equivalent inference endpoint; choosing logits as the readout does not remove the cost of inference. Ember provides access to layer states for the supported local models.</p>
 
         <p>other threads i'm tracking:</p>
 

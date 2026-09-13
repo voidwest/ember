@@ -71,18 +71,9 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>
-            Arabic benchmarks مهمة فعلًا. تعطينا طريقة نقارن الأنظمة ونسأل إذا
-            النماذج تتعامل مع العربي خارج التقييم الإنجليزي المعتاد. بس رقم
-            accuracy واحد ممكن يخبي مشاكل في واجهة القياس نفسها.
-        </p>
+        <p>الـ<bdi>Arabic benchmarks</bdi> تعطينا طريقة نقارن الأنظمة على مهام عربية. بس رقم <bdi>accuracy</bdi> مجمع ممكن يخبي أثر الـ<bdi>prompt</bdi> وطريقة الجواب والـ<bdi>parser</bdi> وترتيب الخيارات.</p>
 
-        <p>
-            هذي ملاحظة قياس صغيرة على <bdi>ArabicMMLU multiple-choice</bdi>.
-            السؤال مو هل <bdi>ArabicMMLU</bdi> سيئ؟ السؤال: وش لازم نعرض مع
-            رقم الدقة، خصوصاً وأنا أقيّم نماذج <bdi>decoder-only</bdi> صغيرة
-            ومحلية؟
-        </p>
+        <p>هذي تجربة تشخيصية صغيرة على <bdi>ArabicMMLU multiple-choice.</bdi> أبغى أعرف إيش لازم أعرض جنب الدقة، خصوصاً مع نماذج <bdi>decoder-only</bdi> صغيرة تشتغل محلياً.</p>
 
         <p>
             أوضح مثال عندي: <bdi>Qwen3-0.6B</bdi> سجل 0.680 لما كانت الإجابة
@@ -101,7 +92,7 @@
         </div>
 
         <p>
-            الخلاصة الضيقة: في هالتشغيلات، صيغة الـ <bdi>prompt</bdi>،
+            الخلاصة الضيقة: في التشغيل هذاات، صيغة الـ <bdi>prompt</bdi>،
             parsing، تفضيل وسوم الخيارات، وموضع الإجابة الصحيحة ارتبطوا
             بتغيرات كبيرة في الدقة المقاسة. الانتقال من <bdi>0.6B/1B</bdi>
             إلى <bdi>3B</bdi> حسّن الوضع، بس ما شال حساسية موضع الخيار.
@@ -109,10 +100,10 @@
 
         <p>
             في multiple-choice، النموذج ما يحل السؤال فقط. لازم يتبع صيغة
-            الجواب، يختار label، وبعدها <bdi>parser</bdi> يحاول يفهم وش قال.
+            الجواب، يختار label، وبعدها <bdi>parser</bdi> يحاول يفهم إيش قال.
         </p>
 
-        <h2><bdi>why multiple-choice evaluation can be fragile</bdi></h2>
+        <h2>ليش واجهة الاختيار المتعدد تفرق؟</h2>
 
         <p>
             على الورق الشكل بسيط: سؤال، خيارات <bdi>A/B/C/D</bdi>، استخرج حرف، احسب
@@ -132,7 +123,7 @@
             بجانب raw accuracy.
         </p>
 
-        <h2><bdi>pilot 1: prompt-format sensitivity</bdi></h2>
+        <h2>التجربة الأولى: حساسية صيغة الـ<bdi>prompt</bdi></h2>
 
         <p>
             <bdi>pilot 1</bdi> استخدم 50 سؤال من <bdi>ArabicMMLU</bdi>،
@@ -184,7 +175,7 @@
             لا ينهار إلى وسم واحد، بس يظل سياقاً مهماً لتفسير الدقة.
         </p>
 
-        <h2><bdi>pilot 2: label and position bias</bdi></h2>
+        <h2>التجربة الثانية: الوسم وموضع الإجابة</h2>
 
         <p>
             <bdi>pilot 2</bdi> استخدم 50 سؤال، و4 تبديلات لكل سؤال: 200
@@ -223,7 +214,7 @@
             </tbody>
         </table>
 
-        <h3><bdi>accuracy by correct-answer position</bdi></h3>
+        <h3>الدقة حسب موضع الجواب الصحيح</h3>
 
         <table>
             <thead>
@@ -242,7 +233,7 @@
             </tbody>
         </table>
 
-        <h3><bdi>prediction distribution</bdi></h3>
+        <h3>توزيع التوقعات</h3>
 
         <table>
             <thead>
@@ -278,7 +269,7 @@
             الحجم يساعد، بس raw accuracy ما زال يحتاج سياق.
         </p>
 
-        <h2><bdi>what changed with Llama-3.2-3B?</bdi></h2>
+        <h2>إيش تغير مع <bdi>Llama-3.2-3B</bdi>؟</h2>
 
         <p>
             <bdi>Llama-3.2-3B</bdi> حسّن أكثر من جانب. في <bdi>pilot 1</bdi>،
@@ -299,7 +290,7 @@
             أزال parse failures.
         </p>
 
-        <h2><bdi>what this does and does not show</bdi></h2>
+        <h2>إيش تدعم النتيجة وإيش ما تدعم؟</h2>
 
         <p>هذي الملاحظة تقول، بشكل محدود:</p>
 
@@ -324,7 +315,7 @@
             <p>رقم benchmark يصير أصدق لما يجي معه تشخيص كافي لواجهة القياس.</p>
         </blockquote>
 
-        <h2><bdi>proposed reporting checklist</bdi></h2>
+        <h2>إيش نعرض مع الدقة؟</h2>
 
         <p>
             لما أقيّم نماذج <bdi>decoder-only</bdi> صغيرة أو محلية، ما أبغى
@@ -343,7 +334,7 @@
             <li>فحوصات تسرب واعية بالصرف كعمل لاحق.</li>
         </ul>
 
-        <h2><bdi>artifacts</bdi></h2>
+        <h2>الملفات</h2>
 
         <p>
             الـ <bdi>prompts</bdi>، والمخرجات، وملفات التقييم، والملخصات موجودة
@@ -353,7 +344,7 @@
             <bdi>artifact bundle</bdi> منشورة لفحص الأرقام والجداول في هذي الملاحظة.
         </p>
 
-        <h2><bdi>closing</bdi></h2>
+        <h2>إيش نأخذ من التجربة؟</h2>
 
         <p>
             الخلاصة مو إن نموذج أفضل من الثاني. ranking مو هدف هذي الملاحظة.

@@ -70,11 +70,7 @@
             <span class="tag key">systems security</span>
         </div>
 
-        <p>
-            I started looking at GGUF loading in Ember as a security boundary
-            and realized that “model file” is a slightly misleading phrase. A
-            model file controls far more than model weights.
-        </p>
+        <p>Reviewing GGUF loading in Ember made the security boundary clearer: a model file controls how the runtime constructs state, as well as the weight values it loads.</p>
 
         <p>
             Tensor dimensions decide shape arithmetic and allocations. Offsets

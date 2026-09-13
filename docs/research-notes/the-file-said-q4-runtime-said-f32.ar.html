@@ -58,6 +58,8 @@
             <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
         </div>
 
+
+        <div class="callout observation"><div class="label">سياق الملاحظة</div><p>الإعدادات والتقديرات والخطوات التالية هنا تخص وقت كتابة الملاحظة. نحتفظ بنتائج التشغيل كما هي؛ تحديث الصياغة ما يعني إننا أعدنا التجربة أو إن حالة التنفيذ القديمة لسه هي الحالية.</p></div>
         <h1>الملف قال <bdi>Q4</bdi>. والـ<bdi>runtime</bdi> قال <bdi>f32</bdi>.</h1>
 
         <div class="meta">
@@ -72,25 +74,9 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>
-            مسار <bdi>K-quant</bdi> الحالي في <bdi>Ember</bdi> يقرأ التمثيل
-            بشكل صحيح، بس يتخلص من فائدته وقت التشغيل. أوزان
-            <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi> تتحول من ملف <bdi>GGUF</bdi> إلى
-            <bdi>f32</bdi> وتبقى في الذاكرة، ثم تمر عبر <bdi>generic f32
-            kernels</bdi>. ما فيه حالياً <bdi>native K-quant matmul</bdi> أو
-            <bdi>packed execution path</bdi> لها. يعني هذا
-            <bdi>reference loader</bdi>، مو <bdi>low-memory K-quant deployment</bdi>.
-        </p>
+        <p>في النسخة السابقة للتحسين المقاسة هنا، <bdi>Ember</bdi> كان يقرأ <bdi>Q6_K</bdi> و<bdi>Q4_K_M</bdi> ثم يفكها إلى أوزان <bdi>f32</bdi> مقيمة في الذاكرة، ويشغّلها عبر <bdi>generic f32 kernels.</bdi> الـ<bdi>native K-quant matmul</bdi> ما كان موجود في النسخة هذي. الأرقام تحت توثق السياسة القديمة، مو حالة الـ<bdi>runtime</bdi> الحالي.</p>
 
-        <p>
-            وعشان كذا المسار الحالي غير مناسب كـ<bdi>deployment</bdi> منخفض
-            الذاكرة أو منخفض التأخير. الصفحة تثبت هذا الـ<bdi>baseline</bdi>
-            قبل تنفيذ مسار <bdi>native K-quant</bdi>. النتيجة مو ادعاء أن
-            <bdi>Q4_K_M</bdi> أو <bdi>Q6_K</bdi> غير فعالة بطبيعتها؛ هي ناتجة
-            عن سياسة الـ<bdi>loader</bdi> والـ<bdi>backend</bdi> الحالية في
-            <bdi>Ember</bdi>، وما ينفع نعممها على <bdi>GGUF</bdi> أو
-            <bdi>K-quants</bdi> أو <bdi>low-bit quantization</bdi> عموماً.
-        </p>
+        <p>عشان كذا المسار المقاس وقتها ما كان مناسب لهدف الذاكرة الأقل أو التأخير الأقل. النتيجة تخص سياسة الـ<bdi>loader</bdi> والـ<bdi>backend</bdi> في النسخة هذي، وما ينفع نعممها على <bdi>GGUF</bdi> أو <bdi>K-quants</bdi> أو <bdi>low-bit quantization</bdi> عموماً.</p>
 
         <div class="callout observation">
             <div class="label">الحالة</div>
@@ -221,7 +207,7 @@ GGUF K-quant blocks
             بس ما يكفي لوصف الـ<bdi>deployment</bdi> كله.
         </p>
 
-        <h2>وش اللي تثبته هذي المراجعة؟</h2>
+        <h2>إيش اللي تثبته هذي المراجعة؟</h2>
 
         <ul>
             <li>دعم <bdi>K-quant</bdi> الحالي في <bdi>Ember</bdi> مسار تحقق ومرجع، مو مسار <bdi>low-bit deployment</bdi> أصلي؛</li>
@@ -232,7 +218,7 @@ GGUF K-quant blocks
             <li><bdi>peak RSS</bdi> يحتاج تفسيراً عند وجود <bdi>mmap</bdi> وتمثيلات مكررة.</li>
         </ul>
 
-        <h2>وش اللي ما تثبته؟</h2>
+        <h2>إيش اللي ما تثبته؟</h2>
 
         <ul>
             <li>إن مسار فك التكميم في <bdi>K-quant</bdi> غير صحيح؛ هو مسار مرجعي متحقق منه، بس مو مسار تشغيل محسّن؛</li>
@@ -280,7 +266,7 @@ GGUF K-quant blocks
             بس ما يحول التشغيل إلى دراسة واسعة للأجهزة.
         </p>
 
-        <h2>وش لازم يظهر في المقارنات الجاية؟</h2>
+        <h2>إيش لازم يظهر في المقارنات الجاية؟</h2>
 
         <ul>
             <li>حجم الـ<bdi>checkpoint</bdi>؛</li>
@@ -314,7 +300,7 @@ GGUF K-quant blocks
             أو تتدخل فيه.
         </p>
 
-        <h2><bdi>artifacts</bdi></h2>
+        <h2>الملفات</h2>
 
         <p>
             مخرجات الـ<bdi>deployment benchmark</bdi> المجمدة والـ<bdi>runner</bdi>

@@ -59,6 +59,8 @@
             <a href="/research-notes/index.ar.html"><bdi>research notes</bdi></a>
         </div>
 
+
+        <div class="callout observation"><div class="label">سياق الملاحظة</div><p>الإعدادات والتقديرات والخطوات التالية هنا تخص وقت كتابة الملاحظة. نحتفظ بنتائج التشغيل كما هي؛ تحديث الصياغة ما يعني إننا أعدنا التجربة أو إن حالة التنفيذ القديمة لسه هي الحالية.</p></div>
         <h1>قبل ما نربط ذاكرات <bdi>KV</bdi> بين النماذج، لازم نخليها قابلة للقياس</h1>
 
         <div class="meta">
@@ -74,11 +76,7 @@
 
         <h2>الملخص</h2>
 
-        <p>
-            بدأت هالشغل من خطوة مغرية: آخذ <bdi>KV cache</bdi> من نموذج،
-            وأتعلم <bdi>linear map</bdi> صغير، ثم أختبر إذا كان نموذج ثاني يقدر
-            يكمل منه من دون ما يعيد حساب الـ<bdi>prefix</bdi> كامل.
-        </p>
+        <p>بدأت بفكرة آخذ <bdi>KV cache</bdi> من نموذج وأتعلم <bdi>linear map</bdi> صغير، وأشوف إذا نموذج ثاني يقدر يكمل منه بدون ما يعيد حساب الـ<bdi>prefix</bdi> كامل. بس قبلها احتجت حد أقدر أقيسه وأعيد تشغيله.</p>
 
         <p>بس ما بنيت الـ<bdi>mapper</bdi>.</p>
 
@@ -91,10 +89,7 @@
             ومسار تغيير مضبوط داخل الذاكرة.
         </p>
 
-        <p>
-            هذا أقل إثارة من عرض <bdi>transfer</bdi>. بس الشغل اللي يخلي أي
-            نتيجة نقل لاحقة قابلة للفهم.
-        </p>
+        <p>الشغل هنا يجهز طريقة نفهم بها أي نتيجة نقل لاحقة، سواء نجحت أو فشلت.</p>
 
         <div class="callout observation">
             <div class="label">الحالة</div>
@@ -138,7 +133,7 @@
             التوليد الجشع؟
         </p>
 
-        <h2>وش صار جزءاً أساسياً؟</h2>
+        <h2>إيش صار جزءاً أساسياً؟</h2>
 
         <p>
             الأثر الجديد له إصدار مستقل باسم
@@ -308,7 +303,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             </p>
         </div>
 
-        <h2>وش يثبته الدليل الحالي؟</h2>
+        <h2>إيش يثبته الدليل الحالي؟</h2>
 
         <ul>
             <li>حد الـ<bdi>native snapshot</bdi> المختبر يحفظ بتات <bdi>f16 KV</bdi> المستخدمة ويعيد الـ<bdi>cursor</bdi>،</li>
@@ -322,7 +317,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             أسهل في التشخيص؛ بسا مو دليل على نجاح الـ<bdi>mapper</bdi>.
         </p>
 
-        <h2>وش ما يثبته هذا العمل؟</h2>
+        <h2>إيش ما يثبته هذا العمل؟</h2>
 
         <ul>
             <li>ما تم تدريب <bdi>ridge mapper</bdi> أو <bdi>neural mapper</bdi>،</li>
@@ -387,11 +382,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             من دون ما ندّعي إنها أثر متعلم.
         </p>
 
-        <p>
-            هذا هو الحد الممل اللي أبيه قبل ما أسأل إذا كان
-            <bdi>KV cache</bdi> من <bdi>Qwen</bdi> يقدر يقوم مقام
-            <bdi>cache</bdi> من <bdi>Qwen</bdi> ثاني.
-        </p>
+        <p>هذا الحد اللي أبغى أثبته قبل ما أسأل إذا <bdi>cache</bdi> من <bdi>Qwen</bdi> يقدر يقوم مقام <bdi>cache</bdi> من <bdi>Qwen</bdi> ثاني.</p>
         <!-- docs:footer start -->
         <footer class="site-footer">
             <span>© 2026 voidwest</span>
