@@ -53,11 +53,12 @@
             mohammed al-thobaiti · 2026-05-16
         </div>
 
-        <p>After building Ember, I started reading about Arabic tokenization. I expected better morphological segmentation to explain better generation. The papers reviewed here make that relationship less straightforward.</p>
+        <p>Tokenizer alignment failed to predict generation performance in the reported Arabic tasks. GPT-4o reached 97% on nonce roots with 17% boundary precision. The result leaves the underlying computation unresolved.</p>
 
         <h2>why Arabic is a real stress test for tokenizers</h2>
 
-        <p>Arabic uses a <strong>root-and-pattern (non-concatenative) morphological system</strong>. a 3-consonant root like <em>k-t-b</em> (write) combines with templatic vowel patterns to produce: <em>kataba</em> (he wrote), <em>kitaab</em> (book), <em>maktab</em> (office), <em>maktūb</em> (written), <em>yaktubu</em> (he writes). the root never appears as a standalone word, it's always embedded inside a surface form.</p>
+        <p>Arabic uses a <strong>root-and-pattern (non-concatenative) morphological system</strong>. a 3-consonant root like <em>k-t-b</em> (write) combines with templatic vowel patterns to produce: <em>kataba</em> (he wrote), <em>kitaab</em> (book), <em>maktab</em> (office), <em>maktūb</em> (written), <em>yaktubu</em> (he writes).</p>
+        <p>the root never appears as a standalone word, it's always embedded inside a surface form.</p>
 
         <p>a single Arabic word can encode what would be 4 separate tokens in English. <em>fasayaktubūnahā</em> (فسيكتبونها) = "and they will write it", one word with proclitics, stem, and enclitic fused together.</p>
 
@@ -94,15 +95,15 @@
             <p><strong>no correlation</strong> between tokenizer alignment metrics and morphological generation performance. morpheme F1 and MCR have zero or weak negative correlation with generation accuracy.</p>
         </div>
 
-        <p>FANAR, which has a morphologically-informed tokenizer (MorphBPE), performed consistently but didn't dominate. its steadier performance might be instruction-following, not tokenizer quality.</p>
+        <p>FANAR’s MorphBPE tokenizer accompanied steady, middling performance. The contribution of instruction-following remains unresolved.</p>
 
         <p>English prompts performed better for most models in the reported comparison. Instruction-tuning language is a plausible contributor, but the experiment does not isolate training-language composition.</p>
 
-        <p>The paper argues for testing productive generalization directly instead of treating segmentation alignment as a proxy. Compositional reasoning and instruction-following are proposed explanations, not mechanisms isolated by these scores.</p>
+        <p>The paper recommends measuring productive generalization directly. Compositional reasoning and instruction-following remain proposed explanations for the scores.</p>
 
         <h2>what this means</h2>
 
-        <p>The 2020 embedding results and the 2026 generation results measure different tasks, models, and interventions. Scale is a hypothesis for part of the difference, not an explanation isolated by comparing the two papers.</p>
+        <p>The two studies differ in tasks, models, and interventions. Testing scale as an explanation would require a controlled comparison.</p>
 
         <ul>
             <li>at <strong>Word2Vec/mBERT scale</strong> (~100M params), explicit morphological injection at the embedding layer compensates for limited capacity to learn it implicitly</li>
@@ -112,7 +113,8 @@
 
         <p>the field has been asking "which tokenizer wins on classification tasks" for years. multiple papers (2023, 2024) kept landing on "it depends on the task and dataset." the 2026 paper reframes the question entirely: stop asking about surface segmentation and start asking about productive generalization.</p>
 
-        <p>the real gap might not be at the tokenizer or even the embedding layer, it might be in the <strong>internal representations</strong> the model builds. GPT-4 and GPT-4o are doing something ALLAM isn't, despite ALLAM having more Arabic training data and a better tokenizer. what is it?</p>
+        <p>the real gap might not be at the tokenizer or even the embedding layer, it might be in the <strong>internal representations</strong> the model builds. GPT-4 and GPT-4o are doing something ALLAM isn't, despite ALLAM having more Arabic training data and a better tokenizer.</p>
+        <p>what is it?</p>
 
         <h2>what's next</h2>
 

@@ -71,7 +71,7 @@
             <span class="tag model">Jais</span>
         </div>
 
-        <p>Jais 2’s clearest gain in this comparison is number. Gender and POS tell a different story, and the result changes with lexical metadata and the representation interface. The useful comparison is across tasks, splits, and readout locations rather than a single model ranking.</p>
+        <p>Jais 2 improved number recovery in the full-metadata held-out comparison. Number macro-F1 rose from 0.7177 to 0.9245; gender barely changed and POS declined. The two frozen configurations differ in several ways, so the comparison cannot isolate a model-revision effect.</p>
 
         <p>
             both runs use the same 4,701-example Modern Standard Arabic testbed,
@@ -83,13 +83,7 @@
 
         <pre><code class="language-plaintext">StandardScaler + RidgeClassifier(alpha=1.0)</code></pre>
 
-        <p>
-            these are two separately frozen experiments, not a controlled
-            intervention on one checkpoint. model revision, architecture,
-            tokenizer, parameter count, and base-versus-chat training status all
-            change together. the deltas below describe the two evaluated model
-            configurations; they do not isolate a causal “Jais 2 effect.”
-        </p>
+        <p>These separately frozen experiments change model revision, architecture, tokenizer, parameter count, and base-versus-chat training status together. Their deltas describe the evaluated configurations; the contribution of each change remains unresolved.</p>
 
         <h2>the two model configurations</h2>
 
@@ -124,27 +118,20 @@
             </tbody>
         </table>
 
-        <p>
-            Jais-13B uses <code>inceptionai/Jais-13B</code> at revision prefix
+        <p>Jais-13B uses <code>inceptionai/Jais-13B</code> at revision prefix
             <code>0d5eb87f</code>; JAIS-2-8B-Chat uses
             <code>inception42/Jais-2-8B-Chat</code> at revision prefix
-            <code>da0e1639</code>. both were requested and saved as BF16. the
+            <code>da0e1639</code>. both were requested and saved as BF16.</p>
+        <p>the
             tokenizer revisions differ too: Jais 1 has 5,149 target-span tokens
             across the examples, while Jais 2 has 5,118. every example aligned
-            successfully in both runs. absolute layer numbers therefore should
-            not be compared as though the networks had the same depth.
-        </p>
+            successfully in both runs.</p>
+        <p>absolute layer numbers therefore should
+            not be compared as though the networks had the same depth.</p>
 
         <h2>the headline result is task-dependent</h2>
 
-        <p>
-            the table compares the main <code>full_prompt_final</code> interface,
-            averaging each task over the lemma-heldout and root-heldout test
-            splits. each underlying split value is itself a mean across five
-            outer folds. the delta is Jais 2 minus Jais 1. accuracy is included
-            because the number task is imbalanced across classes and its accuracy
-            can hide a change in minority-class recovery.
-        </p>
+        <p>Number recovery improves most in the full_prompt_final comparison. The table averages lemma-heldout and root-heldout macro-F1, with each split averaged over five outer folds. Deltas are Jais 2 minus Jais 1. Accuracy is shown alongside macro-F1 because class imbalance can hide minority-class changes.</p>
 
         <table>
             <thead>
@@ -180,24 +167,27 @@
             </figcaption>
         </figure>
 
-        <p>
-            number is the clear separation. Jais 1's full-metadata held-out
+        <p>number is the clear separation. Jais 1's full-metadata held-out
             number macro-F1 is low despite 0.9362 accuracy, a sign that the majority
-            class is doing much of the work. Jais 2 raises both metrics, and its
+            class is doing much of the work.</p>
+        <p>Jais 2 raises both metrics, and its
             macro-F1 gain is much larger than its accuracy gain. gender is nearly
-            unchanged in this aggregate, while POS declines modestly. those
-            summaries conceal an important interface effect.
-        </p>
+            unchanged in this aggregate, while POS declines modestly.</p>
+        <p>those
+            summaries conceal an important interface effect.</p>
 
         <h2>metadata changes the comparison</h2>
+<p>the striking result is that the Jais 2 number gain survives without
+            metadata, but is smaller there. gender loses about 0.077 macro-F1 in
+            the metadata-free interface even though it is unchanged with the
+            full prompt.</p>
 
-        <p>
-            <code>full_prompt_final</code> reads the final state of a prompt that
+        <p><code>full_prompt_final</code> reads the final state of a prompt that
             contains surface, target, lemma, root, and pattern. the fields after
             the target are available at that endpoint. <code>metadata_free_prompt_final</code>
             removes the explicit lexical fields but remains a prompt-final
-            representation. the following table uses only the two grouped splits:
-        </p>
+            representation.</p>
+        <p>the following table uses only the two grouped splits:</p>
 
         <table>
             <thead>
@@ -216,16 +206,12 @@
             </tbody>
         </table>
 
-        <p>
-            the striking result is that the Jais 2 number gain survives without
-            metadata, but is smaller there. gender loses about 0.077 macro-F1 in
-            the metadata-free interface even though it is unchanged with the
-            full prompt. this is why “Jais 2 is better at morphology” is too
-            broad: the answer depends on which information is present at the
-            extraction endpoint.
-        </p>
 
-        <h2>where the representation is read also matters</h2>
+        <p>this is why “Jais 2 is better at morphology” is too
+            broad: the answer depends on which information is present at the
+            extraction endpoint.</p>
+
+        <h2>readout position</h2>
 
         <p>
             the two target-local interfaces read the final token overlapping the
@@ -250,14 +236,13 @@
             </tbody>
         </table>
 
-        <p>
-            Jais 2 is strongest on the target-final interface in this aggregate,
+        <p>Jais 2 is strongest on the target-final interface in this aggregate,
             narrowly ahead of full prompt-final. Jais 1's best aggregate here is
-            metadata-free prompt-final. that reversal is not evidence that one
+            metadata-free prompt-final.</p>
+        <p>that reversal is not evidence that one
             pooling rule is universally correct; it shows that the probe's
             estimand includes where the state is read, what the causal prefix
-            contains, and how a multi-token span is pooled.
-        </p>
+            contains, and how a multi-token span is pooled.</p>
 
         <h2>held-out transfer is still not random interpolation</h2>
 
@@ -283,35 +268,28 @@
             </tbody>
         </table>
 
-        <p>
-            both models lose performance when familiar lemma or root groups are
-            kept out of training. Jais 2's number result makes its grouped scores
-            much higher, but the lexical gap does not disappear. random splitting
-            remains an optimistic interpolation reference, not a measure of
-            transfer to unseen lexical groups.
-        </p>
+        <p>Both models lose performance on unseen lemma or root groups. Jais 2 improves grouped number scores substantially, while random splitting remains an optimistic interpolation reference.</p>
 
         <h2>controls and scope</h2>
 
-        <p>
-            each run selected layers on development data only, refit on
+        <p>each run selected layers on development data only, refit on
             train-plus-development, and evaluated test once per outer fold. all
-            4,701 examples aligned successfully for both models. the Jais 2
+            4,701 examples aligned successfully for both models.</p>
+        <p>the Jais 2
             archive contains 180 shuffled-label cells; none exceeds its
             train-only majority baseline. the larger Jais 1 archive contains 360
             shuffled cells for its two designated primary models (Qwen3-0.6B and
-            Llama-3.2-1B), not for Jais-13B itself. these controls check the
-            pipeline; they are not a causal test of model behavior.
-        </p>
+            Llama-3.2-1B), not for Jais-13B itself.</p>
+        <p>these controls check the
+            pipeline; they are not a causal test of model behavior.</p>
 
-        <p>
-            the result is therefore precise but narrow: under this prompt,
+        <p>the result is therefore precise but narrow: under this prompt,
             lexical split, alignment rule, target interface, pooling rule,
             selected layer, and linear estimator, Jais 2 makes number more
-            linearly recoverable than Jais 1 in these frozen captures. that does
+            linearly recoverable than Jais 1 in these frozen captures.</p>
+        <p>that does
             not establish better Arabic generation, universal Arabic competence,
-            or that either model uses the decoded feature during generation.
-        </p>
+            or that either model uses the decoded feature during generation.</p>
 
         <h2>frozen sources</h2>
 

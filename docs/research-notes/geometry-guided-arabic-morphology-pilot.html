@@ -62,43 +62,25 @@
 
         <h2>summary</h2>
 
-        <p>The question is whether layers selected using a morphology-related representation signal make better adaptation targets than parameter-matched random layers. This local pilot tests an earlier requirement: whether development-selected layer groups carry stronger held-out Arabic POS signal in frozen features.</p>
+        <p>Development-selected layer groups carried stronger held-out POS signal than the random controls. At K=4, macro-F1 improved by 4.70 points for Qwen and 3.15 for Llama, beating all five random groups in each model. This tests frozen features; LoRA adaptation remains untested.</p>
 
-        <p>
-            this run does not test LoRA. it trains deterministic linear controls
-            on concatenated frozen hidden-state features from Qwen3-0.6B and
-            Llama-3.2-1B. the K=4 result repeats in both models and survives all
-            five declared random controls. that is enough to justify a tiny
-            targeted-LoRA intervention. it is not a causal localization claim.
-        </p>
+        <p>We fitted deterministic linear classifiers to concatenated frozen states from Qwen3-0.6B and Llama-3.2-1B. The replicated K=4 result motivates a small targeted-LoRA test. Adaptation and causal localization remain open questions.</p>
 
         <div class="callout observation">
             <div class="label">status</div>
-            <p>
-                frozen-feature evidence only. this is not a LoRA result, not
-                language-model adaptation evidence, and not evidence that Arabic
-                morphology is causally localized in four layers.
-            </p>
+            <p>Scope: frozen-feature classification. LoRA adaptation and causal localization of Arabic morphology remain untested.</p>
         </div>
 
         <h2>motivation</h2>
 
-        <p>
-            Arabic morphology is a useful test case because the structure is
-            rich and the generalization question matters. related forms can
-            share roots, lemmas, and surface patterns, so an easy random split
-            can reward lexical overlap instead of the kind of held-out
-            morphology signal the experiment is supposed to measure.
-        </p>
+        <p>Related Arabic forms share roots, lemmas, and surface patterns. Random splits can reward that overlap; grouped splits test transfer across lexical groups.</p>
 
-        <p>
-            random layer adaptation is also a weak control unless it is matched.
-            changing the number of layers, target modules, adapter rank, data,
+        <p>random layer adaptation is also a weak control unless it is matched. changing the number of layers, target modules, adapter rank, data,
             or training budget changes capacity or compute along with layer
-            choice. the contrast i care about is narrower: geometry-selected
+            choice.</p>
+        <p>the contrast i care about is narrower: geometry-selected
             layers versus non-overlapping random layers, with everything else
-            held fixed.
-        </p>
+            held fixed.</p>
 
         <p>
             the local control cannot tell me whether targeted LoRA will work.
@@ -126,13 +108,7 @@
             alpha 16, and matched expected adapter counts within each K.
         </p>
 
-        <p>
-            that module metadata is for future manifest parity. sklearn never
-            touches <code>q_proj</code> or <code>v_proj</code>. it concatenates
-            the selected layers' frozen hidden-state vectors and fits a linear
-            classifier. this is a test of layer-group signal, not adapter
-            injection.
-        </p>
+        <p>The module metadata is reserved for future manifest parity. sklearn concatenates selected layers’ frozen hidden states and fits a linear classifier; q_proj and v_proj remain untouched.</p>
 
         <h2>main results</h2>
 
@@ -171,14 +147,12 @@
             </figcaption>
         </figure>
 
-        <p>
-            K=4 is positive for both models and beats all five non-overlapping
+        <p>K=4 is positive for both models and beats all five non-overlapping
             random controls in both cases. macro-F1 improves by 4.70 points for
-            Qwen and 3.15 points for Llama. the K=1 and K=2 rows matter too:
-            Qwen K=1 fails this control, and Llama K=2 is effectively neutral.
-            the result is not “selected layers always win.” it is a replicated
-            local signal at K=4.
-        </p>
+            Qwen and 3.15 points for Llama.</p>
+        <p>the K=1 and K=2 rows matter too:
+            Qwen K=1 fails this control, and Llama K=2 is effectively neutral. the result is not “selected layers always win.” it is a replicated
+            local signal at K=4.</p>
 
         <h2>class-level K=4 result</h2>
 
@@ -280,13 +254,12 @@
 
         <h2>conclusion</h2>
 
-        <p>
-            this is a local proof-of-life. development-ranked K=4 layer groups
+        <p>this is a local proof-of-life. development-ranked K=4 layer groups
             carry stronger held-out POS signal than five non-overlapping random
             groups in two small decoder models, and the gain appears across all
-            three POS classes. that justifies the intervention experiment. it
-            does not yet claim adaptation success.
-        </p>
+            three POS classes.</p>
+        <p>that justifies the intervention experiment. it
+            does not yet claim adaptation success.</p>
         <!-- docs:footer start -->
         <footer class="site-footer">
             <span>© 2026 voidwest</span>

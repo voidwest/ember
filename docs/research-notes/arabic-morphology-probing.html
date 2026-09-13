@@ -61,7 +61,7 @@
 
         <div class="callout warning">
             <div class="label">method clarification · 2026-08 audit</div>
-            <p>a probe cannot test whether a representation inferred a root or pattern when the prompt states that same root or pattern. label-revealed prompts are useful only as positive controls for prompt retention. the primary experiment must use a surface-only prompt and predict morphology from the observed word, with label-revealed runs reported separately.</p>
+            <p>This note proposes testing whether probes can recover Arabic roots and patterns from model states. The planned stimulus grid combines about 200 nonce roots with 10 patterns. It is an experiment plan; no probe result is reported here.</p>
         </div>
 
         <div class="callout open-question">
@@ -138,7 +138,8 @@
         <div class="callout hypothesis">
             <div class="label">Hypothesis</div>
             <p><strong>Q5: the scaling question</strong></p>
-            <p>if possible, run the same probes on GPT-2 small → medium → large (or LLaMA 3 1B → 3B → 8B). at what parameter count does the model transition from memorization (ALLAM-like, real roots only) to productive generalization (GPT-4o-like, nonce roots)? this answers the inflection-point question from the tokenizer writeup.</p>
+            <p>if possible, run the same probes on GPT-2 small → medium → large (or LLaMA 3 1B → 3B → 8B). at what parameter count does the model transition from memorization (ALLAM-like, real roots only) to productive generalization (GPT-4o-like, nonce roots)?</p>
+        <p>this answers the inflection-point question from the tokenizer writeup.</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
@@ -172,7 +173,7 @@
 
         <h3>if GPT-4 succeeds but we can't probe it</h3>
 
-        <p>The probing plan requires open-weight models with accessible hidden states. GPT-4o’s reported 97% is a behavioral reference, not an attainable ceiling established by this experiment or evidence about its internal organization.</p>
+        <p>The plan requires open-weight models with accessible hidden states. GPT-4o’s reported 97% provides a behavioral reference; its internal organization remains inaccessible to this experiment.</p>
 
         <h3>if probes are near chance everywhere</h3>
 

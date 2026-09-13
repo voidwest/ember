@@ -71,7 +71,7 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>Arabic benchmarks let us compare systems on Arabic tasks. Their aggregate accuracy also depends on the evaluation interface: the prompt, answer format, parser, and option order.</p>
+        <p>Moving the correct answer changed measured accuracy sharply in this ArabicMMLU audit. Qwen3-0.6B scored 0.680 with the answer under A and 0.020 under B. The small local-model sample measures interface sensitivity; it cannot rank Arabic capability broadly.</p>
 
         <p>
             this note is a small diagnostic pilot on ArabicMMLU-style
@@ -80,20 +80,11 @@
             score, especially when evaluating small local decoder-only models.
         </p>
 
-        <p>
-            in the strongest case, Qwen3-0.6B scored 0.680 when the correct
-            answer was labeled A, but 0.020 when the same setup placed the
-            correct answer under B. that does not make ArabicMMLU invalid, but it
-            does show why raw accuracy is not enough.
-        </p>
+        <p>Qwen3-0.6B scored 0.680 with the correct answer under A and 0.020 under B in the same setup. That sensitivity makes answer position essential context for the accuracy score.</p>
 
         <div class="callout observation">
             <div class="label">status</div>
-            <p>
-                treat this as a measurement note, not a model ranking. the item
-                count is small, the models are small/local decoder-only models,
-                and the 3B run is a scale-check rather than a full scaling study.
-            </p>
+            <p>This small-sample audit covers local decoder-only models. The 3B run adds one scale check; broader rankings and scaling conclusions require more models and items.</p>
         </div>
 
         <p>
@@ -104,11 +95,7 @@
             eliminate option-position sensitivity.
         </p>
 
-        <p>
-            in multiple-choice evaluation, a model is not only solving the
-            underlying task. it is also following the answer format, choosing
-            from labels, and interacting with a parser.
-        </p>
+        <p>Multiple-choice evaluation combines task solving, answer-format compliance, label selection, and parsing.</p>
 
         <h2>why multiple-choice evaluation can be fragile</h2>
 
@@ -133,14 +120,13 @@
 
         <h2>pilot 1: prompt-format sensitivity</h2>
 
-        <p>
-            pilot 1 used 50 ArabicMMLU source items and 6 prompt variants per
+        <p>pilot 1 used 50 ArabicMMLU source items and 6 prompt variants per
             item, for 300 prompts per model. the models were Qwen3-0.6B,
-            Llama-3.2-1B, and Llama-3.2-3B. the metrics were overall accuracy,
+            Llama-3.2-1B, and Llama-3.2-3B.</p>
+        <p>the metrics were overall accuracy,
             accuracy on parseable outputs, parse-failure rate, semantic
             consistency across variants, strict-output accuracy, strict-output
-            parse failure, and predicted label distribution.
-        </p>
+            parse failure, and predicted label distribution.</p>
 
         <p>
             here, semantic consistency means the proportion of source items for
@@ -167,22 +153,16 @@
             </tbody>
         </table>
 
-        <p>
-            Qwen3-0.6B had high parse failure under non-strict variants. strict
+        <p>Qwen3-0.6B had high parse failure under non-strict variants. strict
             output prompting eliminated parse failures for all three models, but
-            fixing parseability did not fully solve robustness. Llama-3.2-3B
+            fixing parseability did not fully solve robustness.</p>
+        <p>Llama-3.2-3B
             improved accuracy, parseability, and semantic consistency, which is
             evidence that scale helps in this setup. still, semantic consistency
             remained 0.340, meaning most source items did not receive a stable
-            semantic answer across all prompt variants.
-        </p>
+            semantic answer across all prompt variants.</p>
 
-        <p>
-            for the Llama-3.2-3B pilot 1 run, the aggregate predicted label
-            distribution was A/B/C/D/E/PF = 59/87/92/58/2/2. that distribution is
-            not collapsed to one label, but it is still useful context for
-            interpreting the accuracy number.
-        </p>
+        <p>Llama-3.2-3B’s aggregate label distribution in pilot 1 was A/B/C/D/E/PF = 59/87/92/58/2/2. Predictions spread across labels, with B and C most frequent.</p>
 
         <h2>pilot 2: option-label and correct-position bias</h2>
 
@@ -266,14 +246,11 @@
             </tbody>
         </table>
 
-        <p>
-            strict-output prompting eliminated parse failures for all models.
-            that is useful, but it also makes the remaining instability clearer.
-            Qwen3-0.6B showed an extreme A-label preference: 126 of 200
+        <p>strict-output prompting eliminated parse failures for all models. that is useful, but it also makes the remaining instability clearer.</p>
+        <p>Qwen3-0.6B showed an extreme A-label preference: 126 of 200
             predictions were A. its accuracy changed sharply depending on where
             the correct answer was placed: 0.680 when correct=A versus 0.020 when
-            correct=B.
-        </p>
+            correct=B.</p>
 
         <p>
             Llama-3.2-1B was less extreme, but still unstable. Llama-3.2-3B
@@ -292,13 +269,7 @@
             overall accuracy and better semantic consistency than Llama-3.2-1B.
         </p>
 
-        <p>
-            the important caveat is that the 3B result is a robustness check, not
-            a scaling study. it adds one larger model size under the same audit
-            setup. it does not establish how larger models in general behave, and
-            it does not replace evaluation on stronger arabic-capable systems.
-            larger-model evaluation is future work.
-        </p>
+        <p>The 3B run adds one larger model under the same audit setup. Generalizing the finding requires a broader size range and stronger Arabic-capable systems.</p>
 
         <p>
             the practical reading is cautious: scaling improved robustness here,
@@ -364,19 +335,9 @@
 
         <h2>closing</h2>
 
-        <p>
-            the main takeaway is not that one model is better than another. the
-            model ranking is not the point of this audit. the point is that raw
-            benchmark accuracy can conflate task competence with benchmark
-            interface behavior.
-        </p>
+        <p>Raw benchmark accuracy can combine task competence with sensitivity to the evaluation interface. Report parsing and position effects alongside the score.</p>
 
-        <p>
-            arabic evaluation should not only ask whether a model gets the right
-            answer. it should also ask whether the answer survives harmless
-            changes in prompt format, option labels, option order, and arabic
-            text normalization.
-        </p>
+        <p>Arabic evaluation should measure whether correct answers survive harmless changes to prompt format, labels, option order, and text normalization.</p>
         <!-- docs:footer start -->
         <footer class="site-footer">
             <span>© 2026 voidwest</span>

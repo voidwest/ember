@@ -56,9 +56,10 @@
             <span class="tag">arXiv:2603.15773</span>
         </div>
         <h2>the core claim</h2>
-        <p>In the reported Arabic root-pattern generation tasks, closer token–morpheme alignment did not reliably predict better generation. Clean segmentation did not guarantee success, and poor alignment did not prevent it.</p>
+        <p>Closer tokenizer–morpheme alignment failed to predict better generation in the reported tasks. GPT-4o reached 97% on nonce roots with 17% boundary precision. The comparison tests this association; it leaves the mechanism behind the performance unresolved.</p>
         <h2>why Arabic morphology is a good test</h2>
-        <p>Arabic uses a <strong>root-and-pattern</strong> (non-concatenative) system. consonantal roots combine with templatic vowel patterns to form words. example: root <em>ktb</em> (write) + pattern <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (written). the root and pattern interleave; they aren't concatenated like prefix+stem+suffix in English, which makes Arabic a stress test for subword tokenizers (BPE, Unigram, WordPiece) built for concatenative morphology.</p>
+        <p>Arabic uses a <strong>root-and-pattern</strong> (non-concatenative) system. consonantal roots combine with templatic vowel patterns to form words.</p>
+        <p>example: root <em>ktb</em> (write) + pattern <em>maf&#x16B;l</em> → <em>makt&#x16B;b</em> (written). the root and pattern interleave; they aren't concatenated like prefix+stem+suffix in English, which makes Arabic a stress test for subword tokenizers (BPE, Unigram, WordPiece) built for concatenative morphology.</p>
         <h2>experimental design</h2>
         <h3>part 1: tokenizer morphological alignment</h3>
         <p>measured how well each tokenizer's segments match gold-standard morpheme boundaries from CAMEL and Farasa analyzers, on MSA (ATB3) and dialectal (BOLT) Arabic. metrics:</p>
@@ -97,7 +98,7 @@
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
             <p><strong>finding 4</strong></p>
-            <p><strong>one-shot prompting helps weak models, not strong ones.</strong> GPT-4 and GPT-4o were flat across zero-shot and one-shot. LLaMA-3, Qwen-3, and Cohere improved with an example. they need in-context scaffolding to figure out the transformation.</p>
+            <p>One-shot prompting improved LLaMA-3, Qwen-3, and Cohere; GPT-4 and GPT-4o stayed flat. The weaker models benefited from an example of the transformation.</p>
         </div>
         <div class="callout observation">
             <div class="label">Observation</div>
@@ -113,7 +114,7 @@
         <h3>3. the model comparison does not isolate training choices</h3>
         <p>ALLAM and FANAR underperformed GPT-4 and GPT-4o on the reported tasks. Architecture, training data, scale, and tuning differ together, so these results do not isolate which factor explains the gap.</p>
         <h3>4. nonce conditions expose a generalization gap</h3>
-        <p>ALLAM scored 67% on real roots and 20% on nonce roots, a 47-point gap. Adding nonce conditions exposes a failure hidden by real-word-only evaluation. It is one useful generalization test, not the only way to investigate memorization.</p>
+        <p>ALLAM scored 67% on real roots and 20% on nonce roots, a 47-point generalization gap that real-word-only evaluation would miss.</p>
         <h3>5. questions for a controlled follow-up</h3>
         <ul>
             <li><strong>tokenization-agnostic morphology learning</strong>: teach LLMs morphology through data and tuning, not custom tokenizers</li>

@@ -57,8 +57,8 @@
             <span class="tag key">embeddings</span>
         </div>
 
-        <h2>the claim</h2>
-        <p>This study evaluates morphology-aware tokens at the embedding interface of Word2Vec and BERT on NER, sentiment, and POS tagging. The reported gains belong to those experimental settings; they are not a guarantee for every architecture or task.</p>
+        <h2>the result</h2>
+        <p>The study reports gains from morphology-aware tokens with Word2Vec and BERT. It reports a 60% smaller vocabulary and evaluates NER, sentiment, and POS tagging. The gains belong to those experimental settings.</p>
 
         <h2>results</h2>
         <ul>
@@ -68,12 +68,14 @@
         </ul>
 
         <h2>context</h2>
-        <p>this worked because Arabic's morphological system has a finite (and relatively small) set of roots, patterns, and affixes. a morphology-aware tokenizer maps surface forms to these primitives, reducing the effective vocabulary from ~1M surface forms to ~20K morphemes, and since the embedding layer accounts for a large fraction of parameter count in smaller models, shrinking the embedding table while keeping semantic compositionality intact produces gains.</p>
+        <p>this worked because Arabic's morphological system has a finite (and relatively small) set of roots, patterns, and affixes.</p>
+        <p>a morphology-aware tokenizer maps surface forms to these primitives, reducing the effective vocabulary from ~1M surface forms to ~20K morphemes, and since the embedding layer accounts for a large fraction of parameter count in smaller models, shrinking the embedding table while keeping semantic compositionality intact produces gains.</p>
 
         <div class="callout hypothesis">
             <div class="label">Hypothesis</div>
-            <p><strong>why this matters alongside the 2026 results</strong></p>
-            <p>The 2020 embedding study and the 2026 generation study ask different questions. Their results can coexist: an explicit morphology intervention can help particular embedding tasks while tokenizer alignment alone fails to predict generation. Scale is one hypothesis to test, alongside task, architecture, and training differences; neither comparison identifies a transition point.</p>
+            <p>comparison with the 2026 results</p>
+            <p>The 2020 embedding study and the 2026 generation study ask different questions. Their results can coexist: an explicit morphology intervention can help particular embedding tasks while tokenizer alignment alone fails to predict generation.</p>
+        <p>Scale is one hypothesis to test, alongside task, architecture, and training differences; neither comparison identifies a transition point.</p>
         </div>
         <!-- docs:footer start -->
         <footer class="site-footer">

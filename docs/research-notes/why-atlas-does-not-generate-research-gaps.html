@@ -57,14 +57,13 @@
             <span class="tag key">Atlas</span>
         </div>
 
-        <p>Atlas maps recurring limitations, missing evaluations, open problems, and future-work claims across academic papers. Its starting point is a statement an author actually made, with enough context to review it.</p>
+        <p>Atlas extracts source-backed limitation statements for human review. Version 1.0.0 applies seven rule categories to English text and text-bearing PDFs. A candidate statement still needs review before it can support a research-gap claim.</p>
 
-        <p>
-            the obvious version of this tool would ask an LLM to read the papers
+        <p>the obvious version of this tool would ask an LLM to read the papers
             and generate a list of research gaps. that version would also be the
-            easiest one to demo. give it a folder of PDFs, wait a few minutes,
-            and show a clean list of promising directions.
-        </p>
+            easiest one to demo.</p>
+        <p>give it a folder of PDFs, wait a few minutes,
+            and show a clean list of promising directions.</p>
 
         <p>i did not build that version.</p>
 
@@ -100,14 +99,12 @@
             <li><code>more work is needed</code>.</li>
         </ul>
 
-        <p>
-            this works because academic limitations are not always subtle.
-            papers often announce them using formulaic language, especially in
-            dedicated sections. regex is weak at meaning, but it is good at
+        <p>this works because academic limitations are not always subtle. papers often announce them using formulaic language, especially in
+            dedicated sections.</p>
+        <p>regex is weak at meaning, but it is good at
             finding repeated surface forms. section context makes those forms
             more useful: <code>limited to</code> means something different in a
-            Limitations section than it does in a dataset description.
-        </p>
+            Limitations section than it does in a dataset description.</p>
 
         <p>
             the early version scored each candidate from two sources: the
@@ -130,14 +127,13 @@
             object.
         </p>
 
-        <p>
-            if a paper says it did not evaluate robustness under domain shift,
+        <p>if a paper says it did not evaluate robustness under domain shift,
             that is evidence about what the authors did not test. it is not yet
             proof that nobody has tested it, that the problem remains open, or
-            that another study would be novel. answering those questions needs
+            that another study would be novel.</p>
+        <p>answering those questions needs
             literature search, comparison across papers, and scientific
-            judgment.
-        </p>
+            judgment.</p>
 
         <p>
             a language model can collapse those steps into one fluent sentence.
@@ -175,15 +171,13 @@
             anything stronger.
         </p>
 
-        <p>
-            later versions added promotion, deterministic map nodes, manifests,
+        <p>later versions added promotion, deterministic map nodes, manifests,
             validation, safer edits, and release diagnostics. a map node is a
             group of reviewed evidence: for example, several papers reporting
             missing dialect evaluation can sit under one node without Atlas
-            claiming that the issue remains unresolved across the literature.
-            every added layer put more friction between raw regex output and a
-            finished research claim.
-        </p>
+            claiming that the issue remains unresolved across the literature.</p>
+        <p>every added layer put more friction between raw regex output and a
+            finished research claim.</p>
 
         <h2>determinism is part of the method</h2>
 
@@ -219,14 +213,13 @@
             important problem onto the user. academic corpora arrive as PDFs.
         </p>
 
-        <p>
-            Atlas 1.0.0 added local PDF ingestion through Poppler's
+        <p>Atlas 1.0.0 added local PDF ingestion through Poppler's
             <code>pdftotext</code>. the converter runs with fixed reading-order
             arguments, and Atlas preserves the exact converted text used for
-            every character offset. the output does not pretend an offset points
+            every character offset.</p>
+        <p>the output does not pretend an offset points
             into PDF bytes or page coordinates. it points into a saved UTF-8
-            artifact that can be opened and checked.
-        </p>
+            artifact that can be opened and checked.</p>
 
         <p>
             the first real-corpus run was ugly. three papers produced 293
@@ -236,13 +229,13 @@
             text into candidate spans.
         </p>
 
-        <p>
-            this was useful. the failure was concrete. i could point to the
+        <p>this was useful. the failure was concrete.</p>
+        <p>i could point to the
             converted text, the bad boundary, the rule hit, and the candidate
             ID. changing PDF extraction from layout-preserving output to reading
-            order removed the worst cross-column spans. tightening heading
-            rules reduced the same corpus from 293 detected sections to 126.
-        </p>
+            order removed the worst cross-column spans.</p>
+        <p>tightening heading
+            rules reduced the same corpus from 293 detected sections to 126.</p>
 
         <p>
             126 is still noisy. PDF text is not a semantic document tree, and a
@@ -264,16 +257,15 @@
             <code>future research would</code> or <code>future studies should</code>.
         </p>
 
-        <p>
-            second, a paper about limitation generation contains the word
+        <p>second, a paper about limitation generation contains the word
             <em>limitation</em> everywhere: prompts, labels, rubric definitions,
             model outputs, and dataset examples. substring scoring treated
             headings such as <em>Limitation Subtype: Limited Datasets</em> as if
-            they were the paper's own Limitations section. during the final
+            they were the paper's own Limitations section.</p>
+        <p>during the final
             pre-release hardening for the public 1.0.0 tag, that shortcut was
             replaced with exact canonical heading scores, and references were
-            removed from candidate scanning.
-        </p>
+            removed from candidate scanning.</p>
 
         <p>
             the corpus also exposed misses. explicit paragraphs beginning with
@@ -357,11 +349,7 @@
             makes the reviewer do work.
         </p>
 
-        <p>
-            that is the point: the first useful map of research debt should show
-            where every claim came from before it tries to tell us where
-            research should go next.
-        </p>
+        <p>Every extracted research limitation should lead back to its source statement so a reader can check it.</p>
 
         <p>
             source and release artifacts:

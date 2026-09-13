@@ -62,17 +62,12 @@
 
         <div class="callout observation">
             <div class="label">method status · 2026-08 audit</div>
-            <p>the source prompts expose the root and pattern labels verbatim. all root/pattern accuracies on this page are label-revealed prompt-retention controls, not evidence of morphology inferred from a surface form. cross-family curves are retained for provenance but should not be used for representational or scaling claims until rerun with surface-only prompts. the Gemma comparison has an additional stale pre-orientation-fix parity caveat.</p>
+            <p>The archived probes recovered root and pattern labels supplied directly in the prompts. Across seven models, pattern accuracy reached 1.000 at both peak and final layers. These are prompt-retention controls; the setup cannot establish morphology inferred from surface words.</p>
         </div>
 
         <p>This archived layerwise run asks whether a linear probe can recover root and pattern labels supplied in the prompt from saved hidden states across LLaMA, Qwen, and one completed Gemma model. It measures prompt retention under this setup.</p>
 
-        <p>
-            the answer is descriptive, not behavioral. these probes measure
-            recoverability from hidden states under this dataset and split
-            policy. they do not show that a model understands Arabic morphology,
-            generates correct forms, or causally uses the probed features.
-        </p>
+        <p>These probes measure hidden-state recoverability under the specified dataset and splits. Arabic generation and causal use of the features require separate evaluation.</p>
 
         <div class="callout hypothesis">
             <div class="label">status</div>
@@ -174,13 +169,12 @@
 
         <div class="callout observation">
             <div class="label">observation</div>
-            <p>
-                the LLaMA-vs-Qwen final-layer contrast is the most interesting
+            <p>the LLaMA-vs-Qwen final-layer contrast is the most interesting
                 cross-family signal in the table: LLaMA 1B and 3B stay saturated,
                 while all Qwen models drop below peak. this is hypothesis-generating
-                only. the current run does not establish why the contrast appears
-                or whether it survives reruns.
-            </p>
+                only.</p>
+        <p>the current run does not establish why the contrast appears
+                or whether it survives reruns.</p>
         </div>
 
         <h2>Gemma E2B caveat</h2>
@@ -192,14 +186,12 @@
             representational result.
         </p>
 
-        <p>
-            the Gemma E2B golden-logit validation reached only cosine ~0.87
-            against llama.cpp, with gradual layerwise drift from layer 5 onward.
-            later hidden states may therefore be affected by numerical
+        <p>the Gemma E2B golden-logit validation reached only cosine ~0.87
+            against llama.cpp, with gradual layerwise drift from layer 5 onward. later hidden states may therefore be affected by numerical
             accumulation in the implementation rather than only by model-internal
-            morphology representations. the layer 14 root peak and final-layer
-            drop are potentially confounded by this.
-        </p>
+            morphology representations.</p>
+        <p>the layer 14 root peak and final-layer
+            drop are potentially confounded by this.</p>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_peak_layer_summary.png"
@@ -215,22 +207,16 @@
             every model also has a final-layer score of 1.000.
         </p>
 
-        <p>
-            this is a strong interpretability limit. pattern is only a 10-way
+        <p>this is a strong interpretability limit. pattern is only a 10-way
             classification task here, and ceiling performance leaves little room
-            to interpret family differences, scale differences, or layer timing.
-            the stimuli may simply be too easy for this task under the current
+            to interpret family differences, scale differences, or layer timing.</p>
+        <p>the stimuli may simply be too easy for this task under the current
             probe setup. pattern results should not be used to support
-            cross-family or scale comparisons in this run.
-        </p>
+            cross-family or scale comparisons in this run.</p>
 
         <h2>exploratory geometry</h2>
 
-        <p>
-            the RSA, CCA, and PCA figures are included as exploratory checks,
-            not primary evidence. the saved geometry files are within-model
-            matrices; they are not pairwise cross-model CCA or RSA.
-        </p>
+        <p>The exploratory RSA, CCA, and PCA figures use within-model matrices. Pairwise cross-model geometry remains unmeasured.</p>
 
         <figure class="chart-wrap">
         <img class="chart" src="/plots/morphology_cross_family_gemma_rsa.png"

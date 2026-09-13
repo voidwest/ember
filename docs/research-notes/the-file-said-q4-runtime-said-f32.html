@@ -74,17 +74,16 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>In this pre-optimization snapshot, Ember loaded K-quants correctly but expanded Q6_K and Q4_K_M into resident f32 weights for generic f32 kernels. Native K-quant matmul was not yet implemented in that version. The measurements below describe that historical loader policy, not the current runtime.</p>
+        <p>The historical loader expanded K-quant weights to f32, making smaller files expensive in memory. Qwen Q4_K_M occupied 1066 MB on disk and peaked at 8712 MB RSS, versus 1941 MB RSS for Q8_0. These measurements describe the old loader policy, which later changed.</p>
 
-        <p>
-            that makes the current path unsuitable as a low-memory or
+        <p>that makes the current path unsuitable as a low-memory or
             low-latency deployment backend. this note freezes that
             pre-optimization baseline before native K-quant execution is
-            implemented. it is not a claim that Q4_K_M or Q6_K are inherently
+            implemented.</p>
+        <p>it is not a claim that Q4_K_M or Q6_K are inherently
             inefficient: the result comes from Ember's current loader and
             backend policy and should not be generalized to GGUF, K-quants,
-            or low-bit quantization as a whole.
-        </p>
+            or low-bit quantization as a whole.</p>
 
         <div class="callout observation">
             <div class="label">status</div>
@@ -165,14 +164,13 @@
             resident and uses its packed Q8 execution path.
         </p>
 
-        <p>
-            the current K-quant path is a reference loader, not a native
+        <p>the current K-quant path is a reference loader, not a native
             K-quant backend. the loader dequantizes the weights to f32 at load
             time, keeps the expanded buffers resident, and sends the work
-            through generic f32 execution. there is no K-specific matmul or
+            through generic f32 execution.</p>
+        <p>there is no K-specific matmul or
             packed kernel in Ember's current backend. the checkpoint is still
-            Q4 or Q6 on disk; the ordinary in-memory deployment is not.
-        </p>
+            Q4 or Q6 on disk; the ordinary in-memory deployment is not.</p>
 
         <pre><code>Q8_0:
 GGUF Q8 blocks

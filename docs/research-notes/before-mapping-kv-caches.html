@@ -76,18 +76,11 @@
 
         <h2>summary</h2>
 
-        <p>I wanted to take a KV cache from one model, learn a small linear map, and test whether another model could continue from it without recomputing the prefix. First, I needed a boundary I could measure and replay.</p>
+        <p>Ember can save, compare, and replay a compatible KV cache before we try mapping it between models. The snapshot format is ember.kv-snapshot.v1, and the replay check requires exact f32 logits. This establishes the measurement interface; cross-model transfer remains untested.</p>
 
         <p>i did not build the mapper.</p>
 
-        <p>
-            instead, i spent the day making KV state into something Ember can
-            export, verify, import, replay, compare, and perturb under explicit
-            contracts. the result is a first-class three-file snapshot, exact
-            same-model replay validation, per-layer and per-head K/V metrics,
-            attention-output and logit diagnostics, and a controlled in-memory
-            altered-state path.
-        </p>
+        <p>The implementation adds a three-file snapshot and exact same-model replay. It also measures per-layer and per-head K/V differences, attention outputs, logits, and controlled in-memory perturbations.</p>
 
         <p>
             that is less exciting than a transfer demo. it is also the work
@@ -96,23 +89,20 @@
 
         <div class="callout observation">
             <div class="label">status</div>
-            <p>
-                Ember can now measure and causally perturb compatible KV state.
-                this is not a cross-model transfer result, not evidence that a
-                ridge mapper will work, and not a latency claim.
-            </p>
+            <p>Ember can now measure and causally perturb compatible KV state. Cross-model transfer, mapper quality, and latency gains remain untested.</p>
         </div>
 
         <h2>why the mapper had to wait</h2>
 
-        <p>
-            a mapped cache can fail for several unrelated reasons. the snapshot
-            may be malformed. the token prefix may not match. the cache cursor
-            may be off by one. RoPE or Q/K normalization may be interpreted in
-            the wrong coordinate system. import may change f16 bits. the model
+        <p>a mapped cache can fail for several unrelated reasons. the snapshot
+            may be malformed.</p>
+        <p>the token prefix may not match. the cache cursor
+            may be off by one.</p>
+        <p>RoPE or Q/K normalization may be interpreted in
+            the wrong coordinate system. import may change f16 bits.</p>
+        <p>the model
             may take a different execution path. or the learned map may simply
-            be bad.
-        </p>
+            be bad.</p>
 
         <p>
             if all of those failures collapse into one final generated string,
@@ -146,14 +136,13 @@
 ├── keys.f16le
 └── values.f16le</code></pre>
 
-        <p>
-            K and V are stored as compact f16 bit patterns in
+        <p>K and V are stored as compact f16 bit patterns in
             <code>[layer][kv_head][position][dimension]</code> order. unused
-            cache capacity is not serialized. the manifest records the model
+            cache capacity is not serialized.</p>
+        <p>the manifest records the model
             and tokenizer hashes, cache geometry, RoPE layout and theta, Q/K
             normalization semantics, value state, execution mode and
-            fingerprint, prefix-token hash, resume token, and payload hashes.
-        </p>
+            fingerprint, prefix-token hash, resume token, and payload hashes.</p>
 
         <p>
             import is intentionally strict. there is no “close enough” switch.
@@ -268,22 +257,19 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             in memory.
         </p>
 
-        <p>
-            the operation has a typed receipt naming the native source snapshot,
+        <p>the operation has a typed receipt naming the native source snapshot,
             layer, head, K/V selection, exact scale bits, and affected element
             counts. it cannot be saved as <code>ember.kv-snapshot.v1</code> and
-            it does not fill the reserved mapper hash with a placeholder.
-            ordinary replay still accepts native snapshots only.
-        </p>
+            it does not fill the reserved mapper hash with a placeholder.</p>
+        <p>ordinary replay still accepts native snapshots only.</p>
 
-        <p>
-            on a Qwen2.5-1.5B Q6_K planned smoke, comparing a snapshot with
+        <p>on a Qwen2.5-1.5B Q6_K planned smoke, comparing a snapshot with
             itself produced zero paired differences, top-1 agreement, and the
             same short greedy sequence. zeroing K and V for layer 0, head 0
             produced a layer-0 attention-output cosine of about 0.886 and a
-            final-logit cosine of about 0.9953. top-1 still agreed over the very
-            short horizon.
-        </p>
+            final-logit cosine of about 0.9953.</p>
+        <p>top-1 still agreed over the very
+            short horizon.</p>
 
         <div class="callout observation">
             <div class="label">how to read that smoke</div>
@@ -320,13 +306,7 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             <li>and Gemma's heterogeneous cache semantics remain out of scope.</li>
         </ul>
 
-        <p>
-            attention-output cosine is useful, but it is not an attention
-            probability and not a causal explanation by itself. K/V R² is a
-            reconstruction statistic, not proof that the target model can use
-            the reconstructed cache. greedy agreement over a short horizon is
-            behavior, but it is still a censored and prompt-dependent measure.
-        </p>
+        <p>Each diagnostic has a specific scope: attention-output cosine measures similarity, K/V R² measures reconstruction, and short-horizon greedy agreement measures prompt-dependent behavior. Establishing causal mechanisms or usable cache transfer requires further tests.</p>
 
         <h2>the deliberately small next experiment</h2>
 
@@ -335,14 +315,13 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             infrastructure built around it.
         </p>
 
-        <p>
-            the current proposed scope is one fixed Qwen-to-Qwen pair with the
+        <p>the current proposed scope is one fixed Qwen-to-Qwen pair with the
             same tokenizer and matched KV geometry. keys would be mapped in the
             declared post-normalization, pre-RoPE content space; values would be
-            mapped in their declared value state. each target layer/head would
+            mapped in their declared value state.</p>
+        <p>each target layer/head would
             get its own fixed closed-form ridge map, with a frozen calibration
-            split, one lambda, and no layer search.
-        </p>
+            split, one lambda, and no layer search.</p>
 
         <p>
             the pilot should compare identity and ridge reconstruction first,
@@ -352,19 +331,11 @@ ember kv replay --snapshot runs/kv/prefix   --model MODEL.gguf --tokenizer TOKEN
             snapshot format.
         </p>
 
-        <p>
-            if the local files remain the only available Qwen pair, Q4_K_M to
-            Q8_0 would be a quantization-boundary pilot on the same base model,
-            not evidence for cross-size model transfer. that distinction needs
-            to stay in the title, artifact metadata, and conclusion.
-        </p>
+        <p>With the available Qwen pair, Q4_K_M to Q8_0 would test a quantization boundary within one base model. The title, metadata, and conclusion should retain that scope; cross-size transfer would need another pair.</p>
 
-        <h2>bottom line</h2>
+        <h2>conclusion</h2>
 
-        <p>
-            today did not produce a mapper. it produced the conditions under
-            which a mapper can fail honestly.
-        </p>
+        <p>The replay and perturbation controls are ready for a mapper experiment.</p>
 
         <p>
             native state now has a strict identity. replay has a bit-exact

@@ -73,17 +73,19 @@
 
         <div class="callout observation">
             <div class="label">method status · 2026-08 audit</div>
-            <p>the prompts used for every result on this page state the target root and pattern verbatim. these probe scores are therefore <strong>label-revealed positive controls</strong>: they show that a last-token representation retains supplied prompt variables, not that the model inferred Arabic morphology. the charts remain as historical diagnostics; the current probe runner rejects this setup by default, and morphology claims require the new surface-only prompts.</p>
+            <p>The corrected local probes recovered labels that the prompts explicitly supplied. Pattern accuracy reached 99.5% at layer 0 in the 1B run and 100% afterward. These label-revealed controls cannot establish Arabic root-pattern composition.</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
         <h2>motivation</h2>
 
-        <p>the <a href="/research-notes/morphemes-without-borders.html">Alakeel et al. (2026)</a> paper left an open question: GPT-4o gets 97% on nonce Arabic root-pattern generation despite having the worst tokenizer alignment in the study (17% boundary precision). ALLAM, with the best tokenizer alignment, collapses to 20% on the same task. tokenizer quality doesn't predict morphological competence ,  so what does?</p>
+        <p>the <a href="/research-notes/morphemes-without-borders.html">Alakeel et al. (2026)</a> paper left an open question: GPT-4o gets 97% on nonce Arabic root-pattern generation despite having the worst tokenizer alignment in the study (17% boundary precision). ALLAM, with the best tokenizer alignment, collapses to 20% on the same task.</p>
+        <p>tokenizer quality doesn't predict morphological competence ,  so what does?</p>
 
         <p>The behavioral paper motivates looking at internal representations. This archived run answers a narrower question: which supplied prompt variables can a fitted probe recover? Its label-revealed prompts cannot establish a mechanism for morphology.</p>
 
-        <p>i used <a href="/ember/">ember</a>, a from-scratch inference engine that gives direct access to hidden states at every transformer block, to probe LLaMA 3.2 1B and LLaMA 3.2 3B on a nonce root-pattern task. 20 invented triliteral roots (from the Alakeel dataset) crossed with 10 Arabic morphological patterns = 200 stimuli, all Latin-transliterated for ASCII-safe probing. 8B results from the first pass are archived below as stale until they can be rerun off-machine. four analysis methods:</p>
+        <p>i used <a href="/ember/">ember</a>, a from-scratch inference engine that gives direct access to hidden states at every transformer block, to probe LLaMA 3.2 1B and LLaMA 3.2 3B on a nonce root-pattern task. 20 invented triliteral roots (from the Alakeel dataset) crossed with 10 Arabic morphological patterns = 200 stimuli, all Latin-transliterated for ASCII-safe probing. 8B results from the first pass are archived below as stale until they can be rerun off-machine.</p>
+        <p>four analysis methods:</p>
 
         <ul>
             <li><strong>linear probes</strong> ,  per-layer logistic regression: is root identity (20-way) or pattern identity (10-way) linearly decodable from hidden states?</li>
@@ -92,11 +94,13 @@
             <li><strong>divergence</strong> ,  correct-vs-incorrect: at which layer do hidden states for correct and incorrect predictions separate?</li>
         </ul>
 
-        <p>a note on method: probes measure what information is <em>recoverable</em> from hidden states, not what the model causally uses during generation. linear separability is a lower bound on the structure present; it does not imply the model relies on that structure for its outputs. the corrected runs use task-specific closed-set splits: root probes hold out patterns, and pattern probes hold out roots. the old root-held-out root probe framing was invalid because it asked a classifier to predict unseen root labels.</p>
+        <p>a note on method: probes measure what information is <em>recoverable</em> from hidden states, not what the model causally uses during generation. linear separability is a lower bound on the structure present; it does not imply the model relies on that structure for its outputs.</p>
+        <p>the corrected runs use task-specific closed-set splits: root probes hold out patterns, and pattern probes hold out roots. the old root-held-out root probe framing was invalid because it asked a classifier to predict unseen root labels.</p>
 
         <div class="callout observation">
             <div class="label">Observation</div>
-            <p>the rerun 1B and 3B models still output <code>"The"</code> for every stimulus: 0/200. the hidden states preserve the explicit root and pattern variables from the prompt, but this is not yet proof of internal Arabic morphology. the next controls need to separate prompt-variable recovery from actual morphological computation.</p>
+            <p>the rerun 1B and 3B models still output <code>"The"</code> for every stimulus: 0/200. the hidden states preserve the explicit root and pattern variables from the prompt, but this is not yet proof of internal Arabic morphology.</p>
+        <p>the next controls need to separate prompt-variable recovery from actual morphological computation.</p>
         </div>
 
         <!-- ════════════════════════════════════════════════ -->
@@ -154,9 +158,11 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p>this is where things get strange.</p>
 
-        <p><strong>root identity</strong> still develops a <strong>U-shaped dip</strong>, but the corrected trough is weaker than the first write-up claimed. it starts at 100%, erodes across mid-layers, bottoms at <strong>86% at layer 19</strong>, then partially recovers to 92% in the final layer. root identity becomes <em>less</em> linearly accessible in mid-layers before partially returning in the deepest blocks.</p>
+        <p><strong>root identity</strong> still develops a <strong>U-shaped dip</strong>, but the corrected trough is weaker than the first write-up claimed. it starts at 100%, erodes across mid-layers, bottoms at <strong>86% at layer 19</strong>, then partially recovers to 92% in the final layer.</p>
+        <p>root identity becomes <em>less</em> linearly accessible in mid-layers before partially returning in the deepest blocks.</p>
 
-        <p><strong>pattern identity</strong> is dead flat at 100% for all 28 layers. pattern is linearly separable as a surface-level feature ,  no depth required to separate the 10 pattern classes linearly. the 3B model shows pattern identity on a linearly accessible subspace from the first layer onward.</p>
+        <p><strong>pattern identity</strong> is dead flat at 100% for all 28 layers. pattern is linearly separable as a surface-level feature ,  no depth required to separate the 10 pattern classes linearly.</p>
+        <p>the 3B model shows pattern identity on a linearly accessible subspace from the first layer onward.</p>
 
         <p><strong>CCA</strong> self-similarity starts at 0.889 at layer 0 (slightly lower than 1B's 0.921) but stabilizes faster: 0.977 by layer 1, 0.995 by layer 3. the heatmap is essentially uniform bright yellow from layer 4 onward. <strong>RSA</strong> shows smooth, continuous transitions with no sharp break like 1B's layer 3–4 drop.</p>
 
@@ -164,7 +170,9 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <div class="callout observation">
             <div class="label">Observation</div>
-            <p><strong>3B still has the clearest root dip.</strong> After correcting the split logic, 1B no longer shows a pattern acquisition curve. Both 1B and 3B have pattern identity essentially available from layer 0. The robust 3B-specific result is the root dip: root identity is still recoverable, but less linearly accessible in the middle of the network. The model <a href="#caveats">still has no Arabic output</a> to show for it.</p>
+            <p><strong>3B still has the clearest root dip.</strong> After correcting the split logic, 1B no longer shows a pattern acquisition curve.</p>
+        <p>Both 1B and 3B have pattern identity essentially available from layer 0. The robust 3B-specific result is the root dip: root identity is still recoverable, but less linearly accessible in the middle of the network.</p>
+        <p>The model <a href="#caveats">still has no Arabic output</a> to show for it.</p>
         </div>
 
         <hr>
@@ -183,13 +191,16 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <p><strong>archival caveat:</strong> this 8B section uses the first-pass probe files and has not been rerun with the corrected split logic. do not compare its exact numbers to the corrected 1B/3B results yet.</p>
 
-        <p><strong>root identity</strong> appeared to deepen the U-dip: after a brief peak at 100% (layer 1), it descends through 94% → 88% → 75% → bottoms at <strong>70% at layer 19</strong>, partially recovers to 89%, then drops again to 79% at the final layer. the curve is textured, not a clean U, with a jagged descent and a secondary dip at the end. treat this as an archived signal, not a corrected scaling conclusion.</p>
+        <p><strong>root identity</strong> appeared to deepen the U-dip: after a brief peak at 100% (layer 1), it descends through 94% → 88% → 75% → bottoms at <strong>70% at layer 19</strong>, partially recovers to 89%, then drops again to 79% at the final layer.</p>
+        <p>the curve is textured, not a clean U, with a jagged descent and a secondary dip at the end. treat this as an archived signal, not a corrected scaling conclusion.</p>
 
         <p><strong>pattern identity</strong> appeared to return to a staircase in the archived run: 69% at layer 0 -> 82% -> 92% -> 100% by layer 3. because the corrected 1B result changed substantially, this 8B pattern claim should be treated as pending rerun.</p>
 
-        <p><strong>CCA</strong> starts dramatically lower: <strong>0.566 at layer 0</strong> ,  the noisiest early representation of any model. then climbs: 0.68 (layer 1) → 0.94 (layer 2) → 0.99 (layer 4). the heatmap has a visibly dark bottom-left corner that brightens across the first 4 layers. <strong>RSA</strong> layer 0→1 correlation is 0.76, then smooth 0.96–0.999 thereafter.</p>
+        <p><strong>CCA</strong> starts dramatically lower: <strong>0.566 at layer 0</strong> ,  the noisiest early representation of any model. then climbs: 0.68 (layer 1) → 0.94 (layer 2) → 0.99 (layer 4).</p>
+        <p>the heatmap has a visibly dark bottom-left corner that brightens across the first 4 layers. <strong>RSA</strong> layer 0→1 correlation is 0.76, then smooth 0.96–0.999 thereafter.</p>
 
-        <p><strong>root-pattern CCA</strong> shows the most interesting curve: it <em>rises</em> to a <strong>peak of 0.345 at layer 4</strong> ,  the probe subspaces briefly show higher overlap ,  then steadily declines to 0.078 at layer 30. this is a pattern consistent with early representational mixing followed by later separability: the first few layers show increased subspace overlap between root and pattern probe weights, while deeper layers show increasingly separable organization. neither 1B (monotonic decline) nor 3B (flat-near-zero) shows this two-phase pattern.</p>
+        <p><strong>root-pattern CCA</strong> shows the most interesting curve: it <em>rises</em> to a <strong>peak of 0.345 at layer 4</strong> ,  the probe subspaces briefly show higher overlap ,  then steadily declines to 0.078 at layer 30.</p>
+        <p>this is a pattern consistent with early representational mixing followed by later separability: the first few layers show increased subspace overlap between root and pattern probe weights, while deeper layers show increasingly separable organization. neither 1B (monotonic decline) nor 3B (flat-near-zero) shows this two-phase pattern.</p>
 
         <div class="callout key-finding">
             <div class="label">Key Finding</div>
@@ -250,27 +261,32 @@ plot_results.py --dark     → probe_results.png     (3x2 figure)
 
         <h3>1. the representation–behavior gap</h3>
 
-        <p>this is the central puzzle. the corrected 1B and 3B runs have linearly decodable root and pattern variables. root identity is high but dips in 3B mid-layers; pattern identity is essentially perfect from the first layer. the information is recoverable and structured, but the current extraction point is the last token of a prompt that explicitly contains the root and pattern.</p>
+        <p>this is the central puzzle. the corrected 1B and 3B runs have linearly decodable root and pattern variables.</p>
+        <p>root identity is high but dips in 3B mid-layers; pattern identity is essentially perfect from the first layer. the information is recoverable and structured, but the current extraction point is the last token of a prompt that explicitly contains the root and pattern.</p>
 
         <p>yet every model outputs <code>"The"</code> for every stimulus. the root and pattern variables are recoverable from hidden states but never translate into the requested output tokens under this prompt setup.</p>
 
-        <p>The explicit prompt variables are recoverable in this setup. Whether the states encode a morphological computation or retain the instruction text remains unresolved. GPT-4o’s reported 97% is a separate behavioral result; it does not isolate instruction tuning as the cause of this run’s output failure.</p>
+        <p>The explicit prompt variables are recoverable in this setup. Whether the states encode a morphological computation or retain the instruction text remains unresolved.</p>
+        <p>GPT-4o’s reported 97% is a separate behavioral result; it does not isolate instruction tuning as the cause of this run’s output failure.</p>
 
-        <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results are consistent with a refinement: <strong>instruction-following may be what connects recoverable task variables to output behavior.</strong> to upgrade that into a morphology claim, the next run needs prompt ablations, span-specific extraction, and controls where root or pattern text is removed or replaced.</p>
+        <p>the Alakeel paper concluded "compositional reasoning + instruction-following substitutes for explicit morphological parsing." our results are consistent with a refinement: <strong>instruction-following may be what connects recoverable task variables to output behavior.</strong></p>
+        <p>to upgrade that into a morphology claim, the next run needs prompt ablations, span-specific extraction, and controls where root or pattern text is removed or replaced.</p>
 
         <h3>2. non-monotonic scaling</h3>
 
-        <p>"bigger is better" doesn't describe root probing. the corrected local accuracy curve goes from nearly flat (1B) to U-shaped (3B). the older 8B run may deepen the pattern, but it is not part of the corrected comparison yet. this is consistent with the hypothesis from the <a href="/research-notes/arabic-morphology-probing.html">original research plan</a>:</p>
+        <p>"bigger is better" doesn't describe root probing. the corrected local accuracy curve goes from nearly flat (1B) to U-shaped (3B).</p>
+        <p>the older 8B run may deepen the pattern, but it is not part of the corrected comparison yet. this is consistent with the hypothesis from the <a href="/research-notes/arabic-morphology-probing.html">original research plan</a>:</p>
 
         <blockquote>
             <p>The original plan suggested that a difference between 1B and 3B might identify a useful scale for morphological injection. This run does not test that intervention, and the exposed labels prevent interpreting its curves as evidence for that threshold.</p>
         </blockquote>
 
-        <p>The corrected 1B and 3B runs differ in the layerwise recoverability of supplied root labels. This is a descriptive difference under the probe and prompt used here. It does not establish a qualitative transition in morphological computation or show that information was lost and recovered inside the network.</p>
+        <p>The corrected 1B and 3B runs differ in the layerwise recoverability of supplied root labels. This is a descriptive difference under the probe and prompt used here.</p>
+        <p>It does not establish a qualitative transition in morphological computation or show that information was lost and recovered inside the network.</p>
 
         <h3>3. pattern is a prompt-level variable</h3>
 
-        <p>the corrected result is simpler and more sobering: pattern is basically linearly separable from the first layer in both 1B and 3B. that makes sense because the prompt literally names the pattern. this result is useful, but it is not evidence by itself that the model has performed Arabic root-pattern composition.</p>
+        <p>Pattern identity is linearly separable from the first layer in both 1B and 3B, consistent with the prompt explicitly naming it. Testing root-pattern composition requires surface-only controls.</p>
 
         <p>possible explanations:</p>
 

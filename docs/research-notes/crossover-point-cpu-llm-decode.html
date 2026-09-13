@@ -60,7 +60,8 @@
 
         <div class="callout observation">
             <div class="label">implementation status · 2026-08 audit</div>
-            <p>the measurements below remain a historical kernel sweep, but the statement that Ember's current gate activates near 32 MFLOPs is stale. the present Q8×Q8 decode path uses a 1,048,576-MAC gate (about 2.1 MFLOPs). the measured “crossover” is also thread-count-specific: two and eight threads first exceed 1× between the 14.2 and 25.2 MFLOP test points, while four threads are only marginally above 1× at the first point. these are observed medians, not a universal hardware threshold.</p>
+            <p>the measurements below remain a historical kernel sweep, but the statement that Ember's current gate activates near 32 MFLOPs is stale. the present Q8×Q8 decode path uses a 1,048,576-MAC gate (about 2.1 MFLOPs).</p>
+        <p>the measured “crossover” is also thread-count-specific: two and eight threads first exceed 1× between the 14.2 and 25.2 MFLOP test points, while four threads are only marginally above 1× at the first point. these are observed medians, not a universal hardware threshold.</p>
         </div>
 
 
@@ -77,7 +78,7 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>Thread count is often the main parallelism setting exposed by an inference engine. Increasing it helps only when the work per operation pays for the scheduling overhead.</p>
+        <p>The isolated Q8_0 kernel benefited from extra threads only at particular workload sizes. On this CPU, two and eight threads first exceeded 1× between the 14.2 and 25.2 MFLOP samples. These historical kernel medians are not a universal threshold or an end-to-end decode speedup.</p>
 
         <p>but does single-token decode actually benefit from more threads?</p>
 
@@ -90,14 +91,13 @@
 
         <h2>the question</h2>
 
-        <p>
-            during decode, a transformer produces one token at a time. each
+        <p>during decode, a transformer produces one token at a time. each
             token passes through every layer: attention projections, MLP
-            projections, RMS norms, rotary embeddings. most of that work is
+            projections, RMS norms, rotary embeddings.</p>
+        <p>most of that work is
             matrix multiplication: small matmuls, one after another, each
             processing a single row of activations against a quantized weight
-            matrix.
-        </p>
+            matrix.</p>
 
         <p>
             those matmuls are naturally parallelizable: split the output
@@ -248,13 +248,12 @@
              loading="lazy">
         </figure>
 
-        <p>
-            the 2-thread line crosses 1.0× between 14 and 25 MFLOPs. four
+        <p>the 2-thread line crosses 1.0× between 14 and 25 MFLOPs. four
             and eight threads both outperform two threads across most sizes
-            above 25 MFLOPs. eight-thread results are less stable, with higher
+            above 25 MFLOPs.</p>
+        <p>eight-thread results are less stable, with higher
             relative dispersion (stdev/median up to 15% vs 6–14% for 4-thread), so four physical
-            cores provide the safer default on this CPU.
-        </p>
+            cores provide the safer default on this CPU.</p>
 
         <h2>scheduling overhead</h2>
 
@@ -275,23 +274,21 @@
             </tbody>
         </table>
 
-        <p>
-            at 14.2 MFLOPs, matmul latency is ~1.7 ms: scheduling overhead
+        <p>at 14.2 MFLOPs, matmul latency is ~1.7 ms: scheduling overhead
             (~4 µs for 2 threads) is small in absolute terms. the real issue
             was the gate used at the time: it kept these small real-model calls
-            serial. the current Q8×Q8 implementation has since lowered that
-            gate substantially; this paragraph describes the historical run.
-        </p>
+            serial.</p>
+        <p>the current Q8×Q8 implementation has since lowered that
+            gate substantially; this paragraph describes the historical run.</p>
 
         <h2>the engineering rule</h2>
 
-        <p>
-            on this CPU and isolated Q8_0 kernel, the first observed median
+        <p>on this CPU and isolated Q8_0 kernel, the first observed median
             speedup depends on thread count. two and eight threads cross between
             the 14.2 and 25.2 MFLOP samples; four threads are marginally positive
-            at 14.2 MFLOPs. this sweep does not by itself justify a universal
-            threshold, and Ember's current Q8×Q8 gate is calibrated separately.
-        </p>
+            at 14.2 MFLOPs.</p>
+        <p>this sweep does not by itself justify a universal
+            threshold, and Ember's current Q8×Q8 gate is calibrated separately.</p>
 
         <p>
             in the real-model experiment, performance peaked at four physical
@@ -312,14 +309,14 @@
 
         <p>a fixed global thread count is the wrong abstraction.</p>
 
-        <p>
-            different operations inside the same decode step have wildly
+        <p>different operations inside the same decode step have wildly
             different matrix sizes. the attention Q projection is 2× the K/V
-            projection. the MLP up/gate/down projections are 3× the attention
-            output. the LM head is tens of times wider than the per-layer projections. assigning the same
+            projection.</p>
+        <p>the MLP up/gate/down projections are 3× the attention
+            output. the LM head is tens of times wider than the per-layer projections.</p>
+        <p>assigning the same
             thread count to all of them wastes cores on small matmuls and
-            underutilizes them on large ones.
-        </p>
+            underutilizes them on large ones.</p>
 
         <p>the next step is an adaptive scheduler:</p>
 

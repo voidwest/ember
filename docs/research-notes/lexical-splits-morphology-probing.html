@@ -72,15 +72,14 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>A linear-probe score belongs to a measurement setup: model, prompt, split, extraction point, pooling rule, and fitted decoder. Changing those choices can change the question the score answers.</p>
+        <p>Random splits scored higher than both lexical held-out splits in every comparison. All 132 comparisons had positive gaps; the mean gaps were 0.1059 for lemma-heldout and 0.1179 for root-heldout macro-F1. These scores measure linear recovery under the named interfaces, not model use of morphology.</p>
 
-        <p>
-            the testbed is 4,701 Modern Standard Arabic stimuli derived from
+        <p>the testbed is 4,701 Modern Standard Arabic stimuli derived from
             Universal Dependencies Arabic-PADT and CAMeL Tools processing. the
-            tasks are part of speech, gender, and number. all results below are
+            tasks are part of speech, gender, and number.</p>
+        <p>all results below are
             about linear recoverability under named conditions; broader Arabic
-            competence and model behavior are separate questions.
-        </p>
+            competence and model behavior are separate questions.</p>
 
         <h2>the measurement unit</h2>
 
@@ -92,15 +91,14 @@
 
         <pre><code class="language-plaintext">StandardScaler + RidgeClassifier(alpha=1.0)</code></pre>
 
-        <p>
-            for each outer fold, layer selection is performed on the training
+        <p>for each outer fold, layer selection is performed on the training
             data and a development partition carved from the outer-training
             portion. the chosen layer is then refit on train plus development
-            and evaluated once on test. test metrics never select the layer,
+            and evaluated once on test.</p>
+        <p>test metrics never select the layer,
             preprocessing, model, or hyperparameter. macro-F1 is reported with
             accuracy and a majority reference computed from training labels
-            only.
-        </p>
+            only.</p>
 
         <p>
             the three split conditions put different lexical units on the other
@@ -120,10 +118,7 @@
 
         <h2>random is an optimistic reference</h2>
 
-        <p>
-            the compact comparison has one row for each model, task, and
-            interface: 132 rows in total. the quantities are:
-        </p>
+        <p>Random splitting scored higher in every comparison. There are 132 model–task–interface rows; the two gap definitions are:</p>
 
         <pre><code class="language-plaintext">delta_lemma = macro_f1_random - macro_f1_lemma_heldout
 delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
@@ -152,13 +147,12 @@ delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
             </figcaption>
         </figure>
 
-        <p>
-            taken as a reference, random splitting measures interpolation among
+        <p>taken as a reference, random splitting measures interpolation among
             instances from a familiar lexical inventory. the grouped runs ask
             transfer questions, and their effect sizes vary by model, task,
-            representation interface, and grouping key. the table below maps that
-            heterogeneity rather than collapsing it into one correction.
-        </p>
+            representation interface, and grouping key.</p>
+        <p>the table below maps that
+            heterogeneity rather than collapsing it into one correction.</p>
 
         <table>
             <thead>
@@ -183,13 +177,12 @@ delta_root  = macro_f1_random - macro_f1_root_heldout</code></pre>
             </tbody>
         </table>
 
-        <p>
-            these means map heterogeneity across the matrix. architecture,
+        <p>these means map heterogeneity across the matrix. architecture,
             tokenizer, parameter count, training mixture, and instruction status
             all vary together, so the table cannot isolate a size or family
-            effect. Qwen3-8B has a slightly larger lemma gap than root gap,
-            while most rows go the other way.
-        </p>
+            effect.</p>
+        <p>Qwen3-8B has a slightly larger lemma gap than root gap,
+            while most rows go the other way.</p>
 
         <h2>prompt context changes the interface</h2>
 
@@ -214,15 +207,13 @@ Surface: {surface_dediac}
 Token: {target}
 Predict the token morphology.</code></pre>
 
-        <p>
-            full-metadata prompt-final and target-final differ along two axes.
-            the final state of the complete prompt can attend to later lemma,
-            root, and pattern fields. target-final subtoken comes from a causal
+        <p>full-metadata prompt-final and target-final differ along two axes. the final state of the complete prompt can attend to later lemma,
+            root, and pattern fields.</p>
+        <p>target-final subtoken comes from a causal
             prefix ending at the selected final target-overlapping token, where
             those later fields have not appeared. metadata-free prompt-final
             narrows the information-availability difference while retaining a
-            prompt-final context.
-        </p>
+            prompt-final context.</p>
 
         <table>
             <thead>
@@ -252,14 +243,13 @@ Predict the token morphology.</code></pre>
             </tbody>
         </table>
 
-        <p>
-            the examples go in opposite directions. Qwen favors the full prompt,
-            while the Jais number example favors the metadata-free version. the
+        <p>the examples go in opposite directions. Qwen favors the full prompt,
+            while the Jais number example favors the metadata-free version.</p>
+        <p>the
             ordering changes because position and available information move
             together, so these rows are construct-validity comparisons. a
             prompt-final score belongs to that endpoint and its context; the
-            target-word question uses a different interface.
-        </p>
+            target-word question uses a different interface.</p>
 
         <h2>pooling is part of the construct</h2>
 
@@ -329,14 +319,13 @@ Predict the token morphology.</code></pre>
 
         <h2>controls are pipeline checks</h2>
 
-        <p>
-            shuffled-label controls cover the two primary models (Qwen3-0.6B and
+        <p>shuffled-label controls cover the two primary models (Qwen3-0.6B and
             Llama-3.2-1B), four interfaces, three tasks, three splits, and five
             folds: <strong>360 cells</strong> in total. labels are shuffled
             independently within train, development, and test, and the full
-            layer-selection pipeline is rerun. none exceeds its corresponding
-            train-only majority baseline.
-        </p>
+            layer-selection pipeline is rerun.</p>
+        <p>none exceeds its corresponding
+            train-only majority baseline.</p>
 
         <p>
             the control checks whether removing the label relationship still

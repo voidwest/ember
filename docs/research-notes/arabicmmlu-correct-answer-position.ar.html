@@ -71,7 +71,7 @@
             <span class="tag model">LLaMA</span>
         </div>
 
-        <p>الـ<bdi>Arabic benchmarks</bdi> تعطينا طريقة نقارن الأنظمة على مهام عربية. بس رقم <bdi>accuracy</bdi> مجمع ممكن يخبي أثر الـ<bdi>prompt</bdi> وطريقة الجواب والـ<bdi>parser</bdi> وترتيب الخيارات.</p>
+        <p>تغيير مكان الإجابة الصحيحة غيّر الدقة بقوة في مراجعة <bdi>ArabicMMLU</bdi> هذي. <bdi>Qwen3-0.6B</bdi> جاب <bdi>0.680</bdi> لما الجواب تحت <bdi>A</bdi>، و<bdi>0.020</bdi> لما صار تحت <bdi>B</bdi>. العينة الصغيرة تقيس حساسية الواجهة، وما ترتّب قدرات العربي عموماً.</p>
 
         <p>هذي تجربة تشخيصية صغيرة على <bdi>ArabicMMLU multiple-choice.</bdi> أبغى أعرف إيش لازم أعرض جنب الدقة، خصوصاً مع نماذج <bdi>decoder-only</bdi> صغيرة تشتغل محلياً.</p>
 
@@ -160,14 +160,12 @@
             </tbody>
         </table>
 
-        <p>
-            <bdi>Qwen3-0.6B</bdi> واجه parse failures كثيرة في الصيغ
-            غير الصارمة. <bdi>strict-output</bdi> أزال المشكلة في كل النماذج.
-            بس إصلاح parsing ما حل robustness بالكامل. <bdi>Llama-3.2-3B</bdi>
-            حسّن الدقة، وقابلية التحليل، والثبات، وهذا يوحي إن الحجم يساعد هنا. مع ذلك،
+        <p><bdi>Qwen3-0.6B</bdi> واجه parse failures كثيرة في الصيغ
+            غير الصارمة. <bdi>strict-output</bdi> أزال المشكلة في كل النماذج. بس إصلاح parsing ما حل robustness بالكامل. <bdi>Llama-3.2-3B</bdi>
+            حسّن الدقة، وقابلية التحليل، والثبات، وهذا يوحي إن الحجم يساعد هنا.</p>
+        <p>مع ذلك،
             <bdi>semantic consistency</bdi> بقي 0.340، يعني أغلب الأسئلة ما
-            أخذت نفس الإجابة الدلالية عبر كل الصيغ.
-        </p>
+            أخذت نفس الإجابة الدلالية عبر كل الصيغ.</p>
 
         <p>
             في تشغيل <bdi>Llama-3.2-3B</bdi> لـ <bdi>pilot 1</bdi>، كان توزيع
