@@ -61,24 +61,9 @@
 <p>This separates three questions: can a fitted probe recover an ID from the features; can the existing receiver interface support the desired answer under supervised oracle fitting; and can a mapping trained on the 56 IDs make the receiver answer correctly for diagnostic IDs? A positive answer to one does not settle the others.</p>
 <h2>recoverable by a probe</h2>
 <p>A fixed ridge probe trained on the 56 IDs decoded seven of the eight diagnostic IDs from the two sender states. The corresponding probe on the compressed representation decoded six. Neither fit used diagnostic labels or oracle codes as training targets.</p>
-<figure class="probe-use-figure">
-<h3>ID recovery by the probe</h3>
-<div class="metric">
-<div class="metric-label">Two sender states<bdi>7/8</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar probe-0">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">Compressed representation<bdi>6/8</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar probe-1">
-</div>
-</div>
-</div>
+<figure>
+<img class="chart theme-chart-dark" src="figures/probe-post-en-dark.png" alt="ID recovery by the probe: Two sender states 7/8; Compressed representation 6/8">
+<img class="chart theme-chart-light" src="figures/probe-post-en-light.png" alt="ID recovery by the probe: Two sender states 7/8; Compressed representation 6/8">
 <figcaption>Same diagnostic bank: eight distinct IDs. Probe comparison, not a native-transfer measurement.</figcaption>
 </figure>
 <p>Leave-one-whole-ID-out checks on the training IDs were 56/56 for the two sender states and 44/56 for the compressed representation. Shifted-training-label nulls recovered 1/8 and 0/8 diagnostic IDs respectively. Independent NumPy and Torch implementations agreed within the registered numerical tolerances, with identical primary predictions.</p>
@@ -90,40 +75,9 @@
 <p>The probe’s 6/8 and the receiver’s one successful identity are different measurements, not a controlled causal ablation. They establish a gap between this probe’s recoverability and this mapping’s downstream behavior. They do not identify a unique failing circuit or prove that receiver-side repair is impossible.</p>
 <h2>better training fit, worse transfer</h2>
 <p>A separately frozen continuation loaded the step-200 parameters and Adam moments, reproduced the starting candidate exactly, and ran 400 more identical updates. Familiar performance stayed 32/32/31. Diagnostic performance fell from 4/4/4 to 0/0/0.</p>
-<figure class="probe-use-figure">
-<h3>Two endpoints on the same training trajectory</h3>
-<div class="metric">
-<div class="metric-label">Training digits · near 200<bdi>153/224</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-0">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">Training digits · near 600<bdi>224/224</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-1">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">Diagnostic cases · 200<bdi>4/32</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-2">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">Diagnostic cases · 600<bdi>0/32</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-3">
-</div>
-</div>
-</div>
+<figure>
+<img class="chart theme-chart-dark" src="figures/continuation-post-en-dark.png" alt="Two endpoints on the same training trajectory: Training digits · near 200 153/224; Training digits · near 600 224/224; Diagnostic cases · 200 4/32; Diagnostic cases · 600 0/32">
+<img class="chart theme-chart-light" src="figures/continuation-post-en-light.png" alt="Two endpoints on the same training trajectory: Training digits · near 200 153/224; Training digits · near 600 224/224; Diagnostic cases · 200 4/32; Diagnostic cases · 600 0/32">
 <figcaption>Bars are proportions within each metric. Training: pre-update teacher forcing. Diagnostic: original native scoring, eight IDs × four queries. All successes belong to M3.</figcaption>
 </figure>
 <p>The recorded pre-update training loss fell from 0.5465 to 0.0954. Teacher-forced letters were already 224/224; digits rose from 153/224 to 224/224. These are training diagnostics near the endpoints, not native evaluation scores or proof of mathematical convergence.</p>

@@ -67,26 +67,9 @@
 <h2>الـ<bdi>probe</bdi> يقدر يسترجعها</h2>
 <p>
 <bdi>Ridge probe</bdi> ثابت، متدرّب على الـ<bdi>56 ID</bdi>، فك سبعة من الثمانية من حالتي الـ<bdi>sender.</bdi> والـ<bdi>probe</bdi> المقابل على التمثيل المضغوط فك ستة. ولا واحد من التدريبين استخدم <bdi>labels</bdi> الـ<bdi>IDs</bdi> التشخيصية أو <bdi>oracle codes</bdi> كأهداف تدريب.</p>
-<figure class="probe-use-figure">
-<h3>استرجاع الـ<bdi>ID</bdi> بالـ<bdi>probe</bdi>
-</h3>
-<div class="metric">
-<div class="metric-label">حالتي الـ<bdi>sender</bdi>
-<bdi>7/8</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar probe-0">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">التمثيل المضغوط<bdi>6/8</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar probe-1">
-</div>
-</div>
-</div>
+<figure>
+<img class="chart theme-chart-dark" src="figures/probe-post-ar-dark.png" alt="استرجاع الـID بالـprobe: حالتي الـsender 7/8; التمثيل المضغوط 6/8">
+<img class="chart theme-chart-light" src="figures/probe-post-ar-light.png" alt="استرجاع الـID بالـprobe: حالتي الـsender 7/8; التمثيل المضغوط 6/8">
 <figcaption>نفس البنك التشخيصي: ثماني هويات مختلفة. مقارنة <bdi>probe</bdi>، مو قياس نقل فعلي.</figcaption>
 </figure>
 <p>في فحص <bdi>leave-one-whole-ID-out</bdi> على بيانات التدريب، النتيجة كانت <bdi>56/56</bdi> لحالتي الـ<bdi>sender</bdi> و<bdi>44/56</bdi> للتمثيل المضغوط. ومع إزاحة <bdi>labels</bdi> التدريب كـ<bdi>null control</bdi>، النتائج التشخيصية كانت <bdi>1/8</bdi> و<bdi>0/8</bdi> بالترتيب. تطبيقان مستقلان بـ<bdi>NumPy</bdi> و<bdi>Torch</bdi> اتفقوا ضمن حدود الخطأ المسجلة، ونفس التوقعات الأساسية طلعت من الاثنين.</p>
@@ -100,44 +83,9 @@
 <h2>تدريب أحسن، ونقل أسوأ</h2>
 <p>في <bdi>continuation</bdi> تجمّدت لحالها، حمّلت معاملات الخطوة <bdi>200</bdi> وحالة <bdi>Adam</bdi>، وأعدت إنتاج نقطة البداية بالضبط، ثم كملت <bdi>400</bdi> تحديث بنفس الإعدادات. الأداء المألوف بقي <bdi>32/32/31.</bdi> الأداء التشخيصي نزل من <bdi>4/4/4</bdi> إلى <bdi>0/0/0.</bdi>
 </p>
-<figure class="probe-use-figure">
-<h3>نقطتان على نفس مسار التدريب</h3>
-<div class="metric">
-<div class="metric-label">أرقام التدريب · قرب <bdi>200</bdi>
-<bdi>153/224</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-0">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">أرقام التدريب · قرب <bdi>600</bdi>
-<bdi>224/224</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-1">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">حالات تشخيصية · <bdi>200</bdi>
-<bdi>4/32</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-2">
-</div>
-</div>
-</div>
-<div class="metric">
-<div class="metric-label">حالات تشخيصية · <bdi>600</bdi>
-<bdi>0/32</bdi>
-</div>
-<div class="metric-track">
-<div class="metric-bar continuation-3">
-</div>
-</div>
-</div>
+<figure>
+<img class="chart theme-chart-dark" src="figures/continuation-post-ar-dark.png" alt="نقطتان على نفس مسار التدريب: أرقام التدريب · قرب 200 153/224; أرقام التدريب · قرب 600 224/224; حالات تشخيصية · 200 4/32; حالات تشخيصية · 600 0/32">
+<img class="chart theme-chart-light" src="figures/continuation-post-ar-light.png" alt="نقطتان على نفس مسار التدريب: أرقام التدريب · قرب 200 153/224; أرقام التدريب · قرب 600 224/224; حالات تشخيصية · 200 4/32; حالات تشخيصية · 600 0/32">
 <figcaption>الأشرطة نسب داخل كل مقياس. التدريب: <bdi>teacher forcing</bdi> قبل التحديث. التشخيص: <bdi>original native scoring</bdi>، ثماني هويات × أربعة استعلامات. كل النجاحات تخص <bdi>M3.</bdi>
 </figcaption>
 </figure>

@@ -15,18 +15,12 @@ def inline(s):
 
 
 def chart(ar):
-    titles = ['بناء النموذج', 'قراءة بيانات GGUF الوصفية'] if ar else ['Model build', 'GGUF metadata parse']
-    names = [['التخزين معطل', 'الكتابة الأولى', 'إصابة دافئة'], ['قبل التغيير', 'تحقق وتجاوز']] if ar else [['Cache off', 'First cache write', 'Warm cache hit'], ['Before', 'Validate + skip']]
-    units = 'مللي ثانية' if ar else 'ms'
-    result = '<figure class="startup-figure"><div class="startup-grid">'
-    for title, labels, values, limit in zip(titles, names, [[670,749,83],[37.7,10.8]], [900,48]):
-        result += '<section class="startup-panel"><h3>' + title + '</h3>'
-        for i,(label,value) in enumerate(zip(labels, values)):
-            color = 'after' if i == len(values)-1 else ('write' if i == 1 else 'before')
-            result += f'<div class="bar-row"><div class="bar-label">{label}<bdi>{value} {units}</bdi></div><div class="track"><div class="bar {color} value-{str(value).replace(chr(46), chr(45))}"></div></div></div>'
-        result += '<div class="axis" dir="ltr"><span>0</span><span>' + str(limit) + ' ' + units + '</span></div></section>'
-    note = 'القيمة الأقل أفضل · مقياسان مستقلان · لا يمثل الرسم الزمن الكلي حتى أول توكن' if ar else 'Lower is better · Independent scales · Not full time to first token'
-    return result + '</div><figcaption>' + note + '</figcaption></figure>'
+    lang = 'ar' if ar else 'en'
+    alt = 'Model build: 670 / 749 / 83 ms. Metadata parse: 37.7 / 10.8 ms.' if not ar else 'بناء النموذج: 670 / 749 / 83 مللي ثانية. قراءة البيانات الوصفية: 37.7 / 10.8 مللي ثانية.'
+    out = '<figure>'
+    for theme in ('dark', 'light'):
+        out += '<img class="chart theme-chart-' + theme + '" src="/research-notes/figures/startup-post-' + lang + '-' + theme + '.png" alt="' + alt + '">'
+    return out + '</figure>'
 
 
 def render(text, ar=False):

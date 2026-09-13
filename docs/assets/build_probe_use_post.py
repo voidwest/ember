@@ -94,10 +94,12 @@ def figure(kind, ar):
         title='نقطتان على نفس مسار التدريب' if ar else 'Two endpoints on the same training trajectory'
         rows=[('أرقام التدريب · قرب 200' if ar else 'Training digits · near 200',153,224),('أرقام التدريب · قرب 600' if ar else 'Training digits · near 600',224,224),('حالات تشخيصية · 200' if ar else 'Diagnostic cases · 200',4,32),('حالات تشخيصية · 600' if ar else 'Diagnostic cases · 600',0,32)]
         note='الأشرطة نسب داخل كل مقياس. التدريب: teacher forcing قبل التحديث. التشخيص: original native scoring، ثماني هويات × أربعة استعلامات. كل النجاحات تخص M3.' if ar else 'Bars are proportions within each metric. Training: pre-update teacher forcing. Diagnostic: original native scoring, eight IDs × four queries. All successes belong to M3.'
-    out='<figure class="probe-use-figure"><h3>'+text(title,ar)+'</h3>'
-    for i,(label,n,d) in enumerate(rows):
-        out+='<div class="metric"><div class="metric-label">'+text(label,ar)+f'<bdi>{n}/{d}</bdi></div><div class="metric-track"><div class="metric-bar {kind}-{i}"></div></div></div>'
-    return out+'<figcaption>'+text(note,ar)+'</figcaption></figure>'
+    lang = 'ar' if ar else 'en'
+    out = '<figure>'
+    for theme in ('dark', 'light'):
+        out += '<img class="chart theme-chart-' + theme + '" src="figures/' + kind + '-post-' + lang + '-' + theme + '.png" alt="' + html.escape(title + ': ' + '; '.join(label + ' ' + str(n) + '/' + str(d) for label,n,d in rows), quote=True) + '">'
+    return out + '<figcaption>' + text(note,ar) + '</figcaption></figure>'
+
 
 
 def main():
