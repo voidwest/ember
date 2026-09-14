@@ -4,6 +4,13 @@
 
 ## Replay record
 
+- **Commit:** `ae550f0` (archived correction source).
+- **Replay setting:** `EMBER_VERIFY_QUANT=0`.
+- **Model SHA-256 values:** unavailable for all seven scanned files.
+
+<details>
+<summary>Replay details, commands, and artifact hashes</summary>
+
 - **Archived source commit:** `ae550f0fbcf9dea1a5507f5695b077d2cc77d02b` (correction package; the original executable/build identity was not recorded in that package).
 - **Sweep binary:** `sweep`, from `docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml`.
 - **Replay setting:** `EMBER_VERIFY_QUANT=0`. The original process environment was not saved. The sweep directly invokes the kernels after mutation; this is not a validator-detection run.
@@ -11,6 +18,9 @@
 - **Seven input-file SHA-256 values:** not recorded in the correction package; all seven are explicitly marked unavailable in the [file inventory](#file-inventory). Do not substitute a hash from another experiment or a same-named current file.
 
 [Replay commands](#replay-commands) · [Saved artifact hashes](#artifact-identity-at-draft-preparation)
+
+
+</details>
 
 ## Abstract
 
@@ -36,6 +46,8 @@ The experiment uses these layouts:
 | Q8_0 | 32 | 34 | bytes 0–1 |
 | Q4_K | 256 | 144 | bytes 0–1 |
 | Q6_K | 256 | 210 | bytes 208–209 |
+
+*Format note:* `Q4_K_M` is the file tag used in the inventory. The mutated field is the block `d` field in Q4_K; mixed files also contain tensors in other formats.
 
 Q4_K also contains a binary16 minimum parameter and packed local scale/minimum fields. Q6_K contains integer local scales. Only `d` is mutated in the corrected sweep.
 
@@ -105,7 +117,7 @@ The implementation floors the squared denominator at the smallest positive norma
 
 The following values were recounted directly from the saved JSONL rows:
 
-| Format | Production-scale trials | Non-finite outputs | Maximum relative L2 drift | Maximum absolute difference | Bit-14 output-argmax changes |
+| Format | Scan-magnitude trials | Non-finite outputs | Maximum relative L2 drift | Maximum absolute difference | Bit-14 output-argmax changes |
 |---|---:|---:|---:|---:|---:|
 | Q4_K | 176 | 0 | 4,976.151 | 62,578.38 | 11/11 |
 | Q6_K | 160 | 0 | 30,831.56 | 57,895.96 | 5/10 |
@@ -139,7 +151,7 @@ The check establishes a limited form of numerical validity. It does not compare 
 
 ## 6. Interpretation and related work
 
-Quantization scaling factors are an established concern in fault resilience. Fasfous et al.'s *Mind the Scaling Factors: Resilience Analysis of Quantized Adversarially Robust CNNs* (DATE 2022) relates quantization scaling factors to hardware-fault susceptibility in CNNs. This note examines the corresponding issue in GGUF block formats at the kernel boundary.
+Quantization scaling factors are an established concern in fault resilience. Fasfous et al.'s *Mind the Scaling Factors: Resilience Analysis of Quantized Adversarially Robust CNNs* (DATE 2022) relates quantization scaling factors to hardware-fault susceptibility in CNNs. Here the corresponding issue is examined in GGUF block formats at the kernel boundary.
 
 Choosing `d = 1.0` made the initial test exercise a mechanism absent from the scanned population. Replacing it with magnitudes from that population changed the result: the outputs stayed finite, sometimes with large errors. A check designed to reject NaN/Inf headers leaves those errors undetected.
 
