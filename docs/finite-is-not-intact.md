@@ -2,9 +2,19 @@
 
 **EmberSEC Phase V · Technical lab note · Draft, 14 September 2026**
 
+## Replay record
+
+- **Archived source commit:** `ae550f0fbcf9dea1a5507f5695b077d2cc77d02b` (correction package; the original executable/build identity was not recorded in that package).
+- **Sweep binary:** `sweep`, from `docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml`.
+- **Replay setting:** `EMBER_VERIFY_QUANT=0`. The original process environment was not saved. The sweep directly invokes the kernels after mutation; this is not a validator-detection run.
+- **Fixed seeds:** K payload constructor `0x5EED` (Xor64 initialized with `0x243F6A8885A308D3 ^ seed`), K activations `7`; Q8 payload construction and activations `11`.
+- **Seven input-file SHA-256 values:** not recorded in the correction package; all seven are explicitly marked unavailable in the [file inventory](#file-inventory). Do not substitute a hash from another experiment or a same-named current file.
+
+[Replay commands](#replay-commands) · [Saved artifact hashes](#artifact-identity-at-draft-preparation)
+
 ## Abstract
 
-A fault-injection result can depend critically on the values chosen for the test. EmberSEC's initial synthetic experiment showed that a single bit flip in a binary16 quantization scale could produce infinity. A subsequent scan of 136,307,712 scale words across seven GGUF model files found that none of their encoded exponents could become the NaN/Inf exponent through one bit flip. A distribution-informed experiment using Ember's actual quantized matrix-vector kernels likewise produced no non-finite outputs in 512 trials at production-scale magnitudes, while reproducing non-finite outputs in four of 64 synthetic-control trials. Yet finite output drift reached relative L2 errors of approximately 5,000–31,000 in the tested geometries. The result exposes a distinction between numerical validity and content integrity: a finite-header check accepts the finite scale corruptions responsible for these large changes. This note reports the corrected experiment, its analytical boundary, and the limitations of the associated load-time check. It does not measure end-to-end model accuracy or physical fault feasibility.
+A fault-injection result can depend critically on the values chosen for the test. EmberSEC's initial synthetic experiment showed that a single bit flip in a binary16 quantization scale could produce infinity. A subsequent scan of 136,307,712 scale words across seven GGUF model files found that none of their encoded exponents could become the NaN/Inf exponent through one bit flip. A distribution-informed experiment using Ember's actual quantized matrix-vector kernels likewise produced no non-finite outputs in 512 trials at production-scale magnitudes, while reproducing non-finite outputs in four of 64 synthetic-control trials. Yet finite output drift reached relative L2 errors of approximately 5,000–31,000 in the tested geometries. The result exposes a distinction between numerical validity and content integrity: a finite-header check accepts the finite scale corruptions responsible for these large changes. This note reports the corrected experiment, its analytical boundary, and the limitations of the associated load-time check. The drift is kernel-fixture drift, not a measured accuracy drop. It does not measure end-to-end model accuracy or physical fault feasibility.
 
 ## 1. Question and scope
 
@@ -54,9 +64,25 @@ The saved scan covers seven files: Llama-3.2-1B and Qwen2.5-1.5B in Q8_0, Q4_K_M
 
 These are counts within the saved corpus, not a random sample of all GGUF models. The scanner reads packed scale words and records per-file/per-format statistics. The analysis here independently totals the saved counts and checks the occupied exponent buckets; it does not repeat the full model-file scan.
 
+### File inventory
+
+These are the exact filenames keyed in the saved scan. Counts include only the scanned Q8_0, Q4_K, and Q6_K `d` fields, not all tensor values or every header field.
+
+| Scanned GGUF filename | `d` words | SHA-256 at scan time |
+|---|---:|---|
+| `Llama-3.2-1B-Instruct.Q4_K_M.gguf` | 4,827,136 | Not recorded |
+| `Llama-3.2-1B-Instruct.Q6_K.gguf` | 4,827,136 | Not recorded |
+| `Llama-3.2-1B-Instruct-Q8_0.gguf` | 38,617,088 | Not recorded |
+| `Qwen3-0.6B-Q8_0.gguf` | 18,624,512 | Not recorded |
+| `qwen2.5-1.5b-instruct-q4_k_m.ember.gguf` | 6,941,184 | Not recorded |
+| `qwen2.5-1.5b-instruct-q6_k.ember.gguf` | 6,941,184 | Not recorded |
+| `qwen2.5-1.5b-instruct-q8_0.gguf` | 55,529,472 | Not recorded |
+
+The correction package does not bind these filenames to file-content hashes. A separate Phase I record contains a Llama Q8_0 hash, but it does not establish the identity of the file scanned here. The counts and exponent result are therefore attributed to the saved scan record; the original seven file identities cannot be independently established from this package alone.
+
 ### 3.2 Kernel sweep
 
-The correction harness constructs deterministic synthetic weights with eight output rows and 256 input features. K-quant payload bytes come from a fixed pseudorandom seed. Q8_0 payloads are generated by quantizing deterministic synthetic values. Each fixture uses a uniform requested `d`, converted to binary16, across its blocks. Q4_K's minimum parameter remains fixed at approximately `−0.02`.
+The correction harness constructs deterministic synthetic weights with eight output rows and 256 input features. This is **not a layer of Llama-3.2-1B**. The 136-million-word distribution scan is the only part of this experiment that touched real model files. K-quant payload bytes come from a fixed pseudorandom seed. Q8_0 payloads are generated by quantizing deterministic synthetic values. Each fixture uses a uniform requested `d`, converted to binary16, across its blocks. Q4_K's minimum parameter remains fixed at approximately `−0.02`.
 
 For each requested scale, the harness flips each of the 16 bits of `d` in the first block, separately, and calls the real Ember kernel through `k_decode` or `q8_decode`. Activations are fixed synthetic vectors. The experiment includes 11 distribution-informed scale settings for Q4_K, 10 for Q6_K, and 11 for Q8_0, plus `+1.0` controls for all formats and a `−1.0` control for Q6_K.
 
@@ -82,6 +108,8 @@ The following values were recounted directly from the saved JSONL rows:
 | Q8_0 | 176 | 0 | 6,297.217 | 939,410.2 | 0/11 |
 
 All four non-finite trials occurred in the synthetic controls, at bit 14. The real-scale trials also have finite mutated `d` words, as checked directly from their saved bit patterns.
+
+Relative L2, maximum absolute difference (L∞), and output-argmax change are different estimands. Q6_K has the largest relative L2 maximum in this fixture; Q8_0 has the largest absolute difference, about 939,410, while retaining argmax in all 11 bit-14 trials. None is an accuracy-drop measurement or a format-level security ranking.
 
 The Q8_0 result illustrates why output-argmax stability alone is insufficient: none of its 11 real-scale bit-14 trials changed argmax, despite very large vector changes. This observation is tied to the fixed output geometry. It does not establish that Q8_0 protects a model's predictions better than either K format.
 
@@ -111,13 +139,41 @@ Quantization scaling factors are an established concern in fault resilience. Fas
 
 The contribution here is a reproducible case study with three connected observations: a synthetic scale selected a non-finite mechanism absent from the scanned scale population; distribution-informed scale faults still caused large finite kernel-output changes; and a finite-header validator does not detect those changes. The correction strengthens the measurement lesson by separating a valid bit-level demonstration from an unsupported population interpretation.
 
-## 7. Limits and publication readiness
+## 7. Limits
 
 This is a kernel-level lab result. It supplies no end-to-end model accuracy, perplexity, safety-behavior, or generated-answer measurements. It supplies no physical fault rate or adversarial fault-selection study. One fixed geometry per format cannot estimate typical drift, and seven files cannot establish a universal property of quantized models. Multi-bit faults and other header fields remain outside the corrected sweep.
 
-The current artifact package supports inspection and independent saved-row recounting. Before an archival release, it needs portable paths, exact provenance and content hashes for all seven scanned model files, and a pinned build environment for a fresh kernel replay. The vendored Cargo dependency points to `/home/west/ember`, and the legacy analysis script reads `/tmp/opencode/phase5/sweep.jsonl`. The sweep's custom float-to-half conversion also deserves an independent check: its comment says round-to-nearest-even, while its implementation uses `round()`. The saved `d_bits` and `faulted_bits` are the authoritative inputs for this note's bit-level reasoning.
+The sweep's custom float-to-half conversion comment says round-to-nearest-even, while its implementation uses `round()`. The saved `d_bits` and `faulted_bits` are the authoritative inputs for this note's bit-level reasoning. Exact historical replay is limited by the missing original build/environment identity and scan-time model hashes.
 
 No new model execution, fault campaign, or validator benchmark was performed while preparing this draft. Numerical checks were confined to existing saved artifacts; implementation claims were checked by source inspection.
+
+### Replay commands
+
+To rerun the archived synthetic kernel sweep, create a separate checkout of the correction commit and point its vendored crate at that checkout. This produces new measurements; it does not recreate missing historical provenance. It requires Git, Python 3, a compatible Rust toolchain, and access to the crate dependencies. No model files are used.
+
+```bash
+git worktree add --detach /tmp/embersec-phase5 ae550f0fbcf9dea1a5507f5695b077d2cc77d02b
+python3 - <<'PYTHON'
+from pathlib import Path
+p = Path('/tmp/embersec-phase5/docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml')
+p.write_text(p.read_text().replace('/home/west/ember', '/tmp/embersec-phase5'))
+PYTHON
+EMBER_VERIFY_QUANT=0 cargo run \
+  --manifest-path /tmp/embersec-phase5/docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml \
+  --bin sweep -- /tmp/embersec-phase5-replay.jsonl
+```
+
+For a new real-file scan, supply seven explicit file paths and save their hashes alongside the output. This requires NumPy. New hashes identify that new scan only.
+
+```bash
+# Set these seven positional arguments to the files in the inventory.
+set -- /path/to/file1.gguf /path/to/file2.gguf /path/to/file3.gguf \
+  /path/to/file4.gguf /path/to/file5.gguf /path/to/file6.gguf /path/to/file7.gguf
+sha256sum "$@" > /tmp/embersec-phase5-models.sha256
+python3 /tmp/embersec-phase5/docs/embersec/phase5-correction-2026-09-03/gguf_d_scan.py \
+  "$@" --out /tmp/embersec-phase5-distribution.json \
+  --samples /tmp/embersec-phase5-samples.json
+```
 
 ## Evidence and references
 

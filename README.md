@@ -107,6 +107,9 @@ These are optional extensions and separate research tracks around the CLI instru
   research. The [frozen Phase I evaluation](research/embersec/comparative/README.md)
   retains its corpus, harnesses, results, and hashes as a separate evidence
   record; it is not a security certification of the evolving engine.
+  [Phase V lab note: Finite Is Not Intact](https://voidwest.dev/finite-is-not-intact.html):
+  the Inf result was a fixture; the operational failure is silent finite drift.
+  The measured drift is from synthetic kernels, not a model accuracy drop.
 - [Python bindings](bindings/python/README.md), [maintenance audits](docs/audits/README.md),
   and [external benchmarks](docs/external-benchmark.md)
 - [Sarf Atlas](https://github.com/voidwest/sarf-atlas): the separate Arabic
