@@ -82,19 +82,32 @@ h1,h2,h3{color:var(--heading)}.theme-toggle{margin-left:auto;background:transpar
 .replay-record{border:1px solid var(--border);background:var(--surface);padding:16px 20px;margin:0 0 28px;font:14px/1.6 system-ui,sans-serif}.replay-record h2{font:600 16px/1.4 system-ui,sans-serif;margin:0 0 10px}.replay-record ul{margin-bottom:12px}.replay-record p{margin:0}.replay-record code{font-size:.9em}
 .replay-record summary{cursor:pointer;color:var(--accent-strong);padding:5px 0}.replay-record details[open] summary{margin-bottom:12px}.format-note{font:14px/1.6 system-ui,sans-serif;color:var(--muted)}@media print{details:not([open])>*:not(summary){display:block!important}}
 </style><script src="theme.js"></script></head>
-<body><a class="skip" href="#article">Skip to article</a><div class="shell"><header class="masthead"><a href="embersec/README.md">EmberSEC</a><span>Technical notes</span><button class="theme-toggle" type="button" aria-label="Switch to dark theme">Light / dark</button></header><main><header class="article-header"><h1>Finite Is Not Intact: Scale-Bit Faults in GGUF Quantized Kernels</h1><p class="meta">Phase V · 14 September 2026 · Draft</p><p class="source-link"><a href="finite-is-not-intact.md">Markdown source</a></p></header><div class="layout"><article id="article"><section class="replay-record" aria-labelledby="replay-record"><h2 id="replay-record">Replay record</h2><ul><li><strong>Commit:</strong> <code>ae550f0</code> (archived correction source).</li><li><strong>Replay setting:</strong> <code>EMBER_VERIFY_QUANT=0</code>.</li><li><strong>Model SHA-256 values:</strong> unavailable for all seven scanned files.</li></ul><details><summary>Replay details, commands, and artifact hashes</summary>
+<body><a class="skip" href="#article">Skip to article</a><div class="shell"><header class="masthead"><a href="embersec/README.md">EmberSEC</a><span>Technical notes</span><button class="theme-toggle" type="button" aria-label="Switch to dark theme">Light / dark</button></header><main><header class="article-header"><h1>Finite Is Not Intact: Scale-Bit Faults in GGUF Quantized Kernels</h1><p class="meta">Phase V · 14 September 2026 · Draft</p><p class="source-link"><a href="finite-is-not-intact.md">Markdown source</a></p></header><div class="layout"><article id="article"><section class="replay-record" aria-labelledby="replay-record"><h2 id="replay-record">Replay record</h2>
+<ul>
+<li><strong>Commit:</strong> <code>ae550f0</code> (archived correction source).</li>
+<li><strong>Replay setting:</strong> <code>EMBER_VERIFY_QUANT=0</code>.</li>
+<li><strong>Model SHA-256 values:</strong> <a href="embersec/phase5-replay-2026-09-14/model_inventory.json">recorded for the 14 September replay</a>.</li>
+</ul>
+<details>
+<summary>Replay details, commands, and artifact hashes</summary>
 <ul>
 <li><strong>Archived source commit:</strong> <code>ae550f0fbcf9dea1a5507f5695b077d2cc77d02b</code> (correction package; the original executable/build identity was not recorded in that package).</li>
 <li><strong>Sweep binary:</strong> <code>sweep</code>, from <code>docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml</code>.</li>
 <li><strong>Replay setting:</strong> <code>EMBER_VERIFY_QUANT=0</code>. The original process environment was not saved. The sweep directly invokes the kernels after mutation; this is not a validator-detection run.</li>
 <li><strong>Fixed seeds:</strong> K payload constructor <code>0x5EED</code> (Xor64 initialized with <code>0x243F6A8885A308D3 ^ seed</code>), K activations <code>7</code>; Q8 payload construction and activations <code>11</code>.</li>
-<li><strong>Seven input-file SHA-256 values:</strong> not recorded in the correction package; all seven are explicitly marked unavailable in the <a href="#file-inventory">file inventory</a>. Do not substitute a hash from another experiment or a same-named current file.</li>
+<li><strong>Seven input-file SHA-256 values:</strong> recorded in the new replay; see the <a href="#file-inventory">file inventory</a>. The original scan did not record hashes. <a href="embersec/phase5-replay-2026-09-14/REPORT.md">Replay evidence</a> includes the dependency lock, executable hash, direct validator results, and independent checks.</li>
 </ul>
 <p><a href="#replay-commands">Replay commands</a> · <a href="#artifact-identity-at-draft-preparation">Saved artifact hashes</a></p>
-</details></section><h2 id="abstract">Abstract</h2>
+</details>
+</section><h2 id="abstract">Abstract</h2>
 <p>EmberSEC's first scale-fault fixture produced infinity after a single bit flip. Its scale was 1.0. A later scan of 136,307,712 scale words across seven GGUF files found no exponent that could reach NaN/Inf through one bit flip. In the corrected kernel sweep, all 512 trials at magnitudes drawn from that scan stayed finite; four of 64 synthetic-control trials produced non-finite outputs.</p>
 <p>The finite outputs could still move substantially. Relative L2 drift reached thousands to tens of thousands in the synthetic kernels. Ember's header-finiteness check accepts the corrupted scales responsible for those changes.</p>
 <p>These measurements describe kernel-fixture drift. End-to-end accuracy and physical fault feasibility were not tested.</p>
+<h3 id="replay-verification-14-september-2026">Replay verification · 14 September 2026</h3>
+<p>Two fresh runs of the archived kernel sweep reproduced all 576 JSONL rows <strong>byte for byte</strong>. Rescanning the seven current model files matched every saved distribution field. A separate parser and extraction implementation agreed on the word counts and exponent histograms; Ember's loader matched 45 sampled scale words.</p>
+<p>The replay also tested the validators directly. They accepted all 512 scan-magnitude faults and rejected the four non-finite controls. Adding the checks left the kernel outputs unchanged.</p>
+<p><a href="embersec/phase5-replay-2026-09-14/REPORT.md">Replay report</a> · <a href="embersec/phase5-replay-2026-09-14/verify.py">Saved evidence verifier</a> · <a href="embersec/phase5-replay-2026-09-14/Cargo.lock">Dependency lock</a> · <a href="embersec/phase5-replay-2026-09-14/SHA256SUMS">Package hashes</a></p>
+<p>The new hashes identify the files read during this replay. They cannot recover the missing original scan-time identities.</p>
 <h2 id="1-question-and-scope">1. Question and scope</h2>
 <p>Packed quantization stores numerical payloads together with parameters that determine their interpretation. Changing a payload bit changes part of a block's quantized representation; changing a shared scale can alter the contribution of many values at once. We ask two bounded questions:</p>
 <ol>
@@ -133,7 +146,7 @@ h1,h2,h3{color:var(--heading)}.theme-toggle{margin-left:auto;background:transpar
 </tr>
 </tbody>
 </table></div>
-<p class="format-note"><em>Format note:</em> <code>Q4_K_M</code> is the file tag used in the inventory. The mutated field is the block <code>d</code> field in Q4_K; mixed files also contain tensors in other formats.</p>
+<p><em>Format note:</em> <code>Q4_K_M</code> is the file tag used in the inventory. The mutated field is the block <code>d</code> field in Q4_K; mixed files also contain tensors in other formats.</p>
 <p>Q4_K also contains a binary16 minimum parameter and packed local scale/minimum fields. Q6_K contains integer local scales. Only <code>d</code> is mutated in the corrected sweep.</p>
 <h2 id="2-why-the-original-result-needed-correction">2. Why the original result needed correction</h2>
 <p>The initial deterministic fixture used <code>d = 1.0</code>. In binary16, this is <code>0x3c00</code>. Flipping bit 14 gives <code>0x7c00</code>, positive infinity. The analogous change to <code>−1.0</code> gives negative infinity. Whether this mechanism occurs in model weights depends on their scale exponents.</p>
@@ -152,7 +165,7 @@ h1,h2,h3{color:var(--heading)}.theme-toggle{margin-left:auto;background:transpar
 <li>maximum positive <code>d</code> of <strong>0.09326171875</strong>;</li>
 <li>maximum occupied encoded exponent of <strong>11</strong>.</li>
 </ul>
-<p>These are counts within the saved corpus, not a random sample of all GGUF models. The scanner reads packed scale words and records per-file/per-format statistics. The analysis here independently totals the saved counts and checks the occupied exponent buckets; it does not repeat the full model-file scan.</p>
+<p>These are counts within the saved corpus, not a random sample of all GGUF models. The scanner reads packed scale words and records per-file/per-format statistics. The original note recounted the saved summary. The 14 September replay repeated the full model-file scan and matched every field of that summary.</p>
 <h3 id="file-inventory">File inventory</h3>
 <p>These are the exact filenames keyed in the saved scan. Counts include only the scanned Q8_0, Q4_K, and Q6_K <code>d</code> fields, not all tensor values or every header field.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Data table"><table>
@@ -160,48 +173,48 @@ h1,h2,h3{color:var(--heading)}.theme-toggle{margin-left:auto;background:transpar
 <tr>
 <th>Scanned GGUF filename</th>
 <th style="text-align:right"><code>d</code> words</th>
-<th>SHA-256 at scan time</th>
+<th>Replay SHA-256 · 14 September 2026</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>Llama-3.2-1B-Instruct.Q4_K_M.gguf</code></td>
 <td style="text-align:right">4,827,136</td>
-<td>Not recorded</td>
+<td><code>f3cdd84d4a33483d749ddbe9cf13433b763ce41352f58b86cc67718325a38885</code></td>
 </tr>
 <tr>
 <td><code>Llama-3.2-1B-Instruct.Q6_K.gguf</code></td>
 <td style="text-align:right">4,827,136</td>
-<td>Not recorded</td>
+<td><code>3e22c35a5214a758faf2ca6bdd175aab574a4f8d2914e81f90375393bc0bf3df</code></td>
 </tr>
 <tr>
 <td><code>Llama-3.2-1B-Instruct-Q8_0.gguf</code></td>
 <td style="text-align:right">38,617,088</td>
-<td>Not recorded</td>
+<td><code>432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3</code></td>
 </tr>
 <tr>
 <td><code>Qwen3-0.6B-Q8_0.gguf</code></td>
 <td style="text-align:right">18,624,512</td>
-<td>Not recorded</td>
+<td><code>9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031</code></td>
 </tr>
 <tr>
 <td><code>qwen2.5-1.5b-instruct-q4_k_m.ember.gguf</code></td>
 <td style="text-align:right">6,941,184</td>
-<td>Not recorded</td>
+<td><code>b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5</code></td>
 </tr>
 <tr>
 <td><code>qwen2.5-1.5b-instruct-q6_k.ember.gguf</code></td>
 <td style="text-align:right">6,941,184</td>
-<td>Not recorded</td>
+<td><code>c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1</code></td>
 </tr>
 <tr>
 <td><code>qwen2.5-1.5b-instruct-q8_0.gguf</code></td>
 <td style="text-align:right">55,529,472</td>
-<td>Not recorded</td>
+<td><code>d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8</code></td>
 </tr>
 </tbody>
 </table></div>
-<p>The correction package does not bind these filenames to file-content hashes. A separate Phase I record contains a Llama Q8_0 hash, but it does not establish the identity of the file scanned here. The counts and exponent result are therefore attributed to the saved scan record; the original seven file identities cannot be independently established from this package alone.</p>
+<p>Each replay hash was computed before and after scanning; all seven stayed unchanged. The new distributions exactly match the historical summaries. Those summaries do not identify payload bytes, so this agreement cannot establish the complete identities of the files used in the original scan.</p>
 <h3 id="3-2-kernel-sweep">3.2 Kernel sweep</h3>
 <p>The correction harness constructs deterministic synthetic weights with eight output rows and 256 input features. This is <strong>not a layer of Llama-3.2-1B</strong>. The 136-million-word distribution scan is the only part of this experiment that touched real model files. K-quant payload bytes come from a fixed pseudorandom seed. Q8_0 payloads are generated by quantizing deterministic synthetic values. Each fixture uses a uniform requested <code>d</code>, converted to binary16, across its blocks. Q4_K's minimum parameter remains fixed at approximately <code>−0.02</code>.</p>
 <p>For each requested scale, the harness flips each of the 16 bits of <code>d</code> in the first block, separately, and calls the real Ember kernel through <code>k_decode</code> or <code>q8_decode</code>. Activations are fixed synthetic vectors. The experiment includes 11 scale settings with magnitudes taken from the scanned <code>d</code> population for Q4_K, 10 for Q6_K, and 11 for Q8_0, plus <code>+1.0</code> controls for all formats and a <code>−1.0</code> control for Q6_K.</p>
@@ -261,7 +274,7 @@ h1,h2,h3{color:var(--heading)}.theme-toggle{margin-left:auto;background:transpar
 <p>The earlier payload sweep remains supporting exploratory evidence in the Phase V report. Its finite outputs do not prove that payload corruption is harmless, and its fault sites and fixtures are not a matched comparison establishing that scale faults always dominate payload faults.</p>
 <h2 id="5-what-the-integrity-check-detects">5. What the integrity check detects</h2>
 <p>Ember's <code>QuantizedWeight::validate_integrity()</code> checks expected byte length and finite Q8_0 scales. <code>KQuantWeight::validate_integrity()</code> checks expected byte length and finite Q4_K <code>d</code>/minimum or Q6_K <code>d</code> fields. The optional <code>EMBER_VERIFY_QUANT</code> load hook invokes this validation on constructed quantized weights.</p>
-<p>Under those predicates, a bit flip that changes a finite <code>d</code> to another finite <code>d</code> while preserving layout is accepted. The finite scale faults above satisfy that condition. This is a source-level deduction from the validator, rather than a newly executed detector benchmark over all 576 trials.</p>
+<p>Under those predicates, a bit flip that changes a finite <code>d</code> to another finite <code>d</code> while preserving layout is accepted. The finite scale faults above satisfy that condition. This was originally a source-level deduction. The 14 September replay checked all 576 mutated fixtures directly: all 512 scan-magnitude faults were accepted, and the four non-finite controls were rejected.</p>
 <div class="table-wrap" tabindex="0" role="region" aria-label="Data table"><table>
 <thead>
 <tr>
@@ -300,10 +313,11 @@ h1,h2,h3{color:var(--heading)}.theme-toggle{margin-left:auto;background:transpar
 <p>Each format was tested in one fixed geometry, so the results cannot estimate typical drift across layers or models. The sweep changes one bit of <code>d</code> at a time. Multi-bit faults and other header fields remain untested.</p>
 <p>The experiment ends at kernel outputs. It provides no measurements of model accuracy, perplexity, generated answers, physical fault rates, or adversarial fault selection. The seven-file scan supports a claim about that recorded corpus only.</p>
 <h3 id="artifact-status">Artifact status</h3>
-<p>The vendored Cargo dependency points to <code>/home/west/ember</code>; the legacy analysis script reads <code>/tmp/opencode/phase5/sweep.jsonl</code>. The commands below relocate the dependency and give the new sweep output an explicit path.</p>
-<p>There is also a conversion discrepancy to preserve: the sweep's float-to-half comment says round-to-nearest-even, while the implementation uses <code>round()</code>. This note's bit-level reasoning uses the saved <code>d_bits</code> and <code>faulted_bits</code>. Original build/environment identity and scan-time model hashes are missing, which limits exact historical replay.</p>
-<p>Preparing this note involved saved-array checks and source inspection. No new model execution, fault campaign, or validator benchmark was run.</p>
+<p>The vendored Cargo dependency points to <code>/home/west/ember</code>; the legacy analysis script reads <code>/tmp/opencode/phase5/sweep.jsonl</code>. The commands below relocate the dependency and give the new sweep output an explicit path. The verified replay used the same source with that path adaptation, default features enabled, Rust 1.92.0, and a newly captured dependency lock.</p>
+<p>There is also a conversion discrepancy to preserve: the sweep's float-to-half comment says round-to-nearest-even, while the implementation uses <code>round()</code>. This note's bit-level reasoning uses the saved <code>d_bits</code> and <code>faulted_bits</code>. All 576 recorded trials agree with independent round-to-nearest-even conversion. The new replay records its compiler, dependencies, executable hash, environment settings, and model hashes. The original build/environment identity and scan-time model hashes remain missing.</p>
+<p>The first draft used saved-array checks and source inspection. The subsequent replay rebuilt the synthetic sweep, repeated the real-file scan, and tested the validators. It performed no full-model inference or training.</p>
 <h3 id="replay-commands">Replay commands</h3>
+<p>For the captured-dependency procedure and saved-evidence verification, use the <a href="embersec/phase5-replay-2026-09-14/REPORT.md">replay bundle</a>. The original command sequence below resolves dependencies unless you also supply the captured lockfile.</p>
 <p>To rerun the archived synthetic kernel sweep, create a separate checkout of the correction commit and point its vendored crate at that checkout. This produces new measurements; it does not recreate missing historical provenance. It requires Git, Python 3, a compatible Rust toolchain, and access to the crate dependencies. No model files are used.</p>
 <pre><code class="language-bash">git worktree add --detach /tmp/embersec-phase5 ae550f0fbcf9dea1a5507f5695b077d2cc77d02b
 python3 - &lt;&lt;'PYTHON'
@@ -329,7 +343,7 @@ python3 /tmp/embersec-phase5/docs/embersec/phase5-correction-2026-09-03/gguf_d_s
 <li><a href="embersec/quantized-inference-security.md">EmberSEC Phase V report and historical correction</a>.</li>
 <li><a href="embersec/phase5-correction-2026-09-03/sweep.jsonl">Per-trial sweep data</a> and <a href="embersec/phase5-correction-2026-09-03/d_distribution.json">saved scale distributions</a>.</li>
 <li><a href="embersec/phase5-correction-2026-09-03/sweep/src/main.rs">Correction sweep source</a>, <a href="embersec/phase5-correction-2026-09-03/gguf_d_scan.py">GGUF scanner</a>, and <a href="embersec/phase5-correction-2026-09-03/analyze_sweep.py">legacy analysis script</a>.</li>
-<li><a href="https://github.com/voidwest/ember/blob/9fa94c77b4dee8c29a99c1a6d32f6e292cb4f378/src/quant_fault.rs">Kernel fault harness</a>, <a href="https://github.com/voidwest/ember/blob/9fa94c77b4dee8c29a99c1a6d32f6e292cb4f378/src/quant.rs">Q8_0 validation</a>, and <a href="https://github.com/voidwest/ember/blob/9fa94c77b4dee8c29a99c1a6d32f6e292cb4f378/src/quant_k.rs">K-quant validation</a>.</li>
+<li><a href="https://github.com/voidwest/ember/blob/ae550f0fbcf9dea1a5507f5695b077d2cc77d02b/src/quant_fault.rs">Kernel fault harness</a>, <a href="https://github.com/voidwest/ember/blob/ae550f0fbcf9dea1a5507f5695b077d2cc77d02b/src/quant.rs">Q8_0 validation</a>, and <a href="https://github.com/voidwest/ember/blob/ae550f0fbcf9dea1a5507f5695b077d2cc77d02b/src/quant_k.rs">K-quant validation</a>.</li>
 <li>Fasfous et al. (2022), <a href="https://iris.polito.it/handle/11583/2964392"><em>Mind the Scaling Factors: Resilience Analysis of Quantized Adversarially Robust CNNs</em></a>, DATE 2022. Related-work positioning is preliminary, not a systematic novelty review.</li>
 </ol>
 <h3 id="artifact-identity-at-draft-preparation">Artifact identity at draft preparation</h3>

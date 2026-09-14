@@ -1,0 +1,37 @@
+{
+  "rows": 576,
+  "independent_bit_and_RNE_issues": [],
+  "eligible_finite_exponents": [
+    15,
+    23,
+    27,
+    29,
+    30
+  ],
+  "real_rows": 512,
+  "real_nonfinite": 0,
+  "control_nonfinite": 4,
+  "by_format": {
+    "Q4_K": {
+      "n": 176,
+      "max_relative_l2": 4976.151,
+      "max_absolute": 62578.38,
+      "bit14_argmax_changes": 11,
+      "bit14_trials": 11
+    },
+    "Q6_K": {
+      "n": 160,
+      "max_relative_l2": 30831.56,
+      "max_absolute": 57895.96,
+      "bit14_argmax_changes": 5,
+      "bit14_trials": 10
+    },
+    "Q8_0": {
+      "n": 176,
+      "max_relative_l2": 6297.217,
+      "max_absolute": 939410.2,
+      "bit14_argmax_changes": 0,
+      "bit14_trials": 11
+    }
+  }
+}

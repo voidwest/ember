@@ -6,7 +6,7 @@
 
 - **Commit:** `ae550f0` (archived correction source).
 - **Replay setting:** `EMBER_VERIFY_QUANT=0`.
-- **Model SHA-256 values:** unavailable for all seven scanned files.
+- **Model SHA-256 values:** [recorded for the 14 September replay](embersec/phase5-replay-2026-09-14/model_inventory.json).
 
 <details>
 <summary>Replay details, commands, and artifact hashes</summary>
@@ -15,7 +15,7 @@
 - **Sweep binary:** `sweep`, from `docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml`.
 - **Replay setting:** `EMBER_VERIFY_QUANT=0`. The original process environment was not saved. The sweep directly invokes the kernels after mutation; this is not a validator-detection run.
 - **Fixed seeds:** K payload constructor `0x5EED` (Xor64 initialized with `0x243F6A8885A308D3 ^ seed`), K activations `7`; Q8 payload construction and activations `11`.
-- **Seven input-file SHA-256 values:** not recorded in the correction package; all seven are explicitly marked unavailable in the [file inventory](#file-inventory). Do not substitute a hash from another experiment or a same-named current file.
+- **Seven input-file SHA-256 values:** recorded in the new replay; see the [file inventory](#file-inventory). The original scan did not record hashes. [Replay evidence](embersec/phase5-replay-2026-09-14/REPORT.md) includes the dependency lock, executable hash, direct validator results, and independent checks.
 
 [Replay commands](#replay-commands) · [Saved artifact hashes](#artifact-identity-at-draft-preparation)
 
@@ -29,6 +29,16 @@ EmberSEC's first scale-fault fixture produced infinity after a single bit flip. 
 The finite outputs could still move substantially. Relative L2 drift reached thousands to tens of thousands in the synthetic kernels. Ember's header-finiteness check accepts the corrupted scales responsible for those changes.
 
 These measurements describe kernel-fixture drift. End-to-end accuracy and physical fault feasibility were not tested.
+
+### Replay verification · 14 September 2026
+
+Two fresh runs of the archived kernel sweep reproduced all 576 JSONL rows **byte for byte**. Rescanning the seven current model files matched every saved distribution field. A separate parser and extraction implementation agreed on the word counts and exponent histograms; Ember's loader matched 45 sampled scale words.
+
+The replay also tested the validators directly. They accepted all 512 scan-magnitude faults and rejected the four non-finite controls. Adding the checks left the kernel outputs unchanged.
+
+[Replay report](embersec/phase5-replay-2026-09-14/REPORT.md) · [Saved evidence verifier](embersec/phase5-replay-2026-09-14/verify.py) · [Dependency lock](embersec/phase5-replay-2026-09-14/Cargo.lock) · [Package hashes](embersec/phase5-replay-2026-09-14/SHA256SUMS)
+
+The new hashes identify the files read during this replay. They cannot recover the missing original scan-time identities.
 
 ## 1. Question and scope
 
@@ -78,23 +88,23 @@ The saved scan covers seven files: Llama-3.2-1B and Qwen2.5-1.5B in Q8_0, Q4_K_M
 - maximum positive `d` of **0.09326171875**;
 - maximum occupied encoded exponent of **11**.
 
-These are counts within the saved corpus, not a random sample of all GGUF models. The scanner reads packed scale words and records per-file/per-format statistics. The analysis here independently totals the saved counts and checks the occupied exponent buckets; it does not repeat the full model-file scan.
+These are counts within the saved corpus, not a random sample of all GGUF models. The scanner reads packed scale words and records per-file/per-format statistics. The original note recounted the saved summary. The 14 September replay repeated the full model-file scan and matched every field of that summary.
 
 ### File inventory
 
 These are the exact filenames keyed in the saved scan. Counts include only the scanned Q8_0, Q4_K, and Q6_K `d` fields, not all tensor values or every header field.
 
-| Scanned GGUF filename | `d` words | SHA-256 at scan time |
+| Scanned GGUF filename | `d` words | Replay SHA-256 · 14 September 2026 |
 |---|---:|---|
-| `Llama-3.2-1B-Instruct.Q4_K_M.gguf` | 4,827,136 | Not recorded |
-| `Llama-3.2-1B-Instruct.Q6_K.gguf` | 4,827,136 | Not recorded |
-| `Llama-3.2-1B-Instruct-Q8_0.gguf` | 38,617,088 | Not recorded |
-| `Qwen3-0.6B-Q8_0.gguf` | 18,624,512 | Not recorded |
-| `qwen2.5-1.5b-instruct-q4_k_m.ember.gguf` | 6,941,184 | Not recorded |
-| `qwen2.5-1.5b-instruct-q6_k.ember.gguf` | 6,941,184 | Not recorded |
-| `qwen2.5-1.5b-instruct-q8_0.gguf` | 55,529,472 | Not recorded |
+| `Llama-3.2-1B-Instruct.Q4_K_M.gguf` | 4,827,136 | `f3cdd84d4a33483d749ddbe9cf13433b763ce41352f58b86cc67718325a38885` |
+| `Llama-3.2-1B-Instruct.Q6_K.gguf` | 4,827,136 | `3e22c35a5214a758faf2ca6bdd175aab574a4f8d2914e81f90375393bc0bf3df` |
+| `Llama-3.2-1B-Instruct-Q8_0.gguf` | 38,617,088 | `432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3` |
+| `Qwen3-0.6B-Q8_0.gguf` | 18,624,512 | `9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031` |
+| `qwen2.5-1.5b-instruct-q4_k_m.ember.gguf` | 6,941,184 | `b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5` |
+| `qwen2.5-1.5b-instruct-q6_k.ember.gguf` | 6,941,184 | `c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1` |
+| `qwen2.5-1.5b-instruct-q8_0.gguf` | 55,529,472 | `d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8` |
 
-The correction package does not bind these filenames to file-content hashes. A separate Phase I record contains a Llama Q8_0 hash, but it does not establish the identity of the file scanned here. The counts and exponent result are therefore attributed to the saved scan record; the original seven file identities cannot be independently established from this package alone.
+Each replay hash was computed before and after scanning; all seven stayed unchanged. The new distributions exactly match the historical summaries. Those summaries do not identify payload bytes, so this agreement cannot establish the complete identities of the files used in the original scan.
 
 ### 3.2 Kernel sweep
 
@@ -137,7 +147,7 @@ The earlier payload sweep remains supporting exploratory evidence in the Phase V
 
 Ember's `QuantizedWeight::validate_integrity()` checks expected byte length and finite Q8_0 scales. `KQuantWeight::validate_integrity()` checks expected byte length and finite Q4_K `d`/minimum or Q6_K `d` fields. The optional `EMBER_VERIFY_QUANT` load hook invokes this validation on constructed quantized weights.
 
-Under those predicates, a bit flip that changes a finite `d` to another finite `d` while preserving layout is accepted. The finite scale faults above satisfy that condition. This is a source-level deduction from the validator, rather than a newly executed detector benchmark over all 576 trials.
+Under those predicates, a bit flip that changes a finite `d` to another finite `d` while preserving layout is accepted. The finite scale faults above satisfy that condition. This was originally a source-level deduction. The 14 September replay checked all 576 mutated fixtures directly: all 512 scan-magnitude faults were accepted, and the four non-finite controls were rejected.
 
 | Event | Covered by the described check? |
 |---|---|
@@ -163,13 +173,15 @@ The experiment ends at kernel outputs. It provides no measurements of model accu
 
 ### Artifact status
 
-The vendored Cargo dependency points to `/home/west/ember`; the legacy analysis script reads `/tmp/opencode/phase5/sweep.jsonl`. The commands below relocate the dependency and give the new sweep output an explicit path.
+The vendored Cargo dependency points to `/home/west/ember`; the legacy analysis script reads `/tmp/opencode/phase5/sweep.jsonl`. The commands below relocate the dependency and give the new sweep output an explicit path. The verified replay used the same source with that path adaptation, default features enabled, Rust 1.92.0, and a newly captured dependency lock.
 
-There is also a conversion discrepancy to preserve: the sweep's float-to-half comment says round-to-nearest-even, while the implementation uses `round()`. This note's bit-level reasoning uses the saved `d_bits` and `faulted_bits`. Original build/environment identity and scan-time model hashes are missing, which limits exact historical replay.
+There is also a conversion discrepancy to preserve: the sweep's float-to-half comment says round-to-nearest-even, while the implementation uses `round()`. This note's bit-level reasoning uses the saved `d_bits` and `faulted_bits`. All 576 recorded trials agree with independent round-to-nearest-even conversion. The new replay records its compiler, dependencies, executable hash, environment settings, and model hashes. The original build/environment identity and scan-time model hashes remain missing.
 
-Preparing this note involved saved-array checks and source inspection. No new model execution, fault campaign, or validator benchmark was run.
+The first draft used saved-array checks and source inspection. The subsequent replay rebuilt the synthetic sweep, repeated the real-file scan, and tested the validators. It performed no full-model inference or training.
 
 ### Replay commands
+
+For the captured-dependency procedure and saved-evidence verification, use the [replay bundle](embersec/phase5-replay-2026-09-14/REPORT.md). The original command sequence below resolves dependencies unless you also supply the captured lockfile.
 
 To rerun the archived synthetic kernel sweep, create a separate checkout of the correction commit and point its vendored crate at that checkout. This produces new measurements; it does not recreate missing historical provenance. It requires Git, Python 3, a compatible Rust toolchain, and access to the crate dependencies. No model files are used.
 

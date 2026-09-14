@@ -1,0 +1,43 @@
+{
+  "original_sha256": "fbf34d0d1f02f819d1141012c01ae7f90e2266ab9e4b336218960a5faf19abc6",
+  "binary_sha256": "5ac7b57bac9a449d731ba49556d2f50c9d502a87eaa501df97360646aeb8716a",
+  "replay_sha256": "fbf34d0d1f02f819d1141012c01ae7f90e2266ab9e4b336218960a5faf19abc6",
+  "exact_bytes_original": true,
+  "exact_bytes_repeat": true,
+  "rows": 576,
+  "validator_outputs_exact_replay": true,
+  "validator_real_accepted": 512,
+  "validator_nonfinite_rejected": 4,
+  "validator_mismatch_count": 0,
+  "loader_checks": {
+    "Llama-3.2-1B-Instruct.Q4_K_M.gguf": {
+      "samples": 10,
+      "output": "validate_scales: 10 matched, 0 mismatched"
+    },
+    "Llama-3.2-1B-Instruct.Q6_K.gguf": {
+      "samples": 5,
+      "output": "validate_scales: 5 matched, 0 mismatched"
+    },
+    "Llama-3.2-1B-Instruct-Q8_0.gguf": {
+      "samples": 5,
+      "output": "validate_scales: 5 matched, 0 mismatched"
+    },
+    "Qwen3-0.6B-Q8_0.gguf": {
+      "samples": 5,
+      "output": "validate_scales: 5 matched, 0 mismatched"
+    },
+    "qwen2.5-1.5b-instruct-q4_k_m.ember.gguf": {
+      "samples": 10,
+      "output": "validate_scales: 10 matched, 0 mismatched"
+    },
+    "qwen2.5-1.5b-instruct-q6_k.ember.gguf": {
+      "samples": 5,
+      "output": "validate_scales: 5 matched, 0 mismatched"
+    },
+    "qwen2.5-1.5b-instruct-q8_0.gguf": {
+      "samples": 5,
+      "output": "validate_scales: 5 matched, 0 mismatched"
+    }
+  },
+  "finished_utc": "2026-09-14T16:47:19.987972+00:00"
+}

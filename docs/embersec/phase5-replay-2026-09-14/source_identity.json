@@ -1,0 +1,7 @@
+{
+  "checked_blobs": 146,
+  "changed_blobs": [
+    "docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml"
+  ],
+  "adaptation": "Only absolute ember path dependency changed; all checked engine, scanner, and sweep source files match archived Git blobs."
+}

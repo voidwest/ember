@@ -1,0 +1,3458 @@
+[
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 192,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 503,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 908,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1195,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1466,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1655,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 1938,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 2529,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 3155,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 4121,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 6121,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 14,
+    "accepted": false
+  },
+  {
+    "dtype": "Q4_K",
+    "d_bits": 15360,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 36039,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33268,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33122,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 33007,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 32905,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 137,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 235,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 344,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 495,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 3138,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 14,
+    "accepted": false
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 15360,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 14,
+    "accepted": false
+  },
+  {
+    "dtype": "Q6_K",
+    "d_bits": 48128,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 464,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2314,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 2782,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3217,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3451,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 3757,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4298,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 4830,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 6169,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 7455,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 14,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 8402,
+    "bit": 15,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 0,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 1,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 2,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 3,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 4,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 5,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 6,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 7,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 8,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 9,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 10,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 11,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 12,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 13,
+    "accepted": true
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 14,
+    "accepted": false
+  },
+  {
+    "dtype": "Q8_0",
+    "d_bits": 15360,
+    "bit": 15,
+    "accepted": true
+  }
+]

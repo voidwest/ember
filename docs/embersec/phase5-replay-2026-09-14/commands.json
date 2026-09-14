@@ -1,0 +1,131 @@
+[
+  {
+    "label": "locked_build",
+    "argv": [
+      "cargo",
+      "build",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml",
+      "--bin",
+      "sweep"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 1.0199883919999593
+  },
+  {
+    "label": "sweep_run_1",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/sweep",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/sweep_replay_1.jsonl"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.018691014999603794
+  },
+  {
+    "label": "sweep_run_2",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/sweep",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/sweep_replay_2.jsonl"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.01885701900027925
+  },
+  {
+    "label": "validation_build",
+    "argv": [
+      "cargo",
+      "build",
+      "--offline",
+      "--locked",
+      "--manifest-path",
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/Cargo.toml",
+      "--bin",
+      "validate_faults",
+      "--bin",
+      "validate_scales"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 1.9224959039997884
+  },
+  {
+    "label": "validator_run",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_faults",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/validator_sweep.jsonl"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.019275920999916707
+  },
+  {
+    "label": "loader_check_0",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_scales",
+      "/home/west/ember/Llama-3.2-1B-Instruct.Q4_K_M.gguf",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/loader_samples_0.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.06717366499970012
+  },
+  {
+    "label": "loader_check_1",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_scales",
+      "/home/west/ember/Llama-3.2-1B-Instruct.Q6_K.gguf",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/loader_samples_1.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.07506756899965694
+  },
+  {
+    "label": "loader_check_2",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_scales",
+      "/home/west/ember/Llama-3.2-1B-Instruct-Q8_0.gguf",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/loader_samples_2.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.06722843599982298
+  },
+  {
+    "label": "loader_check_3",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_scales",
+      "/home/west/ember/Qwen3-0.6B-Q8_0.gguf",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/loader_samples_3.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.10083661500038943
+  },
+  {
+    "label": "loader_check_4",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_scales",
+      "/home/west/ember/qwen2.5-1.5b-instruct-q4_k_m.ember.gguf",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/loader_samples_4.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.09335246499995264
+  },
+  {
+    "label": "loader_check_5",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_scales",
+      "/home/west/ember/qwen2.5-1.5b-instruct-q6_k.ember.gguf",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/loader_samples_5.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.06625166499998159
+  },
+  {
+    "label": "loader_check_6",
+    "argv": [
+      "/tmp/embersec-phase5-replay-source/docs/embersec/phase5-correction-2026-09-03/sweep/target/debug/validate_scales",
+      "/home/west/ember/qwen2.5-1.5b-instruct-q8_0.gguf",
+      "/home/west/ember/research/embersec/phase5_replay_20260914/loader_samples_6.json"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.0418310510003721
+  }
+]

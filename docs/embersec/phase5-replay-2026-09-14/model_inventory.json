@@ -1,0 +1,149 @@
+{
+  "Llama-3.2-1B-Instruct.Q4_K_M.gguf": {
+    "sha256": "f3cdd84d4a33483d749ddbe9cf13433b763ce41352f58b86cc67718325a38885",
+    "sha256_after": "f3cdd84d4a33483d749ddbe9cf13433b763ce41352f58b86cc67718325a38885",
+    "stat_before": [
+      66307,
+      16003598,
+      807694080,
+      1785595829492702120,
+      1785595829492702120
+    ],
+    "stat_after": [
+      66307,
+      16003598,
+      807694080,
+      1785595829492702120,
+      1785595829492702120
+    ],
+    "stable": true,
+    "bytes": 807694080,
+    "distribution_exact": true
+  },
+  "Llama-3.2-1B-Instruct.Q6_K.gguf": {
+    "sha256": "3e22c35a5214a758faf2ca6bdd175aab574a4f8d2914e81f90375393bc0bf3df",
+    "sha256_after": "3e22c35a5214a758faf2ca6bdd175aab574a4f8d2914e81f90375393bc0bf3df",
+    "stat_before": [
+      66307,
+      16003612,
+      1021800192,
+      1785581045700725681,
+      1785581170542986806
+    ],
+    "stat_after": [
+      66307,
+      16003612,
+      1021800192,
+      1785581045700725681,
+      1785581170542986806
+    ],
+    "stable": true,
+    "bytes": 1021800192,
+    "distribution_exact": true
+  },
+  "Llama-3.2-1B-Instruct-Q8_0.gguf": {
+    "sha256": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+    "sha256_after": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+    "stat_before": [
+      66307,
+      15348057,
+      1321083008,
+      1779417760874958849,
+      1779417836050010760
+    ],
+    "stat_after": [
+      66307,
+      15348057,
+      1321083008,
+      1779417760874958849,
+      1779417836050010760
+    ],
+    "stable": true,
+    "bytes": 1321083008,
+    "distribution_exact": true
+  },
+  "Qwen3-0.6B-Q8_0.gguf": {
+    "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+    "sha256_after": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+    "stat_before": [
+      66307,
+      16023643,
+      639446688,
+      1780109672978025119,
+      1780109672978025119
+    ],
+    "stat_after": [
+      66307,
+      16023643,
+      639446688,
+      1780109672978025119,
+      1780109672978025119
+    ],
+    "stable": true,
+    "bytes": 639446688,
+    "distribution_exact": true
+  },
+  "qwen2.5-1.5b-instruct-q4_k_m.ember.gguf": {
+    "sha256": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+    "sha256_after": "b66e0350b994a95e26e9c41f05410c39f1ec84838b96144f494f87a5aaee8bf5",
+    "stat_before": [
+      66307,
+      15993151,
+      1117320736,
+      1785573548647917527,
+      1785573548647917527
+    ],
+    "stat_after": [
+      66307,
+      15993151,
+      1117320736,
+      1785573548647917527,
+      1785573548647917527
+    ],
+    "stable": true,
+    "bytes": 1117320736,
+    "distribution_exact": true
+  },
+  "qwen2.5-1.5b-instruct-q6_k.ember.gguf": {
+    "sha256": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+    "sha256_after": "c6bc806dd29f9dd3f32e320d90cd6f3facf94f2bdff0b13fc8311113a7f354d1",
+    "stat_before": [
+      66307,
+      16003603,
+      1464178720,
+      1785573594923333646,
+      1785573594923333646
+    ],
+    "stat_after": [
+      66307,
+      16003603,
+      1464178720,
+      1785573594923333646,
+      1785573594923333646
+    ],
+    "stable": true,
+    "bytes": 1464178720,
+    "distribution_exact": true
+  },
+  "qwen2.5-1.5b-instruct-q8_0.gguf": {
+    "sha256": "d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8",
+    "sha256_after": "d7efb072e7724d25048a4fda0a3e10b04bdef5d06b1403a1c93bd9f1240a63c8",
+    "stat_before": [
+      66307,
+      16021577,
+      1894532128,
+      1779986641911565897,
+      1779986641911565897
+    ],
+    "stat_after": [
+      66307,
+      16021577,
+      1894532128,
+      1779986641911565897,
+      1779986641911565897
+    ],
+    "stable": true,
+    "bytes": 1894532128,
+    "distribution_exact": true
+  }
+}
