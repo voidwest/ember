@@ -383,6 +383,19 @@ enum ResultView {
 impl ResultView {
     const ALL: [Self; 4] = [Self::Overview, Self::Layers, Self::Tokens, Self::Trace];
 
+    /// Stable identity key for the result tabs. As with [`View::key`], the
+    /// element id is behaviour and the label is display text, so they are kept
+    /// separate -- "Raw trace" is a label that can be reworded without
+    /// renaming the tab's address.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Overview => "overview",
+            Self::Layers => "layers",
+            Self::Tokens => "tokens",
+            Self::Trace => "trace",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             Self::Overview => "Overview",
@@ -1650,59 +1663,108 @@ impl Console {
     }
 
     /// Workflow stepper. Reads as tabs, not a wizard diagram.
-    /// Flat text tabs: a label and, on the active one, a hairline beneath it.
+    /// One tab bar, used for both the workflow steps and the result views.
     ///
-    /// gpui-kit has a `TabBar` with exactly this `.underline()` variant, and it
-    /// is the component the design guides say to reach for. It is not usable
-    /// here yet: in 0.6.6 `Tab` exposes `label`, `aria_label`, `icon`, the four
-    /// variants and `on_click`, but no element id and no tooltip -- the docs
-    /// page documents `.id("custom-id")`, which does not exist in the shipped
-    /// source. Those ids are what the kit tests click to catch shell breakage,
-    /// and the step hints are the only place a step says what it is for.
+    /// gpui-kit ships a `TabBar` with exactly this `.underline()` treatment, and
+    /// the design guides say to reach for the component. It cannot be used here
+    /// for a concrete reason, checked in the 0.6.6 source rather than assumed:
+    /// `Tab::ix` sets `self.base = self.base.id(ix)` -- a tab's element id is
+    /// its *positional index*, assigned internally, and the docs page documents
+    /// a `.id("custom-id")` method that does not exist. So a tab has no stable
+    /// address, which means no test can click "go to Prompt" and nothing can
+    /// label a tab for a screen reader beyond the visible text.
     ///
-    /// So the affordance is built here instead, on the same Buttons, and this
-    /// is the note to check first if the component gains an id.
-    fn stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+    /// Both call sites need those, so both are built here. The alternative --
+    /// the library tab bar on one screen and a hand-rolled imitation on the
+    /// other -- is worse than either alone.
+    fn tab_row(
+        &self,
+        colors: &Colors,
+        cx: &mut Context<Self>,
+        prefix: &'static str,
+        // (element key, visible label, what a screen reader should hear)
+        tabs: &[(&'static str, &'static str, String)],
+        active: usize,
+    ) -> Div {
         let mut row = div().flex().flex_row().gap(px(Space::SM));
-        for step in WorkspaceStep::ALL.iter() {
-            let active = self.step == *step;
+        for (index, (key, text, accessible)) in tabs.iter().enumerate() {
+            let is_active = index == active;
+            let selected = *key;
             row = row.child(
                 div()
                     .flex()
                     .flex_col()
                     .items_center()
                     .child(
-                        Button::new(SharedString::from(format!("step:{}", step.key())))
+                        Button::new(SharedString::from(format!("{prefix}:{key}")))
                             .ghost()
                             .compact()
-                            .label(step.label())
-                            .tooltip(step.hint())
-                            .accessibility_label(format!(
-                                "Step {}: {}. {}",
-                                step.number(),
-                                step.label(),
-                                step.hint()
-                            ))
+                            .label(*text)
+                            .tooltip(*text)
+                            .accessibility_label(accessible)
                             .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
-                                console.step = *step;
+                                console.select_tab(prefix, selected);
                                 cx.notify();
                             })),
                     )
-                    // The underline is the whole selected state. The filled
-                    // pill it replaces was the chunkiest thing on the page and
-                    // read as a component sample rather than a position in a
-                    // flow. Weight on the label carries the rest.
+                    // The underline is the whole selected state. The filled pill
+                    // it replaces was the chunkiest thing on the page and read as
+                    // a component sample rather than a position in a flow.
                     .child(
                         div()
                             .w_full()
                             .h(px(2.0))
                             .mt(px(-Space::XS))
                             .rounded_full()
-                            .bg(if active { colors.accent } else { colors.border }),
+                            .bg(if is_active {
+                                colors.accent
+                            } else {
+                                colors.border
+                            }),
                     ),
             );
         }
-        div().w_full().px_5().pt_4().child(row)
+        row
+    }
+
+    /// Switch whichever family of tabs `prefix` names. One decision point, so
+    /// the two tab bars cannot drift apart the way two implementations did.
+    fn select_tab(&mut self, prefix: &str, key: &str) {
+        if prefix == "step" {
+            if let Some(step) = WorkspaceStep::ALL.iter().find(|step| step.key() == key) {
+                self.step = *step;
+            }
+        } else if let Some(view) = ResultView::ALL.iter().find(|view| view.key() == key) {
+            self.result_view = *view;
+        }
+    }
+
+    /// Workflow steps: Prompt, Intervention, Review.
+    fn stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let tabs: Vec<(&'static str, &'static str, String)> = WorkspaceStep::ALL
+            .iter()
+            .map(|step| {
+                (
+                    step.key(),
+                    step.label(),
+                    format!(
+                        "Step {} of 3: {}. {}",
+                        step.number(),
+                        step.label(),
+                        step.hint()
+                    ),
+                )
+            })
+            .collect();
+        let active = WorkspaceStep::ALL
+            .iter()
+            .position(|step| *step == self.step)
+            .unwrap_or(0);
+        div()
+            .w_full()
+            .px_5()
+            .pt_4()
+            .child(self.tab_row(colors, cx, "step", &tabs, active))
     }
 
     /// Home: a landing surface with something to do, not a form in waiting.
@@ -2684,26 +2746,25 @@ impl Console {
             ))
     }
 
-    fn result_tabs(&self, _colors: &Colors, cx: &mut Context<Self>) -> Div {
-        use gpui_kit::component::tab::{Tab, TabBar};
-        let selected = ResultView::ALL
+    /// Result sub-views: Overview, Layers, Tokens, Trace.
+    fn result_tabs(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let tabs: Vec<(&'static str, &'static str, String)> = ResultView::ALL
+            .iter()
+            .map(|view| {
+                (
+                    view.key(),
+                    view.label(),
+                    format!("{} of 4 result views", view.label()),
+                )
+            })
+            .collect();
+        let active = ResultView::ALL
             .iter()
             .position(|view| *view == self.result_view)
             .unwrap_or(0);
-        div().w_full().child(
-            TabBar::new("result-tabs")
-                .underline()
-                .selected_index(selected)
-                .children(
-                    ResultView::ALL
-                        .into_iter()
-                        .map(|view| Tab::new().label(view.label())),
-                )
-                .on_click(cx.listener(|console, index: &usize, _, cx| {
-                    console.result_view = ResultView::ALL[*index];
-                    cx.notify();
-                })),
-        )
+        div()
+            .w_full()
+            .child(self.tab_row(colors, cx, "result", &tabs, active))
     }
 
     fn intervention_layer_for_result(&self) -> Option<usize> {
