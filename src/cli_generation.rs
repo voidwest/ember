@@ -1094,11 +1094,13 @@ where
 
         // write JSON if requested
         if let Some(path) = trace_out {
-            let artifact = serde_json::json!({
-                "schema_version": 1,
-                "prefill": prefill_trace,
-                "decode": aggregated,
-            });
+            // The document carries a named schema id (ember.infertrace.v1)
+            // alongside the legacy integer, so a reader can reject an unknown
+            // format instead of guessing. See trace::parse_infertrace_document.
+            let artifact =
+                trace::InferTraceDocument::new(prefill_trace.clone(), Some(aggregated.clone()));
+            let artifact =
+                serde_json::to_value(&artifact).context("failed to encode trace JSON")?;
             write_json_file(path, &artifact).context("failed to write trace JSON")?;
             eprintln!("trace JSON written to {}", path);
         }

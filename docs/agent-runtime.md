@@ -163,8 +163,9 @@ counted as mismatches). `report` writes one self-contained HTML file:
 summary card, timeline bars per step, artifact list, full event table;
 inline CSS only, no JavaScript, no external assets.
 
-Privacy defaults, documented: prompts ON, generated text ON, tool payloads
-summarized at 2048 bytes, token events OFF. Disabling a mode records a
+Privacy defaults, documented: prompts OFF, generated text OFF, tool payloads
+summarized at 2048 bytes, token events OFF. Prompt and generated-text capture
+are opt-in; digests are recorded under every mode. Disabling a mode records a
 length + SHA-256 instead of content. Every payload also carries
 `payload_sha256` regardless of mode, which is what deterministic replay
 verifies against.

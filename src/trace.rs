@@ -276,6 +276,103 @@ pub struct TraceReport {
     pub run_metadata: Option<RunMetadata>,
 }
 
+// ---------------------------------------------------------------------------
+// document schema
+// ---------------------------------------------------------------------------
+
+/// Named schema identifier written into every inference-trace document.
+///
+/// This is the inference counterpart to `agent::TRACE_SCHEMA`
+/// (`ember.agent.trace.v1`). It exists because the trace document previously
+/// carried only a bare `schema_version: 1` integer, which is not a schema
+/// name: it cannot be extended compatibly, and a reader had no way to tell an
+/// Ember trace from an unrelated JSON file with a `version` field.
+///
+/// Compatibility rules, matching `docs/trace-schema.md`:
+///
+/// - a breaking change must mint a new identifier (`ember.infertrace.v2`);
+/// - readers must ignore unknown fields, so additive changes stay compatible;
+/// - readers must reject an unknown *major* rather than reinterpret it.
+pub const TRACE_SCHEMA: &str = "ember.infertrace.v1";
+
+/// Major version of [`TRACE_SCHEMA`]. Compared by the reader so that
+/// `ember.infertrace.v2` is rejected rather than silently misread.
+pub const TRACE_SCHEMA_MAJOR: u32 = 1;
+
+/// The on-disk inference-trace document written by `--trace-out`.
+///
+/// `schema` is the compatibility anchor. `schema_version` is retained for
+/// readers that predate the named identifier; new readers use `schema` and
+/// ignore it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct InferTraceDocument {
+    /// Named schema identifier; always [`TRACE_SCHEMA`] when written here.
+    pub schema: String,
+    /// Legacy integer version, retained for older readers.
+    pub schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefill: Option<TraceReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decode: Option<TraceReport>,
+}
+
+impl InferTraceDocument {
+    /// Build a document from its parts, stamping the current schema.
+    pub fn new(prefill: Option<TraceReport>, decode: Option<TraceReport>) -> Self {
+        Self {
+            schema: TRACE_SCHEMA.to_string(),
+            schema_version: TRACE_SCHEMA_MAJOR,
+            prefill,
+            decode,
+        }
+    }
+}
+
+/// Why an inference-trace document could not be read.
+#[derive(Debug, thiserror::Error)]
+pub enum InferTraceError {
+    /// The bytes are not valid JSON.
+    #[error("trace document is not valid JSON: {0}")]
+    Json(#[from] serde_json::Error),
+    /// No named `schema` field.
+    ///
+    /// This is a hard failure on purpose. Documents written before the named
+    /// identifier carried only `schema_version`, and accepting them silently
+    /// would mean the format was never actually versioned.
+    #[error(
+        "trace document has no named `schema` field (expected {expected:?}); \
+             documents predating the schema id are not accepted"
+    )]
+    MissingSchema { expected: &'static str },
+    /// A named schema this build does not understand.
+    #[error("unsupported trace schema {found:?}; this build reads {expected:?}")]
+    UnsupportedSchema {
+        found: String,
+        expected: &'static str,
+    },
+}
+
+/// Read and validate an inference-trace document.
+///
+/// Rejects a missing schema and any unrecognized schema, including a future
+/// major. Unknown *fields* are ignored, so additive changes stay compatible.
+pub fn parse_infertrace_document(raw: &str) -> Result<InferTraceDocument, InferTraceError> {
+    let value: serde_json::Value = serde_json::from_str(raw)?;
+    let found = value
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(InferTraceError::MissingSchema {
+            expected: TRACE_SCHEMA,
+        })?;
+    if found != TRACE_SCHEMA {
+        return Err(InferTraceError::UnsupportedSchema {
+            found: found.to_string(),
+            expected: TRACE_SCHEMA,
+        });
+    }
+    Ok(serde_json::from_value(value)?)
+}
+
 /// Collect system-level metadata for a trace run.
 pub fn collect_run_metadata(thread_count: usize) -> RunMetadata {
     let cpu_model = std::fs::read_to_string("/proc/cpuinfo")

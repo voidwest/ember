@@ -294,8 +294,10 @@ RAYON_NUM_THREADS=1 target/release/ember \
 ```
 
 Tracing is thread-local; use one Rayon thread when a complete per-operation
-decode trace is more important than throughput. See `TRACE.md` for the event
-schema, recorded operation types, and caveats.
+decode trace is more important than throughput. `--trace-out` writes a
+document identified by the named schema `ember.infertrace.v1`; see
+[trace-schema.md](trace-schema.md) for the event schema, the recorded
+operation types, the reader's compatibility rules, and caveats.
 
 ### subcommands
 
