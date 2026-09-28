@@ -1,7 +1,8 @@
 # Steps to Ember 1.0
 
-This is a release plan, not a declaration that 1.0 has shipped. The current
-package remains 0.6.8. It turns the nine criteria in
+This is a release plan, not a declaration that 1.0 has shipped. The tree now
+reports `1.0.0`, but the `v1.0.0` tag is held until the external gates below
+close. It turns the nine criteria in
 [What Ember 1.0 has to earn](ember/road-to-ember-1.0/07-what-ember-1-0-has-to-earn.html)
 into ordered work and reviewable evidence. A faster kernel or a new GUI alone
 cannot satisfy these gates.

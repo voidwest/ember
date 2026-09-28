@@ -48,8 +48,8 @@ limits.
 2. Re-freeze the candidate: rebuild `--locked --release`, then rerun the battery
    in [1.0 current validation](audits/1.0-current-validation.md) so every
    artifact identity matches the tagged commit.
-3. Bump versions in `Cargo.toml`, `Cargo.lock`, `bindings/python/Cargo.toml`
-   (and the Python package metadata) from `0.6.8` to `1.0.0`.
+3. Version bump to `1.0.0` is already applied in `Cargo.toml`, `Cargo.lock`, and
+   `bindings/python/Cargo.toml`; the tree reports `1.0.0`.
 4. Run the release checklist in [api-stability](api-stability.md): `cargo fmt
    --all -- --check`, `cargo test --locked --all-targets`, headless
    `--no-default-features --all-targets`, default + headless clippy `-D warnings`,
