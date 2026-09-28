@@ -56,14 +56,6 @@ pub fn architecture_note(declared: &str) -> Option<&'static str> {
     }
 }
 
-/// The declared `general.architecture` string from GGUF metadata, if present.
-pub fn declared_architecture(loader: &GgufLoader) -> Option<&str> {
-    match loader.metadata.get("general.architecture") {
-        Some(GgufValue::Str(value)) => Some(value.as_str()),
-        _ => None,
-    }
-}
-
 /// Log a warning when the declared architecture is outside the supported
 /// matrix. Called from the shared architecture resolver so every Rust caller
 /// (CLI, bindings, research tools) sees the same signal.
@@ -83,6 +75,106 @@ pub fn strict_gate(declared: &str, strict: bool) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// architecture dispatch
+// ---------------------------------------------------------------------------
+
+/// The engine family Ember dispatches a declared GGUF architecture to.
+///
+/// This is the single mapping from `general.architecture` to the Rust type
+/// that implements the forward pass. It lived inline in four places (the
+/// loader resolver, the extraction resolver, the EmberSEC harness, and the
+/// differential harness), each with its own default for unknown input. Those
+/// copies could disagree, and two of them defaulted an unrecognized
+/// architecture to [`EngineFamily::Llama`] instead of failing closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineFamily {
+    Gpt2,
+    Llama,
+    Qwen3,
+    Gemma4,
+}
+
+impl EngineFamily {
+    /// The canonical family label, matching the resolver's output string.
+    ///
+    /// Note that `qwen2` and `qwen3` both map to [`EngineFamily::Qwen3`]: they
+    /// share one engine and differ only in numerics, which
+    /// [`architecture_support`] reports separately.
+    pub fn label(self) -> &'static str {
+        match self {
+            EngineFamily::Gpt2 => "gpt2",
+            EngineFamily::Llama => "llama",
+            EngineFamily::Qwen3 => "qwen3",
+            EngineFamily::Gemma4 => "gemma4",
+        }
+    }
+
+    /// Normalize a family alias as a user may pass it to `--arch`.
+    ///
+    /// Accepts both the declared architecture spellings and the canonical
+    /// family labels, so `--arch qwen2` and `--arch qwen3` are equivalent.
+    pub fn from_alias(alias: &str) -> Option<Self> {
+        match alias {
+            "gpt2" => Some(EngineFamily::Gpt2),
+            "llama" => Some(EngineFamily::Llama),
+            "qwen2" | "qwen3" => Some(EngineFamily::Qwen3),
+            "gemma3" | "gemma4" => Some(EngineFamily::Gemma4),
+            _ => None,
+        }
+    }
+}
+
+/// Why a declared architecture could not be dispatched.
+///
+/// Every variant is a hard failure. There is deliberately no catch-all that
+/// guesses a family: a GGUF whose architecture is missing, mistyped, or
+/// unrecognized must be rejected rather than silently loaded as some other
+/// model, because a differential harness that reports "accepted" for a file
+/// the CLI rejects is worse than no harness at all.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ArchitectureError {
+    /// `general.architecture` is absent.
+    #[error("GGUF is missing required general.architecture metadata")]
+    Missing,
+    /// `general.architecture` is present but is not a string.
+    #[error("GGUF general.architecture must be a string")]
+    NotAString,
+    /// `general.architecture` names an architecture Ember cannot run.
+    #[error(
+        "GGUF architecture '{0}' is not supported by generation; \
+         expected gpt2, llama, qwen2/qwen3, or gemma3/gemma4"
+    )]
+    Unsupported(String),
+}
+
+/// Map a declared `general.architecture` string to its engine family.
+///
+/// Fails closed on anything unrecognized.
+pub fn engine_family_for(declared: &str) -> Result<EngineFamily, ArchitectureError> {
+    EngineFamily::from_alias(declared)
+        .ok_or_else(|| ArchitectureError::Unsupported(declared.to_string()))
+}
+
+/// Read `general.architecture` from a loader and resolve it, failing closed.
+///
+/// Returns the family together with the *declared* string, because callers
+/// need the declaration for support warnings and `--arch` conflict messages.
+///
+/// This is the shared entry point for every runtime that needs to decide which
+/// model to build. It replaces per-call-site `match` blocks whose defaults
+/// disagreed.
+pub fn resolve_engine_family(
+    loader: &GgufLoader,
+) -> Result<(EngineFamily, &str), ArchitectureError> {
+    let declared = match loader.metadata.get("general.architecture") {
+        Some(GgufValue::Str(value)) => value.as_str(),
+        Some(_) => return Err(ArchitectureError::NotAString),
+        None => return Err(ArchitectureError::Missing),
+    };
+    Ok((engine_family_for(declared)?, declared))
 }
 
 /// Human notes for tensors that fell back to eager-f32 because no resident

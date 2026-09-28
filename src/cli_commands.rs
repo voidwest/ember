@@ -983,21 +983,16 @@ pub(crate) fn infer_extraction_architecture(
         .get("general.architecture")
         .and_then(serde_json::Value::as_str)
         .context("GGUF is missing string metadata general.architecture")?;
-    let detected = match declared {
-        "gpt2" => "gpt2",
-        "llama" => "llama",
-        "qwen2" | "qwen3" => "qwen3",
-        "gemma3" | "gemma4" => "gemma4",
-        other => anyhow::bail!("unsupported GGUF architecture '{other}'"),
-    };
+    // Same mapping as the generation resolver, via crate::support, so the
+    // two cannot drift. Only the error wording differs, because these are
+    // different flags.
+    let detected = ember::support::engine_family_for(declared)
+        .map_err(|error| anyhow::anyhow!("{error}"))?
+        .label();
     if let Some(requested) = config.architecture.as_deref() {
-        let requested = match requested {
-            "qwen2" | "qwen3" => "qwen3",
-            "gemma3" | "gemma4" => "gemma4",
-            "gpt2" => "gpt2",
-            "llama" => "llama",
-            other => anyhow::bail!("unsupported extraction architecture '{other}'"),
-        };
+        let requested = ember::support::EngineFamily::from_alias(requested)
+            .ok_or_else(|| anyhow::anyhow!("unsupported extraction architecture '{requested}'"))?
+            .label();
         if requested != detected {
             anyhow::bail!(
                 "extraction architecture '{requested}' conflicts with GGUF general.architecture='{declared}'"

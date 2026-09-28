@@ -346,12 +346,18 @@ fn load_model(
 ) -> Result<Loaded> {
     use ember::loader::load_gguf_with_k_strategy;
     let loader = load_gguf_with_k_strategy(model_path, ember::quant_k::KStrategy::Auto, true)?;
-    let declared = match loader.metadata.get("general.architecture") {
-        Some(ember::loader::GgufValue::Str(v)) => v.clone(),
-        _ => anyhow::bail!("GGUF missing general.architecture"),
-    };
+    // Shared fail-closed read of general.architecture, then an agent-specific
+    // subset check expressed over the resolved family. Previously this hand-
+    // rolled its own metadata read and allowlist, so it could drift from the
+    // resolver (and reported a different error for a missing key).
+    let (family, declared) =
+        ember::support::resolve_engine_family(&loader).map_err(anyhow::Error::msg)?;
+    let declared = declared.to_string();
     anyhow::ensure!(
-        matches!(declared.as_str(), "llama" | "qwen2" | "qwen3"),
+        matches!(
+            family,
+            ember::support::EngineFamily::Llama | ember::support::EngineFamily::Qwen3
+        ),
         "agent phase 1 supports llama/qwen-family GGUFs; got `{declared}`"
     );
     // general.file_type carries the LLAMA_FTYPE enum (not a GGML dtype)

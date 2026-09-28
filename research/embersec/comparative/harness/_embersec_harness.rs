@@ -51,16 +51,28 @@ fn gguf_model_check() {
             std::process::exit(1);
         }
     };
-    // Architecture-aware dispatch mirrors the CLI: llama/qwen3 -> Llama,
-    // gemma3/gemma4 -> Gemma4, gpt2 -> Gpt2.
-    let arch = match loader.metadata.get("general.architecture") {
-        Some(ember::loader::GgufValue::Str(s)) => s.as_str(),
-        _ => "llama",
+    // Architecture-aware dispatch, resolved through the same shared mapping
+    // the CLI uses (ember::support). This previously defaulted an absent or
+    // unrecognized architecture to "llama". Because the loader does not
+    // require general.architecture and Llama::from_loader_impl only checks it
+    // `if let Some(..)`, a GGUF with no architecture key was reported
+    // HARNESS: MODEL_OK -- a false accept in a corpus whose whole purpose is
+    // recording what Ember rejects.
+    let family = match ember::support::resolve_engine_family(&loader) {
+        Ok((family, _)) => family,
+        Err(error) => {
+            eprintln!("HARNESS: ARCH_REJECT: {error}");
+            std::process::exit(1);
+        }
     };
-    let result = match arch {
-        "gemma3" | "gemma4" => ember::gemma4::Gemma4::from_loader(loader).map(|_| ()),
-        "gpt2" => ember::model::Gpt2::from_loader(loader).map(|_| ()),
-        _ => ember::llama::Llama::from_loader(loader).map(|_| ()),
+    let result = match family {
+        ember::support::EngineFamily::Gemma4 => {
+            ember::gemma4::Gemma4::from_loader(loader).map(|_| ())
+        }
+        ember::support::EngineFamily::Gpt2 => ember::model::Gpt2::from_loader(loader).map(|_| ()),
+        ember::support::EngineFamily::Llama | ember::support::EngineFamily::Qwen3 => {
+            ember::llama::Llama::from_loader(loader).map(|_| ())
+        }
     };
     match result {
         Ok(_) => eprintln!("HARNESS: MODEL_OK"),
