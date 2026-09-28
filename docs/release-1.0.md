@@ -1,10 +1,11 @@
 # Cutting Ember 1.0.0
 
 Status: **staged, not released.** The local release gates pass on candidate
-`099270c44ccb02dde40a3797595bb180633ff286621894c4d861306c6d67db00` (uncommitted,
-package still 0.6.8). The version bump and tag are deliberately held until the
-external gates below close, per [the roadmap](road-to-1.0.md) gate 7 ("Only then
-bump the package/bindings versions ... and create the 1.0.0 release").
+`099270c44ccb02dde40a3797595bb180633ff286621894c4d861306c6d67db00`; the tree now
+reports `version = "1.0.0"` (rebuilt binary
+`f443082e83ddeb20916598b512dee0604c81c5f340ec87852bf51a478dd18ed8`, a
+version-string-only delta). The `v1.0.0` tag is deliberately held until the
+external gates below close, per [the roadmap](road-to-1.0.md) gate 7.
 
 ## Gate status
 
@@ -13,8 +14,8 @@ bump the package/bindings versions ... and create the 1.0.0 release").
 | 1. Public workflow (GUI + headless) | Implementation done; desktop accessibility/manual acceptance **open** | 86 `gui-tests` bin tests, 28 offscreen render scenes; headless builds independent |
 | 2. Freeze research contracts | Done | [contract audit](audits/1.0-contract-audit.md); six-site captures/interventions/scale/observer on the candidate |
 | 3. Compatibility & migration rules | Done | [research contract §19](v05-research-contract.md); [API stability](api-stability.md); [public-surface inventory](audits/1.0-public-surfaces.md) |
-| 4. Installation & examples | Examples pinned; clean machine **open** | [morphology examples](../examples/experiments/README.md); authorized tokenizer download blocked (HTTP 403) |
-| 5. Reconcile validation | Done (capture-overhead sub-item open) | [validation](validation.md); [Q6 disposition](audits/1.0-q6-numerics.md); [Gate C](audits/1.0-current-validation.md); [Gate H matrix](audits/1.0-performance-m1.md) |
+| 4. Installation & examples | Examples pinned; clean machine **open** | [morphology examples](../examples/experiments/README.md); tokenizer bundled in-repo with a public pinned fallback, so only a clean machine remains |
+| 5. Reconcile validation | Done | [validation](validation.md); [Q6 disposition](audits/1.0-q6-numerics.md); [Gate C](audits/1.0-current-validation.md); [Gate H matrix + capture overhead](audits/1.0-performance-m1.md) |
 | 6. External validation | **Open** | [external acceptance checklist](1.0-external-acceptance.md); needs a real second person |
 | 7. Cut the release | **Blocked** | this document |
 
@@ -62,7 +63,8 @@ limits.
 - Cross-tier eager-f32 vs compressed K-quant agreement is a cosine envelope,
   not exact greedy-token equality; the pinned llama.cpp golden ladder is the
   authoritative model-level numerical gate ([Q6 audit](audits/1.0-q6-numerics.md)).
-- Selected-row capture overhead is not yet measured (remaining Gate H item).
+- Capture overhead is measured at the prompt-final and decode-step-1 positions
+  only (within noise); per-step capture rates are not characterized.
 - `qwen3` and `gemma4` remain experimental; see [support](support.md).
 - The Rust library API has no stable subset; only the serialized anchors and
   documented CLI/Python surfaces are the 1.x promise.
