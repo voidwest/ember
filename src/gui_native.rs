@@ -1012,6 +1012,7 @@ impl Console {
                         Type::META,
                         colors.text_faint,
                     ))
+                    .child(div().w_full())
                     .child(mono(
                         format!("\u{2264}{} tokens  \u{00b7}  seed 0", context.max_tokens),
                         Type::META,
@@ -1649,26 +1650,59 @@ impl Console {
     }
 
     /// Workflow stepper. Reads as tabs, not a wizard diagram.
+    /// Flat text tabs: a label and, on the active one, a hairline beneath it.
+    ///
+    /// gpui-kit has a `TabBar` with exactly this `.underline()` variant, and it
+    /// is the component the design guides say to reach for. It is not usable
+    /// here yet: in 0.6.6 `Tab` exposes `label`, `aria_label`, `icon`, the four
+    /// variants and `on_click`, but no element id and no tooltip -- the docs
+    /// page documents `.id("custom-id")`, which does not exist in the shipped
+    /// source. Those ids are what the kit tests click to catch shell breakage,
+    /// and the step hints are the only place a step says what it is for.
+    ///
+    /// So the affordance is built here instead, on the same Buttons, and this
+    /// is the note to check first if the component gains an id.
     fn stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let mut row = div().flex().flex_row().gap(px(Space::XS));
-        for (index, step) in WorkspaceStep::ALL.iter().enumerate() {
-            if index > 0 {
-                row = row.child(label("/", Type::LABEL, colors.text_faint));
-            }
+        let mut row = div().flex().flex_row().gap(px(Space::SM));
+        for step in WorkspaceStep::ALL.iter() {
+            let active = self.step == *step;
             row = row.child(
-                Button::new(SharedString::from(format!("step:{}", step.key())))
-                    .small()
-                    .selected(self.step == *step)
-                    .label(step.label())
-                    .tooltip(step.hint())
-                    .accessibility_label(format!("Step {}: {}", step.number(), step.label()))
-                    .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
-                        console.step = *step;
-                        cx.notify();
-                    })),
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .child(
+                        Button::new(SharedString::from(format!("step:{}", step.key())))
+                            .ghost()
+                            .compact()
+                            .label(step.label())
+                            .tooltip(step.hint())
+                            .accessibility_label(format!(
+                                "Step {}: {}. {}",
+                                step.number(),
+                                step.label(),
+                                step.hint()
+                            ))
+                            .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
+                                console.step = *step;
+                                cx.notify();
+                            })),
+                    )
+                    // The underline is the whole selected state. The filled
+                    // pill it replaces was the chunkiest thing on the page and
+                    // read as a component sample rather than a position in a
+                    // flow. Weight on the label carries the rest.
+                    .child(
+                        div()
+                            .w_full()
+                            .h(px(2.0))
+                            .mt(px(-Space::XS))
+                            .rounded_full()
+                            .bg(if active { colors.accent } else { colors.border }),
+                    ),
             );
         }
-        div().w_full().px_5().pt_4().pb_1().child(row)
+        div().w_full().px_5().pt_4().child(row)
     }
 
     /// Home: a landing surface with something to do, not a form in waiting.
@@ -2195,38 +2229,38 @@ impl Console {
             .child(group(
                 div()
                     .flex_col()
-                    .gap(px(Space::MD))
+                    .gap(px(Space::SM))
+                    .child(section_label(colors, "Model"))
+                    // Select, status and action on one line. They were three
+                    // stacked rows, which split one object across the page and
+                    // left the badge and the button looking like they belonged
+                    // to the fields below rather than to the model.
                     .child(
                         div()
                             .flex()
-                            .items_center()
-                            .child(section_label(colors, "Model"))
-                            .child(div().w_full())
-                            .child(chip(model_status.0, model_status.2)),
-                    )
-                    .child(self.picker(
-                        colors,
-                        "model-picker",
-                        ComboId::Model,
-                        &self.model_path,
-                        &self.model_options,
-                        cx,
-                    ))
-                    .children(raw_path)
-                    .child(
-                        div()
-                            .flex()
+                            .flex_row()
                             .items_center()
                             .gap(px(Space::SM))
-                            .child(label(model_status.1, Type::LABEL, colors.text_faint))
-                            .child(div().w_full())
-                            .child(div().w(px(150.0)).child(btn_secondary(
+                            // A floor, not min_w(0): the picker wraps a library
+                            // Select that sizes to its content, and min_w(0)
+                            // let the whole control collapse to nothing beside
+                            // the chip and the action.
+                            .child(div().flex_1().min_w(px(200.0)).child(self.picker(
+                                colors,
+                                "model-picker",
+                                ComboId::Model,
+                                &self.model_path,
+                                &self.model_options,
+                                cx,
+                            )))
+                            .child(chip(model_status.0, model_status.2))
+                            .child(div().flex_none().child(btn_secondary(
                                 colors,
                                 icons::MODEL,
                                 if self.status == Status::Preparing {
                                     "LOADING…"
                                 } else {
-                                    "LOAD MODEL"
+                                    "Load"
                                 },
                                 (!self.busy()).then(|| {
                                     cx.listener(|console, _: &ClickEvent, _window, cx| {
@@ -2235,7 +2269,9 @@ impl Console {
                                     })
                                 }),
                             ))),
-                    ),
+                    )
+                    .child(label(model_status.1, Type::LABEL, colors.text_faint))
+                    .children(raw_path),
             ))
             .child(group(
                 div()
