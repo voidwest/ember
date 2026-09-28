@@ -10,6 +10,63 @@ Moved from the top-level README.
 > with completed golden checks (qwen3/llama families); do not cite it as
 > validated across all architectures.
 
+## 1.0 candidate status (2026-09-27)
+
+A 1.0 release candidate has not yet been frozen. Historical results below are
+scoped to their recorded model, hardware, implementation, and protocol; they
+are not a fresh pass for the current M1/GPUI Kit worktree. Use these terms:
+
+| Claim | Evidence required | What it does not establish |
+|---|---|---|
+| Loadable | GGUF parses and architecture/shape checks succeed | A working forward pass |
+| Executable/supported path | Documented path completes a smoke run | Numerical parity or model quality |
+| Parity-tested | Named execution paths match on pinned fixtures within stated envelopes | Agreement with an external implementation |
+| Golden-validated | Pinned external reference, model/tokenizer hashes, prompts and numerical report | Unchecked architectures, quantizations or hardware |
+| Activation-validated | Internal tensors agree with a named reference | Causal usefulness of a representation |
+
+The local Llama 3.2 1B Q8 GUI worker run verifies bundles and exact restoration;
+it is not a new external golden check. The earlier M1 optimization pass passed
+ARM/scalar comparisons but retained a scalar-versus-eager-f32 greedy
+continuation difference on K-quant. The earlier v0.3 Gate B statement below must
+not be used to label that current gate as passing. It is now explicitly bounded
+by the evidence-based contract decision recorded in the
+[Q6 numerical investigation](audits/1.0-q6-numerics.md): exact greedy-token
+equality is asserted only within a compressed tier, the cross-tier eager-f32
+comparison keeps the per-layer/logit cosine envelope on shared-prefix steps and
+records a flip, and the pinned llama.cpp golden ladder (Gate C) remains the
+authoritative model-level numerical gate. The fresh frozen-ladder run narrows
+this further: all seven native K-parity tests pass on Llama Q4_K_M; Q6_K now
+passes seven after the scope (it had passed six, failing greedy eager/scalar
+equality on `The quick brown fox jumps over the` at generated token 3, eager
+token 13 versus compressed token 627 — a 0.05-logit near-tie). ARM/scalar bit
+equality and planned/fused/hook/allocation checks pass on both rungs. The
+divergence itself is retained as evidence and is not claimed away.
+
+Golden ladder validation refuses missing models and mismatched model
+hashes/sizes before starting. The complete frozen six-rung ladder has now
+been reproduced byte-for-byte on M1 from the original FP16 sources. A fresh
+run against llama.cpp `47c786924ad1ab7e91da2cdc72fcdb563780c2bd` passed
+all six rungs on both frozen English prompts, with no threshold changes:
+
+| Model/rung | Top-1 | Max absolute difference | Worst mean difference | Minimum cosine |
+|---|---:|---:|---:|---:|
+| Llama Q8_0 | 2/2 | 0.463001 | 0.100230 | 0.999399 |
+| Llama Q6_K | 2/2 | 0.804647 | 0.122699 | 0.998937 |
+| Llama Q4_K_M | 2/2 | 0.884105 | 0.134403 | 0.998633 |
+| Qwen Q8_0 | 2/2 | 0.806422 | 0.130503 | 0.999237 |
+| Qwen Q6_K | 2/2 | 1.743902 | 0.265537 | 0.996888 |
+| Qwen Q4_K_M | 2/2 | 1.319626 | 0.221879 | 0.997136 |
+
+This worktree evidence is stored in the local milestone checkpoint's
+`golden-pinned-m1` directory, with raw logits, model/tokenizer identities,
+reference build hashes, configuration, per-rung summaries, and aggregate
+`ladder-summary.json`. It covers final-position logits on those two prompts;
+it does not establish activation parity, long-form generation equivalence,
+or closure of the separate scalar/eager-f32 gate.
+
+Contract and historical-reader work is tracked in
+[the 1.0 contract audit](audits/1.0-contract-audit.md).
+
 ## validation ladder
 
 Use these levels when interpreting Ember runs:
@@ -166,3 +223,93 @@ F1-F5 with hook-driven defusion).
   reference; the planned/fused paths reproduce reference greedy outputs
   within the frozen envelopes, so the golden-logit agreement carries over
   by transitivity (ladder re-run for the release artifacts).
+
+### Rebuilding the pinned reference on macOS or Linux
+
+Use Python 3.11+ (the supported development environment uses 3.12), CMake,
+Git, and a C++ compiler. `scripts/setup_llama_cpp.sh --jobs 6` builds the
+frozen b9999 reference and records `ember-reference-build.json` beside its
+checkout. The golden runner verifies that stamp against the actual checkout,
+executables, shared libraries, and CMake cache; rerun setup after a reference
+build changes. The setup path has been exercised on the M1 Pro; this is not
+clean-machine installation evidence.
+
+Run `scripts/validate_golden_ladder.sh --workdir /path/to/new-golden-run`
+with all six pinned models available. The directory must be new: previous
+results are preserved. The harness is rebuilt for each run, and `provenance.json`
+records binary/library/source and tokenizer identities. The model preflight
+continues to enforce the frozen manifest, including when `LADDER` points to a
+different directory. A diagnostic run on a downloaded model with another hash
+cannot substitute for this gate.
+
+For rebuilding models, `scripts/quantize_ladder.sh` accepts `PYTHON` and uses
+portable hashing and size checks. Use a new `--out` directory. It refuses an
+existing rung or manifest record; do not run concurrent writers in that directory.
+The generated manifest records the exact argv, including the thread count.
+The resulting files must still match the frozen ladder hashes to count as
+Gate C inputs.
+
+The original FP16 sources are now pinned by repository revision as well as by
+SHA-256. With `huggingface_hub` installed, run:
+
+```sh
+.venv/bin/python scripts/download_ladder_sources.py --out models/v03-sources
+```
+
+The helper downloads Llama from
+[second-state at ffae973](https://huggingface.co/second-state/Llama-3.2-1B-Instruct-GGUF/tree/ffae973dc8b47a497fae462fc1f882437e258bbf)
+and Qwen from
+[Qwen at 91cad51](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/tree/91cad51170dc346986eccefdc2dd33a9da36ead9),
+then checks the original source sizes and hashes from the frozen manifest.
+It writes `sources.json` with the download identities. A matching FP16 source
+and quantizer commit do not alone prove matching output bytes: the default
+M1 build reproduced the Llama Q8 rung exactly but differed on Q4/Q6. The
+separate quantizer build below disables floating-point contraction and native
+CPU tuning; it reproduced all three frozen Llama hashes on this M1 Pro.
+It leaves the optimized inference reference build intact.
+
+```sh
+JOBS=6 scripts/setup_ladder_quantizer.sh
+scripts/quantize_ladder.sh \
+  --model-llama models/v03-sources/Llama-3.2-1B-Instruct-f16.gguf \
+  --model-qwen models/v03-sources/qwen2.5-1.5b-instruct-fp16.gguf \
+  --out models/v03-ladder-reproduced --jobs 6
+.venv/bin/python scripts/validate_ladder_inputs.py \
+  --models-dir models/v03-ladder-reproduced
+LADDER=models/v03-ladder-reproduced scripts/validate_golden_ladder.sh \
+  --workdir /path/to/new-golden-run
+```
+
+`quantize_ladder.sh` uses this separate build by default and verifies its
+`ember-quantizer-build.json` identity before creating output. Existing rungs
+remain protected. The model-hash preflight is still authoritative: a successful
+quantization command alone is not a reproducibility pass.
+
+The pinned K-parity runner now selects ARM64 or x86_64 explicitly and requires
+that native tier plus the parallel scheduler. Use
+`EMBER_PARITY_MODEL_ROOT=models/v03-ladder-reproduced scripts/validate_k_parity.sh`.
+Its scalar/eager-f32, hook, planned/fused, and allocation checks retain their
+existing assertions. A native ARM pass does not claim an x86 test run.
+
+### Q6 generation follow-up
+
+The [Q6 numerical investigation](audits/1.0-q6-numerics.md) compares the first
+differing logits and reference cache/attention settings. With F32 KV and flash
+attention disabled, compressed Ember matches the reference for five of six
+12-token frozen continuations. The final Arabic prompt still differs from
+both eager and compressed Ember. The internal eager/compressed comparison
+also differs at the last token of that Arabic prompt. These diagnostics do
+not replace the frozen assertion, which remains failing, or extend the
+six-rung final-position golden result to general generation equivalence.
+
+The latest stage of that investigation isolates the English step-3 flip on
+identical layer-zero input: the eager-f32 projections match an independent
+exact-f32 dequantization to summation-order noise (~1e-7…1e-6), while the
+compressed projections and the pinned native Q6_K reference agree with each
+other to ~1e-7 and sit ~0.005 away from exact f32 because both quantize
+activations to Q8_K. The eager/compressed token mismatch is therefore the
+intended activation-precision difference between two execution tiers, not a
+kernel defect. This is evidence for explicitly scoping the frozen
+eager-versus-compressed assertion (tier-internal bitwise, cross-tier
+tolerance); it is not a pass, no threshold changed, and the assertion still
+fails as written.
