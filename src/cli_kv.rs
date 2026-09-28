@@ -663,6 +663,11 @@ fn run_compare(
     } else {
         print_measurement_report(&report);
     }
+    // Verifier contract (docs/usage.md, "exit codes"): a FAIL verdict must be
+    // detectable by automation, not just readable by a human.
+    if !report.comparison.thresholds_passed {
+        return Err(crate::cli_support::VerificationFailed.into());
+    }
     Ok(())
 }
 
