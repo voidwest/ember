@@ -485,6 +485,21 @@ impl Tool for SearchTextTool {
             ));
         }
         let path = resolve_under_root(&self.root, rel)?;
+        let meta = std::fs::metadata(&path).map_err(|e| {
+            fail(
+                ToolFailureKind::Execution,
+                format!("cannot stat `{rel}`: {e}"),
+            )
+        })?;
+        if meta.len() > MAX_READ_BYTES {
+            return Err(fail(
+                ToolFailureKind::Execution,
+                format!(
+                    "`{rel}` exceeds the 1 MiB search cap ({} bytes)",
+                    meta.len()
+                ),
+            ));
+        }
         let mut text = String::new();
         std::fs::File::open(&path)
             .and_then(|mut f| f.read_to_string(&mut text))
@@ -586,6 +601,30 @@ mod tests {
             .execute(&args_for(&schema, r#"{"key":"gamma"}"#), &c)
             .unwrap_err();
         assert!(err.message.contains("no fixture"));
+    }
+
+    #[test]
+    fn search_text_rejects_files_over_the_read_cap() {
+        let root = std::env::temp_dir().join("ember-search-cap-root");
+        std::fs::create_dir_all(&root).unwrap();
+        let data = "x".repeat(MAX_READ_BYTES as usize + 1);
+        std::fs::write(root.join("big.txt"), data).unwrap();
+        let store = Mutex::new(
+            ArtifactStore::open(std::env::temp_dir().join("ember-search-cap-art"), "r").unwrap(),
+        );
+        let cancel = CancelFlag::new();
+        let c = ctx(&store, &cancel);
+        let tool = SearchTextTool::new(&root);
+        let schema = tool.schema();
+        let err = tool
+            .execute(
+                &args_for(&schema, r#"{"path":"big.txt","pattern":"x"}"#),
+                &c,
+            )
+            .unwrap_err();
+        assert_eq!(err.kind, ToolFailureKind::Execution);
+        assert!(err.message.contains("search cap"));
+        let _ = std::fs::remove_file(root.join("big.txt"));
     }
 
     #[test]
