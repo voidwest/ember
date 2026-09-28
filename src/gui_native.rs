@@ -726,6 +726,31 @@ impl Console {
         }
     }
 
+    /// Whether the primary workspace action may proceed.
+    ///
+    /// Single source of truth for the gate. It used to be a local in `render`
+    /// that only the button consulted, while the Ctrl+Enter handler advanced
+    /// the workflow with no gate at all -- so a disabled button could still be
+    /// driven by the keyboard.
+    fn action_enabled(&self) -> bool {
+        !self.busy() && self.validation_error().is_none()
+    }
+
+    /// The primary action, shared by the button and the keyboard shortcut.
+    ///
+    /// Both paths must go through here so they cannot disagree about when the
+    /// action is allowed.
+    fn advance_or_run(&mut self) {
+        if !self.action_enabled() {
+            return;
+        }
+        match self.step {
+            WorkspaceStep::Prompt => self.step = WorkspaceStep::Intervention,
+            WorkspaceStep::Intervention => self.step = WorkspaceStep::Review,
+            WorkspaceStep::Review => self.run(),
+        }
+    }
+
     fn validation_error(&self) -> Option<String> {
         self.build_run_request()
             .and_then(|request| parse_run_request(&request).map(|_| ()))
@@ -1394,11 +1419,7 @@ impl Console {
         if matches!(event.keystroke.key.as_str(), "enter" | "return")
             && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
         {
-            match self.step {
-                WorkspaceStep::Prompt => self.step = WorkspaceStep::Intervention,
-                WorkspaceStep::Intervention => self.step = WorkspaceStep::Review,
-                WorkspaceStep::Review => self.run(),
-            }
+            self.advance_or_run();
             cx.notify();
         }
     }
@@ -3068,7 +3089,7 @@ impl Console {
             Status::Restoring => (colors.busy, "Checking exact restoration…"),
         };
         let validation_error = self.validation_error();
-        let action_enabled = !self.busy() && validation_error.is_none();
+        let action_enabled = self.action_enabled();
         let action_label = match self.status {
             Status::Preparing => "LOADING MODEL…",
             Status::Running => "RUNNING EXPERIMENT…",
@@ -3118,11 +3139,7 @@ impl Console {
                 action_label,
                 action_enabled.then(|| {
                     cx.listener(|console, _: &ClickEvent, _window, cx| {
-                        match console.step {
-                            WorkspaceStep::Prompt => console.step = WorkspaceStep::Intervention,
-                            WorkspaceStep::Intervention => console.step = WorkspaceStep::Review,
-                            WorkspaceStep::Review => console.run(),
-                        }
+                        console.advance_or_run();
                         cx.notify();
                     })
                 }),
@@ -3437,6 +3454,81 @@ mod kit_tests {
         borrow::Cow,
         sync::{mpsc, Arc, Mutex},
     };
+
+    /// The primary action must be gated identically by the button and by the
+    /// Ctrl+Enter shortcut.
+    ///
+    /// The keyboard path previously advanced the workspace with no gate at
+    /// all, so a visibly disabled button could still be driven from the
+    /// keyboard -- and the UI advertises "Ctrl+Enter" right next to it.
+    /// While a run is in flight the button is disabled; the shortcut must
+    /// refuse too.
+    #[gpui_kit::test]
+    fn primary_action_is_gated_for_both_mouse_and_keyboard(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (tx, _worker) = mpsc::channel();
+        let (_reply, rx) = mpsc::channel();
+
+        // Console::new needs a real Window, so the entity is built inside the
+        // window closure and handed back out through a cell for assertions.
+        let cell: Arc<Mutex<Option<gpui_kit::Entity<Console>>>> = Arc::default();
+        let sink = cell.clone();
+        let handle = cx.add_window(move |window, cx| {
+            let console =
+                cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(rx)), false, window, cx));
+            *sink.lock().expect("cell unlocked") = Some(console.clone());
+            Root::new(console, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        let console = cell
+            .lock()
+            .expect("cell unlocked")
+            .clone()
+            .expect("window construction registers the Console");
+
+        // Idle: the action is eligible and advances the workspace.
+        let idle = cx.update(|cx| {
+            let console = console.read(cx);
+            (console.action_enabled(), console.busy(), console.step)
+        });
+        assert!(idle.0, "an idle console must allow the primary action");
+        assert!(!idle.1, "an idle console must not report busy");
+
+        let step_before = idle.2;
+        cx.update(|cx| console.update(cx, |console, _| console.advance_or_run()));
+        let step_after = cx.update(|cx| console.read(cx).step);
+        assert_ne!(
+            step_before, step_after,
+            "an eligible action must advance the workspace"
+        );
+
+        // Busy: a run is in flight, so the button is disabled and the
+        // shortcut must be refused rather than advancing the step anyway.
+        cx.update(|cx| {
+            console.update(cx, |console, _| {
+                console.status = super::Status::Running;
+            })
+        });
+        let busy = cx.update(|cx| {
+            let console = console.read(cx);
+            (console.action_enabled(), console.busy(), console.step)
+        });
+        assert!(busy.1, "the console must report busy while running");
+        assert!(
+            !busy.0,
+            "a busy console must disable the primary action (and its shortcut)"
+        );
+
+        cx.update(|cx| console.update(cx, |console, _| console.advance_or_run()));
+        let after_busy = cx.update(|cx| console.read(cx).step);
+        assert_eq!(
+            busy.2, after_busy,
+            "the keyboard path must not advance the workspace while busy"
+        );
+    }
 
     #[gpui_kit::test]
     fn populated_chart_registers_handlers_during_paint(cx: &mut TestAppContext) {
