@@ -991,7 +991,20 @@ impl Llama<CpuBackend> {
             })
             .map(str::to_string)
             .collect();
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        let features = [
+            ("neon", std::arch::is_aarch64_feature_detected!("neon")),
+            (
+                "dotprod",
+                std::arch::is_aarch64_feature_detected!("dotprod"),
+            ),
+            ("fp16", std::arch::is_aarch64_feature_detected!("fp16")),
+        ]
+        .into_iter()
+        .filter(|(_, available)| *available)
+        .map(|(name, _)| name.to_string())
+        .collect();
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let features = Vec::new();
 
         let plan = ExecutionPlan {

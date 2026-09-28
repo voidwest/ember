@@ -1015,23 +1015,37 @@ fn four_regions(slices: [&mut [f32]; 4]) -> (&mut [f32], &mut [f32], &mut [f32],
     (a, b, c, d)
 }
 
-/// Fusion F2: `out = rmsnorm(a + b)` in one pass over both inputs (no
-/// standalone residual materialization). Bit-identical to the unfused
-/// add-then-norm composition (same elementwise adds, same sum order, same
-/// scale multiply order).
+/// Fusion F2: `out = rmsnorm(a + b)` without an intermediate allocation.
+/// On ARM the destination temporarily holds the residual so normalization
+/// can reuse the reference NEON reduction tree and scale multiplication order.
 fn fused_residual_rmsnorm_into(a: &[f32], b: &[f32], weight: &[f32], eps: f32, out: &mut [f32]) {
     debug_assert_eq!(a.len(), b.len());
     debug_assert_eq!(a.len(), weight.len());
     debug_assert_eq!(a.len(), out.len());
-    let mut sum = 0.0f32;
-    for i in 0..a.len() {
-        let value = a[i] + b[i];
-        sum += value * value;
+    #[cfg(target_arch = "aarch64")]
+    {
+        // Preserve the reference NEON reduction tree. The destination doubles
+        // as residual storage, keeping the fused path allocation-free.
+        crate::simd::add(a, b, out);
+        let rstd = (crate::simd::sum_squares(out) / out.len() as f32 + eps)
+            .sqrt()
+            .recip();
+        for (value, &scale) in out.iter_mut().zip(weight) {
+            *value = *value * rstd * scale;
+        }
     }
-    let rstd = (sum / a.len() as f32 + eps).sqrt().recip();
-    for i in 0..a.len() {
-        let value = a[i] + b[i];
-        out[i] = value * rstd * weight[i];
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let mut sum = 0.0f32;
+        for i in 0..a.len() {
+            let value = a[i] + b[i];
+            sum += value * value;
+        }
+        let rstd = (sum / a.len() as f32 + eps).sqrt().recip();
+        for i in 0..a.len() {
+            let value = a[i] + b[i];
+            out[i] = value * rstd * weight[i];
+        }
     }
 }
 

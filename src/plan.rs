@@ -23,10 +23,15 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Execution-plan schema version (`"v04-plan/1"`).
 pub const PLAN_SCHEMA_VERSION: u32 = 1;
 
-/// Numerical/runtime kernel ABI encoded into plan identity. Revision 2 is the
-/// canonical Q4_K/Q6_K × Q8_K implementation; revision 1 was the superseded
-/// exact-f32 K-quant production path.
-pub const PLAN_KERNEL_REVISION: u32 = 2;
+/// Numerical/runtime kernel ABI encoded into plan identity. Revision 5 aligns
+/// ARM F32 dot-product reduction and tail arithmetic with the pinned reference.
+/// Revision 4 aligns
+/// RoPE frequency recurrence and fused rotation order with the pinned reference.
+/// Revision 3 adds
+/// native ARM K kernels and aligns ARM planned RMS normalization with reference
+/// NEON arithmetic. Revision 2 introduced canonical Q4_K/Q6_K × Q8_K;
+/// revision 1 used exact-f32 K-quant production arithmetic.
+pub const PLAN_KERNEL_REVISION: u32 = 5;
 
 fn legacy_plan_kernel_revision() -> u32 {
     1
@@ -119,6 +124,10 @@ pub enum KernelId {
     KQuantAvx2Q4K,
     /// Compressed-resident Q6_K AVX2/FMA/F16C/SSSE3 kernel.
     KQuantAvx2Q6K,
+    /// Compressed Q4_K ARM NEON signed dot-product kernel.
+    KQuantArmQ4K,
+    /// Compressed Q6_K ARM NEON signed dot-product kernel.
+    KQuantArmQ6K,
 }
 
 impl KernelId {
@@ -135,6 +144,8 @@ impl KernelId {
             Self::KQuantScalarQ6K => "q6-k-q8-k-scalar",
             Self::KQuantAvx2Q4K => "q4-k-q8-k-avx2",
             Self::KQuantAvx2Q6K => "q6-k-q8-k-avx2",
+            Self::KQuantArmQ4K => "q4-k-q8-k-neon-dotprod",
+            Self::KQuantArmQ6K => "q6-k-q8-k-neon-dotprod",
         }
     }
 
@@ -157,6 +168,7 @@ impl KernelId {
     /// CPU feature requirement, if any.
     pub fn cpu_feature(self) -> Option<&'static str> {
         match self {
+            Self::KQuantArmQ4K | Self::KQuantArmQ6K => Some("neon+dotprod"),
             Self::KQuantAvx2Q4K | Self::KQuantAvx2Q6K => Some("avx2+fma+f16c+ssse3"),
             _ => None,
         }
@@ -170,6 +182,8 @@ impl KernelId {
 pub fn resolve_kernel(gguf_dtype: &str, execution: &str) -> KernelId {
     match (gguf_dtype, execution) {
         ("q4_k", "compressed_x86") => KernelId::KQuantAvx2Q4K,
+        ("q4_k", "compressed_arm") => KernelId::KQuantArmQ4K,
+        ("q6_k", "compressed_arm") => KernelId::KQuantArmQ6K,
         ("q4_k", "compressed_scalar") => KernelId::KQuantScalarQ4K,
         ("q6_k", "compressed_x86") => KernelId::KQuantAvx2Q6K,
         ("q6_k", "compressed_scalar") => KernelId::KQuantScalarQ6K,
@@ -186,8 +200,12 @@ pub fn resolve_embedding_kernel(gguf_dtype: &str, execution: &str) -> Option<Ker
     }
     match (gguf_dtype, execution) {
         ("q8_0", "compressed") => Some(KernelId::EmbeddingQ8Row),
-        ("q4_k", "compressed_scalar" | "compressed_x86") => Some(KernelId::EmbeddingQ4KRow),
-        ("q6_k", "compressed_scalar" | "compressed_x86") => Some(KernelId::EmbeddingQ6KRow),
+        ("q4_k", "compressed_scalar" | "compressed_x86" | "compressed_arm") => {
+            Some(KernelId::EmbeddingQ4KRow)
+        }
+        ("q6_k", "compressed_scalar" | "compressed_x86" | "compressed_arm") => {
+            Some(KernelId::EmbeddingQ6KRow)
+        }
         _ => None,
     }
 }
@@ -1020,6 +1038,12 @@ impl ExecutionPlan {
                     "plan requires CPU feature '{feature}' but its detected feature record omits it"
                 );
             }
+            if *requirement == "neon+dotprod" {
+                anyhow::ensure!(
+                    crate::k_quant_matmul::arm_k_supported(),
+                    "plan requires ARM NEON+dotprod but the current CPU lacks the tier"
+                );
+            }
             if *requirement == "avx2+fma+f16c+ssse3" {
                 anyhow::ensure!(
                     crate::k_quant_matmul::x86_k_supported(),
@@ -1459,9 +1483,23 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string()
             .contains("kernel revision"));
+        let mut previous = current.clone();
+        previous.kernel_revision = 2;
+        let previous = previous.finalize();
+        let previous_json = serde_json::to_string(&previous).unwrap();
+        let decoded_previous: ExecutionPlan = serde_json::from_str(&previous_json).unwrap();
+        assert_eq!(plan_hash(&decoded_previous), previous.plan_hash);
+        assert!(decoded_previous
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("kernel revision"));
+        assert!(decoded_previous
+            .to_summary_text()
+            .contains("q6-k-q8-k-scalar"));
         assert!(serde_json::to_string(&current)
             .unwrap()
-            .contains("\"kernel_revision\":2"));
+            .contains("\"kernel_revision\":5"));
     }
 
     #[test]
@@ -1491,6 +1529,23 @@ pub(crate) mod tests {
     #[test]
     fn kernel_resolution_matches_v03_strategy_contract() {
         assert_eq!(
+            resolve_kernel("q4_k", "compressed_arm"),
+            KernelId::KQuantArmQ4K
+        );
+        assert_eq!(
+            resolve_kernel("q6_k", "compressed_arm"),
+            KernelId::KQuantArmQ6K
+        );
+        assert_eq!(KernelId::KQuantArmQ4K.cpu_feature(), Some("neon+dotprod"));
+        assert_eq!(
+            resolve_embedding_kernel("q4_k", "compressed_arm"),
+            Some(KernelId::EmbeddingQ4KRow)
+        );
+        assert_eq!(
+            resolve_embedding_kernel("q6_k", "compressed_arm"),
+            Some(KernelId::EmbeddingQ6KRow)
+        );
+        assert_eq!(
             resolve_kernel("q4_k", "compressed_x86"),
             KernelId::KQuantAvx2Q4K
         );
@@ -1517,7 +1572,7 @@ pub(crate) mod tests {
     fn summary_text_renders() {
         let plan = sample_plan(ExecutionMode::Planned, HookMode::Disabled).finalize();
         let text = plan.to_summary_text();
-        assert!(text.contains("execution plan (schema v04-plan/1, kernel revision 2)"));
+        assert!(text.contains("execution plan (schema v04-plan/1, kernel revision 5)"));
         assert!(text.contains("operations: 5 total (1 preamble, 1 final)"));
         assert!(text.contains("scratch: 4096 bytes"));
         assert!(text.contains("fallbacks: none"));
