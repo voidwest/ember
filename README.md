@@ -19,7 +19,9 @@ Other execution paths have different [validation coverage](docs/validation.md).
 
 ## five-minute workflow
 
-After obtaining the pinned model and tokenizer, put both in the repository
+Fetch the pinned model with `scripts/download_models.sh research-example`
+and obtain the matching tokenizer described in the
+[example instructions](examples/experiments/README.md). Put both in the repository
 root. Ember does not download them automatically. Build once, then capture
 and verify a run (build and download time are additional):
 
@@ -85,6 +87,7 @@ Validated on the qwen3/llama rows with completed golden checks; see
 ## core documentation
 
 - [CLI usage](docs/usage.md) and [experiment specs and bundles](docs/experiments.md)
+- [Support matrix](docs/support.md), [cancellation contract](docs/cancellation.md), and [agent trace schema](docs/trace-schema.md)
 - [Model coverage](docs/models.md) and [numerical validation status](docs/validation.md)
 - [Architecture](docs/architecture.md), [decode contract](docs/v04-execution-contract.md), and [research contract](docs/v05-research-contract.md)
 - [Probing workflows](docs/research.md) and [dataset schemas](docs/dataset_pipeline.md)
@@ -99,8 +102,9 @@ execution path does not imply completed numerical validation.
 These are optional extensions and separate research tracks around the CLI instrument:
 
 - [Experiment consoles](docs/v06-gui.md): native and browser interfaces to the
-  same bundle workflow. The native GUI is experimental and requires Vulkan
-  plus X11/Wayland; it has no software-rendering fallback.
+  same bundle workflow. The GPUI Kit native GUI uses Metal on macOS and
+  a GPU-backed X11/Wayland window on Linux. GUI builds use the pinned Rust
+  1.98.1 toolchain; headless builds retain Rust 1.92 support.
 - [Agent runtime](docs/agent-runtime.md): tool protocols and auditable traces,
   with their own tool-validation and approval boundaries.
 - [EmberSEC](docs/embersec/README.md): hostile-artifact and quantized-fault
@@ -118,3 +122,5 @@ These are optional extensions and separate research tracks around the CLI instru
 ## citation and license
 
 See [CITATION.cff](CITATION.cff) and the [MIT license](LICENSE).
+
+The actionable [road to 1.0](docs/road-to-1.0.md) tracks release gates and the GPUI Kit console migration.
