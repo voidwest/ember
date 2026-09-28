@@ -108,8 +108,8 @@ pub(super) fn light() -> Colors {
         // from a barely-there hairline rather than a cool line.
         canvas: rgb(0xfbfaf9),
         sidebar: rgb(0xf5f3f1),
-        surface: rgb(0xffffff),
-        surface_raised: rgb(0xf7f5f3),
+        surface: rgb(0xfdfdfc),
+        surface_raised: rgb(0xffffff),
         text: rgb(0x2e2c29),
         text_muted: rgb(0x6b6862),
         // Faint is the smallest metadata text in the UI, so it is held to the
@@ -133,20 +133,22 @@ pub(super) fn light() -> Colors {
 
 pub(super) fn dark() -> Colors {
     Colors {
-        // Warm charcoal rather than blue-black. The previous dark canvas was
-        // #090a0d, which is a cool near-black; this sits in the Obsidian
-        // family where the darkest surface is a warm off-black.
-        canvas: rgb(0x1a1918),
+        // A canvas at #1a1918 is mid-grey, not "very dark charcoal", and every
+        // surface had to announce itself with a border to be seen at all. The
+        // darkest plane is now the content canvas and each step up is lighter,
+        // so hierarchy is carried by luminance and the hairlines can recede.
+        // Warm-neutral rather than blue-black, and deliberately not pure black.
+        canvas: rgb(0x0d0c0b),
         sidebar: rgb(0x141312),
-        surface: rgb(0x201f1d),
-        surface_raised: rgb(0x2a2825),
+        surface: rgb(0x1a1917),
+        surface_raised: rgb(0x232120),
         text: rgb(0xe6e2dc),
         text_muted: rgb(0xa8a29a),
         // Held to 4.5:1 on the raised surface too, which is where the old
         // value failed.
         text_faint: rgb(0x9c968c),
-        border: rgb(0x302d29),
-        border_strong: rgb(0x433f39),
+        border: rgba(0xffffff1e),
+        border_strong: rgba(0xffffff33),
         accent: rgb(0xef8c48),
         accent_soft: rgba(0xef8c4826),
         ok: rgb(0x5cb88a),
