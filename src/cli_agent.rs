@@ -104,9 +104,10 @@ pub(crate) struct AgentRunArgs {
     #[arg(long)]
     pub tokenizer: Option<String>,
 
-    /// omit prompt/generated text from traces (lengths + hashes only)
-    #[arg(long, default_value_t = false)]
-    pub privacy_off_content: bool,
+    /// record prompt and generated text verbatim in the trace (off by
+    /// default: the trace then records lengths + sha256 only)
+    #[arg(long, default_value_t = false, visible_alias = "privacy-off-content")]
+    pub trace_content: bool,
 
     /// KV cache capacity for the conversation
     #[arg(long, default_value_t = 8192)]
@@ -470,7 +471,7 @@ fn run_agent_run(args: &AgentRunArgs) -> Result<()> {
                 ember::agent::ApprovalPolicy::default()
             },
         },
-        !args.privacy_off_content,
+        args.trace_content,
     )
 }
 

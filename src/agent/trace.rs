@@ -78,14 +78,16 @@ impl Default for ToolTraceMode {
 }
 
 /// Trace behavior knobs. Defaults are documented on each field.
-#[derive(Debug, Clone)]
+/// Prompt and generated content are omitted unless explicitly enabled.
+#[derive(Debug, Clone, Default)]
 pub struct TraceConfig {
     /// JSONL destination. `None` retains events in memory only (tests).
     pub output_path: Option<PathBuf>,
-    /// Capture user/system prompts verbatim. Default true (research tool);
-    /// when false only lengths + hashes are recorded.
+    /// Capture user/system prompts verbatim. Default **false**: the trace
+    /// records lengths + SHA-256 only. Opt in for debuggable transcripts.
     pub trace_prompts: bool,
-    /// Capture generated assistant text verbatim. Default true.
+    /// Capture generated assistant text verbatim. Default **false**, same
+    /// contract as `trace_prompts`.
     pub trace_generated_text: bool,
     /// Tool payload capture mode. Default: [`ToolTraceMode::Summary`] with a
     /// 2048-byte excerpt.
@@ -93,18 +95,6 @@ pub struct TraceConfig {
     /// Per-token trace events (id + fragment). Default false: this is the
     /// one knob that can produce very large files on long runs.
     pub token_events: bool,
-}
-
-impl Default for TraceConfig {
-    fn default() -> Self {
-        Self {
-            output_path: None,
-            trace_prompts: true,
-            trace_generated_text: true,
-            tool_results: ToolTraceMode::default(),
-            token_events: false,
-        }
-    }
 }
 
 /// Append-only, crash-tolerant trace writer.
@@ -433,5 +423,24 @@ mod tests {
             .events()
             .iter()
             .all(|e| e["event_type"] != ev::GENERATION_TOKEN));
+    }
+
+    #[test]
+    fn default_config_omits_prompt_and_generated_content() {
+        let config = TraceConfig::default();
+        assert!(!config.trace_prompts, "prompt content must be opt-in");
+        assert!(
+            !config.trace_generated_text,
+            "generated text must be opt-in"
+        );
+        let mut rec = TraceRecorder::open(TraceConfig::default(), "run-d").unwrap();
+        rec.emit_prompt("m", "user", "user", "secret prompt");
+        let data = &rec.events()[0]["data"];
+        assert_eq!(data["content_omitted"], true);
+        assert!(data.get("content").is_none());
+        assert_eq!(
+            data["sha256"],
+            crate::extraction::sha256_bytes(b"secret prompt")
+        );
     }
 }
