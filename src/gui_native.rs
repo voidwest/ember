@@ -20,6 +20,7 @@ use ember::app_store::{self, AppStore, RunRecord};
 use ember::quant_k::KStrategy;
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
+    table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
     Icon, Selectable, Sizable,
 };
 use gpui_kit::prelude::*;
@@ -461,6 +462,197 @@ fn unix_now() -> i64 {
         .unwrap_or(0)
 }
 
+/// `TableDelegate` over the run history.
+///
+/// This is the kit's real table: virtualized, sortable, resizable columns,
+/// keyboard-navigable. The hand-rolled grid it replaces had the same seven
+/// columns in the same order and none of those properties, and at the minimum
+/// window width it clipped the last two columns with no way to reach them.
+///
+/// The delegate owns a *snapshot* of the rows rather than reading the store on
+/// demand. `TableDelegate` is addressed through `&mut self` during paint, so
+/// borrowing the console's store into it would alias the very thing the table
+/// is editing; a snapshot plus an explicit `sync` is the version that stays
+/// honest when a run finishes while the table is on screen.
+struct RunsDelegate {
+    rows: Vec<RunRecord>,
+    colors: Colors,
+}
+
+/// Column identities. Declared once because `Column` is keyed by string and a
+/// typo in a key silently sorts the wrong column rather than failing to build.
+mod run_col {
+    pub const RUN: &str = "run";
+    pub const MODEL: &str = "model";
+    pub const INTERVENTION: &str = "intervention";
+    pub const TOKENS: &str = "tokens";
+    pub const RESULT: &str = "result";
+    pub const WHEN: &str = "when";
+}
+
+impl RunsDelegate {
+    fn new(rows: Vec<RunRecord>, colors: Colors) -> Self {
+        Self { rows, colors }
+    }
+
+    /// Replace the snapshot and repaint.
+    ///
+    /// `TableState::refresh` is a method on the state, and a delegate has no
+    /// handle on the state that owns it, so the signal has to be the context.
+    ///
+    /// Colours come in here too, not just rows. The delegate is built once and
+    /// kept, so a palette captured at construction would survive every theme
+    /// change afterwards -- which showed up as a table that stayed light while
+    /// the rest of the app went dark, and then as text too dim to read.
+    fn sync(&mut self, rows: Vec<RunRecord>, colors: Colors, cx: &mut Context<TableState<Self>>) {
+        self.rows = rows;
+        self.colors = colors;
+        cx.notify();
+    }
+
+    /// The text for one cell. Kept beside `render_td` so sorting and rendering
+    /// cannot disagree about what a cell says.
+    fn cell_text(&self, row_ix: usize, col_ix: usize) -> String {
+        let Some(run) = self.rows.get(row_ix) else {
+            return String::new();
+        };
+        match col_ix {
+            0 => format!("Run #{}", run.number),
+            1 => run.model.clone(),
+            2 => run.intervention.clone(),
+            3 => token_cell(run),
+            4 => result_word(run).to_string(),
+            5 => relative_time(run.finished_at),
+            _ => String::new(),
+        }
+    }
+}
+
+impl TableDelegate for RunsDelegate {
+    fn columns_count(&self, _cx: &App) -> usize {
+        6
+    }
+
+    fn rows_count(&self, _cx: &App) -> usize {
+        self.rows.len()
+    }
+
+    fn column(&self, col_ix: usize, _cx: &App) -> Column {
+        // The table supplies its own cell padding and a sort chevron per
+        // column, so a width has to cover that overhead as well as the text.
+        match col_ix {
+            0 => Column::new(run_col::RUN, "Run").width(px(76.0)),
+            1 => Column::new(run_col::MODEL, "Model").width(px(214.0)),
+            2 => Column::new(run_col::INTERVENTION, "Intervention").width(px(178.0)),
+            3 => Column::new(run_col::TOKENS, "Tokens").width(px(78.0)),
+            4 => Column::new(run_col::RESULT, "Result").width(px(84.0)),
+            _ => Column::new(run_col::WHEN, "When").width(px(64.0)),
+        }
+        // Every column sorts: `sortable` is a flagless builder, and a history
+        // you cannot re-order is a log file.
+        .sortable()
+        .resizable(true)
+    }
+
+    fn perform_sort(
+        &mut self,
+        col_ix: usize,
+        sort: ColumnSort,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) {
+        let descending = matches!(sort, ColumnSort::Descending);
+        self.rows.sort_by(|left, right| {
+            let ordering = match col_ix {
+                0 => left.number.cmp(&right.number),
+                1 => left.model.cmp(&right.model),
+                2 => left.intervention.cmp(&right.intervention),
+                4 => result_word(left).cmp(result_word(right)),
+                5 => left.finished_at.cmp(&right.finished_at),
+                // Tokens are a pair; sort on the baseline side so the order is
+                // total, and the arrow in the cell still shows both.
+                _ => left
+                    .baseline_tokens
+                    .cmp(&right.baseline_tokens)
+                    .then(left.intervention_tokens.cmp(&right.intervention_tokens)),
+            };
+            if descending {
+                ordering.reverse()
+            } else {
+                ordering
+            }
+        });
+    }
+
+    fn render_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let colors = self.colors;
+        let text = self.cell_text(row_ix, col_ix);
+        let failed = self
+            .rows
+            .get(row_ix)
+            .is_some_and(|run| col_ix == 4 && !run.verified);
+        let tint = if failed {
+            colors.err
+        } else if matches!(col_ix, 0 | 1 | 2 | 4) {
+            // Run, model, intervention, result: what you came to read.
+            colors.text
+        } else {
+            // Tokens and when: context for the row beside them.
+            colors.text_muted
+        };
+        let _ = cx;
+        mono(text, Type::META, tint)
+    }
+
+    fn render_th(
+        &mut self,
+        col_ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> impl IntoElement {
+        let colors = self.colors;
+        let name = self.column(col_ix, cx).name;
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .child(label(name, Type::MICRO, colors.text_faint))
+    }
+}
+
+/// Token cell: a bare count when the two sides agree, an arrow when they do
+/// not. Reading `48` next to `48 -> 12` is the cheapest way to see that an
+/// intervention shortened the completion.
+/// A word, not a colour. `failed` is the only result not obvious from the
+/// columns beside it, and the only one the token counts do not imply.
+///
+/// Free rather than a method on the delegate: it is read from inside the
+/// `sort_by` closure, which already holds a mutable borrow of the delegate's
+/// rows, so a `&self` method would not compile there.
+fn result_word(run: &RunRecord) -> &'static str {
+    if !run.verified {
+        "failed"
+    } else if run.outputs_equal {
+        "unchanged"
+    } else {
+        "changed"
+    }
+}
+
+fn token_cell(run: &RunRecord) -> String {
+    match (run.baseline_tokens, run.intervention_tokens) {
+        (Some(baseline), Some(intervention)) if baseline == intervention => format!("{baseline}"),
+        (Some(baseline), Some(intervention)) => format!("{baseline} \u{2192} {intervention}"),
+        _ => "\u{2014}".to_string(),
+    }
+}
+
 /// Coarse relative time for a run row.
 ///
 /// Deliberately not a full date: the table is scanned, and "2m" answers the
@@ -589,6 +781,9 @@ struct Console {
     worker_tx: mpsc::Sender<WorkerMsg>,
     reply_rx: Arc<Mutex<mpsc::Receiver<WorkerReply>>>,
     // model
+    /// Lazily created: the table needs a `Window` to build, which the
+    /// constructor does not have. Kept out of `Console::new` for that reason.
+    runs_table: Option<Entity<TableState<RunsDelegate>>>,
     model_options: Vec<String>,
     model_path: String,
     // form
@@ -796,6 +991,7 @@ impl Console {
         Console {
             worker_tx,
             reply_rx,
+            runs_table: None,
             model_options: models,
             model_path,
             site_options: STAGES.iter().map(|s| s.to_string()).collect(),
@@ -1874,91 +2070,38 @@ impl Console {
             )
     }
 
-    /// Runs: one row per record, columns aligned, no card per run.
+    /// Runs: the kit's `DataTable` over the store.
     ///
-    /// This was a stack of bordered cards, each holding three strings and a
-    /// number. A history is a table -- the columns are the same for every row
-    /// and comparing two of them is the whole point -- so it is laid out as
-    /// columns now, and a card only appears where a run failed verification.
+    /// Previously a stack of bordered cards, then a hand-rolled seven-column
+    /// grid. The grid had the right columns and none of the properties that
+    /// make a history usable: it could not sort, could not be navigated by
+    /// keyboard, and at the minimum window width it clipped the last two
+    /// columns with no way to reach them.
     ///
-    /// Not a `DataTable` yet: the kit's table is virtualized, sortable and
-    /// keyboard-navigable, which is what this wants, but it needs a
-    /// `TableDelegate` and real rows to be worth judging. Until the store is
-    /// populated in normal use, a hand-rolled grid is the honest amount of
-    /// surface to add -- and this is the layout to replace, not to keep.
-    /// Runs: one row per record, columns aligned, no card per run.
-    ///
-    /// This was a stack of bordered cards, each holding three strings and a
-    /// number. A history is a table -- the columns are the same for every row
-    /// and comparing two of them is the whole point -- so it is laid out as
-    /// columns now, and a card only appears where a run failed verification.
-    ///
-    /// Not a `DataTable` yet: the kit's table is virtualized, sortable and
-    /// keyboard-navigable, which is what this wants, but it needs a
-    /// `TableDelegate` and real rows to be worth judging. Until the store is
-    /// populated in normal use, a hand-rolled grid is the honest amount of
-    /// surface to add -- and this is the layout to replace, not to keep.
-    fn runs_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
-        /// One column, declared once.
-        ///
-        /// The first version of this table held the widths as loose constants
-        /// and paired them by hand at two call sites, and paired them wrongly:
-        /// the model rendered in the run-number column's width, and there was no
-        /// constant for the result column at all, so the outcome inherited the
-        /// tokens width. Named constants are supposed to make that impossible;
-        /// they only help if the header and the cell cannot be told apart. So a
-        /// column is a struct, and the header row and the body row are both
-        /// driven from this one list.
-        struct Col {
-            header: &'static str,
-            width: f32,
-        }
-        const COLS: [Col; 7] = [
-            Col {
-                header: "Run",
-                width: 92.0,
-            },
-            Col {
-                header: "Model",
-                width: 210.0,
-            },
-            Col {
-                header: "Intervention",
-                width: 132.0,
-            },
-            Col {
-                header: "Hook",
-                width: 140.0,
-            },
-            Col {
-                header: "Tokens",
-                width: 78.0,
-            },
-            Col {
-                header: "Result",
-                width: 92.0,
-            },
-            Col {
-                header: "When",
-                width: 64.0,
-            },
-        ];
-        let gap = Space::SM;
-        let table_width: f32 =
-            COLS.iter().map(|c| c.width).sum::<f32>() + gap * (COLS.len() - 1) as f32;
-
-        let cell = |content: String, width: f32, color: Rgba| {
-            div()
-                .w(px(width))
-                .flex_none()
-                .overflow_hidden()
-                .child(mono(content, Type::META, color))
+    /// The table state is created here rather than in the constructor because
+    /// `TableState::new` needs a `Window`. It is built once and then synced:
+    /// the delegate holds a snapshot, so a run finishing while Runs is on screen
+    /// has to push new rows in rather than expect the table to notice.
+    fn runs_view(&mut self, colors: &Colors, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let rows: Vec<RunRecord> = self.store.runs_ordered().into_iter().cloned().collect();
+        let row_count = rows.len();
+        let table = match &self.runs_table {
+            Some(state) => {
+                state.update(cx, |state, cx| {
+                    state.delegate_mut().sync(rows, *colors, cx);
+                });
+                state.clone()
+            }
+            None => {
+                let state =
+                    cx.new(|cx| TableState::new(RunsDelegate::new(rows, *colors), window, cx));
+                self.runs_table = Some(state.clone());
+                state
+            }
         };
 
-        let rows = self.store.runs_ordered();
-        let row_count = rows.len();
-        let mut body = div().flex().flex_col();
-        if rows.is_empty() {
+        let mut body: Div = div().flex().flex_col();
+        if row_count == 0 {
             body = body.child(
                 div()
                     .py(px(Space::XXL))
@@ -1970,69 +2113,22 @@ impl Console {
                     )),
             );
         } else {
-            for run in rows.iter() {
-                let tokens = match (run.baseline_tokens, run.intervention_tokens) {
-                    (Some(baseline), Some(intervention)) if baseline == intervention => {
-                        format!("{baseline}")
-                    }
-                    (Some(baseline), Some(intervention)) => {
-                        format!("{baseline} \u{2192} {intervention}")
-                    }
-                    _ => "\u{2014}".to_string(),
-                };
-                // Colour is not the only signal: the word is the same either
-                // way, so the result is legible without colour.
-                let (result, result_color) = if !run.verified {
-                    ("failed", colors.err)
-                } else if run.outputs_equal {
-                    ("unchanged", colors.text_muted)
-                } else {
-                    ("changed", colors.text)
-                };
-                let values: [String; 7] = [
-                    format!("Run #{}", run.number),
-                    run.model.clone(),
-                    run.intervention.clone(),
-                    run.hook.clone(),
-                    tokens,
-                    result.to_string(),
-                    relative_time(run.finished_at),
-                ];
-                let muted = colors.text_muted;
-                let faint = colors.text_faint;
-                let colors_for: [Rgba; 7] = [
-                    colors.text,
-                    muted,
-                    colors.text,
-                    muted,
-                    muted,
-                    result_color,
-                    faint,
-                ];
-                let mut row = div()
-                    .flex()
-                    .flex_row()
-                    .gap(px(gap))
-                    .py(px(Space::SM))
-                    .border_b_1()
-                    .border_color(colors.border);
-                for (index, col) in COLS.iter().enumerate() {
-                    if index == 0 && run.pinned {
-                        row = row.child(
-                            div()
-                                .w(px(3.0))
-                                .flex_none()
-                                .self_start()
-                                .mt(px(5.0))
-                                .h(px(6.0))
-                                .rounded(px(Radius::SM))
-                                .bg(colors.accent),
-                        );
-                    }
-                    row = row.child(cell(values[index].clone(), col.width, colors_for[index]));
-                }
-                body = body.child(row);
-            }
+            // Header plus one row band per record, measured off a render rather
+            // than guessed: a fixed 420px left a void under a short history, and
+            // asking for less than the rows need silently dropped the last one.
+            //
+            // `flex_none` matters as much as the number. In a flex column this
+            // wrapper was being compressed to fit the page, so it rendered
+            // shorter than it was asked for -- 194pt for a 230pt request -- and
+            // the shortfall came straight out of the last row.
+            let height = 34.0 + row_count as f32 * 32.0;
+            body = body.child(
+                div()
+                    .w_full()
+                    .flex_none()
+                    .h(px(height))
+                    .child(DataTable::new(&table)),
+            );
         }
 
         div()
@@ -2050,32 +2146,7 @@ impl Console {
                     if row_count == 1 { "" } else { "s" }
                 ),
             ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w(px(table_width))
-                    .max_w_full()
-                    .flex_none()
-                    .overflow_hidden()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap(px(gap))
-                            .pb(px(Space::SM))
-                            .border_b_1()
-                            .border_color(colors.border_strong)
-                            .children(COLS.iter().map(|col| {
-                                div().w(px(col.width)).flex_none().child(label(
-                                    col.header,
-                                    Type::MICRO,
-                                    colors.text_faint,
-                                ))
-                            })),
-                    )
-                    .child(body),
-            )
+            .child(body)
     }
 
     fn settings_view(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -3903,7 +3974,7 @@ impl Render for Console {
         let content: AnyElement = match self.view {
             View::Home => self.home_view(&colors, cx).into_any_element(),
             View::Models => self.models_view(&colors, cx).into_any_element(),
-            View::Runs => self.runs_view(&colors, cx).into_any_element(),
+            View::Runs => self.runs_view(&colors, _window, cx).into_any_element(),
             View::Settings => self.settings_view(&colors, cx).into_any_element(),
             View::Experiment => {
                 let inspector = self.advanced_inspector(&colors, cx);
