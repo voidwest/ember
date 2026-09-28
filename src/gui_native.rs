@@ -19,7 +19,7 @@ use clap::Args as ClapArgs;
 use ember::quant_k::KStrategy;
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
-    Selectable, Sizable,
+    Icon, Selectable, Sizable,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -1678,18 +1678,35 @@ impl Console {
         hint: &'static str,
         cx: &mut Context<Self>,
     ) -> Button {
+        // State must be visible, and text contrast must survive it. The hint
+        // used text_faint in both states, so the selected segment was a
+        // barely-darker gray on a light gray fill. The selected variant
+        // promotes the hint to text_muted, which is a real contrast step.
+        let selected = self.max_tokens == value.to_string();
         Button::new(SharedString::from(format!("generation-length:{value}")))
             .w(relative(0.333))
             .h_auto()
             .py_2()
-            .selected(self.max_tokens == value.to_string())
-            .accessibility_label(title)
+            .selected(selected)
+            .accessibility_label(if selected {
+                format!("{title}, selected")
+            } else {
+                title.to_string()
+            })
             .child(
                 div()
                     .flex_col()
                     .gap_1()
                     .child(label(title, 11.0, colors.text))
-                    .child(label(hint, 9.0, colors.text_faint)),
+                    .child(label(
+                        hint,
+                        9.0,
+                        if selected {
+                            colors.text_muted
+                        } else {
+                            colors.text_faint
+                        },
+                    )),
             )
             .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.set_max_tokens(value, cx);
@@ -2820,14 +2837,25 @@ impl Console {
                 )
             }))
             .child(rule_h(colors))
+            // A ghost button with only a text label reads as static copy in a
+            // wide empty column. The design guides require a disclosure
+            // control to look like one: a chevron carries the affordance, and
+            // the accessible name states the position so the control is not
+            // announced as a bare label.
             .child(
                 Button::new("advanced-toggle")
                     .ghost()
                     .w_full()
+                    .icon(Icon::default().path(icons::CHEVRON_DOWN))
                     .label(if self.advanced_open {
                         "Hide advanced controls"
                     } else {
                         "Show advanced controls"
+                    })
+                    .accessibility_label(if self.advanced_open {
+                        "Hide advanced controls (currently expanded)"
+                    } else {
+                        "Show advanced controls (currently collapsed)"
                     })
                     .on_click(toggle),
             )
