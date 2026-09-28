@@ -20,20 +20,54 @@ The GGUF loader accepts these tensor encodings:
 | F32 | materialized as f32 | generic f32 kernels |
 | F16 | converted once to f32 while loading | generic f32 kernels |
 | BF16 | converted once to f32 while loading | generic f32 kernels |
-| Q8_0 | retained block-compressed, mmap-backed for file loads | scalar/AVX2/AVX-512 decode and tiled/packed prefill dispatch |
-| Q2_K / Q3_K / Q4_K / Q5_K / Q6_K | dequantized once to f32 while loading | generic f32 kernels |
+| Q8_0 | retained block-compressed, mmap-backed for file loads | architecture-dispatched packed decode and prefill kernels |
+| Q4_K / Q6_K | compressed by default; eager f32 only when explicitly requested | Q4_K/Q6_K weights × transient Q8_K activation rows; scalar/x86/ARM tiers |
+| Q2_K / Q3_K / Q5_K | dequantized once to f32 while loading | generic f32 kernels |
 
-K-quant tensors are dequantized to f32 at load (transcribed from llama.cpp;
-validated against llama.cpp logits and fp16 source tensors: see
-`src/quant_k.rs`). A GGUF may mix the listed types, as real models commonly
-do for norms, embeddings, and linear weights. “Supported” here means Ember
-has an execution path; external golden-logit or activation-reference status
-is tracked separately in the validation tables below.
+A GGUF can mix these encodings across norms, embeddings, and projections.
+Q4_K/Q6_K projections normally retain compressed weights and quantize each
+finite activation row to Q8_K before the integer dot product. The explicit
+`--k-strategy eager-f32` oracle instead expands weights and uses floating-point
+activations. Those are different numerical algorithms; equal greedy output is
+not established generally. The remaining frozen Q6 eager/compressed failure
+is documented in [validation](validation.md) and has not been waived.
 
-Note: the K-quant path is a research loader, not a deployment path :
-dequant-to-f32 makes Q4/Q6 models use 2.6–4.5× more RAM and run 16–52×
-slower than Q8 (the Q8 path keeps weights compressed and uses the fast
-decode path).
+The `reference`, `planned`, and `planned-fused` execution modes select
+scheduling/fusion behavior. `reference` does not imply `eager-f32`; choose the
+K strategy explicitly when studying that oracle. Plans and kernel provenance
+must accompany numerical results.
+
+Older measurements describing all K weights as eagerly dequantized, with
+large memory and speed penalties, do not describe the default compressed
+Q4/Q6 implementation. Current numerical and performance claims must name the
+model hash, K strategy, execution mode, kernel revision, and hardware.
+
+### obtaining pinned models
+
+From the repository root, download just the morphology example's model with:
+
+```sh
+scripts/download_models.sh research-example
+```
+
+`quickstart` selects three small models; `all` adds the larger Qwen3 8B.
+`MODEL_DIR=/path/to/models` selects another destination. Every entry is pinned
+to an immutable Hub revision, exact byte count, and SHA-256. Existing files
+are verified and preserved; a different file with the same name causes an
+error. Downloads resume in `.part` files, and only verified complete files
+are published to the final filename. No Python runtime is required by this
+helper; it uses Bash, curl, and SHA-256 utilities available on macOS/Linux.
+
+A per-file directory lock prevents concurrent writers. Normal failures release
+the lock and preserve partial data. After a forcibly killed process, check that
+no downloader remains before removing its empty `.download.lock` directory.
+A completed partial with the wrong hash is preserved for inspection; use a
+new destination for a fresh download.
+
+Tokenizers are separate inputs. The [morphology example](../examples/experiments/README.md)
+pins its tokenizer hash; obtaining the official Llama tokenizer requires an
+account with approved access to the upstream repository. A successful CLI
+login alone does not establish that permission.
 
 
 ### llama models
@@ -52,8 +86,9 @@ implementation; the GGUF `general.architecture` metadata selects the `llama`,
 `qwen2`, or `qwen3` configuration keys. The smoke wrapper labels Qwen2.5 as
 `qwen3` and passes `tokenizer-qwen2.5.json` explicitly. Qwen2/Qwen2.5
 attention projections carry q/k/v biases, which the loader now picks up;
-a golden-logit check on Qwen2.5-1.5B matches llama.cpp (top-1 agreement,
-max abs diff 0.29).
+the current pinned Qwen2.5-1.5B ladder has an external golden-logit
+report in [validation](validation.md). The earlier 0.29 maximum-difference
+result belongs to an older, separately scoped pilot.
 
 
 ### support status
@@ -61,8 +96,8 @@ max abs diff 0.29).
 | architecture | loads | generates | probe smoke | full 200-stimulus probe | golden checked |
 |--------------|-------|-----------|-------------|--------------------------|----------------|
 | gpt-2 | yes | yes | yes | not standard | no |
-| llama | yes | yes | yes | yes, local/cloud depending on size | no |
-| qwen2.5 | yes, via `--arch qwen3` (attention projection biases loaded) | yes, coherent after bias fix | selected smoke runs | pending | yes, 1.5B vs llama.cpp (top-1 match, max diff 0.29) |
+| llama | yes | yes | yes | yes, local/cloud depending on size | yes, pinned 1B Q8/Q6/Q4 final-position ladder; see validation |
+| qwen2.5 | yes, via `--arch qwen3` (attention projection biases loaded) | yes, coherent after bias fix | selected smoke runs | pending | yes, pinned 1.5B Q8/Q6/Q4 final-position ladder; see validation |
 | qwen3 | yes, via `--arch qwen3` | yes | yes, 5-stimulus local smoke | yes, Qwen3 0.6B local run | no |
 | gemma4 | yes | yes, coherent English | one-stimulus local smoke | pending | no (cosine ~0.87; L0 bit-identical; remaining gap unresolved) |
 

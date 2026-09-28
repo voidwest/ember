@@ -22,7 +22,17 @@ sha256 6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b
 
 The example files embed these hashes; run them from the repository root
 with the model and tokenizer present there. Ember does not download
-models automatically.
+models automatically. The matching model is available from
+[bartowski at revision 067b946](https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/blob/067b946cf014b7c697f3654f621d577a3e3afd1c/Llama-3.2-1B-Instruct-Q8_0.gguf);
+`scripts/download_models.sh` now uses that exact revision for the 1B model.
+Do not substitute another publisher's file with the same filename.
+
+The matching `tokenizer.json` is tracked in this repository, so a fresh clone
+already has it and no gated access is required. To re-fetch or verify it
+without Meta's gated `meta-llama` repository, run
+`scripts/download_models.sh tokenizer`: it downloads the byte-identical public
+copy pinned to `unsloth/Llama-3.2-1B-Instruct` revision
+`5a8abab4a5d6f164389b1079fb721cfab8d7126c` and checks the SHA-256 above.
 
 ## The workflow
 
@@ -31,8 +41,9 @@ models automatically.
    and the target's final-subtoken representation at `residual-post-mlp`
    across all 16 layers (one row per layer), writes
    `runs/morphology-baseline`.
-2. `morphology-intervention.toml` — the same capture plus a `zero`
-   intervention at layer 8's `attention-output`, writes
+2. `morphology-intervention.toml` — the same capture plus a `replace`
+   intervention at layer 7's `residual-post-mlp`: replace the prompt-final
+   row with the target word's final-subtoken row, writes
    `runs/morphology-intervention`.
 3. `morphology-restoration.toml` — the same intervention followed by
    `restore-original` at the same site, writes
@@ -70,3 +81,16 @@ ember experiment tokenize --model Llama-3.2-1B-Instruct-Q8_0.gguf \
 On the reference machine the baseline reproduces `exact-semantic` and
 the restoration leg compares bit-exact (tokens, text, top-1, and every
 capture `exact`).
+
+For an automated local acceptance run, use a new output directory:
+
+```sh
+.venv/bin/python scripts/validate_morphology_example.py --workdir /path/to/new-example-run
+```
+
+This follows the same three specs, deep-verifies all bundles against the
+pinned model/tokenizer, requires an observable intervention, checks all 32
+restored captures and generated outputs exactly, and reproduces the baseline
+with an `exact-semantic` verdict. It preserves commands, JSON reports, and
+stderr logs for review. A successful local run does not substitute for the
+1.0 clean-machine or external-user acceptance gates.
