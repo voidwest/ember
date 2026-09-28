@@ -1934,21 +1934,6 @@ impl Console {
 
     /// Contextual inspector. Only present while the user has it open, and it
     /// reports the state of the current run rather than repeating it.
-    fn inspector(&self, colors: &Colors, _cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id(ElementId::Name(SharedString::from("workflow-rail")))
-            .flex_col()
-            .w(px(216.0))
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .bg(colors.sidebar)
-            .border_r_1()
-            .border_color(colors.border)
-            .p(px(Space::MD))
-            .gap(px(Space::LG))
-    }
-
     /// Starting points for a new experiment.
     ///
     /// These were in the left rail, which made them look like a mode switch.
@@ -3295,19 +3280,6 @@ impl Console {
                             .child(page),
                     ),
             )
-            .child(
-                div()
-                    .id("inspector-scroll")
-                    .w(px(224.0))
-                    .flex_none()
-                    .h_full()
-                    .overflow_y_scroll()
-                    .bg(colors.surface)
-                    .border_l_1()
-                    .border_color(colors.border)
-                    .p(px(Space::LG))
-                    .child(self.advanced_inspector(colors, cx)),
-            )
     }
 
     fn output_panel(
@@ -3625,7 +3597,7 @@ impl Render for Console {
             View::Runs => self.runs_view(&colors, cx).into_any_element(),
             View::Settings => self.settings_view(&colors, cx).into_any_element(),
             View::Experiment => {
-                let inspector = self.inspector(&colors, cx);
+                let inspector = self.advanced_inspector(&colors, cx);
                 // The column is the growing region; the inspector is a fixed
                 // aside beside it. Note the direction is set once here --
                 // re-calling .flex() on this element would silently override
@@ -3663,10 +3635,17 @@ impl Render for Console {
                         .child(column)
                         .child(
                             div()
+                                .id(ElementId::Name(SharedString::from("inspector")))
                                 .w(px(300.0))
                                 .flex_none()
                                 .min_w(px(0.0))
-                                .child(div().w_full().child(inspector)),
+                                .h_full()
+                                .overflow_y_scroll()
+                                .bg(colors.surface)
+                                .border_l_1()
+                                .border_color(colors.border)
+                                .p(px(Space::LG))
+                                .child(inspector),
                         )
                         .into_any_element()
                 } else {
@@ -4166,8 +4145,18 @@ mod kit_tests {
             assert_ne!(console.read(cx).prompt, "مرحبا Ember\nاختبار");
             window.click(SharedString::from("nav:experiments"), cx);
             window.click(SharedString::from("step:intervention"), cx);
-            // The site picker is an advanced control and the panel starts
-            // collapsed, so open it before reaching for the picker.
+            // The advanced controls live in the inspector, and the inspector
+            // starts closed -- so this has to open the inspector first. This
+            // test used to find `advanced-toggle` without doing that, which
+            // was only possible because a second, unclosable copy of the
+            // inspector was being rendered alongside the real one.
+            assert!(
+                window
+                    .try_find(SharedString::from("advanced-toggle"))
+                    .is_none(),
+                "advanced controls must not be reachable while the inspector is closed"
+            );
+            window.click(SharedString::from("inspector-toggle"), cx);
             window.click(SharedString::from("advanced-toggle"), cx);
             window.click(SharedString::from("picker:Site"), cx);
         })
