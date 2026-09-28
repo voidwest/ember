@@ -9,10 +9,146 @@ is still pre-1.0: versioned CLI/artifact contracts are the primary integration
 anchors, while undocumented or `#[doc(hidden)]` Rust modules are not supported
 API.
 
+## [1.0.0] — release candidate (staged; pending external acceptance gates)
+
+This is the 1.0.0 changelog, staged for the release cut. The local release
+gates pass on candidate `099270c4…` (see
+[docs/audits/1.0-current-validation.md](docs/audits/1.0-current-validation.md));
+the tag waits on the external items in
+[docs/road-to-1.0.md](docs/road-to-1.0.md): clean-machine installation,
+independent external-user validation, and desktop GUI acceptance. Do not
+publish this section as a released version until those are closed.
+
+- Scope the K-quant greedy-token contract (`tests/k_parity.rs`): exact greedy-token
+  equality is now asserted only within a compressed tier (ARM/scalar/x86), while
+  the cross-tier eager-f32 comparison keeps the pre-registered per-layer/logit
+  cosine envelope on shared-prefix steps and records a near-tie flip instead of
+  requiring it away. This implements the existing 2026-08-11 amendment in
+  [docs/v03-execution-contracts.md](docs/v03-execution-contracts.md); the pinned
+  llama.cpp golden ladder (Gate C) remains the authoritative model-level numerical
+  gate. `scripts/validate_k_parity.sh` now passes Q4_K_M 7/7 and Q6_K 7/7. The
+  observed flips and their margins are retained in
+  [docs/audits/1.0-q6-numerics.md](docs/audits/1.0-q6-numerics.md).
+
+- Reject intervention text-span selectors on selected empty inputs during
+  specification validation, matching the existing capture rule. Unselected
+  empty inputs and position-only selectors are unaffected.
+
+- Candidate kernel revision 5 aligns ARM f32 dot reduction and tail ordering with
+  the pinned reference, covered by 39 retained independent reference cases.
+  Broader candidate validation is pending; existing artifact identities remain
+  unchanged.
+
+- Candidate kernel revision 4 aligns RoPE frequency recurrence and fused rotation
+  ordering across reference, planned, and split-half SIMD paths. This can change
+  numerical outputs; full candidate validation is pending. Historical plan and
+  bundle identities are preserved.
+
+- Align failed experiment verification/reproduction verdicts with CLI exit code 3; return the shared error so handler cleanup runs.
+
+- Correct capture result assembly so out-of-order buffers are merged into
+  ascending token positions while preserving each row's exact values. Ordinary
+  sequential decode already visits positions in order.
+
+- Write recursively sorted `execution-identity-v2` run identities. Keep historical
+  v1 insertion-order digests verifiable without rewriting artifacts; reject
+  unknown or mismatched manifest/identity versions. Signed run manifests share
+  these checks and reject missing identity fields. See the
+  [migration notes](docs/migration-to-1.0.md#run-manifest-identity-migration).
+- Reject finite timeout overflow as a normal input error in Python `diff` and
+  `diff_corpus` and the shared Rust corpus runner, before creating output or
+  reading seeds. This replaces a Rust panic or unrelated filesystem error;
+  ordinary representable timeout behavior is unchanged.
+
+- Run complete CPU inference sessions inside Rayon workers, avoiding repeated
+  external queue allocations during parallel planned decode. Native GUI event
+  loops remain on the main thread; prepared inference uses the requested pool
+  size with exclusive model access. `model::with_cpu_session` is an experimental
+  helper for Rust embedders. Raw calls outside a session can still allocate
+  scheduler queue blocks. See the [measured scope](docs/audits/1.0-performance-m1.md).
+
+- Correct `bench-decode --allocations` accounting (nested report schema 3):
+  process-global bytes now count requested allocation bytes, including buffers
+  freed during measurement, rather than net live-memory growth. Preallocate
+  measurement vectors so they do not inflate global counts. The performance
+  analyzer labels schema 1/2 byte figures as legacy live-memory deltas.
+
+- Correct activation addressing and intervention source selection: generated
+  selectors fire only during decode, head hooks use the final prompt position,
+  and current-run sources match the target site/layer instead of the first
+  stored layer. Cross-bundle layer mismatches now fail. These fixes can change
+  experiment outputs, including the supplied Arabic intervention; rerun affected
+  experiments while preserving original bundles. See
+  [candidate migration notes](docs/migration-to-1.0.md).
+- Validate intervention source row counts before mutation. Single-row sources
+  broadcast; matching multi-row sources map in selector order. Incompatible
+  counts now produce errors instead of replacement panics or silent arithmetic
+  truncation. Generated-position verification follows the absolute decode
+  position convention. Evidence and scope are recorded in the
+  [contract audit](docs/audits/1.0-contract-audit.md).
+
+- Record nested experiment defaults without losing omission provenance in
+  raw-spec round trips. Explicit settings keep identical execution semantics.
+  Experimental Rust raw-spec callers migrate capture/intervention lists to
+  `Option<Vec<RawDefinition<T>>>`; authored TOML is unchanged.
+- Verify bundles before publication and use no-clobber creation or atomic
+  replacement on Linux/macOS. Failed replacements preserve existing data;
+  unsupported filesystems fail safely. Retained staging directories cannot
+  be accepted as published bundles.
+
+- Make golden-ladder validation fail when any pinned model is missing or has a
+  different hash/size; partial or empty matrices can no longer report success.
+
+- Harden experiment contracts for the 1.0 candidate: reject unknown nested
+  schemas, inconsistent plan identity, unlisted bundle files, missing/duplicate
+  checksum entries, symlinks, special files, and unknown selector/operation/source
+  fields. These are enforcement fixes for the documented fail-closed contract.
+- Sort deterministic JSON payload keys regardless of dependency feature
+  unification. This fixes insertion-order-dependent bundle identities; newly
+  written payload/semantic hashes can differ from earlier affected GUI builds.
+  Existing bundle bytes retain their original hashes and are verified offline.
+
+- Rewrite native experiment controls with GPUI Kit 0.6.6: Kit application root,
+  buttons, searchable selectors, and text inputs; retain the shared experiment
+  engine and offline fonts. Verified with interaction tests, a real-model
+  worker round trip, and CoreText/Metal render checks. Desktop accessibility
+  inspection remains unverified.
+- GUI builds now use Rust 1.98.1; headless library/CLI builds retain Rust 1.92.
+  This GUI toolchain increase is reserved for the next minor release.
+- Add an actionable 1.0 release-gate checklist in `docs/road-to-1.0.md`.
+
 ## [Unreleased]
+
+- Align failed experiment verification/reproduction verdicts with CLI exit code 3; return the shared verdict error so handler cleanup runs.
 
 ### Added
 
+- **Native ARM quantized CPU kernels.** Q8_0 uses signed byte dot products,
+  FP16 scale conversion, and decode/prefill tiling. Q4_K/Q6_K gain a recorded
+  ARM execution tier with vector integer accumulation and four-row prefill
+  reuse. `--k-strategy auto` selects it on supported CPUs; `--k-strategy arm`
+  requires it explicitly. ARM planned normalization now follows the reference
+  NEON reduction order. Eager-f32 K loading reuses mapped compressed payloads
+  rather than copying them. See [ARM kernels](docs/arm-kernels.md).
+
+- **Cooperative SIGINT cancellation for CLI generation.** Ctrl-C now fires a
+  shared cancel token instead of killing the process: the generation loop
+  checks it before prefill and at the top of every decode step, prints how many
+  tokens were produced, and exits with code 4. A second Ctrl-C force-exits
+  (130). Contract: `docs/cancellation.md`; API: `ember::cancel::CancelToken` /
+  `ember::cancel::Cancelled`.
+- **Support matrix and runtime warning.** `docs/support.md` is now the single
+  source of truth for supported model families, quantization types, execution
+  paths, and platforms. Loading an architecture outside the matrix logs a
+  warning; `--strict-support` turns that warning into a failure. The loader
+  also warns when tensors fall back to eager-f32 for lack of a resident kernel.
+- **Verifier exit code 3.** `kv compare` (threshold exceedance), `diff`
+  (runtime disagreement or a side that failed to run), and `score-batch`
+  (per-line errors) now terminate with exit code 3 after printing their report,
+  so automation can detect a FAIL verdict. Exit codes are documented in
+  `docs/usage.md`.
+- `docs/trace-schema.md`: the `ember.agent.trace.v1` field/ordering/privacy
+  contract, and `docs/cancellation.md`: the interruption contract.
 - Optional Python bindings (`bindings/python`, PyO3 + maturin): `ember.inspect`,
   `ember.plan`, `ember.diff`, and `ember.diff_corpus` return the same report
   dictionaries as the CLI (`--json` / `--output` output). The extension is abi3
@@ -40,6 +176,13 @@ API.
 
 ### Changed
 
+- **Agent traces no longer record prompt or generated content by default.**
+  `TraceConfig` defaults are now privacy-first (`trace_prompts: false`,
+  `trace_generated_text: false`): a trace written without an explicit opt-in
+  contains lengths and SHA-256 digests only. The CLI flag is
+  `--trace-content` (`--privacy-off-content` remains as a visible alias with
+  the same meaning). Breaking for anyone who relied on the old default; the
+  schema is unchanged (`docs/trace-schema.md`).
 - The packed Q8_0 decode cache is now on by default: the first run writes the
   packed VNNI + interleaved-head layouts once (~1.3 GiB for a 1B Q8_0 model, in
   `$EMBER_CACHE_DIR` or `$XDG_CACHE_HOME/ember/packed`) and later runs skip the
@@ -55,6 +198,9 @@ API.
 
 ### Fixed
 
+- `search_text` tool calls now reject files larger than the 1 MiB read cap
+  (matching `read_text_file`) instead of materializing the whole file; a large
+  file under the sandbox root can no longer drive unbounded tool memory.
 - The packed-cache key no longer `Debug`-formats every metadata value: on
   tokenizer-scale headers (Gemma 4) that formatted ~1.3M values per
   cache-enabled load. The key now hashes scalar metadata exactly and bounds
