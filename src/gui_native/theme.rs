@@ -102,48 +102,60 @@ pub(super) struct Colors {
 
 pub(super) fn light() -> Colors {
     Colors {
-        canvas: rgb(0xf7f7f8),
-        sidebar: rgb(0xf0f1f3),
+        // Warm neutrals. The previous palette was blue-tinted grey, which
+        // reads as a code-hosting site; these sit in the Obsidian/Notion
+        // family where the canvas is a warm off-white and separation comes
+        // from a barely-there hairline rather than a cool line.
+        canvas: rgb(0xfbfaf9),
+        sidebar: rgb(0xf5f3f1),
         surface: rgb(0xffffff),
-        surface_raised: rgb(0xf5f5f6),
-        text: rgb(0x202126),
-        text_muted: rgb(0x555b66),
-        text_faint: rgb(0x777f8c),
-        border: rgb(0xdfe2e7),
-        border_strong: rgb(0xc7ccd4),
-        accent: rgb(0xd65318),
-        accent_soft: rgba(0xdc5c201f),
-        ok: rgb(0x197a48),
-        err: rgb(0xc43e36),
-        warn: rgb(0x9a6810),
-        busy: rgb(0xb5477b),
-        err_box_bg: rgb(0xfceceb),
-        err_box_border: rgb(0xe5b8b4),
-        warn_box_bg: rgb(0xfaf3df),
-        warn_box_border: rgb(0xe0c98f),
+        surface_raised: rgb(0xf7f5f3),
+        text: rgb(0x2e2c29),
+        text_muted: rgb(0x6b6862),
+        // Faint is the smallest metadata text in the UI, so it is held to the
+        // 4.5:1 body-text floor against every surface it can land on rather
+        // than being dialled down for looks. The old light value sat at 3.8:1.
+        text_faint: rgb(0x6e6961),
+        border: rgb(0xe8e4de),
+        border_strong: rgb(0xd5cfc6),
+        accent: rgb(0xb8501a),
+        accent_soft: rgba(0xb8501a1f),
+        ok: rgb(0x2f7d4f),
+        err: rgb(0xb23c33),
+        warn: rgb(0x8a6410),
+        busy: rgb(0x9c3f70),
+        err_box_bg: rgb(0xfbeceb),
+        err_box_border: rgb(0xe3bdb8),
+        warn_box_bg: rgb(0xf8f2e2),
+        warn_box_border: rgb(0xddc78f),
     }
 }
 
 pub(super) fn dark() -> Colors {
     Colors {
-        canvas: rgb(0x090a0d),
-        sidebar: rgb(0x101216),
-        surface: rgb(0x15181e),
-        surface_raised: rgb(0x1c2028),
-        text: rgb(0xe9eaed),
-        text_muted: rgb(0xa3a9b3),
-        text_faint: rgb(0x747c89),
-        border: rgb(0x282d37),
-        border_strong: rgb(0x3a414e),
-        accent: rgb(0xf06b2f),
-        accent_soft: rgba(0xf06b2f26),
-        ok: rgb(0x4cc38a),
-        err: rgb(0xf0685c),
-        warn: rgb(0xe8b34b),
-        busy: rgb(0xe06b9f),
-        err_box_bg: rgb(0x2a1a18),
-        err_box_border: rgb(0x5c332e),
-        warn_box_bg: rgb(0x2a2418),
-        warn_box_border: rgb(0x5c4a2a),
+        // Warm charcoal rather than blue-black. The previous dark canvas was
+        // #090a0d, which is a cool near-black; this sits in the Obsidian
+        // family where the darkest surface is a warm off-black.
+        canvas: rgb(0x1a1918),
+        sidebar: rgb(0x141312),
+        surface: rgb(0x201f1d),
+        surface_raised: rgb(0x2a2825),
+        text: rgb(0xe6e2dc),
+        text_muted: rgb(0xa8a29a),
+        // Held to 4.5:1 on the raised surface too, which is where the old
+        // value failed.
+        text_faint: rgb(0x9c968c),
+        border: rgb(0x302d29),
+        border_strong: rgb(0x433f39),
+        accent: rgb(0xef8c48),
+        accent_soft: rgba(0xef8c4826),
+        ok: rgb(0x5cb88a),
+        err: rgb(0xe2695e),
+        warn: rgb(0xd8a94a),
+        busy: rgb(0xdb6a9c),
+        err_box_bg: rgb(0x2b1d1a),
+        err_box_border: rgb(0x5c3830),
+        warn_box_bg: rgb(0x2a251a),
+        warn_box_border: rgb(0x584a2e),
     }
 }

@@ -922,7 +922,7 @@ impl Console {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .flex_wrap()
+                    .overflow_hidden()
                     .child(track("INPUT", colors.text_faint))
                     .child(sep())
                     .child(self.pipeline_node(
@@ -3562,7 +3562,14 @@ impl Render for Console {
                         .flex_1()
                         .min_h(px(0.0))
                         .child(column)
-                        .child(div().w(px(268.0)).flex_none().child(inspector))
+                        .child(
+                            div()
+                                .w(px(268.0))
+                                .flex_none()
+                                .min_w(px(0.0))
+                                .overflow_hidden()
+                                .child(div().w_full().child(inspector)),
+                        )
                         .into_any_element()
                 } else {
                     column.into_any_element()
