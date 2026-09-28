@@ -20,6 +20,14 @@ fn runtime_error(error: anyhow::Error) -> PyErr {
     PyRuntimeError::new_err(format!("{error:#}"))
 }
 
+fn checked_timeout(seconds: f64) -> PyResult<Duration> {
+    if !(seconds.is_finite() && seconds > 0.0) {
+        return Err(PyValueError::new_err("timeout_secs must be positive"));
+    }
+    Duration::try_from_secs_f64(seconds)
+        .map_err(|_| PyValueError::new_err("timeout_secs exceeds the supported duration range"))
+}
+
 /// Parse `against` names, de-duplicating in order; unknown names are refused
 /// with the CLI's wording.
 fn parse_runtimes(names: Vec<String>) -> PyResult<Vec<ExternalRuntime>> {
@@ -103,12 +111,9 @@ fn diff(
     against: Vec<String>,
     timeout_secs: f64,
 ) -> PyResult<Py<PyAny>> {
-    if !(timeout_secs.is_finite() && timeout_secs > 0.0) {
-        return Err(PyValueError::new_err("timeout_secs must be positive"));
-    }
+    let timeout = checked_timeout(timeout_secs)?;
     let runtimes = parse_runtimes(against)?;
-    let report =
-        py.detach(|| evaluate_diff(&file, &runtimes, Duration::from_secs_f64(timeout_secs)));
+    let report = py.detach(|| evaluate_diff(&file, &runtimes, timeout));
     let value = serde_json::to_value(&report)
         .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
     json_to_py(py, &value)
@@ -157,9 +162,7 @@ fn diff_corpus(
     if jobs == 0 {
         return Err(PyValueError::new_err("jobs must be positive"));
     }
-    if !(timeout_secs.is_finite() && timeout_secs > 0.0) {
-        return Err(PyValueError::new_err("timeout_secs must be positive"));
-    }
+    checked_timeout(timeout_secs)?;
     let Some(mode) = CorpusMode::parse(mode) else {
         return Err(PyValueError::new_err(format!(
             "unknown mode '{mode}'; supported: raw, construction"
