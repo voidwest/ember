@@ -126,6 +126,35 @@ private USB files or local credentials being copied into the repository.
 Evidence: candidate commit, toolchain/hardware, commands, raw results, and a
 validation matrix. Earlier local test counts are background, not candidate proof.
 
+### Automated cadence for the K-quant gate
+
+The K-quant parity gate used to be reachable only by hand. It now also runs
+in CI via `.github/workflows/numerical-gates.yml`, on a weekly schedule and on
+demand. That job downloads the pinned fp16 source, builds the pinned
+llama.cpp quantizer (`47c786924ad1ab7e91da2cdc72fcdb563780c2bd`, built
+`-ffp-contract=off` so the rung bytes match), quantizes the llama Q4_K_M and
+Q6_K rungs, and runs `scripts/validate_k_parity.sh` unchanged. It writes into a
+fresh `models/ci-ladder` directory, because the tracked
+`models/v03-ladder/ladder-manifest.json` already records every rung and
+`scripts/quantize_ladder.sh` refuses to overwrite one.
+
+Two limits are deliberate and must not be papered over:
+
+- The job is **scheduled, not per-PR**. The per-PR guard remains the cheap
+  model-free `k_quant_matmul::tests` gate in `ci.yml`. Cost, not coverage, is
+  the reason for the split.
+- The golden-logit ladder (**Gate C**, `scripts/validate_golden_ladder.sh`) is
+  **still not in CI**. It needs the full six-rung matrix across both families,
+  peaking near 11 GB of source plus ladder artifacts, which does not reliably
+  fit a standard runner. It stays a documented manual gate until the rungs are
+  published as a versioned artifact or the job moves to a larger runner. Gate C
+  remains the authoritative model-level gate; this job does not replace it.
+
+A green `ci.yml` therefore does **not** mean the numerics are validated. Until
+Gate C is automated, "numerically validated" continues to mean "a recorded
+manual run exists", and the release checklist in
+[release-1.0.md](release-1.0.md) must carry it explicitly.
+
 Current broad regression snapshot: [development-tree validation](audits/1.0-current-validation.md).
 It is not a frozen-candidate release verdict.
 

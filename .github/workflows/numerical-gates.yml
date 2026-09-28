@@ -1,0 +1,181 @@
+# Pinned numerical gates: the K-quant parity ladder (contract Gate B).
+#
+# WHY THIS IS A SEPARATE, SCHEDULED WORKFLOW
+#
+#   Ember's numerical credibility rests on comparisons against a pinned
+#   llama.cpp quantizer, not on the fast model-free CI job. That comparison
+#   needs a 2.5 GB fp16 source download, a pinned llama.cpp C++ build, a
+#   quantization pass, and a release-profile test run. That is far too
+#   expensive for per-PR CI, so it runs weekly and on demand instead.
+#
+#   The cheap guard for per-PR regressions is unchanged and still blocks
+#   merges: the model-free `k_quant_matmul::tests` gate in ci.yml, which
+#   runs with EMBER_REQUIRE_X86_TESTS=1.
+#
+#   Release policy: this workflow must be green on the candidate commit
+#   before the v1.0.0 tag is cut. A red run here is a release blocker, not
+#   a caveat. See docs/road-to-1.0.md and docs/validation.md.
+#
+# WHAT IS *NOT* HERE, AND WHY
+#
+#   The golden-logit ladder (contract Gate C, scripts/validate_golden_ladder.sh)
+#   is deliberately excluded. It requires the full six-rung matrix across both
+#   model families, which peaks around 11 GB of source plus ladder artifacts
+#   and does not reliably fit a standard runner. Gate C remains a manual,
+#   documented local gate until the ladder rungs are published as a versioned
+#   artifact or the job moves to a larger runner. Do not add it speculatively:
+#   a job that is disk-flaky trains everyone to ignore red.
+#
+# The ladder is built into a FRESH output directory on purpose. The tracked
+# models/v03-ladder/ladder-manifest.json already contains records for every
+# rung, and scripts/quantize_ladder.sh refuses to overwrite an existing rung,
+# so reusing that directory would fail before quantizing anything.
+
+name: numerical-gates
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, Monday 05:17 UTC. A non-zero minute avoids the top-of-hour
+    # scheduling spike that GitHub-hosted runners queue on.
+    - cron: "17 5 * * 1"
+
+concurrency:
+  group: numerical-gates
+  cancel-in-progress: false
+
+# This job clones a third-party repository and downloads model weights.
+# It never needs to write back to the Ember repository.
+permissions:
+  contents: read
+
+env:
+  # Pinned fp16 source for the llama-3.2-1b ladder family.
+  # Source of truth is models/v03-sources/sources.json; the "verify pinned
+  # source metadata" step below fails if these two ever drift apart.
+  SRC_REPO: second-state/Llama-3.2-1B-Instruct-GGUF
+  SRC_REVISION: ffae973dc8b47a497fae462fc1f882437e258bbf
+  SRC_FILE: Llama-3.2-1B-Instruct-f16.gguf
+  SRC_SHA256: 1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146
+  SRC_BYTES: "2479595360"
+
+  # Pinned llama.cpp quantizer commit. Must match QUANTIZER_COMMIT in
+  # scripts/validate_ladder_inputs.py and the pin in setup_lama_cpp.sh.
+  LLAMA_CPP_PIN: 47c786924ad1ab7e91da2cdc72fcdb563780c2bd
+
+  # Fresh ladder output directory; see the note at the top of this file.
+  LADDER_DIR: models/ci-ladder
+  LLAMA_CPP_DIR: ${{ github.workspace }}/.llama-cpp
+
+  # The two ladder scripts default to $REPO_ROOT/.venv/bin/python, which does
+  # not exist on a clean runner. Both accept an override.
+  PYTHON: python3
+
+jobs:
+  k-quant-parity:
+    name: k-quant parity (llama Q4_K_M + Q6_K)
+    runs-on: ubuntu-latest
+    # Download + C++ build + quantization + a release test run. Generous on
+    # purpose: a timeout here would be indistinguishable from a real failure.
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        # The hosted image ships an Android SDK we do not need. Reclaiming it
+        # is the difference between fitting the ladder and OOMing mid-run.
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc
+          df -h "$GITHUB_WORKSPACE"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install Rust toolchain
+        # Honour the repository pin (rust-toolchain.toml) rather than
+        # hardcoding a version here, so a toolchain bump stays one edit.
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: verify pinned source metadata
+        # Guards against the workflow env drifting from the recorded source
+        # manifest. A silent drift here would mean the ladder is built from an
+        # unpinned input while still being reported as pinned.
+        run: |
+          python3 - "$SRC_REPO" "$SRC_REVISION" "$SRC_FILE" "$SRC_SHA256" "$SRC_BYTES" <<'PY'
+          import json, pathlib, sys
+          repo, revision, name, sha, nbytes = sys.argv[1:]
+          records = json.loads(pathlib.Path("models/v03-sources/sources.json").read_text())
+          match = [r for r in records if r.get("filename") == name]
+          if not match:
+              raise SystemExit(f"{name} is not recorded in models/v03-sources/sources.json")
+          r = match[0]
+          for label, want, got in (
+              ("repo", repo, r["repo"]),
+              ("revision", revision, r["revision"]),
+              ("sha256", sha, r["sha256"]),
+              ("bytes", nbytes, str(r["bytes"])),
+          ):
+              if want != got:
+                  raise SystemExit(
+                      f"pin drift for {label} of {name}: workflow has {want!r}, "
+                      f"models/v03-sources/sources.json has {got!r}"
+                  )
+          print(f"pins agree for {name} ({r['repo']}@{r['revision'][:12]})")
+          PY
+
+      - name: download pinned fp16 source
+        run: |
+          set -euo pipefail
+          mkdir -p models/ci-sources
+          url="https://huggingface.co/${SRC_REPO}/resolve/${SRC_REVISION}/${SRC_FILE}"
+          out="models/ci-sources/${SRC_FILE}"
+          curl --fail --location --retry 3 --retry-delay 5 \
+               --create-dirs --output "$out" "$url"
+          echo "${SRC_SHA256}  ${out}" | sha256sum --check -
+          test "$(stat -c %s "$out")" = "${SRC_BYTES}"
+
+      - name: obtain pinned llama.cpp checkout
+        run: |
+          set -euo pipefail
+          bash scripts/setup_llama_cpp.sh --commit "${LLAMA_CPP_PIN}"
+          test "$(git -C "${LLAMA_CPP_DIR}" rev-parse HEAD)" = "${LLAMA_CPP_PIN}"
+
+      - name: build pinned ladder quantizer
+        # -ffp-contract=off matters: the default compiler contraction changes
+        # Q4/Q6 bytes and would break the pinned rung hashes.
+        run: bash scripts/setup_ladder_quantizer.sh
+
+      - name: quantize the llama ladder rungs
+        run: |
+          set -euo pipefail
+          bash scripts/quantize_ladder.sh \
+            --model-llama "models/ci-sources/${SRC_FILE}" \
+            --out "${LADDER_DIR}"
+          ls -la "${LADDER_DIR}"
+
+      - name: report rung identities
+        # The manifest is the evidence for what was actually built. Print it
+        # before the gate runs so a failure can be diagnosed from the log.
+        run: cat "${LADDER_DIR}/ladder-manifest.json"
+
+      - name: run fail-closed K-quant parity gate
+        # scripts/validate_k_parity.sh is already fail-closed: it pins the
+        # tokenizer SHA-256, the rung SHA-256/dtype/layer counts, refuses an
+        # eager-f32 fallback, requires the native CPU tier, and requires a
+        # parallel scheduler. A red result is a numerical regression.
+        env:
+          EMBER_PARITY_MODEL_ROOT: ${{ env.LADDER_DIR }}
+        run: bash scripts/validate_k_parity.sh
+
+      - name: upload ladder evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k-quant-parity-evidence
+          path: |
+            ${{ env.LADDER_DIR }}/ladder-manifest.json
+            models/v03-sources/sources.json
+          if-no-files-found: error
+          retention-days: 30
