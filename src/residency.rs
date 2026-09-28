@@ -1,7 +1,9 @@
-//! Low-frequency Linux process-residency snapshots for lifecycle experiments.
+//! Low-frequency phase snapshots with Linux process-residency accounting.
 //!
 //! This module intentionally reads only procfs accounting files at explicit
 //! phase boundaries. It does not sample in the inference hot path.
+//! On other platforms, phase markers remain available but accounting is
+//! disabled; zero-valued memory/fault fields mean unavailable, not measured zero.
 
 use serde::Serialize;
 use std::fs;
@@ -38,7 +40,7 @@ impl ResidencyRecorder {
     pub fn new() -> Self {
         Self {
             process_start: Instant::now(),
-            enabled: true,
+            enabled: cfg!(target_os = "linux"),
             measurement_ns: 0,
             snapshots: Vec::new(),
         }
@@ -181,6 +183,18 @@ mod tests {
         assert_eq!(snapshot.phase, "test");
         assert!(snapshot.rss_kib > 0);
         assert!(snapshot.peak_rss_kib > 0);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn unsupported_platform_preserves_phases_without_reading_procfs() {
+        let mut recorder = ResidencyRecorder::new();
+        assert!(!recorder.is_enabled());
+        recorder.capture("load_start").unwrap();
+        recorder.capture("model_built").unwrap();
+        assert_eq!(recorder.snapshots().len(), 2);
+        assert_eq!(recorder.snapshots()[1].phase, "model_built");
+        assert_eq!(recorder.measurement_ns(), 0);
     }
 
     #[test]
