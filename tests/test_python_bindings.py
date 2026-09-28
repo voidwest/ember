@@ -110,12 +110,26 @@ def test_diff_rejects_unknown_runtime(tmp_path):
         ember.diff(str(path), against=["vllm"])
 
 
-def test_diff_rejects_nonpositive_timeout(tmp_path):
+def test_diff_rejects_invalid_timeout(tmp_path):
     path = tmp_path / "junk.gguf"
     path.write_bytes(b"junk")
-    for bad in (0, -1.0, float("nan"), float("inf")):
+    for bad in (0, -1.0, float("nan"), float("inf"), 1e300):
         with pytest.raises(ValueError, match="timeout_secs"):
             ember.diff(str(path), against=[], timeout_secs=bad)
+
+
+@pytest.mark.parametrize("timeout", [0, -1.0, float("nan"), float("inf"), 1e300])
+def test_diff_corpus_rejects_invalid_timeout_before_output(tmp_path, timeout):
+    out_dir = tmp_path / "must-not-be-created"
+    with pytest.raises(ValueError, match="timeout_secs"):
+        ember.diff_corpus(
+            n=1,
+            out_dir=out_dir,
+            against=[],
+            timeout_secs=timeout,
+            seeds=[str(tmp_path / "missing-seed")],
+        )
+    assert not out_dir.exists()
 
 
 def test_diff_duplicate_runtimes_are_ignored(tmp_path):
