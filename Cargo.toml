@@ -15,7 +15,7 @@ exclude = [
 
 [package]
 name = "ember"
-version = "0.6.8"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"

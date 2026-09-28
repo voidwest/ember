@@ -1872,7 +1872,7 @@ dependencies = [
 
 [[package]]
 name = "ember"
-version = "0.6.8"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1905,7 +1905,7 @@ dependencies = [
 
 [[package]]
 name = "ember-python"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "ember",
