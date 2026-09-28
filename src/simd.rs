@@ -1,4 +1,4 @@
-//! SIMD-accelerated Q8_0 dequantization kernels.
+//! SIMD-accelerated Q8_0 dequantization and matrix multiplication kernels.
 //!
 //! Platform-specific kernels with runtime dispatch via `std::arch` and a
 //! portable scalar fallback.  The dispatch function selects the fastest
@@ -10,6 +10,7 @@
 //! |----------|---------|-------|------------------------------|
 //! | x86-64   | avx2+f16c | 256 | 8 f32 per op, 4 ops / block |
 //! | aarch64  | neon    | 128   | 4 f32 per op, 8 ops / block  |
+//! | aarch64  | neon+dotprod+fp16 | 128 | Q8 integer dots, tiled decode/prefill |
 //! | fallback | (none)  | —     | scalar, matches original     |
 //!
 //! One Q8_0 block = 34 bytes (2-byte f16 scale + 32 i8 quants) → 32 f32 values.
@@ -36,7 +37,11 @@ pub(crate) fn interleaved_q8_0_supported() -> bool {
             && is_x86_feature_detected!("f16c")
             && is_x86_feature_detected!("fma")
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        is_aarch64_feature_detected!("dotprod") && is_aarch64_feature_detected!("fp16")
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         false
     }
@@ -139,7 +144,35 @@ pub fn rms_norm_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
             }
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    if is_aarch64_feature_detected!("neon") {
+        // Match CpuTensor::rms_norm's NEON reduction order exactly. A scalar
+        // reduction here perturbs later activation quantization in planned decode.
+        let rstd = (sum_squares(x) / n as f32 + eps).sqrt().recip();
+        scale_weight_mul(x, rstd, weight, dst);
+        return;
+    }
     rms_norm_into_scalar(x, weight, eps, dst);
+}
+
+/// Preserve the established Q8 fast-decode normalization order on ARM.
+/// Its scalar reduction is part of existing generation/reproduction behavior;
+/// planned K decode instead uses the tensor-reference NEON order above.
+#[inline]
+pub(crate) fn rms_norm_q8_decode_into(x: &[f32], weight: &[f32], eps: f32, dst: &mut [f32]) {
+    #[cfg(target_arch = "aarch64")]
+    {
+        assert!(!x.is_empty());
+        assert_eq!(x.len(), weight.len());
+        assert_eq!(x.len(), dst.len());
+        assert!(eps.is_finite() && eps >= 0.0);
+        let sum: f32 = x.iter().map(|value| value * value).sum();
+        let rstd = (sum / x.len() as f32 + eps).sqrt().recip();
+        // Vectorize the apply step without changing the reduction or multiply order.
+        scale_weight_mul(x, rstd, weight, dst);
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    rms_norm_into(x, weight, eps, dst);
 }
 
 /// Fused SiLU multiply: `dst[i] = silu(gate[i]) * up[i]`.
@@ -221,6 +254,14 @@ pub fn rms_norm_residual_into(
                 return x86_64::rms_norm_residual_into_avx2(x, weight, eps, residual, dst);
             }
         }
+    }
+    #[cfg(target_arch = "aarch64")]
+    if is_aarch64_feature_detected!("neon") {
+        rms_norm_into(x, weight, eps, dst);
+        for (value, &addend) in dst.iter_mut().zip(residual) {
+            *value += addend;
+        }
+        return;
     }
     rms_norm_residual_into_scalar(x, weight, eps, residual, dst);
 }
@@ -1486,8 +1527,8 @@ mod x86_64 {
     ///
     /// # Safety
     ///
-    /// Caller must ensure the required x86 feature set (`avx2`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
-    #[target_feature(enable = "avx2")]
+    /// Caller must ensure the required x86 feature set (`avx2` and `fma`) is supported at runtime (dispatched via `is_x86_feature_detected!`) before calling this function.
+    #[target_feature(enable = "avx2,fma")]
     pub(crate) unsafe fn rope_split_half_avx2(
         x: &mut [f32],
         n_heads: usize,
@@ -1508,12 +1549,13 @@ mod x86_64 {
                     let c = _mm256_loadu_ps(cos.as_ptr().add(d));
                     let s = _mm256_loadu_ps(sin.as_ptr().add(d));
                     // x0' = x0*c - x1*s,  x1' = x0*s + x1*c
-                    let x0c = _mm256_mul_ps(x0, c);
                     let x1s = _mm256_mul_ps(x1, s);
-                    let x0s = _mm256_mul_ps(x0, s);
                     let x1c = _mm256_mul_ps(x1, c);
-                    _mm256_storeu_ps(x.as_mut_ptr().add(off + d), _mm256_sub_ps(x0c, x1s));
-                    _mm256_storeu_ps(x.as_mut_ptr().add(off + d + half), _mm256_add_ps(x0s, x1c));
+                    _mm256_storeu_ps(x.as_mut_ptr().add(off + d), _mm256_fmsub_ps(x0, c, x1s));
+                    _mm256_storeu_ps(
+                        x.as_mut_ptr().add(off + d + half),
+                        _mm256_fmadd_ps(x0, s, x1c),
+                    );
                     d += 8;
                 }
                 // Tail
@@ -1522,8 +1564,8 @@ mod x86_64 {
                     let i1 = off + d + half;
                     let x0 = x[i0];
                     let x1 = x[i1];
-                    x[i0] = x0 * cos[d] - x1 * sin[d];
-                    x[i1] = x0 * sin[d] + x1 * cos[d];
+                    x[i0] = x0.mul_add(cos[d], -(x1 * sin[d]));
+                    x[i1] = x0.mul_add(sin[d], x1 * cos[d]);
                 }
             }
         }
@@ -1616,6 +1658,261 @@ mod x86_64 {
 mod aarch64 {
     use super::*;
     use std::arch::aarch64::*;
+
+    // Rust 1.92 still gates the SDOT intrinsic; keep the instruction wrapper
+    // local and require the same CPU feature as its caller.
+    #[inline]
+    #[target_feature(enable = "neon,dotprod")]
+    unsafe fn signed_dot(acc: int32x4_t, x: int8x16_t, w: int8x16_t) -> int32x4_t {
+        let mut result = acc;
+        unsafe {
+            std::arch::asm!(
+                "sdot {acc:v}.4s, {x:v}.16b, {w:v}.16b",
+                acc = inout(vreg) result,
+                x = in(vreg) x,
+                w = in(vreg) w,
+                options(pure, nomem, nostack),
+            );
+        }
+        result
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    unsafe fn q8_tile<const N: usize>(x: &[u8], data: &[u8], blocks: usize, dst: &mut [f32]) {
+        unsafe {
+            let mut sums = [0.0f32; N];
+            for b in 0..blocks {
+                let xp = x.as_ptr().add(b * Q8_0_TYPE_SIZE);
+                let xs = load_scale(xp);
+                let x0 = vld1q_s8(xp.add(2).cast());
+                let x1 = vld1q_s8(xp.add(18).cast());
+                for (r, sum) in sums.iter_mut().enumerate() {
+                    let wp = data.as_ptr().add((r * blocks + b) * Q8_0_TYPE_SIZE);
+                    let ws = load_scale(wp);
+                    let dot = signed_dot(
+                        signed_dot(vdupq_n_s32(0), x0, vld1q_s8(wp.add(2).cast())),
+                        x1,
+                        vld1q_s8(wp.add(18).cast()),
+                    );
+                    *sum += vaddvq_s32(dot) as f32 * ws * xs;
+                }
+            }
+            dst.copy_from_slice(&sums);
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "fp16")]
+    unsafe fn load_scale(ptr: *const u8) -> f32 {
+        unsafe {
+            let bits = u16::from_le(std::ptr::read_unaligned(ptr.cast::<u16>()));
+            let value: f32;
+            std::arch::asm!("fcvt {out:s}, {bits:h}", out = out(vreg) value, bits = in(vreg) bits, options(pure, nomem, nostack, preserves_flags));
+            value
+        }
+    }
+
+    /// Four independent output rows reuse each activation load. Integer dot
+    /// products are exact, and scaling preserves the scalar block order.
+    ///
+    /// # Safety
+    /// Requires NEON, FP16 conversion and the signed byte dot-product extension.
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    pub unsafe fn matmul_q8_0_decode_dotprod(
+        x: &[u8],
+        data: &[u8],
+        blocks: usize,
+        out: &mut [f32],
+    ) {
+        assert!(x.len() >= blocks * Q8_0_TYPE_SIZE);
+        assert!(data.len() >= out.len() * blocks * Q8_0_TYPE_SIZE);
+        unsafe {
+            let full_rows = out.len() / 4 * 4;
+            for (tile, dst) in out[..full_rows].chunks_exact_mut(4).enumerate() {
+                q8_tile::<4>(x, &data[tile * 4 * blocks * Q8_0_TYPE_SIZE..], blocks, dst);
+            }
+            for (row, dst) in out[full_rows..].chunks_mut(1).enumerate() {
+                q8_tile::<1>(
+                    x,
+                    &data[(full_rows + row) * blocks * Q8_0_TYPE_SIZE..],
+                    blocks,
+                    dst,
+                );
+            }
+        }
+    }
+
+    /// Decode four adjacent outputs from the packed four-row weight stripes.
+    ///
+    /// # Safety
+    /// Caller validates the logical output range and runtime CPU features.
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    pub unsafe fn matmul_q8_0_interleaved_dotprod(
+        x: &[u8],
+        w: &QuantizedWeightInterleaved,
+        out: &mut [f32],
+        start: usize,
+    ) {
+        unsafe {
+            let mut done = 0;
+            while done < out.len() && !(start + done).is_multiple_of(4) {
+                q8_interleaved_tile::<1>(x, w, start + done, &mut out[done..done + 1]);
+                done += 1;
+            }
+            while done + 4 <= out.len() {
+                q8_interleaved_tile::<4>(x, w, start + done, &mut out[done..done + 4]);
+                done += 4;
+            }
+            while done < out.len() {
+                q8_interleaved_tile::<1>(x, w, start + done, &mut out[done..done + 1]);
+                done += 1;
+            }
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    unsafe fn q8_interleaved_tile<const N: usize>(
+        x: &[u8],
+        w: &QuantizedWeightInterleaved,
+        start: usize,
+        out: &mut [f32],
+    ) {
+        unsafe {
+            let stripe = start / 4;
+            let lane = start % 4;
+            let quants = w
+                .quants()
+                .as_ptr()
+                .add(stripe * w.blocks_per_row * 128 + lane * 32);
+            let scales = w
+                .scales()
+                .as_ptr()
+                .add(stripe * w.blocks_per_row * 8 + lane * 2);
+            let mut sums = [0.0f32; N];
+            for b in 0..w.blocks_per_row {
+                let xp = x.as_ptr().add(b * Q8_0_TYPE_SIZE);
+                let xs = load_scale(xp);
+                let x0 = vld1q_s8(xp.add(2).cast());
+                let x1 = vld1q_s8(xp.add(18).cast());
+                for (r, sum) in sums.iter_mut().enumerate() {
+                    let wp = quants.add(b * 128 + r * 32);
+                    let ws = load_scale(scales.add(b * 8 + r * 2));
+                    let dot = signed_dot(
+                        signed_dot(vdupq_n_s32(0), x0, vld1q_s8(wp.cast())),
+                        x1,
+                        vld1q_s8(wp.add(16).cast()),
+                    );
+                    *sum += vaddvq_s32(dot) as f32 * ws * xs;
+                }
+            }
+            out.copy_from_slice(&sums);
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "neon,fp16")]
+    unsafe fn load_f16x4(ptr: *const f16) -> float32x4_t {
+        unsafe {
+            let bits = vld1_u16(ptr.cast());
+            let result: float32x4_t;
+            std::arch::asm!("fcvtl {result:v}.4s, {bits:v}.4h",
+                result = out(vreg) result, bits = in(vreg) bits,
+                options(pure, nomem, nostack, preserves_flags));
+            result
+        }
+    }
+
+    /// FP16 conversion and products are vectorized; reduction order is unchanged.
+    ///
+    /// # Safety
+    /// Requires NEON/FP16 and equal input lengths.
+    #[target_feature(enable = "neon,fp16")]
+    pub unsafe fn dot_product_f16_ordered(a: &[f32], b: &[f16]) -> f32 {
+        unsafe {
+            // Rust's floating-point Sum identity is negative zero.
+            let mut sum = -0.0f32;
+            let mut i = 0;
+            while i + 4 <= a.len() {
+                let products =
+                    vmulq_f32(vld1q_f32(a.as_ptr().add(i)), load_f16x4(b.as_ptr().add(i)));
+                sum += vgetq_lane_f32::<0>(products);
+                sum += vgetq_lane_f32::<1>(products);
+                sum += vgetq_lane_f32::<2>(products);
+                sum += vgetq_lane_f32::<3>(products);
+                i += 4;
+            }
+            while i < a.len() {
+                sum += a[i] * b[i].to_f32();
+                i += 1;
+            }
+            sum
+        }
+    }
+
+    /// SIMD FP16 weighted accumulation without FMA contraction.
+    ///
+    /// # Safety
+    /// Requires NEON/FP16 and equal source/destination lengths.
+    #[target_feature(enable = "neon,fp16")]
+    pub unsafe fn weighted_add_f16_neon(acc: &mut [f32], src: &[f16], weight: f32) {
+        unsafe {
+            let mut i = 0;
+            while i + 4 <= acc.len() {
+                let dst = acc.as_mut_ptr().add(i);
+                let product = vmulq_n_f32(load_f16x4(src.as_ptr().add(i)), weight);
+                vst1q_f32(dst, vaddq_f32(vld1q_f32(dst), product));
+                i += 4;
+            }
+            while i < acc.len() {
+                acc[i] += weight * src[i].to_f32();
+                i += 1;
+            }
+        }
+    }
+
+    /// Prompt tile: reuse each weight block for N activation rows.
+    ///
+    /// # Safety
+    /// Requires NEON, dotprod and FP16; dimensions must describe the slices.
+    #[target_feature(enable = "neon,dotprod,fp16")]
+    pub unsafe fn matmul_q8_0_batch_dotprod<const N: usize>(
+        x: &[u8],
+        data: &[u8],
+        outputs: usize,
+        blocks: usize,
+        out: &mut [f32],
+    ) {
+        let row_bytes = blocks * Q8_0_TYPE_SIZE;
+        assert_eq!(x.len(), N * row_bytes);
+        assert!(data.len() >= outputs * row_bytes);
+        assert_eq!(out.len(), N * outputs);
+        unsafe {
+            for column in 0..outputs {
+                let mut sums = [0.0f32; N];
+                for b in 0..blocks {
+                    let wp = data.as_ptr().add(column * row_bytes + b * Q8_0_TYPE_SIZE);
+                    let ws = load_scale(wp);
+                    let w0 = vld1q_s8(wp.add(2).cast());
+                    let w1 = vld1q_s8(wp.add(18).cast());
+                    for (row, sum) in sums.iter_mut().enumerate() {
+                        let xp = x.as_ptr().add(row * row_bytes + b * Q8_0_TYPE_SIZE);
+                        let xs = load_scale(xp);
+                        let dot = signed_dot(
+                            signed_dot(vdupq_n_s32(0), w0, vld1q_s8(xp.add(2).cast())),
+                            w1,
+                            vld1q_s8(xp.add(18).cast()),
+                        );
+                        *sum += vaddvq_s32(dot) as f32 * ws * xs;
+                    }
+                }
+                for (row, value) in sums.into_iter().enumerate() {
+                    out[row * outputs + column] = value;
+                }
+            }
+        }
+    }
 
     /// NEON-accelerated Q8_0 row dequantization.
     ///
@@ -1779,23 +2076,32 @@ mod aarch64 {
     pub(crate) unsafe fn dot_product_neon(a: &[f32], b: &[f32]) -> f32 {
         unsafe {
             let n = a.len();
-            let mut acc = vdupq_n_f32(0.0);
+            // Pinned ggml F32 reduction: four independent NEON accumulators,
+            // then a fixed pairwise tree. Its compiled tail multiplies groups of
+            // four separately, adds their lanes in order, and fuses the final 1–3.
+            let mut acc = [vdupq_n_f32(0.0); 4];
             let mut i = 0;
-
+            while i + 16 <= n {
+                for (j, sum) in acc.iter_mut().enumerate() {
+                    let av = vld1q_f32(a.as_ptr().add(i + j * 4));
+                    let bv = vld1q_f32(b.as_ptr().add(i + j * 4));
+                    *sum = vfmaq_f32(*sum, av, bv);
+                }
+                i += 16;
+            }
+            let paired = vaddq_f32(vaddq_f32(acc[0], acc[2]), vaddq_f32(acc[1], acc[3]));
+            let mut sum = vaddvq_f32(paired);
             while i + 4 <= n {
-                let av = vld1q_f32(a.as_ptr().add(i));
-                let bv = vld1q_f32(b.as_ptr().add(i));
-                acc = vfmaq_f32(acc, av, bv);
+                let products =
+                    vmulq_f32(vld1q_f32(a.as_ptr().add(i)), vld1q_f32(b.as_ptr().add(i)));
+                sum += vgetq_lane_f32::<0>(products);
+                sum += vgetq_lane_f32::<1>(products);
+                sum += vgetq_lane_f32::<2>(products);
+                sum += vgetq_lane_f32::<3>(products);
                 i += 4;
             }
-
-            let mut sum = vgetq_lane_f32::<0>(acc)
-                + vgetq_lane_f32::<1>(acc)
-                + vgetq_lane_f32::<2>(acc)
-                + vgetq_lane_f32::<3>(acc);
-
             while i < n {
-                sum += a[i] * b[i];
+                sum = a[i].mul_add(b[i], sum);
                 i += 1;
             }
             sum
@@ -2034,37 +2340,7 @@ pub(crate) fn matmul_q8_0_decode(x: &[u8], w: &QuantizedWeight, out: &mut [f32])
         return;
     }
 
-    #[cfg(target_arch = "x86_64")]
-    {
-        if is_x86_feature_detected!("avx512vnni")
-            && is_x86_feature_detected!("avx512vl")
-            && is_x86_feature_detected!("avx2")
-            && is_x86_feature_detected!("f16c")
-            && is_x86_feature_detected!("fma")
-        {
-            unsafe {
-                return x86_64::matmul_q8_0_decode_avx512_vnni(
-                    x,
-                    w.data(),
-                    w.out_features(),
-                    blocks_per_row,
-                    out,
-                );
-            }
-        }
-        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("f16c") {
-            unsafe {
-                return x86_64::matmul_q8_0_decode_avx2(
-                    x,
-                    w.data(),
-                    w.out_features(),
-                    blocks_per_row,
-                    out,
-                );
-            }
-        }
-    }
-    matmul_q8_0_decode_scalar(x, w.data(), w.out_features(), blocks_per_row, out);
+    matmul_q8_0_decode_dispatch_chunk(x, w.data(), blocks_per_row, out);
 }
 
 /// Packed Q8_0 matrix multiply for multiple activation rows.
@@ -2169,6 +2445,34 @@ fn matmul_q8_0_batch_dispatch_tile(
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    if is_aarch64_feature_detected!("dotprod") && is_aarch64_feature_detected!("fp16") {
+        // SAFETY: runtime checks guard both extensions; the batch caller validates shapes.
+        unsafe {
+            match rows {
+                4 => {
+                    return aarch64::matmul_q8_0_batch_dotprod::<4>(
+                        x,
+                        data,
+                        out_features,
+                        blocks_per_row,
+                        out,
+                    )
+                }
+                2 => {
+                    return aarch64::matmul_q8_0_batch_dotprod::<2>(
+                        x,
+                        data,
+                        out_features,
+                        blocks_per_row,
+                        out,
+                    )
+                }
+                _ => {}
+            }
+        }
+    }
+
     let encoded_row_len = blocks_per_row * Q8_0_TYPE_SIZE;
     for (x_row, out_row) in x
         .chunks_exact(encoded_row_len)
@@ -2188,6 +2492,17 @@ pub(crate) fn q8_decode_uses_row_parallel(out_features: usize, in_features: usiz
     should_parallel_q8_decode(out_features, in_features)
 }
 
+// Ten-worker M1 Pro pools mix performance and efficiency cores. More work
+// chunks let Rayon redistribute a slow worker's remaining output rows.
+fn q8_decode_chunk_rows(outputs: usize, threads: usize, alignment: usize) -> usize {
+    let rows = outputs.div_ceil(threads).max(64);
+    #[cfg(target_arch = "aarch64")]
+    if threads > 8 {
+        return rows.min(256).next_multiple_of(alignment.max(4));
+    }
+    rows.next_multiple_of(alignment)
+}
+
 fn matmul_q8_0_decode_parallel(
     x: &[u8],
     w: &QuantizedWeight,
@@ -2195,7 +2510,7 @@ fn matmul_q8_0_decode_parallel(
     out: &mut [f32],
 ) {
     let threads = rayon::current_num_threads().max(1);
-    let chunk_rows = w.out_features().div_ceil(threads).max(64);
+    let chunk_rows = q8_decode_chunk_rows(w.out_features(), threads, 1);
     out.par_chunks_mut(chunk_rows)
         .enumerate()
         .for_each(|(chunk_idx, out_chunk)| {
@@ -2235,6 +2550,11 @@ fn matmul_q8_0_decode_dispatch_chunk(
                 return x86_64::matmul_q8_0_decode_avx2(x, data, out.len(), blocks_per_row, out);
             }
         }
+    }
+    #[cfg(target_arch = "aarch64")]
+    if is_aarch64_feature_detected!("dotprod") && is_aarch64_feature_detected!("fp16") {
+        // SAFETY: runtime detection guarantees the dot-product extension.
+        return unsafe { aarch64::matmul_q8_0_decode_dotprod(x, data, blocks_per_row, out) };
     }
     matmul_q8_0_decode_scalar(x, data, out.len(), blocks_per_row, out);
 }
@@ -2329,6 +2649,11 @@ pub(crate) fn matmul_q8_0_decode_interleaved(
             }
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    if interleaved_q8_0_supported() {
+        // SAFETY: range checks above and feature gate validate this call.
+        return unsafe { aarch64::matmul_q8_0_interleaved_dotprod(x, w, out, global_row_start) };
+    }
     // Fallback: dequantize to f32 and use standard matmul (unlikely path)
     for (row, out_val) in out.iter_mut().enumerate() {
         let global_row = global_row_start + row;
@@ -2377,11 +2702,7 @@ pub(crate) fn matmul_q8_0_decode_interleaved_parallel(
         .expect("interleaved q8 input length overflow");
     assert_eq!(x.len(), input_len, "interleaved q8 input length mismatch");
     let threads = rayon::current_num_threads().max(1);
-    let chunk_rows = w
-        .out_features()
-        .div_ceil(threads)
-        .next_multiple_of(crate::quant::INTERLEAVE)
-        .max(64);
+    let chunk_rows = q8_decode_chunk_rows(w.out_features(), threads, crate::quant::INTERLEAVE);
     out.par_chunks_mut(chunk_rows)
         .enumerate()
         .for_each(|(chunk_idx, out_chunk)| {
@@ -2516,6 +2837,11 @@ pub(crate) fn dot_product_f16(a: &[f32], b: &[f16]) -> f32 {
             }
         }
     }
+    #[cfg(target_arch = "aarch64")]
+    if is_aarch64_feature_detected!("fp16") {
+        // SAFETY: lengths checked above; NEON is baseline on AArch64.
+        return unsafe { aarch64::dot_product_f16_ordered(a, b) };
+    }
     a.iter().zip(b.iter()).map(|(x, y)| x * y.to_f32()).sum()
 }
 
@@ -2560,6 +2886,11 @@ pub(crate) fn weighted_add_f16(acc: &mut [f32], src: &[f16], weight: f32) {
                 return x86_64::weighted_add_f16_avx2(acc, src, weight);
             }
         }
+    }
+    #[cfg(target_arch = "aarch64")]
+    if is_aarch64_feature_detected!("fp16") {
+        // SAFETY: lengths checked above; NEON is baseline on AArch64.
+        return unsafe { aarch64::weighted_add_f16_neon(acc, src, weight) };
     }
     for i in 0..acc.len() {
         acc[i] += weight * src[i].to_f32();
@@ -2666,7 +2997,7 @@ pub(crate) fn rope_split_half(
     assert_eq!(sin.len(), half, "RoPE sine length mismatch");
     #[cfg(target_arch = "x86_64")]
     {
-        if is_x86_feature_detected!("avx2") {
+        if is_x86_feature_detected!("avx2") && is_x86_feature_detected!("fma") {
             unsafe {
                 return x86_64::rope_split_half_avx2(x, n_heads, head_dim, cos, sin);
             }
@@ -2679,8 +3010,8 @@ pub(crate) fn rope_split_half(
             let i1 = off + d + half;
             let x0 = x[i0];
             let x1 = x[i1];
-            x[i0] = x0 * cos[d] - x1 * sin[d];
-            x[i1] = x0 * sin[d] + x1 * cos[d];
+            x[i0] = x0.mul_add(cos[d], -(x1 * sin[d]));
+            x[i1] = x0.mul_add(sin[d], x1 * cos[d]);
         }
     }
 }
@@ -2691,6 +3022,121 @@ pub(crate) fn rope_split_half(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_inplace_norm_is_exact_with_tensor_reference() {
+        use crate::tensor::CpuTensor;
+        for n in [1, 3, 4, 5, 31, 2048] {
+            let x: Vec<f32> = (0..n)
+                .map(|i| (i as f32 * 0.17).sin() * (i % 7 + 1) as f32)
+                .collect();
+            let w: Vec<f32> = (0..n).map(|i| 0.5 + (i as f32 * 0.11).cos()).collect();
+            let expected = CpuTensor::from_data(vec![1, n], x.clone())
+                .rms_norm(&CpuTensor::from_data(vec![n], w.clone()), 1e-5);
+            let mut out = vec![0.0; n];
+            rms_norm_into(&x, &w, 1e-5, &mut out);
+            assert_eq!(out, expected.data());
+            let mut scalar = vec![0.0; n];
+            rms_norm_into_scalar(&x, &w, 1e-5, &mut scalar);
+            rms_norm_q8_decode_into(&x, &w, 1e-5, &mut out);
+            assert_eq!(
+                out, scalar,
+                "Q8 fast decode must retain scalar reduction order"
+            );
+            rms_norm_residual_into(&x, &w, 1e-5, &x, &mut out);
+            for i in 0..n {
+                assert_eq!(out[i].to_bits(), (expected.data()[i] + x[i]).to_bits());
+            }
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_q8_batch_is_exact_across_tile_and_output_tails() {
+        if !is_aarch64_feature_detected!("dotprod") || !is_aarch64_feature_detected!("fp16") {
+            return;
+        }
+        for rows in [1, 2, 3, 4] {
+            for outputs in [1, 3, 4, 17] {
+                for blocks in [1, 7, 64] {
+                    let mut x = vec![0u8; 1 + rows * blocks * 34];
+                    let mut data = vec![0u8; 1 + outputs * blocks * 34];
+                    for (i, block) in x[1..]
+                        .chunks_mut(34)
+                        .chain(data[1..].chunks_mut(34))
+                        .enumerate()
+                    {
+                        block[..2].copy_from_slice(
+                            &f16::from_f32((i as f32 % 17.0 - 8.0) / 8.0)
+                                .to_bits()
+                                .to_le_bytes(),
+                        );
+                        for (j, q) in block[2..].iter_mut().enumerate() {
+                            *q = (i * 37 + j * 13) as u8;
+                        }
+                    }
+                    let mut expected = vec![0.0; rows * outputs];
+                    for row in 0..rows {
+                        matmul_q8_0_decode_scalar(
+                            &x[1 + row * blocks * 34..][..blocks * 34],
+                            &data[1..],
+                            outputs,
+                            blocks,
+                            &mut expected[row * outputs..][..outputs],
+                        );
+                    }
+                    let mut actual = vec![0.0; rows * outputs];
+                    matmul_q8_0_batch_dispatch_tile(
+                        &x[1..],
+                        rows,
+                        &data[1..],
+                        outputs,
+                        blocks,
+                        &mut actual,
+                    );
+                    assert_eq!(
+                        actual, expected,
+                        "rows={rows} outputs={outputs} blocks={blocks}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_q8_dotprod_matches_scalar_extremes_and_tails() {
+        if !is_aarch64_feature_detected!("dotprod") || !is_aarch64_feature_detected!("fp16") {
+            return;
+        }
+        for rows in [1, 3, 4, 5, 17] {
+            for blocks in [1, 3, 64] {
+                let mut x = vec![0u8; 1 + blocks * 34];
+                let mut w = vec![0u8; 1 + rows * blocks * 34];
+                for (i, block) in x[1..]
+                    .chunks_mut(34)
+                    .chain(w[1..].chunks_mut(34))
+                    .enumerate()
+                {
+                    block[..2].copy_from_slice(
+                        &[0u16, 1, 0x03ff, 0x0400, 0x3c00, 0x7bff, 0x8001, 0xbc00][i % 8]
+                            .to_le_bytes(),
+                    );
+                    for (j, q) in block[2..].iter_mut().enumerate() {
+                        *q = [128, 127, 0, 255, 1, (i * 37 + j * 13) as u8][(i + j) % 6];
+                    }
+                }
+                let mut expected = vec![0.0; rows];
+                let mut actual = vec![0.0; rows];
+                matmul_q8_0_decode_scalar(&x[1..], &w[1..], rows, blocks, &mut expected);
+                unsafe {
+                    aarch64::matmul_q8_0_decode_dotprod(&x[1..], &w[1..], blocks, &mut actual);
+                }
+                assert_eq!(actual, expected, "rows={rows} blocks={blocks}");
+            }
+        }
+    }
+
     use crate::quant::{quantize_q8_0_into, Q8TopkNorms, QuantizedWeight};
 
     /// Fast-exp error ladder, level 1 (kernel): the AVX2 approximation vs
@@ -2874,6 +3320,34 @@ mod tests {
         }
         assert_eq!(buf.len(), Q8_0_TYPE_SIZE);
         buf
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    fn arm_dot_matches_retained_reference_lengths_and_tails() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/dot-reference/arm-f32.json"))
+                .unwrap();
+        for record in fixture["records"].as_array().unwrap() {
+            let decode = |key: &str| -> Vec<f32> {
+                record[key]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| f32::from_bits(v.as_u64().unwrap() as u32))
+                    .collect()
+            };
+            let a = decode("a_bits");
+            let b = decode("b_bits");
+            let actual = dot_product(&a, &b);
+            assert_eq!(
+                actual.to_bits(),
+                record["expected_bits"].as_u64().unwrap() as u32,
+                "reference dot case {} length {}",
+                record["name"],
+                a.len()
+            );
+        }
     }
 
     #[test]
@@ -3217,6 +3691,85 @@ mod tests {
         matmul_q8_0_decode_interleaved_parallel(&quantized, &interleaved, &mut actual);
 
         assert_close("interleaved q8 decode", &actual, &expected, 0.1, 0.02);
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_interleaved_exact_for_unaligned_output_ranges() {
+        if !interleaved_q8_0_supported() {
+            return;
+        }
+        for outputs in [1, 3, 4, 5, 17, 70] {
+            for blocks in [1, 7, 64] {
+                let mut bytes = vec![0u8; outputs * blocks * 34];
+                for (i, b) in bytes.chunks_exact_mut(34).enumerate() {
+                    b[..2].copy_from_slice(
+                        &[1u16, 0x03ff, 0x0400, 0x3c00, 0xbc00][i % 5].to_le_bytes(),
+                    );
+                    for (j, q) in b[2..].iter_mut().enumerate() {
+                        *q = (i * 37 + j * 13) as u8;
+                    }
+                }
+                let input = bytes[..blocks * 34].to_vec();
+                let weight = QuantizedWeight::try_new(bytes, vec![outputs, blocks * 32]).unwrap();
+                let packed = QuantizedWeightInterleaved::from_quantized(&weight);
+                let mut expected = vec![0.0; outputs];
+                matmul_q8_0_decode(&input, &weight, &mut expected);
+                for start in 0..outputs {
+                    for len in [1, (outputs - start).min(5), outputs - start] {
+                        let mut actual = vec![0.0; len];
+                        matmul_q8_0_decode_interleaved(&input, &packed, &mut actual, start);
+                        assert_eq!(
+                            actual,
+                            expected[start..start + len],
+                            "outputs={outputs} blocks={blocks} start={start} len={len}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_f16_attention_is_bit_exact_with_ordered_scalar() {
+        if !is_aarch64_feature_detected!("fp16") {
+            return;
+        }
+        // Every finite half value, plus all SIMD tail lengths and zero signs.
+        let values: Vec<f16> = (0..=u16::MAX)
+            .filter(|b| b & 0x7c00 != 0x7c00)
+            .map(f16::from_bits)
+            .collect();
+        for offset in 0..4 {
+            for len in [0, 1, 3, 4, 5, 7, 64, 129, values.len() - offset] {
+                let src = &values[offset..offset + len];
+                let query: Vec<f32> = (0..len)
+                    .map(|i| [0.0, -0.0, 0.375, -1.25, 1e-30][i % 5])
+                    .collect();
+                let expected: f32 = query.iter().zip(src).map(|(a, b)| a * b.to_f32()).sum();
+                assert_eq!(
+                    dot_product_f16(&query, src).to_bits(),
+                    expected.to_bits(),
+                    "dot offset={offset} len={len}"
+                );
+                for weight in [0.0, -0.0, 0.375, -1.25, 1e-30] {
+                    let mut expected = query.clone();
+                    for (a, b) in expected.iter_mut().zip(src) {
+                        *a += weight * b.to_f32();
+                    }
+                    let mut actual = query.clone();
+                    weighted_add_f16(&mut actual, src, weight);
+                    assert!(
+                        actual
+                            .iter()
+                            .zip(&expected)
+                            .all(|(a, b)| a.to_bits() == b.to_bits()),
+                        "add offset={offset} len={len} weight={weight}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
