@@ -324,6 +324,20 @@ enum View {
 }
 
 impl View {
+    /// Stable identity key. Never derive an `ElementId` from `label()`: the
+    /// label is display text and is expected to change (or be translated),
+    /// while the id is behavior, so a label change would silently reset the
+    /// control's state.
+    fn key(self) -> &'static str {
+        match self {
+            View::Home => "home",
+            View::Experiment => "experiments",
+            View::Models => "models",
+            View::Runs => "runs",
+            View::Settings => "settings",
+        }
+    }
+
     fn label(self) -> &'static str {
         match self {
             View::Home => "Home",
@@ -386,6 +400,15 @@ impl ResultView {
 
 impl WorkspaceStep {
     const ALL: [Self; 3] = [Self::Prompt, Self::Intervention, Self::Review];
+
+    /// Stable identity key for the stepper. `number()` is display text.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Prompt => "prompt",
+            Self::Intervention => "intervention",
+            Self::Review => "results",
+        }
+    }
 
     fn number(self) -> &'static str {
         match self {
@@ -1554,7 +1577,7 @@ impl Console {
         for view in View::ALL {
             let active = self.view == view;
             column = column.child(
-                Button::new(SharedString::from(format!("nav:{}", view.label())))
+                Button::new(SharedString::from(format!("nav:{}", view.key())))
                     .ghost()
                     .w_full()
                     .h(px(30.0))
@@ -1582,7 +1605,7 @@ impl Console {
                 row = row.child(label("/", 10.0, colors.text_faint));
             }
             row = row.child(
-                Button::new(SharedString::from(format!("step:{}", step.number())))
+                Button::new(SharedString::from(format!("step:{}", step.key())))
                     .small()
                     .selected(self.step == *step)
                     .label(step.label())
@@ -4023,8 +4046,8 @@ mod kit_tests {
         let console = view.unwrap();
         cx.update_window(handle.into(), |_, window, cx| {
             window.draw(cx).clear(cx);
-            window.click(SharedString::from("nav:Experiments"), cx);
-            window.click(SharedString::from("step:2"), cx);
+            window.click(SharedString::from("nav:experiments"), cx);
+            window.click(SharedString::from("step:intervention"), cx);
             assert_eq!(console.read(cx).step, WorkspaceStep::Intervention);
             window.click(SharedString::from("operation-card:zero"), cx);
             assert_eq!(console.read(cx).op, "zero");
@@ -4038,7 +4061,7 @@ mod kit_tests {
         })
         .unwrap();
         cx.update_window(handle.into(), |_, window, cx| {
-            window.click(SharedString::from("step:1"), cx);
+            window.click(SharedString::from("step:prompt"), cx);
             let input = console.read(cx).inputs.prompt.clone();
             input.update(cx, |input, cx| input.focus_for_test(window, cx));
             window.press(
@@ -4066,8 +4089,8 @@ mod kit_tests {
         .unwrap();
         cx.update_window(handle.into(), |_, window, cx| {
             assert_ne!(console.read(cx).prompt, "مرحبا Ember\nاختبار");
-            window.click(SharedString::from("nav:Experiments"), cx);
-            window.click(SharedString::from("step:2"), cx);
+            window.click(SharedString::from("nav:experiments"), cx);
+            window.click(SharedString::from("step:intervention"), cx);
             // The site picker is an advanced control and the panel starts
             // collapsed, so open it before reaching for the picker.
             window.click(SharedString::from("advanced-toggle"), cx);
@@ -4100,7 +4123,7 @@ mod kit_tests {
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, cx| {
             assert_eq!(console.read(cx).site, "before-logits");
-            window.click(SharedString::from("step:3"), cx);
+            window.click(SharedString::from("step:results"), cx);
             window.click(SharedString::from("btn:RUN EXPERIMENT"), cx);
             assert_eq!(console.read(cx).status, super::Status::Preparing);
             assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(path) if path == "fixture.gguf"));
