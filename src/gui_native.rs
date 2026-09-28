@@ -16,6 +16,7 @@ use crate::gui::{
     RunOutput, RunRequest, SessionInfo,
 };
 use clap::Args as ClapArgs;
+use ember::app_store::{self, AppStore, RunRecord};
 use ember::quant_k::KStrategy;
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
@@ -451,12 +452,36 @@ enum Preset {
     ArabicMorphology,
 }
 
-#[derive(Debug, Clone)]
-struct HistoryEntry {
-    number: usize,
-    summary: String,
-    outcome: String,
-    ok: bool,
+/// Seconds since the epoch. Behind a function so a test can pin "now" and
+/// assert on ordering without sleeping.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Coarse relative time for a run row.
+///
+/// Deliberately not a full date: the table is scanned, and "2m" answers the
+/// only question a scan asks. Anything older than a week gets a date, because
+/// "6d" stops being useful once you lose the thread of what you were doing.
+fn relative_time(at: i64) -> String {
+    let elapsed = unix_now().saturating_sub(at).max(0);
+    match elapsed {
+        ..=59 => "just now".to_string(),
+        60..=3_599 => format!("{}m", elapsed / 60),
+        3_600..=86_399 => format!("{}h", elapsed / 3_600),
+        86_400..=604_799 => format!("{}d", elapsed / 86_400),
+        _ => {
+            let days = elapsed / 86_400;
+            if days < 365 {
+                format!("{}d", days)
+            } else {
+                format!("{}y", days / 365)
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -592,8 +617,11 @@ struct Console {
     pending_run: bool,
     pending_context: Option<FormValues>,
     result_context: Option<FormValues>,
-    history: Vec<HistoryEntry>,
-    run_sequence: usize,
+    store: AppStore,
+    /// Read failure, surfaced rather than swallowed: a store we could not
+    /// parse is not the same as a store with no runs.
+    store_error: Option<String>,
+    run_sequence: u64,
     // theme
     appearance: AppearanceMode,
     system_dark: bool,
@@ -635,6 +663,17 @@ impl Console {
                       \u{627}\u{644}\u{645}\u{646}\u{648}\u{631}\u{629}"
             .to_string();
         let appearance = AppearanceMode::load();
+        // A store we cannot parse is reported, not treated as empty: silently
+        // showing "no runs" for a damaged file would look like the user never
+        // ran anything, and the next write would destroy their history.
+        let (store, store_error) = if cfg!(feature = "gui-tests") && seed_runs_requested() {
+            (seed_store(), None)
+        } else {
+            match app_store::load(app_store::store_path()) {
+                Ok(store) => (store, None),
+                Err(error) => (AppStore::default(), Some(error.to_string())),
+            }
+        };
         let colors = if appearance.is_dark(system_dark) {
             theme::dark()
         } else {
@@ -787,7 +826,8 @@ impl Console {
             pending_run: false,
             pending_context: None,
             result_context: None,
-            history: Vec::new(),
+            store,
+            store_error,
             run_sequence: 0,
             appearance,
             system_dark,
@@ -1137,31 +1177,30 @@ impl Console {
                             );
                         }
                         self.run_sequence += 1;
-                        self.history.insert(
-                            0,
-                            HistoryEntry {
-                                number: self.run_sequence,
-                                summary: format!(
-                                    "{} · {}",
-                                    operation_label(&self.op),
-                                    if per_layer(&self.site) {
-                                        format!("layer {}", self.layer)
-                                    } else {
-                                        site_label(&self.site).to_string()
-                                    }
-                                ),
-                                outcome: if bundle.baseline.text == bundle.intervention.text {
-                                    "Output unchanged".to_string()
-                                } else {
-                                    bundle.comparison.first_token_divergence.map_or_else(
-                                        || "Output text changed".to_string(),
-                                        |step| format!("Diverged at decode step {step}"),
-                                    )
-                                },
-                                ok: bundle.verification.ok,
-                            },
-                        );
-                        self.history.truncate(6);
+                        let now = unix_now();
+                        self.store.push_run(RunRecord {
+                            number: self.run_sequence,
+                            finished_at: now,
+                            model: model_display_name(&self.model_path),
+                            intervention: operation_label(&self.op).to_string(),
+                            hook: site_label(&self.site).to_string(),
+                            layer: per_layer(&self.site)
+                                .then(|| self.layer.parse::<u32>().ok())
+                                .flatten(),
+                            duration_ms: Some(bundle.elapsed_ms_total.max(0.0).round() as u64),
+                            baseline_tokens: Some(bundle.baseline.generated_tokens as u32),
+                            intervention_tokens: Some(bundle.intervention.generated_tokens as u32),
+                            diverged_at_step: bundle
+                                .comparison
+                                .first_token_divergence
+                                .map(|step| step as u32),
+                            outputs_equal: bundle.comparison.generated_text_equal,
+                            verified: bundle.verification.ok,
+                            pinned: false,
+                            prompt: self.prompt.clone(),
+                        });
+                        self.store.touch_model(&self.model_path, now);
+                        self.persist();
                         self.status = Status::Idle;
                     }
                     Err(error) => {
@@ -1727,6 +1766,16 @@ impl Console {
         row
     }
 
+    /// Write the store, surfacing a failure instead of dropping the record.
+    ///
+    /// A run that completed and was never written is the one loss this app
+    /// cannot explain to the user, so the error is shown rather than swallowed.
+    fn persist(&mut self) {
+        if let Err(error) = self.store.write(app_store::store_path()) {
+            self.store_error = Some(format!("could not save run history: {error}"));
+        }
+    }
+
     /// Switch whichever family of tabs `prefix` names. One decision point, so
     /// the two tab bars cannot drift apart the way two implementations did.
     fn select_tab(&mut self, prefix: &str, key: &str) {
@@ -1768,13 +1817,13 @@ impl Console {
     }
 
     /// Home: a landing surface with something to do, not a form in waiting.
-    fn section_header(&self, colors: &Colors, title: &'static str, hint: &'static str) -> Div {
+    fn section_header(&self, colors: &Colors, title: &'static str, hint: &str) -> Div {
         div()
             .flex()
             .flex_col()
             .gap(px(Space::XS))
             .child(label(title, Type::SECTION, colors.text))
-            .child(label(hint, Type::BODY, colors.text_muted))
+            .child(label(hint.to_string(), Type::BODY, colors.text_muted))
     }
 
     fn models_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
@@ -1825,65 +1874,208 @@ impl Console {
             )
     }
 
+    /// Runs: one row per record, columns aligned, no card per run.
+    ///
+    /// This was a stack of bordered cards, each holding three strings and a
+    /// number. A history is a table -- the columns are the same for every row
+    /// and comparing two of them is the whole point -- so it is laid out as
+    /// columns now, and a card only appears where a run failed verification.
+    ///
+    /// Not a `DataTable` yet: the kit's table is virtualized, sortable and
+    /// keyboard-navigable, which is what this wants, but it needs a
+    /// `TableDelegate` and real rows to be worth judging. Until the store is
+    /// populated in normal use, a hand-rolled grid is the honest amount of
+    /// surface to add -- and this is the layout to replace, not to keep.
+    /// Runs: one row per record, columns aligned, no card per run.
+    ///
+    /// This was a stack of bordered cards, each holding three strings and a
+    /// number. A history is a table -- the columns are the same for every row
+    /// and comparing two of them is the whole point -- so it is laid out as
+    /// columns now, and a card only appears where a run failed verification.
+    ///
+    /// Not a `DataTable` yet: the kit's table is virtualized, sortable and
+    /// keyboard-navigable, which is what this wants, but it needs a
+    /// `TableDelegate` and real rows to be worth judging. Until the store is
+    /// populated in normal use, a hand-rolled grid is the honest amount of
+    /// surface to add -- and this is the layout to replace, not to keep.
     fn runs_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
-        let mut list = div().flex().flex_col().gap(px(Space::SM));
-        if self.history.is_empty() {
-            list = list.child(
+        /// One column, declared once.
+        ///
+        /// The first version of this table held the widths as loose constants
+        /// and paired them by hand at two call sites, and paired them wrongly:
+        /// the model rendered in the run-number column's width, and there was no
+        /// constant for the result column at all, so the outcome inherited the
+        /// tokens width. Named constants are supposed to make that impossible;
+        /// they only help if the header and the cell cannot be told apart. So a
+        /// column is a struct, and the header row and the body row are both
+        /// driven from this one list.
+        struct Col {
+            header: &'static str,
+            width: f32,
+        }
+        const COLS: [Col; 7] = [
+            Col {
+                header: "Run",
+                width: 92.0,
+            },
+            Col {
+                header: "Model",
+                width: 210.0,
+            },
+            Col {
+                header: "Intervention",
+                width: 132.0,
+            },
+            Col {
+                header: "Hook",
+                width: 140.0,
+            },
+            Col {
+                header: "Tokens",
+                width: 78.0,
+            },
+            Col {
+                header: "Result",
+                width: 92.0,
+            },
+            Col {
+                header: "When",
+                width: 64.0,
+            },
+        ];
+        let gap = Space::SM;
+        let table_width: f32 =
+            COLS.iter().map(|c| c.width).sum::<f32>() + gap * (COLS.len() - 1) as f32;
+
+        let cell = |content: String, width: f32, color: Rgba| {
+            div()
+                .w(px(width))
+                .flex_none()
+                .overflow_hidden()
+                .child(mono(content, Type::META, color))
+        };
+
+        let rows = self.store.runs_ordered();
+        let row_count = rows.len();
+        let mut body = div().flex().flex_col();
+        if rows.is_empty() {
+            body = body.child(
                 div()
-                    .p(px(Space::XL))
-                    .rounded(px(8.0))
-                    .bg(colors.surface)
-                    .border_1()
-                    .border_color(colors.border)
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
+                    .py(px(Space::XXL))
                     .child(label("No runs yet", Type::SUBSECTION, colors.text))
                     .child(label(
-                        "Experiments you run in this session are listed here.",
+                        "Experiments you run will appear here.",
                         Type::LABEL,
                         colors.text_faint,
                     )),
             );
         } else {
-            for entry in self.history.iter().rev() {
-                list = list.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(Space::MD))
-                        .px_3()
-                        .py_2()
-                        .rounded(px(6.0))
-                        .bg(colors.surface)
-                        .border_1()
-                        .border_color(if entry.ok {
-                            colors.border
-                        } else {
-                            colors.err_box_border
-                        })
-                        .child(label(format!("Run #{}", entry.number), 11.0, colors.text))
-                        .child(label(
-                            entry.summary.as_str(),
-                            Type::LABEL,
-                            colors.text_muted,
-                        ))
-                        .child(div().w_full())
-                        .child(mono(entry.outcome.as_str(), Type::LABEL, colors.text_faint)),
-                );
+            for run in rows.iter() {
+                let tokens = match (run.baseline_tokens, run.intervention_tokens) {
+                    (Some(baseline), Some(intervention)) if baseline == intervention => {
+                        format!("{baseline}")
+                    }
+                    (Some(baseline), Some(intervention)) => {
+                        format!("{baseline} \u{2192} {intervention}")
+                    }
+                    _ => "\u{2014}".to_string(),
+                };
+                // Colour is not the only signal: the word is the same either
+                // way, so the result is legible without colour.
+                let (result, result_color) = if !run.verified {
+                    ("failed", colors.err)
+                } else if run.outputs_equal {
+                    ("unchanged", colors.text_muted)
+                } else {
+                    ("changed", colors.text)
+                };
+                let values: [String; 7] = [
+                    format!("Run #{}", run.number),
+                    run.model.clone(),
+                    run.intervention.clone(),
+                    run.hook.clone(),
+                    tokens,
+                    result.to_string(),
+                    relative_time(run.finished_at),
+                ];
+                let muted = colors.text_muted;
+                let faint = colors.text_faint;
+                let colors_for: [Rgba; 7] = [
+                    colors.text,
+                    muted,
+                    colors.text,
+                    muted,
+                    muted,
+                    result_color,
+                    faint,
+                ];
+                let mut row = div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(gap))
+                    .py(px(Space::SM))
+                    .border_b_1()
+                    .border_color(colors.border);
+                for (index, col) in COLS.iter().enumerate() {
+                    if index == 0 && run.pinned {
+                        row = row.child(
+                            div()
+                                .w(px(3.0))
+                                .flex_none()
+                                .self_start()
+                                .mt(px(5.0))
+                                .h(px(6.0))
+                                .rounded(px(Radius::SM))
+                                .bg(colors.accent),
+                        );
+                    }
+                    row = row.child(cell(values[index].clone(), col.width, colors_for[index]));
+                }
+                body = body.child(row);
             }
         }
+
         div()
             .flex()
             .flex_col()
-            .gap(px(Space::XXL))
+            .gap(px(Space::XL))
             .w_full()
-            .max_w(px(760.0))
             .px_5()
             .pt_6()
-            .child(self.section_header(colors, "Runs", "Every experiment run from this session."))
-            .child(list)
+            .child(self.section_header(
+                colors,
+                "Runs",
+                &format!(
+                    "{row_count} recorded experiment{}.",
+                    if row_count == 1 { "" } else { "s" }
+                ),
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(table_width))
+                    .max_w_full()
+                    .flex_none()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap(px(gap))
+                            .pb(px(Space::SM))
+                            .border_b_1()
+                            .border_color(colors.border_strong)
+                            .children(COLS.iter().map(|col| {
+                                div().w(px(col.width)).flex_none().child(label(
+                                    col.header,
+                                    Type::MICRO,
+                                    colors.text_faint,
+                                ))
+                            })),
+                    )
+                    .child(body),
+            )
     }
 
     fn settings_view(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -1952,36 +2144,56 @@ impl Console {
         });
         let mut recent = div().flex().flex_col().gap(px(Space::SM));
         recent = recent.child(label("Recent runs", Type::LABEL, colors.text_faint));
-        if self.history.is_empty() {
-            recent = recent.child(
-                div()
-                    .text_color(colors.text_faint)
-                    .text_size(px(11.0))
-                    .child("No runs yet. Start an experiment and its results will collect here."),
-            );
+        // Home shows the same records the Runs table does, newest first, without
+        // the columns: the point of Home is "what did I do last", not "compare
+        // two runs". Each row states what was changed, because a bare "Run #7"
+        // is not something you can recognise your own work by.
+        let recent_runs = self.store.runs_ordered();
+        if recent_runs.is_empty() {
+            recent = recent.child(label(
+                "No runs yet. Start an experiment and its results will collect here.",
+                Type::LABEL,
+                colors.text_faint,
+            ));
         } else {
-            for entry in self.history.iter().rev().take(5) {
+            for run in recent_runs.iter().take(4) {
                 recent = recent.child(
                     div()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(Space::SM))
-                        .px_3()
-                        .py_2()
-                        .rounded(px(6.0))
-                        .bg(colors.surface)
-                        .border_1()
+                        .py(px(Space::SM))
+                        .border_b_1()
                         .border_color(colors.border)
-                        .child(label(format!("Run #{}", entry.number), 11.0, colors.text))
-                        .child(div().w_full())
-                        .child(mono(entry.outcome.as_str(), Type::LABEL, colors.text_muted)),
+                        .child(label(
+                            format!("#{}", run.number),
+                            Type::LABEL,
+                            colors.text_faint,
+                        ))
+                        .child(div().flex_1().min_w(px(0.0)).overflow_hidden().child(label(
+                            truncate_chars(&run.intervention, 22),
+                            Type::LABEL,
+                            colors.text,
+                        )))
+                        .child(label(
+                            model_display_name(&run.model),
+                            Type::META,
+                            colors.text_muted,
+                        ))
+                        .child(label(
+                            relative_time(run.finished_at),
+                            Type::META,
+                            colors.text_faint,
+                        )),
                 );
             }
             recent = recent.child(
                 Button::new("home-all-runs")
-                    .small()
+                    .ghost()
+                    .compact()
                     .label("See all runs")
+                    .accessibility_label("See all runs")
                     .on_click(runs),
             );
         }
@@ -3885,6 +4097,187 @@ pub(crate) fn run_gui_command(
             cx.activate(true);
         });
     Ok(())
+}
+// ---------------------------------------------------------------------------
+// render fixture
+// ---------------------------------------------------------------------------
+
+/// Whether the render harness should fill the store with representative runs.
+///
+/// Gated behind an env var rather than on `cfg!(feature = "gui-tests")` alone,
+/// because a feature-gated fixture would also fire in the kit tests, where a
+/// populated store would mask the empty-state behaviour those tests check.
+fn seed_runs_requested() -> bool {
+    std::env::var_os("EMBER_GUI_TEST_SEED_RUNS").is_some()
+}
+
+/// Representative history for screenshot review.
+///
+/// Every screenshot so far has been an empty state, which is why column widths,
+/// truncation and density kept going unjudged until someone opened a real
+/// window. These are the shapes that actually occur: a long model name, an
+/// intervention with a layer, one run that did not verify, a pinned record, and
+/// timestamps spread far enough apart to exercise "2m ago" versus "3d ago".
+///
+/// Timestamps are relative to load time so the relative formatting stays
+/// honest whenever the fixtures are regenerated.
+#[cfg(feature = "gui-tests")]
+fn seed_store() -> AppStore {
+    /// One fixture row. Named fields on purpose: the previous version was a
+    /// twelve-element tuple ending in three bare booleans, and I set `pinned`
+    /// on six of the seven rows without noticing, which made the pin marker
+    /// meaningless and the ordering look like a plain newest-first list.
+    struct Row {
+        model: &'static str,
+        intervention: &'static str,
+        hook: &'static str,
+        layer: Option<u32>,
+        duration_ms: u64,
+        baseline_tokens: u32,
+        intervention_tokens: u32,
+        diverged_at_step: Option<u32>,
+        outputs_equal: bool,
+        verified: bool,
+        pinned: bool,
+        age_seconds: i64,
+    }
+    // The shapes that actually occur: a long model name, a layer, a run that
+    // did not verify, a run whose token counts diverged, and timestamps spread
+    // from minutes to a fortnight so the relative formatting is exercised.
+    //
+    // One run is pinned, and it is deliberately not the newest, so the render
+    // shows pinning reordering rather than coinciding with recency.
+    let rows = [
+        Row {
+            model: "Llama-3.2-1B-Instruct-Q8_0",
+            intervention: "Scale \u{d7}0.5",
+            hook: "After MLP block",
+            layer: Some(8),
+            duration_ms: 1_240,
+            baseline_tokens: 48,
+            intervention_tokens: 48,
+            diverged_at_step: Some(17),
+            outputs_equal: false,
+            verified: true,
+            pinned: false,
+            age_seconds: 120,
+        },
+        Row {
+            model: "Qwen2.5-1.5B-Instruct-Q8_0",
+            intervention: "Zero",
+            hook: "Before output head",
+            layer: None,
+            duration_ms: 890,
+            baseline_tokens: 48,
+            intervention_tokens: 31,
+            diverged_at_step: Some(4),
+            outputs_equal: false,
+            verified: true,
+            pinned: false,
+            age_seconds: 2_400,
+        },
+        Row {
+            model: "gemma-3-270m-it-Q4_K_M",
+            intervention: "Copy from layer",
+            hook: "After MLP block",
+            layer: Some(3),
+            duration_ms: 410,
+            baseline_tokens: 32,
+            intervention_tokens: 32,
+            diverged_at_step: Some(2),
+            outputs_equal: false,
+            verified: true,
+            pinned: true,
+            age_seconds: 86_400,
+        },
+        Row {
+            model: "Llama-3.2-1B-Instruct-Q8_0",
+            intervention: "Add a learned difference",
+            hook: "After attention block",
+            layer: Some(14),
+            duration_ms: 3_010,
+            baseline_tokens: 48,
+            intervention_tokens: 48,
+            diverged_at_step: None,
+            outputs_equal: true,
+            verified: false,
+            pinned: false,
+            age_seconds: 9_600,
+        },
+        Row {
+            model: "Llama-3.2-1B-Instruct-Q8_0",
+            intervention: "Blend representations",
+            hook: "Final prompt token",
+            layer: None,
+            duration_ms: 1_980,
+            baseline_tokens: 48,
+            intervention_tokens: 48,
+            diverged_at_step: Some(29),
+            outputs_equal: false,
+            verified: true,
+            pinned: false,
+            age_seconds: 172_800,
+        },
+        Row {
+            model: "Qwen2.5-0.5B-Instruct-Q8_0",
+            intervention: "Scale \u{d7}0.75",
+            hook: "Before output head",
+            layer: None,
+            duration_ms: 640,
+            baseline_tokens: 24,
+            intervention_tokens: 24,
+            diverged_at_step: None,
+            outputs_equal: true,
+            verified: true,
+            pinned: false,
+            age_seconds: 604_800,
+        },
+        Row {
+            model: "Llama-3.2-1B-Instruct-Q8_0",
+            intervention: "Zero",
+            hook: "After attention block",
+            layer: Some(21),
+            duration_ms: 2_260,
+            baseline_tokens: 48,
+            intervention_tokens: 12,
+            diverged_at_step: Some(1),
+            outputs_equal: false,
+            verified: true,
+            pinned: false,
+            age_seconds: 1_209_600,
+        },
+    ];
+
+    let now = unix_now();
+    let mut store = AppStore::default();
+    for (index, row) in rows.iter().enumerate() {
+        store.push_run(RunRecord {
+            number: (rows.len() - index) as u64,
+            finished_at: now - row.age_seconds,
+            model: row.model.to_string(),
+            intervention: row.intervention.to_string(),
+            hook: row.hook.to_string(),
+            layer: row.layer,
+            duration_ms: Some(row.duration_ms),
+            baseline_tokens: Some(row.baseline_tokens),
+            intervention_tokens: Some(row.intervention_tokens),
+            diverged_at_step: row.diverged_at_step,
+            outputs_equal: row.outputs_equal,
+            verified: row.verified,
+            pinned: row.pinned,
+            prompt: "\u{0627}\u{0643}\u{062a}\u{0628} \u{062c}\u{0645}\u{0644}\u{0629}".to_string(),
+        });
+        store.touch_model(
+            &format!("/models/{}.gguf", row.model),
+            now - row.age_seconds,
+        );
+    }
+    store
+}
+
+#[cfg(not(feature = "gui-tests"))]
+fn seed_store() -> AppStore {
+    AppStore::default()
 }
 
 #[cfg(test)]
