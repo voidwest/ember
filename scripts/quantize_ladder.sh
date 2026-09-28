@@ -22,10 +22,11 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/.cache/ember/llama.cpp}"
-LLAMA_BIN="$LLAMA_CPP_DIR/build/bin/llama"
-QUANTIZE_CMD="$LLAMA_BIN quantize"
+QUANTIZER_BUILD_DIR="${QUANTIZER_BUILD_DIR:-build-quantize-portable}"
+LLAMA_BIN="$LLAMA_CPP_DIR/$QUANTIZER_BUILD_DIR/bin/llama-quantize"
+PYTHON_BIN="${PYTHON:-$REPO_ROOT/.venv/bin/python}"
 OUT="${OUT:-$REPO_ROOT/models/v03-ladder}"
-JOBS="${JOBS:-$(nproc)}"
+JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
 
 LLAMA_FP16=""
 QWEN_FP16=""
@@ -39,7 +40,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -x "$LLAMA_BIN" ]] || {
-  echo "llama binary not found at $LLAMA_BIN — run scripts/setup_llama_cpp.sh first" >&2
+  echo "quantizer not found at $LLAMA_BIN — run scripts/setup_ladder_quantizer.sh first" >&2
   exit 1
 }
 [[ -n "$LLAMA_FP16" || -n "$QWEN_FP16" ]] || {
@@ -47,8 +48,10 @@ done
   exit 1
 }
 
+[[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "jobs must be a positive integer" >&2; exit 1; }
 mkdir -p "$OUT"
-COMMIT="$(cat "$LLAMA_CPP_DIR/COMMIT" 2>/dev/null || echo unknown)"
+COMMIT="$(cat "$LLAMA_CPP_DIR/COMMIT")"
+"$PYTHON_BIN" "$REPO_ROOT/scripts/reference_build.py" verify "$LLAMA_CPP_DIR" "$COMMIT" --build-dir "$QUANTIZER_BUILD_DIR" --quantizer-only
 MANIFEST="$OUT/ladder-manifest.json"
 # merge: the ladder may be built in multiple invocations (per family);
 # never reset an existing manifest
@@ -58,38 +61,63 @@ else
   echo "[]" > "$MANIFEST"
 fi
 
+# Preflight every requested family before quantizing anything. Never replace a
+# previous rung or append a duplicate manifest record on a retry.
+"$PYTHON_BIN" - "$MANIFEST" "$OUT" "$LLAMA_FP16" "$QWEN_FP16" <<'PYEOF'
+import json, pathlib, sys
+manifest, out, llama, qwen = sys.argv[1:]
+records = json.loads(pathlib.Path(manifest).read_text())
+for family, source in (("llama-3.2-1b", llama), ("qwen2.5-1.5b", qwen)):
+    if not source:
+        continue
+    if not pathlib.Path(source).is_file():
+        raise SystemExit(f"source not found: {source}")
+    for rung in ("q8_0", "q6_k", "q4_k_m"):
+        target = pathlib.Path(out) / f"{family}-{rung}.gguf"
+        if target.exists() or target.is_symlink() or any(r["family"] == family and r["rung"] == rung for r in records):
+            raise SystemExit(f"existing rung; use a new output directory: {target}")
+PYEOF
+
+file_identity() {
+  "$PYTHON_BIN" - "$1" <<'PYEOF'
+import hashlib, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+with path.open("rb") as handle:
+    print(hashlib.file_digest(handle, "sha256").hexdigest(), path.stat().st_size)
+PYEOF
+}
+
 quantize_rungs() {
   local family="$1" source="$2"
   [[ -f "$source" ]] || { echo "source not found: $source" >&2; exit 1; }
   local source_sha source_bytes
-  source_sha="$(sha256sum "$source" | cut -d' ' -f1)"
-  source_bytes="$(stat -c %s "$source")"
+  read -r source_sha source_bytes <<< "$(file_identity "$source")"
   for rung in q8_0 q6_k q4_k_m; do
     local target="$OUT/$family-$rung.gguf"
     echo "== $family: $source -> $rung =="
-    rm -f "$target"
-    "$LLAMA_BIN" quantize "$source" "$target" "$rung" "$JOBS"
+    "$LLAMA_BIN" "$source" "$target" "$rung" "$JOBS"
     [[ -f "$target" ]] || { echo "quantize produced no output: $target" >&2; exit 1; }
     local target_sha target_bytes
-    target_sha="$(sha256sum "$target" | cut -d' ' -f1)"
-    target_bytes="$(stat -c %s "$target")"
-    "$REPO_ROOT/.venv/bin/python" - "$MANIFEST" "$family" "$rung" \
-      "$source" "$source_sha" "$source_bytes" "$target" "$target_sha" "$target_bytes" "$COMMIT" <<'PYEOF'
-import json, sys
-manifest_path, family, rung, source, source_sha, source_bytes, target, target_sha, target_bytes, commit = sys.argv[1:]
+    read -r target_sha target_bytes <<< "$(file_identity "$target")"
+    "$PYTHON_BIN" - "$MANIFEST" "$family" "$rung" \
+      "$source" "$source_sha" "$source_bytes" "$target" "$target_sha" "$target_bytes" "$COMMIT" "$JOBS" "$LLAMA_BIN" <<'PYEOF'
+import json, os, shlex, sys
+manifest_path, family, rung, source, source_sha, source_bytes, target, target_sha, target_bytes, commit, jobs, binary = sys.argv[1:]
 with open(manifest_path, encoding="utf-8") as handle:
     manifest = json.load(handle)
 manifest.append({
     "family": family,
     "rung": rung,
     "quantizer_commit": commit,
-    "command": f"llama quantize {source} {target} {rung}",
+    "command": shlex.join([binary, source, target, rung, jobs]),
+    "argv": [binary, source, target, rung, jobs],
     "source": {"path": source, "sha256": source_sha, "bytes": int(source_bytes)},
     "target": {"path": target, "sha256": target_sha, "bytes": int(target_bytes)},
 })
-with open(manifest_path, "w", encoding="utf-8") as handle:
+with open(manifest_path + ".tmp", "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2)
     handle.write("\n")
+os.replace(manifest_path + ".tmp", manifest_path)
 PYEOF
   done
 }
@@ -98,7 +126,7 @@ PYEOF
 [[ -n "$LLAMA_FP16" ]] && quantize_rungs "llama-3.2-1b" "$LLAMA_FP16"
 
 echo "== ladder complete =="
-"$REPO_ROOT/.venv/bin/python" - "$MANIFEST" <<'PYEOF'
+"$PYTHON_BIN" - "$MANIFEST" <<'PYEOF'
 import json, sys
 manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 for entry in manifest:
