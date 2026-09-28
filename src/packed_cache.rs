@@ -1,7 +1,8 @@
 //! On-disk cache for the packed Q8_0 decode layouts built at model load.
 //!
 //! Building the 16-output VNNI layout costs ~0.5 s for Llama-3.2-1B (and
-//! comparable work for Gemma gate/up projections) and is paid on every
+//! comparable work for Gemma gate/up projections). ARM uses the four-row
+//! interleaved output-head layout. Packing is otherwise paid on every
 //! process start. This module persists those packed bytes and serves them
 //! back when the source model is unchanged, so a warm deployment can skip
 //! the repack.
@@ -169,7 +170,10 @@ impl PackedCache {
         verify: bool,
         budget: u64,
     ) -> Option<Self> {
-        if !enabled || !crate::simd::packed_q8_0_vnni_supported() {
+        if !enabled
+            || !(crate::simd::packed_q8_0_vnni_supported()
+                || crate::simd::interleaved_q8_0_supported())
+        {
             return None;
         }
         let dir = dir?;
@@ -991,7 +995,7 @@ mod tests {
 
     #[test]
     fn interleaved_round_trip_is_byte_identical() {
-        if !vnni_host() {
+        if !crate::simd::interleaved_q8_0_supported() {
             return;
         }
         let (loader, _) = loader_fixture();
