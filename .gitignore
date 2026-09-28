@@ -1,5 +1,7 @@
 /target
 *.gguf
+*.gguf.part
+*.gguf.download.lock/
 .zed/
 data/*.npz
 data/*_activations.npy
@@ -30,6 +32,7 @@ docs/plots/root_probe_scale_comparison.png
 !/CONTRIBUTING.md
 !docs/agent-runtime.md
 !docs/dataset_pipeline.md
+!docs/arm-kernels.md
 !docs/packed-q8-phase0.md
 !docs/packed-q8-research-memo.md
 !docs/packed-q8-lifecycle.md
@@ -55,6 +58,9 @@ docs/plots/root_probe_scale_comparison.png
 !docs/bundle-schema-v1.md
 !docs/experiment-schema-v1.md
 !docs/usage.md
+!docs/support.md
+!docs/cancellation.md
+!docs/trace-schema.md
 !docs/validation.md
 !docs/models.md
 !docs/architecture.md
@@ -169,3 +175,6 @@ artifacts/golden-v03/**/*.bin
 !docs/audits/*.md
 !docs/adr/
 !docs/adr/*.md
+
+!docs/road-to-1.0.md
+!docs/release-1.0.md

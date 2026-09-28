@@ -33,10 +33,9 @@ jobs:
           python-version: "3.12"
 
       - name: select Rust toolchain
-        # rust-toolchain.toml pins the toolchain (1.92.0 = Cargo.toml
-        # rust-version); install it here so the runner has it.
+        # Install the pinned development/GUI toolchain. Headless MSRV is checked below.
         run: |
-          rustup toolchain install 1.92.0 --profile minimal --component clippy,rustfmt
+          rustup toolchain install 1.98.1 --profile minimal --component clippy,rustfmt
 
       - uses: actions/cache@v4
         with:
@@ -53,13 +52,16 @@ jobs:
           # libasound2-dev: the `audio` feature (cpal -> alsa-sys) needs the
           # ALSA headers; only `clippy --all-features` compiles it, but a
           # missing header fails that step (v0.6.6 first run).
-          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libasound2-dev pkg-config
+          sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libfontconfig-dev libwayland-dev libasound2-dev pkg-config
 
       - name: build
         run: cargo build --locked --release --all-targets --verbose
 
       - name: test
         run: cargo test --locked --all-targets --verbose
+
+      - name: native GUI interactions (headless test window)
+        run: cargo test --locked --features gui-tests --bin ember gui_native::kit_tests
 
       - name: canonical K-quant x86 tier (fail closed)
         env:
@@ -71,7 +73,9 @@ jobs:
         run: cargo check --locked --no-default-features --all-targets
 
       - name: clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        # New 1.98 style lint: retain measured kernel loop shapes during the
+        # GUI migration. Rewriting them belongs in a separate benchmarked change.
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings -A clippy::chunks_exact_to_as_chunks
 
       - name: clippy (python bindings)
         run: cargo clippy --locked -p ember-python -- -D warnings
@@ -116,6 +120,7 @@ jobs:
       - name: select Rust toolchain
         run: |
           rustup toolchain install 1.92.0 --profile minimal --component clippy,rustfmt
+          rustup override set 1.92.0
 
       - uses: actions/cache@v4
         with:
