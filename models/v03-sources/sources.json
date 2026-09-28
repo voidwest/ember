@@ -1,0 +1,20 @@
+[
+  {
+    "family": "llama-3.2-1b",
+    "repo": "second-state/Llama-3.2-1B-Instruct-GGUF",
+    "revision": "ffae973dc8b47a497fae462fc1f882437e258bbf",
+    "filename": "Llama-3.2-1B-Instruct-f16.gguf",
+    "path": "/Users/west/Projects/ember/models/v03-sources/Llama-3.2-1B-Instruct-f16.gguf",
+    "sha256": "1f33ad43d2b85b908ff06fe7002b69806a57359b9b2617ca27d7bdea428ae146",
+    "bytes": 2479595360
+  },
+  {
+    "family": "qwen2.5-1.5b",
+    "repo": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+    "revision": "91cad51170dc346986eccefdc2dd33a9da36ead9",
+    "filename": "qwen2.5-1.5b-instruct-fp16.gguf",
+    "path": "/Users/west/Projects/ember/models/v03-sources/qwen2.5-1.5b-instruct-fp16.gguf",
+    "sha256": "fc89e330deb3fd8fa560f1c0f35a1e2b8da96d59e13445559ed190307a6f5649",
+    "bytes": 3560416288
+  }
+]
