@@ -1,6 +1,5 @@
-# Pin the toolchain to the declared MSRV (Cargo.toml `rust-version` and
-# .github/workflows/ci.yml both use 1.92.0). Keeps local builds identical to
-# CI; prevents accidental reliance on newer std/lib features.
+# GPUI Kit's GUI dependencies require newer Rust than the headless MSRV.
+# CI separately checks the headless CLI/library on Rust 1.92.0.
 [toolchain]
-channel = "1.92.0"
+channel = "1.98.1"
 components = ["clippy", "rustfmt"]
