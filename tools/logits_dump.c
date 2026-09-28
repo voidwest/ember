@@ -122,10 +122,11 @@ int main(int argc, char **argv) {
         FILE *out = fopen(out_path, "wb");
         if (!out) { fprintf(stderr, "failed to open %s\n", out_path); return 1; }
         size_t written = fwrite(final_row, sizeof(float), (size_t)n_vocab, out);
-        fclose(out);
-        if (written != (size_t)n_vocab) {
+        int write_errno = errno;
+        int close_result = fclose(out);
+        if (written != (size_t)n_vocab || close_result != 0) {
             fprintf(stderr, "short write for prompt %d: %zu of %d (errno=%d)\n",
-                    index, written, n_vocab, ferror(out) ? errno : 0);
+                    index, written, n_vocab, close_result != 0 ? errno : write_errno);
             return 1;
         }
         fprintf(stderr, "prompt %d: %d tokens -> %s\n", index, n_tokens, out_path);
