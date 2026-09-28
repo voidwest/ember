@@ -939,6 +939,7 @@ impl Console {
             .w_full()
             .flex_col()
             .gap_1()
+            .pb_4()
             .child(
                 div()
                     .flex()
@@ -1922,11 +1923,19 @@ impl Console {
                 "Matched-span experiment using an Arabic prompt",
             ),
         ];
-        div().flex().flex_row().gap_2().children(
-            presets
-                .into_iter()
-                .map(|(preset, title, hint)| self.preset_card(colors, preset, title, hint, cx)),
-        )
+        // Wrapping grid, not one row: four w_full cards in a row overflowed the
+        // workspace and the trailing cards were unreachable.
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap_2()
+            .children(presets.into_iter().map(|(preset, title, hint)| {
+                div()
+                    .flex_1()
+                    .min_w(px(230.0))
+                    .child(self.preset_card(colors, preset, title, hint, cx))
+            }))
     }
 
     fn preset_card(
@@ -2123,12 +2132,13 @@ impl Console {
                         colors.text_muted,
                     )),
             )
+            .child(div().h(px(6.0)))
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .mb_4()
+                    .gap_3()
+                    .mb_5()
                     .child(label("START FROM A PRESET", 9.0, colors.text_faint))
                     .child(self.presets_block(colors, cx)),
             )
@@ -3545,6 +3555,10 @@ impl Render for Console {
                     .w_full()
                     .flex_1()
                     .min_h(px(0.0))
+                    // The workspace is the pane that must give way. Without an
+                    // explicit min-width it keeps its intrinsic width and shoves
+                    // the inspector past the right edge of the window.
+                    .min_w(px(0.0))
                     .child(
                         div()
                             .flex()
