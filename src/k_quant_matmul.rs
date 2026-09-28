@@ -12,6 +12,22 @@ use crate::quant_k::{
 use rayon::join;
 use std::cell::RefCell;
 
+#[cfg(target_arch = "aarch64")]
+mod arm;
+
+/// Runtime feature gate for the recorded ARM K-quant tier.
+pub fn arm_k_supported() -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        std::arch::is_aarch64_feature_detected!("neon")
+            && std::arch::is_aarch64_feature_detected!("dotprod")
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        false
+    }
+}
+
 const PARALLEL_LEAF_OUTPUTS: usize = 256;
 const PARALLEL_MIN_MACS: usize = 512_000;
 
@@ -1223,6 +1239,16 @@ mod x86 {
 
 #[inline]
 fn dot_column(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> f32 {
+    #[cfg(target_arch = "aarch64")]
+    if matches!(w.execution(), KExecution::CompressedArm) {
+        // SAFETY: validate checks the feature gate; weight construction checks layout.
+        return unsafe {
+            match w.dtype() {
+                KQuantDtype::Q4K => arm::q4::<1>(w.data(), w.blocks_per_row(), column, input)[0],
+                KQuantDtype::Q6K => arm::q6::<1>(w.data(), w.blocks_per_row(), column, input)[0],
+            }
+        };
+    }
     #[cfg(target_arch = "x86_64")]
     if matches!(w.execution(), KExecution::CompressedX86) {
         #[cfg(test)]
@@ -1297,7 +1323,18 @@ fn dot_four_rows(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> Option<
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-fn dot_four_rows(_w: &KQuantWeight, _column: usize, _input: &[Q8KBlock]) -> Option<[f32; 4]> {
+fn dot_four_rows(w: &KQuantWeight, column: usize, input: &[Q8KBlock]) -> Option<[f32; 4]> {
+    #[cfg(target_arch = "aarch64")]
+    if matches!(w.execution(), KExecution::CompressedArm) {
+        // SAFETY: validate checks the recorded tier's CPU features and shapes.
+        return Some(unsafe {
+            match w.dtype() {
+                KQuantDtype::Q4K => arm::q4::<4>(w.data(), w.blocks_per_row(), column, input),
+                KQuantDtype::Q6K => arm::q6::<4>(w.data(), w.blocks_per_row(), column, input),
+            }
+        });
+    }
+    let _ = (w, column, input);
     None
 }
 
@@ -1335,7 +1372,13 @@ fn validate(src: &[f32], rows: usize, w: &KQuantWeight, dst: &[f32]) -> Result<(
                     .to_string(),
             );
         }
-        KExecution::CompressedScalar | KExecution::CompressedX86 => {}
+        KExecution::CompressedArm if !arm_k_supported() => {
+            return Err(
+                "matmul_k_q8: compressed-arm was recorded but NEON+dotprod is unavailable"
+                    .to_string(),
+            );
+        }
+        KExecution::CompressedScalar | KExecution::CompressedX86 | KExecution::CompressedArm => {}
     }
     Ok(())
 }
@@ -1572,6 +1615,50 @@ mod tests {
             KQuantDtype::Q6K => seeded_q6_blocks(blocks, seed),
         };
         KQuantWeight::try_new(bytes, [out, input], dtype).unwrap()
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[test]
+    fn arm_k_kernels_match_scalar_and_preserve_accumulation() {
+        if !arm_k_supported() {
+            return;
+        }
+        for dtype in [KQuantDtype::Q4K, KQuantDtype::Q6K] {
+            for outputs in [17, 513] {
+                for seed in [0, 17, 913] {
+                    let scalar = weight(dtype, outputs, 3 * QK_K, seed);
+                    let arm = scalar.clone().with_execution(KExecution::CompressedArm);
+                    let mut packed = vec![Q8KBlock::default(); 3];
+                    for (b, a) in packed.iter_mut().enumerate() {
+                        a.d = (b as f32 - 1.0) * 0.125;
+                        for (j, q) in a.qs.iter_mut().enumerate() {
+                            *q =
+                                [i8::MIN, i8::MAX, -1, 0, 1, (j * 37 + seed as usize) as i8][j % 6];
+                        }
+                        for (dst, qs) in a.bsums.iter_mut().zip(a.qs.chunks_exact(16)) {
+                            *dst = qs.iter().map(|&q| i16::from(q)).sum();
+                        }
+                    }
+                    for column in 0..outputs {
+                        assert_eq!(
+                            dot_column(&scalar, column, &packed).to_bits(),
+                            dot_column(&arm, column, &packed).to_bits(),
+                            "{dtype:?} seed={seed} column={column}"
+                        );
+                    }
+                    for rows in [1, 4, 7] {
+                        let src = seeded_activations(rows * 3 * QK_K, seed + 7);
+                        let mut expected = vec![0.25; rows * outputs];
+                        matmul_k_q8_into(&src, rows, &scalar, &mut expected, false).unwrap();
+                        for parallel in [false, true] {
+                            let mut actual = vec![0.25; rows * outputs];
+                            matmul_k_q8_into(&src, rows, &arm, &mut actual, parallel).unwrap();
+                            assert_eq!(actual, expected);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
