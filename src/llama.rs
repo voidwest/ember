@@ -651,8 +651,8 @@ fn apply_rope_and_qk_norm<B: Backend>(
                 let c = cos_row[d];
                 let si = sin_row[d];
 
-                data[i0] = x0 * c - x1 * si;
-                data[i1] = x0 * si + x1 * c;
+                data[i0] = x0.mul_add(c, -(x1 * si));
+                data[i1] = x0.mul_add(si, x1 * c);
             }
         }
     }
@@ -708,8 +708,8 @@ impl LlamaAttention<CpuBackend> {
                         let i1 = i0 + 1;
                         let x0 = data[i0];
                         let x1 = data[i1];
-                        data[i0] = x0 * cos[d] - x1 * sin[d];
-                        data[i1] = x0 * sin[d] + x1 * cos[d];
+                        data[i0] = x0.mul_add(cos[d], -(x1 * sin[d]));
+                        data[i1] = x0.mul_add(sin[d], x1 * cos[d]);
                     }
                 }
             }
@@ -1962,7 +1962,12 @@ impl Llama<CpuBackend> {
                 hooks.before_layer(layer, &mut hidden)?;
             }
             profile_op!(layer, "attn_rms_norm", embed_dim, embed_dim, "F32", {
-                crate::simd::rms_norm_into(x, block.input_layernorm.data(), block.norm_eps, norm)
+                crate::simd::rms_norm_q8_decode_into(
+                    x,
+                    block.input_layernorm.data(),
+                    block.norm_eps,
+                    norm,
+                )
             });
 
             let q_weight = block
@@ -2076,7 +2081,7 @@ impl Llama<CpuBackend> {
             });
 
             profile_op!(layer, "ffn_rms_norm", embed_dim, embed_dim, "F32", {
-                crate::simd::rms_norm_into(
+                crate::simd::rms_norm_q8_decode_into(
                     x,
                     block.post_attention_layernorm.data(),
                     block.norm_eps,
@@ -2156,7 +2161,7 @@ impl Llama<CpuBackend> {
         cache.advance_cursor();
 
         profile_op!(usize::MAX, "final_rms_norm", embed_dim, embed_dim, "F32", {
-            crate::simd::rms_norm_into(x, self.norm.data(), self.config.norm_eps, norm)
+            crate::simd::rms_norm_q8_decode_into(x, self.norm.data(), self.config.norm_eps, norm)
         });
         {
             let mut hidden = SliceActivation::new(1, embed_dim, norm);
@@ -3498,6 +3503,7 @@ pub(crate) fn k_execution_name(execution: crate::quant_k::KExecution) -> &'stati
         crate::quant_k::KExecution::EagerF32 => "eager_f32",
         crate::quant_k::KExecution::CompressedScalar => "compressed_scalar",
         crate::quant_k::KExecution::CompressedX86 => "compressed_x86",
+        crate::quant_k::KExecution::CompressedArm => "compressed_arm",
     }
 }
 
@@ -3629,16 +3635,14 @@ impl Llama<CpuBackend> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::experiments::test_support::RecordingExperiment;
-    use crate::plan::{FusionState, KernelId, PlannedOp};
-    // HookRecord backs the x86-only parity envelopes (gated tests above).
-    #[cfg(target_arch = "x86_64")]
     use crate::experiments::test_support::HookRecord;
+    use crate::experiments::test_support::RecordingExperiment;
     use crate::experiments::{
         ExecutionPhase, ExperimentHook, ModelContext, ModelFamily, TracingState, ZeroLayerOutput,
         ZeroLayerOutputSpec, ZeroLayerOutputStage,
     };
     use crate::loader::{GgufLoader, GgufValue, LoadedTensor};
+    use crate::plan::{FusionState, KernelId, PlannedOp};
     use crate::planned_decode::planned_causal_attention;
     use crate::quant::{QuantizedWeight, Q8_0_BLOCK_SIZE, Q8_0_TYPE_SIZE};
     use std::collections::HashMap;
@@ -5144,10 +5148,6 @@ mod tests {
 
     /// Gate C: the planned path fires the six semantic hook sites with the
     /// same stages, layers, and shapes as the reference path.
-    // x86-only: the planned/fused parity envelope (1e-4) assumes the
-    // bit-identical x86 kernels; aarch64 FP order differences
-    // (documented in AGENTS.md) exceed it on the scalar/NEON path.
-    #[cfg(target_arch = "x86_64")]
     #[test]
     fn planned_hook_sites_match_reference() {
         let mut model = test_llama_model_with_layers(2);
@@ -5216,10 +5216,6 @@ mod tests {
     /// Gate C: an intervention (zero-layer-output patch) on the planned path
     /// lands at the same tensor and produces the same patched output as the
     /// reference path.
-    // x86-only: the planned/fused parity envelope (1e-4) assumes the
-    // bit-identical x86 kernels; aarch64 FP order differences
-    // (documented in AGENTS.md) exceed it on the scalar/NEON path.
-    #[cfg(target_arch = "x86_64")]
     #[test]
     fn planned_patch_intervention_matches_reference() {
         let mut model = test_llama_model_with_layers(2);
@@ -5497,10 +5493,6 @@ mod tests {
     /// Phase 8 defusion: planned-fused with an after_attention hook must
     /// defuse F5, fire the hook on the materialized o tensor, and stay
     /// within the Gate C envelope of the hooked reference path.
-    // x86-only: the planned/fused parity envelope (1e-4) assumes the
-    // bit-identical x86 kernels; aarch64 FP order differences
-    // (documented in AGENTS.md) exceed it on the scalar/NEON path.
-    #[cfg(target_arch = "x86_64")]
     #[test]
     fn planned_fused_defuses_after_attention_hook() {
         let mut model = test_llama_model_with_layers(2);
@@ -5586,5 +5578,236 @@ mod tests {
         assert_eq!(cache.max_seq_len(), 8);
         let cache = model.create_request_cache(&backend, 5, 1);
         assert_eq!(cache.max_seq_len(), 6);
+    }
+    #[test]
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    fn retained_reference_rope_matches_reference_and_planned_layouts() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/rope-reference/llama-q6-position15.json"
+        ))
+        .unwrap();
+        let position = fixture["position"].as_u64().unwrap() as usize;
+        let dim = fixture["head_dim"].as_u64().unwrap() as usize;
+        let factors: Vec<f32> = serde_json::from_value(fixture["freq_factors"].clone()).unwrap();
+        let (cos, sin) = crate::tensor::compute_rope_freqs(
+            position + 1,
+            dim,
+            fixture["theta_base"].as_f64().unwrap() as f32,
+            Some(&factors),
+        );
+        for layout in [RopeLayout::AdjacentPair, RopeLayout::SplitHalf] {
+            let attention = LlamaAttention::new(
+                test_q8_linear(dim, dim, 1),
+                test_q8_linear(dim, dim, 2),
+                test_q8_linear(dim, dim, 3),
+                test_q8_linear(dim, dim, 4),
+                cos.clone(),
+                sin.clone(),
+                1,
+                1,
+                dim,
+                layout,
+                QkNormOrder::AfterRope,
+                None,
+                None,
+            );
+            for record in fixture["records"].as_array().unwrap() {
+                let mut input: Vec<f32> = serde_json::from_value(record["input"].clone()).unwrap();
+                let mut expected: Vec<f32> =
+                    serde_json::from_value(record["expected"].clone()).unwrap();
+                if layout == RopeLayout::SplitHalf {
+                    let reorder = |v: Vec<f32>| {
+                        v.iter()
+                            .step_by(2)
+                            .chain(v.iter().skip(1).step_by(2))
+                            .copied()
+                            .collect()
+                    };
+                    input = reorder(input);
+                    expected = reorder(expected);
+                }
+                let actual = apply_rope_and_qk_norm(
+                    &CpuBackend,
+                    CpuTensor::from_data(vec![1, dim], input.clone()),
+                    &cos,
+                    &sin,
+                    RopeQkNormSpec {
+                        start_pos: position,
+                        n_heads: 1,
+                        head_dim: dim,
+                        rope_layout: layout,
+                        qk_norm_order: QkNormOrder::AfterRope,
+                    },
+                    None,
+                    None,
+                )
+                .unwrap();
+                let mut planned = input;
+                attention.apply_decode_rope_and_qk_norm(&mut planned, 1, position, None);
+                let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+                assert_eq!(
+                    bits(actual.data()),
+                    bits(&expected),
+                    "reference {:?} {}",
+                    layout,
+                    record["name"]
+                );
+                assert_eq!(
+                    bits(&planned),
+                    bits(&expected),
+                    "planned {:?} {}",
+                    layout,
+                    record["name"]
+                );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod reference_rope_diagnostic {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires pinned Q6 model and reference projection/rotation captures"]
+    fn diagnose_reference_input_rope() {
+        let model = std::env::var("EMBER_PARITY_MODEL").expect("model required");
+        assert_eq!(
+            crate::extraction::sha256_file_result(&model).unwrap(),
+            "4bf385159856b7c50a938b1228112318d9f99238a76880ea0f6381ab879982b3"
+        );
+        let source = std::env::var("EMBER_PARITY_REFERENCE_TENSORS").unwrap();
+        let reference: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&source).unwrap()).unwrap();
+        let control: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(std::env::var("EMBER_PARITY_REFERENCE_OUTPUT").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let prompt_len = control["input_token_ids"].as_array().unwrap().len();
+        // Evaluation 1 consumes the prompt; evaluation 10 consumes generated token 9.
+        let position = prompt_len.checked_add(8).unwrap();
+        let rows: std::collections::BTreeMap<String, Vec<f32>> = reference["tensors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| {
+                assert_eq!(t["step"], 10);
+                assert_eq!(t["row"], 0);
+                let values: Vec<f32> = serde_json::from_value(t["values"].clone()).unwrap();
+                assert_eq!(values.len(), t["width"].as_u64().unwrap() as usize);
+                assert!(values.iter().all(|x| x.is_finite()));
+                (t["name"].as_str().unwrap().to_string(), values)
+            })
+            .collect();
+        let loader =
+            crate::loader::load_gguf_with_k_strategy(&model, crate::quant_k::KStrategy::Arm, false)
+                .unwrap();
+        let config = LlamaConfig::from_gguf_metadata(&loader);
+        let factors = loader.tensors.get("rope_freqs.weight").map(|weight| {
+            let crate::loader::LoadedTensor::F32(tensor) = weight else {
+                panic!("expected f32 factors")
+            };
+            tensor.data()
+        });
+        let (cos, sin) = crate::tensor::compute_rope_freqs(
+            position + 1,
+            config.head_dim,
+            config.rope_theta,
+            factors,
+        );
+        // Diagnostic alternative matching the pinned reference's frequency recurrence.
+        // The retained context log confirms freq_scale=1 for this pinned model/run.
+        let half = config.head_dim / 2;
+        let theta_scale = config.rope_theta.powf(-2.0 / config.head_dim as f32);
+        let mut recurrent_cos = vec![0.0; (position + 1) * half];
+        let mut recurrent_sin = vec![0.0; (position + 1) * half];
+        for p in 0..=position {
+            let mut theta = p as f32;
+            for i in 0..half {
+                let angle = theta / factors.map_or(1.0, |values| values[i]);
+                recurrent_cos[p * half + i] = angle.cos();
+                recurrent_sin[p * half + i] = angle.sin();
+                theta *= theta_scale;
+            }
+        }
+        let recurrent_cos = CpuTensor::from_data(vec![position + 1, half], recurrent_cos);
+        let recurrent_sin = CpuTensor::from_data(vec![position + 1, half], recurrent_sin);
+        let mut records = Vec::new();
+        for (table_kind, cos, sin) in [
+            ("production", &cos, &sin),
+            ("reference_recurrence", &recurrent_cos, &recurrent_sin),
+        ] {
+            for (input_name, output_name, heads) in [
+                ("q_projection-0", "q_rope-0", config.n_heads),
+                ("k_projection-0", "k_rope-0", config.n_kv_heads),
+            ] {
+                let input = &rows[input_name];
+                assert_eq!(input.len(), heads * config.head_dim);
+                let actual = apply_rope_and_qk_norm(
+                    &CpuBackend,
+                    CpuTensor::from_data(vec![1, input.len()], input.clone()),
+                    cos,
+                    sin,
+                    RopeQkNormSpec {
+                        start_pos: position,
+                        n_heads: heads,
+                        head_dim: config.head_dim,
+                        rope_layout: config.rope_layout,
+                        qk_norm_order: config.qk_norm_order,
+                    },
+                    None,
+                    None,
+                )
+                .unwrap();
+                assert_eq!(actual.data().len(), rows[output_name].len());
+                assert!(actual.data().iter().all(|x| x.is_finite()));
+                records.push(
+                serde_json::json!({"operation": output_name, "input": input_name,
+                "position": position, "table_kind": table_kind, "actual": actual.data(), "reference": rows[output_name]}),
+            );
+            }
+        }
+        assert_eq!(config.rope_layout, RopeLayout::AdjacentPair);
+        for (input_name, output_name) in [
+            ("q_projection-0", "q_rope-0"),
+            ("k_projection-0", "k_rope-0"),
+        ] {
+            for fuse_first in [false, true] {
+                for fuse_second in [false, true] {
+                    let mut actual = rows[input_name].clone();
+                    for head in actual.chunks_exact_mut(config.head_dim) {
+                        for i in 0..half {
+                            let x0 = head[2 * i];
+                            let x1 = head[2 * i + 1];
+                            let c = recurrent_cos.data()[position * half + i];
+                            let si = recurrent_sin.data()[position * half + i];
+                            head[2 * i] = if fuse_first {
+                                x0.mul_add(c, -(x1 * si))
+                            } else {
+                                (-x1).mul_add(si, x0 * c)
+                            };
+                            head[2 * i + 1] = if fuse_second {
+                                x0.mul_add(si, x1 * c)
+                            } else {
+                                x1.mul_add(c, x0 * si)
+                            };
+                        }
+                    }
+                    assert!(actual.iter().all(|x| x.is_finite()));
+                    records.push(serde_json::json!({"operation": output_name, "input": input_name,
+                        "position": position, "table_kind": "reference_recurrence_fused_diagnostic",
+                        "fuse_first_product_for_even": fuse_first, "fuse_first_product_for_odd": fuse_second,
+                        "actual": actual, "reference": rows[output_name]}));
+                }
+            }
+        }
+        let output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(std::env::var("EMBER_PARITY_DIAGNOSTIC").unwrap())
+            .unwrap();
+        serde_json::to_writer_pretty(output, &serde_json::json!({
+            "scope": "actual Ember RoPE plus explicitly labeled diagnostic fused variants on identical reference projections; no acceptance threshold",
+            "reference_source": source, "records": records})).unwrap();
     }
 }

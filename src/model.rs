@@ -8,6 +8,21 @@ use anyhow::Context;
 
 pub use crate::llama::{Llama, LlamaConfig};
 
+/// Execute a complete CPU inference session on a Rayon worker.
+///
+/// Enter once around model preparation and the generation loop, not once per
+/// token. Nested calls reuse the caller's current pool. External callers submit
+/// one job at session entry, keeping per-projection joins off the global injector.
+/// Raw forward calls outside a session remain supported but may allocate scheduler
+/// queue blocks. This helper is an experimental Rust API.
+pub fn with_cpu_session<R: Send>(run: impl FnOnce() -> R + Send) -> R {
+    if rayon::current_thread_index().is_some() {
+        run()
+    } else {
+        rayon::join(run, || ()).0
+    }
+}
+
 /// a model that can run inference with a kv cache.
 /// gpt-2 and llama-family models implement this trait so the
 /// `generate` / `demo_mode` / `interactive_mode` functions
@@ -1996,5 +2011,49 @@ mod tests {
         let v32: Vec<f32> = cv.iter().map(|v| v.to_f32()).collect();
         assert_eq!(&k32[..4], &[1.0, 2.0, 3.0, 4.0]);
         assert_eq!(&v32[..4], &[5.0, 6.0, 7.0, 8.0]);
+    }
+}
+
+#[cfg(test)]
+mod cpu_session_tests {
+    use super::with_cpu_session;
+
+    #[test]
+    fn session_enters_worker_and_preserves_nested_custom_pool() {
+        std::thread::spawn(|| {
+            assert!(rayon::current_thread_index().is_none());
+            with_cpu_session(|| assert!(rayon::current_thread_index().is_some()));
+        })
+        .join()
+        .unwrap();
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(2)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            let index = rayon::current_thread_index();
+            with_cpu_session(|| {
+                assert_eq!(rayon::current_thread_index(), index);
+                assert_eq!(rayon::current_num_threads(), 2);
+            });
+        });
+    }
+
+    #[test]
+    fn session_propagates_panics_and_accepts_concurrent_callers() {
+        let threads: Vec<_> = (0..4)
+            .map(|index| {
+                std::thread::spawn(move || {
+                    assert!(std::panic::catch_unwind(|| with_cpu_session(|| panic!(
+                        "session test"
+                    )))
+                    .is_err());
+                    with_cpu_session(|| index * 2)
+                })
+            })
+            .collect();
+        for (index, thread) in threads.into_iter().enumerate() {
+            assert_eq!(thread.join().unwrap(), index * 2);
+        }
     }
 }

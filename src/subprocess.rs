@@ -381,7 +381,7 @@ mod tests {
     fn success_command() -> SupervisedCommand {
         #[cfg(unix)]
         {
-            SupervisedCommand::new(PathBuf::from("/bin/true"), vec![], Duration::from_secs(10))
+            SupervisedCommand::new(PathBuf::from("true"), vec![], Duration::from_secs(10))
         }
         #[cfg(windows)]
         {

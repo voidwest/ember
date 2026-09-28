@@ -5,7 +5,7 @@
 //! `lib.rs`). Counting is flag-gated per thread: `count_allocations` turns
 //! tracking on for the calling thread, runs the closure, and returns how
 //! many allocations it performed — independent of other threads' activity.
-//! A global total is always maintained (one relaxed atomic per allocation)
+//! A global total is always maintained (relaxed atomic counters per allocation)
 //! for benchmark and residency reports.
 //!
 //! Steady-state planned decode performs no allocations, so the hot token
@@ -21,6 +21,7 @@ pub struct CountingAllocator;
 
 static TOTAL_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
 static TOTAL_ALLOCATED_BYTES: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_REQUESTED_BYTES: AtomicUsize = AtomicUsize::new(0);
 
 thread_local! {
     static TRACK_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
@@ -31,6 +32,7 @@ thread_local! {
 #[inline]
 fn count_one(layout_size: usize) {
     TOTAL_ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+    TOTAL_REQUESTED_BYTES.fetch_add(layout_size, Ordering::Relaxed);
     TOTAL_ALLOCATED_BYTES.fetch_add(layout_size, Ordering::Relaxed);
     TRACK_ALLOCATIONS
         .try_with(|tracking| {
@@ -119,6 +121,12 @@ pub fn total_allocations() -> usize {
     TOTAL_ALLOCATIONS.load(Ordering::Relaxed)
 }
 
+/// Total requested bytes of allocation/reallocation events since process start.
+/// Unlike live bytes, freeing memory never decreases this counter.
+pub fn total_requested_bytes() -> usize {
+    TOTAL_REQUESTED_BYTES.load(Ordering::Relaxed)
+}
+
 /// Bytes currently allocated (approximate; realloc deltas are best-effort).
 pub fn total_allocated_bytes() -> usize {
     TOTAL_ALLOCATED_BYTES.load(Ordering::Relaxed)
@@ -139,6 +147,14 @@ mod tests {
         // outside tracking, the count is not bumped
         let (_, quiet) = count_allocations(|| {});
         assert_eq!(quiet, 0);
+    }
+
+    #[test]
+    fn requested_bytes_include_allocations_freed_inside_measurement() {
+        let before = total_requested_bytes();
+        let buffer = std::hint::black_box(vec![0u8; 8192]);
+        drop(buffer);
+        assert!(total_requested_bytes().wrapping_sub(before) >= 8192);
     }
 
     #[test]
