@@ -1044,8 +1044,34 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                 );
                 match execution {
                     crate::quant_k::KExecution::EagerF32 => {
-                        let mut raw = vec![0u8; byte_len];
-                        reader.read_exact(&mut raw)?;
+                        // The mapped payload already owns the compressed bytes.
+                        // Borrow it instead of allocating a second full tensor
+                        // while materializing the eager-f32 oracle.
+                        let raw = if let Some(mapped) = mmap.as_ref() {
+                            let start = usize::try_from(tensor_offset).map_err(|error| {
+                                LoaderError::overflow(format!(
+                                    "tensor '{}' offset exceeds address space: {error}",
+                                    info.name
+                                ))
+                            })?;
+                            let end = start.checked_add(byte_len).ok_or_else(|| {
+                                LoaderError::overflow(format!(
+                                    "tensor '{}' byte range overflow",
+                                    info.name
+                                ))
+                            })?;
+                            let bytes = mapped.get(start..end).ok_or_else(|| {
+                                LoaderError::malformed(format!(
+                                    "tensor '{}' payload exceeds mapped file",
+                                    info.name
+                                ))
+                            })?;
+                            std::borrow::Cow::Borrowed(bytes)
+                        } else {
+                            let mut raw = vec![0u8; byte_len];
+                            reader.read_exact(&mut raw)?;
+                            std::borrow::Cow::Owned(raw)
+                        };
                         let mut data = vec![0.0f32; element_count];
                         crate::quant_k::dequant_tensor(info.dtype, &raw, &mut data).map_err(
                             |e| LoaderError::malformed(format!("tensor '{}': {e}", info.name)),
@@ -1053,7 +1079,8 @@ fn load_gguf_from_reader_impl<R: Read + Seek>(
                         LoadedTensor::F32(CpuTensor::from_data(info.dims, data))
                     }
                     crate::quant_k::KExecution::CompressedScalar
-                    | crate::quant_k::KExecution::CompressedX86 => {
+                    | crate::quant_k::KExecution::CompressedX86
+                    | crate::quant_k::KExecution::CompressedArm => {
                         let native = native.ok_or_else(|| {
                             LoaderError::malformed(format!(
                                 "tensor '{}' selected compressed execution without a native dtype",
@@ -1189,6 +1216,7 @@ fn resolve_k_execution(
         KStrategy::EagerF32 => Ok((KExecution::EagerF32, None)),
         KStrategy::Auto => Ok(match native {
             Some(_) if x86_available => (KExecution::CompressedX86, None),
+            Some(_) if crate::k_quant_matmul::arm_k_supported() => (KExecution::CompressedArm, None),
             Some(_) => (KExecution::CompressedScalar, None),
             None => (KExecution::EagerF32, Some(no_native_kernel())),
         }),
@@ -1201,6 +1229,12 @@ fn resolve_k_execution(
                 info.name,
                 ggml_dtype_name(info.dtype).unwrap_or("unknown")
             ))),
+        },
+        KStrategy::Arm => match native {
+            Some(_) if crate::k_quant_matmul::arm_k_supported() => Ok((KExecution::CompressedArm, None)),
+            Some(_) if allow_fallback => Ok((KExecution::CompressedScalar, Some("ARM NEON+dotprod unavailable".to_string()))),
+            None if allow_fallback => Ok((KExecution::EagerF32, Some(no_native_kernel()))),
+            _ => Err(LoaderError::malformed("--k-strategy arm requires Q4_K/Q6_K weights and ARM NEON+dotprod; pass --k-allow-fallback to permit fallback".to_string())),
         },
         KStrategy::X86 => match (native, x86_available) {
             (Some(_), true) => Ok((KExecution::CompressedX86, None)),
@@ -1361,9 +1395,16 @@ fn estimated_tensor_allocation_bytes(
                 allow_fallback,
             )?;
             match execution {
-                crate::quant_k::KExecution::EagerF32 => add(encoded_bytes, f32_bytes),
+                crate::quant_k::KExecution::EagerF32 => {
+                    if mmap_present {
+                        Ok(f32_bytes)
+                    } else {
+                        add(encoded_bytes, f32_bytes)
+                    }
+                }
                 crate::quant_k::KExecution::CompressedScalar
-                | crate::quant_k::KExecution::CompressedX86 => {
+                | crate::quant_k::KExecution::CompressedX86
+                | crate::quant_k::KExecution::CompressedArm => {
                     let mut owned = if mmap_present { 0 } else { encoded_bytes };
                     if matches!(execution, crate::quant_k::KExecution::CompressedX86)
                         && presplit_requested()
@@ -1495,6 +1536,7 @@ pub fn resolve_generation_architecture(
             "--arch {requested} conflicts with GGUF general.architecture='{declared}' (use --arch {detected} or omit --arch)"
         );
     }
+    crate::support::warn_if_unsupported(declared);
     Ok(detected.to_string())
 }
 
@@ -2580,6 +2622,101 @@ mod tests {
     }
 
     #[test]
+    fn eager_k_mapped_payload_matches_owned_without_duplicate_budget() {
+        for dtype in 10..=14 {
+            let bytes = write_minimal_gguf_with_k_tensor(dtype, 4);
+            let mut mapping = memmap2::MmapMut::map_anon(bytes.len()).unwrap();
+            mapping.copy_from_slice(&bytes);
+            let mapped = Arc::new(mapping.make_read_only().unwrap());
+            let (mapped_loader, _) = load_gguf_from_reader_impl(
+                &mut std::io::Cursor::new(&bytes),
+                Some(mapped),
+                crate::quant_k::KStrategy::EagerF32,
+                false,
+            )
+            .unwrap();
+            let owned_loader = load_gguf_from_reader_with_k_strategy(
+                &mut std::io::Cursor::new(&bytes),
+                crate::quant_k::KStrategy::EagerF32,
+                false,
+            )
+            .unwrap();
+            let name = "blk.0.attn_q.weight";
+            let (LoadedTensor::F32(a), LoadedTensor::F32(b)) =
+                (&mapped_loader.tensors[name], &owned_loader.tensors[name])
+            else {
+                panic!("expected eager weights")
+            };
+            assert_eq!(a.shape(), b.shape());
+            assert_eq!(a.data(), b.data());
+            let info = TensorInfo {
+                name: name.into(),
+                dims: vec![256, 4],
+                dtype,
+                offset: 0,
+            };
+            let encoded = 4 * crate::quant_k::k_block_bytes(dtype).unwrap() as u64;
+            assert_eq!(
+                estimated_tensor_allocation_bytes(
+                    &info,
+                    1024,
+                    encoded,
+                    crate::quant_k::KStrategy::EagerF32,
+                    false,
+                    true,
+                    false
+                )
+                .unwrap(),
+                4096
+            );
+            assert_eq!(
+                estimated_tensor_allocation_bytes(
+                    &info,
+                    1024,
+                    encoded,
+                    crate::quant_k::KStrategy::EagerF32,
+                    false,
+                    false,
+                    false
+                )
+                .unwrap(),
+                4096 + encoded
+            );
+        }
+    }
+
+    #[test]
+    fn arm_strategy_records_native_tier_or_rejects_unavailable_cpu() {
+        for (dtype, kernel) in [
+            (12, "q4-k-q8-k-neon-dotprod"),
+            (14, "q6-k-q8-k-neon-dotprod"),
+        ] {
+            let bytes = write_minimal_gguf_with_k_tensor(dtype, 4);
+            let mut cursor = std::io::Cursor::new(bytes);
+            let result = load_gguf_from_reader_with_k_strategy(
+                &mut cursor,
+                crate::quant_k::KStrategy::Arm,
+                false,
+            );
+            if !crate::k_quant_matmul::arm_k_supported() {
+                assert!(result.is_err());
+                continue;
+            }
+            let loader = result.unwrap();
+            let decision = &loader.k_decisions["blk.0.attn_q.weight"];
+            assert_eq!(
+                decision.execution,
+                crate::quant_k::KExecution::CompressedArm
+            );
+            assert!(decision.fallback_reason.is_none());
+            let inventory = crate::artifact::ExecutionInventory::from_loader(&loader);
+            assert_eq!(inventory.tensors[0].kernel, kernel);
+            assert_eq!(inventory.tensors[0].strategy, "compressed-arm");
+            assert_eq!(inventory.tensors[0].cpu_features, "neon+dotprod");
+        }
+    }
+
+    #[test]
     fn auto_strategy_selects_x86_when_avx2_available() {
         let bytes = write_minimal_gguf_with_k_tensor(12, 8); // q4_k
         let mut cursor = std::io::Cursor::new(bytes);
@@ -2592,6 +2729,8 @@ mod tests {
         let decision = &loader.k_decisions["blk.0.attn_q.weight"];
         let expected = if crate::k_quant_matmul::x86_k_supported() {
             crate::quant_k::KExecution::CompressedX86
+        } else if crate::k_quant_matmul::arm_k_supported() {
+            crate::quant_k::KExecution::CompressedArm
         } else {
             crate::quant_k::KExecution::CompressedScalar
         };

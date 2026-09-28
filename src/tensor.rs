@@ -836,22 +836,15 @@ pub fn compute_rope_freqs(
         .expect("RoPE table size overflow");
     let mut cos = vec![0.0f32; table_len];
     let mut sin = vec![0.0f32; table_len];
-    for i in 0..half {
-        let base_freq = theta_base.powf(-(2.0 * i as f32) / head_dim as f32);
-        // freq_factors gate specific frequency pairs:
-        // factor==1.0 → full RoPE; factor is large (1e30) → freq→0 (no rotation)
-        // freq_factors has one scalar per frequency pair (half elements of freq_factors tensor)
-        // factor is 1e30 for pairs that should NOT rotate, 1.0 for pairs that should
-        // The ggml kernel computes theta = pos * base_freq / ff with the
-        // per-pair factor ff (freq_factors[i]); a huge factor therefore
-        // drives the rotation to zero. Division semantics, matching
-        // ggml_rope_cache_init.
-        let factor = freq_factors.map_or(1.0, |factors| factors[i]);
-        let freq = base_freq / factor;
-        for p in 0..max_seq_len {
-            let angle = p as f32 * freq;
+    // Match the pinned reference's frequency recurrence and scaling order.
+    let theta_scale = theta_base.powf(-2.0 / head_dim as f32);
+    for p in 0..max_seq_len {
+        let mut theta = p as f32;
+        for i in 0..half {
+            let angle = theta / freq_factors.map_or(1.0, |factors| factors[i]);
             cos[p * half + i] = angle.cos();
             sin[p * half + i] = angle.sin();
+            theta *= theta_scale;
         }
     }
     (

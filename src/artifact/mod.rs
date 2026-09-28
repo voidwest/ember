@@ -533,6 +533,23 @@ impl ExecutionInventory {
                     ),
                     None => ("f32", "eager-f32", "eager-f32-dequant", "none", 0),
                 },
+                KExecution::CompressedArm => match KQuantDtype::from_gguf(decision.gguf_dtype) {
+                    Some(KQuantDtype::Q4K) => (
+                        "compressed",
+                        "compressed-arm",
+                        "q4-k-q8-k-neon-dotprod",
+                        "neon+dotprod",
+                        q8_k_workspace_bytes,
+                    ),
+                    Some(KQuantDtype::Q6K) => (
+                        "compressed",
+                        "compressed-arm",
+                        "q6-k-q8-k-neon-dotprod",
+                        "neon+dotprod",
+                        q8_k_workspace_bytes,
+                    ),
+                    None => ("f32", "eager-f32", "eager-f32-dequant", "none", 0),
+                },
             };
 
             let matmul = TensorOperationExecution {
@@ -550,7 +567,9 @@ impl ExecutionInventory {
                 if name.as_str() == "token_embd.weight" {
                     let row_kernel = match decision.execution {
                         KExecution::EagerF32 => "embedding-f32-row",
-                        KExecution::CompressedScalar | KExecution::CompressedX86 => {
+                        KExecution::CompressedScalar
+                        | KExecution::CompressedX86
+                        | KExecution::CompressedArm => {
                             match KQuantDtype::from_gguf(decision.gguf_dtype) {
                                 Some(KQuantDtype::Q4K) => "embedding-q4-k-row-dequant",
                                 Some(KQuantDtype::Q6K) => "embedding-q6-k-row-dequant",
@@ -609,7 +628,9 @@ impl ExecutionInventory {
                     entry.tensor_count += 1;
                     entry.expanded_bytes += expanded;
                 }
-                KExecution::CompressedScalar | KExecution::CompressedX86 => {
+                KExecution::CompressedScalar
+                | KExecution::CompressedX86
+                | KExecution::CompressedArm => {
                     compressed_bytes += compressed;
                     let entry = per_dtype.entry(dtype_name.clone()).or_insert_with(|| {
                         DtypeExecutionSummary {

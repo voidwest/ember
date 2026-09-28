@@ -1892,3 +1892,68 @@ mod tests {
         assert_eq!(actual, expected.data());
     }
 }
+
+#[cfg(test)]
+mod reference_softmax_diagnostic {
+    #[test]
+    #[ignore = "requires pinned reference attention score captures"]
+    fn diagnose_reference_input_softmax() {
+        let source = std::env::var("EMBER_PARITY_REFERENCE_TENSORS").unwrap();
+        let capture: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&source).unwrap()).unwrap();
+        let rows = capture["tensors"].as_array().unwrap();
+        let values = |name: &str| -> Vec<f32> {
+            let row = rows
+                .iter()
+                .find(|r| r["name"] == name)
+                .expect("required score row");
+            assert_eq!(row["step"], 10);
+            assert_eq!(row["row"], 0);
+            assert_eq!(row["width"], 16);
+            let data: Vec<f32> = serde_json::from_value(row["values"].clone()).unwrap();
+            assert_eq!(data.len(), 16);
+            assert!(data.iter().all(|x| x.is_finite()));
+            data
+        };
+        let raw = values("kq-0");
+        let expected = values("kq_soft_max-0");
+        // Pinned Llama 3.2 1B: 64 dimensions/head, scale=1/sqrt(64), no ALiBi.
+        let scale = 1.0 / 64.0_f32.sqrt();
+        let mut actual: Vec<f32> = raw.iter().map(|v| v * scale).collect();
+        super::softmax_prefix(&mut actual, raw.len());
+        let vector = |name: &str| -> Vec<f32> {
+            let row = rows
+                .iter()
+                .find(|r| r["name"] == name)
+                .expect("rotation capture required");
+            let data: Vec<f32> = serde_json::from_value(row["values"].clone()).unwrap();
+            assert!(data.len() >= 64 && data.iter().all(|x| x.is_finite()));
+            data
+        };
+        let q = vector("q_rope-0");
+        let k = vector("k_rope-0");
+        let dot = crate::simd::dot_product(&q[..64], &k[..64]);
+        let cached_k: Vec<half::f16> = k[..64].iter().copied().map(half::f16::from_f32).collect();
+        let mixed_dot = crate::simd::dot_product_f16(&q[..64], &cached_k);
+        let rounded_q: Vec<f32> = q[..64]
+            .iter()
+            .map(|x| half::f16::from_f32(*x).to_f32())
+            .collect();
+        let both_rounded_dot = crate::simd::dot_product_f16(&rounded_q, &cached_k);
+        let output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(std::env::var("EMBER_PARITY_DIAGNOSTIC").unwrap())
+            .unwrap();
+        serde_json::to_writer_pretty(output, &serde_json::json!({
+            "scope": "actual Ember softmax on identical reference first-head scores at Arabic evaluation 10",
+            "reference_source": source,
+            "dot_product_check": {"scope": "current query/key first head at position 15",
+                "actual": dot, "reference": raw[15]},
+            "mixed_precision_check": {"scope": "identical captured Q/K before optional f16 conversion",
+                "f32_query_f16_key": mixed_dot, "f16_query_f16_key": both_rounded_dot},
+            "records": [{"operation": "softmax", "scale": scale, "input": raw,
+                "actual": actual, "reference": expected}]
+        })).unwrap();
+    }
+}

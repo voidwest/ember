@@ -189,6 +189,8 @@ fn is_matvec_record(record: &TensorRecord) -> bool {
                 | KernelId::KQuantScalarQ4K
                 | KernelId::KQuantScalarQ6K
                 | KernelId::KQuantAvx2Q4K
+                | KernelId::KQuantArmQ4K
+                | KernelId::KQuantArmQ6K
                 | KernelId::KQuantAvx2Q6K
         )
 }
@@ -207,18 +209,18 @@ fn schedule_matvec(record: &TensorRecord, requested: bool, threads: usize) -> Sc
         KernelId::KQuantScalarQ4K
         | KernelId::KQuantScalarQ6K
         | KernelId::KQuantAvx2Q4K
-        | KernelId::KQuantAvx2Q6K => {
+        | KernelId::KQuantArmQ4K
+        | KernelId::KQuantArmQ6K
+        | KernelId::KQuantAvx2Q6K
             if crate::k_quant_matmul::parallel_for_shape(
                 1,
                 in_features,
                 out_features,
                 threads,
                 requested,
-            ) {
-                "column-parallel-rayon"
-            } else {
-                "serial"
-            }
+            ) =>
+        {
+            "column-parallel-rayon"
         }
         _ => "serial",
     };
