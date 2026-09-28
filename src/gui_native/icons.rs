@@ -39,6 +39,13 @@ icons![
     (CHECK, "check"),
     (WARNING, "warning"),
     (COPY, "copy"),
+    // App-shell navigation.
+    (HOME, "home"),
+    (EXPERIMENT, "experiment"),
+    (RUNS, "runs"),
+    (SETTINGS, "settings"),
+    (BACK, "back"),
+    (PLUS, "plus"),
 ];
 
 pub(super) fn icon(path: &'static str) -> Svg {

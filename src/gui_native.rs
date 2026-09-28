@@ -110,15 +110,34 @@ fn operation_hint(operation: &str) -> &'static str {
     }
 }
 
+/// Plain-language name for a hook site.
+///
+/// The exact contract names stay available in Advanced controls, but the
+/// default surface should read as an outcome rather than an implementation
+/// detail: "After feed-forward processing" describes a stage of the graph, not
+/// something an operator reasons about.
 fn site_label(site: &str) -> &'static str {
     match site {
-        "before-layer" => "Before the transformer layer",
+        "before-layer" => "Layer input",
         "after-attention" => "After attention",
-        "after-mlp" => "After feed-forward processing",
-        "after-layer" => "After the transformer layer",
-        "before-logits" => "Before output prediction",
-        "after-logits" => "After output prediction",
+        "after-mlp" => "After MLP block",
+        "after-layer" => "Layer output",
+        "before-logits" => "Before output head",
+        "after-logits" => "After output head",
         _ => "Custom location",
+    }
+}
+
+/// The exact `ember.hook.v1` identifier, for Advanced controls.
+fn site_contract_name(site: &str) -> &'static str {
+    match site {
+        "before-layer" => "before-layer",
+        "after-attention" => "after-attention",
+        "after-mlp" => "after-mlp",
+        "after-layer" => "after-layer",
+        "before-logits" => "before-logits",
+        "after-logits" => "after-logits",
+        _ => "custom",
     }
 }
 
@@ -153,6 +172,15 @@ fn combo_value_label(combo: ComboId, value: &str) -> String {
             _ => value.to_string(),
         },
     }
+}
+
+/// Filename stem for a model path, for display chips.
+fn model_display_name(path: &str) -> String {
+    path.rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(path)
+        .trim_end_matches(".gguf")
+        .to_string()
 }
 
 fn truncate_chars(text: &str, limit: usize) -> String {
@@ -278,6 +306,61 @@ enum WorkspaceStep {
     Prompt,
     Intervention,
     Review,
+}
+
+/// Top-level destinations in the app shell.
+///
+/// The console used to be one screen: you landed inside a half-configured
+/// experiment whether or not that was what you came for. These are ordinary
+/// product destinations, and the experiment is one of them rather than the
+/// whole application.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum View {
+    Home,
+    Experiment,
+    Models,
+    Runs,
+    Settings,
+}
+
+impl View {
+    fn label(self) -> &'static str {
+        match self {
+            View::Home => "Home",
+            View::Experiment => "Experiments",
+            View::Models => "Models",
+            View::Runs => "Runs",
+            View::Settings => "Settings",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            View::Home => icons::HOME,
+            View::Experiment => icons::EXPERIMENT,
+            View::Models => icons::MODEL,
+            View::Runs => icons::RUNS,
+            View::Settings => icons::SETTINGS,
+        }
+    }
+
+    fn hint(self) -> &'static str {
+        match self {
+            View::Home => "Recent runs and starting points",
+            View::Experiment => "Configure and run an experiment",
+            View::Models => "Local models and their state",
+            View::Runs => "Every run from this session",
+            View::Settings => "Appearance and defaults",
+        }
+    }
+
+    const ALL: [View; 5] = [
+        View::Home,
+        View::Experiment,
+        View::Models,
+        View::Runs,
+        View::Settings,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -472,6 +555,8 @@ struct Console {
     focus_handle: FocusHandle,
     inputs: Inputs,
     step: WorkspaceStep,
+    view: View,
+    inspector_open: bool,
     advanced_open: bool,
     pending_run: bool,
     pending_context: Option<FormValues>,
@@ -662,6 +747,11 @@ impl Console {
             focus_handle: cx.focus_handle(),
             inputs,
             step: WorkspaceStep::Prompt,
+            // Land on Home rather than inside a half-configured experiment.
+            view: View::Home,
+            // The context rail opens on demand; it used to be permanent and
+            // permanently half-empty on the setup steps.
+            inspector_open: false,
             advanced_open: false,
             pending_run: false,
             pending_context: None,
@@ -699,20 +789,6 @@ impl Console {
         } else {
             theme::light()
         }
-    }
-
-    fn model_name(&self) -> String {
-        self.session
-            .as_ref()
-            .map(|info| info.model_name.clone())
-            .unwrap_or_else(|| {
-                self.model_path
-                    .rsplit(['/', '\\'])
-                    .next()
-                    .unwrap_or(&self.model_path)
-                    .trim_end_matches(".gguf")
-                    .to_string()
-            })
     }
 
     fn form_values(&self) -> FormValues {
@@ -1449,13 +1525,17 @@ impl Console {
         div().w_full().child(picker.clone())
     }
 
-    fn header(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let session_chip = match &self.session {
-            Some(info) => format!(
-                "{} \u{00b7} {} \u{00b7} {} layers",
-                info.model_name, info.architecture, info.n_layers
-            ),
-            None => format!("{} \u{2014} not loaded", self.model_name()),
+    /// Slim top bar: identity, current model, appearance.
+    ///
+    /// The wordmark stands on its own. There was an accent-coloured "E" badge
+    /// here that carried no information and dated the product instantly.
+    fn topbar(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let model_chip = match &self.session {
+            Some(info) => format!("{} \u{00b7} {} layers", info.model_name, info.n_layers),
+            None => match self.model_path.trim() {
+                "" => "No model selected".to_string(),
+                path => format!("{} \u{2014} not loaded", model_display_name(path)),
+            },
         };
         let toggle = cx.listener(|console, _: &ClickEvent, _w, cx| {
             console.cycle_appearance(cx);
@@ -1466,26 +1546,25 @@ impl Console {
             .items_center()
             .gap_3()
             .px_4()
-            .h(px(44.0))
+            .h(px(46.0))
             .w_full()
             .bg(colors.surface)
             .border_b_1()
             .border_color(colors.border)
             .child(
-                div()
-                    .size(px(20.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .bg(colors.accent)
-                    .rounded(px(5.0))
-                    .child(label("E", 11.0, rgb(0xffffff))),
-            )
-            .child(
-                div()
-                    .flex_col()
-                    .child(label("ember", 13.0, colors.text))
-                    .child(label("causal experiment workbench", 9.0, colors.text_faint)),
+                div().flex().flex_row().items_center().gap_2().child(
+                    Button::new("topbar-home")
+                        .ghost()
+                        .small()
+                        .icon(Icon::default().path(icons::BACK))
+                        .label("ember")
+                        .tooltip("Home")
+                        .accessibility_label("Ember, go to Home")
+                        .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
+                            console.view = View::Home;
+                            cx.notify();
+                        })),
+                ),
             )
             .child(div().w_full())
             .child(
@@ -1494,39 +1573,356 @@ impl Console {
                     .py_1()
                     .bg(colors.surface_raised)
                     .rounded_full()
-                    .child(mono(session_chip, 10.0, colors.text_muted)),
+                    .child(mono(model_chip, 10.0, colors.text_muted)),
             )
             .child(
                 Button::new("theme-toggle")
                     .small()
                     .label(self.appearance.label())
-                    .tooltip("Change appearance")
+                    .tooltip("Appearance")
                     .on_click(toggle),
             )
     }
 
-    fn sidebar(&self, colors: &Colors, cx: &mut Context<Self>) -> Stateful<Div> {
-        let steps = WorkspaceStep::ALL
-            .into_iter()
-            .map(|step| {
-                Button::new(SharedString::from(format!(
-                    "workflow-step:{}",
-                    step.number()
-                )))
-                .ghost()
-                .w_full()
-                .h(px(48.0))
-                .selected(self.step == step)
-                .label(format!("{}  {}", step.number(), step.label()))
-                .tooltip(step.hint())
-                .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
-                    console.step = step;
-                    cx.notify();
-                }))
-                .into_any_element()
-            })
-            .collect::<Vec<_>>();
+    /// Left navigation rail: icon plus label, tight spacing.
+    fn nav_rail(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let mut column = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .w(px(184.0))
+            .flex_none()
+            .px_3()
+            .py_3()
+            .bg(colors.sidebar)
+            .border_r_1()
+            .border_color(colors.border);
+        for view in View::ALL {
+            let active = self.view == view;
+            column = column.child(
+                Button::new(SharedString::from(format!("nav:{}", view.label())))
+                    .ghost()
+                    .w_full()
+                    .h(px(30.0))
+                    .justify_start()
+                    .gap_2()
+                    .selected(active)
+                    .icon(Icon::default().path(view.icon()))
+                    .label(view.label())
+                    .tooltip(view.hint())
+                    .accessibility_label(format!("{}, {}", view.label(), view.hint()))
+                    .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
+                        console.view = view;
+                        cx.notify();
+                    })),
+            );
+        }
+        column
+    }
 
+    /// Workflow stepper. Reads as tabs, not a wizard diagram.
+    fn stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let mut row = div().flex().flex_row().gap_1();
+        for (index, step) in WorkspaceStep::ALL.iter().enumerate() {
+            if index > 0 {
+                row = row.child(label("/", 10.0, colors.text_faint));
+            }
+            row = row.child(
+                Button::new(SharedString::from(format!("step:{}", step.number())))
+                    .small()
+                    .selected(self.step == *step)
+                    .label(step.label())
+                    .tooltip(step.hint())
+                    .accessibility_label(format!("Step {}: {}", step.number(), step.label()))
+                    .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
+                        console.step = *step;
+                        cx.notify();
+                    })),
+            );
+        }
+        div().w_full().px_5().pt_4().pb_1().child(row)
+    }
+
+    /// Home: a landing surface with something to do, not a form in waiting.
+    fn section_header(&self, colors: &Colors, title: &'static str, hint: &'static str) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(label(title, 18.0, colors.text))
+            .child(label(hint, 11.0, colors.text_muted))
+    }
+
+    fn models_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
+        let loaded = self.session.is_some();
+        let current = self.model_path.trim();
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .w_full()
+            .max_w(px(760.0))
+            .px_5()
+            .pt_6()
+            .child(self.section_header(
+                colors,
+                "Models",
+                "Local GGUF files. Nothing leaves this machine.",
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_4()
+                    .rounded(px(8.0))
+                    .bg(colors.surface)
+                    .border_1()
+                    .border_color(colors.border)
+                    .child(label("Current", 9.0, colors.text_faint))
+                    .child(mono(
+                        if current.is_empty() {
+                            "No model selected"
+                        } else {
+                            current
+                        },
+                        11.0,
+                        colors.text,
+                    ))
+                    .child(label(
+                        if loaded {
+                            "Loaded and resident"
+                        } else {
+                            "Not loaded yet"
+                        },
+                        10.0,
+                        if loaded { colors.ok } else { colors.text_muted },
+                    )),
+            )
+    }
+
+    fn runs_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
+        let mut list = div().flex().flex_col().gap_2();
+        if self.history.is_empty() {
+            list = list.child(
+                div()
+                    .p_6()
+                    .rounded(px(8.0))
+                    .bg(colors.surface)
+                    .border_1()
+                    .border_color(colors.border)
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(label("No runs yet", 12.0, colors.text))
+                    .child(label(
+                        "Experiments you run in this session are listed here.",
+                        10.0,
+                        colors.text_faint,
+                    )),
+            );
+        } else {
+            for entry in self.history.iter().rev() {
+                list = list.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_3()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(6.0))
+                        .bg(colors.surface)
+                        .border_1()
+                        .border_color(if entry.ok {
+                            colors.border
+                        } else {
+                            colors.err_box_border
+                        })
+                        .child(label(format!("Run #{}", entry.number), 11.0, colors.text))
+                        .child(label(entry.summary.as_str(), 10.0, colors.text_muted))
+                        .child(div().w_full())
+                        .child(mono(entry.outcome.as_str(), 10.0, colors.text_faint)),
+                );
+            }
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .w_full()
+            .max_w(px(760.0))
+            .px_5()
+            .pt_6()
+            .child(self.section_header(colors, "Runs", "Every experiment run from this session."))
+            .child(list)
+    }
+
+    fn settings_view(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let toggle = cx.listener(|console, _: &ClickEvent, _, cx| {
+            console.cycle_appearance(cx);
+        });
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .w_full()
+            .max_w(px(760.0))
+            .px_5()
+            .pt_6()
+            .child(self.section_header(
+                colors,
+                "Settings",
+                "Appearance and defaults for this console.",
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .p_4()
+                    .rounded(px(8.0))
+                    .bg(colors.surface)
+                    .border_1()
+                    .border_color(colors.border)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(label("Appearance", 11.0, colors.text))
+                            .child(label(
+                                "Currently following the system setting when set to System.",
+                                10.0,
+                                colors.text_faint,
+                            )),
+                    )
+                    .child(div().w_full())
+                    .child(
+                        Button::new("settings-appearance")
+                            .small()
+                            .label(self.appearance.label())
+                            .on_click(toggle),
+                    ),
+            )
+    }
+
+    fn home_view(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let start = cx.listener(|console, _: &ClickEvent, _, cx| {
+            console.view = View::Experiment;
+            console.step = WorkspaceStep::Prompt;
+            cx.notify();
+        });
+        let runs = cx.listener(|console, _: &ClickEvent, _, cx| {
+            console.view = View::Runs;
+            cx.notify();
+        });
+        let models = cx.listener(|console, _: &ClickEvent, _, cx| {
+            console.view = View::Models;
+            cx.notify();
+        });
+        let mut recent = div().flex().flex_col().gap_2();
+        recent = recent.child(label("RECENT RUNS", 9.0, colors.text_faint));
+        if self.history.is_empty() {
+            recent = recent.child(
+                div()
+                    .text_color(colors.text_faint)
+                    .text_size(px(11.0))
+                    .child("No runs yet. Start an experiment and its results will collect here."),
+            );
+        } else {
+            for entry in self.history.iter().rev().take(5) {
+                recent = recent.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(6.0))
+                        .bg(colors.surface)
+                        .border_1()
+                        .border_color(colors.border)
+                        .child(label(format!("Run #{}", entry.number), 11.0, colors.text))
+                        .child(div().w_full())
+                        .child(mono(entry.outcome.as_str(), 10.0, colors.text_muted)),
+                );
+            }
+            recent = recent.child(
+                Button::new("home-all-runs")
+                    .small()
+                    .label("See all runs")
+                    .on_click(runs),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_5()
+            .w_full()
+            .max_w(px(760.0))
+            .px_5()
+            .pt_6()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(label("What do you want to do?", 18.0, colors.text))
+                    .child(label(
+                        "Run a controlled experiment, or pick up where you left off.",
+                        11.0,
+                        colors.text_muted,
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_3()
+                    .child(
+                        Button::new("home-start")
+                            .primary()
+                            .icon(Icon::default().path(icons::PLUS))
+                            .label("New experiment")
+                            .accessibility_label("Start a new experiment")
+                            .on_click(start),
+                    )
+                    .child(
+                        Button::new("home-models")
+                            .icon(Icon::default().path(icons::MODEL))
+                            .label("Manage models")
+                            .on_click(models),
+                    ),
+            )
+            .child(recent)
+    }
+
+    /// Contextual inspector. Only present while the user has it open, and it
+    /// reports the state of the current run rather than repeating it.
+    fn inspector(&self, colors: &Colors, _cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id(ElementId::Name(SharedString::from("workflow-rail")))
+            .flex_col()
+            .w(px(216.0))
+            .flex_none()
+            .h_full()
+            .overflow_y_scroll()
+            .bg(colors.sidebar)
+            .border_r_1()
+            .border_color(colors.border)
+            .p_3()
+            .gap_4()
+    }
+
+    /// Starting points for a new experiment.
+    ///
+    /// These were in the left rail, which made them look like a mode switch.
+    /// They are choices for starting work, so they belong on the Prompt step
+    /// where the work starts.
+    fn presets_block(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         let presets = [
             (
                 Preset::ZeroMiddle,
@@ -1548,91 +1944,12 @@ impl Console {
                 "Arabic morphology",
                 "Matched-span experiment using an Arabic prompt",
             ),
-        ]
-        .into_iter()
-        .map(|(preset, title, hint)| self.preset_card(colors, preset, title, hint, cx))
-        .collect::<Vec<_>>();
-
-        let history: Vec<AnyElement> = if self.history.is_empty() {
-            vec![label(
-                "Completed experiments will appear here during this session.",
-                9.0,
-                colors.text_faint,
-            )
-            .into_any_element()]
-        } else {
-            self.history
-                .iter()
-                .map(|entry| {
-                    div()
-                        .w_full()
-                        .px_2()
-                        .py_2()
-                        .rounded_md()
-                        .bg(colors.surface_raised)
-                        .flex_col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .child(mono(
-                                    format!("RUN {:02}", entry.number),
-                                    8.5,
-                                    colors.text_faint,
-                                ))
-                                .child(div().w_full())
-                                .child(status_dot(
-                                    if entry.ok { colors.ok } else { colors.err },
-                                    false,
-                                )),
-                        )
-                        .child(label(entry.summary.clone(), 10.0, colors.text))
-                        .child(label(
-                            entry.outcome.clone(),
-                            9.0,
-                            if entry.ok { colors.ok } else { colors.err },
-                        ))
-                        .into_any_element()
-                })
-                .collect()
-        };
-
-        div()
-            .id(ElementId::Name(SharedString::from("workflow-rail")))
-            .flex_col()
-            .w(px(216.0))
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .bg(colors.sidebar)
-            .border_r_1()
-            .border_color(colors.border)
-            .p_3()
-            .gap_4()
-            .child(
-                div()
-                    .flex_col()
-                    .gap_1()
-                    .child(label("EXPERIMENT WORKFLOW", 9.0, colors.text_faint))
-                    .children(steps),
-            )
-            .child(rule_h(colors))
-            .child(
-                div()
-                    .flex_col()
-                    .gap_2()
-                    .child(label("START FROM A PRESET", 9.0, colors.text_faint))
-                    .children(presets),
-            )
-            .child(rule_h(colors))
-            .child(
-                div()
-                    .flex_col()
-                    .gap_2()
-                    .child(label("RECENT RUNS", 9.0, colors.text_faint))
-                    .children(history),
-            )
+        ];
+        div().flex().flex_row().gap_2().children(
+            presets
+                .into_iter()
+                .map(|(preset, title, hint)| self.preset_card(colors, preset, title, hint, cx)),
+        )
     }
 
     fn preset_card(
@@ -1828,6 +2145,15 @@ impl Console {
                         11.0,
                         colors.text_muted,
                     )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .mb_4()
+                    .child(label("START FROM A PRESET", 9.0, colors.text_faint))
+                    .child(self.presets_block(colors, cx)),
             )
             .child(panel(
                 colors,
@@ -2120,6 +2446,13 @@ impl Console {
                             &self.site_options,
                             cx,
                         ),
+                    ))
+                    // The picker says "After MLP block"; this line carries the
+                    // exact frozen identifier for anyone reproducing a run.
+                    .child(mono(
+                        format!("ember.hook.v1 \u{00b7} {}", site_contract_name(&self.site)),
+                        8.5,
+                        colors.text_faint,
                     ))
                     .when(per_layer(&self.site), |content| {
                         content.child(field(colors, "MODEL LAYER", self.layer_stepper(colors, cx)))
@@ -3124,6 +3457,25 @@ impl Console {
     }
 
     fn statusbar(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        // Home, Models, Runs and Settings have no experiment to advance, so the
+        // status line reports the surface instead of offering a run button that
+        // would do nothing sensible.
+        if self.view != View::Experiment {
+            return div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .h(px(40.0))
+                .w_full()
+                .bg(colors.surface)
+                .border_t_1()
+                .border_color(colors.border)
+                .child(status_dot(colors.ok, false))
+                .child(label(self.view.hint(), 10.5, colors.text_muted))
+                .child(div().w_full());
+        }
         let (dot, status_text) = match self.status {
             Status::Idle => (colors.ok, "Ready to run"),
             Status::Preparing => (colors.warn, "Loading the model…"),
@@ -3193,16 +3545,85 @@ impl Console {
 impl Render for Console {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = self.colors();
-        let header = self.header(&colors, cx);
+        let topbar = self.topbar(&colors, cx);
+        let statusbar = self.statusbar(&colors, cx);
+
+        // The content region depends on the destination. Only the experiment
+        // view carries the workflow stepper and the contextual inspector; the
+        // other views are plain pages.
+        let content: AnyElement = match self.view {
+            View::Home => self.home_view(&colors, cx).into_any_element(),
+            View::Models => self.models_view(&colors, cx).into_any_element(),
+            View::Runs => self.runs_view(&colors, cx).into_any_element(),
+            View::Settings => self.settings_view(&colors, cx).into_any_element(),
+            View::Experiment => {
+                let inspector = self.inspector(&colors, cx);
+                // The column is the growing region; the inspector is a fixed
+                // aside beside it. Note the direction is set once here --
+                // re-calling .flex() on this element would silently override
+                // flex_col with a row and squeeze the workspace out.
+                let column = div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .w_full()
+                            .px_5()
+                            .child(self.stepper(&colors, cx))
+                            .child(div().w_full())
+                            .child(
+                                Button::new("toggle-inspector")
+                                    .small()
+                                    .label(if self.inspector_open {
+                                        "Hide inspector"
+                                    } else {
+                                        "Inspector"
+                                    })
+                                    .tooltip("Show the state of the current run")
+                                    .accessibility_label(if self.inspector_open {
+                                        "Hide inspector (currently shown)"
+                                    } else {
+                                        "Show inspector (currently hidden)"
+                                    })
+                                    .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
+                                        console.inspector_open = !console.inspector_open;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(self.main_panel(&colors, cx));
+                if self.inspector_open {
+                    // The inspector is an aside beside the workspace, not a
+                    // band below it: the row is the thing that places them.
+                    div()
+                        .flex()
+                        .flex_row()
+                        .w_full()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .child(column)
+                        .child(div().w(px(268.0)).flex_none().child(inspector))
+                        .into_any_element()
+                } else {
+                    column.into_any_element()
+                }
+            }
+        };
+
         let body = div()
             .flex()
             .flex_row()
             .w_full()
             .flex_1()
             .min_h(px(0.0))
-            .child(self.sidebar(&colors, cx))
-            .child(self.main_panel(&colors, cx));
-        let statusbar = self.statusbar(&colors, cx);
+            .child(self.nav_rail(&colors, cx))
+            .child(content);
 
         div()
             .flex()
@@ -3213,7 +3634,7 @@ impl Render for Console {
             .on_key_down(cx.listener(|console, event: &KeyDownEvent, _window, cx| {
                 console.picker_key(event, cx);
             }))
-            .child(header.flex_none())
+            .child(topbar.flex_none())
             .child(body)
             .child(statusbar.flex_none())
     }
@@ -3641,7 +4062,8 @@ mod kit_tests {
         let console = view.unwrap();
         cx.update_window(handle.into(), |_, window, cx| {
             window.draw(cx).clear(cx);
-            window.click(SharedString::from("workflow-step:2"), cx);
+            window.click(SharedString::from("nav:Experiments"), cx);
+            window.click(SharedString::from("step:2"), cx);
             assert_eq!(console.read(cx).step, WorkspaceStep::Intervention);
             window.click(SharedString::from("operation-card:zero"), cx);
             assert_eq!(console.read(cx).op, "zero");
@@ -3655,7 +4077,7 @@ mod kit_tests {
         })
         .unwrap();
         cx.update_window(handle.into(), |_, window, cx| {
-            window.click(SharedString::from("workflow-step:1"), cx);
+            window.click(SharedString::from("step:1"), cx);
             let input = console.read(cx).inputs.prompt.clone();
             input.update(cx, |input, cx| input.focus_for_test(window, cx));
             window.press(
@@ -3683,7 +4105,11 @@ mod kit_tests {
         .unwrap();
         cx.update_window(handle.into(), |_, window, cx| {
             assert_ne!(console.read(cx).prompt, "مرحبا Ember\nاختبار");
-            window.click(SharedString::from("workflow-step:2"), cx);
+            window.click(SharedString::from("nav:Experiments"), cx);
+            window.click(SharedString::from("step:2"), cx);
+            // The site picker is an advanced control and the panel starts
+            // collapsed, so open it before reaching for the picker.
+            window.click(SharedString::from("advanced-toggle"), cx);
             window.click(SharedString::from("picker:Site"), cx);
         })
         .unwrap();
@@ -3698,7 +4124,10 @@ mod kit_tests {
             |window, _| {
                 window
                     .try_find(SharedString::from("choice:before-logits"))
-                    .is_some_and(|item| item.label() == Some("Before output prediction"))
+                    // Human-facing wording, not the frozen hook identifier:
+                    // the picker shows "Before output head" while the value
+                    // committed to the spec stays "before-logits".
+                    .is_some_and(|item| item.label() == Some("Before output head"))
             },
         )
         .await;
@@ -3710,7 +4139,7 @@ mod kit_tests {
         cx.run_until_parked();
         cx.update_window(handle.into(), |_, window, cx| {
             assert_eq!(console.read(cx).site, "before-logits");
-            window.click(SharedString::from("workflow-step:3"), cx);
+            window.click(SharedString::from("step:3"), cx);
             window.click(SharedString::from("btn:RUN EXPERIMENT"), cx);
             assert_eq!(console.read(cx).status, super::Status::Preparing);
             assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(path) if path == "fixture.gguf"));
@@ -3765,11 +4194,24 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
             ("light", AppearanceMode::Light),
             ("dark", AppearanceMode::Dark),
         ] {
-            for step in WorkspaceStep::ALL {
+            // The app has a shell with several destinations, so the baseline
+            // has to cover the shell and the experiment workspace, not just
+            // the old single screen.
+            for (view, step, inspector) in [
+                (View::Home, WorkspaceStep::Prompt, false),
+                (View::Models, WorkspaceStep::Prompt, false),
+                (View::Runs, WorkspaceStep::Prompt, false),
+                (View::Settings, WorkspaceStep::Prompt, false),
+                (View::Experiment, WorkspaceStep::Prompt, false),
+                (View::Experiment, WorkspaceStep::Intervention, false),
+                (View::Experiment, WorkspaceStep::Review, true),
+            ] {
                 context.update_window(handle.into(), |_, window, cx| {
                     console.update(cx, |console, cx| {
                         console.appearance = mode;
+                        console.view = view;
                         console.step = step;
+                        console.inspector_open = inspector;
                         console.sync_kit_theme(cx);
                         cx.notify();
                     });
@@ -3779,9 +4221,22 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
                 context.update_window(handle.into(), |_, window, cx| {
                     window.draw(cx).clear(cx);
                 })?;
+                let file = match view {
+                    View::Home => "home".to_string(),
+                    View::Models => "models".to_string(),
+                    View::Runs => "runs".to_string(),
+                    View::Settings => "settings".to_string(),
+                    View::Experiment => {
+                        format!(
+                            "experiment-{}{}",
+                            step.number(),
+                            if inspector { "-inspector" } else { "" }
+                        )
+                    }
+                };
                 context
                     .capture_screenshot(handle.into())?
-                    .save(directory.join(format!("{name}-{appearance}-{}.png", step.number())))?;
+                    .save(directory.join(format!("{name}-{appearance}-{file}.png")))?;
             }
         }
         if let Ok(model) = std::env::var("EMBER_GUI_TEST_MODEL") {
