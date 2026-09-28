@@ -188,3 +188,6 @@ artifacts/golden-v03/**/*.bin
 #   ./target/debug/ember gui --render-test-dir docs/screenshots/console
 docs/screenshots/console/
 docs/screenshots/console-shell/
+
+# Local working notes for the current UI pass; not documentation.
+/nextsteps.md

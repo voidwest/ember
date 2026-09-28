@@ -654,6 +654,64 @@ fn token_cell(run: &RunRecord) -> String {
     }
 }
 
+/// Quantisation, read off the filename.
+///
+/// GGUF files are conventionally named `<model>-<quant>.gguf`, so this is a
+/// naming convention rather than a parse of the header. It is a display
+/// nicety: a file that does not follow the convention shows an em dash rather
+/// than a guess, and the loader remains the authority on what a model actually
+/// is.
+fn quant_of(path: &str) -> &'static str {
+    let stem = path.trim_end_matches(".gguf");
+    let Some((_, tail)) = stem.rsplit_once('-') else {
+        return "\u{2014}";
+    };
+    let upper = tail.to_ascii_uppercase();
+    // Q4_K_M, Q8_0, Q6_K, F16, BF16 and friends.
+    if upper.starts_with('Q')
+        && upper[1..]
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        // Leaked deliberately: the set of quant tags is closed and small, and
+        // returning &'static keeps the row builder allocation-free.
+        return Box::leak(upper.into_boxed_str());
+    }
+    match upper.as_str() {
+        "F16" | "F32" | "BF16" | "F8" => "\u{2014}",
+        _ => "\u{2014}",
+    }
+}
+
+/// Human-readable file size, binary units, one decimal.
+fn fmt_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+/// Keep the informative end of a path, dropping the front.
+///
+/// `/Users/someone/very/deep/place/model-q8.gguf` should read as
+/// `…/place/model-q8.gguf`: the filename is the part that identifies it, and a
+/// right-truncation would throw exactly that away.
+fn truncate_path_start(path: &str, max: usize) -> String {
+    if path.chars().count() <= max {
+        return path.to_string();
+    }
+    let keep: String = path.chars().skip(path.chars().count() - max + 1).collect();
+    format!("\u{2026}{keep}")
+}
+
 /// Coarse relative time for a run row.
 ///
 /// Deliberately not a full date: the table is scanned, and "2m" answers the
@@ -2023,52 +2081,142 @@ impl Console {
             .child(label(hint.to_string(), Type::BODY, colors.text_muted))
     }
 
+    /// Models: one row per discovered file, name first.
+    ///
+    /// This page was a single card whose entire content was the absolute path
+    /// `/Users/west/Projects/ember/Llama-3.2-1B-Instruct-Q8_0.gguf`. The design
+    /// brief is explicit that a page must not be centred on filesystem paths and
+    /// that each model should read as a proper object, and a path is neither:
+    /// it is the one string on the screen that means nothing to anyone reading
+    /// over your shoulder.
+    ///
+    /// So the name leads, the path demotes to a secondary line that truncates
+    /// from the left -- the end of a path is the informative end, and cutting
+    /// the start is what keeps the filename visible. Size comes from the
+    /// filesystem, quant from the filename, and last-used from the store, so
+    /// nothing here is invented.
     fn models_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
         let loaded = self.session.is_some();
         let current = self.model_path.trim();
+        let paths: Vec<&String> = self.model_options.iter().collect();
+
+        let mut rows = div().flex().flex_col();
+        if paths.is_empty() {
+            rows = rows.child(
+                div()
+                    .py(px(Space::XXL))
+                    .child(label("No models found", Type::SUBSECTION, colors.text))
+                    .child(label(
+                        "Point Ember at a directory of GGUF files to get started.",
+                        Type::LABEL,
+                        colors.text_faint,
+                    )),
+            );
+        }
+        for path in paths.iter() {
+            let name = model_display_name(path);
+            let is_current = path.as_str() == current;
+            let size = std::fs::metadata(path).map(|meta| meta.len()).ok();
+            let last_used = self.store.model_last_used(path);
+            rows = rows.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(Space::LG))
+                    .py(px(Space::MD))
+                    .border_b_1()
+                    .border_color(colors.border)
+                    // Name, then the metadata that makes it a model rather
+                    // than a filename: quant, size, and whether it is the one
+                    // currently in play.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(Space::SM))
+                                    .when(is_current, |row| {
+                                        row.child(
+                                            div()
+                                                .w(px(3.0))
+                                                .h(px(3.0))
+                                                .rounded(px(Radius::SM))
+                                                .bg(colors.accent),
+                                        )
+                                    })
+                                    .child(label(name, Type::BODY, colors.text)),
+                            )
+                            // Left-truncated: the tail of a path identifies the
+                            // file, so that is the end worth keeping.
+                            .child(mono(
+                                format!("…{}", truncate_path_start(path, 64)),
+                                Type::META,
+                                colors.text_faint,
+                            )),
+                    )
+                    .child(mono(
+                        quant_of(path).to_string(),
+                        Type::META,
+                        colors.text_muted,
+                    ))
+                    .child(
+                        div().w(px(76.0)).flex_none().child(mono(
+                            size.map(fmt_bytes)
+                                .unwrap_or_else(|| "\u{2014}".to_string()),
+                            Type::META,
+                            colors.text_muted,
+                        )),
+                    )
+                    .child(div().w(px(96.0)).flex_none().child(label(
+                        if is_current && loaded {
+                            "Loaded"
+                        } else if is_current {
+                            "Selected"
+                        } else {
+                            "Available"
+                        },
+                        Type::LABEL,
+                        if is_current {
+                            colors.accent
+                        } else {
+                            colors.text_faint
+                        },
+                    )))
+                    .child(
+                        div().w(px(64.0)).flex_none().child(label(
+                            last_used
+                                .map(relative_time)
+                                .unwrap_or_else(|| "Never".into()),
+                            Type::META,
+                            colors.text_faint,
+                        )),
+                    ),
+            );
+        }
+
         div()
             .flex()
             .flex_col()
-            .gap(px(Space::XXL))
+            .gap(px(Space::XL))
             .w_full()
-            .max_w(px(760.0))
             .px_5()
             .pt_6()
             .child(self.section_header(
                 colors,
                 "Models",
-                "Local GGUF files. Nothing leaves this machine.",
+                &format!(
+                    "{} local GGUF file{}. Nothing leaves this machine.",
+                    paths.len(),
+                    if paths.len() == 1 { "" } else { "s" }
+                ),
             ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::SM))
-                    .p(px(Space::LG))
-                    .rounded(px(8.0))
-                    .bg(colors.surface)
-                    .border_1()
-                    .border_color(colors.border)
-                    .child(label("Current", Type::LABEL, colors.text_faint))
-                    .child(mono(
-                        if current.is_empty() {
-                            "No model selected"
-                        } else {
-                            current
-                        },
-                        Type::BODY,
-                        colors.text,
-                    ))
-                    .child(label(
-                        if loaded {
-                            "Loaded and resident"
-                        } else {
-                            "Not loaded yet"
-                        },
-                        Type::LABEL,
-                        if loaded { colors.ok } else { colors.text_muted },
-                    )),
-            )
+            .child(rows)
     }
 
     /// Runs: the kit's `DataTable` over the store.
@@ -2185,7 +2333,16 @@ impl Console {
                             .gap(px(Space::XS))
                             .child(label("Appearance", Type::BODY, colors.text))
                             .child(label(
-                                "Currently following the system setting when set to System.",
+                                // Says what is true for the current mode. The
+                                // previous line described System while the badge
+                                // beside it read LIGHT, so on every screen that
+                                // was not System it claimed to be following a
+                                // setting it was ignoring.
+                                match self.appearance {
+                                    AppearanceMode::System => "Following your operating system.",
+                                    AppearanceMode::Dark => "Always dark.",
+                                    AppearanceMode::Light => "Always light.",
+                                },
                                 Type::LABEL,
                                 colors.text_faint,
                             )),
