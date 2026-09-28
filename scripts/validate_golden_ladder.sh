@@ -10,7 +10,7 @@
 # Per-rung flow:
 #   1. ember native-logits-reference on the ladder file (compressed
 #      path, --k-strategy auto) -> logits.npy [samples, vocab]
-#   2. llama-cpp-python reference extraction -> reference-logits.npy
+#   2. pinned llama.cpp C harness reference extraction -> reference-logits.npy
 #   3. numpy comparison with the Gate C numbers (contract section 9,
 #      amended 2026-08-03 with the evidence-based standard):
 #      top-1 agreement 100%, cosine >= 1 - 1e-3,
@@ -33,11 +33,57 @@ LADDER="${LADDER:-$REPO_ROOT/models/v03-ladder}"
 WORKDIR="${WORKDIR:-$REPO_ROOT/artifacts/golden-v03}"
 PYTHON_BIN="${PYTHON:-$REPO_ROOT/.venv/bin/python}"
 LLAMA_CPP_DIR="${LLAMA_CPP_DIR:-$HOME/.cache/ember/llama.cpp}"
-LOGITS_DUMP="${LOGITS_DUMP:-$WORKDIR/bin/logits_dump}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --workdir) WORKDIR="${2:?--workdir needs a directory}"; shift 2 ;;
+    *) echo "unknown argument: $1" >&2; exit 1 ;;
+  esac
+done
+LOGITS_DUMP="$WORKDIR/bin/logits_dump"
 
 [[ -x "$EMBER" ]] || { echo "Ember executable not found: $EMBER" >&2; exit 1; }
 [[ -d "$LADDER" ]] || { echo "ladder not found: $LADDER (run scripts/quantize_ladder.sh)" >&2; exit 1; }
 command -v "$PYTHON_BIN" >/dev/null 2>&1 || { echo "Python not found: $PYTHON_BIN" >&2; exit 1; }
+
+# Check the entire matrix before running any rung. Missing files or a different
+# quantization build are failures, never a successful empty/partial ladder.
+"$PYTHON_BIN" "$REPO_ROOT/scripts/validate_ladder_inputs.py" --models-dir "$LADDER"
+
+# Rebuild the reference harness for every run and record the actual inputs.
+# A historical output directory must never be silently replaced.
+PIN="$("$PYTHON_BIN" -c 'import sys; sys.path.insert(0, sys.argv[1]); from validate_ladder_inputs import QUANTIZER_COMMIT; print(QUANTIZER_COMMIT)' "$REPO_ROOT/scripts")"
+"$PYTHON_BIN" "$REPO_ROOT/scripts/reference_build.py" verify "$LLAMA_CPP_DIR" "$PIN"
+mkdir -p "$(dirname "$WORKDIR")"
+mkdir "$WORKDIR" || { echo "use a new workdir to preserve previous evidence: $WORKDIR" >&2; exit 1; }
+mkdir "$WORKDIR/bin"
+CXX="${CXX:-c++}"
+"$CXX" -O2 -Wno-deprecated-declarations -x c++ "$REPO_ROOT/tools/logits_dump.c" \
+  -I "$LLAMA_CPP_DIR/include" -I "$LLAMA_CPP_DIR/ggml/include" \
+  -I "$LLAMA_CPP_DIR/build/ggml/include" \
+  -L "$LLAMA_CPP_DIR/build/bin" -lllama -lggml -lggml-cpu -lggml-base \
+  -Wl,-rpath,"$LLAMA_CPP_DIR/build/bin" -o "$LOGITS_DUMP"
+"$PYTHON_BIN" - "$REPO_ROOT" "$LLAMA_CPP_DIR" "$WORKDIR" "$EMBER" "$PIN" <<'PYEOF'
+import hashlib, json, pathlib, platform, subprocess, sys
+repo, reference, work, ember, pin = map(pathlib.Path, sys.argv[1:])
+def identity(path):
+    with path.open("rb") as handle:
+        return {"path": str(path.resolve()), "sha256": hashlib.file_digest(handle, "sha256").hexdigest()}
+libs = sorted((reference / "build/bin").glob("*.dylib")) + sorted((reference / "build/bin").glob("*.so*"))
+record = {
+    "platform": platform.platform(), "reference_commit": str(pin),
+    "ember_commit": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(),
+    "ember_dirty": bool(subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"])),
+    "ember": identity(ember), "harness": identity(work / "bin/logits_dump"),
+    "harness_source": identity(repo / "tools/logits_dump.c"),
+    "reference_cmake_cache": identity(reference / "build/CMakeCache.txt"),
+    "reference_build_stamp": identity(reference / "ember-reference-build.json"),
+    "reference_libraries": [identity(p) for p in libs],
+    "ladder_manifest": identity(repo / "models/v03-ladder/ladder-manifest.json"),
+    "tokenizers": [identity(repo / name) for name in ("tokenizer.json", "tokenizer-qwen2.5.json")],
+}
+(work / "provenance.json").write_text(json.dumps(record, indent=2) + "\n")
+PYEOF
 
 # Per-family gates from the measured envelope (contract Gate C, third
 # amendment): llama rungs observed max 0.81 / mean 0.131 / cosine 0.9989;
@@ -55,9 +101,8 @@ run_rung() {
   if [[ "$family" == qwen* ]]; then
     family_max="${MAX_DIFF:-2.0}"; family_mean="${MEAN_DIFF:-0.3}"; family_cosine="${MIN_COSINE:-0.995}"
   fi
-  [[ -f "$model" ]] || { echo "skip: $model missing" >&2; return 0; }
-  rm -rf "$run"
-  mkdir -p "$run"
+  [[ -f "$model" ]] || { echo "missing pinned model: $model" >&2; exit 1; }
+  mkdir "$run"
 
   "$PYTHON_BIN" - "$run" <<'PYEOF'
 import json, sys
@@ -101,18 +146,6 @@ PYEOF
   "$EMBER" --k-strategy auto native-logits-reference --config "$run/config.json" >/dev/null
 
   echo "== golden: $family-$rung (pinned llama.cpp reference) =="
-  mkdir -p "$WORKDIR/bin"
-  if [[ ! -x "$LOGITS_DUMP" ]]; then
-    g++ -O2 -Wno-deprecated-declarations -x c++ -c "$REPO_ROOT/tools/logits_dump.c" \
-      -I "$LLAMA_CPP_DIR/include" -I "$LLAMA_CPP_DIR/ggml/include" \
-      -I "$LLAMA_CPP_DIR/build/ggml/include" -o "$WORKDIR/bin/logits_dump.o"
-    g++ "$WORKDIR/bin/logits_dump.o" \
-      "$LLAMA_CPP_DIR/build/bin/libllama.so" \
-      "$LLAMA_CPP_DIR/build/bin/libggml.so" \
-      "$LLAMA_CPP_DIR/build/bin/libggml-cpu.so" \
-      "$LLAMA_CPP_DIR/build/bin/libggml-base.so" \
-      -Wl,-rpath,"$LLAMA_CPP_DIR/build/bin" -o "$LOGITS_DUMP"
-  fi
   "$PYTHON_BIN" - "$run" <<'PYEOF2'
 import json, sys
 run = sys.argv[1]
@@ -149,6 +182,8 @@ min_cosine_gate = float(sys.argv[5]) if len(sys.argv) > 5 else 0.999
 ember = np.load(f"{run}/out/logits.npy", allow_pickle=False)
 reference = np.load(f"{run}/reference-logits.npy", allow_pickle=False)
 assert ember.shape == reference.shape, f"shape mismatch: {ember.shape} vs {reference.shape}"
+assert ember.ndim == 2 and ember.shape[0] == 2 and ember.shape[1] > 0, f"invalid logits matrix: {ember.shape}"
+assert np.isfinite(ember).all() and np.isfinite(reference).all(), "non-finite logits"
 n_samples = ember.shape[0]
 
 def top1(logits):
@@ -207,7 +242,7 @@ for spec in "llama-3.2-1b tokenizer.json llama" "qwen2.5-1.5b tokenizer-qwen2.5.
   set -- $spec
   family="$1"; tokenizer="$2"; arch="$3"
   for rung in q8_0 q6_k q4_k_m; do
-    run_rung "$family" "$tokenizer" "$arch" "$rung"
+    run_rung "$family" "$REPO_ROOT/$tokenizer" "$arch" "$rung"
   done
 done
 
