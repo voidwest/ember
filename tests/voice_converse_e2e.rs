@@ -23,6 +23,13 @@
 //! EMBER_TTS_TOKENIZER     its tokenizer.json
 //! EMBER_TTS_CODEC         wavtokenizer decoder GGUF
 //! ```
+//!
+//! Add `EMBER_CONVERSE_E2E_REQUIRED=1` to fail instead of skipping when the
+//! fixture is absent, so a release job cannot report green without having
+//! driven the real chain. See `tests/common/mod.rs`.
+
+#[path = "common/mod.rs"]
+mod common;
 
 use ember::duplex::{capture_ring, playback_ring, DuplexController, EnergyVad};
 use ember::multimodal::converse::{
@@ -43,23 +50,29 @@ struct Fixture {
 }
 
 fn fixture() -> Option<Fixture> {
-    if std::env::var("EMBER_CONVERSE_E2E").ok().as_deref() != Some("1") {
-        return None;
+    match common::gate(
+        "EMBER_CONVERSE_E2E_REQUIRED",
+        Some("EMBER_CONVERSE_E2E"),
+        &[
+            "EMBER_VOICE_TEXT_GGUF",
+            "EMBER_VOICE_AUDIO_GGUF",
+            "EMBER_VOICE_TOKENIZER",
+            "EMBER_TTS_GGUF",
+            "EMBER_TTS_TOKENIZER",
+            "EMBER_TTS_CODEC",
+        ],
+    ) {
+        Ok(Some(paths)) => Some(Fixture {
+            text_gguf: paths[0].clone(),
+            audio_gguf: paths[1].clone(),
+            tokenizer: paths[2].clone(),
+            tts_gguf: paths[3].clone(),
+            tts_tokenizer: paths[4].clone(),
+            codec: paths[5].clone(),
+        }),
+        Ok(None) => None,
+        Err(why) => panic!("ember voice_converse_e2e: {why}"),
     }
-    let get = |k: &str| -> Option<PathBuf> {
-        std::env::var(k)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    Some(Fixture {
-        text_gguf: get("EMBER_VOICE_TEXT_GGUF")?,
-        audio_gguf: get("EMBER_VOICE_AUDIO_GGUF")?,
-        tokenizer: get("EMBER_VOICE_TOKENIZER")?,
-        tts_gguf: get("EMBER_TTS_GGUF")?,
-        tts_tokenizer: get("EMBER_TTS_TOKENIZER")?,
-        codec: get("EMBER_TTS_CODEC")?,
-    })
 }
 
 /// One shared set of loaded models per process (expensive-fixture pattern;

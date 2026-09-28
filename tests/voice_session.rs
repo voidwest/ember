@@ -13,6 +13,14 @@
 //!
 //! Hermetic `cargo test` runs skip them; the session-2 report records the
 //! executed run against Llama-3.2-1B-Instruct-Q8_0 + ultravox audio tower f32.
+//!
+//! The streaming-speech tests have their own switch (`EMBER_TTS_E2E=1` with
+//! `EMBER_TTS_GGUF` / `EMBER_TTS_TOKENIZER` / `EMBER_TTS_CODEC`). Both
+//! groups accept a matching `*_REQUIRED=1` flag to fail instead of skipping;
+//! see `tests/common/mod.rs`.
+
+#[path = "common/mod.rs"]
+mod common;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -25,20 +33,23 @@ struct VoiceFixture {
 }
 
 fn fixture() -> Option<VoiceFixture> {
-    if std::env::var("EMBER_VOICE_E2E").ok().as_deref() != Some("1") {
-        return None;
+    match common::gate(
+        "EMBER_VOICE_E2E_REQUIRED",
+        Some("EMBER_VOICE_E2E"),
+        &[
+            "EMBER_VOICE_TEXT_GGUF",
+            "EMBER_VOICE_AUDIO_GGUF",
+            "EMBER_VOICE_TOKENIZER",
+        ],
+    ) {
+        Ok(Some(paths)) => Some(VoiceFixture {
+            text_gguf: paths[0].clone(),
+            audio_gguf: paths[1].clone(),
+            tokenizer: paths[2].clone(),
+        }),
+        Ok(None) => None,
+        Err(why) => panic!("ember voice_session: {why}"),
     }
-    let get = |k: &str| -> Option<PathBuf> {
-        std::env::var(k)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    Some(VoiceFixture {
-        text_gguf: get("EMBER_VOICE_TEXT_GGUF")?,
-        audio_gguf: get("EMBER_VOICE_AUDIO_GGUF")?,
-        tokenizer: get("EMBER_VOICE_TOKENIZER")?,
-    })
 }
 
 /// One shared loaded model for the whole test binary (sessions borrow it).
@@ -305,20 +316,15 @@ fn provisional_transcript_never_touches_committed_state() {
 // ---------------------------------------------------------------------------
 
 fn tts_fixture() -> Option<(PathBuf, PathBuf, PathBuf)> {
-    if std::env::var("EMBER_TTS_E2E").ok().as_deref() != Some("1") {
-        return None;
+    match common::gate(
+        "EMBER_TTS_E2E_REQUIRED",
+        Some("EMBER_TTS_E2E"),
+        &["EMBER_TTS_GGUF", "EMBER_TTS_TOKENIZER", "EMBER_TTS_CODEC"],
+    ) {
+        Ok(Some(paths)) => Some((paths[0].clone(), paths[1].clone(), paths[2].clone())),
+        Ok(None) => None,
+        Err(why) => panic!("ember voice_session (tts): {why}"),
     }
-    let get = |k: &str| -> Option<PathBuf> {
-        std::env::var(k)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    Some((
-        get("EMBER_TTS_GGUF")?,
-        get("EMBER_TTS_TOKENIZER")?,
-        get("EMBER_TTS_CODEC")?,
-    ))
 }
 
 static TTS_MODEL: std::sync::OnceLock<std::sync::Mutex<ember::tts::outetts::OuteTts>> =

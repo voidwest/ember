@@ -8,20 +8,29 @@
 //! forms, combining marks, zero-width characters, and bidi marks. The gate
 //! is exact id equality — no normalization may happen anywhere in ember's
 //! path.
+//!
+//! Set `EMBER_TOK_PARITY_REQUIRED=1` to fail instead of skipping when the
+//! reference dump is absent. See `tests/common/mod.rs`.
 
 use serde_json::Value;
 
+#[path = "common/mod.rs"]
+mod common;
+
 #[test]
 fn arabic_tokenizer_parity_matches_hf_reference() {
-    let Ok(json_path) = std::env::var("EMBER_TOK_PARITY_JSON") else {
-        eprintln!("skipping: set EMBER_TOK_PARITY_JSON (+ EMBER_TOK_PARITY=1)");
+    let Some(paths) = (match common::gate(
+        "EMBER_TOK_PARITY_REQUIRED",
+        Some("EMBER_TOK_PARITY"),
+        &["EMBER_TOK_PARITY_JSON"],
+    ) {
+        Ok(paths) => paths,
+        Err(why) => panic!("ember arabic_tokenizer parity: {why}"),
+    }) else {
+        eprintln!("skipping: set EMBER_TOK_PARITY=1 (+ EMBER_TOK_PARITY_JSON)");
         return;
     };
-    if std::env::var("EMBER_TOK_PARITY").ok().as_deref() != Some("1") {
-        eprintln!("skipping: set EMBER_TOK_PARITY=1");
-        return;
-    }
-    let raw = std::fs::read_to_string(&json_path).expect("read parity json");
+    let raw = std::fs::read_to_string(&paths[0]).expect("read parity json");
     let dump: Value = serde_json::from_str(&raw).expect("parse parity json");
     let tok_path = dump["tokenizer"].as_str().expect("tokenizer path");
 
@@ -85,14 +94,12 @@ fn arabic_roundtrip_preserves_text_exactly() {
         "ﻟﻐﺔ ﻋﺮﺑﻴﺔ",
         "لا لأ لإ لآ",
     ];
-    let tok =
-        ember::tokenizer::EmberTokenizer::from_file("/home/west/ember-work/llama32/tokenizer.json")
-            .or_else(|_| {
-                let p = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
-                    .join("tokenizer.json");
-                ember::tokenizer::EmberTokenizer::from_file(p)
-            })
-            .expect("load a tokenizer for roundtrip test");
+    // The tracked repo-root tokenizer, anchored to the crate directory so the
+    // test is independent of both the host and the working directory.
+    let tok = {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tokenizer.json");
+        ember::tokenizer::EmberTokenizer::from_file(p).expect("load a tokenizer for roundtrip test")
+    };
     for text in texts {
         let ids = tok.encode(text).expect("encode");
         let back = tok.decode(&ids).expect("decode");

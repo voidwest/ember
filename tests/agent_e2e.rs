@@ -12,6 +12,13 @@
 //!
 //! Hermetic `cargo test` runs skip them; the Phase 1 report records the
 //! executed run against Llama-3.2-1B-Instruct-Q8_0.
+//!
+//! Add `EMBER_AGENT_E2E_REQUIRED=1` to convert a missing fixture from a
+//! silent skip into a failure. Release and pre-tag CI sets it so a green run
+//! is evidence the suite actually executed. See `tests/common/mod.rs`.
+
+#[path = "common/mod.rs"]
+mod common;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -30,19 +37,21 @@ struct Fixture {
 }
 
 fn fixture() -> Option<Fixture> {
-    if std::env::var("EMBER_AGENT_E2E").ok().as_deref() != Some("1") {
-        return None;
+    // Fail-closed: with EMBER_AGENT_E2E_REQUIRED=1 a missing fixture is a
+    // failure, not a skip, so a release job cannot report green without
+    // having actually driven the loop against real weights.
+    match common::gate(
+        "EMBER_AGENT_E2E_REQUIRED",
+        Some("EMBER_AGENT_E2E"),
+        &["EMBER_AGENT_MODEL", "EMBER_AGENT_TOKENIZER"],
+    ) {
+        Ok(Some(paths)) => Some(Fixture {
+            model: paths[0].clone(),
+            tokenizer: paths[1].clone(),
+        }),
+        Ok(None) => None,
+        Err(why) => panic!("ember agent_e2e: {why}"),
     }
-    let get = |k: &str| -> Option<PathBuf> {
-        std::env::var(k)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    Some(Fixture {
-        model: get("EMBER_AGENT_MODEL")?,
-        tokenizer: get("EMBER_AGENT_TOKENIZER")?,
-    })
 }
 
 #[test]
