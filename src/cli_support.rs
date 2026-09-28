@@ -260,9 +260,9 @@ pub(crate) fn behavior_env_snapshot() -> BTreeMap<String, Option<String>> {
 }
 
 /// The canonical execution identity: a sorted JSON object of every
-/// output-affecting input of a run. Field order is irrelevant (the serde_json
-/// Map is BTreeMap-backed); volatile metadata (timestamps, argv, paths) is
-/// excluded so the digest is stable across identical runs and sensitive to
+/// output-affecting input of a run. The v2 digest sorts every object recursively;
+/// volatile metadata (timestamps and argv) is excluded so the digest is
+/// stable across identical runs and sensitive to
 /// any input that would change the output.
 pub(crate) fn execution_identity_canonical(
     args: &Args,
@@ -274,7 +274,7 @@ pub(crate) fn execution_identity_canonical(
     let mut canonical: BTreeMap<String, serde_json::Value> = BTreeMap::new();
     canonical.insert(
         "schema".to_string(),
-        serde_json::json!("execution-identity-v1"),
+        serde_json::json!(crate::cli_manifest::EXECUTION_IDENTITY_SCHEMA),
     );
     canonical.insert(
         "binary".to_string(),
@@ -370,17 +370,14 @@ pub(crate) fn execution_identity_canonical(
         serde_json::Value::Object(mode.into_iter().collect()),
     );
 
-    // serde_json is compiled with preserve_order in this crate, so the Map is
-    // an IndexMap: build from the BTreeMap so keys serialize in sorted order,
-    // which is what makes the digest canonical and round-trip-stable.
-    serde_json::Value::Object(canonical.into_iter().collect())
+    // preserve_order also affects nested json! objects. Sort recursively for v2.
+    crate::cli_evidence::sort_value(&serde_json::Value::Object(canonical.into_iter().collect()))
 }
 
-/// SHA-256 over the compact canonical identity JSON. Deterministic because
-/// every nested object is BTreeMap-backed (sorted keys).
+/// SHA-256 using the identity version's canonical encoding.
 pub(crate) fn execution_identity_digest(canonical: &serde_json::Value) -> String {
-    let bytes = serde_json::to_vec(canonical).expect("canonical identity serializes");
-    sha256_bytes(&bytes)
+    crate::cli_manifest::recompute_identity_sha256(canonical)
+        .expect("writer constructs a supported execution identity")
 }
 
 pub(crate) fn build_run_manifest(
@@ -447,7 +444,7 @@ pub(crate) fn build_run_manifest(
         "created_at_unix": unix_timestamp(),
         "command_argv": env::args().collect::<Vec<_>>(),
         "identity": {
-            "schema": "execution-identity-v1",
+            "schema": crate::cli_manifest::EXECUTION_IDENTITY_SCHEMA,
             "sha256": identity_sha256,
             "canonical": identity_canonical,
         },
@@ -532,6 +529,9 @@ fn cpu_features_detected() -> Vec<&'static str> {
         if std::arch::is_aarch64_feature_detected!("neon") {
             features.push("neon");
         }
+        if std::arch::is_aarch64_feature_detected!("dotprod") {
+            features.push("dotprod");
+        }
         if std::arch::is_aarch64_feature_detected!("fp16") {
             features.push("fp16");
         }
@@ -563,6 +563,47 @@ pub(crate) fn token_audit_json(
         "offset_unit": "unicode_character_index",
         "encode_with_offsets_matches_encode": true,
     })
+}
+
+/// Exit code used by verification commands (`kv compare`, `diff`,
+/// `score-batch`) when their recorded verdict is FAIL. Documented in
+/// `docs/usage.md` (exit codes).
+pub(crate) const EXIT_VERIFICATION_FAILED: i32 = 3;
+
+/// Exit code used when the user cancels a run (Ctrl-C).
+pub(crate) const EXIT_CANCELLED: i32 = 4;
+
+/// Map a verification verdict onto its process exit code.
+pub(crate) fn verdict_exit_code(passed: bool) -> i32 {
+    if passed {
+        0
+    } else {
+        EXIT_VERIFICATION_FAILED
+    }
+}
+
+/// A completed verification whose verdict is FAIL. Command handlers return
+/// this error so callers can finish cleanup; only `main` exits the process.
+#[derive(Debug, thiserror::Error)]
+#[error("verification failed")]
+pub(crate) struct VerificationFailed;
+
+/// Install a SIGINT handler that fires `token` instead of killing the
+/// process, so generation can stop cleanly. A second Ctrl-C exits hard.
+///
+/// Returns false when a handler is already installed (the process may
+/// legitimately call this more than once in tests).
+pub(crate) fn install_sigint_cancel(token: &ember::cancel::CancelToken) -> bool {
+    let upgraded = token.clone();
+    ctrlc::set_handler(move || {
+        if upgraded.is_cancelled() {
+            eprintln!("interrupted twice; exiting");
+            std::process::exit(130);
+        }
+        eprintln!("interrupt received; stopping generation (Ctrl-C again to force exit)");
+        upgraded.cancel();
+    })
+    .is_ok()
 }
 
 #[cfg(test)]
@@ -759,5 +800,13 @@ mod tests {
         assert_eq!(resolved.identity(), "embedded:tokenizer.json");
         assert_eq!(resolved.sha256().unwrap().len(), 64);
         assert!(resolved.load().unwrap().vocab_size() > 0);
+    }
+
+    #[test]
+    fn verification_verdicts_map_to_documented_exit_codes() {
+        assert_eq!(verdict_exit_code(true), 0);
+        assert_eq!(verdict_exit_code(false), EXIT_VERIFICATION_FAILED);
+        assert_eq!(EXIT_VERIFICATION_FAILED, 3);
+        assert_eq!(EXIT_CANCELLED, 4);
     }
 }

@@ -35,6 +35,7 @@ pub mod artifact;
 #[doc(hidden)]
 pub mod atomic_file;
 pub mod backend;
+pub mod cancel;
 pub mod compare;
 #[doc(hidden)]
 pub mod decode_profile;
@@ -75,6 +76,7 @@ pub mod quant_fault;
 pub mod quant_k;
 #[doc(hidden)]
 pub mod residency;
+pub mod residual_patch;
 pub mod runtime_schedule;
 pub mod sampler;
 #[doc(hidden)]
@@ -82,6 +84,7 @@ pub mod simd;
 pub mod smolvlm;
 pub mod smolvlm_video;
 pub mod subprocess;
+pub mod support;
 pub mod tensor;
 pub mod tokenizer;
 pub mod trace;
