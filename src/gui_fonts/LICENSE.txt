@@ -6,4 +6,10 @@ The embedded fonts in this directory are Noto fonts (SIL Open Font License 1.1):
 
 Copyright Google LLC. Licensed under the SIL Open Font License, Version 1.1
 (https://openfontlicense.org). They are embedded so the experiment console
-renders Latin and Arabic text identically on any machine, fully offline.
+has Latin and Arabic glyph coverage offline. Platform shaping may differ.
+
+Noto Naskh Arabic: upstream v2.021 full/ttf build, including Latin glyphs
+required by GPUI macOS font metrics. Unmodified upstream file.
+Source: https://github.com/notofonts/arabic/releases/tag/NotoNaskhArabic-v2.021
+SHA-256: c9a039ce48a477243c1eb7d561b13de115cfd651d8a83fa42e2f4d63c2e11b00
+Full license: OFL-Naskh.txt
