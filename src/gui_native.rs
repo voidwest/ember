@@ -151,12 +151,7 @@ fn token_label(token: &str) -> &'static str {
 
 fn combo_value_label(combo: ComboId, value: &str) -> String {
     match combo {
-        ComboId::Model => value
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(value)
-            .trim_end_matches(".gguf")
-            .to_string(),
+        ComboId::Model => model_display_name(value),
         ComboId::Site => site_label(value).to_string(),
         ComboId::Op => operation_label(value).to_string(),
         ComboId::Source => match value {
@@ -1511,13 +1506,6 @@ impl Console {
     /// The wordmark stands on its own. There was an accent-coloured "E" badge
     /// here that carried no information and dated the product instantly.
     fn topbar(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let model_chip = match &self.session {
-            Some(info) => format!("{} \u{00b7} {} layers", info.model_name, info.n_layers),
-            None => match self.model_path.trim() {
-                "" => "No model selected".to_string(),
-                path => format!("{} \u{2014} not loaded", model_display_name(path)),
-            },
-        };
         let toggle = cx.listener(|console, _: &ClickEvent, _w, cx| {
             console.cycle_appearance(cx);
         });
@@ -1552,22 +1540,76 @@ impl Console {
                             })),
                     ),
             )
-            .child(div().w_full())
+            // A flex_1 row will happily paint text over its siblings when the
+            // content cannot shrink, so this one truncates rather than trusting
+            // min_w(0) alone. The step is the context that is true on every
+            // screen; the model is the experiment's business and the inspector
+            // already carries it, where it cannot go stale.
             .child(
                 div()
-                    .px_2()
-                    .py_1()
-                    .bg(colors.surface_raised)
-                    .rounded(px(Radius::SM))
-                    .child(mono(model_chip, Type::LABEL, colors.text_muted)),
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .overflow_hidden()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(Space::SM))
+                    .child(label(self.view.label(), Type::LABEL, colors.text_faint))
+                    .when(self.view == View::Experiment, |row| {
+                        row.child(
+                            div()
+                                .w(px(3.0))
+                                .h(px(3.0))
+                                .rounded(px(Radius::SM))
+                                .bg(colors.border_strong),
+                        )
+                        .child(label(
+                            truncate_chars(self.step.label(), 28),
+                            Type::LABEL,
+                            colors.text_muted,
+                        ))
+                    }),
             )
             .child(
                 Button::new("theme-toggle")
+                    .ghost()
                     .small()
-                    .label(self.appearance.label())
+                    .icon(
+                        Icon::default().path(if self.appearance.is_dark(self.system_dark) {
+                            icons::SUN
+                        } else {
+                            icons::MOON
+                        }),
+                    )
                     .tooltip("Appearance")
+                    .accessibility_label(format!(
+                        "Appearance: {}. Switch appearance.",
+                        self.appearance.label()
+                    ))
                     .on_click(toggle),
             )
+            .when(self.view == View::Experiment, |bar| {
+                bar.child(
+                    Button::new("inspector-toggle")
+                        .ghost()
+                        .small()
+                        .selected(self.inspector_open)
+                        .icon(Icon::default().path(icons::PANEL_RIGHT))
+                        .tooltip("Inspector")
+                        .accessibility_label(format!(
+                            "Inspector. {}",
+                            if self.inspector_open {
+                                "Hide the inspector"
+                            } else {
+                                "Show the inspector"
+                            }
+                        ))
+                        .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
+                            console.inspector_open = !console.inspector_open;
+                            cx.notify();
+                        })),
+                )
+            })
     }
 
     /// Left navigation rail: icon plus label, tight spacing.
@@ -1917,22 +1959,22 @@ impl Console {
             (
                 Preset::ZeroMiddle,
                 "Zero a middle layer",
-                "A clear causal-ablation starting point",
+                "Causal ablation, cleanly scoped",
             ),
             (
                 Preset::ScaleLate,
                 "Weaken a late layer",
-                "Test a near-output representation at 50%",
+                "Near-output layer, at 50%",
             ),
             (
                 Preset::CopyEarlier,
                 "Copy an earlier layer",
-                "Replace a late state with an earlier capture",
+                "Substitute an earlier capture",
             ),
             (
                 Preset::ArabicMorphology,
                 "Arabic morphology",
-                "Matched-span experiment using an Arabic prompt",
+                "Matched spans, Arabic prompt",
             ),
         ];
         // Wrapping grid, not one row: four w_full cards in a row overflowed the
@@ -1945,7 +1987,7 @@ impl Console {
             .children(presets.into_iter().map(|(preset, title, hint)| {
                 div()
                     .flex_1()
-                    .min_w(px(230.0))
+                    .min_w(px(300.0))
                     .child(self.preset_card(colors, preset, title, hint, cx))
             }))
     }
@@ -2970,13 +3012,7 @@ impl Console {
 
     fn advanced_inspector(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         let context = self.visible_experiment_context();
-        let model_name = context
-            .model_path
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or(&context.model_path)
-            .trim_end_matches(".gguf")
-            .to_string();
+        let model_name = model_display_name(&context.model_path);
         let prompt_excerpt = truncate_chars(&context.prompt, 120);
         let target = if per_layer(&context.site) {
             format!(
@@ -3104,7 +3140,6 @@ impl Console {
                         None => mono("not loaded", Type::META, colors.text_faint),
                     }),
             )
-            .child(rule_h(colors))
             .child(
                 div()
                     .flex_col()
@@ -3117,7 +3152,6 @@ impl Console {
                         FONT_ARABIC_NAME,
                     )),
             )
-            .child(rule_h(colors))
             .child(
                 div()
                     .flex_col()
@@ -3125,7 +3159,6 @@ impl Console {
                     .child(label("Target", Type::META, colors.text_faint))
                     .child(multiline(&target, Type::META, colors.text, FONT_SANS_NAME)),
             )
-            .child(rule_h(colors))
             .child(
                 div()
                     .flex_col()
@@ -3615,26 +3648,7 @@ impl Render for Console {
                             .w_full()
                             .px_5()
                             .child(self.stepper(&colors, cx))
-                            .child(div().w_full())
-                            .child(
-                                Button::new("toggle-inspector")
-                                    .small()
-                                    .label(if self.inspector_open {
-                                        "Hide inspector"
-                                    } else {
-                                        "Inspector"
-                                    })
-                                    .tooltip("Show the state of the current run")
-                                    .accessibility_label(if self.inspector_open {
-                                        "Hide inspector (currently shown)"
-                                    } else {
-                                        "Show inspector (currently hidden)"
-                                    })
-                                    .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
-                                        console.inspector_open = !console.inspector_open;
-                                        cx.notify();
-                                    })),
-                            ),
+                            .child(div().w_full()),
                     )
                     .child(self.main_panel(&colors, cx));
                 if self.inspector_open {

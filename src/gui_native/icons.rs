@@ -46,6 +46,9 @@ icons![
     (SETTINGS, "settings"),
     (BACK, "back"),
     (PLUS, "plus"),
+    (PANEL_RIGHT, "panel-right"),
+    (SUN, "sun"),
+    (MOON, "moon"),
 ];
 
 pub(super) fn icon(path: &'static str) -> Svg {
