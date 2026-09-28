@@ -10,6 +10,7 @@ use crate::{rayon_current_num_threads, Args};
 use anyhow::Context;
 use ember::backend::Backend;
 use ember::backend::CpuBackend;
+use ember::cancel::{CancelToken, Cancelled};
 use ember::experiments::{
     ExecutionContext, ExecutionPhase, ExperimentRunner, ExperimentalForwardModel,
     GenerationContext, ModelContext, TracingState,
@@ -105,6 +106,11 @@ fn validate_last_logits_values(logits: &[f32], expected_vocab_size: usize) -> an
     Ok(())
 }
 
+/// True when the caller asked for cancellation and the token has fired.
+fn cancelled_by(cancel: Option<&CancelToken>) -> bool {
+    cancel.is_some_and(|token| token.is_cancelled())
+}
+
 fn validate_generated_token(
     tokenizer: &ember::tokenizer::EmberTokenizer,
     token: usize,
@@ -131,6 +137,7 @@ pub(crate) fn run_single_prompt_with_experiment(
     args: &Args,
     model_context: ModelContext<'_>,
     runner: &mut ExperimentRunner,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<()> {
     let output = generate_with_experiment(
         backend,
@@ -151,6 +158,7 @@ pub(crate) fn run_single_prompt_with_experiment(
         rayon_current_num_threads(),
         effective_context_limit(backend, model, args),
         args.seed,
+        cancel,
     )?;
     println!("{}", output);
     Ok(())
@@ -161,6 +169,7 @@ pub(crate) fn run_single_prompt<B: Backend>(
     model: &impl ForwardModel<B>,
     tokenizer: &ember::tokenizer::EmberTokenizer,
     args: &Args,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<()>
 where
     B::Error: Send + Sync + 'static,
@@ -182,6 +191,7 @@ where
         rayon_current_num_threads(),
         effective_context_limit(backend, model, args),
         args.seed,
+        cancel,
     )?;
     println!("{}", output);
     Ok(())
@@ -743,6 +753,7 @@ pub(crate) fn generate<B: Backend>(
     thread_count: usize,
     context_limit: usize,
     rng_seed: Option<u64>,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<String>
 where
     B::Error: Send + Sync + 'static,
@@ -766,6 +777,7 @@ where
         thread_count,
         context_limit,
         rng_seed,
+        cancel,
     )
 }
 
@@ -789,6 +801,7 @@ pub(crate) fn generate_with_experiment(
     thread_count: usize,
     context_limit: usize,
     rng_seed: Option<u64>,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<String> {
     let mut execution = ActiveGeneration {
         runner,
@@ -813,6 +826,7 @@ pub(crate) fn generate_with_experiment(
         thread_count,
         context_limit,
         rng_seed,
+        cancel,
     )
 }
 
@@ -847,6 +861,7 @@ pub(crate) fn generate_with_execution<B, M, E>(
     thread_count: usize,
     context_limit: usize,
     rng_seed: Option<u64>,
+    cancel: Option<&CancelToken>,
 ) -> anyhow::Result<String>
 where
     B: Backend,
@@ -881,6 +896,15 @@ where
 
     let prompt_len = all_tokens.len();
     let max_seq_len = ensure_sequence_fits(prompt_len, max_tokens, context_limit)?;
+
+    // Cancellation contract (docs/cancellation.md): checked before prefill and
+    // at the top of every decode step. Prefill is a single forward pass and is
+    // not interruptible mid-pass; a cancel during prefill fires the first loop
+    // check. Cancellation is reported as a typed error so the CLI can exit 4.
+    if cancelled_by(cancel) {
+        log::info!("generation cancelled before prefill");
+        return Err(anyhow::Error::new(Cancelled));
+    }
 
     // -- 1. prefill: run the prompt through the transformer and fill kv cache.
     // Only the last prompt position needs logits for generation, so avoid
@@ -945,6 +969,13 @@ where
     let eos_ids = tokenizer.eos_token_ids();
 
     for step in 0..max_tokens {
+        if cancelled_by(cancel) {
+            log::info!(
+                "generation cancelled after {} generated tokens",
+                generated.len()
+            );
+            return Err(anyhow::Error::new(Cancelled));
+        }
         // Greedy decode steps after the first can use the fused argmax path
         // (the model may compute only the top token instead of the full
         // vocabulary). Tracing and sampling always use the full path.
@@ -1439,6 +1470,7 @@ where
                         <Gpt2<B> as ForwardModel<B>>::max_seq_len(model, backend)
                     }),
                     None, // interactive mode keeps the thread-local RNG
+                    None, // interactive mode is not signal-cancellable yet
                 )?;
                 println!("{}", output);
                 print!("> ");
@@ -1595,6 +1627,7 @@ mod tests {
             1,
             64,
             Some(1),
+            None,
         )
         .unwrap();
         assert_eq!(output, "a b b");
@@ -1619,6 +1652,7 @@ mod tests {
             1,
             64,
             Some(1),
+            None,
         )
         .unwrap();
         assert_eq!(output, "b b b");
@@ -1630,6 +1664,194 @@ mod tests {
                 ExecutionPhase::Decode,
                 ExecutionPhase::Decode
             ]
+        );
+    }
+
+    #[test]
+    fn cancellation_stops_before_prefill_and_at_step_boundaries() {
+        let tokenizer = ember::tokenizer::EmberTokenizer::from_bytes(
+            r#"{
+            "version":"1.0", "truncation":null, "padding":null,
+            "added_tokens":[], "normalizer":null, "pre_tokenizer":null,
+            "post_processor":null, "decoder":null,
+            "model":{"type":"WordLevel","vocab":{"p":0,"a":1,"b":2,"[UNK]":3},"unk_token":"[UNK]"}
+        }"#,
+        )
+        .unwrap();
+
+        use ember::{backend::CpuError, kv_cache::KVCache, tensor::CpuTensor};
+
+        /// Minimal deterministic model that counts forward calls.
+        #[derive(Default)]
+        struct CancelModel(std::cell::RefCell<usize>);
+        impl ForwardModel<CpuBackend> for CancelModel {
+            fn create_cache(&self, _: &CpuBackend, capacity: usize) -> KVCache {
+                KVCache::new(1, 1, 1, capacity)
+            }
+            fn max_seq_len(&self, _: &CpuBackend) -> usize {
+                64
+            }
+            fn n_layers(&self) -> usize {
+                1
+            }
+            fn embed_dim(&self) -> usize {
+                1
+            }
+            fn vocab_size(&self, _: &CpuBackend) -> usize {
+                4
+            }
+            fn forward_with_cache(
+                &self,
+                _: &CpuBackend,
+                _: &[u32],
+                _: &mut KVCache,
+                _: usize,
+            ) -> Result<CpuTensor, CpuError> {
+                panic!("generation should request last-position logits")
+            }
+            fn forward_last_logits_with_cache(
+                &self,
+                _: &CpuBackend,
+                ids: &[u32],
+                cache: &mut KVCache,
+                start: usize,
+            ) -> Result<CpuTensor, CpuError> {
+                *self.0.borrow_mut() += 1;
+                cache.validate_start_pos(start);
+                for _ in ids {
+                    cache.advance_cursor();
+                }
+                Ok(CpuTensor::from_data(vec![1, 4], vec![0.0, 2.0, 1.0, -10.0]))
+            }
+            fn forward_last_logits_with_cache_reusing(
+                &self,
+                _: &CpuBackend,
+                ids: &[u32],
+                cache: &mut KVCache,
+                start: usize,
+                output: &mut CpuTensor,
+            ) -> Result<(), CpuError> {
+                *self.0.borrow_mut() += 1;
+                cache.validate_start_pos(start);
+                for _ in ids {
+                    cache.advance_cursor();
+                }
+                output.data_mut().copy_from_slice(&[0.0, 1.0, 2.0, -10.0]);
+                Ok(())
+            }
+            fn forward_with_activations(
+                &self,
+                _: &CpuBackend,
+                _: &[u32],
+            ) -> Result<(Vec<Vec<f32>>, CpuTensor), CpuError> {
+                panic!("generation should not capture activations")
+            }
+        }
+
+        // (a) a pre-cancelled token stops before any model work happens.
+        let model = CancelModel::default();
+        let token = CancelToken::new();
+        token.cancel();
+        let error = generate_with_execution(
+            &CpuBackend,
+            &model,
+            &mut StandardGeneration,
+            &tokenizer,
+            "p",
+            3,
+            1.0,
+            Some(1),
+            None,
+            false,
+            false,
+            None,
+            false,
+            false,
+            1,
+            64,
+            Some(1),
+            Some(&token),
+        )
+        .unwrap_err();
+        assert!(error.is::<Cancelled>());
+        assert_eq!(
+            *model.0.borrow(),
+            0,
+            "no forward should run after a pre-cancel"
+        );
+
+        // (b) a token fired during the first decode forward is honored at the
+        // next step boundary: one prefill + one decode, never the second.
+        struct CancelDuringDecode {
+            token: CancelToken,
+            phases: Vec<ExecutionPhase>,
+        }
+        impl GenerationExecution<CpuBackend, CancelModel> for CancelDuringDecode {
+            fn before_prefill(&mut self, _: &[u32]) -> anyhow::Result<()> {
+                Ok(())
+            }
+            fn forward_last_logits(
+                &mut self,
+                _: &CpuBackend,
+                _: &CancelModel,
+                ids: &[u32],
+                cache: &mut KVCache,
+                start: usize,
+                phase: ExecutionPhase,
+            ) -> Result<CpuTensor, CpuError> {
+                self.phases.push(phase);
+                if phase == ExecutionPhase::Decode {
+                    self.token.cancel();
+                }
+                cache.validate_start_pos(start);
+                for _ in ids {
+                    cache.advance_cursor();
+                }
+                Ok(CpuTensor::from_data(vec![1, 4], vec![0.0, 2.0, 1.0, -10.0]))
+            }
+            fn generation_complete(
+                &mut self,
+                _: usize,
+                _: usize,
+                _: usize,
+                _: &[u32],
+                _: &[u32],
+            ) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+        let model = CancelModel::default();
+        let token = CancelToken::new();
+        let mut custom = CancelDuringDecode {
+            token: token.clone(),
+            phases: Vec::new(),
+        };
+        let error = generate_with_execution(
+            &CpuBackend,
+            &model,
+            &mut custom,
+            &tokenizer,
+            "p",
+            3,
+            1.0,
+            Some(1),
+            None,
+            false,
+            false,
+            None,
+            false,
+            false,
+            1,
+            64,
+            Some(1),
+            Some(&token),
+        )
+        .unwrap_err();
+        assert!(error.is::<Cancelled>());
+        assert_eq!(
+            custom.phases,
+            [ExecutionPhase::Prefill, ExecutionPhase::Decode],
+            "the loop must stop at the step boundary after cancellation"
         );
     }
 

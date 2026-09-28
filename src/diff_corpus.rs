@@ -915,6 +915,8 @@ pub fn run_diff_corpus(request: &CorpusRequest, verbose: bool) -> anyhow::Result
         request.timeout_secs.is_finite() && request.timeout_secs > 0.0,
         "timeout_secs must be positive"
     );
+    let timeout = Duration::try_from_secs_f64(request.timeout_secs)
+        .map_err(|_| anyhow::anyhow!("timeout_secs exceeds the supported duration range"))?;
     let out_dir = guard_out_dir(&request.out_dir)?;
     let (seed_names, seed_blobs) = if request.seeds.is_empty() {
         load_default_seeds(request.mode)?
@@ -927,7 +929,7 @@ pub fn run_diff_corpus(request: &CorpusRequest, verbose: bool) -> anyhow::Result
         mode: request.mode,
         seed_blobs,
         against: request.against.clone(),
-        timeout: Duration::from_secs_f64(request.timeout_secs),
+        timeout,
         jobs: request.jobs,
         out_dir: out_dir.clone(),
         verbose,
@@ -1234,6 +1236,34 @@ mod tests {
         );
         assert_eq!(CorpusMode::parse("bytes"), None);
         assert_eq!(CorpusMode::Raw.as_str(), "raw");
+    }
+
+    #[test]
+    fn campaign_rejects_invalid_timeout_before_filesystem_work() {
+        let dir = std::env::temp_dir().join(format!(
+            "ember-invalid-timeout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(!dir.exists());
+        for timeout_secs in [0.0, -1.0, f64::NAN, f64::INFINITY, 1e300] {
+            let request = CorpusRequest {
+                n: 1,
+                seed: 1,
+                mode: CorpusMode::Raw,
+                against: Vec::new(),
+                timeout_secs,
+                jobs: 1,
+                out_dir: dir.clone(),
+                seeds: vec![dir.join("missing-seed").display().to_string()],
+            };
+            let error = run_diff_corpus(&request, false).unwrap_err();
+            assert!(error.to_string().contains("timeout_secs"), "{error:#}");
+            assert!(!dir.exists(), "invalid timeout created output directory");
+        }
     }
 
     #[test]

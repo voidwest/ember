@@ -314,7 +314,7 @@ schema, recorded operation types, and caveats.
 The v0.4 release adds an immutable, per-model execution plan built once
 after load, plus a plan-driven single-token decode interpreter
 (`docs/v04-execution-contract.md`). Three execution concepts are selectable
-with `--execution` (default `reference`):
+with `--execution` (default `planned`):
 
 - `reference`: the v0.3 generic hooked path with per-tensor K dispatch
   (the readable oracle and parity baseline).
@@ -940,3 +940,17 @@ cargo run --release -- \
 > **note**: demo (`--demo`), single-prompt generation, and probe (`--probe`)
 > mode work across the supported model families. Interactive mode (`-i`)
 > remains GPT-2-only.
+
+## exit codes
+
+| code | meaning |
+|---|---|
+| 0 | success |
+| 1 | runtime error (the `Error: …` line on stderr) |
+| 2 | usage error (unknown flag or subcommand, conflicting options) |
+| 3 | verification verdict FAIL — `kv compare` threshold exceedance, `diff` runtime disagreement or a side that failed to run, `score-batch` per-line errors, failed `experiment verify` or `experiment reproduce` verdicts |
+| 4 | cancelled by the user (Ctrl-C during generation; see `docs/cancellation.md`) |
+
+Related contracts: `docs/support.md` (what is supported and how the runtime
+warns outside it) and `docs/trace-schema.md` (agent trace fields and privacy
+defaults).
