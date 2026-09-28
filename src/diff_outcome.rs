@@ -363,14 +363,26 @@ pub fn evaluate_ember(file: &Path) -> SideReport {
             return ember_report(outcome, format!("HARNESS: LOAD_REJECT: {error}"), start);
         }
     };
-    let arch = match loader.metadata.get("general.architecture") {
-        Some(crate::loader::GgufValue::Str(s)) => s.as_str(),
-        _ => "llama",
+    // Fail closed on an absent, non-string, or unrecognized architecture.
+    // This previously defaulted to "llama", which meant a GGUF with no
+    // general.architecture at all was reported HARNESS: MODEL_OK while the
+    // CLI rejected the same file. In a differential harness that records
+    // outcomes as evidence, a false "accepted" is worse than a hard reject.
+    let family = match crate::support::resolve_engine_family(&loader) {
+        Ok((family, _)) => family,
+        Err(error) => {
+            outcome = DiffOutcome::StructuredReject;
+            return ember_report(outcome, format!("HARNESS: ARCH_REJECT: {error}"), start);
+        }
     };
-    let result = match arch {
-        "gemma3" | "gemma4" => crate::gemma4::Gemma4::from_loader(loader).map(|_| ()),
-        "gpt2" => crate::model::Gpt2::from_loader(loader).map(|_| ()),
-        _ => crate::llama::Llama::from_loader(loader).map(|_| ()),
+    let result = match family {
+        crate::support::EngineFamily::Gemma4 => {
+            crate::gemma4::Gemma4::from_loader(loader).map(|_| ())
+        }
+        crate::support::EngineFamily::Gpt2 => crate::model::Gpt2::from_loader(loader).map(|_| ()),
+        crate::support::EngineFamily::Llama | crate::support::EngineFamily::Qwen3 => {
+            crate::llama::Llama::from_loader(loader).map(|_| ())
+        }
     };
     match result {
         Ok(()) => ember_report(DiffOutcome::Accept, "HARNESS: MODEL_OK".to_string(), start),

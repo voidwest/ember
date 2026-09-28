@@ -1517,20 +1517,11 @@ pub fn resolve_generation_architecture(
     requested: &str,
     loader: &GgufLoader,
 ) -> anyhow::Result<String> {
-    let declared = match loader.metadata.get("general.architecture") {
-        Some(GgufValue::Str(value)) => value.as_str(),
-        Some(_) => anyhow::bail!("GGUF general.architecture must be a string"),
-        None => anyhow::bail!("GGUF is missing required general.architecture metadata"),
-    };
-    let detected = match declared {
-        "gpt2" => "gpt2",
-        "llama" => "llama",
-        "qwen2" | "qwen3" => "qwen3",
-        "gemma3" | "gemma4" => "gemma4",
-        other => anyhow::bail!(
-            "GGUF architecture '{other}' is not supported by generation; expected gpt2, llama, qwen2/qwen3, or gemma3/gemma4"
-        ),
-    };
+    // The declared -> family mapping lives in crate::support so every runtime
+    // (CLI, extraction, differential harness, EmberSEC harness) resolves it
+    // identically and fails closed on anything unrecognized.
+    let (family, declared) = crate::support::resolve_engine_family(loader)?;
+    let detected = family.label();
     if requested != "auto" && requested != detected {
         anyhow::bail!(
             "--arch {requested} conflicts with GGUF general.architecture='{declared}' (use --arch {detected} or omit --arch)"

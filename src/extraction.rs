@@ -162,11 +162,10 @@ impl ExtractionConfig {
                 anyhow::bail!("run_id must be a single path component");
             }
         }
+        // Validated against the same alias table the architecture resolvers
+        // use, so the accepted set cannot drift from what can actually run.
         if let Some(architecture) = &self.architecture
-            && !matches!(
-                architecture.as_str(),
-                "gpt2" | "llama" | "qwen2" | "qwen3" | "gemma3" | "gemma4"
-            )
+            && crate::support::EngineFamily::from_alias(architecture).is_none()
         {
             anyhow::bail!("unsupported architecture '{architecture}'");
         }

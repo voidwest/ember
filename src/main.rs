@@ -881,12 +881,16 @@ fn run_args(mut args: Args) -> anyhow::Result<()> {
         ember::plan::ExecutionMode::from_cli(&args.execution).map_err(anyhow::Error::msg)?;
     let loader = load_gguf_with_k_strategy(&args.model, k_strategy, args.k_allow_fallback)?;
     let execution_inventory = ember::artifact::ExecutionInventory::from_loader(&loader);
+    // Resolve the declared architecture once, fail closed, and keep the
+    // declaration for the support gate below. Previously this used the
+    // Option-returning accessor inside `if let Some(..)`, which meant a GGUF
+    // with no general.architecture silently skipped --strict-support.
+    let (_, declared) =
+        ember::support::resolve_engine_family(&loader).map_err(anyhow::Error::msg)?;
     args.arch = resolve_generation_architecture(&args.arch, &loader)?;
-    if let Some(declared) = ember::support::declared_architecture(&loader) {
-        ember::support::strict_gate(declared, args.strict_support)?;
-        for note in ember::support::eager_fallback_notes(&loader) {
-            log::warn!("{note}");
-        }
+    ember::support::strict_gate(declared, args.strict_support)?;
+    for note in ember::support::eager_fallback_notes(&loader) {
+        log::warn!("{note}");
     }
     validate_experiment_options(&args)?;
     let n_tensors = loader.tensors.len();
