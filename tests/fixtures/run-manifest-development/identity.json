@@ -1,0 +1,61 @@
+{
+  "schema_version": 2,
+  "identity": {
+    "schema": "execution-identity-v1",
+    "sha256": "9ecd501e9ac8ba978e7981cc3bf38d2d1c898d2f60ed6032ddfb54bffa225926",
+    "canonical": {
+      "binary": {
+        "git_commit": "85c2382f43d6976b95b5d0fe22a2312c9157f8f7",
+        "git_dirty": "true",
+        "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+        "target": "aarch64-apple-darwin"
+      },
+      "cpu_features": [
+        "neon",
+        "dotprod",
+        "fp16"
+      ],
+      "env": {
+        "EMBER_CONVERSE_DBG": null,
+        "EMBER_FUSED_GREEDY": null,
+        "EMBER_GEMMA_DUMP": null,
+        "EMBER_K_AVX512": null,
+        "EMBER_LLAMA_PACKED_Q8": null,
+        "EMBER_PARALLEL_REPACK": null,
+        "EMBER_PRESPLIT": null,
+        "EMBER_VISION_FAST_EXP": null
+      },
+      "limits": {
+        "max_tokens": 4,
+        "max_seq_len": null
+      },
+      "mode": {
+        "execution": "planned",
+        "probe": false,
+        "probe_generate_tokens": 16,
+        "probe_limit": null,
+        "probe_position": "last",
+        "probe_stimuli": "stimuli/nonce_root_pattern_surface.json",
+        "probe_template": "en_surface_probe"
+      },
+      "model": {
+        "sha256": "432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3",
+        "architecture": "llama",
+        "k_strategy": "auto",
+        "k_allow_fallback": false
+      },
+      "prompt": "The capital of France is",
+      "sampler": {
+        "temperature": 0.0,
+        "top_k": null,
+        "top_p": null,
+        "seed": null
+      },
+      "schema": "execution-identity-v1",
+      "threads": 4,
+      "tokenizer": {
+        "sha256": "6b9e4e7fb171f92fd137b777cc2714bf87d11576700a1dcd7a399e7bbe39537b"
+      }
+    }
+  }
+}

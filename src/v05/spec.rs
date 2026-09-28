@@ -217,10 +217,120 @@ pub struct RawExperimentSpec {
     pub generation: Option<RawGenerationSpec>,
     pub inputs: Vec<RawInputSpec>,
     #[serde(default)]
-    pub captures: Vec<CaptureSpec>,
+    pub captures: Option<Vec<RawDefinition<CaptureSpec>>>,
     #[serde(default)]
-    pub interventions: Vec<InterventionSpec>,
+    pub interventions: Option<Vec<RawDefinition<InterventionSpec>>>,
     pub output: RawOutputSpec,
+}
+
+/// A strictly validated definition retaining the fields actually supplied by
+/// the author. Keeping the wire value prevents nested Serde defaults from
+/// erasing omission provenance before resolution. Serialization retains that
+/// omission information as well.
+#[derive(Debug, Clone, Serialize)]
+#[serde(transparent)]
+pub struct RawDefinition<T> {
+    value: serde_json::Value,
+    #[serde(skip)]
+    marker: std::marker::PhantomData<T>,
+}
+
+impl<'de, T: serde::de::DeserializeOwned> Deserialize<'de> for RawDefinition<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        serde_json::from_value::<T>(value.clone()).map_err(serde::de::Error::custom)?;
+        omit_null_fields(&mut value);
+        Ok(Self {
+            value,
+            marker: std::marker::PhantomData,
+        })
+    }
+}
+
+impl<T: Serialize + serde::de::DeserializeOwned> RawDefinition<T> {
+    /// Construct a definition for programmatic callers such as the GUI.
+    /// Concrete values are explicit; absent optional values remain omitted,
+    /// since TOML has no null literal.
+    pub fn explicit(value: T) -> Result<Self, serde_json::Error> {
+        let mut value = serde_json::to_value(value)?;
+        omit_null_fields(&mut value);
+        Ok(Self {
+            value,
+            marker: std::marker::PhantomData,
+        })
+    }
+
+    fn resolve(self, path: &str, defaults: &mut Vec<DefaultRecord>) -> Result<T, SpecError> {
+        let resolved: T = serde_json::from_value(self.value.clone())
+            .map_err(|error| SpecError::at(path, error.to_string()))?;
+        let mut serialized = serde_json::to_value(&resolved)
+            .map_err(|error| SpecError::at(path, error.to_string()))?;
+        crate::plan::sort_value_keys(&mut serialized);
+        record_nested_defaults(Some(&self.value), &serialized, path, defaults);
+        Ok(resolved)
+    }
+}
+
+fn omit_null_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            fields.retain(|_, value| !value.is_null());
+            for value in fields.values_mut() {
+                omit_null_fields(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                omit_null_fields(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn record_nested_defaults(
+    supplied: Option<&serde_json::Value>,
+    resolved: &serde_json::Value,
+    path: &str,
+    defaults: &mut Vec<DefaultRecord>,
+) {
+    if let Some(object) = resolved.as_object() {
+        for (key, value) in object {
+            record_nested_defaults(
+                supplied.and_then(|value| value.get(key)),
+                value,
+                &format!("{path}.{key}"),
+                defaults,
+            );
+        }
+    } else if supplied.is_none() {
+        defaults.push(DefaultRecord {
+            field: path.into(),
+            value: resolved
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| resolved.to_string()),
+        });
+    }
+}
+
+fn resolve_definitions<T: Serialize + serde::de::DeserializeOwned>(
+    definitions: Option<Vec<RawDefinition<T>>>,
+    path: &str,
+    defaults: &mut Vec<DefaultRecord>,
+) -> Result<Vec<T>, SpecError> {
+    let Some(definitions) = definitions else {
+        defaults.push(DefaultRecord {
+            field: path.into(),
+            value: "[]".into(),
+        });
+        return Ok(Vec::new());
+    };
+    definitions
+        .into_iter()
+        .enumerate()
+        .map(|(index, definition)| definition.resolve(&format!("{path}[{index}]"), defaults))
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -377,6 +487,12 @@ impl RawExperimentSpec {
             arch_default,
             &mut defaults,
         );
+        if self.model.tokenizer.is_none() {
+            defaults.push(DefaultRecord {
+                field: "model.tokenizer".into(),
+                value: "null (auto)".into(),
+            });
+        }
 
         let mode = match self.execution.as_ref().and_then(|e| e.mode.as_deref()) {
             Some(value) => ExecutionMode::from_cli(value)
@@ -464,6 +580,9 @@ impl RawExperimentSpec {
             ));
         }
 
+        let captures = resolve_definitions(self.captures, "captures", &mut defaults)?;
+        let interventions =
+            resolve_definitions(self.interventions, "interventions", &mut defaults)?;
         let resolved = ExperimentSpecV1 {
             schema: EXPERIMENT_SCHEMA_V1.to_string(),
             experiment: ExperimentMetadata {
@@ -495,8 +614,8 @@ impl RawExperimentSpec {
                     text: input.text.clone(),
                 })
                 .collect(),
-            captures: self.captures.clone(),
-            interventions: self.interventions.clone(),
+            captures,
+            interventions,
             output: OutputSpec {
                 directory: self.output.directory.clone(),
                 tensor_format,
@@ -542,7 +661,7 @@ impl ExperimentSpecV1 {
         let input_ids: Vec<String> = input_ids.iter().map(|s| s.to_string()).collect();
         for (index, capture) in self.captures.iter().enumerate() {
             let path = format!("captures[{index}]");
-            capture
+            let selected_inputs = capture
                 .inputs
                 .resolve(&input_ids)
                 .map_err(|message| SpecError::at(format!("{path}.inputs"), message))?;
@@ -564,7 +683,7 @@ impl ExperimentSpecV1 {
             }
             if capture.tokens.requires_text() {
                 for input in &self.inputs {
-                    if input.text.is_empty() {
+                    if selected_inputs.contains(&input.id) && input.text.is_empty() {
                         return Err(SpecError::at(
                             format!("{path}.tokens"),
                             format!(
@@ -591,10 +710,24 @@ impl ExperimentSpecV1 {
             intervention
                 .validate_self()
                 .map_err(|message| SpecError::at(path.clone(), message))?;
-            intervention
+            let selected_inputs = intervention
                 .inputs
                 .resolve(&input_ids)
                 .map_err(|message| SpecError::at(format!("{path}.inputs"), message))?;
+            if intervention.tokens.requires_text() {
+                for input in &self.inputs {
+                    if selected_inputs.contains(&input.id) && input.text.is_empty() {
+                        return Err(SpecError::at(
+                            format!("{path}.tokens"),
+                            format!(
+                                "token selector {:?} requires non-empty input text; input {} \
+                                 is empty",
+                                intervention.tokens, input.id
+                            ),
+                        ));
+                    }
+                }
+            }
             if !intervention.site.is_per_layer() {
                 if !matches!(intervention.layers, LayerSelector::All(_)) {
                     return Err(SpecError::at(
@@ -716,8 +849,23 @@ overwrite = false
         assert!(resolved.execution.deterministic);
         assert_eq!(resolved.generation.max_new_tokens, 0);
         assert_eq!(resolved.captures.len(), 1);
-        // Only tokenizer_expected_sha256 and arch are unset in VALID_SPEC.
-        assert_eq!(resolved.defaults.len(), 2);
+        let fields: Vec<_> = resolved
+            .defaults
+            .iter()
+            .map(|record| record.field.as_str())
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                "model.tokenizer_expected_sha256",
+                "model.arch",
+                "model.tokenizer",
+                "captures[0].dtype",
+                "captures[0].inputs",
+                "captures[0].storage",
+                "interventions"
+            ]
+        );
     }
 
     #[test]
@@ -741,6 +889,171 @@ overwrite = false
         let text = VALID_SPEC.replace("max_new_tokens = 0", "max_new_tokens = 0\nunknown = 1");
         let error = RawExperimentSpec::from_toml_str(&text).unwrap_err();
         assert!(error.message.contains("unknown"), "{}", error.message);
+    }
+
+    #[test]
+    fn nested_selector_operation_and_source_fields_are_strict() {
+        for selector in [
+            r#"{ kind = "prompt-final", unexpected = true }"#,
+            r#"{ kind = "absolute-token", index = 0, unexpected = true }"#,
+        ] {
+            let mut value: toml::Value = toml::from_str(VALID_SPEC).unwrap();
+            let fragment: toml::Value = toml::from_str(&format!("tokens = {selector}")).unwrap();
+            value["captures"][0]["tokens"] = fragment["tokens"].clone();
+            assert!(RawExperimentSpec::from_toml_str(&toml::to_string(&value).unwrap()).is_err());
+        }
+        for operation in [
+            r#"{"kind":"zero","unexpected":true}"#,
+            r#"{"kind":"scale","factor":0.5,"unexpected":true}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<crate::v05::intervention::InterventionOperation>(operation)
+                    .is_err()
+            );
+        }
+        for source in [
+            r#"{"kind":"zero","unexpected":true}"#,
+            r#"{"kind":"capture-from-current-run","capture_id":"c","unexpected":true}"#,
+        ] {
+            assert!(serde_json::from_str::<InterventionSource>(source).is_err());
+        }
+    }
+
+    #[test]
+    fn intervention_text_selectors_reject_only_selected_empty_inputs() {
+        for selector in [
+            serde_json::json!({"kind":"matched-span", "text":"word", "occurrence":0, "subtokens":"all"}),
+            serde_json::json!({"kind":"byte-span", "start":0, "end":4, "subtokens":"all"}),
+        ] {
+            let mut spec = RawExperimentSpec::from_toml_str(VALID_SPEC)
+                .unwrap()
+                .resolve()
+                .unwrap();
+            spec.captures.clear();
+            spec.inputs[0].text.clear();
+            spec.inputs.push(InputSpec {
+                id: "nonempty".into(),
+                text: "word".into(),
+            });
+            spec.interventions.push(
+                serde_json::from_value(serde_json::json!({
+                    "id":"patch", "site":"mlp-output", "tokens":selector,
+                    "operation":{"kind":"zero"},
+                }))
+                .unwrap(),
+            );
+            let error = spec.validate().unwrap_err();
+            assert_eq!(error.path, "interventions[0].tokens");
+            assert!(error.message.contains("requires non-empty input text"));
+            assert!(error.message.contains("example-001"));
+            spec.interventions[0].inputs =
+                crate::v05::capture::InputSelector::List(vec!["nonempty".into()]);
+            spec.validate().unwrap();
+            // Position-only selectors do not require prompt text at this stage.
+            spec.interventions[0].inputs = crate::v05::capture::InputSelector::All("all".into());
+            spec.interventions[0].tokens = TokenSelector::PromptFinal;
+            spec.validate().unwrap();
+        }
+    }
+
+    #[test]
+    fn required_fields_cannot_be_defaulted_away() {
+        for path in [
+            vec!["schema"],
+            vec!["experiment"],
+            vec!["model"],
+            vec!["inputs"],
+            vec!["output"],
+            vec!["experiment", "name"],
+            vec!["model", "path"],
+            vec!["output", "directory"],
+        ] {
+            let mut value: toml::Value = toml::from_str(VALID_SPEC).unwrap();
+            let mut table = &mut value;
+            for key in &path[..path.len() - 1] {
+                table = table.get_mut(*key).unwrap();
+            }
+            table.as_table_mut().unwrap().remove(*path.last().unwrap());
+            assert!(
+                RawExperimentSpec::from_toml_str(&toml::to_string(&value).unwrap()).is_err(),
+                "{path:?}"
+            );
+        }
+        for (array, fields) in [
+            ("inputs", &["id", "text"][..]),
+            ("captures", &["id", "site", "tokens"][..]),
+        ] {
+            for field in fields {
+                let mut value: toml::Value = toml::from_str(VALID_SPEC).unwrap();
+                value[array][0].as_table_mut().unwrap().remove(*field);
+                assert!(
+                    RawExperimentSpec::from_toml_str(&toml::to_string(&value).unwrap()).is_err(),
+                    "{array}.{field}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_tagged_variant_requires_its_declared_fields() {
+        fn check<T: serde::de::DeserializeOwned>(cases: &[&str], optional: &[&str]) {
+            for text in cases {
+                let complete: serde_json::Value = serde_json::from_str(text).unwrap();
+                assert!(
+                    serde_json::from_value::<T>(complete.clone()).is_ok(),
+                    "{text}"
+                );
+                for key in complete.as_object().unwrap().keys() {
+                    if optional.contains(&key.as_str()) {
+                        continue;
+                    }
+                    let mut missing = complete.clone();
+                    missing.as_object_mut().unwrap().remove(key);
+                    assert!(
+                        serde_json::from_value::<T>(missing).is_err(),
+                        "{text} accepted missing {key}"
+                    );
+                }
+            }
+        }
+        check::<TokenSelector>(
+            &[
+                r#"{"kind":"prompt-final"}"#,
+                r#"{"kind":"absolute-token","index":0}"#,
+                r#"{"kind":"relative-token","offset_from_end":0}"#,
+                r#"{"kind":"generated-step","step":1}"#,
+                r#"{"kind":"matched-span","text":"word","occurrence":1,"subtokens":"final","normalization":"none"}"#,
+                r#"{"kind":"byte-span","start":0,"end":4,"subtokens":"all"}"#,
+            ],
+            &["normalization"],
+        );
+        check::<crate::v05::intervention::InterventionOperation>(
+            &[
+                r#"{"kind":"replace"}"#,
+                r#"{"kind":"zero"}"#,
+                r#"{"kind":"scale","factor":0.5}"#,
+                r#"{"kind":"interpolate","alpha":0.5}"#,
+                r#"{"kind":"add-delta"}"#,
+                r#"{"kind":"restore-original"}"#,
+            ],
+            &[],
+        );
+        check::<InterventionSource>(
+            &[
+                r#"{"kind":"inline-vector","values":[1.0]}"#,
+                r#"{"kind":"capture-from-current-run","capture_id":"cap"}"#,
+                r#"{"kind":"capture-from-bundle","bundle_path":"source","capture_id":"cap","input_id":"i","layer":0}"#,
+                r#"{"kind":"zero"}"#,
+            ],
+            &[],
+        );
+        check::<InterventionSpec>(
+            &[
+                r#"{"id":"i","site":"mlp-output","tokens":{"kind":"prompt-final"},"operation":{"kind":"zero"}}"#,
+            ],
+            &[],
+        );
+        check::<crate::v05::capture::LayerRange>(&[r#"{"start":0,"end":4,"step":1}"#], &["step"]);
     }
 
     #[test]
@@ -773,6 +1086,120 @@ directory = "runs/minimal"
         let a = serde_json::to_vec(&resolved).unwrap();
         let b = serde_json::to_vec(&resolved).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn nested_defaults_are_recorded_without_changing_semantics() {
+        let text = VALID_SPEC.replace("layers = \"all\"", "layers = { start = 0, end = 2 }")
+            .replace("kind = \"prompt-final\"", "kind = \"matched-span\"\ntext = \"some\"\noccurrence = 0\nsubtokens = \"all\"")
+            + "\n[[interventions]]\nid = \"zero\"\nsite = \"mlp-output\"\noperation = { kind = \"zero\" }\ntokens = { kind = \"prompt-final\" }\n";
+        let raw = RawExperimentSpec::from_toml_str(&text).unwrap();
+        let mut omitted = raw.clone().resolve().unwrap();
+        // A raw TOML round trip must not materialize defaults before resolve.
+        let round_trip = RawExperimentSpec::from_toml_str(&toml::to_string(&raw).unwrap())
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert_eq!(omitted, round_trip);
+        let defaults: std::collections::BTreeMap<_, _> = omitted
+            .defaults
+            .iter()
+            .map(|record| (record.field.as_str(), record.value.as_str()))
+            .collect();
+        for (path, value) in [
+            ("captures[0].layers.step", "1"),
+            ("captures[0].tokens.normalization", "none"),
+            ("captures[0].dtype", "f32"),
+            ("captures[0].storage", "selected-rows"),
+            ("interventions[0].layers", "all"),
+            ("interventions[0].inputs", "all"),
+            ("interventions[0].source", "null"),
+            ("interventions[0].shape_policy", "strict"),
+            (
+                "interventions[0].compatibility.allow_model_mismatch",
+                "false",
+            ),
+            (
+                "interventions[0].compatibility.allow_tokenizer_mismatch",
+                "false",
+            ),
+        ] {
+            assert_eq!(defaults.get(path), Some(&value), "{path}");
+        }
+        let mut explicit = raw;
+        explicit.captures = Some(
+            omitted
+                .captures
+                .iter()
+                .cloned()
+                .map(RawDefinition::explicit)
+                .collect::<Result<_, _>>()
+                .unwrap(),
+        );
+        explicit.interventions = Some(
+            omitted
+                .interventions
+                .iter()
+                .cloned()
+                .map(RawDefinition::explicit)
+                .collect::<Result<_, _>>()
+                .unwrap(),
+        );
+        let mut explicit = RawExperimentSpec::from_toml_str(&toml::to_string(&explicit).unwrap())
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert!(!explicit
+            .defaults
+            .iter()
+            .any(|record| record.field.starts_with("captures[0]")));
+        assert!(!explicit
+            .defaults
+            .iter()
+            .any(|record| record.field.contains("compatibility")));
+        omitted.defaults.clear();
+        explicit.defaults.clear();
+        assert_eq!(omitted, explicit);
+    }
+
+    #[test]
+    fn explicit_empty_collections_do_not_count_as_defaults() {
+        let text = VALID_SPEC.replace("[experiment]", "interventions = []\n\n[experiment]");
+        let spec = RawExperimentSpec::from_toml_str(&text)
+            .unwrap()
+            .resolve()
+            .unwrap();
+        assert!(!spec
+            .defaults
+            .iter()
+            .any(|record| record.field == "interventions"));
+        assert!(spec.interventions.is_empty());
+    }
+
+    #[test]
+    fn text_requirements_apply_only_to_selected_inputs() {
+        let mut spec = RawExperimentSpec::from_toml_str(VALID_SPEC)
+            .unwrap()
+            .resolve()
+            .unwrap();
+        spec.captures[0].tokens = TokenSelector::ByteSpan {
+            start: 0,
+            end: 4,
+            subtoken_selection: crate::v05::token_select::SubtokenSelection::All,
+        };
+        spec.inputs.push(InputSpec {
+            id: "unused-empty".into(),
+            text: String::new(),
+        });
+        spec.captures[0].inputs =
+            crate::v05::capture::InputSelector::List(vec!["example-001".into()]);
+        assert!(spec.validate().is_ok());
+        spec.captures[0].inputs = crate::v05::capture::InputSelector::All("all".into());
+        assert!(spec
+            .validate()
+            .unwrap_err()
+            .message
+            .contains("unused-empty"));
     }
 
     #[test]

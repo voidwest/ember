@@ -31,7 +31,7 @@ pub enum TextNormalization {
 
 /// Typed token selector (contract section 6).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", rename_all = "kebab-case", from = "StrictTokenSelector")]
 pub enum TokenSelector {
     /// The final token of the complete model input (BOS included).
     PromptFinal,
@@ -59,6 +59,70 @@ pub enum TokenSelector {
         #[serde(rename = "subtokens")]
         subtoken_selection: SubtokenSelection,
     },
+}
+// Empty struct variants reject stray fields that Serde ignores for unit variants.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum StrictTokenSelector {
+    /// The final token of the complete model input (BOS included).
+    PromptFinal {},
+    /// The token at an explicit 0-based model-input position.
+    AbsoluteToken { index: usize },
+    /// `seq_len - 1 - offset`; offset 0 equals `prompt-final`.
+    RelativeToken { offset_from_end: usize },
+    /// The token generated at decode step `step` (1-based), observed at the
+    /// decode evaluation processing it.
+    GeneratedStep { step: usize },
+    /// Exact text-span match with occurrence resolution.
+    #[serde(rename = "matched-span")]
+    MatchedTextSpan {
+        text: String,
+        occurrence: usize,
+        #[serde(rename = "subtokens")]
+        subtoken_selection: SubtokenSelection,
+        #[serde(default)]
+        normalization: TextNormalization,
+    },
+    /// Explicit byte span into the prompt text.
+    ByteSpan {
+        start: usize,
+        end: usize,
+        #[serde(rename = "subtokens")]
+        subtoken_selection: SubtokenSelection,
+    },
+}
+
+impl From<StrictTokenSelector> for TokenSelector {
+    fn from(value: StrictTokenSelector) -> Self {
+        match value {
+            StrictTokenSelector::PromptFinal {} => Self::PromptFinal,
+            StrictTokenSelector::AbsoluteToken { index } => Self::AbsoluteToken { index },
+            StrictTokenSelector::RelativeToken { offset_from_end } => {
+                Self::RelativeToken { offset_from_end }
+            }
+            StrictTokenSelector::GeneratedStep { step } => Self::GeneratedStep { step },
+            StrictTokenSelector::MatchedTextSpan {
+                text,
+                occurrence,
+                subtoken_selection,
+                normalization,
+            } => Self::MatchedTextSpan {
+                text,
+                occurrence,
+                subtoken_selection,
+                normalization,
+            },
+            StrictTokenSelector::ByteSpan {
+                start,
+                end,
+                subtoken_selection,
+            } => Self::ByteSpan {
+                start,
+                end,
+                subtoken_selection,
+            },
+        }
+    }
 }
 
 impl TokenSelector {

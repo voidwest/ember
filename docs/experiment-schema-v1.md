@@ -2,8 +2,10 @@
 
 `ember.experiment.v1` is the user-authored experiment language. It is a
 strict TOML document: unknown fields, unknown schema majors, duplicate
-IDs, invalid references, and impossible settings fail with the exact
-field path before any inference runs.
+IDs, invalid references, and impossible settings fail before inference.
+Semantic validation reports a field path; TOML decoding errors include source
+location and field/type details. Nested token, operation, and source objects
+also reject unknown fields, including objects with a unit `kind`.
 
 `v1` means the schema is stable within Ember 0.5.x: it does not freeze
 every possible future field forever.
@@ -41,7 +43,7 @@ text = "..."                        # required
 [[captures]]
 id = "prompt-final"                 # required; unique across captures
 site = "residual-post-mlp"          # required; see hook sites
-layers = "all"                      # optional: all|<n>|[list]|{start,end_exclusive,step}
+layers = "all"                      # optional: all|[list]|{start,end,step} (end exclusive)
 storage = "selected-rows"           # optional: selected-rows|full-tensor|summary-only
 dtype = "f32"                       # optional: f32|f16
 
@@ -65,7 +67,13 @@ overwrite = false                   # optional
 
 Every omitted default is recorded in the resolved specification and
 serialized into the bundle as `resolved-experiment.json` (its `defaults`
-array), so a bundle always states exactly what ran.
+array), so a bundle always states exactly what ran. Nested omissions include capture/intervention
+layer and input selectors, range `step`, span `normalization`, storage/dtype,
+optional intervention source, and each compatibility flag. Explicit values
+equal to defaults are not labeled as omitted. Omitted empty capture/intervention
+lists and automatic tokenizer selection are also recorded. The resolved
+settings are identical whether a default is omitted or explicitly supplied.
+
 
 ## Semantic hook sites
 
@@ -93,8 +101,9 @@ kind = "matched-span", text = "كِتَاب", occurrence = 0, subtokens = "first
 kind = "byte-span", start = 12, end = 24, subtokens = "all"
 ```
 
-`subtokens` is `first` (default), `final`, or `all`. `normalization` is
-an explicit opt-in (`kind = "nfc"`); Arabic is never normalized
+`subtokens` is required for matched/byte spans: `first`, `final`, or `all`.
+`occurrence` is required for matched spans and is zero-based. `normalization`
+defaults to `"none"`; use `normalization = "nfc"` for an explicit opt-in; Arabic is never normalized
 silently. See `docs/token-selection.md`.
 
 ## Input selectors
@@ -121,7 +130,7 @@ inputs = ["i1", "i2"]   # explicit list
 - unknown TOML fields fail;
 - duplicate input/capture/intervention ids fail; intervention ids must
   not collide with capture ids;
-- invalid layer ranges fail (`start >= end_exclusive`, out-of-range
+- invalid layer ranges fail (`start >= end`, out-of-range
   indices for the model's layer count);
 - unsupported hook sites, execution modes, and tensor formats fail
   before inference;
