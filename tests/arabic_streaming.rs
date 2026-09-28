@@ -9,14 +9,12 @@
 use ember::tokenizer::EmberTokenizer;
 
 fn tokenizer() -> EmberTokenizer {
-    // any byte-level BPE tokenizer works; llama32 is present on this host,
-    // the repo-root one is the fallback for other environments
-    EmberTokenizer::from_file("/home/west/ember-work/llama32/tokenizer.json")
-        .or_else(|_| {
-            let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tokenizer.json");
-            EmberTokenizer::from_file(p)
-        })
-        .expect("load tokenizer")
+    // Any byte-level BPE tokenizer works. Use the tracked repo-root tokenizer
+    // so this behaves identically on every host and CI runner; the
+    // CARGO_MANIFEST_DIR anchor keeps it independent of the working directory
+    // the test binary happens to start in.
+    let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tokenizer.json");
+    EmberTokenizer::from_file(p).expect("load repo-root tokenizer.json")
 }
 
 #[test]
@@ -62,16 +60,37 @@ fn incremental_stream_prefix_is_stable() {
     let tok = tokenizer();
     let text = "تُعدُّ اللغة العربية واحدة من أكثر اللغات تحدثًا في العالم";
     let ids = tok.encode(text).expect("encode");
-    let mut dec = tok.incremental_decoder();
-    let mut released = 0usize;
-    for &id in &ids {
-        let before = released;
-        let piece = dec.push(id).expect("push");
-        if !piece.is_empty() {
-            // pieces only ever append; the consumer may rely on this
-            assert_eq!(piece.len(), piece.len());
+
+    // The text a consumer sees once the whole stream is pushed. This is the
+    // reference every truncated decode must agree with.
+    let full = {
+        let mut dec = tok.incremental_decoder();
+        let mut out = String::new();
+        for &id in &ids {
+            out.push_str(&dec.push(id).expect("push"));
         }
-        released += piece.len();
-        assert!(released >= before);
+        out.push_str(&dec.finish().expect("finish"));
+        out
+    };
+    assert!(!full.is_empty(), "full decode released no text");
+
+    // The property: stopping after N tokens must leave the consumer holding a
+    // prefix of the final text. A decoder that released bytes speculatively
+    // and later had to take them back would break this, and a consumer that
+    // already drew those bytes would show corruption. Note we deliberately do
+    // NOT call finish() on the truncated runs: those trailing bytes are
+    // exactly what a live consumer has not received yet.
+    for n in 0..=ids.len() {
+        let mut dec = tok.incremental_decoder();
+        let mut partial = String::new();
+        for &id in &ids[..n] {
+            partial.push_str(&dec.push(id).expect("push"));
+        }
+        assert!(
+            full.starts_with(&partial),
+            "after {n}/{} tokens the consumer holds {partial:?}, \
+             which is not a prefix of the final text {full:?}",
+            ids.len()
+        );
     }
 }

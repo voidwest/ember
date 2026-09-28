@@ -142,3 +142,66 @@ jobs:
 
       - name: clippy (headless)
         run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+
+  build-and-test-macos:
+    # macOS is the advertised Metal GUI platform (README, docs/usage.md) and
+    # the primary development host, yet no job here built it: every numeric
+    # claim in docs/validation.md came from a platform CI never compiled.
+    #
+    # Both architectures are covered deliberately. Together with the x86_64
+    # and arm64 Linux jobs this completes the 2x2 the support matrix claims.
+    # macos-latest is arm64; macos-13 is the x86_64 (Intel) image. If GitHub
+    # retires macos-13, this matrix needs a replacement label rather than
+    # being quietly dropped -- losing Intel-macOS coverage silently is the
+    # failure mode to avoid here.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            label: arm64
+          - runner: macos-13
+            label: x86_64
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No explicit toolchain install: rust-toolchain.toml pins 1.98.1, which
+      # is what the GUI features need. The Linux jobs install a *different*
+      # version on purpose (1.92.0 on arm64 to prove the headless MSRV), so
+      # they cannot be copied here.
+      - name: report toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.label }}-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.label }}-cargo-
+
+      - name: build (headless)
+        run: cargo build --locked --no-default-features --all-targets
+
+      - name: test (headless)
+        run: cargo test --locked --no-default-features --all-targets
+
+      - name: clippy (headless)
+        # The same 1.98 chunks_exact carve-out as the x86_64 job: it is a new
+        # style lint, and the measured kernel loop shapes are intentionally
+        # retained. Omitting it here would fail on 1.98.1.
+        run: cargo clippy --locked --no-default-features --all-targets -- -D warnings -A clippy::chunks_exact_to_as_chunks
+
+      - name: gui compile check (Metal)
+        # Compile-only: this proves the GPUI Kit/Metal stack builds on macOS
+        # for this architecture. It does NOT prove the console renders or is
+        # usable -- that stays a manual acceptance item in
+        # docs/road-to-1.0.md section 1. The gui-tests headless window needs a
+        # display and is therefore not run here.
+        run: cargo check --locked --features gui --all-targets
