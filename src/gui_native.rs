@@ -1961,7 +1961,11 @@ impl Console {
         Button::new(SharedString::from(format!("preset:{title}")))
             .w_full()
             .h_auto()
-            .py_2()
+            .ghost()
+            .outline()
+            .compact()
+            .py_1()
+            .px_3()
             .accessibility_label(title)
             .child(
                 div()
@@ -2161,8 +2165,7 @@ impl Console {
                     .child(label("Start from a preset", Type::LABEL, colors.text_faint))
                     .child(self.presets_block(colors, cx)),
             )
-            .child(panel(
-                colors,
+            .child(group(
                 div()
                     .flex_col()
                     .gap(px(Space::MD))
@@ -2207,8 +2210,7 @@ impl Console {
                             ))),
                     ),
             ))
-            .child(panel(
-                colors,
+            .child(group(
                 div()
                     .flex_col()
                     .gap(px(Space::MD))

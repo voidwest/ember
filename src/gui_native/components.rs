@@ -91,6 +91,17 @@ pub(super) fn panel(colors: &Colors, content: impl IntoElement) -> Div {
         .child(content)
 }
 
+/// A conceptual block, deliberately unframed.
+///
+/// Most sections in this app are not objects. A model row, a prompt editor, a
+/// list of starting points -- none of them is a thing you pick up and put down,
+/// so a rectangle around them says "object" when the content says "section".
+/// Spacing and a section label do the organising; a surface is spent only where
+/// there is genuinely a selectable object, a result, or a control group.
+pub(super) fn group(content: impl IntoElement) -> Div {
+    div().w_full().flex_col().gap(px(Space::MD)).child(content)
+}
+
 pub(super) fn rule_h(colors: &Colors) -> Div {
     div().w_full().h(px(1.0)).bg(colors.border)
 }
