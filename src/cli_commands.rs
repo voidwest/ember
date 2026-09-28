@@ -107,8 +107,8 @@ impl DecodeAllocationSamples {
         let global_events_total = sum(&global_alloc_events);
         let global_bytes_total = sum(&global_alloc_bytes);
         Ok(serde_json::json!({
-            "schema_version": 2,
-            "method": "counting allocator; caller-thread per-token counts via count_allocations_with_bytes, process-global deltas across the timed loop",
+            "schema_version": 3,
+            "method": "counting allocator; caller-thread per-token counts via count_allocations_with_bytes, process-global event and requested-byte deltas across the timed loop; sample buffers preallocated",
             "tokens": tokens,
             "repetitions": repetitions,
             "measured_tokens": token_count,
@@ -1212,6 +1212,7 @@ fn bench_load_report(
             "hits": cache.hits(),
             "misses": cache.misses(),
         })),
+        "residency_measurement_enabled": residency.is_enabled(),
         "residency": residency.snapshots(),
     })
 }
@@ -1624,7 +1625,20 @@ where
     // via the counting allocator, plus process-global deltas across the
     // timed loop (includes worker-thread allocations). Only collected on
     // measured repetitions, never warmups.
-    let mut allocation_samples = DecodeAllocationSamples::default();
+    let mut allocation_samples = if command.allocations {
+        let count = command
+            .tokens
+            .checked_mul(command.repetitions)
+            .context("allocation sample count overflow")?;
+        DecodeAllocationSamples {
+            token_alloc_events: Vec::with_capacity(count),
+            token_alloc_bytes: Vec::with_capacity(count),
+            global_alloc_events: Vec::with_capacity(command.repetitions),
+            global_alloc_bytes: Vec::with_capacity(command.repetitions),
+        }
+    } else {
+        DecodeAllocationSamples::default()
+    };
 
     // Returns (steady-state decode ns, prefill ns, first decode-token ns):
     // prefill and first-token costs are reported separately instead of being
@@ -1645,7 +1659,7 @@ where
             ember::decode_profile::resume();
         }
         let global_events_before = ember::alloc_counter::total_allocations();
-        let global_bytes_before = ember::alloc_counter::total_allocated_bytes();
+        let global_bytes_before = ember::alloc_counter::total_requested_bytes();
         let start = Instant::now();
         let mut first_token_ns = 0u64;
         for position in 0..command.tokens {
@@ -1679,7 +1693,7 @@ where
         }
         let elapsed_ns = start.elapsed().as_nanos().min(u64::MAX as u128) as u64;
         let global_events_after = ember::alloc_counter::total_allocations();
-        let global_bytes_after = ember::alloc_counter::total_allocated_bytes();
+        let global_bytes_after = ember::alloc_counter::total_requested_bytes();
         validate_logits_tensor(backend, &logits, 1, model_vocab_size, true)?;
         if elapsed_ns == 0 {
             anyhow::bail!("decode benchmark timer resolution produced a zero-duration sample");
@@ -1788,6 +1802,7 @@ mod benchmark_report_tests {
             assert_eq!(report["caller_thread_alloc_bytes_per_token"], 32.0);
             assert_eq!(report["global_alloc_events_per_token"], 3.0);
             assert_eq!(report["global_alloc_bytes_per_token"], 48.0);
+            assert_eq!(report["schema_version"], 3);
             assert_eq!(report["measured_tokens"], 4 * repetitions);
             assert_eq!(report["caller_thread_alloc_events_total"], 8 * repetitions);
         }

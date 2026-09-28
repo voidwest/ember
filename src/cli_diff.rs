@@ -102,6 +102,12 @@ pub(crate) fn run_diff_command(command: &DiffCommand) -> anyhow::Result<()> {
     } else {
         println!("{}", render_human(&report));
     }
+    // Verifier contract (docs/usage.md, "exit codes"): disagreement between
+    // the runtimes (or a side that failed to run) is a verification failure,
+    // not just a readable finding.
+    if !report.agreement.all_agree {
+        return Err(crate::cli_support::VerificationFailed.into());
+    }
     Ok(())
 }
 
@@ -265,8 +271,10 @@ mod tests {
             json: false,
             command: None,
         };
-        // Must not error even though both externals are missing.
-        run_diff_command(&command).unwrap();
+        // Missing peers must yield a typed verification failure without
+        // terminating the process before caller cleanup can run.
+        let error = run_diff_command(&command).unwrap_err();
+        assert!(error.is::<crate::cli_support::VerificationFailed>());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

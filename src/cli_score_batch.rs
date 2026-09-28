@@ -184,6 +184,7 @@ where
                     rayon_current_num_threads(),
                     context_limit,
                     None,
+                    None, // score-batch runs are not signal-cancellable yet
                 )?;
                 Ok(serde_json::json!({ "id": id, "text": text }))
             }
@@ -257,6 +258,11 @@ where
         "score-batch: {n_ok} ok, {n_err} errors -> {}",
         command.output
     );
+    // Verifier contract (docs/usage.md, "exit codes"): per-line errors are a
+    // verification failure even though the partial output was written.
+    if n_err > 0 {
+        return Err(crate::cli_support::VerificationFailed.into());
+    }
     Ok(())
 }
 
