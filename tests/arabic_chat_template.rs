@@ -7,16 +7,30 @@
 //!
 //! Skipped unless `EMBER_CHAT_PARITY_JSON` points at a dump from
 //! `scripts/ref_chat_template_ar.py`.
+//!
+//! Set `EMBER_CHAT_PARITY_REQUIRED=1` to fail instead of skipping when the
+//! reference dump is absent. See `tests/common/mod.rs`.
 
 use serde_json::Value;
 
+#[path = "common/mod.rs"]
+mod common;
+
 #[test]
 fn arabic_chat_template_parity_matches_hf_reference() {
-    let Ok(json_path) = std::env::var("EMBER_CHAT_PARITY_JSON") else {
+    // No separate enable switch here: pointing at the dump is the opt-in.
+    let Some(paths) = (match common::gate(
+        "EMBER_CHAT_PARITY_REQUIRED",
+        None,
+        &["EMBER_CHAT_PARITY_JSON"],
+    ) {
+        Ok(paths) => paths,
+        Err(why) => panic!("ember arabic_chat_template parity: {why}"),
+    }) else {
         eprintln!("skipping: set EMBER_CHAT_PARITY_JSON");
         return;
     };
-    let raw = std::fs::read_to_string(&json_path).expect("read parity json");
+    let raw = std::fs::read_to_string(&paths[0]).expect("read parity json");
     let dump: Value = serde_json::from_str(&raw).expect("parse parity json");
     let want: Vec<u32> = dump["ids"]
         .as_array()

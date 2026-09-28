@@ -16,25 +16,36 @@
 //! EMBER_VOICE_TEXT_GGUF / EMBER_VOICE_AUDIO_GGUF / EMBER_VOICE_TOKENIZER
 //! EMBER_VITS_GGUF       mms-tts ara GGUF
 //! ```
+//!
+//! Set `EMBER_VOICE_E2E_REQUIRED=1` to make an absent fixture a failure
+//! rather than a skip, so a release job cannot report green without having
+//! run the Arabic speech chain. See `tests/common/mod.rs`.
+
+#[path = "common/mod.rs"]
+mod common;
 
 use std::path::PathBuf;
 
 fn fixture() -> Option<(PathBuf, PathBuf, PathBuf, PathBuf)> {
-    if std::env::var("EMBER_VOICE_E2E").ok().as_deref() != Some("1") {
-        return None;
+    match common::gate(
+        "EMBER_VOICE_E2E_REQUIRED",
+        Some("EMBER_VOICE_E2E"),
+        &[
+            "EMBER_VOICE_TEXT_GGUF",
+            "EMBER_VOICE_AUDIO_GGUF",
+            "EMBER_VOICE_TOKENIZER",
+            "EMBER_VITS_GGUF",
+        ],
+    ) {
+        Ok(Some(paths)) => Some((
+            paths[0].clone(),
+            paths[1].clone(),
+            paths[2].clone(),
+            paths[3].clone(),
+        )),
+        Ok(None) => None,
+        Err(why) => panic!("ember arabic_s2s_vits: {why}"),
     }
-    let get = |k: &str| -> Option<PathBuf> {
-        std::env::var(k)
-            .ok()
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-    };
-    Some((
-        get("EMBER_VOICE_TEXT_GGUF")?,
-        get("EMBER_VOICE_AUDIO_GGUF")?,
-        get("EMBER_VOICE_TOKENIZER")?,
-        get("EMBER_VITS_GGUF")?,
-    ))
 }
 
 /// Minimal 16-bit mono PCM WAV reader (bank clips are 16 kHz s16le).

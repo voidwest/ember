@@ -237,6 +237,32 @@ Markdown-only patch. If a gate is unavailable (no model, x86 host, display, or
 external reference), mark it **not run**, explain why, and provide the strongest
 available substitute.
 
+### Env-gated suites must be able to fail
+
+Suites that load real GGUFs or reference dumps skip silently when their
+environment variables are absent. That is correct for a laptop
+`cargo test`, and wrong as release evidence: a skipped test reports green
+while asserting nothing, so "CI passed" does not mean "the gate ran".
+
+Every such suite therefore accepts a `*_REQUIRED=1` flag that turns an
+absent fixture into a failure. Release and pre-tag jobs set it:
+
+| Suite | Enable | Fail-closed |
+|-------|--------|-------------|
+| `tests/k_parity.rs` | `EMBER_PARITY_*` | `EMBER_PARITY_REQUIRED=1` |
+| `tests/agent_e2e.rs` | `EMBER_AGENT_E2E=1` | `EMBER_AGENT_E2E_REQUIRED=1` |
+| `tests/voice_session.rs` | `EMBER_VOICE_E2E=1` | `EMBER_VOICE_E2E_REQUIRED=1` |
+| `tests/voice_session.rs` (TTS) | `EMBER_TTS_E2E=1` | `EMBER_TTS_E2E_REQUIRED=1` |
+| `tests/voice_converse_e2e.rs` | `EMBER_CONVERSE_E2E=1` | `EMBER_CONVERSE_E2E_REQUIRED=1` |
+| `tests/arabic_s2s_vits.rs` | `EMBER_VOICE_E2E=1` | `EMBER_VOICE_E2E_REQUIRED=1` |
+| `tests/arabic_tokenizer.rs` | `EMBER_TOK_PARITY=1` | `EMBER_TOK_PARITY_REQUIRED=1` |
+| `tests/arabic_chat_template.rs` | `EMBER_CHAT_PARITY_JSON` | `EMBER_CHAT_PARITY_REQUIRED=1` |
+
+New env-gated suites should use `tests/common/mod.rs` rather than
+re-implementing the check, and the decision logic itself is covered
+model-free by `tests/gated_suite_contract.rs`. If a suite must be skipped
+in a release job, that is a **release blocker**, not a caveat.
+
 ## Design and review checklist: `src/k_quant_matmul.rs`
 
 `src/k_quant_matmul.rs` is the canonical Q4_K/Q6_K-weight × transient Q8_K-
