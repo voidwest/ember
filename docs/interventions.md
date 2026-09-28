@@ -60,35 +60,36 @@ interventions.
    bit-exactly: `compare` reports identical tokens, text, top-1, and
    every capture `exact`.
 
-## Cross-bundle replacement (real-model workflow)
+## Cross-bundle replacement
 
 A capture from a saved bundle can back an intervention in a later run.
 The source bundle must pass full offline verification; model, tokenizer,
-hook-site, layer, and shape compatibility are checked before execution
-(model/tokenizer mismatches fail closed unless an expert override is
-recorded). The recorded real-model workflow lives under
-`artifacts/benchmark-v05/capture-from-bundle/`:
+hook site, layer and shape compatibility are checked before execution.
+Model/tokenizer mismatches require an explicit expert override recorded in
+provenance. Source layer must match every targeted layer; shape and layer
+mismatches are not overridable.
 
-```bash
-# 1. baseline: capture prompt-final attention-output across all layers
-ember experiment run artifacts/benchmark-v05/capture-from-bundle/baseline.toml
-ember experiment verify runs/cfb-baseline
+For the [morphology workflow](../examples/experiments/README.md), first create
+and verify `runs/morphology-baseline`. In a copy of the intervention spec,
+keep `layers = [7]` and replace its current-run source with:
 
-# 2. cross-bundle replace: layer 8's prompt-final attention row is
-#    replaced with the baseline bundle's layer-3 row
-ember experiment run artifacts/benchmark-v05/capture-from-bundle/intervention.toml
-ember experiment verify runs/cfb-intervention
-ember experiment compare runs/cfb-baseline runs/cfb-intervention
-
-# 3. restoration: the same replace followed by restore-original at
-#    layer 8; compare reports every capture exact and outputs equal
-ember experiment run artifacts/benchmark-v05/capture-from-bundle/restoration.toml
-ember experiment verify runs/cfb-restoration
-ember experiment compare runs/cfb-baseline runs/cfb-restoration
+```toml
+source = { kind = "capture-from-bundle", bundle_path = "runs/morphology-baseline", capture_id = "target-final-subtoken", input_id = "example-001", layer = 7 }
 ```
 
-Observed (2026-08-04, Llama-3.2-1B-Instruct-Q8_0): the replace leaves
-layers 0-8 bit-exact (captures fire before interventions at the same
-site) and diverges from layer 9 onward; the restoration leg reproduces
-the baseline with all 16 capture layers exact, generated tokens/text
-equal, and final top-1 equal.
+Give the copied spec a new experiment name and output directory. Validate,
+run, verify and compare it through the same documented commands. For exact
+restoration, append the `restore-original` declaration from the restoration
+spec at the same site and layer. A single source row broadcasts to the selected
+rows; otherwise the source row count must exactly match the target selection,
+in selector order. Column count must match.
+
+### Historical cross-layer result
+
+The retained 2026-08-04 artifacts under
+`artifacts/benchmark-v05/capture-from-bundle/` used a layer-3 source for a
+layer-8 target. Their observed restoration result belongs to that older writer;
+those intervention specifications are rejected by the current layer-compatibility
+check and are not current runnable examples. Preserve the artifacts and their
+identities as historical evidence. See the
+[migration notes](migration-to-1.0.md) before rerunning old experiments.

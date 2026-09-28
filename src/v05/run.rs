@@ -527,13 +527,20 @@ fn quantization_summary(plan: &crate::plan::ExecutionPlan) -> String {
 }
 
 fn pretty_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
-    serde_json::to_vec_pretty(value).map_err(|error| format!("JSON serialization failed: {error}"))
+    let mut value = serde_json::to_value(value)
+        .map_err(|error| format!("JSON serialization failed: {error}"))?;
+    // GUI dependencies can enable serde_json/preserve_order. Scientific
+    // payload identity must not depend on feature unification or HashMap order.
+    crate::plan::sort_value_keys(&mut value);
+    serde_json::to_vec_pretty(&value).map_err(|error| format!("JSON serialization failed: {error}"))
 }
 
 fn jsonl(values: &[serde_json::Value]) -> Vec<u8> {
     let mut out = Vec::new();
     for value in values {
-        if let Ok(bytes) = serde_json::to_vec(value) {
+        let mut value = value.clone();
+        crate::plan::sort_value_keys(&mut value);
+        if let Ok(bytes) = serde_json::to_vec(&value) {
             out.extend_from_slice(&bytes);
             out.push(b'\n');
         }
@@ -729,6 +736,24 @@ directory = "runs/bundle-test"
         assert!(
             !bundle.semantic_manifest.payloads.is_empty(),
             "payload inventory populated"
+        );
+    }
+
+    #[test]
+    fn metadata_insertion_order_cannot_change_bundle_identity() {
+        let mut left = materials();
+        let mut right = materials();
+        left.model_meta.gguf_metadata =
+            serde_json::from_str(r#"{"z":1,"a":{"y":2,"b":3},"items":[{"z":4,"a":5}]}"#).unwrap();
+        right.model_meta.gguf_metadata =
+            serde_json::from_str(r#"{"items":[{"a":5,"z":4}],"a":{"b":3,"y":2},"z":1}"#).unwrap();
+        let left = assemble_bundle(&left).unwrap();
+        let right = assemble_bundle(&right).unwrap();
+        assert_eq!(left.files, right.files);
+        assert_eq!(left.semantic_manifest, right.semantic_manifest);
+        assert_eq!(
+            jsonl(&[serde_json::from_str(r#"{"z":1,"a":2}"#).unwrap()]),
+            b"{\"a\":2,\"z\":1}\n",
         );
     }
 

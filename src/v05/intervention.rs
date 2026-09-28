@@ -12,7 +12,11 @@ use serde::{Deserialize, Serialize};
 
 /// The supported v0.5 intervention operations (contract section 3).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    from = "StrictInterventionOperation"
+)]
 pub enum InterventionOperation {
     /// Replace the target rows with the source rows.
     Replace,
@@ -26,6 +30,36 @@ pub enum InterventionOperation {
     AddDelta,
     /// Write the run's own pre-intervention snapshot back at the same site.
     RestoreOriginal,
+}
+// Empty struct variants reject stray fields that Serde ignores for unit variants.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum StrictInterventionOperation {
+    /// Replace the target rows with the source rows.
+    Replace {},
+    /// Zero the target rows in place.
+    Zero {},
+    /// Multiply the target rows by `factor`.
+    Scale { factor: f32 },
+    /// `target := (1 - alpha) * target + alpha * source`.
+    Interpolate { alpha: f32 },
+    /// `target := target + source`.
+    AddDelta {},
+    /// Write the run's own pre-intervention snapshot back at the same site.
+    RestoreOriginal {},
+}
+
+impl From<StrictInterventionOperation> for InterventionOperation {
+    fn from(value: StrictInterventionOperation) -> Self {
+        match value {
+            StrictInterventionOperation::Replace {} => Self::Replace,
+            StrictInterventionOperation::Zero {} => Self::Zero,
+            StrictInterventionOperation::Scale { factor } => Self::Scale { factor },
+            StrictInterventionOperation::Interpolate { alpha } => Self::Interpolate { alpha },
+            StrictInterventionOperation::AddDelta {} => Self::AddDelta,
+            StrictInterventionOperation::RestoreOriginal {} => Self::RestoreOriginal,
+        }
+    }
 }
 
 impl InterventionOperation {
@@ -65,7 +99,11 @@ impl InterventionOperation {
 
 /// Intervention sources (contract section 5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    from = "StrictInterventionSource"
+)]
 pub enum InterventionSource {
     /// An inline row vector (`values`).
     InlineVector { values: Vec<f32> },
@@ -80,6 +118,47 @@ pub enum InterventionSource {
     },
     /// The zero tensor (for `replace`).
     Zero,
+}
+// Empty struct variants reject stray fields that Serde ignores for unit variants.
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum StrictInterventionSource {
+    /// An inline row vector (`values`).
+    InlineVector { values: Vec<f32> },
+    /// A capture from the current run (same input).
+    CaptureFromCurrentRun { capture_id: String },
+    /// A capture from an existing verified bundle.
+    CaptureFromBundle {
+        bundle_path: std::path::PathBuf,
+        capture_id: String,
+        input_id: String,
+        layer: usize,
+    },
+    /// The zero tensor (for `replace`).
+    Zero {},
+}
+
+impl From<StrictInterventionSource> for InterventionSource {
+    fn from(value: StrictInterventionSource) -> Self {
+        match value {
+            StrictInterventionSource::InlineVector { values } => Self::InlineVector { values },
+            StrictInterventionSource::CaptureFromCurrentRun { capture_id } => {
+                Self::CaptureFromCurrentRun { capture_id }
+            }
+            StrictInterventionSource::CaptureFromBundle {
+                bundle_path,
+                capture_id,
+                input_id,
+                layer,
+            } => Self::CaptureFromBundle {
+                bundle_path,
+                capture_id,
+                input_id,
+                layer,
+            },
+            StrictInterventionSource::Zero {} => Self::Zero,
+        }
+    }
 }
 
 /// Shape/dtype compatibility policy for an intervention source.
@@ -130,8 +209,8 @@ pub struct InterventionSpec {
     pub inputs: InputSelector,
     /// The operation.
     pub operation: InterventionOperation,
-    /// The source; required unless the operation is `zero` (which may omit
-    /// it or use `source = { kind = "zero" }`) or `restore-original`.
+    /// The source; required by `replace`, `interpolate`, and `add-delta`.
+    /// `zero`, `scale`, and `restore-original` do not consume a source.
     pub source: Option<InterventionSource>,
     /// Shape/dtype policy (default strict).
     #[serde(default)]

@@ -102,6 +102,14 @@ impl BundleWriter {
         if self.root.as_os_str().is_empty() {
             return Err("bundle output directory must not be empty".into());
         }
+        if self
+            .root
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.') && name.contains(".tmp-"))
+        {
+            return Err("bundle output uses the reserved staging-directory name pattern".into());
+        }
         if self.root.exists() && !self.overwrite {
             return Err(format!(
                 "bundle output '{}' already exists; refusing to overwrite (set \
@@ -118,20 +126,34 @@ impl BundleWriter {
         std::fs::create_dir_all(&parent)
             .map_err(|error| format!("cannot create '{}': {error}", parent.display()))?;
 
-        let staging = parent.join(format!(
-            ".{}.tmp-{}-{}",
-            self.root
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "bundle".into()),
-            std::process::id(),
-            STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        ));
-        if staging.exists() {
-            std::fs::remove_dir_all(&staging).ok();
-        }
-        std::fs::create_dir(&staging)
-            .map_err(|error| format!("cannot create staging '{}': {error}", staging.display()))?;
+        let staging = {
+            let mut created = None;
+            for _ in 0..1000 {
+                let candidate = parent.join(format!(
+                    ".{}.tmp-{}-{}",
+                    self.root
+                        .file_name()
+                        .map(|name| name.to_string_lossy())
+                        .unwrap_or_else(|| "bundle".into()),
+                    std::process::id(),
+                    STAGING_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+                ));
+                match std::fs::create_dir(&candidate) {
+                    Ok(()) => {
+                        created = Some(candidate);
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot create staging '{}': {error}",
+                            candidate.display()
+                        ))
+                    }
+                }
+            }
+            created.ok_or("could not reserve a unique staging directory")?
+        };
         let mut guard = StagingGuard(staging.clone(), self.retain_incomplete);
 
         // 1. write all deterministic files + runtime.json
@@ -205,17 +227,26 @@ impl BundleWriter {
         let checksums_bytes = format!("{}\n", checksum_lines.join("\n")).into_bytes();
         write_staged(&staging, "checksums.sha256", &checksums_bytes)?;
 
-        // 7. atomic publish
-        if self.root.exists() {
-            std::fs::remove_dir_all(&self.root).map_err(|error| {
-                format!(
-                    "cannot remove existing bundle '{}': {error}",
-                    self.root.display()
-                )
-            })?;
+        // 7. Verify before touching the destination. A bad replacement must
+        // not destroy an existing, valid bundle even with overwrite enabled.
+        let verification = crate::v05::verify::verify_staged_bundle(
+            &staging,
+            &crate::v05::verify::VerifyOptions::default(),
+        )
+        .map_err(|error| format!("staged bundle verification failed: {error}"))?;
+        if !verification.ok {
+            let failures = verification
+                .checks
+                .iter()
+                .filter(|check| !check.ok)
+                .map(|check| format!("{}: {}", check.name, check.detail))
+                .collect::<Vec<_>>()
+                .join("; ");
+            return Err(format!("staged bundle verification failed: {failures}"));
         }
-        std::fs::rename(&staging, &self.root)
-            .map_err(|error| format!("cannot publish bundle '{}': {error}", self.root.display()))?;
+
+        // 8. Atomic publication with a no-clobber creation or an atomic swap.
+        publish_directory(&staging, &self.root, self.overwrite)?;
         guard.1 = true; // staging no longer exists
         Ok((
             self.root,
@@ -225,6 +256,45 @@ impl BundleWriter {
             },
         ))
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn publish_directory(staging: &Path, destination: &Path, overwrite: bool) -> Result<(), String> {
+    use rustix::fs::{renameat_with, RenameFlags, CWD};
+    match renameat_with(CWD, staging, CWD, destination, RenameFlags::NOREPLACE) {
+        Ok(()) => return Ok(()),
+        Err(error) if error == rustix::io::Errno::EXIST && overwrite => {}
+        Err(error) => {
+            return Err(format!(
+                "cannot publish bundle '{}': {error}",
+                destination.display()
+            ))
+        }
+    }
+    let metadata = std::fs::symlink_metadata(destination).map_err(|error| error.to_string())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("overwrite target must be a directory, not a symlink or file".into());
+    }
+    renameat_with(CWD, staging, CWD, destination, RenameFlags::EXCHANGE).map_err(|error| {
+        format!(
+            "cannot atomically replace bundle '{}': {error}",
+            destination.display()
+        )
+    })?;
+    // The old bundle now occupies our staging path. Publication has committed;
+    // a cleanup failure must not be reported as failure of the new bundle.
+    if let Err(error) = std::fs::remove_dir_all(staging) {
+        log::warn!(
+            "published bundle, but old bundle remains at '{}': {error}",
+            staging.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn publish_directory(_: &Path, _: &Path, _: bool) -> Result<(), String> {
+    Err("atomic bundle directory publication is supported on Linux and macOS".into())
 }
 
 fn write_staged(staging: &Path, relative: &str, bytes: &[u8]) -> Result<(), String> {
@@ -348,13 +418,100 @@ mod tests {
         }
     }
 
+    fn valid_writer(
+        root: &Path,
+        overwrite: bool,
+        retain: bool,
+    ) -> (BundleWriter, SemanticManifest) {
+        let (files, semantic) = crate::v05::testutil::test_bundle_materials(
+            &crate::v05::testutil::sample_rows(),
+            &crate::v05::testutil::sample_positions(),
+        );
+        let mut writer = BundleWriter::new(root.to_path_buf(), overwrite, retain);
+        for (path, bytes) in files {
+            writer.add(&path, bytes);
+        }
+        (writer, semantic)
+    }
+
+    #[test]
+    fn invalid_replacement_preserves_existing_bundle() {
+        let root = temp_root();
+        let (writer, semantic) = valid_writer(&root, false, false);
+        writer.finalize(semantic, serde_json::json!({})).unwrap();
+        let original = std::fs::read(root.join("manifest.json")).unwrap();
+        let (mut writer, semantic) = valid_writer(&root, true, false);
+        writer.files.remove("outputs.jsonl");
+        let error = writer
+            .finalize(semantic, serde_json::json!({}))
+            .unwrap_err();
+        assert!(
+            error.contains("staged bundle verification failed"),
+            "{error}"
+        );
+        assert_eq!(std::fs::read(root.join("manifest.json")).unwrap(), original);
+        assert!(
+            crate::v05::verify::verify_bundle(&root, &Default::default())
+                .unwrap()
+                .ok
+        );
+        assert!(staging_leftovers(&root).is_empty());
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn publication_rechecks_no_clobber_at_the_rename_boundary() {
+        let root = temp_root();
+        let stage = root.with_file_name("stage");
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::write(stage.join("new"), b"new").unwrap();
+        // Simulate another writer creating the destination after finalize's
+        // initial existence check. Even an empty directory must survive.
+        std::fs::create_dir(&root).unwrap();
+        assert!(publish_directory(&stage, &root, false).is_err());
+        assert!(root.is_dir());
+        assert!(!root.join("new").exists());
+        assert!(stage.join("new").exists());
+        std::fs::write(root.join("old"), b"old").unwrap();
+        publish_directory(&stage, &root, true).unwrap();
+        assert_eq!(std::fs::read(root.join("new")).unwrap(), b"new");
+        assert!(!root.join("old").exists());
+        assert!(!stage.exists());
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn failed_publication_keeps_both_source_and_destination() {
+        let root = temp_root();
+        let stage = root.with_file_name("stage");
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::write(stage.join("new"), b"new").unwrap();
+        std::fs::write(&root, b"existing file").unwrap();
+        assert!(publish_directory(&stage, &root, true).is_err());
+        assert_eq!(std::fs::read(&root).unwrap(), b"existing file");
+        assert_eq!(std::fs::read(stage.join("new")).unwrap(), b"new");
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn retained_failed_verification_is_never_a_published_bundle() {
+        let root = temp_root();
+        let (writer, mut semantic) = valid_writer(&root, false, true);
+        semantic.hook_schema = 99;
+        assert!(writer.finalize(semantic, serde_json::json!({})).is_err());
+        assert!(!root.exists());
+        let leftovers = staging_leftovers(&root);
+        assert_eq!(leftovers.len(), 1);
+        let stage = root.parent().unwrap().join(&leftovers[0]);
+        let error = crate::v05::verify::verify_bundle(&stage, &Default::default()).unwrap_err();
+        assert!(error.contains("staging directory"));
+        std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
+    }
+
     #[test]
     fn publishes_complete_bundle_atomically() {
         let root = temp_root();
-        let mut writer = BundleWriter::new(root.clone(), false, false);
-        writer.add("inputs.jsonl", br#"{"id":"i1","text":"hello"}"#.to_vec());
-        let payloads = payload_checksums(&writer.files);
-        let mut semantic = sample_manifest(payloads);
+        let (writer, mut semantic) = valid_writer(&root, false, false);
         let semantic_hash = BundleIdentity::semantic_hash(&semantic).unwrap();
         let (published, identity) = writer
             .finalize(semantic.clone(), serde_json::json!({"hostname": "test"}))
@@ -391,11 +548,8 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("refusing to overwrite"));
         // with overwrite it succeeds
-        let writer = BundleWriter::new(root.clone(), true, false);
-        let payloads = BTreeMap::new();
-        let (_, identity) = writer
-            .finalize(sample_manifest(payloads), serde_json::json!({}))
-            .unwrap();
+        let (writer, semantic) = valid_writer(&root, true, false);
+        let (_, identity) = writer.finalize(semantic, serde_json::json!({})).unwrap();
         assert_eq!(identity.semantic_hash.len(), 64);
         std::fs::remove_dir_all(root.parent().unwrap()).unwrap();
     }

@@ -11,7 +11,7 @@ use crate::v05::manifest::{
 use crate::v05::safetensors::{self, TensorView};
 use crate::v05::token_select::{CoverageKind, TokenSelectionRecord};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -173,6 +173,25 @@ pub struct VerifyOptions {
 
 /// Verify a bundle fully offline (unless deep verification is requested).
 pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<VerificationReport, String> {
+    if root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with('.') && name.contains(".tmp-"))
+    {
+        return Err("incomplete staging directory is not a published bundle".into());
+    }
+    verify_staged_bundle(root, options)
+}
+
+/// Used only by the writer before atomic publication. All content checks are
+/// identical to public verification; only the staging-name guard is bypassed.
+pub(crate) fn verify_staged_bundle(
+    root: &Path,
+    options: &VerifyOptions,
+) -> Result<VerificationReport, String> {
+    // Check entry types before opening even manifest.json: verification must
+    // never follow a bundle-supplied symlink or block on a special file.
+    let actual_files = regular_bundle_files(root)?;
     // ---- phase 1: manifest load + schema/basic identity checks ----
     let manifest_path = root.join("manifest.json");
     let bytes = std::fs::read(&manifest_path)
@@ -195,6 +214,28 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         "bundle complete",
         manifest.status == "complete",
         format!("status '{}'", manifest.status),
+    );
+    let mut listed = BTreeSet::new();
+    let mut inventory_errors = Vec::new();
+    for name in &manifest.files {
+        if crate::v05::bundle::validate_relative_path(name).is_err() {
+            inventory_errors.push(format!("unsafe manifest path: {name}"));
+        } else if !listed.insert(name.clone()) {
+            inventory_errors.push(format!("duplicate manifest path: {name}"));
+        }
+    }
+    let mut expected_files = listed.clone();
+    expected_files.insert("checksums.sha256".into());
+    if actual_files.contains("verification.json") {
+        expected_files.insert("verification.json".into());
+    }
+    for name in actual_files.symmetric_difference(&expected_files) {
+        inventory_errors.push(format!("file inventory mismatch: {name}"));
+    }
+    report.record(
+        "bundle file inventory",
+        inventory_errors.is_empty(),
+        inventory_errors.join("; "),
     );
 
     // ---- phase 2: required files + checksum scan ----
@@ -249,6 +290,28 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         semantic_manifest.complete,
         String::new(),
     );
+    // A self-consistent hash cannot make an unknown contract interpretable.
+    // Check independently versioned semantics before reading their payloads.
+    report.record(
+        "experiment schema",
+        semantic_manifest.experiment_schema == crate::v05::spec::EXPERIMENT_SCHEMA_V1,
+        semantic_manifest.experiment_schema.clone(),
+    );
+    report.record(
+        "hook schema",
+        semantic_manifest.hook_schema == crate::v05::hook::HOOK_SCHEMA_VERSION,
+        semantic_manifest.hook_schema.to_string(),
+    );
+    report.record(
+        "plan schema",
+        semantic_manifest.plan_schema == crate::plan::PLAN_SCHEMA_VERSION,
+        semantic_manifest.plan_schema.to_string(),
+    );
+    if !report.ok {
+        report.timestamp = now_iso8601();
+        let _ = write_verification_json(root, &report);
+        return Ok(report);
+    }
 
     // checksums: every file covered by checksums.sha256 must match. Keys
     // come from the untrusted bundle and are path-validated before use:
@@ -256,6 +319,11 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     // the bundle root (traversal → arbitrary-file hash oracle / read).
     let checksums = read_checksums(root)?;
     let mut checksum_mismatches: Vec<String> = Vec::new();
+    for name in &listed {
+        if !checksums.contains_key(name) {
+            checksum_mismatches.push(format!("{name}: missing checksum"));
+        }
+    }
     for (relative, expected) in &checksums {
         let Ok(relative) = crate::v05::bundle::validate_relative_path(relative) else {
             checksum_mismatches.push(format!("{relative}: unsafe path in checksums"));
@@ -448,6 +516,23 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
         .map_err(|error| format!("cannot read '{}': {error}", plan_path.display()))?;
     let plan: crate::plan::ExecutionPlan = serde_json::from_slice(&plan_bytes)
         .map_err(|error| format!("execution-plan.json is not valid JSON: {error}"))?;
+    report.record(
+        "execution plan schema",
+        plan.schema_version == crate::plan::PLAN_SCHEMA_VERSION
+            && plan.schema_version == semantic_manifest.plan_schema,
+        format!(
+            "stored {}, semantic {}",
+            plan.schema_version, semantic_manifest.plan_schema
+        ),
+    );
+    report.record(
+        "execution plan identity",
+        plan.plan_hash == semantic_manifest.execution.plan_hash,
+        format!(
+            "stored {}, semantic {}",
+            plan.plan_hash, semantic_manifest.execution.plan_hash
+        ),
+    );
     let recomputed_plan_hash = crate::plan::plan_hash(&plan);
     let plan_matches = recomputed_plan_hash == plan.plan_hash;
     report.record(
@@ -467,22 +552,59 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     );
 
     // semantic hash + payload hash recompute
-    let semantic_hash = BundleIdentity::semantic_hash(&semantic_manifest)?;
+    let canonical_semantic_hash = BundleIdentity::semantic_hash(&semantic_manifest)?;
     let stored_semantic = manifest.semantic_hash.clone();
+    let semantic_file = std::fs::read(root.join("semantic-manifest.json"))
+        .map_err(|error| format!("cannot read semantic-manifest.json: {error}"))?;
+    // Released 0.5/0.6 writers could inherit serde_json/preserve_order and
+    // hash insertion order despite documenting sorted keys. Preserve those
+    // identities explicitly; never rewrite historical payload bytes.
+    let legacy_version = matches!(
+        semantic_manifest.ember_version.as_str(),
+        "0.5.0"
+            | "0.5.1"
+            | "0.6.0"
+            | "0.6.1"
+            | "0.6.2"
+            | "0.6.3"
+            | "0.6.4"
+            | "0.6.5"
+            | "0.6.6"
+            | "0.6.7"
+            | "0.6.8"
+    );
+    let legacy_hash = if legacy_version && canonical_semantic_hash != stored_semantic {
+        let value: serde_json::Value =
+            serde_json::from_slice(&semantic_file).map_err(|error| error.to_string())?;
+        Some(sha256_hex(
+            &serde_json::to_vec(&value).map_err(|error| error.to_string())?,
+        ))
+    } else {
+        None
+    };
+    let used_legacy = legacy_hash.as_ref() == Some(&stored_semantic);
+    let semantic_hash = if used_legacy {
+        stored_semantic.clone()
+    } else {
+        canonical_semantic_hash
+    };
     report.record(
         "semantic hash",
         semantic_hash == stored_semantic,
         format!(
-            "recomputed {} vs stored {}",
+            "recomputed {} vs stored {} ({})",
             &semantic_hash[..12],
-            &stored_semantic[..12.min(stored_semantic.len())]
+            &stored_semantic[..12.min(stored_semantic.len())],
+            if used_legacy {
+                "legacy insertion-order JSON"
+            } else {
+                "sorted-key JSON"
+            },
         ),
     );
     // The payload inventory is the manifest's payloads map plus the
     // semantic manifest's own file (which cannot list itself).
     let mut inventory = semantic_manifest.payloads.clone();
-    let semantic_file = std::fs::read(root.join("semantic-manifest.json"))
-        .map_err(|error| format!("cannot read semantic-manifest.json: {error}"))?;
     inventory.insert(
         "semantic-manifest.json".to_string(),
         sha256_hex(&semantic_file),
@@ -561,6 +683,45 @@ pub fn verify_bundle(root: &Path, options: &VerifyOptions) -> Result<Verificatio
     Ok(report)
 }
 
+fn regular_bundle_files(root: &Path) -> Result<BTreeSet<String>, String> {
+    let metadata =
+        std::fs::symlink_metadata(root).map_err(|error| format!("bundle root: {error}"))?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("bundle root must be a directory, not a symlink".into());
+    }
+    let mut pending = vec![(root.to_path_buf(), 0usize)];
+    let mut files = BTreeSet::new();
+    let mut entries_seen = 0usize;
+    while let Some((directory, depth)) = pending.pop() {
+        if depth > 64 {
+            return Err("bundle directory nesting exceeds 64 levels".into());
+        }
+        for entry in std::fs::read_dir(directory).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            entries_seen += 1;
+            if entries_seen > 100_000 {
+                return Err("bundle inventory exceeds 100000 entries".into());
+            }
+            let kind = entry.file_type().map_err(|error| error.to_string())?;
+            if kind.is_symlink() || (!kind.is_file() && !kind.is_dir()) {
+                return Err(format!(
+                    "bundle contains a symlink or special file: {}",
+                    entry.path().display()
+                ));
+            }
+            if kind.is_dir() {
+                pending.push((entry.path(), depth + 1));
+            } else {
+                let path = entry.path();
+                let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
+                let name = relative.to_str().ok_or("bundle file name is not UTF-8")?;
+                files.insert(name.replace(std::path::MAIN_SEPARATOR, "/"));
+            }
+        }
+    }
+    Ok(files)
+}
+
 fn deep_model_check(
     model_path: &Path,
     semantic_manifest: &SemanticManifest,
@@ -621,9 +782,10 @@ fn deep_model_check(
 /// Minimal GGUF header reader: extracts `general.architecture` and the
 /// `*.block_count` metadata key without materializing tensor data.
 fn read_gguf_summary(path: &Path) -> Result<(String, usize), String> {
-    let bytes = std::fs::read(path)
+    let file = std::fs::File::open(path)
         .map_err(|error| format!("cannot open '{}': {error}", path.display()))?;
-    let mut cursor = std::io::Cursor::new(&bytes[..]);
+    let file_len = file.metadata().map_err(|error| error.to_string())?.len();
+    let mut cursor = std::io::BufReader::new(file);
     let mut magic = [0u8; 4];
     cursor
         .read_exact(&mut magic)
@@ -631,9 +793,10 @@ fn read_gguf_summary(path: &Path) -> Result<(String, usize), String> {
     if &magic != b"GGUF" {
         return Err("not a GGUF file (bad magic)".into());
     }
-    cursor
-        .seek(SeekFrom::Start(8))
-        .map_err(|error| format!("seek failed: {error}"))?; // skip version
+    let version = read_u32(&mut cursor)?;
+    if !matches!(version, 2 | 3) {
+        return Err(format!("unsupported GGUF version {version}"));
+    }
     let mut count_buf = [0u8; 8];
     cursor
         .read_exact(&mut count_buf)
@@ -644,7 +807,7 @@ fn read_gguf_summary(path: &Path) -> Result<(String, usize), String> {
         .map_err(|error| format!("truncated GGUF header: {error}"))?;
     let kv_count = u64::from_le_bytes(count_buf);
     let mut architecture: Option<String> = None;
-    let mut block_count: Option<usize> = None;
+    let mut block_counts = BTreeMap::new();
     for _ in 0..kv_count {
         let key = read_gguf_string(&mut cursor)?;
         let value_type = read_u32(&mut cursor)?;
@@ -653,14 +816,16 @@ fn read_gguf_summary(path: &Path) -> Result<(String, usize), String> {
                 // u32
                 let value = read_u32(&mut cursor)? as usize;
                 if key.ends_with(".block_count") {
-                    block_count = Some(value);
+                    block_counts.insert(key, value);
                 }
             }
             8 => {
                 // string
-                let value = read_gguf_string(&mut cursor)?;
                 if key == "general.architecture" {
-                    architecture = Some(value);
+                    architecture = Some(read_gguf_string(&mut cursor)?);
+                } else {
+                    let length = read_u64(&mut cursor)?;
+                    skip_gguf_bytes(&mut cursor, length, file_len)?;
                 }
             }
             9 => {
@@ -668,33 +833,66 @@ fn read_gguf_summary(path: &Path) -> Result<(String, usize), String> {
                 // element size)
                 let element_type = read_u32(&mut cursor)?;
                 let element_count = read_u64(&mut cursor)?;
-                let element_size = gguf_element_size(element_type)?;
-                let skip = element_size
-                    .checked_mul(element_count as usize)
-                    .ok_or_else(|| "GGUF array size overflow".to_string())?;
-                cursor
-                    .seek(SeekFrom::Current(skip as i64))
-                    .map_err(|error| format!("GGUF array skip failed: {error}"))?;
+                if element_type == 8 {
+                    // String arrays (notably tokenizer tokens/merges) have a
+                    // length prefix per element, not a fixed element size.
+                    let remaining = file_len.saturating_sub(
+                        cursor
+                            .stream_position()
+                            .map_err(|error| error.to_string())?,
+                    );
+                    if element_count > remaining / 8 {
+                        return Err("truncated GGUF string array".into());
+                    }
+                    for _ in 0..element_count {
+                        let length = read_u64(&mut cursor)?;
+                        skip_gguf_bytes(&mut cursor, length, file_len)?;
+                    }
+                } else {
+                    let size = gguf_element_size(element_type)? as u64;
+                    let skip = size
+                        .checked_mul(element_count)
+                        .ok_or_else(|| "GGUF array size overflow".to_string())?;
+                    skip_gguf_bytes(&mut cursor, skip, file_len)?;
+                }
             }
             10 => {
                 // u64
                 let value = read_u64(&mut cursor)?;
                 if key.ends_with(".block_count") {
-                    block_count = Some(value as usize);
+                    block_counts.insert(
+                        key,
+                        usize::try_from(value).map_err(|_| "GGUF block count overflow")?,
+                    );
                 }
             }
             _ => {
                 // skip fixed-size scalar
                 let size = gguf_element_size(value_type)?;
-                cursor
-                    .seek(SeekFrom::Current(size as i64))
-                    .map_err(|error| format!("GGUF scalar skip failed: {error}"))?;
+                skip_gguf_bytes(&mut cursor, size as u64, file_len)?;
             }
         }
     }
     let architecture = architecture.ok_or_else(|| "GGUF lacks general.architecture".to_string())?;
-    let block_count = block_count.ok_or_else(|| "GGUF lacks *.block_count".to_string())?;
+    let block_key = format!("{architecture}.block_count");
+    let block_count = block_counts
+        .remove(&block_key)
+        .ok_or_else(|| format!("GGUF lacks {block_key}"))?;
     Ok((architecture, block_count))
+}
+
+fn skip_gguf_bytes<R: Seek>(reader: &mut R, count: u64, file_len: u64) -> Result<(), String> {
+    let position = reader
+        .stream_position()
+        .map_err(|error| error.to_string())?;
+    let end = position
+        .checked_add(count)
+        .filter(|end| *end <= file_len)
+        .ok_or_else(|| "truncated GGUF metadata value".to_string())?;
+    reader
+        .seek(SeekFrom::Start(end))
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 fn read_gguf_string<R: Read>(reader: &mut R) -> Result<String, String> {
@@ -732,9 +930,9 @@ fn read_u64<R: Read>(reader: &mut R) -> Result<u64, String> {
 
 fn gguf_element_size(value_type: u32) -> Result<usize, String> {
     match value_type {
-        0 | 1 => Ok(1),
+        0 | 1 | 7 => Ok(1),
         2 | 3 => Ok(2),
-        4..=7 => Ok(4),
+        4..=6 => Ok(4),
         8 => Err("string type handled separately".into()),
         9 => Err("array type handled separately".into()),
         10..=12 => Ok(8),
@@ -744,11 +942,28 @@ fn gguf_element_size(value_type: u32) -> Result<usize, String> {
 
 fn selection_consistency(record: &TokenSelectionRecord) -> Option<String> {
     let seq_len = record.token_ids.len();
-    for &index in &record.selected_indices {
-        if index >= seq_len {
+    if let crate::v05::token_select::TokenSelector::GeneratedStep { step } = record.selector {
+        // Tokenization describes the prompt; generated rows use absolute
+        // sequence positions beyond it. Step one evaluates the first generated
+        // token, at prompt_len, rather than selecting a prompt token.
+        let expected = step
+            .checked_sub(1)
+            .and_then(|offset| seq_len.checked_add(offset));
+        let Some(position) = expected else {
+            return Some("generated step is zero or its absolute position overflows".into());
+        };
+        if record.selected_indices != [position] {
             return Some(format!(
-                "selected index {index} out of range for {seq_len} tokens"
+                "generated step {step} must select absolute position {position}"
             ));
+        }
+    } else {
+        for &index in &record.selected_indices {
+            if index >= seq_len {
+                return Some(format!(
+                    "selected index {index} out of range for {seq_len} tokens"
+                ));
+            }
         }
     }
     if record.byte_offsets.len() != seq_len {
@@ -821,7 +1036,12 @@ fn read_checksums(root: &Path) -> Result<BTreeMap<String, String>, String> {
                 "checksums.sha256 has a malformed checksum on line: {line:?}"
             ));
         }
-        checksums.insert(relative.to_string(), sum.to_string());
+        if checksums
+            .insert(relative.to_string(), sum.to_string())
+            .is_some()
+        {
+            return Err(format!("checksums.sha256 repeats path {relative:?}"));
+        }
     }
     Ok(checksums)
 }
@@ -840,6 +1060,29 @@ fn now_iso8601() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generated_selection_uses_absolute_decode_positions() {
+        use crate::v05::token_select::TokenSelector;
+        let mut record =
+            crate::v05::testutil::sample_selection_record(TokenSelector::GeneratedStep { step: 1 });
+        record.selected_indices = vec![1];
+        assert!(super::selection_consistency(&record).is_none());
+        for invalid in [vec![], vec![0], vec![2], vec![1, 1]] {
+            record.selected_indices = invalid;
+            assert!(super::selection_consistency(&record).is_some());
+        }
+        record.selector = TokenSelector::GeneratedStep { step: 3 };
+        record.selected_indices = vec![3];
+        assert!(super::selection_consistency(&record).is_none());
+        record.selector = TokenSelector::GeneratedStep { step: 0 };
+        assert!(super::selection_consistency(&record).is_some());
+        record.token_ids.push(2);
+        record.selector = TokenSelector::GeneratedStep { step: usize::MAX };
+        assert!(super::selection_consistency(&record).is_some());
+        record.selector = TokenSelector::PromptFinal;
+        assert!(super::selection_consistency(&record).is_some());
+    }
+
     use super::*;
     use crate::v05::testutil;
     use crate::v05::testutil::temp_root;
@@ -885,10 +1128,179 @@ mod tests {
         );
         let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
         assert!(report.ok, "{:?}", report.checks);
-        assert_eq!(report.checks.len(), 15);
+        assert_eq!(report.checks.len(), 21);
         // verification.json is written but excluded from hashes
         assert!(root.join("verification.json").is_file());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Reseal mutated fixtures so a failed schema/identity check cannot be
+    // explained by stale hashes. This does not confer trust on their contents.
+    fn reseal(root: &Path, semantic: &mut SemanticManifest) {
+        for (name, checksum) in &mut semantic.payloads {
+            *checksum = sha256_hex(&std::fs::read(root.join(name)).unwrap());
+        }
+        let bytes = crate::v05::manifest::canonical_json(semantic).unwrap();
+        std::fs::write(root.join("semantic-manifest.json"), &bytes).unwrap();
+        let path = root.join("manifest.json");
+        let mut manifest: BundleManifest =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        manifest.semantic_hash = BundleIdentity::semantic_hash(semantic).unwrap();
+        let mut inventory = semantic.payloads.clone();
+        inventory.insert("semantic-manifest.json".into(), sha256_hex(&bytes));
+        manifest.payload_hash = BundleIdentity::payload_hash(&inventory).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let checksums = manifest
+            .files
+            .iter()
+            .filter(|name| !matches!(name.as_str(), "checksums.sha256" | "verification.json"))
+            .map(|name| {
+                format!(
+                    "{}  {name}\n",
+                    sha256_hex(&std::fs::read(root.join(name)).unwrap())
+                )
+            })
+            .collect::<String>();
+        std::fs::write(root.join("checksums.sha256"), checksums).unwrap();
+    }
+
+    #[test]
+    fn unknown_nested_contracts_fail_even_when_hashes_are_valid() {
+        for field in ["experiment schema", "hook schema", "plan schema"] {
+            let root = temp_root("unknown-contract");
+            testutil::write_test_bundle(
+                &root,
+                &testutil::sample_rows(),
+                &testutil::sample_positions(),
+            );
+            let mut semantic = read_semantic_manifest(&root).unwrap();
+            match field {
+                "experiment schema" => semantic.experiment_schema = "ember.experiment.v2".into(),
+                "hook schema" => semantic.hook_schema = 2,
+                "plan schema" => semantic.plan_schema = 2,
+                _ => unreachable!(),
+            }
+            reseal(&root, &mut semantic);
+            let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+            let failed: Vec<_> = report
+                .checks
+                .iter()
+                .filter(|check| !check.ok)
+                .map(|check| check.name.as_str())
+                .collect();
+            assert_eq!(failed, [field]);
+            assert!(!report.ok);
+            assert!(load_bundle_for_source(&root).is_err());
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn stored_plan_must_match_declared_contract_and_identity() {
+        for change_schema in [false, true] {
+            let root = temp_root("plan-contract");
+            testutil::write_test_bundle(
+                &root,
+                &testutil::sample_rows(),
+                &testutil::sample_positions(),
+            );
+            let mut semantic = read_semantic_manifest(&root).unwrap();
+            let expected = if change_schema {
+                let path = root.join("execution-plan.json");
+                let mut plan: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                plan["schema_version"] = serde_json::json!(2);
+                semantic.execution.plan_hash = testutil::fixture_plan_hash(&mut plan);
+                std::fs::write(path, serde_json::to_vec(&plan).unwrap()).unwrap();
+                "execution plan schema"
+            } else {
+                semantic.execution.plan_hash = "0".repeat(64);
+                "execution plan identity"
+            };
+            reseal(&root, &mut semantic);
+            let report = verify_bundle(&root, &VerifyOptions::default()).unwrap();
+            let failed: Vec<_> = report
+                .checks
+                .iter()
+                .filter(|check| !check.ok)
+                .map(|check| check.name.as_str())
+                .collect();
+            assert_eq!(failed, [expected]);
+            assert!(!report.ok);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn unlisted_files_and_unchecked_files_fail() {
+        assert_verification_failure(
+            "extra-file",
+            |root| {
+                std::fs::write(root.join("unindexed.bin"), b"extra payload").unwrap();
+            },
+            &["bundle file inventory"],
+        );
+        assert_verification_failure(
+            "missing-checksum",
+            |root| {
+                let path = root.join("checksums.sha256");
+                let text = std::fs::read_to_string(&path).unwrap();
+                let filtered = text
+                    .lines()
+                    .filter(|line| !line.ends_with("  outputs.jsonl"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                std::fs::write(path, filtered).unwrap();
+            },
+            &["checksums"],
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn symlinks_are_rejected_before_manifest_or_payload_reads() {
+        for name in [
+            "manifest.json",
+            "captures/tensors.safetensors",
+            "verification.json",
+        ] {
+            let root = temp_root("symlink");
+            testutil::write_test_bundle(
+                &root,
+                &testutil::sample_rows(),
+                &testutil::sample_positions(),
+            );
+            let path = root.join(name);
+            if path.exists() {
+                std::fs::remove_file(&path).unwrap();
+            }
+            // A dangling target ensures rejection is based on entry type, not
+            // on accidentally succeeding while following the target.
+            std::os::unix::fs::symlink(root.join("absent-external-target"), &path).unwrap();
+            let error = verify_bundle(&root, &VerifyOptions::default()).unwrap_err();
+            assert!(error.contains("symlink"), "{error}");
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn duplicate_checksum_paths_fail() {
+        let root = temp_root("duplicate-checksum");
+        testutil::write_test_bundle(
+            &root,
+            &testutil::sample_rows(),
+            &testutil::sample_positions(),
+        );
+        let path = root.join("checksums.sha256");
+        let mut text = std::fs::read_to_string(&path).unwrap();
+        let duplicate = text.lines().next().unwrap().to_owned();
+        text.push_str(&duplicate);
+        text.push('\n');
+        std::fs::write(path, text).unwrap();
+        assert!(verify_bundle(&root, &VerifyOptions::default())
+            .unwrap_err()
+            .contains("repeats path"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -982,6 +1394,52 @@ mod tests {
     }
 
     #[test]
+    fn deep_metadata_reads_string_arrays_and_boolean_values() {
+        fn string(bytes: &mut Vec<u8>, value: &str) {
+            bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+            bytes.extend_from_slice(value.as_bytes());
+        }
+        let root = temp_root("metadata.gguf");
+        let mut bytes = b"GGUF".to_vec();
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&5u64.to_le_bytes());
+        string(&mut bytes, "tokenizer.ggml.tokens");
+        bytes.extend_from_slice(&9u32.to_le_bytes());
+        bytes.extend_from_slice(&8u32.to_le_bytes());
+        bytes.extend_from_slice(&2u64.to_le_bytes());
+        string(&mut bytes, "hello");
+        string(&mut bytes, "كتاب");
+        string(&mut bytes, "tokenizer.ggml.add_bos_token");
+        bytes.extend_from_slice(&7u32.to_le_bytes());
+        bytes.push(1);
+        string(&mut bytes, "general.architecture");
+        bytes.extend_from_slice(&8u32.to_le_bytes());
+        string(&mut bytes, "llama");
+        string(&mut bytes, "llama.block_count");
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        // Another architecture's count must not override the selected one.
+        string(&mut bytes, "other.block_count");
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&99u32.to_le_bytes());
+        std::fs::write(&root, &bytes).unwrap();
+        assert_eq!(read_gguf_summary(&root).unwrap(), ("llama".into(), 16));
+        bytes.pop();
+        std::fs::write(&root, &bytes).unwrap();
+        assert!(read_gguf_summary(&root).is_err());
+        std::fs::remove_file(root).unwrap();
+    }
+
+    #[test]
+    fn deep_metadata_rejects_skips_past_eof_and_overflow() {
+        let mut reader = std::io::Cursor::new(vec![0u8; 8]);
+        assert!(skip_gguf_bytes(&mut reader, 9, 8).is_err());
+        reader.set_position(4);
+        assert!(skip_gguf_bytes(&mut reader, u64::MAX, 8).is_err());
+    }
+
+    #[test]
     fn deep_model_mismatch_fails() {
         let root = temp_root("deep");
         testutil::write_test_bundle(
@@ -990,10 +1448,10 @@ mod tests {
             &testutil::sample_positions(),
         );
         // A non-model file with the wrong hash fails the deep check.
-        let model_path = root.join("fake-model.gguf");
+        let model_path = temp_root("fake-model.gguf");
         std::fs::write(&model_path, b"not a model").unwrap();
         let options = VerifyOptions {
-            model_path: Some(model_path),
+            model_path: Some(model_path.clone()),
             tokenizer_path: None,
         };
         let report = verify_bundle(&root, &options).unwrap();
@@ -1005,6 +1463,7 @@ mod tests {
             .map(|check| check.name.as_str())
             .collect();
         assert!(names.contains(&"deep model sha256"), "{names:?}");
+        std::fs::remove_file(model_path).unwrap();
         let _ = std::fs::remove_dir_all(&root);
     }
 

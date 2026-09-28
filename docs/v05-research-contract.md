@@ -110,7 +110,17 @@ Interventions apply at the same moments as observations, in-place:
 Interventions are applied once per evaluation (prefill and each decode
 step), gated by the resolved token selector (section 6). A replace
 intervention with a single-row source applies the source row to every
-selected row.
+selected row. For source-consuming operations (`replace`, `interpolate`, and
+`add-delta`), a source with multiple rows must have exactly the selected target
+row count; rows correspond in selector order. Other source row counts fail
+before the operation mutates any target row. Source columns must match target
+columns; truncation and implicit reshaping are forbidden.
+Current-run capture sources resolve by capture ID and input at the target site
+and layer; they never implicitly select the first layer of a layerwise capture.
+A cross-bundle source names one layer explicitly, and every target must match
+that layer (global head sites use layer zero). Cross-layer and cross-site
+transfer require a separately specified future interface; this schema rejects
+those mismatches.
 
 ## 4. Layer numbering
 
@@ -366,7 +376,9 @@ PID, local paths: verifiable but excluded from the semantic hash.
 Versioned independently: experiment spec schema (`ember.experiment.v1`),
 bundle schema (`ember.bundle.v1`), semantic hook schema (`ember.hook.v1`),
 execution-plan schema (`v04-plan/1`). `v1` means stable within Ember
-0.5.x, not that every future field is frozen forever. Unknown major:
+0.5.x and, per section 19, is the serialized anchor the 1.0 line carries
+forward; it is not a claim that every future field is frozen forever.
+Unknown major:
 fail. Newer minor with only optional recognized-compatible fields:
 handle only if explicitly supported. Missing required field: fail.
 Renamed semantic hook: require migration. Changed hook meaning:
@@ -383,3 +395,38 @@ arbitrary dynamic libraries; do not follow bundle symlinks during
 verification by default; write output atomically; never overwrite existing
 bundles unless explicitly requested; sanitize experiment ids used in
 paths; localize `unsafe`; every `unsafe` block carries a safety comment.
+
+## 19. 1.0 compatibility commitment
+
+This section states what the 1.0 line commits to, and only that. It replaces the
+earlier "stable within 0.5.x" reading for the surfaces named here; everything not
+named remains experimental under `docs/api-stability.md`.
+
+The 1.x serialized anchors are `ember.experiment.v1`, `ember.bundle.v1`,
+`ember.hook.v1`, the execution-plan schema (`v04-plan/1`), the run manifest
+(`schema_version` 2 with `execution-identity-v2`, v1 digests still verifiable),
+`signed-evidence-v1`, and `ember.kv-snapshot.v1`. For each: an unknown major
+version fails, a missing required field fails, unknown fields are rejected where
+the reader is strict and ignored only where the format says so (agent traces),
+and a field's meaning is never reinterpreted in place. Semantic changes require a
+new schema/contract version and a migration note.
+
+Within a compatibility family, exactness rules hold where they are stated:
+compressed K-quant tiers are bit-identical to one another, and the authoritative
+model-level numerical gate for production K-quant is the pinned llama.cpp golden
+ladder (Gate C). The cross-tier eager-f32 comparison is a cosine envelope on
+shared-prefix steps, not exact greedy-token equality (section 16, Gate D;
+`docs/audits/1.0-q6-numerics.md`).
+
+The supported integration surfaces are the documented CLI, the four Python
+binding functions, and the serialized anchors above. Diagnostic commands, kernel
+names, timing fields, plan internals other than `plan_hash`, and the
+`#[doc(hidden)]` modules are **not** stability promises; they may change in a
+minor release. The Rust library is embeddable but remains experimental API
+unless a module is explicitly listed as stable in `docs/api-stability.md`.
+
+Compatibility is verified by the fixture and negative-input tests named in
+`docs/audits/1.0-contract-audit.md` (historical-bundle compatibility, strict
+field rejection, unknown-version rejection, manifest/identity versions). This
+commitment is not a claim about numerical equivalence across architectures,
+dtypes, or hardware beyond the recorded envelopes.

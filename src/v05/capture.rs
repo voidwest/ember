@@ -61,6 +61,15 @@ impl LayerSelector {
                         range.start, range.end
                     ));
                 }
+                // Check the final selected index before allocating the range.
+                // A malformed end near usize::MAX must not exhaust memory before
+                // reporting that it exceeds the model's layer count.
+                let last = range.start + ((range.end - range.start - 1) / range.step) * range.step;
+                if last >= n_layers {
+                    return Err(format!(
+                        "layer selector: layer {last} is out of range for a {n_layers}-layer model"
+                    ));
+                }
                 (range.start..range.end).step_by(range.step).collect()
             }
         };
@@ -205,6 +214,23 @@ mod tests {
             step: 0,
         });
         assert!(zero_step.resolve(16).is_err());
+    }
+
+    #[test]
+    fn oversized_layer_ranges_fail_before_materialization() {
+        let enormous = LayerSelector::Range(LayerRange {
+            start: 0,
+            end: usize::MAX,
+            step: 1,
+        });
+        assert!(enormous.resolve(16).unwrap_err().contains("out of range"));
+        // The bound applies to selected indices, preserving sparse ranges.
+        let sparse = LayerSelector::Range(LayerRange {
+            start: 0,
+            end: usize::MAX,
+            step: usize::MAX,
+        });
+        assert_eq!(sparse.resolve(16).unwrap(), vec![0]);
     }
 
     #[test]

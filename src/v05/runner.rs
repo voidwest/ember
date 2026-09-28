@@ -293,7 +293,7 @@ impl V05Experiment {
             {
                 return true;
             }
-            if !target.generated_steps.is_empty() {
+            if absolute >= self.prompt_len && !target.generated_steps.is_empty() {
                 let step = absolute.saturating_sub(self.prompt_len) + 1;
                 if target.generated_steps.contains(&step) {
                     return true;
@@ -319,6 +319,15 @@ impl V05Experiment {
         let [rows, columns] = *tensor.shape();
         let is_decode = ctx.phase == ExecutionPhase::Decode;
         let start_position = ctx.start_position;
+        // Prefill head hooks expose only the prompt-final row; layer hooks
+        // expose the entire prompt. Decode exposes one absolute-position row.
+        let row_base = if is_decode {
+            start_position
+        } else if !site.is_per_layer() {
+            self.prompt_len.saturating_sub(1)
+        } else {
+            0
+        };
         let input_id = self
             .spec
             .inputs
@@ -329,7 +338,7 @@ impl V05Experiment {
         // 1. snapshots for interventions at this site.
         if self.site_has_interventions(site, layer) {
             for local_row in 0..rows {
-                let absolute = if is_decode { start_position } else { local_row };
+                let absolute = row_base + local_row;
                 if !self.intervenes_at(site, layer, absolute) {
                     continue;
                 }
@@ -358,17 +367,11 @@ impl V05Experiment {
                             .selected_indices
                             .iter()
                             .copied()
-                            .filter(|&position| {
-                                if is_decode {
-                                    position == start_position
-                                } else {
-                                    position < rows
-                                }
-                            })
+                            .filter(|&position| position >= row_base && position - row_base < rows)
                             .collect()
                     } else {
                         let step = self.decode_step(start_position);
-                        if target.generated_steps.contains(&step) {
+                        if is_decode && target.generated_steps.contains(&step) {
                             vec![start_position]
                         } else {
                             Vec::new()
@@ -379,7 +382,7 @@ impl V05Experiment {
                     }
                     let mut values: Vec<f32> = Vec::new();
                     for &position in &wanted {
-                        let local = if is_decode { 0 } else { position };
+                        let local = position - row_base;
                         values.extend_from_slice(
                             &tensor.values()[local * columns..(local + 1) * columns],
                         );
@@ -400,13 +403,7 @@ impl V05Experiment {
                         .selected_indices
                         .iter()
                         .copied()
-                        .filter(|&position| {
-                            if is_decode {
-                                position == start_position
-                            } else {
-                                position < rows
-                            }
-                        })
+                        .filter(|&position| position >= row_base && position - row_base < rows)
                         .collect();
                     if wanted.is_empty() {
                         continue;
@@ -415,10 +412,10 @@ impl V05Experiment {
                     let mut rows_out = Vec::new();
                     let positions: Vec<usize> = if full && !is_decode {
                         rows_out.extend_from_slice(tensor.values());
-                        (0..rows).collect()
+                        (row_base..row_base + rows).collect()
                     } else {
                         for &position in &wanted {
-                            let local = if is_decode { 0 } else { position };
+                            let local = position - row_base;
                             let row = &tensor.values()[local * columns..(local + 1) * columns];
                             rows_out.extend_from_slice(row);
                         }
@@ -443,7 +440,7 @@ impl V05Experiment {
                 } else {
                     // generated-step capture: buffer only the requested steps.
                     let step = self.decode_step(start_position);
-                    if !target.generated_steps.contains(&step) {
+                    if !is_decode || !target.generated_steps.contains(&step) {
                         continue;
                     }
                     let row = tensor.values()[..columns].to_vec();
@@ -489,17 +486,11 @@ impl V05Experiment {
                         .selected_indices
                         .iter()
                         .copied()
-                        .filter(|&position| {
-                            if is_decode {
-                                position == start_position
-                            } else {
-                                position < rows
-                            }
-                        })
+                        .filter(|&position| position >= row_base && position - row_base < rows)
                         .collect()
                 } else {
                     let step = self.decode_step(start_position);
-                    if target.generated_steps.contains(&step) {
+                    if is_decode && target.generated_steps.contains(&step) {
                         vec![start_position]
                     } else {
                         Vec::new()
@@ -531,12 +522,15 @@ impl V05Experiment {
                                 let captured = result
                                     .captures
                                     .iter()
-                                    .find(|c| c.capture_id == *capture_id && c.input_id == input_id)
+                                    .find(|c| {
+                                        c.capture_id == *capture_id && c.input_id == input_id
+                                            && c.site == site && c.layer == layer
+                                    })
                                     .ok_or_else(|| {
                                         ExperimentError::new(format!(
                                             "intervention '{}': source capture '{capture_id}' has \
-                                             not recorded a value at this point (execution order \
-                                             violation)",
+                                             not recorded a value at site {site}, layer {layer} at this point \
+                                             (site/layer mismatch or execution order violation)",
                                             target.intervention_id
                                         ))
                                     })?;
@@ -575,15 +569,36 @@ impl V05Experiment {
                         Some(bundle.rows.clone())
                     }
                 };
+                // A single source row broadcasts; otherwise rows correspond
+                // in selector order. Reject incompatible shapes before changing
+                // any target row (copy_from_slice would panic, zip would truncate).
+                if let Some(source) = &source_rows {
+                    let matched = positions.len().checked_mul(columns);
+                    if columns == 0 || (source.len() != columns && Some(source.len()) != matched) {
+                        return Err(ExperimentError::new(format!(
+                            "intervention '{}': source has {} values; expected one row of {columns} \
+                             values or {} selected rows of {columns} values",
+                            target.intervention_id, source.len(), positions.len()
+                        )));
+                    }
+                }
                 let mut applied = false;
-                for &position in &positions {
-                    let local = if is_decode { 0 } else { position };
+                for (row_index, &position) in positions.iter().enumerate() {
+                    let source_row = source_rows.as_deref().map(|source| {
+                        let offset = if source.len() == columns {
+                            0
+                        } else {
+                            row_index * columns
+                        };
+                        &source[offset..offset + columns]
+                    });
+                    let local = position - row_base;
                     let row_start = local * columns;
                     let row = &mut tensor.values_mut()[row_start..row_start + columns];
                     let snapshot = self.snapshots.get(&(site, layer, position)).cloned();
                     match target.operation {
                         InterventionOperation::Replace => {
-                            let source = source_rows.as_deref().ok_or_else(|| {
+                            let source = source_row.ok_or_else(|| {
                                 ExperimentError::new(format!(
                                     "intervention '{}': replace requires a source",
                                     target.intervention_id
@@ -603,7 +618,7 @@ impl V05Experiment {
                             applied = true;
                         }
                         InterventionOperation::Interpolate { alpha } => {
-                            let source = source_rows.as_deref().ok_or_else(|| {
+                            let source = source_row.ok_or_else(|| {
                                 ExperimentError::new(format!(
                                     "intervention '{}': interpolate requires a source",
                                     target.intervention_id
@@ -615,7 +630,7 @@ impl V05Experiment {
                             applied = true;
                         }
                         InterventionOperation::AddDelta => {
-                            let source = source_rows.as_deref().ok_or_else(|| {
+                            let source = source_row.ok_or_else(|| {
                                 ExperimentError::new(format!(
                                     "intervention '{}': add-delta requires a source",
                                     target.intervention_id
@@ -1045,10 +1060,7 @@ impl V05Experiment {
             // position deterministically).
             let mut order: Vec<usize> = (0..capture.positions.len()).collect();
             order.sort_by_key(|&i| capture.positions[i]);
-            if order
-                .windows(2)
-                .any(|pair| capture.positions[pair[0]] > capture.positions[pair[1]])
-            {
+            if order.iter().enumerate().any(|(i, &original)| i != original) {
                 let columns = capture.columns;
                 let mut rows = Vec::with_capacity(capture.rows.len());
                 let mut positions = Vec::with_capacity(capture.positions.len());
@@ -1127,6 +1139,17 @@ pub fn load_bundle_source(
             "intervention '{}': source bundle layer {layer} is out of range for a \
              {n_layers}-layer model",
             intervention.id
+        ));
+    }
+    let target_layers = if intervention.site.is_per_layer() {
+        intervention.layers.resolve(n_layers)?
+    } else {
+        vec![0]
+    };
+    if target_layers != [*layer] {
+        return Err(format!(
+            "intervention '{}': source bundle layer {layer} does not match target layers {:?}",
+            intervention.id, target_layers
         ));
     }
     let bundle = crate::v05::verify::load_bundle_for_source(bundle_path)?;
@@ -1311,6 +1334,47 @@ directory = "runs/runner-test"
         token_count: usize,
     ) -> ExecutionContext<'static> {
         ExecutionContext::new(model, phase, position, token_count, TracingState::Disabled)
+    }
+
+    #[test]
+    fn prefill_head_row_is_prompt_final_and_captured_before_intervention() {
+        use crate::v05::capture::LayerSelector;
+        for site in [SemanticHookSite::FinalNormOutput, SemanticHookSite::Logits] {
+            for storage in [
+                CaptureStorage::SelectedRows,
+                CaptureStorage::FullTensor,
+                CaptureStorage::SummaryOnly,
+            ] {
+                let mut spec = test_spec();
+                spec.captures.truncate(1);
+                spec.captures[0].site = site;
+                spec.captures[0].layers = LayerSelector::All("all".into());
+                spec.captures[0].storage = storage;
+                spec.interventions.truncate(1);
+                spec.interventions[0].site = site;
+                spec.interventions[0].layers = LayerSelector::All("all".into());
+                let mut experiment = new_experiment(&spec, 0);
+                let context = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
+                experiment.before_prefill(&context).unwrap();
+                let mut values = vec![2.0f32; 4];
+                experiment
+                    .fire_site(&context, 0, site, &mut TensorAccess::new(1, 4, &mut values))
+                    .unwrap();
+                assert_eq!(
+                    values,
+                    vec![0.0; 4],
+                    "prompt-final intervention must reach head"
+                );
+                let result = experiment.result.as_ref().unwrap();
+                assert_eq!(result.events[0].positions, vec![2]);
+                if storage == CaptureStorage::SummaryOnly {
+                    assert_eq!(result.summaries[0].positions, vec![2]);
+                } else {
+                    assert_eq!(result.captures[0].positions, vec![2]);
+                    assert_eq!(result.captures[0].rows, vec![2.0; 4]);
+                }
+            }
+        }
     }
 
     #[test]
@@ -1519,6 +1583,280 @@ directory = "runs/runner-test"
     }
 
     #[test]
+    fn current_run_source_uses_the_target_layer_not_the_first_capture() {
+        use crate::v05::capture::LayerSelector;
+        for source_has_target in [false, true] {
+            let mut spec = test_spec();
+            spec.captures.truncate(1);
+            spec.captures[0].layers = LayerSelector::List(if source_has_target {
+                vec![0, 1]
+            } else {
+                vec![0]
+            });
+            spec.interventions.retain(|i| i.id == "iv-replace");
+            spec.interventions[0].layers = LayerSelector::List(vec![1]);
+            spec.interventions[0].source = Some(InterventionSource::CaptureFromCurrentRun {
+                capture_id: "cap-attn".into(),
+            });
+            let mut experiment = new_experiment(&spec, 0);
+            let context = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
+            experiment.before_prefill(&context).unwrap();
+            let mut first = vec![1.0; 12];
+            experiment
+                .after_attention(
+                    &LayerContext::new(context, 0),
+                    &mut TensorAccess::new(3, 4, &mut first),
+                )
+                .unwrap();
+            let mut second = vec![2.0; 12];
+            let outcome = experiment.after_attention(
+                &LayerContext::new(context, 1),
+                &mut TensorAccess::new(3, 4, &mut second),
+            );
+            if source_has_target {
+                outcome.unwrap();
+            } else {
+                assert!(outcome
+                    .unwrap_err()
+                    .message()
+                    .contains("site/layer mismatch"));
+            }
+            assert_eq!(
+                second,
+                vec![2.0; 12],
+                "must never copy layer zero into layer one"
+            );
+        }
+    }
+
+    #[test]
+    fn bundle_source_layer_must_match_all_target_layers_before_loading() {
+        use crate::v05::capture::LayerSelector;
+        let mut intervention = test_spec().interventions.remove(2);
+        intervention.layers = LayerSelector::List(vec![1]);
+        let source = InterventionSource::CaptureFromBundle {
+            bundle_path: "does-not-exist".into(),
+            capture_id: "capture".into(),
+            input_id: "i1".into(),
+            layer: 0,
+        };
+        let error =
+            load_bundle_source(&intervention, &source, "model", "tokenizer", 2).unwrap_err();
+        assert!(error.contains("does not match target layers"), "{error}");
+        intervention.layers = LayerSelector::List(vec![0, 1]);
+        let error =
+            load_bundle_source(&intervention, &source, "model", "tokenizer", 2).unwrap_err();
+        assert!(error.contains("does not match target layers"), "{error}");
+    }
+
+    #[test]
+    fn cross_bundle_sources_enforce_identity_site_and_verified_payload() {
+        use crate::v05::capture::LayerSelector;
+        use crate::v05::testutil::{
+            temp_root, write_test_bundle, FIXTURE_MODEL_SHA, FIXTURE_TOKENIZER_SHA,
+        };
+        let root = temp_root("source-compatibility");
+        let rows = vec![1.0, 2.0, 3.0, 4.0];
+        write_test_bundle(&root, &rows, &[0]);
+        let source = InterventionSource::CaptureFromBundle {
+            bundle_path: root.clone(),
+            capture_id: "cap-1".into(),
+            input_id: "i1".into(),
+            layer: 0,
+        };
+        let mut intervention = test_spec().interventions.remove(2);
+        intervention.site = SemanticHookSite::ResidualPostMlp;
+        intervention.layers = LayerSelector::List(vec![0]);
+        let load = |target: &InterventionSpec,
+                    source: &InterventionSource,
+                    model: &str,
+                    tokenizer: &str| {
+            load_bundle_source(target, source, model, tokenizer, 2)
+        };
+        let valid = load(
+            &intervention,
+            &source,
+            FIXTURE_MODEL_SHA,
+            FIXTURE_TOKENIZER_SHA,
+        )
+        .unwrap();
+        assert_eq!(valid.rows, rows);
+        assert_eq!(valid.columns, 4);
+        let error = load(
+            &intervention,
+            &source,
+            "different-model",
+            FIXTURE_TOKENIZER_SHA,
+        )
+        .unwrap_err();
+        assert!(error.contains("model SHA"), "{error}");
+        let error = load(
+            &intervention,
+            &source,
+            FIXTURE_MODEL_SHA,
+            "different-tokenizer",
+        )
+        .unwrap_err();
+        assert!(error.contains("tokenizer SHA"), "{error}");
+        // Overrides apply to the named identity only; they cannot bypass the
+        // other identity, semantic site, or source bundle integrity.
+        intervention.compatibility.allow_model_mismatch = true;
+        assert!(load(
+            &intervention,
+            &source,
+            "different-model",
+            FIXTURE_TOKENIZER_SHA
+        )
+        .is_ok());
+        assert!(load(
+            &intervention,
+            &source,
+            "different-model",
+            "different-tokenizer"
+        )
+        .is_err());
+        intervention.compatibility.allow_tokenizer_mismatch = true;
+        assert!(load(
+            &intervention,
+            &source,
+            "different-model",
+            "different-tokenizer"
+        )
+        .is_ok());
+        intervention.site = SemanticHookSite::AttentionOutput;
+        let error = load(
+            &intervention,
+            &source,
+            "different-model",
+            "different-tokenizer",
+        )
+        .unwrap_err();
+        assert!(error.contains("source capture site"), "{error}");
+        intervention.site = SemanticHookSite::ResidualPostMlp;
+        let mut missing = source.clone();
+        if let InterventionSource::CaptureFromBundle { input_id, .. } = &mut missing {
+            *input_id = "absent-input".into();
+        }
+        let error = load(
+            &intervention,
+            &missing,
+            "different-model",
+            "different-tokenizer",
+        )
+        .unwrap_err();
+        assert!(error.contains("has no capture"), "{error}");
+        let payload = root.join("captures/tensors.safetensors");
+        let mut bytes = std::fs::read(&payload).unwrap();
+        *bytes.last_mut().unwrap() ^= 1;
+        std::fs::write(&payload, bytes).unwrap();
+        assert!(
+            load(
+                &intervention,
+                &source,
+                "different-model",
+                "different-tokenizer"
+            )
+            .is_err(),
+            "identity overrides must not permit a corrupted source"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn captured_source_row_count_mismatch_fails_before_mutation() {
+        for operation in [
+            InterventionOperation::Replace,
+            InterventionOperation::Interpolate { alpha: 0.5 },
+            InterventionOperation::AddDelta,
+        ] {
+            let mut spec = test_spec();
+            spec.captures.truncate(1);
+            spec.captures[0].storage = CaptureStorage::FullTensor;
+            spec.interventions.retain(|i| i.id == "iv-replace");
+            spec.interventions[0].operation = operation;
+            spec.interventions[0].source = Some(InterventionSource::CaptureFromCurrentRun {
+                capture_id: "cap-attn".into(),
+            });
+            let mut experiment = new_experiment(&spec, 0);
+            let context = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
+            experiment.before_prefill(&context).unwrap();
+            let mut values = vec![1.0f32; 12];
+            let error = experiment
+                .after_attention(
+                    &LayerContext::new(context, 0),
+                    &mut TensorAccess::new(3, 4, &mut values),
+                )
+                .expect_err("three source rows cannot fit one target row");
+            assert!(error.message().contains("selected rows"), "{error:?}");
+            assert_eq!(values, vec![1.0; 12]);
+            assert!(experiment.result.as_ref().unwrap().events.is_empty());
+        }
+    }
+
+    #[test]
+    fn captured_sources_apply_pairwise_or_broadcast_for_consuming_operations() {
+        for operation in [
+            InterventionOperation::Replace,
+            InterventionOperation::Interpolate { alpha: 0.5 },
+            InterventionOperation::AddDelta,
+        ] {
+            for broadcast in [false, true] {
+                let mut spec = test_spec();
+                spec.captures.truncate(1);
+                spec.captures[0].storage = if broadcast {
+                    CaptureStorage::SelectedRows
+                } else {
+                    CaptureStorage::FullTensor
+                };
+                spec.interventions.retain(|i| i.id == "iv-replace");
+                spec.interventions[0].operation = operation;
+                spec.interventions[0].source = Some(InterventionSource::CaptureFromCurrentRun {
+                    capture_id: "cap-attn".into(),
+                });
+                let mut experiment = new_experiment(&spec, 0);
+                let context = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
+                experiment.before_prefill(&context).unwrap();
+                // Supply an already resolved three-row selector to isolate the
+                // runtime source/target mapping from tokenizer span behavior.
+                experiment.interventions[0]
+                    .static_record
+                    .as_mut()
+                    .unwrap()
+                    .selected_indices = vec![0, 1, 2];
+                let original = vec![
+                    1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0,
+                ];
+                let mut values = original.clone();
+                experiment
+                    .after_attention(
+                        &LayerContext::new(context, 0),
+                        &mut TensorAccess::new(3, 4, &mut values),
+                    )
+                    .unwrap();
+                for index in 0..values.len() {
+                    let source = if broadcast {
+                        original[8 + index % 4]
+                    } else {
+                        original[index]
+                    };
+                    let expected = match operation {
+                        InterventionOperation::Replace => source,
+                        InterventionOperation::Interpolate { .. } => {
+                            0.5 * original[index] + 0.5 * source
+                        }
+                        InterventionOperation::AddDelta => original[index] + source,
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(
+                        values[index], expected,
+                        "{operation:?}, broadcast={broadcast}, element={index}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn restore_original_restores_pre_intervention_snapshot() {
         // Two interventions at the same site in declaration order: replace
         // (mutates), then restore-original (writes the snapshot back).
@@ -1606,6 +1944,16 @@ directory = "runs/decode-intervention-test"
         let prefill = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
         e.before_prefill(&prefill).expect("prepare");
 
+        let mut prompt = vec![2.0f32; 12];
+        e.after_mlp(
+            &LayerContext::new(prefill, 1),
+            &mut TensorAccess::new(3, 4, &mut prompt),
+        )
+        .expect("prefill must not intervene");
+        assert_eq!(prompt, vec![2.0; 12]);
+        assert!(e.snapshots.is_empty());
+        assert!(e.result.as_ref().unwrap().events.is_empty());
+
         // Decode step 1 = absolute position 3 (prompt_len 3 + step 1 - 1).
         let decode = exec_ctx(model_ctx(), ExecutionPhase::Decode, 3, 1);
         let mut values = vec![2.0f32; 4];
@@ -1676,6 +2024,16 @@ directory = "runs/gen-capture-test"
         let prefill = exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3);
         e.before_prefill(&prefill).expect("prepare");
 
+        let mut prompt_values = vec![8.0f32; 12];
+        e.after_mlp(
+            &LayerContext::new(exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3), 0),
+            &mut TensorAccess::new(3, 4, &mut prompt_values),
+        )
+        .expect("prefill hook");
+        assert!(
+            e.result.as_ref().unwrap().captures.is_empty(),
+            "generated step must not capture prompt row zero"
+        );
         let mut values = vec![9.0f32; 4];
         let mut tensor = TensorAccess::new(1, 4, &mut values);
         // decode step 1 = position 3 (1-based: prompt_len 3 + step 1 - 1):
@@ -1729,6 +2087,45 @@ directory = "runs/gen-capture-test"
             .expect("noop fire succeeds");
         assert_eq!(tensor.values(), vec![1.0; 4]);
         assert!(e.result.is_none());
+    }
+
+    #[test]
+    fn into_result_orders_merged_rows_without_changing_their_bits() {
+        let spec = test_spec();
+        let mut experiment = new_experiment(&spec, 0);
+        experiment
+            .before_prefill(&exec_ctx(model_ctx(), ExecutionPhase::Prefill, 0, 3))
+            .unwrap();
+        let capture = CapturedTensor {
+            capture_id: "cap-attn".into(),
+            input_id: "i1".into(),
+            site: SemanticHookSite::AttentionOutput,
+            layer: 0,
+            positions: vec![7, 3],
+            rows: vec![70.0, -0.0, 30.0, 31.0],
+            columns: 2,
+            full_tensor: false,
+            bytes: 16,
+            dtype: crate::v05::capture::CaptureDType::F32,
+        };
+        let later_buffer = CapturedTensor {
+            positions: vec![5],
+            rows: vec![50.0, 51.0],
+            bytes: 8,
+            ..capture.clone()
+        };
+        experiment.result.as_mut().unwrap().captures = vec![capture, later_buffer];
+        let result = experiment.into_result().unwrap();
+        assert_eq!(result.captures.len(), 1);
+        let merged = &result.captures[0];
+        assert_eq!(merged.positions, [3, 5, 7]);
+        assert_eq!(merged.columns, 2);
+        assert_eq!(merged.bytes, 24);
+        let expected = [30.0_f32, 31.0, 50.0, 51.0, 70.0, -0.0];
+        assert_eq!(
+            merged.rows.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+            expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
