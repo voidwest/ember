@@ -178,3 +178,12 @@ artifacts/golden-v03/**/*.bin
 
 !docs/road-to-1.0.md
 !docs/release-1.0.md
+
+.DS_Store
+
+# Native console visual-test artifacts. `ember gui --render-test-dir` writes
+# these; they are a deterministic local baseline for reviewing layout changes,
+# not shipped content. Regenerate with:
+#   cargo build --features gui-tests --bin ember
+#   ./target/debug/ember gui --render-test-dir docs/screenshots/console
+docs/screenshots/console/
