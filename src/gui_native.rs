@@ -863,8 +863,11 @@ impl Console {
         cx: &mut Context<Self>,
     ) -> Button {
         Button::new(SharedString::from(format!("pipeline:{id}")))
+            .ghost()
             .small()
             .label(text)
+            // The intervention is the variable under study, so it is the one
+            // node that keeps emphasis. Everything else stays quiet.
             .selected(accent)
             .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.step = step;
@@ -889,135 +892,83 @@ impl Console {
             "LOGITS".to_string()
         };
         let operation = match context.op.as_str() {
-            "scale" => format!("×{}", context.value),
+            "scale" => format!("\u{d7}{}", context.value),
             "zero" => "ZERO".to_string(),
             "replace" => format!("COPY L{}", context.source_layer),
             "interpolate" => format!("BLEND {}", context.value),
-            "add-delta" => format!("Δ L{}", context.source_layer),
+            "add-delta" => format!("\u{394} L{}", context.source_layer),
             _ => context.op.to_ascii_uppercase(),
         };
         let completed = self.baseline.is_some() && self.status == Status::Idle;
-        let arrow = || mono("→", 11.0, colors.text_faint);
-        let track_label =
-            |text: &'static str, color: Rgba| mono(text, 8.0, color).w(px(78.0)).flex_none();
+        let sep = || label("\u{00b7}", 10.0, colors.text_faint).flex_none();
+        let track = |text: &'static str, color: Rgba| label(text, 8.0, color).flex_none();
 
+        // A summary of what the current form will do, not a diagram of it.
+        //
+        // This was a bordered card with eight pill nodes, two ruled tracks and
+        // a header, which made the experiment graph the loudest object on the
+        // screen while the actual task sat underneath it. The information is
+        // unchanged and every node is still a click target that jumps to the
+        // control it names; only the framing changed -- no container, no
+        // background, no node borders, and the intervention track is the one
+        // thing that carries colour because it is the thing under study.
         div()
             .w_full()
-            .p_4()
             .flex_col()
-            .gap_3()
-            .bg(colors.surface)
-            .border_1()
-            .border_color(colors.border)
-            .rounded(px(10.0))
+            .gap_1()
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .child(label("EXPERIMENT PIPELINE", 9.25, colors.text_faint))
-                    .child(div().w_full())
-                    .child(chip(
-                        if completed { "MEASURED" } else { "PLANNED" },
-                        if completed {
-                            colors.ok
-                        } else {
-                            colors.text_faint
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
+                    .flex_row()
                     .items_center()
                     .gap_2()
+                    .flex_wrap()
+                    .child(track("INPUT", colors.text_faint))
+                    .child(sep())
                     .child(self.pipeline_node(
                         colors,
                         "input",
-                        "INPUT".to_string(),
+                        "prompt".to_string(),
                         false,
                         WorkspaceStep::Prompt,
                         cx,
                     ))
-                    .child(arrow())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(track_label("BASELINE", colors.text_faint))
-                                    .child(self.pipeline_node(
-                                        colors,
-                                        "baseline",
-                                        "ORIGINAL".to_string(),
-                                        false,
-                                        WorkspaceStep::Review,
-                                        cx,
-                                    ))
-                                    .child(arrow())
-                                    .child(self.pipeline_node(
-                                        colors,
-                                        "baseline-generate",
-                                        "GENERATE".to_string(),
-                                        false,
-                                        WorkspaceStep::Review,
-                                        cx,
-                                    ))
-                                    .child(
-                                        div().flex_1().min_w(px(16.0)).h(px(1.0)).bg(colors.border),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(track_label("INTERVENTION", colors.accent))
-                                    .child(self.pipeline_node(
-                                        colors,
-                                        "target",
-                                        target,
-                                        false,
-                                        WorkspaceStep::Intervention,
-                                        cx,
-                                    ))
-                                    .child(arrow())
-                                    .child(self.pipeline_node(
-                                        colors,
-                                        "operation",
-                                        operation,
-                                        true,
-                                        WorkspaceStep::Intervention,
-                                        cx,
-                                    ))
-                                    .child(arrow())
-                                    .child(self.pipeline_node(
-                                        colors,
-                                        "intervention-generate",
-                                        "GENERATE".to_string(),
-                                        false,
-                                        WorkspaceStep::Review,
-                                        cx,
-                                    ))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(16.0))
-                                            .h(px(1.0))
-                                            .bg(Hsla::from(colors.accent).opacity(0.45)),
-                                    ),
-                            ),
-                    )
-                    .child(arrow())
+                    .child(sep())
+                    .child(track("CONTRAST WITH", colors.text_faint))
+                    .child(sep())
+                    .child(self.pipeline_node(
+                        colors,
+                        "baseline",
+                        "unchanged".to_string(),
+                        false,
+                        WorkspaceStep::Review,
+                        cx,
+                    ))
+                    .child(sep())
+                    .child(self.pipeline_node(
+                        colors,
+                        "target",
+                        target,
+                        false,
+                        WorkspaceStep::Intervention,
+                        cx,
+                    ))
+                    .child(sep())
+                    .child(self.pipeline_node(
+                        colors,
+                        "operation",
+                        operation,
+                        true,
+                        WorkspaceStep::Intervention,
+                        cx,
+                    ))
+                    .child(sep())
+                    .child(track("THEN COMPARE", colors.text_faint))
+                    .child(sep())
                     .child(self.pipeline_node(
                         colors,
                         "compare",
-                        "COMPARE".to_string(),
+                        "both".to_string(),
                         false,
                         WorkspaceStep::Review,
                         cx,
@@ -1026,18 +977,21 @@ impl Console {
             .child(
                 div()
                     .flex()
+                    .flex_row()
                     .items_center()
+                    .gap_2()
                     .child(mono(
                         format!(
-                            "TOKEN  {}",
-                            token_label(&context.token).to_ascii_uppercase()
+                            "{}  \u{00b7}  {}",
+                            token_label(&context.token),
+                            if completed { "measured" } else { "planned" }
                         ),
                         8.5,
                         colors.text_faint,
                     ))
                     .child(div().w_full())
                     .child(mono(
-                        format!("≤{} TOKENS  ·  SEED 0", context.max_tokens),
+                        format!("\u{2264}{} tokens  \u{00b7}  seed 0", context.max_tokens),
                         8.5,
                         colors.text_faint,
                     )),
