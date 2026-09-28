@@ -78,7 +78,10 @@ jobs:
         run: cargo clippy --locked --all-targets --all-features -- -D warnings -A clippy::chunks_exact_to_as_chunks
 
       - name: clippy (python bindings)
-        run: cargo clippy --locked -p ember-python -- -D warnings
+        # Same 1.98 style-lint exception as the main clippy step above: the
+        # binding build lints the `ember` lib, whose measured kernel loops are
+        # intentionally retained during the GUI migration.
+        run: cargo clippy --locked -p ember-python -- -D warnings -A clippy::chunks_exact_to_as_chunks
 
       - name: fmt
         run: cargo fmt --all -- --check
