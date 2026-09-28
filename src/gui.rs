@@ -342,8 +342,23 @@ fn raw_spec(
             id: "prompt-1".to_string(),
             text: prompt.to_string(),
         }],
-        captures,
-        interventions,
+        captures: Some(
+            captures
+                .into_iter()
+                .map(|capture| {
+                    ember::v05::spec::RawDefinition::explicit(capture).expect("capture serializes")
+                })
+                .collect(),
+        ),
+        interventions: Some(
+            interventions
+                .into_iter()
+                .map(|intervention| {
+                    ember::v05::spec::RawDefinition::explicit(intervention)
+                        .expect("intervention serializes")
+                })
+                .collect(),
+        ),
         output: RawOutputSpec {
             directory: output_dir,
             tensor_format: Some("safetensors".to_string()),
@@ -937,7 +952,7 @@ fn run_one(
     );
     let prepared = session
         .prepared
-        .as_ref()
+        .as_mut()
         .ok_or_else(|| "model session is not prepared".to_string())?;
     let (spec_text, resolved) = build_and_resolve_spec(cfg, kind, &output_dir)?;
     let (path, identity, report, results) = execute_prepared(
