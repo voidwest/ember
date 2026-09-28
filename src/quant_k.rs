@@ -400,6 +400,8 @@ pub enum KStrategy {
     Scalar,
     /// Compressed resident, AVX2/FMA/F16C/SSSE3 kernels (x86 feature set required).
     X86,
+    /// Compressed resident, ARM NEON signed dot-product kernels.
+    Arm,
     /// Best available per tensor: compressed when a native kernel exists,
     /// eager-f32 otherwise, with every choice recorded.
     Auto,
@@ -412,6 +414,7 @@ impl KStrategy {
             Self::EagerF32 => "eager-f32",
             Self::Scalar => "compressed-scalar",
             Self::X86 => "compressed-x86",
+            Self::Arm => "compressed-arm",
             Self::Auto => "auto",
         }
     }
@@ -422,9 +425,10 @@ impl KStrategy {
             "eager-f32" => Ok(Self::EagerF32),
             "scalar" => Ok(Self::Scalar),
             "x86" => Ok(Self::X86),
+            "arm" => Ok(Self::Arm),
             "auto" => Ok(Self::Auto),
             other => Err(format!(
-                "unknown K strategy '{other}'; expected one of: eager-f32, scalar, x86, auto"
+                "unknown K strategy '{other}'; expected one of: eager-f32, scalar, x86, arm, auto"
             )),
         }
     }
@@ -439,6 +443,8 @@ pub enum KExecution {
     CompressedScalar,
     /// Packed bytes resident, AVX2/FMA/F16C/SSSE3 kernels (x86 feature set required).
     CompressedX86,
+    /// Packed bytes resident, ARM NEON+dotprod kernels.
+    CompressedArm,
 }
 
 /// One loader decision for a K-family tensor (recorded, never silent).
@@ -599,7 +605,9 @@ impl KQuantWeight {
         anyhow::ensure!(
             matches!(
                 execution,
-                KExecution::CompressedScalar | KExecution::CompressedX86
+                KExecution::CompressedScalar
+                    | KExecution::CompressedX86
+                    | KExecution::CompressedArm
             ),
             "KQuantWeight: packed storage cannot record eager-f32 execution"
         );
@@ -751,7 +759,9 @@ impl KQuantWeight {
         assert!(
             matches!(
                 execution,
-                KExecution::CompressedScalar | KExecution::CompressedX86
+                KExecution::CompressedScalar
+                    | KExecution::CompressedX86
+                    | KExecution::CompressedArm
             ),
             "packed K-quant weight cannot record eager-f32 execution"
         );

@@ -264,6 +264,21 @@ non-finite activations fail before the destination is modified. Gate C is not
 relaxed: the per-family max/mean/cosine and 100% top-1 requirements above remain
 the authoritative model-level numerical gate.
 
+1.0 clarification 2026-09-28: the amendment above already retires the original
+Gate B greedy-token equality as the definition of production K-quant.
+`tests/k_parity.rs` now implements that scope: exact greedy-token equality is
+asserted only within a compressed tier (ARM/scalar/x86 bitwise), while the
+cross-tier eager-f32 comparison keeps the pre-registered per-layer/logit cosine
+envelope on every shared-prefix step and records any token flip instead of
+requiring it away. Independent probes explain why this is a scope, not a
+loosening: the compressed path packs activations to Q8_K exactly as pinned
+llama.cpp does and tracks it to ~1e-7, while eager-f32 is an exact-f32
+computation ~0.005 away from that quantized arithmetic, so near-tie argmax
+margins can legitimately flip (see `docs/audits/1.0-q6-numerics.md`). Gate C
+(the llama.cpp golden ladder, top-1 100% and the per-family max/mean/cosine
+envelope) remains the authoritative model-level numerical gate and is unchanged,
+as are all within-tier exactness gates.
+
 Evidence must be attributed rather than inferred from this contract:
 
 - **Continuously verified in-tree:** scalar/x86 packing ABI and bit equality,
@@ -283,8 +298,10 @@ Evidence must be attributed rather than inferred from this contract:
   model-free and may skip the env-gated integration tests.
 - **Historical evidence:** the 2026-08-03 numbers above describe the original
   v0.3 implementation. They are context, not proof for this rewrite. A result
-  is current only when its machine-readable artifact names kernel revision 2
-  and records the model hash and actual dispatch.
+  is current only when its machine-readable artifact names the kernel revision
+  of the measured binary and records the model hash and actual dispatch. Kernel
+  revision 2 identifies that historical rewrite; later source revisions do not
+  retroactively update results produced by an older binary.
 
 Gate D: x86 vs scalar: both implement the same Q8_K mathematical primitive,
 but SIMD lane reduction may differ from scalar by the registered tolerance;
