@@ -12,6 +12,8 @@ mod cli_audio;
 mod cli_commands;
 mod cli_evidence;
 mod cli_generation;
+mod cli_handoff;
+mod cli_intervene;
 mod cli_kv;
 mod cli_manifest;
 mod cli_multimodal;
@@ -282,13 +284,19 @@ pub(crate) struct Args {
     /// K-family (Q4_K/Q6_K) execution strategy; `auto` selects
     /// compressed-resident execution for supported dtypes and eager-f32
     /// for dtypes without a native kernel (recorded per tensor)
-    #[arg(long, default_value = "auto", value_parser = ["eager-f32", "scalar", "x86", "auto"])]
+    #[arg(long, default_value = "auto", value_parser = ["eager-f32", "scalar", "x86", "arm", "auto"])]
     k_strategy: String,
 
     /// allow per-tensor fallback (eager-f32/scalar) when the requested K
     /// strategy has no native path; the fallback is recorded, never silent
     #[arg(long)]
     k_allow_fallback: bool,
+
+    /// fail instead of warn when the GGUF architecture is outside the
+    /// supported matrix (docs/support.md); experimental families stay
+    /// runnable by default, with a warning
+    #[arg(long)]
+    strict_support: bool,
 
     /// v0.4 execution concept: planned (execution-plan interpreter, the
     /// default for llama/qwen3 decode), reference (the v0.3 generic path,
@@ -351,6 +359,18 @@ pub(crate) enum Commands {
     /// batch greedy generation / next-token logprob scoring (one resident model)
     ScoreBatch(cli_score_batch::ScoreBatchCommand),
 
+    /// one-shot latent handoff injection pilot: prefill assembled
+    /// [virtual; prompt] embeddings, greedy-decode, write evidence envelope
+    HandoffInject(cli_handoff::HandoffInjectCommand),
+
+    /// forced-choice log-prob scoring with an optional centered-residual
+    /// span patch (Phase C diagnostics; additive hook only)
+    InterveneScore(cli_intervene::InterveneScoreCommand),
+
+    /// collect per-layer span-mean states over prompts (Phase E direction
+    /// estimation; uncached forwards, no generation)
+    CollectSpans(cli_intervene::CollectSpansCommand),
+
     /// reproducible experiment workflows (v0.5)
     Experiment(cli_experiment::ExperimentCommand),
 
@@ -363,7 +383,7 @@ pub(crate) enum Commands {
     Agent(cli_agent::AgentCommand),
     /// inspect agent research traces (JSONL)
     Trace(cli_agent::TraceCommand),
-    /// native experiment console (v0.6): gpui single-window GUI over the
+    /// native experiment console: GPUI Kit single-window GUI over the
     /// v0.5 experiment pipeline
     #[cfg(feature = "gui")]
     Gui(gui_native::NativeGuiArgs),
@@ -700,6 +720,24 @@ fn validate_tokenizer_model_contract<B: Backend>(
 }
 
 fn main() -> anyhow::Result<()> {
+    match run() {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            if error.is::<cli_support::VerificationFailed>() {
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                std::process::exit(cli_support::verdict_exit_code(false));
+            }
+            if error.is::<ember::cancel::Cancelled>() {
+                eprintln!("cancelled");
+                std::process::exit(cli_support::EXIT_CANCELLED);
+            }
+            Err(error)
+        }
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     env_logger::init();
     let matches = Args::command().get_matches();
     if matches.subcommand_name() == Some("kv") {
@@ -721,9 +759,22 @@ fn main() -> anyhow::Result<()> {
             misplaced.join(", ")
         );
     }
-    let mut args = Args::from_arg_matches(&matches)?;
+    let args = Args::from_arg_matches(&matches)?;
     validate_experiment_options(&args)?;
 
+    // GUI event loops must stay on their owning OS thread. Their inference
+    // workers enter sessions at execute_prepared instead.
+    let event_loop = matches!(&args.command, Some(Commands::WebGui(_)));
+    #[cfg(feature = "gui")]
+    let event_loop = event_loop || matches!(&args.command, Some(Commands::Gui(_)));
+    if event_loop {
+        run_args(args)
+    } else {
+        ember::model::with_cpu_session(|| run_args(args))
+    }
+}
+
+fn run_args(mut args: Args) -> anyhow::Result<()> {
     if let Some(command) = &args.command {
         let k_strategy =
             ember::quant_k::KStrategy::from_cli(&args.k_strategy).map_err(anyhow::Error::msg)?;
@@ -760,6 +811,17 @@ fn main() -> anyhow::Result<()> {
             Commands::Voice(command) => cli_voice::run_voice_command(command),
             Commands::ScoreBatch(command) => {
                 cli_score_batch::run_score_batch_command(command, k_strategy, args.k_allow_fallback)
+            }
+            Commands::HandoffInject(command) => {
+                cli_handoff::run_handoff_inject_command(command, k_strategy, args.k_allow_fallback)
+            }
+            Commands::InterveneScore(command) => cli_intervene::run_intervene_score_command(
+                command,
+                k_strategy,
+                args.k_allow_fallback,
+            ),
+            Commands::CollectSpans(command) => {
+                cli_intervene::run_collect_spans_command(command, k_strategy, args.k_allow_fallback)
             }
             Commands::Agent(command) => cli_agent::run_agent_command(command),
             Commands::Trace(command) => cli_agent::run_trace_command(command),
@@ -820,6 +882,12 @@ fn main() -> anyhow::Result<()> {
     let loader = load_gguf_with_k_strategy(&args.model, k_strategy, args.k_allow_fallback)?;
     let execution_inventory = ember::artifact::ExecutionInventory::from_loader(&loader);
     args.arch = resolve_generation_architecture(&args.arch, &loader)?;
+    if let Some(declared) = ember::support::declared_architecture(&loader) {
+        ember::support::strict_gate(declared, args.strict_support)?;
+        for note in ember::support::eager_fallback_notes(&loader) {
+            log::warn!("{note}");
+        }
+    }
     validate_experiment_options(&args)?;
     let n_tensors = loader.tensors.len();
     let tokenizer_path = args
@@ -870,6 +938,14 @@ fn main() -> anyhow::Result<()> {
     }
     let backend = CpuBackend;
     let tokenizer = resolved_tokenizer.load()?;
+
+    // Cooperative cancellation: Ctrl-C fires this token instead of killing the
+    // process; the generation loop checks it before prefill and per decode step
+    // (docs/cancellation.md). A second Ctrl-C exits hard.
+    let cancel = ember::cancel::CancelToken::new();
+    if !cli_support::install_sigint_cancel(&cancel) {
+        log::warn!("could not install the SIGINT handler; Ctrl-C will terminate the process");
+    }
 
     match args.arch.as_str() {
         "gpt2" => {
@@ -930,7 +1006,7 @@ fn main() -> anyhow::Result<()> {
                     &run_metadata,
                 )?;
             } else {
-                run_single_prompt(&backend, &model, &tokenizer, &args)?;
+                run_single_prompt(&backend, &model, &tokenizer, &args, Some(&cancel))?;
             }
         }
         "llama" | "qwen3" => {
@@ -1029,9 +1105,10 @@ fn main() -> anyhow::Result<()> {
                     &args,
                     model_context,
                     runner,
+                    Some(&cancel),
                 )?;
             } else {
-                run_single_prompt(&backend, &model, &tokenizer, &args)?;
+                run_single_prompt(&backend, &model, &tokenizer, &args, Some(&cancel))?;
             }
         }
         "gemma4" => {
@@ -1132,9 +1209,10 @@ fn main() -> anyhow::Result<()> {
                     &args,
                     model_context,
                     runner,
+                    Some(&cancel),
                 )?;
             } else {
-                run_single_prompt(&backend, &model, &tokenizer, &args)?;
+                run_single_prompt(&backend, &model, &tokenizer, &args, Some(&cancel))?;
             }
         }
         _ => anyhow::bail!("unknown architecture: {}", args.arch),
