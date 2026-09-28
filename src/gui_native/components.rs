@@ -25,7 +25,23 @@ pub(super) fn mono(content: impl Into<SharedString>, size: f32, color: Rgba) -> 
         .text_color(color)
 }
 
+/// Vertical line-height multiplier, as a multiple of the font size.
+///
+/// Noto Naskh Arabic has substantially taller vertical metrics than Noto Sans,
+/// and Arabic tashkeel (diacritics) sit above the baseline. At the Latin 1.8
+/// multiplier the diacritic row was clipped away entirely in the context
+/// sidebar, which made the echoed prompt unreadable -- on the one input the
+/// project exists to study. Verified against the rendered visual artifacts.
+fn line_height_multiplier(font: &'static str) -> f32 {
+    if font == super::FONT_ARABIC_NAME {
+        2.6
+    } else {
+        1.8
+    }
+}
+
 pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static str) -> Div {
+    let line_height = size * line_height_multiplier(font);
     div().flex_col().children(
         content
             .split('\n')
@@ -34,7 +50,7 @@ pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static st
                     .child(line.to_string())
                     .font_family(font)
                     .text_size(px(size))
-                    .line_height(px(size * 1.8))
+                    .line_height(px(line_height))
                     .text_color(color)
                     .into_any_element()
             })

@@ -45,6 +45,12 @@ use theme::{AppearanceMode, Colors};
 // embedded fonts (SIL OFL 1.1, see src/gui_fonts/LICENSE.txt)
 // ---------------------------------------------------------------------------
 
+/// Character budget for a preset hint in the narrow left sidebar.
+///
+/// Chosen against the rendered minimum-width artifact (980px) so the hint
+/// ellipsizes rather than being cut mid-word.
+const PRESET_HINT_CHARS: usize = 34;
+
 const FONT_SANS: &[u8] = include_bytes!("gui_fonts/NotoSans-Regular.ttf");
 const FONT_MONO: &[u8] = include_bytes!("gui_fonts/NotoSansMono-Regular.ttf");
 const FONT_ARABIC: &[u8] = include_bytes!("gui_fonts/NotoNaskhArabic-Regular.ttf");
@@ -1648,7 +1654,15 @@ impl Console {
                     .flex_col()
                     .gap_1()
                     .child(label(title, 10.0, colors.text))
-                    .child(label(hint, 8.5, colors.text_faint)),
+                    // The sidebar is narrow, so the hint is hard-clipped
+                    // mid-word by the button's content box ("...an Arabic
+                    // pi"). Ellipsize explicitly so the reader can see there
+                    // is more, using the same helper the prompt excerpt uses.
+                    .child(label(
+                        truncate_chars(hint, PRESET_HINT_CHARS),
+                        8.5,
+                        colors.text_faint,
+                    )),
             )
             .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.apply_preset(preset, cx);
