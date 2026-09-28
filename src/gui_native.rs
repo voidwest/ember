@@ -885,10 +885,19 @@ impl Console {
         step: WorkspaceStep,
         cx: &mut Context<Self>,
     ) -> Button {
+        // These are commands, not prose, so they use Button (never Link --
+        // Link is for URLs and email). `outline` is not a variant but composes
+        // with ghost, which is what gives the node a resting hairline: a plain
+        // ghost button on a dark canvas reads as static text, so the control
+        // looked clickable while advertising nothing. gpui-kit still owns the
+        // hover and focus-ring geometry, which overriding by hand would break.
         Button::new(SharedString::from(format!("pipeline:{id}")))
             .ghost()
+            .outline()
             .small()
-            .label(text)
+            .label(text.clone())
+            .tooltip(format!("Go to {}", step.label()))
+            .accessibility_label(format!("{}: go to {}", text, step.label()))
             // The intervention is the variable under study, so it is the one
             // node that keeps emphasis. Everything else stays quiet.
             .selected(accent)
