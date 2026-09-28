@@ -25,6 +25,8 @@ extern crate alloc;
 static GLOBAL_ALLOCATOR: alloc_counter::CountingAllocator = alloc_counter::CountingAllocator;
 
 pub mod agent;
+#[doc(hidden)]
+pub mod app_store;
 // These modules are kept source-visible for the package's separate binary
 // target and existing integrations, but are implementation details rather than
 // supported API. `doc(hidden)` preserves current paths without advertising
