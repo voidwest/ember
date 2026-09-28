@@ -94,7 +94,7 @@ Out of scope (hard constraints, from the release spec):
   Q4_K/Q6_K × Q8_K rewrite is `PLAN_KERNEL_REVISION = 2`; historical revision
   1 plans remain deserializable for offline bundle verification but cannot be
   executed as current plans.
-- D7: `execution-plan.json` (schema `v04-plan/1`, kernel revision 2) is written under
+- D7: `execution-plan.json` (schema `v04-plan/1`, candidate kernel revision 5) is written under
   `artifacts/benchmark-v04/<run>/` for every benchmarked run and is also
   available through `ember inspect-plan`.
 
@@ -344,7 +344,7 @@ decisions are load-time and orthogonal to execution planning).
 
 ```text
 schema_version: 1            # "v04-plan/1"
-kernel_revision: 2           # numerical/runtime ABI; legacy missing field = 1
+kernel_revision: 5           # candidate numerical/runtime ABI; legacy missing field = 1
 architecture: string         # "llama" | "qwen2" | "qwen3" (scope: llama, qwen2)
 model_sha256, tokenizer_sha256
 gguf_metadata: { arch, block_count, embedding_length, head_count,
@@ -482,7 +482,7 @@ script. The tight route-parity bounds apply when reference/planned/fused execute
 the same Q8_K primitive; they do not require production to reproduce the
 separate exact-f32 dequantize-and-dot oracle. Historical benchmark/golden
 numbers are not relabeled as current evidence unless their artifact records
-kernel revision 2 and actual dispatch.
+the same kernel revision and actual dispatch as the candidate being assessed.
 
 Gate C: hook semantics, every supported site: inactive hooks bit-identical
 to disabled; captures match between reference and planned paths (same
@@ -619,3 +619,14 @@ preserving exact research hook semantics. It materially improves Ember's
 own decode path; llama.cpp remains the external performance reference. No
 competitive parity with llama.cpp is claimed unless the evidence
 unexpectedly demonstrates it.
+
+Kernel revision 3 adds native ARM K-quant dispatch and reference-equivalent
+NEON normalization in ARM planned/fused execution. Revision-1 and revision-2
+plans remain readable for offline inspection and checksum verification, but
+must be rebuilt before live execution. Their historical hashes and kernel
+labels are preserved; they are not silently reinterpreted as revision 3.
+
+The working revision-5 candidate additionally aligns ARM f32 dot-product
+reduction and tail ordering. Revision-4 evidence remains labeled revision 4;
+revision-5 validation is tracked separately. Existing gate thresholds remain
+unchanged, and the Q6 continuation failure remains open until verified otherwise.

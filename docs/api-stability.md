@@ -7,11 +7,28 @@ reproducibility matters as much as source compatibility.
 
 ## Current status and scope
 
-The package is currently `0.6.x` and has an explicit MSRV of Rust **1.92**
-(`Cargo.toml`, `rust-toolchain.toml`, and CI use 1.92.0). The CLI and the
+The package is currently `0.6.x`. The headless library/CLI MSRV remains Rust
+**1.92** (`--no-default-features`). The unreleased GPUI Kit migration uses
+Rust **1.98.1** for GUI builds and the pinned development toolchain; CI also
+checks headless builds separately on 1.92. This GUI toolchain increase must
+ship in the next minor release, not a 0.6.x patch. The CLI and the
 schema-versioned artifact formats are the primary supported integration
 surfaces. The Rust library is embeddable, but it is not yet a 1.0 compatibility
 promise: a `pub` item is source-visible, not automatically stable.
+
+## 1.0 line commitment
+
+The 1.0 line commits to the surfaces named in
+[v0.5 research contract section 19](v05-research-contract.md): the serialized
+anchors (`ember.experiment.v1`, `ember.bundle.v1`, `ember.hook.v1`,
+`v04-plan/1`, run-manifest `schema_version` 2 with `execution-identity-v2`,
+`signed-evidence-v1`, `ember.kv-snapshot.v1`) and the documented CLI and Python
+surfaces. Within that line, normal SemVer major/minor/patch rules apply to those
+surfaces. The Rust library stays experimental unless a module is explicitly
+listed as stable here; diagnostic commands, kernel names, timing fields, and the
+`#[doc(hidden)]` modules are not stability promises. The GPUI Kit toolchain
+increase ships as the 1.0 minor change, not a patch. This section states the
+commitment; it does not by itself assert that a release has been tagged.
 
 This policy covers:
 
@@ -28,6 +45,24 @@ This policy covers:
 Model files, logits, hidden states, timings, and other numerical outputs are
 not universal API promises. Each validation or research contract defines its
 own tolerance, provenance, and reproducibility requirements.
+
+## Candidate migration guidance
+
+The [1.0 candidate migration notes](migration-to-1.0.md) identify correctness
+fixes that can change scientific outputs, affected source/capture patterns, and
+the preserve-rerun-compare procedure. Old bundles retain their stored identities;
+verification is not a retroactive proof of correct producer execution. No
+in-place scientific-artifact migration is provided.
+
+## Pending 1.0 raw-spec migration
+
+The candidate changes the experimental Rust `RawExperimentSpec.captures` and
+`.interventions` fields to `Option<Vec<RawDefinition<T>>>`. Use `None` for an
+omitted list and `Some(vec![])` for an explicit empty list; construct authored
+programmatic entries with `RawDefinition::explicit(value)?`. This preserves
+nested omission provenance until resolution. User TOML and the resolved
+`CaptureSpec`/`InterventionSpec` types keep their wire formats. Consumers must
+not assume a fixed length for the resolved spec's `defaults` array.
 
 ## Compatibility levels
 
@@ -48,7 +83,7 @@ Every new Rust surface should be placed in one of these levels in its module
    private or `pub(crate)`. A small set of legacy/internal modules remains
    source-visible for the separate binary target and existing integrations:
    `alloc_counter`, `atomic_file`, `decode_profile`, `k_matmul`,
-   `k_quant_matmul`, `model_backend`, `npy`, `planned_decode`, `quant_k`,
+   `k_quant_matmul`, `model_backend`, `npy`, `planned_decode`, `quant_fault`,
    `residency`, `simd`, and `workspace`. They are marked `#[doc(hidden)]` in
    `lib.rs`. `doc(hidden)` is not a promise of compatibility; it only prevents
    accidental discovery in generated API documentation. Removing one still
