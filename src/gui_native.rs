@@ -3657,7 +3657,17 @@ impl Console {
                     .flex_1()
                     .min_w(px(0.0))
                     .h_full()
+                    // Vertical scroll only. The page's min-content width --
+                    // long mono identifiers, a two-pane result row -- was
+                    // propagating up through the scroll container, past the
+                    // column's `min_w(0)`, into the row that also holds the
+                    // 300px aside. The row overflowed and the aside was the one
+                    // that got squeezed, which is why it rendered at ~118px with
+                    // the model name and the advanced disclosure clipped
+                    // mid-word. Clipping here is what makes the column's
+                    // `min_w(0)` actually mean something.
                     .overflow_y_scroll()
+                    .overflow_x_hidden()
                     .p_5()
                     .child(
                         div()
@@ -4074,6 +4084,13 @@ impl Render for Console {
                         .child(
                             div()
                                 .id(ElementId::Name(SharedString::from("inspector")))
+                                // Observe the aside. Without this its id is only
+                                // a scope in its children's paths, so a test can
+                                // find the controls inside it but not the box
+                                // itself -- which is why the width bug below had
+                                // no test to catch it. A no-op outside the
+                                // `test-support` feature.
+                                .test_support()
                                 .w(px(300.0))
                                 .flex_none()
                                 // `flex_none` alone was not enough: the row
@@ -4628,7 +4645,7 @@ mod tests {
 
 #[cfg(all(test, feature = "gui-tests"))]
 mod kit_tests {
-    use super::{Console, Preset, WorkspaceStep, FONT_ARABIC, FONT_MONO, FONT_SANS};
+    use super::{Console, Preset, View, WorkspaceStep, FONT_ARABIC, FONT_MONO, FONT_SANS};
     use gpui_kit::component::Root;
     use gpui_kit::test::{TestAppContextExt, TestWindowExt};
     use gpui_kit::{AppContext, SharedString, TestAppContext};
@@ -4646,6 +4663,76 @@ mod kit_tests {
     /// While a run is in flight the button is disabled; the shortcut must
     /// refuse too.
     #[gpui_kit::test]
+    /// The inspector declares 300px. This asserts the layout engine agrees.
+    ///
+    /// It was rendering at roughly 118px at the standard 1180pt window, clipping
+    /// the model name, the hook and the advanced disclosure mid-word on every
+    /// experiment screen. Four hypotheses were tried and ruled out by reading
+    /// screenshots: `min_w(0)` on the aside, `flex_shrink_0` on it, `w_full()`
+    /// on the workspace column, and `overflow_x_hidden` on the scroll container.
+    /// Inferring layout from a picture of it does not work.
+    ///
+    /// **What this does and does not prove.** It passes, so the declaration is
+    /// honoured and the 300px is not being ignored outright. But the test window
+    /// is wide enough that the row never has to overflow, which is exactly the
+    /// condition the render fails under -- so this does not reproduce the bug.
+    /// Closing it needs this test to drive a narrow window, and then whatever it
+    /// reports is the number to fix against.
+    ///
+    /// The aside also needed `.test_support()`. Without it its id was only a
+    /// scope inside its children's paths, so a test could find the controls
+    /// inside it but never the box itself -- which is why a layout bug this
+    /// visible had no test standing behind it.
+    #[gpui_kit::test]
+    async fn inspector_keeps_its_declared_width(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (tx, _worker) = mpsc::channel();
+        let (_reply, rx) = mpsc::channel();
+        let cell: Arc<Mutex<Option<gpui_kit::Entity<Console>>>> = Arc::default();
+        let sink = cell.clone();
+        let handle = cx.add_window(move |window, cx| {
+            let console =
+                cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(rx)), false, window, cx));
+            console.update(cx, |console, _| {
+                console.view = View::Experiment;
+                console.inspector_open = true;
+            });
+            *sink.lock().expect("cell unlocked") = Some(console.clone());
+            Root::new(console, window, cx)
+        });
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        // The aside appears once the row that owns it has been laid out, which
+        // is a later frame than the first. `find` on an earlier frame reports a
+        // miss even though the id is registered, so wait for it rather than
+        // reading the first frame and concluding the inspector is not there.
+        cx.wait_for(
+            handle.into(),
+            std::time::Duration::from_secs(2),
+            |window, _| window.try_find(SharedString::from("inspector")).is_some(),
+        )
+        .await;
+
+        let width = cx
+            .update_window(handle.into(), |_, window, _| {
+                window
+                    .find(SharedString::from("inspector"))
+                    .bounds()
+                    .size
+                    .width
+            })
+            .expect("the window update runs");
+        // Compared in f32: `Pixels` has no `abs` in this version.
+        let rendered: f32 = width.into();
+        assert!(
+            (280.0..320.0).contains(&rendered),
+            "inspector rendered at {rendered}px, not the 300px it declares"
+        );
+    }
+
     fn primary_action_is_gated_for_both_mouse_and_keyboard(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let (tx, _worker) = mpsc::channel();
