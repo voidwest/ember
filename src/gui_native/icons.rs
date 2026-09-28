@@ -1,6 +1,6 @@
 //! Small, embedded line-icon set for the native console.
 
-use gpui::{prelude::*, svg, AssetSource, Result, SharedString, Svg};
+use gpui_kit::{prelude::*, svg, AssetSource, Result, SharedString, Svg};
 use std::borrow::Cow;
 
 macro_rules! icons {
@@ -15,7 +15,7 @@ macro_rules! icons {
                     $(concat!("ember-icons/", $file, ".svg") => Some(Cow::Borrowed(
                         include_bytes!(concat!("../gui_icons/", $file, ".svg")),
                     )),)+
-                    _ => None,
+                    _ => gpui_kit::assets::Assets.load(path)?,
                 })
             }
 
@@ -33,9 +33,6 @@ macro_rules! icons {
 
 icons![
     (CHEVRON_DOWN, "chevron-down"),
-    (MOON, "moon"),
-    (SUN, "sun"),
-    (MONITOR, "monitor"),
     (PLAY, "play"),
     (RESTORE, "restore"),
     (MODEL, "model"),

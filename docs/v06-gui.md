@@ -9,8 +9,8 @@ validation. Two consoles share one core: the same
 same `parse_run_request` gate, and the same `prepare_run` /
 `execute_prepared` run path.
 
-- `ember gui`: native single-window workbench (gpui, GPU accelerated,
-  requiring a Vulkan-capable display). See "Native console".
+- `ember gui`: native single-window workbench (GPUI Kit, GPU accelerated,
+  Metal on macOS and X11/Wayland on Linux). See "Native console".
 - `ember web-gui`: browser console: a tiny localhost HTTP server serving
   one self-contained page. Documented below.
 
@@ -74,7 +74,7 @@ all of it unchanged.
 
 ```bash
 cargo build --release
-./target/release/ember gui                # native console (gpui window)
+./target/release/ember gui                # native console (GPUI Kit window)
 ./target/release/ember web-gui            # browser console; prints http://127.0.0.1:8337/ and opens a browser
 ./target/release/ember web-gui --port 9000    # custom port
 ./target/release/ember web-gui --no-open      # just print the URL
@@ -89,14 +89,18 @@ prefer Q8_0 models: K-quant decode is intentionally much slower.
 ## Native console (`ember gui`)
 
 `ember gui` is a native, single-window console over the exact same v0.5
-pipeline. The UI is built with gpui (GPU accelerated; no system-webview
-dependency), and the embedded Noto fonts in
-`src/gui_fonts/` (Noto Sans, Noto Sans Mono, Noto Naskh Arabic: SIL OFL
-1.1, see `src/gui_fonts/LICENSE.txt`) provide Latin + Arabic coverage
-offline, so rendering is identical on any machine. Arabic input/output is
-shaped and laid out RTL by gpui's cosmic-text integration. Text fields use
-the platform input-method seam and support selection, clipboard operations,
-undo/redo, and Arabic grapheme-aware cursor movement.
+pipeline. The UI is built with GPUI Kit 0.6.6. Kit owns the application root,
+buttons, searchable selectors, single-line inputs, multiline prompt editor,
+keyboard editing, clipboard, undo/redo, and platform input-method integration.
+The shared experiment engine remains independent of the control library.
+Embedded Noto Sans, Noto Sans Mono, and Noto Naskh Arabic fonts provide offline
+glyph coverage (SIL OFL 1.1, see `src/gui_fonts/LICENSE.txt`). Platform shaping
+can differ; identical font files do not promise identical rendering everywhere.
+
+GUI development uses the pinned Rust 1.98.1 toolchain because GPUI Kit's
+transitive dependencies do not compile on 1.92. The headless CLI/library still
+supports `cargo +1.92.0 build --release --no-default-features`. This GUI
+requirement is an unreleased next-minor change, not a 0.6.x patch guarantee.
 
 The window is a guided experiment workbench: a narrow workflow rail (Prompt →
 Intervention → Review), a dominant scrollable central workspace, a contextual
@@ -112,7 +116,7 @@ the same code the browser console uses: so model residency, bundle
 writing, and verification semantics are identical. Runs are serialized;
 the model stays resident across baseline / intervention / restore.
 
-Requires a Vulkan-capable display (X11 or Wayland); it is a local window, not
+Uses Metal on macOS and a GPU-backed display on Linux (X11 or Wayland); it is a local window, not
 a server. It opens maximized with a 1180×720 restore size and a 980×620
 minimum; the workflow rail, workspace, and inspector scroll independently.
 
@@ -276,3 +280,52 @@ were Deserialize-only). No behavior or schema change.
    elapsed · throughput: everything a reproducibility-minded audience asks
    for. Bundles live under `runs/gui/`; inspect one with
    `ember experiment inspect runs/gui/intervention-*`.
+
+
+## GPUI Kit migration validation
+
+The console uses GPUI Kit controls rather than its former handwritten text
+editor and dropdown implementation. Numeric fields retain the domain parser's
+validation instead of silently removing invalid pasted characters. Selectors
+search both the displayed description and the exact hook/model value. Native
+Quit menus and Cmd+Q (macOS) / Ctrl+Q shortcuts close the application.
+
+Run the automated interaction checks with:
+
+```sh
+cargo test --features gui-tests --bin ember gui_native::kit_tests
+```
+
+They exercise a rendered headless Kit window: workflow navigation, operation
+selection, a preset, mixed Arabic/Latin multiline editing, undo, and searchable
+hook selection. They do not inspect rendered pixels or establish native macOS
+accessibility behavior.
+
+The optional real-model worker check writes baseline, intervention, and restore
+bundles under `runs/gui`, verifies them, and compares restored token IDs:
+
+```sh
+EMBER_GUI_TEST_MODEL=/absolute/path/to/model.gguf RAYON_NUM_THREADS=4 \
+  cargo test --bin ember native_worker_runs_and_restores_real_model -- --ignored --nocapture
+```
+
+This fixture expects a compatible model with more than eight layers and an
+available tokenizer, and uses four generated tokens. It is intentionally
+explicit rather than downloading a model in ordinary tests. The local Q8 Llama
+3.2 1B check passed; it does not establish every model family's equivalence.
+
+On macOS, the optional test renderer captures the production console using real
+CoreText fonts and Metal without opening desktop windows:
+
+```sh
+cargo run --features gui-tests --bin ember -- gui --render-test-dir /tmp/ember-gui-renders
+```
+
+Set `EMBER_GUI_TEST_MODEL` as above to include populated result tabs from a
+verified four-token baseline/intervention run. Images cover light/dark themes
+at normal and minimum window sizes. The command is only available in macOS
+builds with `gui-tests`; it is not part of the release CLI contract.
+
+Desktop accessibility inspection remains unverified: the macOS window starts,
+but the inspection tool times out when querying Ember. Offscreen render checks
+and virtual-window interaction tests do not establish VoiceOver compatibility.

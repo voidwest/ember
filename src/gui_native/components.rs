@@ -1,10 +1,13 @@
 //! Small, reusable presentation primitives for the native console.
 
-use super::icons;
 use super::input::TextInput;
 use super::theme::Colors;
-use gpui::prelude::*;
-use gpui::*;
+use gpui_kit::component::{
+    button::{Button, ButtonVariants},
+    Disableable, Icon, Sizable,
+};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 use std::time::Duration;
 
 pub(super) fn label(content: impl Into<SharedString>, size: f32, color: Rgba) -> Div {
@@ -31,6 +34,7 @@ pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static st
                     .child(line.to_string())
                     .font_family(font)
                     .text_size(px(size))
+                    .line_height(px(size * 1.8))
                     .text_color(color)
                     .into_any_element()
             })
@@ -108,115 +112,54 @@ pub(super) fn status_dot(color: Rgba, busy: bool) -> AnyElement {
 }
 
 pub(super) fn icon_button(
-    colors: &Colors,
+    _colors: &Colors,
     icon_path: &'static str,
     accessible_label: &'static str,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
-    div()
-        .id(ElementId::Name(SharedString::from(format!(
-            "icon-button:{accessible_label}"
-        ))))
-        .size(px(26.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded_md()
-        .cursor_pointer()
-        .hover(|style| style.bg(colors.hover))
-        .active(|style| style.bg(colors.selected))
-        .on_click(on_click)
-        .child(
-            icons::icon(icon_path)
-                .size(px(14.0))
-                .text_color(colors.text_muted),
-        )
+) -> Button {
+    Button::new(SharedString::from(format!(
+        "icon-button:{accessible_label}"
+    )))
+    .ghost()
+    .small()
+    .icon(Icon::default().path(icon_path))
+    .tooltip(accessible_label)
+    .on_click(on_click)
 }
 
 pub(super) fn btn_primary(
-    colors: &Colors,
+    _colors: &Colors,
     icon_path: &'static str,
     label_text: &str,
     on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-) -> Stateful<Div> {
-    let enabled = on_click.is_some();
-    let mut button = div()
-        .id(ElementId::Name(SharedString::from(format!(
-            "btn:{label_text}"
-        ))))
+) -> Button {
+    let button = Button::new(SharedString::from(format!("btn:{label_text}")))
+        .primary()
         .w_full()
-        .h(px(32.0))
-        .px_4()
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .bg(if enabled {
-            colors.accent
-        } else {
-            colors.accent_soft
-        })
-        .rounded_md()
-        .when(enabled, |button| {
-            button
-                .cursor_pointer()
-                .hover(|style| style.bg(colors.accent_hover))
-                .active(|style| style.bg(colors.accent_pressed))
-        })
-        .child(
-            icons::icon(icon_path)
-                .size(px(14.0))
-                .text_color(if enabled {
-                    rgb(0xffffff)
-                } else {
-                    colors.text_faint
-                }),
-        )
-        .child(label(label_text.to_string(), 12.0, rgb(0xffffff)));
-    if let Some(on_click) = on_click {
-        button = button.on_click(on_click);
+        .icon(Icon::default().path(icon_path))
+        .label(label_text.to_string())
+        .disabled(on_click.is_none());
+    match on_click {
+        Some(callback) => button.on_click(callback),
+        None => button,
     }
-    button
 }
 
 pub(super) fn btn_secondary(
-    colors: &Colors,
+    _colors: &Colors,
     icon_path: &'static str,
     label_text: &str,
     on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-) -> Stateful<Div> {
-    let enabled = on_click.is_some();
-    let mut button = div()
-        .id(ElementId::Name(SharedString::from(format!(
-            "btn:{label_text}"
-        ))))
+) -> Button {
+    let button = Button::new(SharedString::from(format!("btn:{label_text}")))
         .w_full()
-        .h(px(32.0))
-        .px_4()
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap_2()
-        .bg(colors.surface)
-        .border_1()
-        .border_color(colors.border)
-        .rounded_md()
-        .when(enabled, |button| {
-            button
-                .cursor_pointer()
-                .hover(|style| style.bg(colors.surface_raised).border_color(colors.accent))
-        })
-        .when(!enabled, |button| button.opacity(0.55))
-        .child(
-            icons::icon(icon_path)
-                .size(px(14.0))
-                .text_color(colors.text_muted),
-        )
-        .child(label(label_text.to_string(), 12.0, colors.text));
-    if let Some(on_click) = on_click {
-        button = button.on_click(on_click);
+        .icon(Icon::default().path(icon_path))
+        .label(label_text.to_string())
+        .disabled(on_click.is_none());
+    match on_click {
+        Some(callback) => button.on_click(callback),
+        None => button,
     }
-    button
 }
 
 pub(super) fn text_input(
@@ -227,27 +170,11 @@ pub(super) fn text_input(
     height: Option<f32>,
     cx: &App,
 ) -> Div {
-    let focus = input.read(cx).handle();
-    let mut field = div()
+    let _ = (colors, cx);
+    div()
         .w_full()
-        .px_2()
-        .py_1()
-        .bg(colors.surface_raised)
-        .border_1()
-        .border_color(colors.border)
-        .rounded_md()
-        .track_focus(&focus)
-        .focus(|style| style.border_color(colors.focus_ring).bg(colors.surface))
-        .cursor_text()
+        .h(px(height.unwrap_or(32.0)))
         .font_family(font)
         .text_size(px(size))
-        .line_height(px(size + 7.0))
-        .text_color(colors.text)
-        .child(input);
-    if let Some(height) = height {
-        field = field.h(px(height)).overflow_hidden();
-    } else {
-        field = field.h(px(32.0));
-    }
-    field
+        .child(input)
 }

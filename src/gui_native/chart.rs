@@ -7,8 +7,8 @@ use super::components::{label, mono};
 use super::theme::Colors;
 use super::Console;
 use crate::gui::LayerMetric;
-use gpui::prelude::*;
-use gpui::*;
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 use std::sync::Arc;
 
 struct ChartPaint {
@@ -111,7 +111,7 @@ pub(super) fn layer_divergence_chart(
     let metrics_for_mouse = metrics.clone();
     let chart_entity = entity.clone();
     let chart = canvas(
-        move |bounds, window, _cx| {
+        move |bounds, _window, _cx| {
             let left = bounds.origin.x + px(6.0);
             let right = bounds.origin.x + bounds.size.width - px(6.0);
             let top = bounds.origin.y + px(8.0);
@@ -166,6 +166,18 @@ pub(super) fn layer_divergence_chart(
                     builder.build().ok()
                 });
 
+            ChartPaint {
+                grid,
+                series,
+                intervention,
+                points,
+            }
+        },
+        move |bounds, paint, window, _cx| {
+            // GPUI registers mouse listeners during paint, after layout is final.
+            let left = bounds.origin.x + px(6.0);
+            let width = (bounds.size.width - px(12.0)).max(px(1.0));
+            let layer_span = max_layer.saturating_sub(min_layer).max(1) as f32;
             let event_bounds = bounds;
             let mouse_metrics = metrics_for_mouse.clone();
             let move_entity = chart_entity.clone();
@@ -203,14 +215,6 @@ pub(super) fn layer_divergence_chart(
                 });
             });
 
-            ChartPaint {
-                grid,
-                series,
-                intervention,
-                points,
-            }
-        },
-        move |_bounds, paint, window, _cx| {
             for path in paint.grid {
                 window.paint_path(path, grid_color);
             }

@@ -1,6 +1,6 @@
 //! Native-console appearance and semantic design tokens.
 
-use gpui::{rgb, rgba, Rgba, WindowAppearance};
+use gpui_kit::{rgb, rgba, Rgba, WindowAppearance};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,18 +83,12 @@ pub(super) struct Colors {
     pub sidebar: Rgba,
     pub surface: Rgba,
     pub surface_raised: Rgba,
-    pub overlay: Rgba,
     pub text: Rgba,
     pub text_muted: Rgba,
     pub text_faint: Rgba,
     pub border: Rgba,
     pub border_strong: Rgba,
-    pub hover: Rgba,
-    pub selected: Rgba,
-    pub focus_ring: Rgba,
     pub accent: Rgba,
-    pub accent_hover: Rgba,
-    pub accent_pressed: Rgba,
     pub accent_soft: Rgba,
     pub ok: Rgba,
     pub err: Rgba,
@@ -104,8 +98,6 @@ pub(super) struct Colors {
     pub err_box_border: Rgba,
     pub warn_box_bg: Rgba,
     pub warn_box_border: Rgba,
-    pub selection: Rgba,
-    pub caret: Rgba,
 }
 
 pub(super) fn light() -> Colors {
@@ -114,18 +106,12 @@ pub(super) fn light() -> Colors {
         sidebar: rgb(0xf0f1f3),
         surface: rgb(0xffffff),
         surface_raised: rgb(0xf5f5f6),
-        overlay: rgb(0xffffff),
         text: rgb(0x202126),
         text_muted: rgb(0x555b66),
         text_faint: rgb(0x777f8c),
         border: rgb(0xdfe2e7),
         border_strong: rgb(0xc7ccd4),
-        hover: rgb(0xe9ebef),
-        selected: rgb(0xffe5d8),
-        focus_ring: rgba(0xdc5c2066),
         accent: rgb(0xd65318),
-        accent_hover: rgb(0xe86122),
-        accent_pressed: rgb(0xb94412),
         accent_soft: rgba(0xdc5c201f),
         ok: rgb(0x197a48),
         err: rgb(0xc43e36),
@@ -135,8 +121,6 @@ pub(super) fn light() -> Colors {
         err_box_border: rgb(0xe5b8b4),
         warn_box_bg: rgb(0xfaf3df),
         warn_box_border: rgb(0xe0c98f),
-        selection: rgba(0xdc5c2033),
-        caret: rgb(0xd65318),
     }
 }
 
@@ -146,18 +130,12 @@ pub(super) fn dark() -> Colors {
         sidebar: rgb(0x101216),
         surface: rgb(0x15181e),
         surface_raised: rgb(0x1c2028),
-        overlay: rgb(0x20242d),
         text: rgb(0xe9eaed),
         text_muted: rgb(0xa3a9b3),
         text_faint: rgb(0x747c89),
         border: rgb(0x282d37),
         border_strong: rgb(0x3a414e),
-        hover: rgb(0x242933),
-        selected: rgb(0x35231d),
-        focus_ring: rgba(0xf06b2f80),
         accent: rgb(0xf06b2f),
-        accent_hover: rgb(0xff7f45),
-        accent_pressed: rgb(0xd95b24),
         accent_soft: rgba(0xf06b2f26),
         ok: rgb(0x4cc38a),
         err: rgb(0xf0685c),
@@ -167,7 +145,5 @@ pub(super) fn dark() -> Colors {
         err_box_border: rgb(0x5c332e),
         warn_box_bg: rgb(0x2a2418),
         warn_box_border: rgb(0x5c4a2a),
-        selection: rgba(0xf06b2f40),
-        caret: rgb(0xff8b55),
     }
 }

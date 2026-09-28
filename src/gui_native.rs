@@ -1,16 +1,15 @@
 //! Ember v0.6 native experiment console (`ember gui`).
 //!
 //! A native, single-window console over the exact same v0.5 pipeline as the
-//! web console (`ember web-gui`). The UI is built with gpui (Zed's
-//! GPU-accelerated framework, rendered through blade/Vulkan on Linux) and
+//! web console (`ember web-gui`). The UI uses GPUI Kit controls and its
+//! platform renderer (Metal on macOS), and
 //! every experiment is executed in a worker thread through the shared
 //! `GuiSession` core, which in turn calls `prepare_run` / `execute_prepared`
 //! — the same code path as `ember experiment run`. No inference logic lives
 //! in the UI.
 //!
-//! Arabic input/output is shaped and laid out RTL by cosmic-text (gpui's text
-//! engine). The Noto Sans / Noto Sans Mono / Noto Naskh Arabic fonts are
-//! embedded so rendering is identical on any machine, fully offline.
+//! GPUI Kit owns text editing and platform input-method integration. Embedded
+//! Noto fonts provide offline Latin and Arabic glyph coverage.
 
 use crate::gui::{
     discover_models, parse_run_request, ExperimentComparison, RestoreBundle, RunBundle, RunConfig,
@@ -18,17 +17,24 @@ use crate::gui::{
 };
 use clap::Args as ClapArgs;
 use ember::quant_k::KStrategy;
-use gpui::prelude::*;
-use gpui::*;
+use gpui_kit::component::{
+    button::{Button, ButtonVariants},
+    Selectable, Sizable,
+};
+use gpui_kit::prelude::*;
+use gpui_kit::*;
 use std::borrow::Cow;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+gpui_kit::actions!(ember_gui, [Quit]);
+
 mod chart;
 mod components;
 mod icons;
 mod input;
+mod picker;
 mod theme;
 
 use components::*;
@@ -48,7 +54,12 @@ const FONT_ARABIC_NAME: &str = "Noto Naskh Arabic";
 
 /// `ember gui` (native) CLI arguments.
 #[derive(ClapArgs)]
-pub(crate) struct NativeGuiArgs {}
+pub(crate) struct NativeGuiArgs {
+    /// Render deterministic visual-test artifacts without opening a desktop window.
+    #[cfg(all(target_os = "macos", feature = "gui-tests"))]
+    #[arg(long, hide = true)]
+    render_test_dir: Option<std::path::PathBuf>,
+}
 
 /// The v0.4 hook stage ids (from Ember's own hook definitions), in order.
 const STAGES: [&str; 6] = [
@@ -65,7 +76,6 @@ const PER_LAYER_STAGES: [&str; 4] = [
     "after-mlp",
     "after-layer",
 ];
-const OPERATIONS: [&str; 5] = ["replace", "zero", "scale", "interpolate", "add-delta"];
 const EXECUTIONS: [&str; 3] = ["reference", "planned", "planned-fused"];
 
 fn per_layer(site: &str) -> bool {
@@ -440,7 +450,6 @@ struct Console {
     site_options: Vec<String>,
     site: String,
     layer: String,
-    op_options: Vec<String>,
     op: String,
     value: String,
     source_options: Vec<String>,
@@ -453,10 +462,7 @@ struct Console {
     execution_options: Vec<String>,
     execution: String,
     prompt: String,
-    open_combo: Option<ComboId>,
-    combo_active: usize,
-    model_filter: String,
-    menu_generation: u64,
+    pickers: Vec<(ComboId, Entity<picker::Picker>)>,
     focus_handle: FocusHandle,
     inputs: Inputs,
     step: WorkspaceStep,
@@ -492,6 +498,7 @@ impl Console {
         worker_tx: mpsc::Sender<WorkerMsg>,
         reply_rx: Arc<Mutex<mpsc::Receiver<WorkerReply>>>,
         system_dark: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let models = discover_models();
@@ -519,6 +526,7 @@ impl Console {
                     model_path.clone(),
                     "path to model.gguf",
                     &colors,
+                    window,
                     cx,
                 )
             }),
@@ -529,6 +537,7 @@ impl Console {
                     layer.clone(),
                     "0",
                     &colors,
+                    window,
                     cx,
                 )
             }),
@@ -539,6 +548,7 @@ impl Console {
                     value.clone(),
                     "0.5",
                     &colors,
+                    window,
                     cx,
                 )
             }),
@@ -549,6 +559,7 @@ impl Console {
                     source_layer.clone(),
                     "0",
                     &colors,
+                    window,
                     cx,
                 )
             }),
@@ -559,6 +570,7 @@ impl Console {
                     span.clone(),
                     "كلمة في النص",
                     &colors,
+                    window,
                     cx,
                 )
             }),
@@ -569,6 +581,7 @@ impl Console {
                     max_tokens.clone(),
                     "48",
                     &colors,
+                    window,
                     cx,
                 )
             }),
@@ -579,6 +592,7 @@ impl Console {
                     prompt.clone(),
                     "Enter a prompt…",
                     &colors,
+                    window,
                     cx,
                 )
             }),
@@ -589,6 +603,35 @@ impl Console {
             })
             .detach();
         }
+        let pickers = [
+            ComboId::Model,
+            ComboId::Site,
+            ComboId::Op,
+            ComboId::Source,
+            ComboId::Token,
+            ComboId::Execution,
+        ]
+        .into_iter()
+        .map(|combo| {
+            let options = match combo {
+                ComboId::Model => models.clone(),
+                ComboId::Site => STAGES.iter().map(|s| s.to_string()).collect(),
+                ComboId::Op => ["replace", "zero", "scale", "interpolate", "add-delta"]
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+                ComboId::Source => vec!["capture".into(), "zero".into()],
+                ComboId::Token => vec!["prompt-final".into(), "matched-span".into()],
+                ComboId::Execution => EXECUTIONS.iter().map(|s| s.to_string()).collect(),
+            };
+            let picker = cx.new(|cx| picker::Picker::new(combo, options, window, cx));
+            cx.subscribe(&picker, move |console, _, event: &picker::Picked, cx| {
+                console.select_combo(combo, &event.0, cx);
+            })
+            .detach();
+            (combo, picker)
+        })
+        .collect();
         Console {
             worker_tx,
             reply_rx,
@@ -597,7 +640,6 @@ impl Console {
             site_options: STAGES.iter().map(|s| s.to_string()).collect(),
             site: "after-mlp".to_string(),
             layer,
-            op_options: OPERATIONS.iter().map(|s| s.to_string()).collect(),
             op: "scale".to_string(),
             value,
             source_options: vec!["capture".to_string(), "zero".to_string()],
@@ -610,10 +652,7 @@ impl Console {
             execution_options: EXECUTIONS.iter().map(|s| s.to_string()).collect(),
             execution: "reference".to_string(),
             prompt,
-            open_combo: None,
-            combo_active: 0,
-            model_filter: String::new(),
-            menu_generation: 0,
+            pickers,
             focus_handle: cx.focus_handle(),
             inputs,
             step: WorkspaceStep::Prompt,
@@ -709,46 +748,21 @@ impl Console {
 
     fn pipeline_node(
         &self,
-        colors: &Colors,
+        _colors: &Colors,
         id: &'static str,
         text: String,
         accent: bool,
         step: WorkspaceStep,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id(ElementId::Name(SharedString::from(format!(
-                "pipeline:{id}"
-            ))))
-            .min_w(px(54.0))
-            .px_2()
-            .py_1()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(if accent {
-                colors.accent_soft
-            } else {
-                colors.surface_raised
-            })
-            .border_1()
-            .border_color(if accent { colors.accent } else { colors.border })
-            .rounded_md()
-            .cursor_pointer()
-            .hover(|node| node.border_color(colors.border_strong).bg(colors.hover))
-            .on_click(cx.listener(move |console, _: &ClickEvent, _window, cx| {
+    ) -> Button {
+        Button::new(SharedString::from(format!("pipeline:{id}")))
+            .small()
+            .label(text)
+            .selected(accent)
+            .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.step = step;
                 cx.notify();
             }))
-            .child(mono(
-                text,
-                9.75,
-                if accent {
-                    colors.accent
-                } else {
-                    colors.text_muted
-                },
-            ))
     }
 
     fn experiment_pipeline(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -1147,13 +1161,41 @@ impl Console {
         }
     }
 
+    fn sync_kit_theme(&self, cx: &mut App) {
+        use gpui_kit::component::{Theme, ThemeMode};
+        Theme::change(
+            if self.appearance.is_dark(self.system_dark) {
+                ThemeMode::Dark
+            } else {
+                ThemeMode::Light
+            },
+            None,
+            cx,
+        );
+        let colors = self.colors();
+        let theme = Theme::global_mut(cx);
+        theme.font_family = FONT_SANS_NAME.into();
+        theme.font_size = px(13.0);
+        theme.mono_font_family = FONT_MONO_NAME.into();
+        theme.primary = colors.accent.into();
+        theme.primary_hover = colors.accent.into();
+        theme.primary_active = colors.accent.into();
+        theme.primary_foreground = rgb(0xffffff).into();
+        theme.ring = colors.accent.into();
+        theme.button_primary = colors.accent.into();
+        theme.button_primary_hover = colors.accent.into();
+        theme.button_primary_active = colors.accent.into();
+        theme.button_primary_foreground = rgb(0xffffff).into();
+        theme.tokens.button_primary = Hsla::from(colors.accent).into();
+        theme.tokens.button_primary_hover = Hsla::from(colors.accent).into();
+        theme.tokens.button_primary_active = Hsla::from(colors.accent).into();
+        Theme::sync_base(cx);
+    }
+
     fn cycle_appearance(&mut self, cx: &mut Context<Self>) {
         self.appearance = self.appearance.next();
         self.appearance.persist();
-        let colors = self.colors();
-        for input in self.inputs.all() {
-            input.update(cx, |input, cx| input.set_palette(&colors, cx));
-        }
+        self.sync_kit_theme(cx);
         cx.notify();
     }
 
@@ -1163,10 +1205,7 @@ impl Console {
         }
         self.system_dark = dark;
         if self.appearance == AppearanceMode::System {
-            let colors = self.colors();
-            for input in self.inputs.all() {
-                input.update(cx, |input, cx| input.set_palette(&colors, cx));
-            }
+            self.sync_kit_theme(cx);
             cx.notify();
         }
     }
@@ -1218,8 +1257,6 @@ impl Console {
                 .source_layer
                 .update(cx, |input, cx| input.set_value("0", cx));
         }
-        self.open_combo = None;
-        self.model_filter.clear();
         cx.notify();
     }
 
@@ -1336,239 +1373,53 @@ impl Console {
 
     // -- view builders -------------------------------------------------------
 
-    fn visible_combo_options(&self, combo: ComboId) -> Vec<String> {
-        let options = match combo {
-            ComboId::Model => &self.model_options,
-            ComboId::Site => &self.site_options,
-            ComboId::Op => &self.op_options,
-            ComboId::Source => &self.source_options,
-            ComboId::Token => &self.token_options,
-            ComboId::Execution => &self.execution_options,
-        };
-        if combo != ComboId::Model || self.model_filter.is_empty() {
-            return options.clone();
-        }
-        let query = self.model_filter.to_lowercase();
-        options
-            .iter()
-            .filter(|option| option.to_lowercase().contains(&query))
-            .cloned()
-            .collect()
-    }
-
     fn picker_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
-        let Some(combo) = self.open_combo else {
-            if event.keystroke.modifiers.control || event.keystroke.modifiers.platform {
-                let result_view = match event.keystroke.key.as_str() {
-                    "1" => Some(ResultView::Overview),
-                    "2" => Some(ResultView::Layers),
-                    "3" => Some(ResultView::Tokens),
-                    "4" => Some(ResultView::Trace),
-                    _ => None,
-                };
-                if let Some(view) = result_view
-                    && self.step == WorkspaceStep::Review
-                    && self.comparison.is_some()
-                {
-                    self.result_view = view;
-                    cx.notify();
-                    return;
-                }
-            }
-            if matches!(event.keystroke.key.as_str(), "enter" | "return")
-                && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
+        if event.keystroke.modifiers.control || event.keystroke.modifiers.platform {
+            let result_view = match event.keystroke.key.as_str() {
+                "1" => Some(ResultView::Overview),
+                "2" => Some(ResultView::Layers),
+                "3" => Some(ResultView::Tokens),
+                "4" => Some(ResultView::Trace),
+                _ => None,
+            };
+            if let Some(view) = result_view
+                && self.step == WorkspaceStep::Review
+                && self.comparison.is_some()
             {
-                match self.step {
-                    WorkspaceStep::Prompt => self.step = WorkspaceStep::Intervention,
-                    WorkspaceStep::Intervention => self.step = WorkspaceStep::Review,
-                    WorkspaceStep::Review => self.run(),
-                }
+                self.result_view = view;
                 cx.notify();
+                return;
             }
-            return;
-        };
-        let options = self.visible_combo_options(combo);
-        match event.keystroke.key.as_str() {
-            "escape" => {
-                self.open_combo = None;
-                self.model_filter.clear();
-            }
-            "up" => {
-                self.combo_active = self.combo_active.saturating_sub(1);
-            }
-            "down" => {
-                self.combo_active = (self.combo_active + 1).min(options.len().saturating_sub(1));
-            }
-            "enter" | "return" => {
-                if let Some(value) = options.get(self.combo_active) {
-                    self.select_combo(combo, value, cx);
-                    return;
-                }
-            }
-            "backspace" if combo == ComboId::Model => {
-                self.model_filter.pop();
-                self.combo_active = 0;
-            }
-            _ if combo == ComboId::Model
-                && !event.keystroke.modifiers.control
-                && !event.keystroke.modifiers.platform =>
-            {
-                if let Some(text) = event.keystroke.key_char.as_deref() {
-                    self.model_filter.push_str(text);
-                    self.combo_active = 0;
-                }
-            }
-            _ => {}
         }
-        cx.notify();
+        if matches!(event.keystroke.key.as_str(), "enter" | "return")
+            && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
+        {
+            match self.step {
+                WorkspaceStep::Prompt => self.step = WorkspaceStep::Intervention,
+                WorkspaceStep::Intervention => self.step = WorkspaceStep::Review,
+                WorkspaceStep::Review => self.run(),
+            }
+            cx.notify();
+        }
     }
 
     fn picker(
         &self,
-        colors: &Colors,
-        id: &'static str,
+        _colors: &Colors,
+        _id: &'static str,
         combo: ComboId,
         selected: &str,
         options: &[String],
         cx: &mut Context<Self>,
     ) -> Div {
-        let open = self.open_combo == Some(combo);
-        let selected_index = options
+        let picker = &self
+            .pickers
             .iter()
-            .position(|option| option == selected)
-            .unwrap_or(0);
-        let toggle = cx.listener(move |console, _: &ClickEvent, window, cx| {
-            console.focus_handle.focus(window);
-            console.open_combo = if console.open_combo == Some(combo) {
-                None
-            } else {
-                console.combo_active = selected_index;
-                console.model_filter.clear();
-                console.menu_generation = console.menu_generation.wrapping_add(1);
-                Some(combo)
-            };
-            cx.notify();
-        });
-        let button = div()
-            .id(ElementId::Name(SharedString::from(id)))
-            .w_full()
-            .px_2()
-            .py_1()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_2()
-            .h(px(32.0))
-            .bg(colors.surface_raised)
-            .border_1()
-            .border_color(colors.border)
-            .rounded_md()
-            .cursor_pointer()
-            .hover(|style| style.bg(colors.hover).border_color(colors.border_strong))
-            .active(|style| style.bg(colors.selected))
-            .on_click(toggle)
-            .child(label(combo_value_label(combo, selected), 12.0, colors.text))
-            .child(
-                icons::icon(icons::CHEVRON_DOWN)
-                    .size(px(14.0))
-                    .text_color(colors.text_faint),
-            );
-
-        if open {
-            let options = self.visible_combo_options(combo);
-            let list = options
-                .iter()
-                .enumerate()
-                .map(|(index, opt)| {
-                    let opt = opt.clone();
-                    let is_selected = opt == selected;
-                    let is_active = index == self.combo_active;
-                    let listener = {
-                        let opt = opt.clone();
-                        cx.listener(move |console, _: &ClickEvent, _w, cx| {
-                            console.select_combo(combo, &opt, cx);
-                        })
-                    };
-                    let opt_id = ElementId::Name(SharedString::from(format!("{id}:{opt}")));
-                    div()
-                        .id(opt_id)
-                        .w_full()
-                        .px_2()
-                        .py_1()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .cursor_pointer()
-                        .rounded(px(5.0))
-                        .when(is_active, |style| style.bg(colors.hover))
-                        .when(is_selected, |style| style.bg(colors.selected))
-                        .hover(|style| style.bg(colors.hover))
-                        .on_click(listener)
-                        .when(is_selected, |row| {
-                            row.child(
-                                icons::icon(icons::CHECK)
-                                    .size(px(12.0))
-                                    .text_color(colors.accent),
-                            )
-                        })
-                        .child(label(combo_value_label(combo, &opt), 12.0, colors.text))
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>();
-            let dismiss = cx.listener(|console, _: &MouseDownEvent, _window, cx| {
-                console.open_combo = None;
-                console.model_filter.clear();
-                cx.notify();
-            });
-            let search_hint = (combo == ComboId::Model).then(|| {
-                div()
-                    .px_2()
-                    .py_1()
-                    .border_b_1()
-                    .border_color(colors.border)
-                    .child(mono(
-                        if self.model_filter.is_empty() {
-                            "type to filter models".to_string()
-                        } else {
-                            format!("filter: {}", self.model_filter)
-                        },
-                        9.0,
-                        colors.text_faint,
-                    ))
-            });
-            let menu = div()
-                .id(ElementId::Name(SharedString::from(format!("{id}:list"))))
-                .flex_col()
-                .w(px(248.0))
-                .max_h(px(260.0))
-                .overflow_y_scroll()
-                .p_1()
-                .bg(colors.overlay)
-                .border_1()
-                .border_color(colors.border_strong)
-                .rounded_md()
-                .shadow_lg()
-                .on_mouse_down_out(dismiss)
-                .children(search_hint)
-                .child(div().flex_col().children(list))
-                .with_animation(
-                    ElementId::Name(SharedString::from(format!(
-                        "picker-in:{id}:{}",
-                        self.menu_generation
-                    ))),
-                    Animation::new(Duration::from_millis(130)),
-                    |menu, delta| menu.opacity(delta).top(px(-3.0 * (1.0 - delta))),
-                );
-            div().relative().w_full().child(button).child(deferred(
-                anchored()
-                    .position_mode(AnchoredPositionMode::Local)
-                    .anchor(Corner::TopLeft)
-                    .offset(point(px(0.0), px(35.0)))
-                    .child(menu),
-            ))
-        } else {
-            div().relative().w_full().child(button)
-        }
+            .find(|(id, _)| *id == combo)
+            .expect("all domain selectors are initialized")
+            .1;
+        picker.update(cx, |picker, _| picker.sync(options, selected));
+        div().w_full().child(picker.clone())
     }
 
     fn header(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -1619,32 +1470,11 @@ impl Console {
                     .child(mono(session_chip, 10.0, colors.text_muted)),
             )
             .child(
-                div()
-                    .id(ElementId::Name(SharedString::from("theme-toggle")))
-                    .size(px(28.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap_1()
-                    .px_2()
-                    .w_auto()
-                    .bg(colors.surface_raised)
-                    .border_1()
-                    .border_color(colors.border)
-                    .rounded_md()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(colors.hover).border_color(colors.border_strong))
-                    .on_click(toggle)
-                    .child(
-                        icons::icon(match self.appearance {
-                            AppearanceMode::System => icons::MONITOR,
-                            AppearanceMode::Dark => icons::MOON,
-                            AppearanceMode::Light => icons::SUN,
-                        })
-                        .size(px(13.0))
-                        .text_color(colors.text_muted),
-                    )
-                    .child(label(self.appearance.label(), 9.0, colors.text_muted)),
+                Button::new("theme-toggle")
+                    .small()
+                    .label(self.appearance.label())
+                    .tooltip("Change appearance")
+                    .on_click(toggle),
             )
     }
 
@@ -1652,68 +1482,21 @@ impl Console {
         let steps = WorkspaceStep::ALL
             .into_iter()
             .map(|step| {
-                let selected = self.step == step;
-                div()
-                    .id(ElementId::Name(SharedString::from(format!(
-                        "workflow-step:{}",
-                        step.number()
-                    ))))
-                    .w_full()
-                    .min_h(px(48.0))
-                    .px_3()
-                    .py_2()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(selected, |row| row.bg(colors.selected))
-                    .hover(|row| row.bg(colors.hover))
-                    .on_click(cx.listener(move |console, _: &ClickEvent, _window, cx| {
-                        console.step = step;
-                        console.open_combo = None;
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .size(px(24.0))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(if selected {
-                                colors.accent
-                            } else {
-                                colors.border_strong
-                            })
-                            .bg(if selected {
-                                colors.accent
-                            } else {
-                                colors.surface
-                            })
-                            .child(label(
-                                step.number(),
-                                10.0,
-                                if selected {
-                                    rgb(0xffffff)
-                                } else {
-                                    colors.text_muted
-                                },
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .flex_col()
-                            .gap_1()
-                            .child(label(step.label(), 11.0, colors.text))
-                            .child(label(step.hint(), 8.5, colors.text_faint)),
-                    )
-                    .into_any_element()
+                Button::new(SharedString::from(format!(
+                    "workflow-step:{}",
+                    step.number()
+                )))
+                .ghost()
+                .w_full()
+                .h(px(48.0))
+                .selected(self.step == step)
+                .label(format!("{}  {}", step.number(), step.label()))
+                .tooltip(step.hint())
+                .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
+                    console.step = step;
+                    cx.notify();
+                }))
+                .into_any_element()
             })
             .collect::<Vec<_>>();
 
@@ -1833,26 +1616,22 @@ impl Console {
         hint: &'static str,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        div()
-            .id(ElementId::Name(SharedString::from(format!(
-                "preset:{title}"
-            ))))
+        Button::new(SharedString::from(format!("preset:{title}")))
             .w_full()
-            .px_2()
+            .h_auto()
             .py_2()
-            .flex_col()
-            .gap_1()
-            .bg(colors.surface)
-            .border_1()
-            .border_color(colors.border)
-            .rounded_md()
-            .cursor_pointer()
-            .hover(|card| card.bg(colors.hover).border_color(colors.border_strong))
-            .on_click(cx.listener(move |console, _: &ClickEvent, _window, cx| {
+            .accessibility_label(title)
+            .child(
+                div()
+                    .w_full()
+                    .flex_col()
+                    .gap_1()
+                    .child(label(title, 10.0, colors.text))
+                    .child(label(hint, 8.5, colors.text_faint)),
+            )
+            .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.apply_preset(preset, cx);
             }))
-            .child(label(title, 10.0, colors.text))
-            .child(label(hint, 8.5, colors.text_faint))
             .into_any_element()
     }
 
@@ -1863,36 +1642,23 @@ impl Console {
         title: &'static str,
         hint: &'static str,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let selected = self.max_tokens == value.to_string();
-        div()
-            .id(ElementId::Name(SharedString::from(format!(
-                "generation-length:{value}"
-            ))))
+    ) -> Button {
+        Button::new(SharedString::from(format!("generation-length:{value}")))
             .w(relative(0.333))
-            .px_3()
+            .h_auto()
             .py_2()
-            .flex_col()
-            .gap_1()
-            .border_1()
-            .border_color(if selected {
-                colors.border_strong
-            } else {
-                colors.border
-            })
-            .bg(if selected {
-                colors.surface
-            } else {
-                colors.surface_raised
-            })
-            .rounded_md()
-            .cursor_pointer()
-            .hover(|card| card.bg(colors.hover).border_color(colors.border_strong))
-            .on_click(cx.listener(move |console, _: &ClickEvent, _window, cx| {
+            .selected(self.max_tokens == value.to_string())
+            .accessibility_label(title)
+            .child(
+                div()
+                    .flex_col()
+                    .gap_1()
+                    .child(label(title, 11.0, colors.text))
+                    .child(label(hint, 9.0, colors.text_faint)),
+            )
+            .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.set_max_tokens(value, cx);
             }))
-            .child(label(title, 11.0, colors.text))
-            .child(label(hint, 9.0, colors.text_faint))
     }
 
     fn operation_card(
@@ -1900,51 +1666,26 @@ impl Console {
         colors: &Colors,
         operation: &'static str,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let selected = self.op == operation;
-        div()
-            .id(ElementId::Name(SharedString::from(format!(
-                "operation-card:{operation}"
-            ))))
+    ) -> Button {
+        Button::new(SharedString::from(format!("operation-card:{operation}")))
             .w(relative(0.5))
+            .h_auto()
             .min_h(px(70.0))
-            .px_3()
             .py_3()
-            .flex_col()
-            .gap_1()
-            .border_1()
-            .border_color(if selected {
-                colors.accent
-            } else {
-                colors.border
-            })
-            .bg(if selected {
-                colors.selected
-            } else {
-                colors.surface
-            })
-            .rounded(px(9.0))
-            .cursor_pointer()
-            .hover(|card| card.bg(colors.hover).border_color(colors.border_strong))
-            .on_click(cx.listener(move |console, _: &ClickEvent, _window, cx| {
+            .selected(self.op == operation)
+            .accessibility_label(operation_label(operation))
+            .child(
+                div()
+                    .w_full()
+                    .flex_col()
+                    .gap_1()
+                    .child(label(operation_label(operation), 11.0, colors.text))
+                    .child(label(operation_hint(operation), 9.0, colors.text_faint)),
+            )
+            .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.select_combo(ComboId::Op, operation, cx);
                 console.step = WorkspaceStep::Intervention;
             }))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .child(label(operation_label(operation), 11.0, colors.text))
-                    .child(div().w_full())
-                    .when(selected, |row| {
-                        row.child(
-                            icons::icon(icons::CHECK)
-                                .size(px(13.0))
-                                .text_color(colors.accent),
-                        )
-                    }),
-            )
-            .child(label(operation_hint(operation), 9.0, colors.text_faint))
     }
 
     fn feedback_banners(&self, colors: &Colors) -> Div {
@@ -2093,7 +1834,7 @@ impl Console {
                         self.inputs.prompt.clone(),
                         FONT_ARABIC_NAME,
                         15.0,
-                        Some(360.0),
+                        Some(160.0),
                         cx,
                     ))
                     .child(
@@ -2173,21 +1914,12 @@ impl Console {
                     .items_center()
                     .gap_2()
                     .child(
-                        div()
-                            .id("layer-minus")
-                            .size(px(32.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(colors.border)
-                            .cursor_pointer()
-                            .hover(|button| button.bg(colors.hover))
-                            .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                        Button::new("layer-minus")
+                            .label("−")
+                            .accessibility_label("Decrease layer")
+                            .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
                                 console.adjust_layer(-1, cx);
-                            }))
-                            .child(label("−", 16.0, colors.text)),
+                            })),
                     )
                     .child(div().w(px(76.0)).child(text_input(
                         colors,
@@ -2199,21 +1931,12 @@ impl Console {
                     )))
                     .child(label(limit, 10.0, colors.text_muted))
                     .child(
-                        div()
-                            .id("layer-plus")
-                            .size(px(32.0))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_md()
-                            .border_1()
-                            .border_color(colors.border)
-                            .cursor_pointer()
-                            .hover(|button| button.bg(colors.hover))
-                            .on_click(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                        Button::new("layer-plus")
+                            .label("+")
+                            .accessibility_label("Increase layer")
+                            .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
                                 console.adjust_layer(1, cx);
-                            }))
-                            .child(label("+", 15.0, colors.text)),
+                            })),
                     ),
             )
             .child(label(position, 9.0, colors.text_faint))
@@ -2505,49 +2228,26 @@ impl Console {
             ))
     }
 
-    fn result_tabs(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .items_center()
-            .gap_1()
-            .border_b_1()
-            .border_color(colors.border)
-            .children(ResultView::ALL.into_iter().map(|view| {
-                let selected = self.result_view == view;
-                div()
-                    .id(ElementId::Name(SharedString::from(format!(
-                        "result-view:{}",
-                        view.label()
-                    ))))
-                    .px_3()
-                    .py_2()
-                    .bg(if selected {
-                        colors.surface_raised
-                    } else {
-                        colors.canvas
-                    })
-                    .border_b_1()
-                    .border_color(if selected {
-                        colors.border_strong
-                    } else {
-                        colors.canvas
-                    })
-                    .cursor_pointer()
-                    .hover(|tab| tab.bg(colors.hover))
-                    .on_click(cx.listener(move |console, _: &ClickEvent, _window, cx| {
-                        console.result_view = view;
-                        cx.notify();
-                    }))
-                    .child(label(
-                        view.label(),
-                        9.5,
-                        if selected {
-                            colors.text
-                        } else {
-                            colors.text_faint
-                        },
-                    ))
-            }))
+    fn result_tabs(&self, _colors: &Colors, cx: &mut Context<Self>) -> Div {
+        use gpui_kit::component::tab::{Tab, TabBar};
+        let selected = ResultView::ALL
+            .iter()
+            .position(|view| *view == self.result_view)
+            .unwrap_or(0);
+        div().w_full().child(
+            TabBar::new("result-tabs")
+                .underline()
+                .selected_index(selected)
+                .children(
+                    ResultView::ALL
+                        .into_iter()
+                        .map(|view| Tab::new().label(view.label())),
+                )
+                .on_click(cx.listener(|console, index: &usize, _, cx| {
+                    console.result_view = ResultView::ALL[*index];
+                    cx.notify();
+                })),
+        )
     }
 
     fn intervention_layer_for_result(&self) -> Option<usize> {
@@ -2814,6 +2514,8 @@ impl Console {
                     .items_end()
                     .child(
                         div()
+                            .flex_1()
+                            .min_w_0()
                             .flex_col()
                             .gap_1()
                             .child(label("Review and compare", 20.0, colors.text))
@@ -2823,11 +2525,12 @@ impl Console {
                                 colors.text_muted,
                             )),
                     )
-                    .child(div().w_full())
+                    .gap_3()
                     .when(self.last_config.is_some(), |header| {
                         header.child(
                             div()
-                                .w(px(170.0))
+                                .w(px(140.0))
+                                .flex_shrink_0()
                                 .child(btn_secondary(
                                     colors,
                                     icons::RESTORE,
@@ -3083,21 +2786,15 @@ impl Console {
             }))
             .child(rule_h(colors))
             .child(
-                div()
-                    .id("advanced-toggle")
-                    .flex()
-                    .items_center()
-                    .py_2()
-                    .cursor_pointer()
-                    .hover(|row| row.text_color(colors.accent))
-                    .on_click(toggle)
-                    .child(label("ADVANCED CONTROLS", 9.0, colors.text_muted))
-                    .child(div().w_full())
-                    .child(label(
-                        if self.advanced_open { "HIDE" } else { "SHOW" },
-                        9.0,
-                        colors.accent,
-                    )),
+                Button::new("advanced-toggle")
+                    .ghost()
+                    .w_full()
+                    .label(if self.advanced_open {
+                        "Hide advanced controls"
+                    } else {
+                        "Show advanced controls"
+                    })
+                    .on_click(toggle),
             )
             .children(advanced)
     }
@@ -3503,17 +3200,32 @@ pub(crate) fn run_gui_command(
     k_strategy: KStrategy,
     k_allow_fallback: bool,
 ) -> anyhow::Result<()> {
+    #[cfg(all(target_os = "macos", feature = "gui-tests"))]
+    if let Some(directory) = &_args.render_test_dir {
+        return render_test_artifacts(directory);
+    }
     let (worker_tx, reply_rx) = spawn_worker(k_strategy, k_allow_fallback);
     eprintln!(
-        "EMBER experiment console v{} (native, gpui)",
+        "EMBER experiment console v{} (native, GPUI Kit)",
         env!("CARGO_PKG_VERSION")
     );
     eprintln!("  model stays resident; press Ctrl-C to quit.");
 
-    Application::new()
+    gpui_kit::application()
         .with_assets(icons::Assets)
         .run(move |cx: &mut App| {
-            input::bind_keys(cx);
+            gpui_kit::init(cx);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.bind_keys([KeyBinding::new(
+                if cfg!(target_os = "macos") {
+                    "cmd-q"
+                } else {
+                    "ctrl-q"
+                },
+                Quit,
+                None,
+            )]);
+            cx.set_menus([Menu::new("Ember").items([MenuItem::action("Quit Ember", Quit)])]);
             // Register the embedded fonts before the first window opens so the
             // text system can resolve Noto Sans / Mono / Naskh Arabic offline.
             cx.text_system()
@@ -3536,9 +3248,10 @@ pub(crate) fn run_gui_command(
                     ..Default::default()
                 },
                 move |window, cx| {
-                    cx.new(|cx| {
+                    let console = cx.new(|cx| {
                         let system_dark = theme::system_is_dark(window.appearance());
-                        let mut console = Console::new(worker_tx, reply_rx, system_dark, cx);
+                        let mut console =
+                            Console::new(worker_tx, reply_rx, system_dark, window, cx);
                         cx.observe_window_appearance(window, |console, window, cx| {
                             console.system_appearance_changed(
                                 theme::system_is_dark(window.appearance()),
@@ -3546,9 +3259,11 @@ pub(crate) fn run_gui_command(
                             );
                         })
                         .detach();
+                        console.sync_kit_theme(cx);
                         console.spawn_poll(cx);
                         console
-                    })
+                    });
+                    cx.new(|cx| gpui_kit::component::Root::new(console, window, cx))
                 },
             )
             .expect("the experiment console window failed");
@@ -3645,8 +3360,381 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires EMBER_GUI_TEST_MODEL; writes verified experiment bundles"]
+    fn native_worker_runs_and_restores_real_model() {
+        use super::{spawn_worker, WorkerMsg, WorkerReply};
+        use ember::quant_k::KStrategy;
+        use std::time::Duration;
+        let model = std::env::var("EMBER_GUI_TEST_MODEL").expect("set EMBER_GUI_TEST_MODEL");
+        let mut values = form();
+        values.model_path = model.clone();
+        values.prompt = "The capital of France is".into();
+        values.max_tokens = "4".into();
+        let mut request = values.build_run_request().unwrap();
+        let config = parse_run_request(&request).unwrap();
+        let (tx, rx) = spawn_worker(KStrategy::Auto, false);
+        let receive = || {
+            rx.lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(300))
+                .unwrap()
+        };
+        tx.send(WorkerMsg::Prepare(model)).unwrap();
+        let WorkerReply::Prepared(info) = receive() else {
+            panic!("expected prepared reply")
+        };
+        let info = info.unwrap();
+        assert!(info.n_layers > 8);
+        tx.send(WorkerMsg::Run(config)).unwrap();
+        let WorkerReply::RunDone(result) = receive() else {
+            panic!("expected run reply")
+        };
+        let run = result.unwrap();
+        assert!(run.verification.ok);
+        assert!(!run.baseline.generated_token_ids.is_empty());
+        println!(
+            "baseline: {}\nintervention: {}",
+            run.baseline.text, run.intervention.text
+        );
+        println!(
+            "baseline bundle: {}\nintervention bundle: {}",
+            run.baseline.bundle_dir, run.intervention.bundle_dir
+        );
+        request.operation = "restore-original".into();
+        request.factor = None;
+        request.alpha = None;
+        request.source_layer = None;
+        tx.send(WorkerMsg::Restore(parse_run_request(&request).unwrap()))
+            .unwrap();
+        let WorkerReply::RestoreDone(result) = receive() else {
+            panic!("expected restore reply")
+        };
+        let restored = result.unwrap();
+        assert!(restored.verification.ok);
+        assert!(restored.baseline_comparable);
+        assert!(restored.matches_baseline);
+        assert_eq!(
+            restored.output.generated_token_ids,
+            run.baseline.generated_token_ids
+        );
+        println!("restoration bundle: {}", restored.output.bundle_dir);
+    }
+
+    #[test]
     fn inspector_excerpt_preserves_arabic_characters() {
         assert_eq!(truncate_chars("المدينة المنورة", 7), "المدينة…");
         assert_eq!(truncate_chars("اختبار", 20), "اختبار");
     }
+}
+
+#[cfg(all(test, feature = "gui-tests"))]
+mod kit_tests {
+    use super::{Console, Preset, WorkspaceStep, FONT_ARABIC, FONT_MONO, FONT_SANS};
+    use gpui_kit::component::Root;
+    use gpui_kit::test::{TestAppContextExt, TestWindowExt};
+    use gpui_kit::{AppContext, SharedString, TestAppContext};
+    use std::{
+        borrow::Cow,
+        sync::{mpsc, Arc, Mutex},
+    };
+
+    #[gpui_kit::test]
+    fn populated_chart_registers_handlers_during_paint(cx: &mut TestAppContext) {
+        use gpui_kit::{Context, IntoElement, Render, Window};
+        struct ChartFixture(gpui_kit::Entity<Console>);
+        impl Render for ChartFixture {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                super::chart::layer_divergence_chart(
+                    self.0.clone(),
+                    Arc::from(vec![crate::gui::LayerMetric {
+                        layer: 8,
+                        relative_l2_difference: Some(0.5),
+                        cosine_distance: Some(0.01),
+                        maximum_absolute_difference: Some(1.0),
+                        exact: false,
+                    }]),
+                    Some(8),
+                    None,
+                    None,
+                    160.,
+                    &super::theme::light(),
+                )
+            }
+        }
+        cx.update(gpui_kit::init);
+        let (tx, _worker) = mpsc::channel();
+        let (_reply, rx) = mpsc::channel();
+        let handle = cx.add_window(|window, cx| {
+            let console =
+                cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(rx)), false, window, cx));
+            let chart = cx.new(|_| ChartFixture(console));
+            Root::new(chart, window, cx)
+        });
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.text_system()
+                .add_fonts(vec![
+                    Cow::Borrowed(FONT_SANS),
+                    Cow::Borrowed(FONT_MONO),
+                    Cow::Borrowed(FONT_ARABIC),
+                ])
+                .unwrap();
+        });
+        let (tx, worker_rx) = mpsc::channel();
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let mut view = None;
+        let handle = cx.add_window(|window, cx| {
+            let console =
+                cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(reply_rx)), false, window, cx));
+            console.update(cx, |console, cx| {
+                console.model_path = "fixture.gguf".into();
+                console
+                    .inputs
+                    .model
+                    .update(cx, |input, cx| input.set_value("fixture.gguf", cx));
+            });
+            view = Some(console.clone());
+            Root::new(console, window, cx)
+        });
+        let console = view.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.click(SharedString::from("workflow-step:2"), cx);
+            assert_eq!(console.read(cx).step, WorkspaceStep::Intervention);
+            window.click(SharedString::from("operation-card:zero"), cx);
+            assert_eq!(console.read(cx).op, "zero");
+            console.update(cx, |console, cx| {
+                console.apply_preset(Preset::ArabicMorphology, cx)
+            });
+            window.render_frame(cx);
+            let console = console.read(cx);
+            assert!(!console.prompt.is_ascii());
+            assert!(console.build_run_request().is_ok());
+        })
+        .unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.click(SharedString::from("workflow-step:1"), cx);
+            let input = console.read(cx).inputs.prompt.clone();
+            input.update(cx, |input, cx| input.focus_for_test(window, cx));
+            window.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-a"
+                } else {
+                    "ctrl-a"
+                },
+                cx,
+            );
+            window.input("مرحبا Ember\nاختبار", cx);
+        })
+        .unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert_eq!(console.read(cx).prompt, "مرحبا Ember\nاختبار");
+            window.press(
+                if cfg!(target_os = "macos") {
+                    "cmd-z"
+                } else {
+                    "ctrl-z"
+                },
+                cx,
+            );
+        })
+        .unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert_ne!(console.read(cx).prompt, "مرحبا Ember\nاختبار");
+            window.click(SharedString::from("workflow-step:2"), cx);
+            window.click(SharedString::from("picker:Site"), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.input("before-logits", cx);
+        })
+        .unwrap();
+        cx.wait_for(
+            handle.into(),
+            std::time::Duration::from_secs(1),
+            |window, _| {
+                window
+                    .try_find(SharedString::from("choice:before-logits"))
+                    .is_some_and(|item| item.label() == Some("Before output prediction"))
+            },
+        )
+        .await;
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.press("down", cx);
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle.into(), |_, window, cx| {
+            assert_eq!(console.read(cx).site, "before-logits");
+            window.click(SharedString::from("workflow-step:3"), cx);
+            window.click(SharedString::from("btn:RUN EXPERIMENT"), cx);
+            assert_eq!(console.read(cx).status, super::Status::Preparing);
+            assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(path) if path == "fixture.gguf"));
+            let loading = SharedString::from("btn:LOADING MODEL…");
+            assert!(window.find(loading.clone()).visible());
+            window.click(loading, cx);
+            assert!(worker_rx.try_recv().is_err(), "disabled run must not submit another job");
+            reply_tx.send(super::WorkerReply::Prepared(Box::new(Err("fixture load failure".into())))).unwrap();
+            console.update(cx, |console, cx| { console.drain_replies(cx); cx.notify(); });
+            window.render_frame(cx);
+            assert_eq!(console.read(cx).status, super::Status::Idle);
+            assert_eq!(console.read(cx).error.as_deref(), Some("fixture load failure"));
+            window.click(SharedString::from("btn:RUN EXPERIMENT"), cx);
+            assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(_)));
+        }).unwrap();
+    }
+}
+
+/// Offscreen test scenes use the production Console render tree, CoreText, and
+/// Metal. This exercises layout without automating another desktop application.
+#[cfg(all(target_os = "macos", feature = "gui-tests"))]
+fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(directory)?;
+    let platform = gpui_kit::platform::current_platform(true);
+    let mut context = HeadlessAppContext::with_platform(
+        platform.text_system(),
+        Arc::new(icons::Assets),
+        gpui_kit::platform::current_headless_renderer,
+    );
+    context.update(|cx| {
+        gpui_kit::init(cx);
+        cx.text_system()
+            .add_fonts(vec![
+                Cow::Borrowed(FONT_SANS),
+                Cow::Borrowed(FONT_MONO),
+                Cow::Borrowed(FONT_ARABIC),
+            ])
+            .unwrap();
+    });
+    let mut real_replies: Option<(WorkerReply, WorkerReply)> = None;
+    for (name, width, height) in [("standard", 1180., 720.), ("minimum", 980., 620.)] {
+        let (tx, _worker) = mpsc::channel();
+        let (reply, rx) = mpsc::channel();
+        let mut console = None;
+        let handle = context.open_window(size(px(width), px(height)), |window, cx| {
+            let view = cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(rx)), false, window, cx));
+            console = Some(view.clone());
+            cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+        })?;
+        let console = console.unwrap();
+        for (appearance, mode) in [
+            ("light", AppearanceMode::Light),
+            ("dark", AppearanceMode::Dark),
+        ] {
+            for step in WorkspaceStep::ALL {
+                context.update_window(handle.into(), |_, window, cx| {
+                    console.update(cx, |console, cx| {
+                        console.appearance = mode;
+                        console.step = step;
+                        console.sync_kit_theme(cx);
+                        cx.notify();
+                    });
+                    window.draw(cx).clear(cx);
+                })?;
+                context.run_until_parked();
+                context.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })?;
+                context
+                    .capture_screenshot(handle.into())?
+                    .save(directory.join(format!("{name}-{appearance}-{}.png", step.number())))?;
+            }
+        }
+        if let Ok(model) = std::env::var("EMBER_GUI_TEST_MODEL") {
+            let config = context.update_window(handle.into(), |_, _, cx| {
+                console.update(cx, |console, _| {
+                    console.model_path = model.clone();
+                    console.prompt = "The capital of France is".into();
+                    console.max_tokens = "4".into();
+                    console.pending_context = Some(console.form_values());
+                    parse_run_request(&console.form_values().build_run_request().unwrap()).unwrap()
+                })
+            })?;
+            if real_replies.is_none() {
+                eprintln!("Rendering real-model result scenes: preparing and running four tokens");
+                let (worker, receiver) = spawn_worker(ember::quant_k::KStrategy::Auto, false);
+                worker.send(WorkerMsg::Prepare(model))?;
+                let prepared = receiver
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(300))?;
+                if let WorkerReply::Prepared(info) = &prepared {
+                    info.as_ref()
+                        .as_ref()
+                        .map_err(|error| anyhow::anyhow!(error.clone()))?;
+                }
+                worker.send(WorkerMsg::Run(config))?;
+                let completed = receiver
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(300))?;
+                if let WorkerReply::RunDone(result) = &completed {
+                    let bundle = result
+                        .as_ref()
+                        .as_ref()
+                        .map_err(|error| anyhow::anyhow!(error.clone()))?;
+                    anyhow::ensure!(
+                        bundle.verification.ok,
+                        "render fixture bundle failed verification"
+                    );
+                    eprintln!("Render fixture: {}", bundle.baseline.bundle_dir);
+                }
+                real_replies = Some((prepared, completed));
+            }
+            let (prepared, completed) = real_replies.as_ref().unwrap();
+            reply.send(prepared.clone())?;
+            reply.send(completed.clone())?;
+            context.update_window(handle.into(), |_, _, cx| {
+                console.update(cx, |console, cx| {
+                    console.drain_replies(cx);
+                    cx.notify();
+                });
+            })?;
+            for (appearance, mode) in [
+                ("light", AppearanceMode::Light),
+                ("dark", AppearanceMode::Dark),
+            ] {
+                for result in ResultView::ALL {
+                    context.update_window(handle.into(), |_, window, cx| {
+                        console.update(cx, |console, cx| {
+                            console.appearance = mode;
+                            console.step = WorkspaceStep::Review;
+                            console.result_view = result;
+                            console.sync_kit_theme(cx);
+                            cx.notify();
+                        });
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.run_until_parked();
+                    context.update_window(handle.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                    })?;
+                    for _ in 0..20 {
+                        context.advance_clock(Duration::from_millis(50));
+                        context.run_until_parked();
+                        context.update_window(handle.into(), |_, window, cx| {
+                            window.draw(cx).clear(cx);
+                        })?;
+                    }
+                    context
+                        .capture_screenshot(handle.into())?
+                        .save(directory.join(format!(
+                            "{name}-{appearance}-result-{}.png",
+                            result.label().replace(' ', "-")
+                        )))?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
