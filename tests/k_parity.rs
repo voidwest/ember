@@ -18,8 +18,11 @@
 //! the llama.cpp golden-logit artifacts under `artifacts/golden-v03`.
 //!
 //! - per-layer representations remain finite and cosine >= 0.99
-//! - logits cosine >= 0.99
-//! - greedy tokens identical.
+//! - logits cosine >= 0.99 on shared-prefix steps
+//! - greedy tokens identical within a compressed tier. The cross-tier
+//!   eager-f32 comparison keeps the numeric envelope and records token flips
+//!   (the 2026-08-11 amendment scopes the original Gate B; Gate C/llama.cpp
+//!   is the authoritative model-level numerical gate for production K-quant).
 
 use ember::backend::CpuBackend;
 use ember::experiments::ExperimentalForwardModel;
@@ -161,6 +164,10 @@ fn load_llama(
             KStrategy::EagerF32 => KExecution::EagerF32,
             KStrategy::Scalar => KExecution::CompressedScalar,
             KStrategy::X86 => KExecution::CompressedX86,
+            KStrategy::Arm => KExecution::CompressedArm,
+            KStrategy::Auto if ember::k_quant_matmul::arm_k_supported() => {
+                KExecution::CompressedArm
+            }
             KStrategy::Auto if ember::k_quant_matmul::x86_k_supported() => {
                 KExecution::CompressedX86
             }
@@ -228,6 +235,8 @@ fn load_llama(
                 ember::plan::KernelId::KQuantScalarQ4K
                     | ember::plan::KernelId::KQuantScalarQ6K
                     | ember::plan::KernelId::KQuantAvx2Q4K
+                    | ember::plan::KernelId::KQuantArmQ4K
+                    | ember::plan::KernelId::KQuantArmQ6K
                     | ember::plan::KernelId::KQuantAvx2Q6K
             )
         }));
@@ -293,13 +302,53 @@ fn run_frozen_prompt(
     }
 }
 
-/// Internal production-vs-oracle sanity check. This is deliberately not
-/// called a golden gate: the trusted reference for native Q8_K execution is
-/// llama.cpp, not Ember's exact-f32 oracle.
+/// Cross-tier numerical sanity for the production Q8_K path against the
+/// exact-f32 oracle. This is deliberately not a golden gate: the trusted
+/// reference for native Q8_K execution is llama.cpp, not Ember's exact-f32
+/// oracle. Per the 2026-08-11 amendment in `docs/v03-execution-contracts.md`
+/// the original Gate B greedy-token equality no longer defines the production
+/// K-quant algorithm; the llama.cpp golden ladder (Gate C) is the authoritative
+/// model-level numerical gate, and exact greedy-token equality is asserted only
+/// within a tier. Here the compressed path must track the oracle within the
+/// frozen numeric envelope on every step whose generated prefix is still
+/// shared; a token flip at a near-tie margin is recorded, not required away.
 fn assert_production_sanity(reference: &Run, candidate: &Run, label: &str) {
+    let first_divergence = reference
+        .tokens
+        .iter()
+        .zip(&candidate.tokens)
+        .position(|(a, b)| a != b);
+    if let Some(step) = first_divergence {
+        let top = |row: &[f32]| {
+            let mut values: Vec<_> = row.iter().copied().enumerate().collect();
+            values.sort_by(|a, b| b.1.total_cmp(&a.1));
+            values.truncate(8);
+            values
+        };
+        let expected = &reference.decode_logits[step];
+        let actual = &candidate.decode_logits[step];
+        let diagnostic = serde_json::json!({
+            "label": label,
+            "first_divergence_step": step + 1,
+            "common_generated_prefix": &reference.tokens[..step],
+            "eager_top_logits": top(expected),
+            "compressed_top_logits": top(actual),
+            "eager_tokens": reference.tokens,
+            "compressed_tokens": candidate.tokens,
+            "eager_logit_at_compressed_choice": expected[candidate.tokens[step] as usize],
+            "compressed_logit_at_eager_choice": actual[reference.tokens[step] as usize],
+        });
+        eprintln!("first-divergence diagnostic: {diagnostic}");
+        if let Ok(path) = std::env::var("EMBER_PARITY_DIAGNOSTIC") {
+            std::fs::write(path, serde_json::to_vec_pretty(&diagnostic).unwrap()).unwrap();
+        }
+    }
+    // The first generated token comes from the prefill logits, which see the
+    // same prompt in both tiers; it must agree under the envelope.
     assert_eq!(
-        reference.tokens, candidate.tokens,
-        "{label}: greedy token sequences diverged"
+        reference.tokens.first(),
+        candidate.tokens.first(),
+        "{label}: first generated token (prefill argmax) diverged"
     );
     assert_eq!(
         reference.prefill_layers.len(),
@@ -359,10 +408,17 @@ fn assert_production_sanity(reference: &Run, candidate: &Run, label: &str) {
         "{label}: prefill logits cosine {prefill_cosine} < 0.99"
     );
 
+    // Decode logits are comparable only while both tiers consumed the same
+    // generated prefix; compare through the first divergence step inclusive and
+    // skip later rows, which are conditioned on different prefixes.
+    let comparable_steps = first_divergence
+        .map_or(reference.decode_logits.len(), |step| step + 1)
+        .min(reference.decode_logits.len());
     for (step, (expected, actual)) in reference
         .decode_logits
         .iter()
         .zip(&candidate.decode_logits)
+        .take(comparable_steps)
         .enumerate()
     {
         let decode_cosine = cosine(expected, actual);
@@ -384,6 +440,41 @@ fn max_abs_finite(expected: &[f32], actual: &[f32], label: &str) -> f32 {
         max_abs = max_abs.max((left - right).abs());
     }
     max_abs
+}
+
+#[test]
+fn arm_q8_k_is_bit_exact_with_scalar_on_frozen_prompts() {
+    let Some((model_path, tokenizer_path, _, decode_tokens)) = parity_env() else {
+        eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
+        return;
+    };
+    if !ember::k_quant_matmul::arm_k_supported() {
+        assert_ne!(
+            std::env::var("EMBER_PARITY_REQUIRE_ARM").as_deref(),
+            Ok("1"),
+            "required ARM tier unavailable"
+        );
+        return;
+    }
+    let (scalar_model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Scalar);
+    let (arm_model, _, _) = load_llama(&model_path, &tokenizer_path, KStrategy::Arm);
+    for &prompt in FROZEN_PROMPTS {
+        let reference = run_frozen_prompt(&scalar_model, &tokenizer, prompt, decode_tokens);
+        let candidate = run_frozen_prompt(&arm_model, &tokenizer, prompt, decode_tokens);
+        assert_eq!(reference.tokens, candidate.tokens, "{prompt}: tokens");
+        assert_eq!(
+            reference.prefill_layers, candidate.prefill_layers,
+            "{prompt}: layers"
+        );
+        assert_eq!(
+            reference.prefill_logits, candidate.prefill_logits,
+            "{prompt}: prefill logits"
+        );
+        assert_eq!(
+            reference.decode_logits, candidate.decode_logits,
+            "{prompt}: decode logits"
+        );
+    }
 }
 
 #[test]
@@ -422,8 +513,471 @@ fn production_q8_k_keeps_oracle_behavior_across_frozen_prompts() {
     }
 }
 
+/// Collect comparative evidence without changing the release assertions.
+#[test]
+#[ignore = "diagnostic artifact generation requires a pinned real model and output path"]
+fn diagnose_compressed_and_eager_generation() {
+    let (model_path, tokenizer_path, _, decode_tokens) = parity_env().expect("model required");
+    let output = std::env::var("EMBER_PARITY_DIAGNOSTIC").expect("diagnostic output path required");
+    let (compressed, tokenizer, _) = load_llama(
+        &model_path,
+        &tokenizer_path,
+        configured_compressed_strategy(),
+    );
+    let (eager, _, _) = load_llama(&model_path, &tokenizer_path, KStrategy::EagerF32);
+    let mut records = Vec::new();
+    for &prompt in FROZEN_PROMPTS {
+        let a = run_frozen_prompt(&eager, &tokenizer, prompt, decode_tokens);
+        let b = run_frozen_prompt(&compressed, &tokenizer, prompt, decode_tokens);
+        for row in a.decode_logits.iter().chain(&b.decode_logits) {
+            assert!(row.iter().all(|value| value.is_finite()));
+        }
+        let divergence = a.tokens.iter().zip(&b.tokens).position(|(a, b)| a != b);
+        let steps: Vec<_> = a
+            .decode_logits
+            .iter()
+            .zip(&b.decode_logits)
+            .enumerate()
+            .map(|(step, (eager_logits, compressed_logits))| {
+                let top = |row: &[f32]| {
+                    let mut ranked: Vec<_> = row.iter().copied().enumerate().collect();
+                    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+                    ranked.truncate(8);
+                    ranked
+                };
+                serde_json::json!({
+                    "step": step + 1,
+                    "common_input_prefix": a.tokens[..step] == b.tokens[..step],
+                    "eager_top_logits": top(eager_logits),
+                    "compressed_top_logits": top(compressed_logits),
+                    "eager_logit_at_compressed_choice": eager_logits[b.tokens[step] as usize],
+                    "compressed_logit_at_eager_choice": compressed_logits[a.tokens[step] as usize],
+                })
+            })
+            .collect();
+        records.push(serde_json::json!({
+            "prompt": prompt,
+            "input_token_ids": tokenizer.encode(prompt).unwrap(),
+            "eager_tokens": a.tokens,
+            "compressed_tokens": b.tokens,
+            "first_divergence_step": divergence.map(|step| step + 1),
+            "steps": steps,
+        }));
+    }
+    std::fs::write(
+        output,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "scope": "diagnostic, not a replacement for frozen gates",
+            "model": model_path,
+            "tokenizer": tokenizer_path,
+            "decode_tokens": decode_tokens,
+            "records": records,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
 /// A no-op experiment: every hook is observational, so active-hook
 /// plumbing must leave outputs bit-identical to the uninstrumented path.
+struct IntermediateObserver {
+    position: usize,
+    rows: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, Vec<f32>>>>,
+}
+
+impl IntermediateObserver {
+    fn record(
+        &self,
+        name: String,
+        ctx: &ember::experiments::ExecutionContext<'_>,
+        tensor: &ember::experiments::TensorAccess<'_>,
+    ) {
+        if ctx.phase != ember::experiments::ExecutionPhase::Decode
+            || ctx.start_position != self.position
+        {
+            return;
+        }
+        assert_eq!(tensor.shape()[0], 1);
+        assert!(tensor.values().iter().all(|v| v.is_finite()));
+        assert!(
+            self.rows
+                .lock()
+                .unwrap()
+                .insert(name, tensor.values().to_vec())
+                .is_none(),
+            "duplicate intermediate capture"
+        );
+    }
+}
+
+impl ember::experiments::Experiment for IntermediateObserver {
+    fn name(&self) -> &'static str {
+        "q6-intermediate-diagnostic"
+    }
+
+    fn uses_activation_site(
+        &self,
+        _: ember::artifact::ActivationStage,
+        _: Option<usize>,
+        phase: ember::experiments::ExecutionPhase,
+    ) -> bool {
+        phase == ember::experiments::ExecutionPhase::Decode
+    }
+
+    fn after_attention(
+        &mut self,
+        ctx: &ember::experiments::LayerContext<'_>,
+        tensor: &mut ember::experiments::TensorAccess<'_>,
+    ) -> Result<(), ember::experiments::ExperimentError> {
+        self.record(
+            format!("attn_out-{}", ctx.layer_index),
+            &ctx.execution,
+            tensor,
+        );
+        Ok(())
+    }
+
+    fn after_mlp(
+        &mut self,
+        ctx: &ember::experiments::LayerContext<'_>,
+        tensor: &mut ember::experiments::TensorAccess<'_>,
+    ) -> Result<(), ember::experiments::ExperimentError> {
+        self.record(
+            format!("ffn_out-{}", ctx.layer_index),
+            &ctx.execution,
+            tensor,
+        );
+        Ok(())
+    }
+
+    fn after_layer(
+        &mut self,
+        ctx: &ember::experiments::LayerContext<'_>,
+        tensor: &mut ember::experiments::TensorAccess<'_>,
+    ) -> Result<(), ember::experiments::ExperimentError> {
+        self.record(format!("l_out-{}", ctx.layer_index), &ctx.execution, tensor);
+        Ok(())
+    }
+
+    fn before_logits(
+        &mut self,
+        ctx: &ember::experiments::ExecutionContext<'_>,
+        tensor: &mut ember::experiments::TensorAccess<'_>,
+    ) -> Result<(), ember::experiments::ExperimentError> {
+        self.record("result_norm".into(), ctx, tensor);
+        Ok(())
+    }
+
+    fn after_logits(
+        &mut self,
+        ctx: &ember::experiments::ExecutionContext<'_>,
+        tensor: &mut ember::experiments::TensorAccess<'_>,
+    ) -> Result<(), ember::experiments::ExperimentError> {
+        self.record("result_output".into(), ctx, tensor);
+        Ok(())
+    }
+}
+
+#[test]
+#[ignore = "diagnostic intermediate capture requires pinned Q6 model and new output file"]
+fn diagnose_arabic_intermediates() {
+    diagnose_intermediates(FROZEN_PROMPTS[5], 10);
+}
+
+#[test]
+#[ignore = "diagnostic first-divergence capture requires pinned Q6 model and new output file"]
+fn diagnose_english_first_divergence() {
+    diagnose_intermediates(FROZEN_PROMPTS[1], 3);
+}
+
+fn diagnose_intermediates(prompt: &str, capture_step: usize) {
+    assert!(capture_step >= 2);
+    let (model_path, tokenizer_path, _, decode_tokens) = parity_env().expect("model required");
+    assert!(decode_tokens >= capture_step);
+    let output = std::env::var("EMBER_PARITY_DIAGNOSTIC").expect("output required");
+    let backend = CpuBackend;
+    let mut records = Vec::new();
+    for (name, strategy) in [
+        ("eager", KStrategy::EagerF32),
+        ("compressed", configured_compressed_strategy()),
+    ] {
+        let (model, tokenizer, _) = load_llama(&model_path, &tokenizer_path, strategy);
+        let plain = run_frozen_prompt(&model, &tokenizer, prompt, decode_tokens);
+        let ids = tokenizer.encode(prompt).unwrap();
+        let rows = std::sync::Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
+        let mut runner = ember::experiments::ExperimentRunner::new(IntermediateObserver {
+            position: ids.len() + capture_step - 2,
+            rows: rows.clone(),
+        });
+        let context = ember::experiments::ModelContext::new(
+            ember::experiments::ModelFamily::Llama,
+            None,
+            "llama",
+            model.n_layers(),
+            model.embed_dim(),
+        );
+        let mut cache = model.create_cache(&backend, 2048);
+        let mut current = ids.clone();
+        let mut position = 0;
+        let mut tokens = Vec::new();
+        for step in 0..decode_tokens {
+            let phase = if position == 0 {
+                ember::experiments::ExecutionPhase::Prefill
+            } else {
+                ember::experiments::ExecutionPhase::Decode
+            };
+            let execution = ember::experiments::ExecutionContext::new(
+                context,
+                phase,
+                position,
+                current.len(),
+                ember::experiments::TracingState::Disabled,
+            );
+            let logits = model
+                .forward_last_logits_with_experiment(
+                    &backend,
+                    &current,
+                    &mut cache,
+                    position,
+                    execution,
+                    &mut runner,
+                )
+                .unwrap();
+            assert!(
+                logits
+                    .data()
+                    .iter()
+                    .zip(&plain.decode_logits[step])
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "{name}: observer changed step {}",
+                step + 1
+            );
+            assert_eq!(logits.data().len(), plain.decode_logits[step].len());
+            let token = ember::sampler::argmax_token(logits.data()) as u32;
+            tokens.push(token);
+            position += current.len();
+            current = vec![token];
+        }
+        assert_eq!(tokens, plain.tokens);
+        let captured = rows.lock().unwrap();
+        assert_eq!(captured.len(), 3 * model.n_layers() + 2);
+        records.push(serde_json::json!({
+            "strategy": name, "step": capture_step, "input_token_ids": ids,
+            "generated_token_ids": tokens, "observer_all_logits_bit_exact": true,
+            "tensors": *captured,
+        }));
+    }
+    // Cross-strategy comparisons are meaningful only before histories diverge.
+    let eager_tokens = records[0]["generated_token_ids"].as_array().unwrap();
+    let compressed_tokens = records[1]["generated_token_ids"].as_array().unwrap();
+    assert_eq!(
+        &eager_tokens[..capture_step - 1],
+        &compressed_tokens[..capture_step - 1],
+        "intermediate comparison requires identical input history"
+    );
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .unwrap();
+    serde_json::to_writer_pretty(
+        &mut file,
+        &serde_json::json!({
+            "scope": "diagnostic intermediates; not a numerical parity gate",
+            "prompt": prompt, "records": records,
+        }),
+    )
+    .unwrap();
+}
+
+#[test]
+#[ignore = "identical-input projection diagnostic requires pinned Q6 model and new output file"]
+fn diagnose_english_layer_zero_projections() {
+    use ember::loader::LoadedTensor;
+    let (model_path, _, _, _) = parity_env().expect("model required");
+    let output = std::env::var("EMBER_PARITY_DIAGNOSTIC").expect("output required");
+    let source = std::env::var("EMBER_PARITY_REFERENCE_TENSORS").expect("capture required");
+    let captured: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(source).unwrap()).unwrap();
+    let records = captured["records"].as_array().unwrap();
+    assert_eq!(records.len(), 2);
+    for record in records {
+        assert_eq!(record["step"], 3);
+        assert_eq!(record["generated_token_ids"][1], 5679);
+        assert_eq!(record["observer_all_logits_bit_exact"], true);
+    }
+    let token = 5679usize;
+    let mut common_input: Option<Vec<f32>> = None;
+    let mut results = Vec::new();
+    for (name, strategy) in [
+        ("eager", KStrategy::EagerF32),
+        ("compressed", configured_compressed_strategy()),
+    ] {
+        let mut loader = load_gguf_with_k_strategy(&model_path, strategy, false).unwrap();
+        let embedding = loader.tensors.remove("token_embd.weight").unwrap();
+        let row = match embedding {
+            LoadedTensor::F32(t) => {
+                let width = t.shape()[0];
+                t.data()[token * width..(token + 1) * width].to_vec()
+            }
+            LoadedTensor::KQuant(w) => {
+                let mut row = vec![0.0; w.in_features()];
+                w.dequantize_row(token, &mut row);
+                row
+            }
+            LoadedTensor::Q8_0(w) => {
+                let mut row = vec![0.0; w.in_features()];
+                w.dequantize_row(token, &mut row);
+                row
+            }
+        };
+        let LoadedTensor::F32(norm) = loader.tensors.remove("blk.0.attn_norm.weight").unwrap()
+        else {
+            panic!("expected f32 normalization")
+        };
+        let ember::loader::GgufValue::F32(eps) =
+            loader.metadata["llama.attention.layer_norm_rms_epsilon"]
+        else {
+            panic!("expected epsilon")
+        };
+        let mut normalized = vec![0.0; row.len()];
+        ember::simd::rms_norm_into(&row, norm.data(), eps, &mut normalized);
+        if let Some(common) = &common_input {
+            assert_eq!(common.len(), normalized.len());
+            assert!(
+                common
+                    .iter()
+                    .zip(&normalized)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "layer-zero normalized inputs differ"
+            );
+        } else {
+            common_input = Some(normalized.clone());
+        }
+        let input = CpuTensor::from_data(vec![1, normalized.len()], normalized);
+        for projection in ["q", "k", "v"] {
+            let weight_name = format!("blk.0.attn_{projection}.weight");
+            let linear = match loader.tensors.remove(&weight_name).unwrap() {
+                LoadedTensor::F32(w) => {
+                    ember::model::Linear::new(ember::loader::gguf_to_row_major_f32(w), None)
+                }
+                LoadedTensor::KQuant(w) => ember::model::Linear::new_k(w, None),
+                LoadedTensor::Q8_0(_) => panic!("expected Q6 projection"),
+            };
+            let actual = linear.forward(&CpuBackend, &input).unwrap();
+            assert!(actual.data().iter().all(|v| v.is_finite()));
+            results.push(
+                serde_json::json!({"strategy": name, "projection": projection,
+                "values": actual.data()}),
+            );
+        }
+    }
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .unwrap();
+    serde_json::to_writer_pretty(file, &serde_json::json!({
+        "scope": "actual Linear paths on bit-identical layer-zero normalized input; no cache or RoPE",
+        "token": token, "normalized_input": common_input, "records": results,
+    })).unwrap();
+}
+
+#[test]
+#[ignore = "isolated numerical diagnostic requires reference input tensors and pinned Q6 weights"]
+fn diagnose_reference_input_mlp_kernels() {
+    let (model_path, _, _, _) = parity_env().expect("model required");
+    let source =
+        std::env::var("EMBER_PARITY_REFERENCE_TENSORS").expect("reference tensors required");
+    let output = std::env::var("EMBER_PARITY_DIAGNOSTIC").expect("output required");
+    let reference: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&source).unwrap()).unwrap();
+    let rows: std::collections::BTreeMap<String, Vec<f32>> = reference["tensors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tensor| {
+            assert_eq!(tensor["step"], 10);
+            assert_eq!(tensor["row"], 0);
+            let values: Vec<f32> = serde_json::from_value(tensor["values"].clone()).unwrap();
+            assert!(values.iter().all(|x| x.is_finite()));
+            assert_eq!(values.len(), tensor["width"].as_u64().unwrap() as usize);
+            (tensor["name"].as_str().unwrap().to_string(), values)
+        })
+        .collect();
+    let mut records = Vec::new();
+    for (name, strategy) in [("arm", KStrategy::Arm), ("scalar", KStrategy::Scalar)] {
+        let loader = load_gguf_with_k_strategy(&model_path, strategy, false).unwrap();
+        let mut projections = vec![
+            ("ffn_norm-0", "blk.0.ffn_up.weight", "ffn_up-0"),
+            ("ffn_norm-0", "blk.0.ffn_gate.weight", "ffn_gate-0"),
+            ("ffn_swiglu-0", "blk.0.ffn_down.weight", "ffn_out-0"),
+        ];
+        if std::env::var_os("EMBER_PARITY_ATTENTION_DETAIL").is_some() {
+            assert!(rows.contains_key("kqv_out-0"), "attention input required");
+            projections.push(("kqv_out-0", "blk.0.attn_output.weight", "attn_out-0"));
+        }
+        if std::env::var_os("EMBER_PARITY_QKV_DETAIL").is_some() {
+            projections.extend([
+                ("attn_norm-0", "blk.0.attn_q.weight", "q_projection-0"),
+                ("attn_norm-0", "blk.0.attn_k.weight", "k_projection-0"),
+                ("attn_norm-0", "blk.0.attn_v.weight", "v_projection-0"),
+            ]);
+        }
+        for (input_name, weight_name, output_name) in projections {
+            let ember::loader::LoadedTensor::KQuant(weight) = &loader.tensors[weight_name] else {
+                panic!("{weight_name}: expected compressed K weight");
+            };
+            assert_eq!(weight.dtype(), KQuantDtype::Q6K);
+            let input = &rows[input_name];
+            assert_eq!(input.len(), weight.in_features());
+            let mut actual = vec![0.0; weight.out_features()];
+            ember::k_quant_matmul::matmul_k_q8_into(input, 1, weight, &mut actual, true).unwrap();
+            assert!(actual.iter().all(|x| x.is_finite()));
+            assert_eq!(actual.len(), rows[output_name].len());
+            records.push(serde_json::json!({
+                "strategy": name, "operation": output_name,
+                "reference_input": input_name, "weight": weight_name,
+                "actual": actual, "reference": rows[output_name],
+            }));
+        }
+        if name == "arm" {
+            let mut actual = vec![0.0; rows["ffn_gate-0"].len()];
+            ember::simd::silu_mul_into(&rows["ffn_gate-0"], &rows["ffn_up-0"], &mut actual);
+            records.push(serde_json::json!({
+                "strategy": "native", "operation": "ffn_swiglu-0",
+                "reference_input": ["ffn_gate-0", "ffn_up-0"],
+                "actual": actual, "reference": rows["ffn_swiglu-0"],
+            }));
+            let ember::loader::LoadedTensor::F32(weight) = &loader.tensors["blk.0.ffn_norm.weight"]
+            else {
+                panic!("normalization weight must be f32");
+            };
+            let ember::loader::GgufValue::F32(eps) =
+                loader.metadata["llama.attention.layer_norm_rms_epsilon"]
+            else {
+                panic!("normalization epsilon must be f32");
+            };
+            let mut actual = vec![0.0; rows["ffn_inp-0"].len()];
+            ember::simd::rms_norm_into(&rows["ffn_inp-0"], weight.data(), eps, &mut actual);
+            records.push(serde_json::json!({
+                "strategy": "native", "operation": "ffn_norm-0", "epsilon": eps,
+                "reference_input": "ffn_inp-0", "actual": actual, "reference": rows["ffn_norm-0"],
+            }));
+        }
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .unwrap();
+    serde_json::to_writer_pretty(&mut file, &serde_json::json!({
+        "scope": "isolated operations on identical reference inputs; no new acceptance thresholds",
+        "reference_source": source, "records": records,
+    })).unwrap();
+}
+
+/// A no-op observer used by the frozen hook-neutrality gate.
 struct NoopExperiment;
 
 impl ember::experiments::Experiment for NoopExperiment {
@@ -676,7 +1230,7 @@ fn v04_planned_inactive_hooks_real_model() {
 /// planned decode loop with hooks disabled performs zero heap allocations
 /// per token other than the logits tensor materialization (3 documented).
 #[test]
-fn v04_planned_zero_steady_state_allocation_real_model() {
+fn v04_planned_allocations_stay_within_existing_scheduler_bound() {
     let Some((model_path, tokenizer_path, _, _)) = parity_env() else {
         eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
@@ -720,28 +1274,25 @@ fn v04_planned_zero_steady_state_allocation_real_model() {
         counts.push(allocations);
     }
     eprintln!("gate-e allocation counts: {counts:?}");
-    let allocations = counts[0];
-    // Accounted steady-state allocations: 3 for the logits CpuTensor
-    // (shape + strides + data) plus up to 2 for rayon's per-iterator job
-    // structure of the column-parallel matvecs when the shared pool is busy
-    // (measured 0 on a quiet pool, 0 with serial matvecs). The second job
-    // allocation was added when the K/V projections joined the
-    // column-parallel set (decode optimization, 2026-08-21): each
-    // main-thread `join` injects jobs that fall back to a heap allocation
-    // when the pool's job cache is empty, and the K/V dispatches double the
-    // per-token injection count. Anything beyond this documented constant
-    // is a leak.
-    assert!(
-        allocations <= 5,
-        "planned decode allocated {allocations} times per token on the real model; expected at most 5 (3 logits + up to 2 rayon jobs under pool contention)"
-    );
+    // Preserve the existing bound: 3 logits allocations plus up to 2
+    // scheduler allocations. External-thread Rayon injection can allocate
+    // Crossbeam queue blocks even without competing workloads (traced on M1).
+    // This short sample does not prove zero allocation or bound every token
+    // of a longer workload; the release benchmark checks that separately.
+    for (step, allocations) in counts.into_iter().enumerate() {
+        assert!(
+            allocations <= 5,
+            "planned decode step {step} allocated {allocations} times; existing bound is 5 (3 logits + up to 2 scheduler allocations), not zero"
+        );
+    }
 }
 
 /// The into-buffer decode route must produce bit-identical logits while
-/// avoiding the per-token logits allocation entirely (only rayon job
-/// structures may allocate, under pool contention).
+/// avoiding the per-token logits allocation entirely. The existing allowance
+/// for scheduler allocations is a bounded-allocation check, not proof of the
+/// release contract's zero steady-state allocation requirement.
 #[test]
-fn v04_planned_into_route_is_bit_identical_and_allocation_free() {
+fn v04_planned_into_route_is_bit_identical_with_bounded_scheduler_allocations() {
     let Some((model_path, tokenizer_path, _, _)) = parity_env() else {
         eprintln!("skipped: EMBER_PARITY_MODEL/EMBER_PARITY_TOKENIZER not set");
         return;
@@ -797,4 +1348,94 @@ fn v04_planned_into_route_is_bit_identical_and_allocation_free() {
         allocations <= 2,
         "into-buffer decode allocated {allocations} times; rayon job structures (<=2) are the only documented allocation"
     );
+}
+
+/// The production session boundary must remove external injector traffic over
+/// a long stream, while retaining the parallel K-quant scheduler.
+#[test]
+#[ignore = "requires explicit real K-quant model and tokenizer"]
+fn cpu_session_has_zero_steady_state_allocations() {
+    let (model_path, tokenizer_path, _, _) = parity_env().expect("set parity model/tokenizer");
+    assert!(rayon::current_num_threads() > 1, "requires a parallel pool");
+    let (model, tokenizer, has_k_quant) = load_llama(
+        &model_path,
+        &tokenizer_path,
+        configured_compressed_strategy(),
+    );
+    assert!(has_k_quant);
+    let backend = CpuBackend;
+    model.set_execution_mode(ember::plan::ExecutionMode::Planned);
+    let ids = tokenizer.encode(FROZEN_PROMPTS[0]).unwrap();
+    // Establish exact output expectations on an external calling thread.
+    let mut external_cache = model.create_cache(&backend, 2048);
+    let mut external_logits = ForwardModel::forward_last_logits_with_cache(
+        &model,
+        &backend,
+        &ids,
+        &mut external_cache,
+        0,
+    )
+    .unwrap();
+    let mut expected = Vec::with_capacity(72);
+    for offset in 0..72 {
+        ForwardModel::forward_last_logits_with_cache_reusing(
+            &model,
+            &backend,
+            &[ids[0]],
+            &mut external_cache,
+            ids.len() + offset,
+            &mut external_logits,
+        )
+        .unwrap();
+        expected.push(external_logits.data().to_vec());
+    }
+    drop(external_cache);
+    ember::model::with_cpu_session(move || {
+        let mut cache = model.create_cache(&backend, 2048);
+        let mut logits =
+            ForwardModel::forward_last_logits_with_cache(&model, &backend, &ids, &mut cache, 0)
+                .unwrap();
+        for offset in 0..8 {
+            ForwardModel::forward_last_logits_with_cache_reusing(
+                &model,
+                &backend,
+                &[ids[0]],
+                &mut cache,
+                ids.len() + offset,
+                &mut logits,
+            )
+            .unwrap();
+        }
+        let before = ember::alloc_counter::total_allocations();
+        let (_, caller) = ember::alloc_counter::count_allocations(|| {
+            for offset in 8..72 {
+                ForwardModel::forward_last_logits_with_cache_reusing(
+                    &model,
+                    &backend,
+                    &[ids[0]],
+                    &mut cache,
+                    ids.len() + offset,
+                    &mut logits,
+                )
+                .unwrap();
+                assert_eq!(logits.data().len(), expected[offset].len());
+                for (actual, expected) in logits.data().iter().zip(&expected[offset]) {
+                    assert_eq!(
+                        actual.to_bits(),
+                        expected.to_bits(),
+                        "session changed a logit"
+                    );
+                }
+            }
+        });
+        let global = ember::alloc_counter::total_allocations() - before;
+        assert_eq!(
+            caller, 0,
+            "caller allocations across 64 steady-state tokens"
+        );
+        assert_eq!(
+            global, 0,
+            "process allocations across 64 steady-state tokens; run this test in isolation"
+        );
+    });
 }

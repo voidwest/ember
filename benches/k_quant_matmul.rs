@@ -273,7 +273,21 @@ fn detected_cpu_features() -> Vec<&'static str> {
         }
         features
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        [
+            ("neon", std::arch::is_aarch64_feature_detected!("neon")),
+            (
+                "dotprod",
+                std::arch::is_aarch64_feature_detected!("dotprod"),
+            ),
+            ("fp16", std::arch::is_aarch64_feature_detected!("fp16")),
+        ]
+        .into_iter()
+        .filter_map(|(name, present)| present.then_some(name))
+        .collect()
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {
         Vec::new()
     }
@@ -302,6 +316,14 @@ fn runtime_git_state() -> (String, String) {
 }
 
 fn cpu_model() -> String {
+    #[cfg(target_os = "macos")]
+    if let Ok(output) = Command::new("sysctl")
+        .args(["-n", "machdep.cpu.brand_string"])
+        .output()
+        && output.status.success()
+    {
+        return String::from_utf8_lossy(&output.stdout).trim().to_string();
+    }
     #[cfg(target_os = "linux")]
     if let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo")
         && let Some(model) = cpuinfo.lines().find_map(|line| {
@@ -327,8 +349,11 @@ fn main() -> anyhow::Result<()> {
         bail!("--rows and --threads values must be nonzero");
     }
     let strategy = KStrategy::from_cli(&args.k_strategy).map_err(anyhow::Error::msg)?;
-    if !matches!(strategy, KStrategy::Scalar | KStrategy::X86) {
-        bail!("audited benchmark requires explicit --k-strategy scalar or x86");
+    if !matches!(
+        strategy,
+        KStrategy::Scalar | KStrategy::X86 | KStrategy::Arm
+    ) {
+        bail!("audited benchmark requires explicit --k-strategy scalar, x86 or arm");
     }
     let path_count = if args.skip_exact { 2 } else { 3 };
     if args.warmups < path_count
@@ -434,6 +459,7 @@ fn main() -> anyhow::Result<()> {
                     KExecution::EagerF32 => bail!("packed benchmark received eager-f32 weight"),
                     KExecution::CompressedScalar => "compressed_scalar",
                     KExecution::CompressedX86 => "compressed_x86",
+                    KExecution::CompressedArm => "compressed_arm",
                 };
                 let kernel = resolve_kernel(dtype, execution);
                 let timed_paths: Vec<_> = if args.skip_exact {
