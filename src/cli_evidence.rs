@@ -230,17 +230,19 @@ pub(crate) fn verify_envelope(envelope: &serde_json::Value) -> Result<EvidenceVe
 
     // When the signed record is a v2 run manifest, also assert its internal
     // execution identity is self-consistent (Phase III seam).
-    let mut identity_ok = true;
-    let mut identity_digest = None;
-    if let Some(identity) = input.get("identity")
-        && let Some(canon) = identity.get("canonical")
+    let declares_execution_identity = input
+        .get("identity")
+        .and_then(|identity| identity.get("schema"))
+        .and_then(|schema| schema.as_str())
+        .is_some_and(|schema| schema.starts_with("execution-identity-"));
+    let identity_digest = if declares_execution_identity
+        || input.get("schema_version").and_then(|v| v.as_u64()) == Some(2)
     {
-        let digest = crate::cli_manifest::recompute_identity_sha256(canon)?;
-        identity_digest = Some(digest.clone());
-        if let Some(recorded) = identity.get("sha256").and_then(|v| v.as_str()) {
-            identity_ok = digest == recorded;
-        }
-    }
+        Some(crate::cli_manifest::verify_manifest_identity(input)?)
+    } else {
+        None
+    };
+    let identity_ok = true;
 
     Ok(EvidenceVerified {
         signer_fingerprint: fingerprint,
@@ -256,7 +258,7 @@ pub(crate) fn canonical_bytes(value: &serde_json::Value) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(&sort_value(value))?)
 }
 
-fn sort_value(value: &serde_json::Value) -> serde_json::Value {
+pub(crate) fn sort_value(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
             let mut sorted: Vec<(String, serde_json::Value)> = map
@@ -336,6 +338,7 @@ mod tests {
                 "schema": "execution-identity-v1",
                 "sha256": "placeholder",
                 "canonical": {
+                    "schema": "execution-identity-v1",
                     "model": {"sha256": "abc", "architecture": "llama"},
                     "prompt": "hello",
                     "sampler": {"temperature": 0.0, "top_k": null, "top_p": null, "seed": null},
@@ -351,6 +354,49 @@ mod tests {
     }
 
     const SEED: [u8; 32] = [7u8; 32];
+
+    #[test]
+    fn signed_manifest_cannot_omit_identity_fields_or_claim_unknown_version() {
+        for field in ["schema", "sha256", "canonical"] {
+            let mut manifest = run_manifest_value();
+            manifest["identity"].as_object_mut().unwrap().remove(field);
+            let envelope = build_envelope(&manifest, &SEED, 0).unwrap();
+            assert!(verify_envelope(&envelope).is_err(), "{field}");
+        }
+        let mut unknown = run_manifest_value();
+        unknown["schema_version"] = 999.into();
+        let envelope = build_envelope(&unknown, &SEED, 0).unwrap();
+        assert!(verify_envelope(&envelope).is_err());
+        let mut missing = run_manifest_value();
+        missing.as_object_mut().unwrap().remove("identity");
+        let envelope = build_envelope(&missing, &SEED, 0).unwrap();
+        assert!(verify_envelope(&envelope).is_err());
+    }
+
+    #[test]
+    fn signed_v2_identity_survives_object_reordering() {
+        let mut manifest = run_manifest_value();
+        let schema = crate::cli_manifest::EXECUTION_IDENTITY_SCHEMA;
+        manifest["identity"]["schema"] = schema.into();
+        manifest["identity"]["canonical"]["schema"] = schema.into();
+        manifest["identity"]["sha256"] =
+            crate::cli_manifest::recompute_identity_sha256(&manifest["identity"]["canonical"])
+                .unwrap()
+                .into();
+        let envelope = build_envelope(&manifest, &SEED, 0).unwrap();
+        let reordered = serde_json::from_slice(&canonical_bytes(&envelope).unwrap()).unwrap();
+        assert!(verify_envelope(&reordered).unwrap().identity_ok);
+    }
+
+    #[test]
+    fn arbitrary_record_identity_is_not_misclassified_as_a_run_manifest() {
+        let record = serde_json::json!({"identity": {"name": "example"}});
+        let envelope = build_envelope(&record, &SEED, 0).unwrap();
+        assert!(verify_envelope(&envelope)
+            .unwrap()
+            .identity_digest
+            .is_none());
+    }
 
     #[test]
     fn sign_verify_round_trip_with_identity_check() {
