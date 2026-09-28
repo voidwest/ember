@@ -325,9 +325,9 @@ pub(crate) fn execute_resolved(
         .build()
         .context("failed to build the experiment thread pool")?
         .install(|| {
-            let prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
+            let mut prepared = prepare_run(resolved, k_strategy, k_allow_fallback)?;
             execute_prepared(
-                &prepared,
+                &mut prepared,
                 resolved,
                 spec_text,
                 output_directory,
@@ -427,6 +427,49 @@ pub(crate) fn prepare_run(
 /// experiment attached, assemble + write the bundle, and self-verify it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute_prepared(
+    prepared: &mut PreparedRun,
+    resolved: &ember::v05::spec::ExperimentSpecV1,
+    spec_text: &str,
+    output_directory: &std::path::Path,
+    retain_incomplete: bool,
+) -> anyhow::Result<(
+    PathBuf,
+    BundleIdentity,
+    ember::v05::verify::VerificationReport,
+    Vec<InputResult>,
+)> {
+    let threads = if resolved.execution.threads > 0 {
+        resolved.execution.threads
+    } else {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    };
+    if rayon::current_thread_index().is_some() && rayon::current_num_threads() == threads {
+        return execute_prepared_inner(
+            prepared,
+            resolved,
+            spec_text,
+            output_directory,
+            retain_incomplete,
+        );
+    }
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build()
+        .context("failed to build the prepared experiment thread pool")?
+        .install(move || {
+            execute_prepared_inner(
+                prepared,
+                resolved,
+                spec_text,
+                output_directory,
+                retain_incomplete,
+            )
+        })
+}
+
+fn execute_prepared_inner(
     prepared: &PreparedRun,
     resolved: &ember::v05::spec::ExperimentSpecV1,
     spec_text: &str,
@@ -590,6 +633,7 @@ pub(crate) fn execute_prepared(
             } else {
                 None
             },
+            None, // experiment runs are not signal-cancellable yet
         )?;
         {
             let mut experiment = inner.lock().expect("v05 experiment lock");
@@ -844,7 +888,7 @@ pub(crate) fn run_verify_command(command: &VerifyArgs) -> anyhow::Result<()> {
         println!("verdict: {}", if report.ok { "verified" } else { "FAILED" });
     }
     if !report.ok {
-        std::process::exit(1);
+        return Err(crate::cli_support::VerificationFailed.into());
     }
     Ok(())
 }
@@ -1091,7 +1135,7 @@ pub(crate) fn run_reproduce_command(
         println!("  semantic hash: {}", identity.semantic_hash);
     }
     if verdict == "failed" || verdict == "captures-misaligned" {
-        std::process::exit(2);
+        return Err(crate::cli_support::VerificationFailed.into());
     }
     Ok(())
 }
