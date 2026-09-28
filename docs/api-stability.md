@@ -2,19 +2,20 @@
 
 This policy describes what downstream users may rely on when embedding Ember,
 using the `ember` CLI, or consuming its research artifacts. It is deliberately
-conservative: Ember is still a `0.x` research crate and numerical
-reproducibility matters as much as source compatibility.
+conservative: numerical reproducibility matters as much as source
+compatibility.
 
 ## Current status and scope
 
-The package is currently `0.6.x`. The headless library/CLI MSRV remains Rust
-**1.92** (`--no-default-features`). The unreleased GPUI Kit migration uses
+The crate reports `1.0.0` in the tree; the `v1.0.0` tag is held until the
+external acceptance gates close. The headless library/CLI MSRV remains Rust
+**1.92** (`--no-default-features`). The GPUI Kit migration uses
 Rust **1.98.1** for GUI builds and the pinned development toolchain; CI also
-checks headless builds separately on 1.92. This GUI toolchain increase must
-ship in the next minor release, not a 0.6.x patch. The CLI and the
+checks headless builds separately on 1.92. This GUI toolchain increase is part
+of the 1.0 change, not a patch. The CLI and the
 schema-versioned artifact formats are the primary supported integration
-surfaces. The Rust library is embeddable, but it is not yet a 1.0 compatibility
-promise: a `pub` item is source-visible, not automatically stable.
+surfaces. The Rust library is embeddable, but it is not yet a stable
+compatibility promise: a `pub` item is source-visible, not automatically stable.
 
 ## 1.0 line commitment
 
