@@ -44,14 +44,17 @@ rand = "0.8"
 rayon = "1"
 rtrb = "0.3"  # lock-free SPSC rings for the duplex audio queues (pure rust)
 tiny_http = "0.12"
-# v0.6 native console: gpui (Zed's GPU-accelerated framework, blade/Vulkan on
-# Linux). Optional (feature "gui", on by default): headless research builds
-# use --no-default-features and skip the blade/ash/wayland stack. Embedded
-# Noto fonts (src/gui_fonts/) provide Latin + Arabic coverage offline.
-gpui = { version = "0.2.2", default-features = true, optional = true }
-unicode-segmentation = { version = "1", optional = true }
+# Minimal cross-platform Ctrl-C handling for cooperative cancellation
+# (src/cancel.rs + cli_support::install_sigint_cancel).
+ctrlc = "3"
+# GPUI Kit console. Optional so headless builds retain Rust 1.92 support.
+# GUI builds use the pinned Rust 1.98.1 development toolchain. Embedded Noto
+# fonts provide offline Latin and Arabic coverage.
+gpui-kit = { version = "=0.6.6", optional = true }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Preserve original key order when verifying legacy 0.5/0.6 bundle hashes.
+# New deterministic payloads sort explicitly, including in headless builds.
+serde_json = { version = "1", features = ["preserve_order"] }
 toml = "0.8"
 sha2 = "0.10"
 unicode-normalization = "0.1"
@@ -67,7 +70,9 @@ ed25519-dalek = "2"
 
 [features]
 default = ["gui"]
-gui = ["dep:gpui", "dep:unicode-segmentation"]
+gui = ["dep:gpui-kit"]
+# Opt-in headless UI interaction tests; ordinary headless builds stay lightweight.
+gui-tests = ["gui", "gpui-kit/test-support"]
 audio = ["dep:cpal"]
 
 # Cross-crate inlining for the CLI binary without full fat-LTO build cost.
@@ -102,4 +107,9 @@ harness = false
 all = "warn"
 
 [dev-dependencies]
+# Compress historical metadata without changing the frozen bundle bytes.
+flate2 = "1.1.9"
 proptest = "1.11"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }
