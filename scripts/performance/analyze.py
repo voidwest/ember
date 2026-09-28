@@ -85,7 +85,11 @@ def main():
                 "caller_median_bytes": d["allocation_report"]["caller_thread_alloc_bytes_median"],
                 "caller_max_events": d["allocation_report"]["caller_thread_alloc_events_max"],
                 "global_events_per_token": d["allocation_report"]["global_alloc_events_per_token"],
-                "global_bytes_per_token": d["allocation_report"]["global_alloc_bytes_per_token"],
+                "allocation_schema_version": d["allocation_report"].get("schema_version", 1),
+                "global_bytes_per_token": (d["allocation_report"]["global_alloc_bytes_per_token"]
+                    if d["allocation_report"].get("schema_version", 1) >= 3 else None),
+                "legacy_net_live_bytes_per_token": (d["allocation_report"]["global_alloc_bytes_per_token"]
+                    if d["allocation_report"].get("schema_version", 1) < 3 else None),
                 "per_token_bytes": d["allocation_report"]["per_token_alloc_bytes"][:8],
                 "per_token_events": d["allocation_report"]["per_token_alloc_events"][:8],
             }

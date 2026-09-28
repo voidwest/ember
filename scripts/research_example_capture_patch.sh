@@ -137,14 +137,17 @@ targets += [f"{layer}:{stage}:decode:{p}" for p in positions]
 print("\n".join(targets))
 PYEOF
 )
-mapfile -t TARGET_VALUES <<< "$TARGETS"
+TARGET_VALUES=()
+while IFS= read -r target; do
+  TARGET_VALUES+=("$target")
+done <<< "$TARGETS"
 PATCH_ARGS=(--activation-patch "$WORKDIR/run-a/manifest.json")
 for target in "${TARGET_VALUES[@]}"; do
   [[ -n "$target" ]] && PATCH_ARGS+=(--patch-target "$target")
 done
 run_ember "${PATCH_ARGS[@]}" --capture-activations "$WORKDIR/c.toml"
 
-echo "== compare A vs C (expect Identical: frozen restoration criterion) =="
+echo "== compare A vs C (expect tensor-identical: frozen restoration criterion) =="
 "$EMBER" compare-artifacts --left "$WORKDIR/run-a/manifest.json" \
   --right "$WORKDIR/run-c/manifest.json" --json --output "$WORKDIR/ac.json" >/dev/null
 
@@ -186,8 +189,23 @@ print(f"intervention: {b['experiment']['name']} {b['experiment']['arguments']}")
 print(f"patch:        {c['experiment']['name']} {c['experiment']['arguments']}")
 print(f"artifacts:    {workdir}/run-{{a,b,c}}/manifest.json")
 
-if ac["status"] != "identical":
-    print("FAIL: frozen restoration criterion not met (A vs C must be identical)", file=sys.stderr)
+# The patch intentionally changes experiment provenance. The comparator calls
+# equal payloads with different provenance "tensor-identical"; require the
+# actual tensor/identity checks instead of conflating the two statuses.
+identity_fields = ("model_sha256_match", "tokenizer_sha256_match", "prompt_hash_match",
+                   "input_token_ids_match", "generated_token_ids_match")
+restored = (
+    ac["status"] in ("identical", "tensor-identical")
+    and ac["aligned_record_count"] == len(a["records"]) == len(c["records"])
+    and ac["aligned_record_count"] > 0
+    and ac["identical_record_count"] == ac["aligned_record_count"]
+    and ac["differing_record_count"] == 0
+    and not ac["missing_left"] and not ac["missing_right"]
+    and all(ac["run"][key] for key in identity_fields)
+    and all(row["exact_equal"] and row["manifest_sha256_match"] for row in ac["records"])
+)
+if not restored:
+    print("FAIL: frozen restoration criterion not met (A vs C tensors must be bit-identical)", file=sys.stderr)
     sys.exit(1)
 if ab["status"] != "differs":
     print("FAIL: intervention had no observable effect (A vs B must differ)", file=sys.stderr)
