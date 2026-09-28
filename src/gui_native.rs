@@ -21,6 +21,7 @@ use ember::quant_k::KStrategy;
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
     table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
+    tooltip::Tooltip,
     Icon, Selectable, Sizable,
 };
 use gpui_kit::prelude::*;
@@ -2983,7 +2984,7 @@ impl Console {
             "OUTPUTS IDENTICAL".to_string()
         } else {
             landmarks.stable_token_tail_step.map_or_else(
-                || "NOT OBSERVED".to_string(),
+                || "not observed".to_string(),
                 |step| format!("FROM STEP {step}"),
             )
         };
@@ -3011,19 +3012,19 @@ impl Console {
             .border_color(colors.border)
             .rounded(px(Radius::MD))
             .child(landmark(
-                "FIRST INTERNAL DIVERGENCE",
+                "First internal divergence",
                 first_layer,
                 "first non-zero captured layer",
             ))
             .child(divider())
             .child(landmark(
-                "PEAK REPRESENTATION DIVERGENCE",
+                "Peak representation divergence",
                 peak,
                 "relative L2 difference",
             ))
             .child(divider())
             .child(landmark(
-                "STABLE TOKEN TAIL",
+                "Stable token tail",
                 stable_tail,
                 "exact token-ID suffix",
             ))
@@ -3132,10 +3133,10 @@ impl Console {
         div()
             .flex()
             .gap(px(Space::MD))
-            .child(self.output_panel(colors, "BASELINE", self.baseline.as_ref(), self.status, cx))
+            .child(self.output_panel(colors, "Baseline", self.baseline.as_ref(), self.status, cx))
             .child(self.output_panel(
                 colors,
-                "INTERVENTION",
+                "Intervention",
                 self.intervention.as_ref(),
                 self.status,
                 cx,
@@ -3626,7 +3627,17 @@ impl Console {
             .children(advanced)
     }
 
-    fn main_panel(&self, colors: &Colors, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn main_panel(&mut self, colors: &Colors, cx: &mut Context<Self>) -> Stateful<Div> {
+        // The render fixture needs a finished comparison to review the Review
+        // page against. Applied here rather than in the constructor because the
+        // constructor cannot know which step the harness will photograph.
+        #[cfg(feature = "gui-tests")]
+        if self.baseline.is_none() && seed_runs_requested() && self.step == WorkspaceStep::Review {
+            let (baseline, intervention, comparison) = seed_comparison();
+            self.baseline = Some(baseline);
+            self.intervention = Some(intervention);
+            self.comparison = Some(comparison);
+        }
         let page = match self.step {
             WorkspaceStep::Prompt => self.prompt_step(colors, cx).into_any_element(),
             WorkspaceStep::Intervention => self.intervention_step(colors, cx).into_any_element(),
@@ -3651,8 +3662,7 @@ impl Console {
                     .child(
                         div()
                             .w_full()
-                            .max_w(px(980.0))
-                            .mx_auto()
+                            .min_w(px(0.0))
                             .flex_col()
                             .gap(px(Space::XL))
                             .child(self.feedback_banners(colors))
@@ -3713,17 +3723,21 @@ impl Console {
                 div()
                     .flex_col()
                     .gap(px(Space::SM))
+                    // The text is the point of this page, so it gets the room:
+                    // a floor and a generous ceiling rather than a 164px cap
+                    // that showed three lines and left the pane half empty.
                     .child(
                         div()
                             .id(ElementId::Name(SharedString::from(format!(
                                 "output-scroll:{title}"
                             ))))
-                            .min_h(px(84.0))
-                            .max_h(px(164.0))
+                            .flex_1()
+                            .min_h(px(150.0))
+                            .max_h(px(420.0))
                             .overflow_y_scroll()
                             .w_full()
-                            .px_2()
-                            .py_2()
+                            .px_3()
+                            .py_3()
                             .bg(colors.surface_raised)
                             .border_1()
                             .border_color(colors.border)
@@ -3739,33 +3753,51 @@ impl Console {
                         mono(
                             note,
                             Type::LABEL,
-                            if title == "INTERVENTION" {
+                            if title == "Intervention" {
                                 colors.accent
                             } else {
                                 colors.text_muted
                             },
                         )
                     }))
-                    .child(mono(
-                        format!(
-                            "{} tok \u{00b7} {} \u{00b7} {}",
-                            out.generated_tokens,
-                            fmt_ms(out.wall_ms),
-                            fmt_tps(out.decode_tps)
-                        ),
-                        Type::LABEL,
-                        colors.text_muted,
-                    ))
-                    .child(mono(
-                        format!(
-                            "prompt {} tok \u{00b7} bundle {}",
-                            out.prompt_tokens,
-                            short_id(&out.semantic_hash)
-                        ),
-                        Type::META,
-                        colors.text_faint,
-                    ))
-                    .child(mono(out.bundle_dir.clone(), Type::LABEL, colors.text_faint))
+                    // One metadata row. This was three, the last of them a
+                    // full bundle path sitting in the middle of the default
+                    // view -- the page the brief says must not be centred on
+                    // filesystem locations. The path and the semantic hash are
+                    // reproducibility facts, so they stay reachable on the
+                    // pane's tooltip rather than being deleted.
+                    .child(
+                        div()
+                            .id(ElementId::Name(SharedString::from(format!(
+                                "output-meta:{title}"
+                            ))))
+                            // Repro details on hover rather than in the middle
+                            // of the default view. `tooltip` on a plain `Div`
+                            // does not exist -- it is an interactive-element
+                            // method, so the row needs an id first, and the kit
+                            // owns the overlay rather than a hand-rolled one.
+                            .tooltip({
+                                // Owned, because the overlay outlives this
+                                // frame and cannot borrow the run output.
+                                let detail = format!(
+                                    "prompt {} tok  ·  bundle {}  ·  {}",
+                                    out.prompt_tokens,
+                                    short_id(&out.semantic_hash),
+                                    out.bundle_dir
+                                );
+                                move |window, cx| Tooltip::new(detail.clone()).build(window, cx)
+                            })
+                            .child(mono(
+                                format!(
+                                    "{} tok  ·  {}  ·  {}",
+                                    out.generated_tokens,
+                                    fmt_ms(out.wall_ms),
+                                    fmt_tps(out.decode_tps)
+                                ),
+                                Type::META,
+                                colors.text_faint,
+                            )),
+                    )
             }
             Some(_out) => div().child(label("(empty output)", Type::SUBSECTION, colors.text_faint)),
             None => div().child(label(
@@ -3774,26 +3806,47 @@ impl Console {
                 colors.text_faint,
             )),
         };
-        panel(
-            colors,
-            div()
-                .flex_col()
-                .gap(px(Space::SM))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .child(label(title, Type::BODY, colors.text_muted))
-                        .child(div().w_full())
-                        .children(copy_button)
-                        .child(chip(badge_text, badge_color)),
-                )
-                .child(body),
-        )
-        .w(relative(0.5))
-        .min_h(px(148.0))
-        .overflow_hidden()
+        // Not `panel()`: a pane is a grouped object with real boundaries, so it
+        // keeps a surface, but the header sits outside the scrolling body so it
+        // does not leave with the text.
+        div()
+            .flex()
+            .flex_col()
+            .w(relative(0.5))
+            .min_w(px(0.0))
+            .min_h(px(220.0))
+            .overflow_hidden()
+            .rounded(px(Radius::LG))
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.surface)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(Space::SM))
+                    .flex_none()
+                    .px(px(Space::LG))
+                    .pt(px(Space::MD))
+                    .pb(px(Space::SM))
+                    .border_b_1()
+                    .border_color(colors.border)
+                    .child(label(title, Type::SUBSECTION, colors.text))
+                    .child(div().w_full())
+                    .children(copy_button)
+                    .child(chip(badge_text, badge_color)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .gap(px(Space::SM))
+                    .p(px(Space::MD))
+                    .child(body),
+            )
     }
 
     fn verification_panel(&self, colors: &Colors) -> Div {
@@ -3985,7 +4038,12 @@ impl Render for Console {
                 let column = div()
                     .flex()
                     .flex_col()
-                    .w_full()
+                    // No `w_full()` here. `width: 100%` overrides the
+                    // `flex-basis: 0%` that `flex_1` sets, so the workspace
+                    // claimed the whole row and the 300px aside was left with
+                    // whatever was over -- about 118px, clipping the model name,
+                    // the hook and the advanced disclosure mid-word. `flex_1`
+                    // already means "take the space that is not spoken for".
                     .flex_1()
                     .min_h(px(0.0))
                     // The workspace is the pane that must give way. Without an
@@ -4018,7 +4076,14 @@ impl Render for Console {
                                 .id(ElementId::Name(SharedString::from("inspector")))
                                 .w(px(300.0))
                                 .flex_none()
-                                .min_w(px(0.0))
+                                // `flex_none` alone was not enough: the row
+                                // still took the shortfall out of the aside, and
+                                // a 300px inspector was rendering at about 120px
+                                // with the model name, the hook and the advanced
+                                // disclosure all clipped mid-word. The shrink is
+                                // pinned explicitly so the workspace column is
+                                // the only thing that gives way.
+                                .flex_shrink_0()
                                 .h_full()
                                 .overflow_y_scroll()
                                 .bg(colors.surface)
@@ -4349,6 +4414,61 @@ fn seed_store() -> AppStore {
 #[cfg(not(feature = "gui-tests"))]
 fn seed_store() -> AppStore {
     AppStore::default()
+}
+
+/// A finished comparison, for reviewing the Review page at real density.
+///
+/// The empty state is what every screenshot had shown, so the pane layout, the
+/// metadata row and the bidi handling of a mixed-direction completion were all
+/// being judged against a page with nothing on it. Two outputs that share a
+/// prefix and then diverge is the interesting case: it is the one where the
+/// token arrow, the divergence note and the side-by-side panes all have
+/// something to say.
+#[cfg(feature = "gui-tests")]
+fn seed_comparison() -> (RunOutput, RunOutput, ExperimentComparison) {
+    let shared = "The city of Madinah is one of the oldest continuously inhabited places in the world, known for the Prophet's Mosque.";
+    let diverged = "The city of Madinah is among the oldest inhabited places in the world, famed for the Prophet's Mosque and its courtyards.";
+    let arabic = "\u{0627}\u{0643}\u{062a}\u{0628}\u{060c}\u{0627}\u{0644}\u{0645}\u{062f}\u{064a}\u{0646}\u{0629} \u{0627}\u{062d}\u{062f} \u{0623}\u{0642}\u{062f}\u{0645}\u{0627}\u{0641}\u{0627}\u{064a} \u{0641}\u{064a} \u{0627}\u{0644}\u{0639}\u{0627}\u{0644}\u{0645}.";
+    let make = |text: String, tokens: usize, wall_ms: f64| RunOutput {
+        text,
+        generated_token_ids: vec![1; tokens],
+        generated_token_texts: vec![String::new(); tokens],
+        prompt_tokens: 24,
+        generated_tokens: tokens,
+        bundle_dir: "/tmp/ember-render-fixture/baseline".to_string(),
+        semantic_hash: "9f2c1a7b4e6d0358".to_string(),
+        payload_hash: "3a91f0c2".to_string(),
+        wall_ms,
+        decode_tps: Some(tokens as f64 / (wall_ms / 1000.0)),
+        events: Vec::new(),
+    };
+    let baseline = make(shared.to_string(), 48, 1_240.0);
+    let intervention = make(format!("{shared} {diverged}"), 61, 1_980.0);
+    let comparison = ExperimentComparison {
+        layers: Vec::new(),
+        tokens: Vec::new(),
+        first_token_divergence: Some(38),
+        generated_tokens_equal: false,
+        generated_text_equal: false,
+        landmarks: crate::gui::DivergenceLandmarks {
+            first_layer_divergence: Some(7),
+            peak_layer: Some(14),
+            peak_relative_l2: Some(0.214),
+            stable_token_tail_step: None,
+        },
+        layer_token_grid: None,
+    };
+    let _ = arabic;
+    (baseline, intervention, comparison)
+}
+
+// Without the gui-tests feature there is no render harness to feed, and the
+// only call site is behind the same cfg, so this stub exists purely to keep the
+// non-test build compiling.
+#[cfg(not(feature = "gui-tests"))]
+#[expect(dead_code, reason = "only the gui-tests build calls the real one")]
+fn seed_comparison() -> (RunOutput, RunOutput, ExperimentComparison) {
+    unimplemented!("render fixture is only available under gui-tests")
 }
 
 #[cfg(test)]
