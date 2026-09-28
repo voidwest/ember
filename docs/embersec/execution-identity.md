@@ -73,9 +73,11 @@ output-affecting input**, specifically:
 | mode | probe flags, experiment (zero-layer-output / activation-stats) |
 
 Canonicality rules:
-- **Sorted keys**: the canonical object is built from `BTreeMap` and the
-  JSON written compactly, so field order is irrelevant and re-parsing the
-  recorded object reproduces the same bytes.
+- **Sorted keys (identity v2)**: objects are sorted recursively and JSON is
+  written compactly; array order is retained. V2 field order is irrelevant.
+  Historical identity v1 used insertion-order serialization in some builds,
+  so its recorded object order and digest must be preserved. See
+  [candidate migration](../migration-to-1.0.md#run-manifest-identity-migration).
 - **Volatile data excluded**: timestamps, argv, paths are *reported* in the
   manifest but are not part of the identity.
 - **Sensitivity**: any change to any listed field changes the digest
@@ -93,7 +95,8 @@ each a legitimate reason to distrust the result.
 - `--seed <u64>` CLI arg; threaded through `run_single_prompt` /
   `run_single_prompt_with_experiment` and recorded in the manifest. Same seed
   + same inputs ⇒ same token sequence for temperature > 0.
-- Manifest schema v2 (`--write-run-manifest`):
+- Manifest schema v2 (`--write-run-manifest`), now with `execution-identity-v2`
+  in the candidate writer (historical identity v1 remains readable):
   - `identity.{schema, sha256, canonical}`: canonical object + digest,
   - `execution.prompt`, `execution.seed`,
   - `binary.{git_commit, git_dirty, rustc_version, target}` (build-time),

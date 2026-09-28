@@ -25,12 +25,14 @@ use crate::v05::token_select::{
 use crate::v05::verify::{CaptureIndexEntry, SummaryEntry};
 use std::path::PathBuf;
 
-/// Unique per-test temp dir (time + pid based; collisions across parallel
-/// tests are practically impossible).
+/// Unique per-test temp dir, including when parallel tests observe the same
+/// platform clock tick.
 pub(crate) fn temp_root(tag: &str) -> PathBuf {
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     std::env::temp_dir().join(format!(
-        "ember-{tag}-{}-{}",
+        "ember-{tag}-{}-{}-{}",
         std::process::id(),
+        SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -89,7 +91,10 @@ pub fn sample_selection_record(selector: TokenSelector) -> TokenSelectionRecord 
 
 /// Write a complete, verifiable bundle with one capture whose rows are
 /// `rows` at `positions`. Returns the bundle root.
-pub fn write_test_bundle(root: &Path, rows: &[f32], positions: &[usize]) -> std::path::PathBuf {
+pub(crate) fn test_bundle_materials(
+    rows: &[f32],
+    positions: &[usize],
+) -> (BTreeMap<String, Vec<u8>>, SemanticManifest) {
     let plan_text = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/execution-plan-v1.json"
@@ -255,6 +260,12 @@ directory = "out"
         warnings: Vec::new(),
         complete: true,
     };
+    (files, semantic_manifest)
+}
+
+/// Publish the complete fixture through the production writer.
+pub fn write_test_bundle(root: &Path, rows: &[f32], positions: &[usize]) -> PathBuf {
+    let (files, semantic_manifest) = test_bundle_materials(rows, positions);
     let mut writer = BundleWriter::new(root.to_path_buf(), true, false);
     for (relative, bytes) in files {
         writer.add(&relative, bytes);

@@ -69,7 +69,11 @@ it remains checksum-verified.
 
 - unknown bundle schema major: verification fails;
 - `semantic-manifest.json` records `experiment_schema`, `hook_schema`,
-  and `plan_schema`; verification requires each to parse;
+  and `plan_schema`; verification accepts exactly the implemented versions
+  (`ember.experiment.v1`, hook 1, plan 1), even when unknown versions carry
+  self-consistent hashes;
+- the stored execution plan must use the declared schema and match the plan
+  hash in the semantic manifest;
 - renamed hook sites or changed hook meanings require a semantic hook
   schema major bump; verification never reinterprets an old hook id with
   new semantics.
@@ -79,8 +83,35 @@ it remains checksum-verified.
 Bundles are written into a sibling staging directory
 (`runs/.example.tmp-<pid>-<seq>`) and atomically renamed into place only
 after every payload is flushed, checksums are computed, the manifest is
-complete, and internal verification passes. On failure the staging
+complete, and internal verification passes. Publication uses a no-clobber
+rename for new destinations. Explicit replacement uses an atomic directory
+exchange, keeping the old bundle visible until the verified replacement is
+ready. Linux/macOS filesystems must support the required rename operation;
+unsupported platforms/filesystems fail without deleting the destination.
+On failure the staging
 directory is removed unless `--retain-incomplete` keeps it; a retained
 staging directory starts with `.` and contains `.tmp-`, so `verify` can
-never mistake it for a bundle. Existing bundles are never overwritten
+never mistake it for a bundle. The writer alone can run internal verification
+on a staging directory. Existing bundles are never overwritten
 unless `output.overwrite = true`.
+
+## File inventory and JSON ordering
+
+Verification rejects symlinks and special files within a bundle before opening
+its documents. Every regular file must appear in the manifest, apart from
+`checksums.sha256` and the optional runtime `verification.json`. Every listed
+file must have a checksum; duplicate checksum paths fail. The inventory walk
+is bounded to 100,000 entries and 64 directory levels. Verify an immutable
+bundle copy; this is not an atomic snapshot of a concurrently modified tree.
+
+JSON object keys in newly written deterministic payloads are recursively
+sorted, independently of dependency features and map insertion order. Arrays
+retain their semantic ordering. Older bundle bytes are verified in place; the
+verifier does not rewrite them into a newer encoding.
+
+The verifier also recognizes the historical insertion-order semantic hash
+encoding emitted by released Ember 0.5.0/0.5.1 and 0.6.0–0.6.8 builds. It
+reports that encoding in the semantic-hash check and preserves the original
+hash. This exception does not apply to newer producers. New writers use sorted
+keys; no in-place bundle migration is performed. See the frozen fixture and
+provenance in [the contract audit](audits/1.0-contract-audit.md).
