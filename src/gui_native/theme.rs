@@ -159,3 +159,49 @@ pub(super) fn dark() -> Colors {
         warn_box_border: rgb(0x584a2e),
     }
 }
+
+/// Type scale. One place to change a size, so hierarchy cannot drift.
+///
+/// The console had no scale: of roughly fifty text calls, thirty-nine sat
+/// between 8 and 11px and nothing exceeded 20px, which is why the interface
+/// read as small, dense and technical no matter how the surfaces were
+/// retuned. Sizes are a token, not an argument to be chosen per call site.
+pub(super) struct Type;
+
+impl Type {
+    /// Page title. Large enough to anchor a screen, not a hero.
+    pub(super) const TITLE: f32 = 24.0;
+    /// Section title within a page.
+    pub(super) const SECTION: f32 = 17.0;
+    /// Sub-heading / card title.
+    pub(super) const SUBSECTION: f32 = 15.0;
+    /// Body copy and input text.
+    pub(super) const BODY: f32 = 14.0;
+    /// Field labels and secondary copy. Sentence case, never uppercase.
+    pub(super) const LABEL: f32 = 13.0;
+    /// Metadata: model names, hook ids, seeds, token counts.
+    pub(super) const META: f32 = 12.0;
+    /// Micro labels and dense secondary rows.
+    pub(super) const MICRO: f32 = 11.0;
+}
+
+/// Spacing scale. 4/8/12/16/24/32, so rhythm is a token rather than a guess.
+pub(super) struct Space;
+
+impl Space {
+    pub(super) const XS: f32 = 4.0;
+    pub(super) const SM: f32 = 8.0;
+    pub(super) const MD: f32 = 12.0;
+    pub(super) const LG: f32 = 16.0;
+    pub(super) const XL: f32 = 24.0;
+    pub(super) const XXL: f32 = 32.0;
+}
+
+/// Corner radii. Very few values; full pills are for status chips only.
+pub(super) struct Radius;
+
+impl Radius {
+    pub(super) const SM: f32 = 6.0;
+    pub(super) const MD: f32 = 8.0;
+    pub(super) const LG: f32 = 10.0;
+}

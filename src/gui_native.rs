@@ -39,7 +39,7 @@ mod theme;
 
 use components::*;
 use input::{InputEvent, InputId, InputKind, TextInput};
-use theme::{AppearanceMode, Colors};
+use theme::{AppearanceMode, Colors, Radius, Space, Type};
 
 // ---------------------------------------------------------------------------
 // embedded fonts (SIL OFL 1.1, see src/gui_fonts/LICENSE.txt)
@@ -932,8 +932,7 @@ impl Console {
             _ => context.op.to_ascii_uppercase(),
         };
         let completed = self.baseline.is_some() && self.status == Status::Idle;
-        let sep = || label("\u{00b7}", 10.0, colors.text_faint).flex_none();
-        let track = |text: &'static str, color: Rgba| label(text, 8.0, color).flex_none();
+        let sep = || label("\u{00b7}", Type::LABEL, colors.text_faint).flex_none();
 
         // A summary of what the current form will do, not a diagram of it.
         //
@@ -947,17 +946,15 @@ impl Console {
         div()
             .w_full()
             .flex_col()
-            .gap_1()
+            .gap(px(Space::XS))
             .pb_4()
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap(px(Space::SM))
                     .overflow_hidden()
-                    .child(track("INPUT", colors.text_faint))
-                    .child(sep())
                     .child(self.pipeline_node(
                         colors,
                         "input",
@@ -966,8 +963,6 @@ impl Console {
                         WorkspaceStep::Prompt,
                         cx,
                     ))
-                    .child(sep())
-                    .child(track("CONTRAST WITH", colors.text_faint))
                     .child(sep())
                     .child(self.pipeline_node(
                         colors,
@@ -996,7 +991,7 @@ impl Console {
                         cx,
                     ))
                     .child(sep())
-                    .child(track("THEN COMPARE", colors.text_faint))
+                    .child(label("compare", Type::META, colors.text_faint))
                     .child(sep())
                     .child(self.pipeline_node(
                         colors,
@@ -1012,20 +1007,19 @@ impl Console {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
+                    .gap(px(Space::SM))
                     .child(mono(
                         format!(
                             "{}  \u{00b7}  {}",
                             token_label(&context.token),
                             if completed { "measured" } else { "planned" }
                         ),
-                        8.5,
+                        Type::META,
                         colors.text_faint,
                     ))
-                    .child(div().w_full())
                     .child(mono(
                         format!("\u{2264}{} tokens  \u{00b7}  seed 0", context.max_tokens),
-                        8.5,
+                        Type::META,
                         colors.text_faint,
                     )),
             )
@@ -1531,7 +1525,7 @@ impl Console {
             .flex()
             .flex_row()
             .items_center()
-            .gap_3()
+            .gap(px(Space::MD))
             .px_4()
             .h(px(46.0))
             .w_full()
@@ -1539,19 +1533,24 @@ impl Console {
             .border_b_1()
             .border_color(colors.border)
             .child(
-                div().flex().flex_row().items_center().gap_2().child(
-                    Button::new("topbar-home")
-                        .ghost()
-                        .small()
-                        .icon(Icon::default().path(icons::BACK))
-                        .label("ember")
-                        .tooltip("Home")
-                        .accessibility_label("Ember, go to Home")
-                        .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
-                            console.view = View::Home;
-                            cx.notify();
-                        })),
-                ),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(Space::SM))
+                    .child(
+                        Button::new("topbar-home")
+                            .ghost()
+                            .small()
+                            .icon(Icon::default().path(icons::BACK))
+                            .label("ember")
+                            .tooltip("Home")
+                            .accessibility_label("Ember, go to Home")
+                            .on_click(cx.listener(|console, _: &ClickEvent, _, cx| {
+                                console.view = View::Home;
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(div().w_full())
             .child(
@@ -1559,8 +1558,8 @@ impl Console {
                     .px_2()
                     .py_1()
                     .bg(colors.surface_raised)
-                    .rounded_full()
-                    .child(mono(model_chip, 10.0, colors.text_muted)),
+                    .rounded(px(Radius::SM))
+                    .child(mono(model_chip, Type::LABEL, colors.text_muted)),
             )
             .child(
                 Button::new("theme-toggle")
@@ -1576,7 +1575,7 @@ impl Console {
         let mut column = div()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(Space::XS))
             .w(px(184.0))
             .flex_none()
             .px_3()
@@ -1592,7 +1591,7 @@ impl Console {
                     .w_full()
                     .h(px(30.0))
                     .justify_start()
-                    .gap_2()
+                    .gap(px(Space::SM))
                     .selected(active)
                     .icon(Icon::default().path(view.icon()))
                     .label(view.label())
@@ -1609,10 +1608,10 @@ impl Console {
 
     /// Workflow stepper. Reads as tabs, not a wizard diagram.
     fn stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let mut row = div().flex().flex_row().gap_1();
+        let mut row = div().flex().flex_row().gap(px(Space::XS));
         for (index, step) in WorkspaceStep::ALL.iter().enumerate() {
             if index > 0 {
-                row = row.child(label("/", 10.0, colors.text_faint));
+                row = row.child(label("/", Type::LABEL, colors.text_faint));
             }
             row = row.child(
                 Button::new(SharedString::from(format!("step:{}", step.key())))
@@ -1635,9 +1634,9 @@ impl Console {
         div()
             .flex()
             .flex_col()
-            .gap_1()
-            .child(label(title, 18.0, colors.text))
-            .child(label(hint, 11.0, colors.text_muted))
+            .gap(px(Space::XS))
+            .child(label(title, Type::SECTION, colors.text))
+            .child(label(hint, Type::BODY, colors.text_muted))
     }
 
     fn models_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
@@ -1646,7 +1645,7 @@ impl Console {
         div()
             .flex()
             .flex_col()
-            .gap_4()
+            .gap(px(Space::XXL))
             .w_full()
             .max_w(px(760.0))
             .px_5()
@@ -1660,20 +1659,20 @@ impl Console {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
-                    .p_4()
+                    .gap(px(Space::SM))
+                    .p(px(Space::LG))
                     .rounded(px(8.0))
                     .bg(colors.surface)
                     .border_1()
                     .border_color(colors.border)
-                    .child(label("Current", 9.0, colors.text_faint))
+                    .child(label("Current", Type::LABEL, colors.text_faint))
                     .child(mono(
                         if current.is_empty() {
                             "No model selected"
                         } else {
                             current
                         },
-                        11.0,
+                        Type::BODY,
                         colors.text,
                     ))
                     .child(label(
@@ -1682,29 +1681,29 @@ impl Console {
                         } else {
                             "Not loaded yet"
                         },
-                        10.0,
+                        Type::LABEL,
                         if loaded { colors.ok } else { colors.text_muted },
                     )),
             )
     }
 
     fn runs_view(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
-        let mut list = div().flex().flex_col().gap_2();
+        let mut list = div().flex().flex_col().gap(px(Space::SM));
         if self.history.is_empty() {
             list = list.child(
                 div()
-                    .p_6()
+                    .p(px(Space::XL))
                     .rounded(px(8.0))
                     .bg(colors.surface)
                     .border_1()
                     .border_color(colors.border)
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .child(label("No runs yet", 12.0, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label("No runs yet", Type::SUBSECTION, colors.text))
                     .child(label(
                         "Experiments you run in this session are listed here.",
-                        10.0,
+                        Type::LABEL,
                         colors.text_faint,
                     )),
             );
@@ -1715,7 +1714,7 @@ impl Console {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap_3()
+                        .gap(px(Space::MD))
                         .px_3()
                         .py_2()
                         .rounded(px(6.0))
@@ -1727,16 +1726,20 @@ impl Console {
                             colors.err_box_border
                         })
                         .child(label(format!("Run #{}", entry.number), 11.0, colors.text))
-                        .child(label(entry.summary.as_str(), 10.0, colors.text_muted))
+                        .child(label(
+                            entry.summary.as_str(),
+                            Type::LABEL,
+                            colors.text_muted,
+                        ))
                         .child(div().w_full())
-                        .child(mono(entry.outcome.as_str(), 10.0, colors.text_faint)),
+                        .child(mono(entry.outcome.as_str(), Type::LABEL, colors.text_faint)),
                 );
             }
         }
         div()
             .flex()
             .flex_col()
-            .gap_4()
+            .gap(px(Space::XXL))
             .w_full()
             .max_w(px(760.0))
             .px_5()
@@ -1752,7 +1755,7 @@ impl Console {
         div()
             .flex()
             .flex_col()
-            .gap_4()
+            .gap(px(Space::XXL))
             .w_full()
             .max_w(px(760.0))
             .px_5()
@@ -1767,8 +1770,8 @@ impl Console {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_3()
-                    .p_4()
+                    .gap(px(Space::MD))
+                    .p(px(Space::LG))
                     .rounded(px(8.0))
                     .bg(colors.surface)
                     .border_1()
@@ -1777,11 +1780,11 @@ impl Console {
                         div()
                             .flex()
                             .flex_col()
-                            .gap_1()
-                            .child(label("Appearance", 11.0, colors.text))
+                            .gap(px(Space::XS))
+                            .child(label("Appearance", Type::BODY, colors.text))
                             .child(label(
                                 "Currently following the system setting when set to System.",
-                                10.0,
+                                Type::LABEL,
                                 colors.text_faint,
                             )),
                     )
@@ -1809,8 +1812,8 @@ impl Console {
             console.view = View::Models;
             cx.notify();
         });
-        let mut recent = div().flex().flex_col().gap_2();
-        recent = recent.child(label("RECENT RUNS", 9.0, colors.text_faint));
+        let mut recent = div().flex().flex_col().gap(px(Space::SM));
+        recent = recent.child(label("Recent runs", Type::LABEL, colors.text_faint));
         if self.history.is_empty() {
             recent = recent.child(
                 div()
@@ -1825,7 +1828,7 @@ impl Console {
                         .flex()
                         .flex_row()
                         .items_center()
-                        .gap_2()
+                        .gap(px(Space::SM))
                         .px_3()
                         .py_2()
                         .rounded(px(6.0))
@@ -1834,7 +1837,7 @@ impl Console {
                         .border_color(colors.border)
                         .child(label(format!("Run #{}", entry.number), 11.0, colors.text))
                         .child(div().w_full())
-                        .child(mono(entry.outcome.as_str(), 10.0, colors.text_muted)),
+                        .child(mono(entry.outcome.as_str(), Type::LABEL, colors.text_muted)),
                 );
             }
             recent = recent.child(
@@ -1847,7 +1850,7 @@ impl Console {
         div()
             .flex()
             .flex_col()
-            .gap_5()
+            .gap(px(Space::XXL))
             .w_full()
             .max_w(px(760.0))
             .px_5()
@@ -1856,11 +1859,11 @@ impl Console {
                 div()
                     .flex()
                     .flex_col()
-                    .gap_1()
-                    .child(label("What do you want to do?", 18.0, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label("What do you want to do?", Type::SECTION, colors.text))
                     .child(label(
                         "Run a controlled experiment, or pick up where you left off.",
-                        11.0,
+                        Type::BODY,
                         colors.text_muted,
                     )),
             )
@@ -1868,7 +1871,7 @@ impl Console {
                 div()
                     .flex()
                     .flex_row()
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .child(
                         Button::new("home-start")
                             .primary()
@@ -1900,8 +1903,8 @@ impl Console {
             .bg(colors.sidebar)
             .border_r_1()
             .border_color(colors.border)
-            .p_3()
-            .gap_4()
+            .p(px(Space::MD))
+            .gap(px(Space::LG))
     }
 
     /// Starting points for a new experiment.
@@ -1938,7 +1941,7 @@ impl Console {
             .flex()
             .flex_row()
             .flex_wrap()
-            .gap_2()
+            .gap(px(Space::SM))
             .children(presets.into_iter().map(|(preset, title, hint)| {
                 div()
                     .flex_1()
@@ -1964,15 +1967,15 @@ impl Console {
                 div()
                     .w_full()
                     .flex_col()
-                    .gap_1()
-                    .child(label(title, 10.0, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label(title, Type::LABEL, colors.text))
                     // The sidebar is narrow, so the hint is hard-clipped
                     // mid-word by the button's content box ("...an Arabic
                     // pi"). Ellipsize explicitly so the reader can see there
                     // is more, using the same helper the prompt excerpt uses.
                     .child(label(
                         truncate_chars(hint, PRESET_HINT_CHARS),
-                        8.5,
+                        Type::META,
                         colors.text_faint,
                     )),
             )
@@ -2008,11 +2011,11 @@ impl Console {
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label(title, 11.0, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label(title, Type::BODY, colors.text))
                     .child(label(
                         hint,
-                        9.0,
+                        Type::LABEL,
                         if selected {
                             colors.text_muted
                         } else {
@@ -2042,9 +2045,13 @@ impl Console {
                 div()
                     .w_full()
                     .flex_col()
-                    .gap_1()
-                    .child(label(operation_label(operation), 11.0, colors.text))
-                    .child(label(operation_hint(operation), 9.0, colors.text_faint)),
+                    .gap(px(Space::XS))
+                    .child(label(operation_label(operation), Type::BODY, colors.text))
+                    .child(label(
+                        operation_hint(operation),
+                        Type::LABEL,
+                        colors.text_faint,
+                    )),
             )
             .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                 console.select_combo(ComboId::Op, operation, cx);
@@ -2061,16 +2068,16 @@ impl Console {
                 .bg(colors.err_box_bg)
                 .border_1()
                 .border_color(colors.err_box_border)
-                .rounded_md()
+                .rounded(px(Radius::MD))
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap(px(Space::SM))
                 .child(
                     icons::icon(icons::WARNING)
                         .size(px(15.0))
                         .text_color(colors.err),
                 )
-                .child(label(error.clone(), 10.0, colors.err))
+                .child(label(error.clone(), Type::LABEL, colors.err))
         });
         let warning = self.warning.as_ref().map(|warning| {
             div()
@@ -2080,18 +2087,22 @@ impl Console {
                 .bg(colors.warn_box_bg)
                 .border_1()
                 .border_color(colors.warn_box_border)
-                .rounded_md()
+                .rounded(px(Radius::MD))
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap(px(Space::SM))
                 .child(
                     icons::icon(icons::WARNING)
                         .size(px(15.0))
                         .text_color(colors.warn),
                 )
-                .child(label(warning.clone(), 10.0, colors.warn))
+                .child(label(warning.clone(), Type::LABEL, colors.warn))
         });
-        div().flex_col().gap_2().children(error).children(warning)
+        div()
+            .flex_col()
+            .gap(px(Space::SM))
+            .children(error)
+            .children(warning)
     }
 
     fn prompt_step(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -2120,7 +2131,7 @@ impl Console {
                     colors,
                     self.inputs.model.clone(),
                     FONT_MONO_NAME,
-                    11.0,
+                    Type::BODY,
                     None,
                     cx,
                 ),
@@ -2129,38 +2140,37 @@ impl Console {
 
         div()
             .flex_col()
-            .gap_4()
+            .gap(px(Space::LG))
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label("Prepare the experiment", 20.0, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label("Prepare the experiment", Type::TITLE, colors.text))
                     .child(label(
                         "Choose a local GGUF model and give it the prompt you want to study.",
-                        11.0,
+                        Type::BODY,
                         colors.text_muted,
                     )),
             )
-            .child(div().h(px(6.0)))
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .mb_5()
-                    .child(label("START FROM A PRESET", 9.0, colors.text_faint))
+                    .child(label("Start from a preset", Type::LABEL, colors.text_faint))
                     .child(self.presets_block(colors, cx)),
             )
             .child(panel(
                 colors,
                 div()
                     .flex_col()
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .child(section_label(colors, "MODEL"))
+                            .child(section_label(colors, "Model"))
                             .child(div().w_full())
                             .child(chip(model_status.0, model_status.2)),
                     )
@@ -2177,8 +2187,8 @@ impl Console {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(label(model_status.1, 9.5, colors.text_faint))
+                            .gap(px(Space::SM))
+                            .child(label(model_status.1, Type::LABEL, colors.text_faint))
                             .child(div().w_full())
                             .child(div().w(px(150.0)).child(btn_secondary(
                                 colors,
@@ -2201,13 +2211,13 @@ impl Console {
                 colors,
                 div()
                     .flex_col()
-                    .gap_3()
-                    .child(section_label(colors, "PROMPT"))
+                    .gap(px(Space::MD))
+                    .child(section_label(colors, "Prompt"))
                     .child(text_input(
                         colors,
                         self.inputs.prompt.clone(),
                         FONT_ARABIC_NAME,
-                        15.0,
+                        Type::SUBSECTION,
                         Some(160.0),
                         cx,
                     ))
@@ -2217,13 +2227,13 @@ impl Console {
                             .items_center()
                             .child(label(
                                 format!("{} characters", self.prompt.chars().count()),
-                                9.0,
+                                Type::LABEL,
                                 colors.text_faint,
                             ))
                             .child(div().w_full())
                             .child(label(
                                 "Arabic and mixed-direction text supported",
-                                9.0,
+                                Type::LABEL,
                                 colors.text_faint,
                             )),
                     ),
@@ -2231,12 +2241,12 @@ impl Console {
             .child(
                 div()
                     .flex_col()
-                    .gap_2()
-                    .child(label("RESPONSE LENGTH", 9.0, colors.text_faint))
+                    .gap(px(Space::SM))
+                    .child(label("Response length", Type::LABEL, colors.text_faint))
                     .child(
                         div()
                             .flex()
-                            .gap_2()
+                            .gap(px(Space::SM))
                             .child(self.generation_option(
                                 colors,
                                 24,
@@ -2281,12 +2291,12 @@ impl Console {
 
         div()
             .flex_col()
-            .gap_2()
+            .gap(px(Space::SM))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_2()
+                    .gap(px(Space::SM))
                     .child(
                         Button::new("layer-minus")
                             .label("−")
@@ -2299,11 +2309,11 @@ impl Console {
                         colors,
                         self.inputs.layer.clone(),
                         FONT_MONO_NAME,
-                        12.0,
+                        Type::META,
                         None,
                         cx,
                     )))
-                    .child(label(limit, 10.0, colors.text_muted))
+                    .child(label(limit, Type::LABEL, colors.text_muted))
                     .child(
                         Button::new("layer-plus")
                             .label("+")
@@ -2313,7 +2323,7 @@ impl Console {
                             })),
                     ),
             )
-            .child(label(position, 9.0, colors.text_faint))
+            .child(label(position, Type::LABEL, colors.text_faint))
     }
 
     fn intervention_step(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -2323,7 +2333,7 @@ impl Console {
         let source_controls = needs_source.then(|| {
             div()
                 .flex_col()
-                .gap_3()
+                .gap(px(Space::MD))
                 .child(field(
                     colors,
                     "SOURCE",
@@ -2344,7 +2354,7 @@ impl Console {
                             colors,
                             self.inputs.source_layer.clone(),
                             FONT_MONO_NAME,
-                            12.0,
+                            Type::META,
                             None,
                             cx,
                         ),
@@ -2357,13 +2367,13 @@ impl Console {
                 if self.op == "interpolate" {
                     "BLEND AMOUNT (0–1)"
                 } else {
-                    "STRENGTH MULTIPLIER"
+                    "Strength multiplier"
                 },
                 text_input(
                     colors,
                     self.inputs.value.clone(),
                     FONT_MONO_NAME,
-                    12.0,
+                    Type::META,
                     None,
                     cx,
                 ),
@@ -2377,7 +2387,7 @@ impl Console {
                     colors,
                     self.inputs.span.clone(),
                     FONT_ARABIC_NAME,
-                    12.0,
+                    Type::META,
                     None,
                     cx,
                 ),
@@ -2386,41 +2396,41 @@ impl Console {
 
         div()
             .flex_col()
-            .gap_4()
+            .gap(px(Space::LG))
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label("Choose the internal change", 20.0, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label("Choose the internal change", Type::TITLE, colors.text))
                     .child(label(
                         "Start with the research question. Exact hook names remain available in Advanced controls.",
-                        11.0,
+                        Type::BODY,
                         colors.text_muted,
                     )),
             )
             .child(
                 div()
                     .flex_col()
-                    .gap_2()
-                    .child(label("WHAT SHOULD CHANGE?", 9.0, colors.text_faint))
+                    .gap(px(Space::SM))
+                    .child(label("What should change?", Type::LABEL, colors.text_faint))
                     .child(
                         div()
                             .flex()
-                            .gap_2()
+                            .gap(px(Space::SM))
                             .child(self.operation_card(colors, "zero", cx))
                             .child(self.operation_card(colors, "scale", cx)),
                     )
                     .child(
                         div()
                             .flex()
-                            .gap_2()
+                            .gap(px(Space::SM))
                             .child(self.operation_card(colors, "replace", cx))
                             .child(self.operation_card(colors, "interpolate", cx)),
                     )
                     .child(
                         div()
                             .flex()
-                            .gap_2()
+                            .gap(px(Space::SM))
                             .child(self.operation_card(colors, "add-delta", cx))
                             .child(div().w(relative(0.5))),
                     ),
@@ -2429,11 +2439,11 @@ impl Console {
                 colors,
                 div()
                     .flex_col()
-                    .gap_3()
-                    .child(section_label(colors, "WHERE"))
+                    .gap(px(Space::MD))
+                    .child(section_label(colors, "Where"))
                     .child(field(
                         colors,
-                        "LOCATION IN EACH LAYER",
+                        "Location in each layer",
                         self.picker(
                             colors,
                             "site-picker",
@@ -2447,11 +2457,11 @@ impl Console {
                     // exact frozen identifier for anyone reproducing a run.
                     .child(mono(
                         format!("ember.hook.v1 \u{00b7} {}", site_contract_name(&self.site)),
-                        8.5,
+                        Type::META,
                         colors.text_faint,
                     ))
                     .when(per_layer(&self.site), |content| {
-                        content.child(field(colors, "MODEL LAYER", self.layer_stepper(colors, cx)))
+                        content.child(field(colors, "Layer", self.layer_stepper(colors, cx)))
                     })
                     .children(value_control)
                     .children(source_controls),
@@ -2460,11 +2470,11 @@ impl Console {
                 colors,
                 div()
                     .flex_col()
-                    .gap_3()
-                    .child(section_label(colors, "TARGET"))
+                    .gap(px(Space::MD))
+                    .child(section_label(colors, "Target"))
                     .child(field(
                         colors,
-                        "TOKENS TO AFFECT",
+                        "Tokens to affect",
                         self.picker(
                             colors,
                             "token-picker",
@@ -2484,13 +2494,13 @@ impl Console {
                 if baseline.text == intervention.text => div()
                 .px_3()
                 .py_2()
-                .rounded_md()
+                .rounded(px(Radius::MD))
                 .bg(colors.warn_box_bg)
                 .border_1()
                 .border_color(colors.warn_box_border)
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap(px(Space::SM))
                 .child(
                     icons::icon(icons::WARNING)
                         .size(px(15.0))
@@ -2498,19 +2508,19 @@ impl Console {
                 )
                 .child(label(
                     "The intervention completed successfully but did not change the generated text.",
-                    10.0,
+                    Type::LABEL,
                     colors.warn,
                 )),
             (Some(_), Some(_), Some(comparison)) => div()
                 .px_3()
                 .py_2()
-                .rounded_md()
+                .rounded(px(Radius::MD))
                 .bg(colors.accent_soft)
                 .border_1()
                 .border_color(colors.accent)
                 .flex()
                 .items_center()
-                .gap_2()
+                .gap(px(Space::SM))
                 .child(
                     icons::icon(icons::CHECK)
                         .size(px(15.0))
@@ -2521,27 +2531,27 @@ impl Console {
                         || "The generated output text changed.".to_string(),
                         |step| format!("Generated behavior diverges at decode step {step}."),
                     ),
-                    10.0,
+                    Type::LABEL,
                     colors.text,
                 )),
             _ if self.busy() => div()
                 .px_3()
                 .py_2()
-                .rounded_md()
+                .rounded(px(Radius::MD))
                 .bg(colors.accent_soft)
                 .child(label(
                     "The model is running both the baseline and intervention. Results will appear here.",
-                    10.0,
+                    Type::LABEL,
                     colors.text_muted,
                 )),
             _ => div()
                 .px_3()
                 .py_2()
-                .rounded_md()
+                .rounded(px(Radius::MD))
                 .bg(colors.surface_raised)
                 .child(label(
                     "Review the experiment summary, then run it to produce a controlled comparison.",
-                    10.0,
+                    Type::LABEL,
                     colors.text_muted,
                 )),
         }
@@ -2572,10 +2582,10 @@ impl Console {
                 .flex_1()
                 .min_w(px(0.0))
                 .flex_col()
-                .gap_1()
-                .child(label(title, 8.0, colors.text_faint))
-                .child(mono(value, 10.5, colors.text))
-                .child(label(detail, 8.5, colors.text_muted))
+                .gap(px(Space::XS))
+                .child(label(title, Type::MICRO, colors.text_faint))
+                .child(mono(value, Type::LABEL, colors.text))
+                .child(label(detail, Type::META, colors.text_muted))
         };
         let divider = || div().w(px(1.0)).h(px(42.0)).bg(colors.border).flex_none();
 
@@ -2585,11 +2595,11 @@ impl Console {
             .py_2()
             .flex()
             .items_center()
-            .gap_3()
+            .gap(px(Space::MD))
             .bg(colors.surface)
             .border_1()
             .border_color(colors.border)
-            .rounded_md()
+            .rounded(px(Radius::MD))
             .child(landmark(
                 "FIRST INTERNAL DIVERGENCE",
                 first_layer,
@@ -2673,7 +2683,7 @@ impl Console {
             colors,
             div()
                 .flex_col()
-                .gap_2()
+                .gap(px(Space::SM))
                 .child(
                     div()
                         .flex()
@@ -2681,16 +2691,20 @@ impl Console {
                         .child(
                             div()
                                 .flex_col()
-                                .gap_1()
-                                .child(label("REPRESENTATION DIVERGENCE", 9.0, colors.text_faint))
+                                .gap(px(Space::XS))
+                                .child(label(
+                                    "REPRESENTATION DIVERGENCE",
+                                    Type::LABEL,
+                                    colors.text_faint,
+                                ))
                                 .child(label(
                                     "At which layers does the intervention diverge from baseline?",
-                                    11.0,
+                                    Type::BODY,
                                     colors.text,
                                 )),
                         )
                         .child(div().w_full())
-                        .child(label("COPY CSV", 8.0, colors.text_faint))
+                        .child(label("COPY CSV", Type::MICRO, colors.text_faint))
                         .child(export),
                 )
                 .child(chart::layer_divergence_chart(
@@ -2708,7 +2722,7 @@ impl Console {
     fn paired_outputs(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
-            .gap_3()
+            .gap(px(Space::MD))
             .child(self.output_panel(colors, "BASELINE", self.baseline.as_ref(), self.status, cx))
             .child(self.output_panel(
                 colors,
@@ -2723,7 +2737,11 @@ impl Console {
         let Some(comparison) = &self.comparison else {
             return panel(
                 colors,
-                label("No token comparison is available.", 10.0, colors.text_faint),
+                label(
+                    "No token comparison is available.",
+                    Type::LABEL,
+                    colors.text_faint,
+                ),
             );
         };
         let count = comparison.tokens.len();
@@ -2753,9 +2771,9 @@ impl Console {
                 div()
                     .w(px(92.0))
                     .flex_none()
-                    .p_2()
+                    .p(px(Space::SM))
                     .flex_col()
-                    .gap_1()
+                    .gap(px(Space::XS))
                     .bg(if token.differs {
                         colors.accent_soft
                     } else {
@@ -2767,15 +2785,15 @@ impl Console {
                     } else {
                         colors.border
                     })
-                    .rounded_md()
+                    .rounded(px(Radius::MD))
                     .child(mono(
                         format!("STEP {}", token.position),
-                        7.5,
+                        Type::MICRO,
                         colors.text_faint,
                     ))
-                    .child(label(baseline, 11.0, colors.text))
+                    .child(label(baseline, Type::BODY, colors.text))
                     .child(rule_h(colors))
-                    .child(label(intervention, 11.0, colors.text))
+                    .child(label(intervention, Type::BODY, colors.text))
                     .into_any_element()
             })
             .collect::<Vec<_>>();
@@ -2787,24 +2805,24 @@ impl Console {
             colors,
             div()
                 .flex_col()
-                .gap_2()
+                .gap(px(Space::SM))
                 .child(label(
                     "TOKEN-LEVEL OUTPUT COMPARISON",
-                    9.0,
+                    Type::LABEL,
                     colors.text_faint,
                 ))
-                .child(label(divergence, 11.0, colors.text))
+                .child(label(divergence, Type::BODY, colors.text))
                 .child(
                     div()
                         .flex()
-                        .gap_2()
+                        .gap(px(Space::SM))
                         .child(chip("BASELINE", colors.text_muted))
                         .child(chip("INTERVENTION", colors.accent))
                         .child(div().w_full())
                         .children((count > end).then(|| {
                             mono(
                                 format!("showing {}–{} of {count}", start + 1, end),
-                                8.0,
+                                Type::MICRO,
                                 colors.text_faint,
                             )
                         })),
@@ -2815,7 +2833,7 @@ impl Console {
                         .w_full()
                         .overflow_x_scroll()
                         .flex()
-                        .gap_1()
+                        .gap(px(Space::XS))
                         .pb_2()
                         .children(token_cells),
                 ),
@@ -2827,20 +2845,29 @@ impl Console {
             output
                 .events
                 .iter()
-                .map(|event| mono(event.to_string(), 8.5, colors.text_muted).into_any_element())
+                .map(|event| {
+                    mono(event.to_string(), Type::META, colors.text_muted).into_any_element()
+                })
                 .collect::<Vec<_>>()
         });
         panel(
             colors,
             div()
                 .flex_col()
-                .gap_2()
-                .child(label("RAW INTERVENTION TRACE", 9.0, colors.text_faint))
-                .children((!events.is_empty()).then(|| div().flex_col().gap_1().children(events)))
+                .gap(px(Space::SM))
+                .child(label(
+                    "RAW INTERVENTION TRACE",
+                    Type::LABEL,
+                    colors.text_faint,
+                ))
+                .children(
+                    (!events.is_empty())
+                        .then(|| div().flex_col().gap(px(Space::XS)).children(events)),
+                )
                 .children(self.intervention.as_ref().map(|output| {
                     mono(
                         format!("bundle  {}", output.bundle_dir),
-                        8.5,
+                        Type::META,
                         colors.text_faint,
                     )
                 })),
@@ -2852,7 +2879,7 @@ impl Console {
         let result_body = if !has_results {
             div()
                 .flex_col()
-                .gap_3()
+                .gap(px(Space::MD))
                 .child(self.result_summary(colors))
                 .child(self.paired_outputs(colors, cx))
                 .into_any_element()
@@ -2860,7 +2887,7 @@ impl Console {
             match self.result_view {
                 ResultView::Overview => div()
                     .flex_col()
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .child(self.result_summary(colors))
                     .child(self.result_landmarks(colors))
                     .child(self.paired_outputs(colors, cx))
@@ -2868,18 +2895,18 @@ impl Console {
                     .into_any_element(),
                 ResultView::Layers => div()
                     .flex_col()
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .child(self.layer_chart_panel(colors, 350.0, cx))
                     .into_any_element(),
                 ResultView::Tokens => div()
                     .flex_col()
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .child(self.paired_outputs(colors, cx))
                     .child(self.token_comparison_panel(colors))
                     .into_any_element(),
                 ResultView::Trace => div()
                     .flex_col()
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .child(self.raw_trace_panel(colors))
                     .child(self.verification_panel(colors))
                     .into_any_element(),
@@ -2888,7 +2915,7 @@ impl Console {
 
         div()
             .flex_col()
-            .gap_4()
+            .gap(px(Space::LG))
             .child(
                 div()
                     .flex()
@@ -2898,15 +2925,15 @@ impl Console {
                             .flex_1()
                             .min_w_0()
                             .flex_col()
-                            .gap_1()
-                            .child(label("Review and compare", 20.0, colors.text))
+                            .gap(px(Space::XS))
+                            .child(label("Review and compare", Type::TITLE, colors.text))
                             .child(label(
                                 "The baseline and intervention use the same prompt and deterministic settings.",
-                                11.0,
+                                Type::BODY,
                                 colors.text_muted,
                             )),
                     )
-                    .gap_3()
+                    .gap(px(Space::MD))
                     .when(self.last_config.is_some(), |header| {
                         header.child(
                             div()
@@ -2987,7 +3014,7 @@ impl Console {
         let advanced = self.advanced_open.then(|| {
             div()
                 .flex_col()
-                .gap_3()
+                .gap(px(Space::MD))
                 .pt_2()
                 .child(field(
                     colors,
@@ -3008,7 +3035,7 @@ impl Console {
                         colors,
                         self.inputs.max_tokens.clone(),
                         FONT_MONO_NAME,
-                        11.0,
+                        Type::BODY,
                         None,
                         cx,
                     ),
@@ -3020,31 +3047,31 @@ impl Console {
                         colors,
                         self.inputs.model.clone(),
                         FONT_MONO_NAME,
-                        10.0,
+                        Type::LABEL,
                         Some(52.0),
                         cx,
                     ),
                 ))
                 .child(
                     div()
-                        .p_2()
+                        .p(px(Space::SM))
                         .bg(colors.surface_raised)
-                        .rounded_md()
+                        .rounded(px(Radius::MD))
                         .flex_col()
-                        .gap_1()
+                        .gap(px(Space::XS))
                         .child(mono(
                             format!("hook     {}", self.site),
-                            9.0,
+                            Type::LABEL,
                             colors.text_faint,
                         ))
                         .child(mono(
                             format!("operation {}", self.op),
-                            9.0,
+                            Type::LABEL,
                             colors.text_faint,
                         ))
                         .child(mono(
                             format!("tokens    {}", self.token),
-                            9.0,
+                            Type::LABEL,
                             colors.text_faint,
                         )),
                 )
@@ -3056,34 +3083,34 @@ impl Console {
 
         div()
             .flex_col()
-            .gap_3()
+            .gap(px(Space::MD))
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label("MODEL", 8.5, colors.text_faint))
-                    .child(label(model_name, 10.0, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label("Model", Type::META, colors.text_faint))
+                    .child(label(model_name, Type::LABEL, colors.text))
                     .child(match &self.session {
                         Some(session) => mono(
                             format!(
                                 "{} · {} layers · {}d",
                                 session.architecture, session.n_layers, session.embed_dim
                             ),
-                            8.5,
+                            Type::META,
                             colors.text_muted,
                         ),
-                        None => mono("not loaded", 8.5, colors.text_faint),
+                        None => mono("not loaded", Type::META, colors.text_faint),
                     }),
             )
             .child(rule_h(colors))
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label("INPUT", 8.5, colors.text_faint))
+                    .gap(px(Space::XS))
+                    .child(label("Input", Type::META, colors.text_faint))
                     .child(multiline(
                         &prompt_excerpt,
-                        11.0,
+                        Type::LABEL,
                         colors.text,
                         FONT_ARABIC_NAME,
                     )),
@@ -3092,78 +3119,86 @@ impl Console {
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label("TARGET", 8.5, colors.text_faint))
-                    .child(multiline(&target, 10.0, colors.text, FONT_SANS_NAME)),
+                    .gap(px(Space::XS))
+                    .child(label("Target", Type::META, colors.text_faint))
+                    .child(multiline(&target, Type::META, colors.text, FONT_SANS_NAME)),
             )
             .child(rule_h(colors))
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label("INTERVENTION", 8.5, colors.text_faint))
-                    .child(label(intervention, 10.0, colors.accent)),
+                    .gap(px(Space::XS))
+                    .child(label("Intervention", Type::META, colors.text_faint))
+                    .child(label(intervention, Type::LABEL, colors.accent)),
             )
             .child(rule_h(colors))
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label("GENERATION", 8.5, colors.text_faint))
+                    .gap(px(Space::XS))
+                    .child(label("Generation", Type::META, colors.text_faint))
                     .child(mono(
                         format!(
                             "≤{} tokens · seed 0\n{}",
                             context.max_tokens, context.execution
                         ),
-                        9.0,
+                        Type::META,
                         colors.text,
                     )),
             )
             .children(self.intervention.as_ref().map(|output| {
-                div().flex_col().gap_3().child(rule_h(colors)).child(
-                    div()
-                        .flex_col()
-                        .gap_1()
-                        .child(label("RUN", 8.5, colors.text_faint))
-                        .child(mono(
-                            format!(
-                                "{} total\n{} generated\n{}",
-                                self.last_metrics.as_ref().map_or_else(
-                                    || "—".to_string(),
-                                    |(_, elapsed, _)| fmt_ms(*elapsed)
+                div()
+                    .flex_col()
+                    .gap(px(Space::MD))
+                    .child(rule_h(colors))
+                    .child(
+                        div()
+                            .flex_col()
+                            .gap(px(Space::XS))
+                            .child(label("RUN", Type::META, colors.text_faint))
+                            .child(mono(
+                                format!(
+                                    "{} total\n{} generated\n{}",
+                                    self.last_metrics.as_ref().map_or_else(
+                                        || "—".to_string(),
+                                        |(_, elapsed, _)| fmt_ms(*elapsed)
+                                    ),
+                                    output.generated_tokens,
+                                    fmt_tps(output.decode_tps)
                                 ),
-                                output.generated_tokens,
-                                fmt_tps(output.decode_tps)
-                            ),
-                            9.0,
-                            colors.text,
-                        )),
-                )
+                                Type::LABEL,
+                                colors.text,
+                            )),
+                    )
             }))
             .children(active_metric.map(|metric| {
-                div().flex_col().gap_3().child(rule_h(colors)).child(
-                    div()
-                        .flex_col()
-                        .gap_1()
-                        .child(label(active_metric_label, 8.5, colors.text_faint))
-                        .child(mono(format!("layer {}", metric.layer), 10.0, colors.text))
-                        .child(mono(
-                            metric.relative_l2_difference.map_or_else(
-                                || "relative L2  —".to_string(),
-                                |value| format!("relative L2  {value:.6}"),
-                            ),
-                            9.0,
-                            colors.accent,
-                        ))
-                        .child(mono(
-                            metric.cosine_distance.map_or_else(
-                                || "cosine distance  —".to_string(),
-                                |value| format!("cosine distance  {value:.6}"),
-                            ),
-                            9.0,
-                            colors.text_muted,
-                        )),
-                )
+                div()
+                    .flex_col()
+                    .gap(px(Space::MD))
+                    .child(rule_h(colors))
+                    .child(
+                        div()
+                            .flex_col()
+                            .gap(px(Space::XS))
+                            .child(label(active_metric_label, Type::META, colors.text_faint))
+                            .child(mono(format!("layer {}", metric.layer), 10.0, colors.text))
+                            .child(mono(
+                                metric.relative_l2_difference.map_or_else(
+                                    || "relative L2  —".to_string(),
+                                    |value| format!("relative L2  {value:.6}"),
+                                ),
+                                Type::LABEL,
+                                colors.accent,
+                            ))
+                            .child(mono(
+                                metric.cosine_distance.map_or_else(
+                                    || "cosine distance  —".to_string(),
+                                    |value| format!("cosine distance  {value:.6}"),
+                                ),
+                                Type::LABEL,
+                                colors.text_muted,
+                            )),
+                    )
             }))
             .child(rule_h(colors))
             // A ghost button with only a text label reads as static copy in a
@@ -3219,7 +3254,7 @@ impl Console {
                             .max_w(px(980.0))
                             .mx_auto()
                             .flex_col()
-                            .gap_3()
+                            .gap(px(Space::XL))
                             .child(self.feedback_banners(colors))
                             .child(self.experiment_pipeline(colors, cx))
                             .child(page),
@@ -3235,7 +3270,7 @@ impl Console {
                     .bg(colors.surface)
                     .border_l_1()
                     .border_color(colors.border)
-                    .p_4()
+                    .p(px(Space::LG))
                     .child(self.advanced_inspector(colors, cx)),
             )
     }
@@ -3290,7 +3325,7 @@ impl Console {
                 let display_text = isolate_bidi(&out.text);
                 div()
                     .flex_col()
-                    .gap_2()
+                    .gap(px(Space::SM))
                     .child(
                         div()
                             .id(ElementId::Name(SharedString::from(format!(
@@ -3305,10 +3340,10 @@ impl Console {
                             .bg(colors.surface_raised)
                             .border_1()
                             .border_color(colors.border)
-                            .rounded_md()
+                            .rounded(px(Radius::MD))
                             .child(multiline(
                                 &display_text,
-                                14.0,
+                                Type::BODY,
                                 colors.text,
                                 FONT_ARABIC_NAME,
                             )),
@@ -3316,7 +3351,7 @@ impl Console {
                     .children(divergence_note.map(|note| {
                         mono(
                             note,
-                            9.0,
+                            Type::LABEL,
                             if title == "INTERVENTION" {
                                 colors.accent
                             } else {
@@ -3331,7 +3366,7 @@ impl Console {
                             fmt_ms(out.wall_ms),
                             fmt_tps(out.decode_tps)
                         ),
-                        9.5,
+                        Type::LABEL,
                         colors.text_muted,
                     ))
                     .child(mono(
@@ -3340,15 +3375,15 @@ impl Console {
                             out.prompt_tokens,
                             short_id(&out.semantic_hash)
                         ),
-                        8.5,
+                        Type::META,
                         colors.text_faint,
                     ))
-                    .child(mono(out.bundle_dir.clone(), 9.0, colors.text_faint))
+                    .child(mono(out.bundle_dir.clone(), Type::LABEL, colors.text_faint))
             }
-            Some(_out) => div().child(label("(empty output)", 12.0, colors.text_faint)),
+            Some(_out) => div().child(label("(empty output)", Type::SUBSECTION, colors.text_faint)),
             None => div().child(label(
                 "no run yet \u{2014} outputs appear here",
-                12.0,
+                Type::META,
                 colors.text_faint,
             )),
         };
@@ -3356,13 +3391,13 @@ impl Console {
             colors,
             div()
                 .flex_col()
-                .gap_2()
+                .gap(px(Space::SM))
                 .child(
                     div()
                         .flex()
                         .flex_row()
                         .items_center()
-                        .child(label(title, 11.0, colors.text_muted))
+                        .child(label(title, Type::BODY, colors.text_muted))
                         .child(div().w_full())
                         .children(copy_button)
                         .child(chip(badge_text, badge_color)),
@@ -3414,14 +3449,16 @@ impl Console {
         let detail = if lines.is_empty() {
             div().child(label(
                 "bundle self-verification and the restore-original leg report here.",
-                10.0,
+                Type::LABEL,
                 colors.text_faint,
             ))
         } else {
-            div().flex_col().gap_1().children(
+            div().flex_col().gap(px(Space::XS)).children(
                 lines
                     .iter()
-                    .map(|line| mono(line.clone(), 10.0, colors.text_muted).into_any_element())
+                    .map(|line| {
+                        mono(line.clone(), Type::LABEL, colors.text_muted).into_any_element()
+                    })
                     .collect::<Vec<_>>(),
             )
         };
@@ -3438,7 +3475,7 @@ impl Console {
             colors,
             div()
                 .flex_col()
-                .gap_1()
+                .gap(px(Space::XS))
                 .child(
                     div()
                         .flex()
@@ -3446,7 +3483,7 @@ impl Console {
                         .items_center()
                         .child(chip(badge, badge_color))
                         .child(div().w_full())
-                        .child(mono(metrics, 10.0, colors.text_faint)),
+                        .child(mono(metrics, Type::LABEL, colors.text_faint)),
                 )
                 .child(detail),
         )
@@ -3461,7 +3498,7 @@ impl Console {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap_3()
+                .gap(px(Space::MD))
                 .px_4()
                 .h(px(40.0))
                 .w_full()
@@ -3469,7 +3506,7 @@ impl Console {
                 .border_t_1()
                 .border_color(colors.border)
                 .child(status_dot(colors.ok, false))
-                .child(label(self.view.hint(), 10.5, colors.text_muted))
+                .child(label(self.view.hint(), Type::LABEL, colors.text_muted))
                 .child(div().w_full());
         }
         let (dot, status_text) = match self.status {
@@ -3501,7 +3538,7 @@ impl Console {
             .flex()
             .flex_row()
             .items_center()
-            .gap_3()
+            .gap(px(Space::MD))
             .px_5()
             .h(px(58.0))
             .w_full()
@@ -3512,13 +3549,13 @@ impl Console {
             .child(
                 div()
                     .flex_col()
-                    .gap_1()
-                    .child(label(status_text, 10.5, colors.text))
+                    .gap(px(Space::XS))
+                    .child(label(status_text, Type::LABEL, colors.text))
                     .child(label(
                         validation_error.unwrap_or_else(|| {
                             "Deterministic baseline + intervention pair · seed 0".to_string()
                         }),
-                        8.5,
+                        Type::META,
                         colors.text_faint,
                     )),
             )
@@ -3534,7 +3571,7 @@ impl Console {
                     })
                 }),
             )))
-            .child(label("Ctrl+Enter", 8.5, colors.text_faint))
+            .child(label("Ctrl+Enter", Type::META, colors.text_faint))
     }
 }
 
@@ -3610,10 +3647,9 @@ impl Render for Console {
                         .child(column)
                         .child(
                             div()
-                                .w(px(268.0))
+                                .w(px(300.0))
                                 .flex_none()
                                 .min_w(px(0.0))
-                                .overflow_hidden()
                                 .child(div().w_full().child(inspector)),
                         )
                         .into_any_element()

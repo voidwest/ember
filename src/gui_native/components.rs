@@ -1,7 +1,7 @@
 //! Small, reusable presentation primitives for the native console.
 
 use super::input::TextInput;
-use super::theme::Colors;
+use super::theme::{Colors, Radius, Space, Type};
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
     Disableable, Icon, Sizable,
@@ -66,28 +66,28 @@ pub(super) fn section_label(colors: &Colors, label_text: &'static str) -> Div {
         .child(
             div()
                 .w(px(2.0))
-                .h(px(10.0))
+                .h(px(14.0))
                 .bg(colors.border_strong)
                 .rounded_full(),
         )
-        .child(label(label_text, 10.0, colors.text_faint))
+        .child(label(label_text, Type::LABEL, colors.text_faint))
 }
 
 pub(super) fn field(colors: &Colors, title: &'static str, control: impl IntoElement) -> Div {
     div()
         .flex_col()
-        .gap_1()
+        .gap(px(Space::SM))
         .w_full()
-        .child(label(title, 10.0, colors.text_faint))
+        .child(label(title, Type::LABEL, colors.text_faint))
         .child(control)
 }
 
 pub(super) fn panel(colors: &Colors, content: impl IntoElement) -> Div {
     div()
         .w_full()
-        .p_4()
+        .p(px(Space::LG))
         .bg(colors.surface)
-        .rounded(px(10.0))
+        .rounded(px(Radius::LG))
         .child(content)
 }
 
@@ -103,7 +103,7 @@ pub(super) fn chip(label_text: &str, color: Rgba) -> Div {
         .bg(hsla.opacity(0.13))
         .border_1()
         .border_color(hsla.opacity(0.40))
-        .rounded_full()
+        .rounded(px(Radius::SM))
         .child(label(label_text.to_string(), 10.0, color))
 }
 
