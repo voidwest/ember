@@ -118,8 +118,9 @@ private USB files or local credentials being copied into the repository.
   thresholds after seeing results. Preserve the CPU optimizations and headless
   behavior while changing the GUI. The 24-cell K-quant matrix is complete:
   all cells within limits, candidate +28×–96× throughput, RSS −0.8%…−1.4%. See
-  [performance investigation](audits/1.0-performance-m1.md). Selected-row capture
-  overhead is a distinct Gate H component that remains to be measured.
+  [performance investigation](audits/1.0-performance-m1.md). Selected-row and
+  full-tensor capture overhead is now measured: within noise, ~0.2% RSS, bundle
+  payload +1.1–1.3 MB.
 
 Evidence: candidate commit, toolchain/hardware, commands, raw results, and a
 validation matrix. Earlier local test counts are background, not candidate proof.
