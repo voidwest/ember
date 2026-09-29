@@ -2501,8 +2501,33 @@ impl Console {
             .bg(colors.sidebar)
             .border_r_1()
             .border_color(colors.border);
+        // A workspace header and grouped sections, the way Notion and Obsidian
+        // organise a sidebar: the wordmark on top, the working pages first,
+        // a "Library" of things you accumulate, and Settings pinned below.
+        column = column.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .px_2()
+                .pb(px(Space::MD))
+                .child(label("Ember", Type::SUBSECTION, colors.text))
+                .child(label("Experiment console", Type::META, colors.text_faint)),
+        );
         for view in View::ALL {
             let active = self.view == view;
+            if view == View::Models {
+                column = column.child(
+                    div()
+                        .px_2()
+                        .pt(px(Space::MD))
+                        .pb(px(Space::XS))
+                        .child(label("Library", Type::META, colors.text_faint)),
+                );
+            }
+            if view == View::Settings {
+                column = column.child(div().flex_1());
+            }
             column = column.child(
                 Button::new(SharedString::from(format!("nav:{}", view.key())))
                     .ghost()
@@ -2512,7 +2537,7 @@ impl Console {
                     .selected(active)
                     // Left-aligned like an editor's file tree; the kit centres
                     // a plain `.label()` regardless of `justify_start`.
-                    .child(div().w_full().px_2().text_left().child(view.label()))
+                    .child(div().w_full().text_left().child(view.label()))
                     .tooltip(view.hint())
                     .accessibility_label(format!("{}, {}", view.label(), view.hint()))
                     .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
@@ -4732,6 +4757,8 @@ impl Console {
             .px(px(Space::MD))
             .py(px(Space::MD))
             .rounded(px(Radius::MD))
+            .border_l_2()
+            .border_color(colors.busy)
             .bg(colors.accent_soft)
             .children(steps.into_iter().map(|(text, state)| {
                 div()
@@ -4898,6 +4925,8 @@ impl Console {
                         .px(px(Space::MD))
                         .py(px(Space::SM))
                         .rounded(px(Radius::MD))
+                        .border_l_2()
+                        .border_color(colors.accent)
                         .bg(colors.accent_soft)
                         .child(label("Sample result", Type::LABEL, colors.accent))
                         .child(label(
@@ -4949,9 +4978,9 @@ impl Console {
                     .find(|metric| metric.layer == layer)
             });
         let active_metric_label = if self.hovered_layer.is_some() {
-            "Hovered point"
+            "Hovered"
         } else {
-            "Selected point"
+            "Selected"
         };
         let advanced = self.advanced_open.then(|| {
             div()
@@ -5020,6 +5049,21 @@ impl Console {
                         )),
                 )
         });
+        // Notion-style property row: the name on the left, the value beside it.
+        let prop = |name: &'static str, value: Div| -> Div {
+            div()
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap(px(Space::MD))
+                .child(
+                    div()
+                        .w(px(80.0))
+                        .flex_none()
+                        .child(label(name, Type::META, colors.text_faint)),
+                )
+                .child(div().flex_1().min_w(px(0.0)).child(value))
+        };
         let toggle = cx.listener(|console, _: &ClickEvent, _window, cx| {
             console.advanced_open = !console.advanced_open;
             cx.notify();
@@ -5029,12 +5073,7 @@ impl Console {
             .flex()
             .flex_col()
             .gap(px(Space::MD))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label("Model", Type::META, colors.text_faint))
+            .child(prop("Model", div().flex().flex_col().gap(px(Space::XS))
                     .child(label(model_name, Type::BODY, colors.text))
                     .child(match &self.session {
                         Some(session) => mono(
@@ -5047,42 +5086,22 @@ impl Console {
                         ),
                         None => mono("not loaded", Type::META, colors.text_faint),
                     }),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label("Input", Type::META, colors.text_faint))
+            ))
+            .child(prop("Input", div().flex().flex_col().gap(px(Space::XS))
                     .child(multiline(
                         &prompt_excerpt,
                         Type::LABEL,
                         colors.text,
                         FONT_ARABIC_NAME,
                     )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label("Target", Type::META, colors.text_faint))
+            ))
+            .child(prop("Target", div().flex().flex_col().gap(px(Space::XS))
                     .child(multiline(&target, Type::LABEL, colors.text, FONT_SANS_NAME)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label("Intervention", Type::META, colors.text_faint))
+            ))
+            .child(prop("Intervention", div().flex().flex_col().gap(px(Space::XS))
                     .child(label(intervention, Type::BODY, colors.accent)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label("Generation", Type::META, colors.text_faint))
+            ))
+            .child(prop("Generation", div().flex().flex_col().gap(px(Space::XS))
                     .child(mono(
                         format!(
                             "≤{} tokens · seed 0\n{}",
@@ -5091,19 +5110,14 @@ impl Console {
                         Type::META,
                         colors.text,
                     )),
-            )
+            ))
             .children(self.intervention.as_ref().map(|output| {
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(rule_h(colors))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(Space::XS))
-                            .child(label("Run", Type::META, colors.text_faint))
+                    .child(prop("Run", div().flex().flex_col().gap(px(Space::XS))
                             .child(mono(
                                 format!(
                                     "{} total\n{} generated\n{}",
@@ -5117,7 +5131,7 @@ impl Console {
                                 Type::LABEL,
                                 colors.text,
                             )),
-                    )
+                    ))
             }))
             .children(active_metric.map(|metric| {
                 div()
@@ -5125,12 +5139,7 @@ impl Console {
                     .flex_col()
                     .gap(px(Space::MD))
                     .child(rule_h(colors))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(Space::XS))
-                            .child(label(active_metric_label, Type::META, colors.text_faint))
+                    .child(prop(active_metric_label, div().flex().flex_col().gap(px(Space::XS))
                             .child(mono(format!("layer {}", metric.layer), Type::LABEL, colors.text))
                             .child(mono(
                                 metric.relative_l2_difference.map_or_else(
@@ -5148,7 +5157,7 @@ impl Console {
                                 Type::LABEL,
                                 colors.text_muted,
                             )),
-                    )
+                    ))
             }))
             .child(rule_h(colors))
             // A ghost button with only a text label reads as static copy in a
@@ -5579,15 +5588,15 @@ impl Console {
             )))
             // Named for the platform: the binding accepts Control and Command
             // alike, but the hint should read the way the keyboard does.
-            .child(label(
-                if cfg!(target_os = "macos") {
-                    "Cmd+Enter"
+            .children(
+                Keystroke::parse(if cfg!(target_os = "macos") {
+                    "cmd-enter"
                 } else {
-                    "Ctrl+Enter"
-                },
-                Type::META,
-                colors.text_faint,
-            ))
+                    "ctrl-enter"
+                })
+                .ok()
+                .map(Kbd::new),
+            )
             .child(div().w(px(theme::scaled(230.0))).flex_none().child(btn_primary(
                 colors,
                 action_label,
@@ -5620,6 +5629,9 @@ fn shortcut_rows() -> Vec<(String, &'static str)> {
 /// Window widths below which the inspector, then the sidebar, fold away.
 /// Column width of the Prompt and Intervention forms.
 const FORM_MAX_WIDTH: f32 = 940.0;
+/// The inspector reads as a property list (name left, value right), which
+/// needs a little more room than a stacked label did.
+const INSPECTOR_WIDTH: f32 = 344.0;
 const INSPECTOR_MIN_WINDOW: f32 = 1200.0;
 const SIDEBAR_MIN_WINDOW: f32 = 960.0;
 
@@ -5705,7 +5717,7 @@ impl Render for Console {
                                 // no test to catch it. A no-op outside the
                                 // `test-support` feature.
                                 .test_support()
-                                .w(px(312.0))
+                                .w(px(INSPECTOR_WIDTH))
                                 .flex_none()
                                 // `flex_none` alone was not enough: the row
                                 // still took the shortfall out of the aside, and
@@ -6522,8 +6534,9 @@ mod kit_tests {
         // Compared in f32: `Pixels` has no `abs` in this version.
         let rendered: f32 = width.into();
         assert!(
-            (280.0..320.0).contains(&rendered),
-            "inspector rendered at {rendered}px, not the 300px it declares"
+            (rendered - super::INSPECTOR_WIDTH).abs() < 2.0,
+            "inspector rendered at {rendered}px, not the {}px it declares",
+            super::INSPECTOR_WIDTH
         );
     }
 
