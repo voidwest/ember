@@ -9,6 +9,15 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+permissions:
+  contents: read
+
+# A newer push supersedes an older run on the same ref; without this, runs
+# that cannot get a runner pile up in the queue until GitHub cancels them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -60,6 +69,15 @@ jobs:
       - name: test
         run: cargo test --locked --all-targets --verbose
 
+      - name: doctests
+        # --all-targets does not include doctests.
+        run: cargo test --locked --doc
+
+      - name: test with the audio feature
+        # Otherwise only clippy ever compiles `audio`; libasound2-dev is
+        # installed above.
+        run: cargo test --locked --features audio --lib
+
       - name: native GUI interactions (headless test window)
         run: cargo test --locked --features gui-tests --bin ember gui_native::kit_tests
 
@@ -67,10 +85,19 @@ jobs:
         env:
           EMBER_REQUIRE_X86_TESTS: "1"
           RAYON_NUM_THREADS: "2"
-        run: cargo test --locked --release --lib k_quant_matmul::tests -- --nocapture
+        run: |
+          # The AVX-512 kernels are checked against AVX2 whenever the runner
+          # has AVX-512; hosted runners vary, so say which case this run hit.
+          if grep -qw avx512bw /proc/cpuinfo; then echo "AVX-512 present: AVX-512 K kernels are tested"; else echo "no AVX-512 on this runner: AVX-512 K kernels not exercised"; fi
+          cargo test --locked --release --lib k_quant_matmul::tests -- --nocapture
 
-      - name: headless check (no gui feature)
-        run: cargo check --locked --no-default-features --all-targets
+      - name: headless check on the MSRV (no gui feature)
+        # `+1.92.0` overrides rust-toolchain.toml, so this is the x86_64
+        # counterpart of the arm64 job's MSRV check rather than another 1.98.1
+        # build.
+        run: |
+          rustup toolchain install 1.92.0 --profile minimal
+          cargo +1.92.0 check --locked --no-default-features --all-targets
 
       - name: clippy
         # New 1.98 style lint: retain measured kernel loop shapes during the
@@ -150,17 +177,18 @@ jobs:
     #
     # Both architectures are covered deliberately. Together with the x86_64
     # and arm64 Linux jobs this completes the 2x2 the support matrix claims.
-    # macos-latest is arm64; macos-13 is the x86_64 (Intel) image. If GitHub
-    # retires macos-13, this matrix needs a replacement label rather than
-    # being quietly dropped -- losing Intel-macOS coverage silently is the
-    # failure mode to avoid here.
+    # macos-latest is arm64; macos-15-intel is the x86_64 (Intel) image.
+    # macos-13 was retired and its jobs sat queued until GitHub cancelled
+    # them, which left every run since 2026-09-28 unfinished. If GitHub
+    # retires this label too, replace it rather than dropping Intel-macOS
+    # coverage silently.
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: macos-latest
             label: arm64
-          - runner: macos-13
+          - runner: macos-15-intel
             label: x86_64
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.runner }}
@@ -205,3 +233,49 @@ jobs:
         # docs/road-to-1.0.md section 1. The gui-tests headless window needs a
         # display and is therefore not run here.
         run: cargo check --locked --features gui --all-targets
+
+  golden-path:
+    # The README's five-minute workflow on the pinned model, end to end:
+    # capture, verify, intervene, restore bit-exactly, reproduce. Every other
+    # job runs without a model, so without this nothing in CI exercises a
+    # real forward pass on the path the project calls golden.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-golden-cargo-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: ${{ runner.os }}-golden-cargo-
+
+      - name: cache the pinned model
+        # Keyed by the model's pinned SHA-256; download_models.sh re-checks it.
+        uses: actions/cache@v4
+        with:
+          path: Llama-3.2-1B-Instruct-Q8_0.gguf
+          key: model-llama-3.2-1b-q8_0-432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3
+
+      - name: fetch the pinned model
+        run: scripts/download_models.sh research-example
+
+      - name: build (headless release)
+        run: cargo build --locked --release --no-default-features --bin ember
+
+      - name: golden-path acceptance
+        run: python scripts/validate_morphology_example.py --workdir "$RUNNER_TEMP/golden-path"
+
+      - name: keep the evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-path-evidence
+          path: ${{ runner.temp }}/golden-path
+          if-no-files-found: ignore
