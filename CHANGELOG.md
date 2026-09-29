@@ -19,6 +19,31 @@ the tag waits on the external items in
 independent external-user validation, and desktop GUI acceptance. Do not
 publish this section as a released version until those are closed.
 
+- Bundle verification: `experiment verify` no longer writes
+  `verification.json` into the bundle (use `--write-report <path>`); an old
+  one is ignored. Every parsed bundle file is read once and the verified bytes
+  are what `compare`/`inspect`/`reproduce` use. New external anchors
+  (`--expect-semantic-hash`, `--expect-evidence` + `--trusted-key`) on
+  `verify`/`reproduce` and `--expect-{a,b}-semantic-hash` on `compare`;
+  unanchored success is reported as self-consistent only. `reproduce` binds
+  `resolved-experiment.json` to the hashed spec and semantic manifest and pins
+  the tokenizer to its recorded SHA-256.
+- `ember evidence sign` writes `signed-evidence-v2`, whose signature covers
+  the schema, algorithm, signer fingerprint, timestamp, digest and input;
+  `signed-evidence-v1` envelopes still verify, with the timestamp reported as
+  unsigned.
+- The safetensors reader accepts `__metadata__` and zero-element tensors,
+  reads unpadded spec-compliant headers at `8 + header_len`, and accepts the
+  legacy Ember layout only with space/zero padding. The GGUF allocation
+  estimate no longer double-counts streamed f32/f16/bf16 tensors.
+- Greedy decode takes the argmax of the same logits the sampling path
+  computes, on every architecture, with no per-token allocation. The
+  branch-and-bound lm_head kernel and `quant::Q8TopkNorms` are removed.
+- The library no longer installs a global allocator; the `ember` binary and
+  the tests that measure allocations register `alloc_counter::CountingAllocator`
+  themselves. `LlamaConfig::from_gguf_metadata` returns a `Result` and rejects
+  present metadata keys of the wrong type instead of silently using defaults.
+
 - Scope the K-quant greedy-token contract (`tests/k_parity.rs`): exact greedy-token
   equality is now asserted only within a compressed tier (ARM/scalar/x86), while
   the cross-tier eager-f32 comparison keeps the pre-registered per-layer/logit
