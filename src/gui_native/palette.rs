@@ -11,6 +11,9 @@
 pub(super) enum Command {
     NewExperiment,
     LoadModel,
+    RunExperiment,
+    DuplicateExperiment,
+    RerunExperiment,
     GoHome,
     GoExperiments,
     GoModels,
@@ -19,20 +22,23 @@ pub(super) enum Command {
     ToggleInspector,
     ToggleSidebar,
     ToggleTheme,
+    TogglePresentation,
     GoPrompt,
     GoIntervention,
     GoReview,
-    RunExperiment,
+    EditIntervention,
 }
 
 impl Command {
     /// Catalog order: creation first, then navigation, then view toggles,
     /// then the experiment flow -- the order a new user discovers in and a
     /// regular user stops reading.
-    pub(super) const ALL: [Command; 14] = [
+    pub(super) const ALL: [Command; 18] = [
         Command::NewExperiment,
         Command::LoadModel,
         Command::RunExperiment,
+        Command::DuplicateExperiment,
+        Command::RerunExperiment,
         Command::GoHome,
         Command::GoExperiments,
         Command::GoModels,
@@ -41,9 +47,11 @@ impl Command {
         Command::GoPrompt,
         Command::GoIntervention,
         Command::GoReview,
+        Command::EditIntervention,
         Command::ToggleInspector,
         Command::ToggleSidebar,
         Command::ToggleTheme,
+        Command::TogglePresentation,
     ];
 
     pub(super) fn label(self) -> &'static str {
@@ -51,6 +59,8 @@ impl Command {
             Command::NewExperiment => "New experiment",
             Command::LoadModel => "Load model",
             Command::RunExperiment => "Run experiment",
+            Command::DuplicateExperiment => "Duplicate experiment",
+            Command::RerunExperiment => "Rerun experiment",
             Command::GoHome => "Go to Home",
             Command::GoExperiments => "Go to Experiments",
             Command::GoModels => "Go to Models",
@@ -59,9 +69,11 @@ impl Command {
             Command::GoPrompt => "Go to Prompt",
             Command::GoIntervention => "Go to Intervention",
             Command::GoReview => "Go to Review & results",
+            Command::EditIntervention => "Edit intervention",
             Command::ToggleInspector => "Toggle inspector",
             Command::ToggleSidebar => "Toggle sidebar",
             Command::ToggleTheme => "Toggle theme",
+            Command::TogglePresentation => "Presentation mode",
         }
     }
 
@@ -71,6 +83,8 @@ impl Command {
             Command::NewExperiment => "Start a fresh experiment",
             Command::LoadModel => "Load the selected model into memory",
             Command::RunExperiment => "Run the configured baseline + intervention pair",
+            Command::DuplicateExperiment => "Branch from the last run to change one thing",
+            Command::RerunExperiment => "Replay the last run exactly",
             Command::GoHome => "Recent runs and starting points",
             Command::GoExperiments => "Configure and run an experiment",
             Command::GoModels => "Local models and their state",
@@ -79,9 +93,11 @@ impl Command {
             Command::GoPrompt => "Step 1: model and prompt",
             Command::GoIntervention => "Step 2: internal change",
             Command::GoReview => "Step 3: evidence and results",
+            Command::EditIntervention => "Change layer, strength or location",
             Command::ToggleInspector => "Show or hide the context inspector",
             Command::ToggleSidebar => "Show or hide the navigation sidebar",
             Command::ToggleTheme => "Cycle system, dark, light",
+            Command::TogglePresentation => "Larger text, sidebar and inspector hidden",
         }
     }
 }

@@ -20,6 +20,7 @@ use ember::app_store::{self, AppStore, RunRecord};
 use ember::quant_k::KStrategy;
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
+    kbd::Kbd,
     table::{Column, ColumnSort, DataTable, TableDelegate, TableState},
     tooltip::Tooltip,
     Selectable, Sizable,
@@ -55,6 +56,15 @@ const FONT_MONO: &[u8] = include_bytes!("gui_fonts/NotoSansMono-Regular.ttf");
 const FONT_ARABIC: &[u8] = include_bytes!("gui_fonts/NotoNaskhArabic-Regular.ttf");
 const FONT_SANS_NAME: &str = "Noto Sans";
 const FONT_MONO_NAME: &str = "Noto Sans Mono";
+/// The bundled Noto Naskh renders with its dots (nuqta) detached, floating a
+/// full em above the letters and clipped at the top of every text box, under
+/// this text stack -- found in the rendered artifacts, and reproduced at every
+/// size and line height. macOS ships Geeza Pro, which shapes the same prompt
+/// correctly, so it leads there; the embedded face remains the offline
+/// fallback on platforms without a system Arabic font.
+#[cfg(target_os = "macos")]
+const FONT_ARABIC_NAME: &str = "Geeza Pro";
+#[cfg(not(target_os = "macos"))]
 const FONT_ARABIC_NAME: &str = "Noto Naskh Arabic";
 
 /// `ember gui` (native) CLI arguments.
@@ -548,14 +558,16 @@ impl TableDelegate for RunsDelegate {
         // The table supplies its own cell padding and a sort chevron per
         // column, so a width has to cover that overhead as well as the text.
         let column = match col_ix {
-            0 => Column::new(run_col::RUN, "Run").width(px(76.0)),
-            1 => Column::new(run_col::MODEL, "Model").width(px(200.0)),
-            2 => Column::new(run_col::INTERVENTION, "Intervention").width(px(170.0)),
-            3 => Column::new(run_col::TOKENS, "Tokens").width(px(72.0)),
-            4 => Column::new(run_col::RESULT, "Result").width(px(84.0)),
-            5 => Column::new(run_col::DURATION, "Duration").width(px(76.0)),
-            6 => Column::new(run_col::WHEN, "When").width(px(64.0)),
-            _ => Column::new(run_col::ACTIONS, "").width(px(132.0)),
+            0 => Column::new(run_col::RUN, "Run").width(px(84.0)),
+            1 => Column::new(run_col::MODEL, "Model").width(px(224.0)),
+            2 => Column::new(run_col::INTERVENTION, "Intervention").width(px(228.0)),
+            3 => Column::new(run_col::TOKENS, "Tokens").width(px(88.0)),
+            4 => Column::new(run_col::RESULT, "Result").width(px(96.0)),
+            5 => Column::new(run_col::DURATION, "Duration").width(px(96.0)),
+            6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
+            // Wide enough for Reuse + Pin + Delete, the fullest lane a row
+            // can carry.
+            _ => Column::new(run_col::ACTIONS, "").width(px(192.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -614,11 +626,32 @@ impl TableDelegate for RunsDelegate {
             };
             let number = run.number;
             let pinned = run.pinned;
+            // Reuse appears only where there is a stored configuration to
+            // load; older records keep Pin and Delete and nothing that would
+            // pretend to work.
+            let reuse = run
+                .config
+                .clone()
+                .map(|config| (config, run.prompt.clone(), self.console.clone()));
             let console = self.console.clone();
-            return div()
-                .flex()
-                .flex_row()
-                .gap(px(Space::SM))
+            let mut lane = div().flex().flex_row().gap(px(Space::SM));
+            if let Some((config, prompt, console)) = reuse {
+                lane = lane.child(
+                    Button::new(SharedString::from(format!("run-reuse:{number}")))
+                        .ghost()
+                        .compact()
+                        .label("Reuse")
+                        .tooltip("Load this run's configuration into a new experiment")
+                        .on_click(move |_, _, cx| {
+                            if let Some(console) = console.as_ref() {
+                                let _ = console.update(cx, |console, cx| {
+                                    console.reuse_record(&config, &prompt, cx);
+                                });
+                            }
+                        }),
+                );
+            }
+            return lane
                 .child(
                     Button::new(SharedString::from(format!("run-pin:{number}")))
                         .ghost()
@@ -689,7 +722,7 @@ impl TableDelegate for RunsDelegate {
             .size_full()
             .flex()
             .items_center()
-            .child(label(name, Type::MICRO, colors.text_faint))
+            .child(label(name, Type::META, colors.text_faint))
     }
 }
 
@@ -937,6 +970,8 @@ struct Console {
     view: View,
     inspector_open: bool,
     sidebar_open: bool,
+    /// Presentation mode, and the panes it hid so leaving restores them.
+    presentation: Option<(bool, bool)>,
     advanced_open: bool,
     pending_run: bool,
     pending_context: Option<FormValues>,
@@ -953,7 +988,6 @@ struct Console {
     session: Option<SessionInfo>,
     status: Status,
     error: Option<String>,
-    warning: Option<String>,
     baseline: Option<RunOutput>,
     intervention: Option<RunOutput>,
     comparison: Option<ExperimentComparison>,
@@ -1178,6 +1212,7 @@ impl Console {
             } else {
                 theme::load_flag("sidebar").unwrap_or(true)
             },
+            presentation: None,
             advanced_open: false,
             pending_run: false,
             pending_context: None,
@@ -1190,7 +1225,6 @@ impl Console {
             session: None,
             status: Status::Idle,
             error: None,
-            warning: None,
             baseline: None,
             intervention: None,
             comparison: None,
@@ -1405,7 +1439,6 @@ impl Console {
         self.step = WorkspaceStep::Review;
         self.pending_context = Some(self.form_values());
         self.error = None;
-        self.warning = None;
         let _ = self.worker_tx.send(WorkerMsg::Run(cfg));
     }
 
@@ -1489,13 +1522,6 @@ impl Console {
                             bundle.elapsed_ms_total,
                             bundle.intervention.decode_tps,
                         ));
-                        if bundle.baseline.text == bundle.intervention.text {
-                            self.warning = Some(
-                                "baseline and intervention outputs are identical for this \
-                                 configuration."
-                                    .to_string(),
-                            );
-                        }
                         self.run_sequence += 1;
                         let now = unix_now();
                         self.store.push_run(RunRecord {
@@ -1518,6 +1544,19 @@ impl Console {
                             verified: bundle.verification.ok,
                             pinned: false,
                             prompt: self.prompt.clone(),
+                            config: Some(app_store::RecordConfig {
+                                model_path: self.model_path.clone(),
+                                execution: self.execution.clone(),
+                                site: self.site.clone(),
+                                layer: self.layer.clone(),
+                                op: self.op.clone(),
+                                value: self.value.clone(),
+                                source: self.source.clone(),
+                                source_layer: self.source_layer.clone(),
+                                token: self.token.clone(),
+                                span: self.span.clone(),
+                                max_tokens: self.max_tokens.clone(),
+                            }),
                         });
                         self.store.touch_model(&self.model_path, now);
                         // The state that produced this run is the resume point.
@@ -1633,9 +1672,9 @@ impl Console {
         let colors = self.colors();
         let theme = Theme::global_mut(cx);
         theme.font_family = FONT_SANS_NAME.into();
-        theme.font_size = px(13.0);
+        theme.font_size = px(theme::scaled(14.0));
         theme.mono_font_family = FONT_MONO_NAME.into();
-        theme.mono_font_size = px(12.0);
+        theme.mono_font_size = px(theme::scaled(13.0));
         // Kit-owned geometry and hairlines follow the console's scale, so an
         // Input, a Select or a table cell does not disagree with a hand-laid
         // surface beside it.
@@ -1685,6 +1724,28 @@ impl Console {
         cx.notify();
     }
 
+    /// Presentation mode: a larger text scale with the sidebar and inspector
+    /// out of the way. Nothing else changes, and leaving restores the panes
+    /// exactly as they were. The panes are hidden without touching the
+    /// persisted flags, so a crash mid-talk does not lose the workspace.
+    fn toggle_presentation(&mut self, cx: &mut Context<Self>) {
+        match self.presentation.take() {
+            Some((sidebar, inspector)) => {
+                self.sidebar_open = sidebar;
+                self.inspector_open = inspector;
+                theme::set_ui_scale(1.0);
+            }
+            None => {
+                self.presentation = Some((self.sidebar_open, self.inspector_open));
+                self.sidebar_open = false;
+                self.inspector_open = false;
+                theme::set_ui_scale(theme::PRESENTATION_SCALE);
+            }
+        }
+        self.sync_kit_theme(cx);
+        cx.notify();
+    }
+
     // -- command palette -----------------------------------------------------
 
     /// Open or close the palette. Opening clears the previous query and puts
@@ -1708,7 +1769,11 @@ impl Console {
         let query = self.palette_query.trim().to_lowercase();
         Command::ALL
             .into_iter()
-            .filter(|command| query.is_empty() || command.label().to_lowercase().contains(&query))
+            .filter(|command| {
+                query.is_empty()
+                    || command.label().to_lowercase().contains(&query)
+                    || command.hint().to_lowercase().contains(&query)
+            })
             .collect()
     }
 
@@ -1742,6 +1807,12 @@ impl Console {
                 self.step = WorkspaceStep::Review;
                 self.run();
             }
+            Command::DuplicateExperiment => self.duplicate_experiment(cx),
+            Command::RerunExperiment => {
+                self.goto(View::Experiment, cx);
+                self.step = WorkspaceStep::Review;
+                self.rerun(cx);
+            }
             Command::GoHome => self.goto(View::Home, cx),
             Command::GoExperiments => self.goto(View::Experiment, cx),
             Command::GoModels => self.goto(View::Models, cx),
@@ -1759,9 +1830,14 @@ impl Console {
                 self.goto(View::Experiment, cx);
                 self.step = WorkspaceStep::Review;
             }
+            Command::EditIntervention => {
+                self.goto(View::Experiment, cx);
+                self.step = WorkspaceStep::Intervention;
+            }
             Command::ToggleInspector => self.toggle_inspector(cx),
             Command::ToggleSidebar => self.toggle_sidebar(cx),
             Command::ToggleTheme => self.cycle_appearance(cx),
+            Command::TogglePresentation => self.toggle_presentation(cx),
         }
         cx.notify();
     }
@@ -1795,7 +1871,8 @@ impl Console {
                             .overflow_hidden()
                             .child(label(command.label(), Type::LABEL, colors.text))
                             .child(div().w_full())
-                            .child(label(command.hint(), Type::MICRO, colors.text_faint)),
+                            .child(label(command.hint(), Type::MICRO, colors.text_faint))
+                            .children(palette_shortcut(command)),
                     )
                     .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
                         console.palette_index = index;
@@ -1812,7 +1889,7 @@ impl Console {
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(110.0))
+            .pt(px(96.0))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|console, _: &MouseDownEvent, _, cx| {
@@ -1823,7 +1900,7 @@ impl Console {
             .child(
                 div()
                     .id("palette-panel")
-                    .w(px(560.0))
+                    .w(px(600.0))
                     .max_h(px(520.0))
                     .flex()
                     .flex_col()
@@ -1855,7 +1932,7 @@ impl Console {
                             .children(rows),
                     )
                     .child(div().px_2().py_2().child(mono(
-                        "up down navigate \u{00b7} enter run \u{00b7} esc close",
+                        "up down navigate \u{00b7} enter run \u{00b7} esc close \u{00b7} cmd-k palette",
                         Type::MICRO,
                         colors.text_faint,
                     ))),
@@ -2057,6 +2134,17 @@ impl Console {
             self.toggle_inspector(cx);
             return;
         }
+        if cmd && !shift && key == "n" {
+            self.goto(View::Experiment, cx);
+            self.step = WorkspaceStep::Prompt;
+            cx.notify();
+            return;
+        }
+        if cmd && !shift && key == "r" {
+            self.rerun(cx);
+            cx.notify();
+            return;
+        }
 
         // The palette is a modal: while it is open it owns the keyboard.
         if cmd && !shift && key == "k" {
@@ -2166,7 +2254,7 @@ impl Console {
             .items_center()
             .gap(px(Space::MD))
             .px_4()
-            .h(px(46.0))
+            .h(px(theme::scaled(46.0)))
             .w_full()
             .bg(colors.canvas)
             .border_b_1()
@@ -2209,7 +2297,7 @@ impl Console {
             .child(
                 div()
                     .flex_none()
-                    .max_w(px(300.0))
+                    .max_w(px(theme::scaled(320.0)))
                     .overflow_hidden()
                     .child(mono(model_summary, Type::META, colors.text_faint))
                     .whitespace_nowrap(),
@@ -2260,7 +2348,7 @@ impl Console {
             .flex()
             .flex_col()
             .gap(px(Space::XS))
-            .w(px(220.0))
+            .w(px(200.0))
             .flex_none()
             .px(px(Space::MD))
             .py_3()
@@ -2273,10 +2361,12 @@ impl Console {
                 Button::new(SharedString::from(format!("nav:{}", view.key())))
                     .ghost()
                     .w_full()
-                    .h(px(34.0))
+                    .h(px(36.0))
                     .justify_start()
                     .selected(active)
-                    .label(view.label())
+                    // Left-aligned like an editor's file tree; the kit centres
+                    // a plain `.label()` regardless of `justify_start`.
+                    .child(div().w_full().px_2().text_left().child(view.label()))
                     .tooltip(view.hint())
                     .accessibility_label(format!("{}, {}", view.label(), view.hint()))
                     .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
@@ -2411,25 +2501,53 @@ impl Console {
         let Some(draft) = self.store.draft.clone() else {
             return;
         };
-        self.prompt = draft.prompt;
-        self.model_path = draft.model_path;
-        self.session = None;
         let field = |name: &str| draft.fields.get(name).cloned().unwrap_or_default();
-        self.max_tokens = field("max_tokens");
-        self.execution = field("execution");
-        self.site = field("site");
-        self.layer = field("layer");
-        self.op = field("op");
-        self.value = field("value");
-        self.source = field("source");
-        self.source_layer = field("source_layer");
-        self.token = field("token");
-        self.span = field("span");
+        self.apply_form_values(
+            FormValues {
+                model_path: draft.model_path,
+                prompt: draft.prompt,
+                max_tokens: field("max_tokens"),
+                execution: field("execution"),
+                site: field("site"),
+                layer: field("layer"),
+                op: field("op"),
+                value: field("value"),
+                source: field("source"),
+                source_layer: field("source_layer"),
+                token: field("token"),
+                span: field("span"),
+            },
+            cx,
+        );
         self.step = WorkspaceStep::ALL
             .iter()
             .find(|step| step.key() == draft.step)
             .copied()
             .unwrap_or(WorkspaceStep::Prompt);
+        self.view = View::Experiment;
+        cx.notify();
+    }
+
+    /// Put a captured form configuration back into the console. The resident
+    /// session only resets when the model actually changed, so duplicating a
+    /// run on the same model does not pay for a reload.
+    fn apply_form_values(&mut self, values: FormValues, cx: &mut Context<Self>) {
+        if values.model_path != self.model_path {
+            self.session = None;
+        }
+        self.model_path = values.model_path;
+        self.prompt = values.prompt;
+        self.max_tokens = values.max_tokens;
+        self.execution = values.execution;
+        self.site = values.site;
+        self.layer = values.layer;
+        self.op = values.op;
+        self.value = values.value;
+        self.source = values.source;
+        self.source_layer = values.source_layer;
+        self.token = values.token;
+        self.span = values.span;
+        self.clamp_source_layer(cx);
         for (input, value) in [
             (self.inputs.model.clone(), self.model_path.clone()),
             (self.inputs.prompt.clone(), self.prompt.clone()),
@@ -2441,7 +2559,65 @@ impl Console {
         ] {
             self.set_input_value(input, value, cx);
         }
-        self.view = View::Experiment;
+    }
+
+    /// Replay the completed experiment exactly: the form returns to the state
+    /// that produced the last run, then the run starts. The bottom bar's
+    /// "Run experiment again" runs the current form instead, which is the
+    /// change-one-variable path.
+    fn rerun(&mut self, cx: &mut Context<Self>) {
+        if self.busy() {
+            return;
+        }
+        if let Some(context) = self.result_context.clone() {
+            self.apply_form_values(context, cx);
+        }
+        self.run();
+    }
+
+    /// Branch from the completed run: the form returns to the state that
+    /// produced it, and the user changes one thing. The original run stays in
+    /// the history; the next run appends a new record.
+    fn duplicate_experiment(&mut self, cx: &mut Context<Self>) {
+        let Some(context) = self.result_context.clone() else {
+            return;
+        };
+        self.apply_form_values(context, cx);
+        self.save_draft();
+        self.goto(View::Experiment, cx);
+        self.step = WorkspaceStep::Prompt;
+        cx.notify();
+    }
+
+    /// The Runs-page path into the same loop: load a stored run's recorded
+    /// configuration into the form. Records written before configurations
+    /// were stored have nothing to load, so their rows do not offer it.
+    fn reuse_record(
+        &mut self,
+        config: &app_store::RecordConfig,
+        prompt: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_form_values(
+            FormValues {
+                model_path: config.model_path.clone(),
+                prompt: prompt.to_string(),
+                max_tokens: config.max_tokens.clone(),
+                execution: config.execution.clone(),
+                site: config.site.clone(),
+                layer: config.layer.clone(),
+                op: config.op.clone(),
+                value: config.value.clone(),
+                source: config.source.clone(),
+                source_layer: config.source_layer.clone(),
+                token: config.token.clone(),
+                span: config.span.clone(),
+            },
+            cx,
+        );
+        self.save_draft();
+        self.goto(View::Experiment, cx);
+        self.step = WorkspaceStep::Prompt;
         cx.notify();
     }
 
@@ -2540,13 +2716,16 @@ impl Console {
                 .w_full()
                 .h_auto()
                 .justify_start()
-                .py_2()
+                // Name plus path lands the row at ~52px: scannable without
+                // the page turning into a wall of vertical gaps.
+                .py(px(Space::XS))
                 .px_2()
                 .rounded(px(Radius::SM))
                 .selected(is_selected)
                 .accessibility_label(format!("Model {name}"))
                 .child(
                     div()
+                        .w_full()
                         .flex()
                         .flex_row()
                         .items_center()
@@ -2581,20 +2760,20 @@ impl Console {
                                     colors.text_faint,
                                 )),
                         )
-                        .child(mono(
+                        .child(div().w(px(80.0)).flex_none().child(mono(
                             quant_of(path).to_string(),
                             Type::META,
                             colors.text_muted,
-                        ))
+                        )))
                         .child(
-                            div().w(px(76.0)).flex_none().child(mono(
+                            div().w(px(88.0)).flex_none().child(mono(
                                 size.map(fmt_bytes)
                                     .unwrap_or_else(|| "\u{2014}".to_string()),
                                 Type::META,
                                 colors.text_muted,
                             )),
                         )
-                        .child(div().w(px(96.0)).flex_none().child(label(
+                        .child(div().w(px(100.0)).flex_none().child(label(
                             if is_current && loaded {
                                 "Loaded"
                             } else if is_current {
@@ -2677,8 +2856,9 @@ impl Console {
             .flex_col()
             .gap(px(Space::XL))
             .w_full()
-            .px_5()
-            .pt_6()
+            .max_w(px(1200.0))
+            .px_6()
+            .pt_8()
             .child(self.section_header(
                 colors,
                 "Models",
@@ -2729,13 +2909,26 @@ impl Console {
         if row_count == 0 {
             body = body.child(
                 div()
+                    .flex_col()
+                    .gap(px(Space::MD))
                     .py(px(Space::XXL))
                     .child(label("No runs yet", Type::SUBSECTION, colors.text))
                     .child(label(
                         "Experiments you run will appear here.",
                         Type::LABEL,
                         colors.text_faint,
-                    )),
+                    ))
+                    .child(
+                        div().w(px(160.0)).child(btn_secondary(
+                            colors,
+                            "New experiment",
+                            Some(cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                console.goto(View::Experiment, cx);
+                                console.step = WorkspaceStep::Prompt;
+                                cx.notify();
+                            })),
+                        )),
+                    ),
             );
         } else {
             // Header plus one row band per record, measured off a render rather
@@ -2818,9 +3011,9 @@ impl Console {
             .flex_col()
             .gap(px(Space::XXL))
             .w_full()
-            .max_w(px(760.0))
-            .px_5()
-            .pt_6()
+            .max_w(px(1040.0))
+            .px_6()
+            .pt_8()
             .child(self.section_header(
                 colors,
                 "Settings",
@@ -2839,7 +3032,7 @@ impl Console {
                             .gap(px(Space::LG))
                             .child(
                                 div()
-                                    .w(px(220.0))
+                                    .w(px(240.0))
                                     .flex_none()
                                     .child(label("Theme", Type::BODY, colors.text)),
                             )
@@ -2892,7 +3085,7 @@ impl Console {
                             .gap(px(Space::LG))
                             .child(
                                 div()
-                                    .w(px(220.0))
+                                    .w(px(240.0))
                                     .flex_none()
                                     .child(label("Workspace state", Type::BODY, colors.text)),
                             )
@@ -2916,7 +3109,7 @@ impl Console {
                             .gap(px(Space::LG))
                             .child(
                                 div()
-                                    .w(px(220.0))
+                                    .w(px(240.0))
                                     .flex_none()
                                     .child(label("Run history", Type::BODY, colors.text)),
                             )
@@ -2974,6 +3167,7 @@ impl Console {
                     Button::new("home-resume")
                         .ghost()
                         .w_full()
+                        .justify_start()
                         .h_auto()
                         .py_2()
                         .px_2()
@@ -2981,6 +3175,7 @@ impl Console {
                         .accessibility_label("Resume the saved experiment")
                         .child(
                             div()
+                                .w_full()
                                 .flex()
                                 .flex_row()
                                 .items_center()
@@ -3035,44 +3230,67 @@ impl Console {
         // is not something you can recognise your own work by.
         let recent_runs = self.store.runs_ordered();
         if recent_runs.is_empty() {
-            recent = recent.child(label(
-                "No runs yet. Start an experiment and its results will collect here.",
-                Type::LABEL,
-                colors.text_faint,
-            ));
+            recent = recent
+                .child(label("No recent runs", Type::SUBSECTION, colors.text))
+                .child(label(
+                    "Your completed experiments will appear here.",
+                    Type::LABEL,
+                    colors.text_faint,
+                ));
         } else {
             for run in recent_runs.iter().take(4) {
+                let number = run.number;
                 recent = recent.child(
-                    div()
+                    Button::new(SharedString::from(format!("home-run:{number}")))
+                        .ghost()
                         .w_full()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(Space::SM))
-                        .py(px(Space::SM))
-                        .when(run.pinned, |row| {
-                            row.child(status_dot(colors.accent, false))
-                        })
-                        .child(label(
-                            format!("#{}", run.number),
-                            Type::LABEL,
-                            colors.text_faint,
+                        .justify_start()
+                        .rounded(px(Radius::SM))
+                        .accessibility_label(format!(
+                            "Run #{}: {}. Open the run history.",
+                            run.number, run.intervention
                         ))
-                        .child(div().flex_1().min_w(px(0.0)).overflow_hidden().child(label(
-                            truncate_chars(&run.intervention, 22),
-                            Type::LABEL,
-                            colors.text,
-                        )))
-                        .child(label(
-                            model_display_name(&run.model),
-                            Type::META,
-                            colors.text_muted,
-                        ))
-                        .child(label(
-                            relative_time(run.finished_at),
-                            Type::META,
-                            colors.text_faint,
-                        )),
+                        .child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(Space::SM))
+                                .py(px(Space::SM))
+                                .when(run.pinned, |row| {
+                                    row.child(status_dot(colors.accent, false))
+                                })
+                                .child(label(
+                                    format!("#{}", run.number),
+                                    Type::LABEL,
+                                    colors.text_faint,
+                                ))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(0.0))
+                                        .overflow_hidden()
+                                        .child(label(
+                                            truncate_chars(&run.intervention, 22),
+                                            Type::LABEL,
+                                            colors.text,
+                                        )),
+                                )
+                                .child(label(
+                                    model_display_name(&run.model),
+                                    Type::META,
+                                    colors.text_muted,
+                                ))
+                                .child(label(
+                                    relative_time(run.finished_at),
+                                    Type::META,
+                                    colors.text_faint,
+                                )),
+                        )
+                        .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
+                            console.goto(View::Runs, cx);
+                        })),
                 );
             }
             recent = recent.child(
@@ -3089,9 +3307,9 @@ impl Console {
             .flex_col()
             .gap(px(Space::XXL))
             .w_full()
-            .max_w(px(760.0))
-            .px_5()
-            .pt_6()
+            .max_w(px(1040.0))
+            .px_6()
+            .pt_8()
             .child(
                 div()
                     .flex()
@@ -3261,7 +3479,10 @@ impl Console {
         cx: &mut Context<Self>,
     ) -> Button {
         Button::new(SharedString::from(format!("operation-card:{operation}")))
-            .w(relative(0.5))
+            // flex_1, not half the row: two 50% cards plus the gap between
+            // them were wider than the row and overhung its right edge.
+            .flex_1()
+            .min_w(px(0.0))
             .h_auto()
             .py_2()
             .px_2()
@@ -3287,6 +3508,8 @@ impl Console {
     }
 
     fn feedback_banners(&self, colors: &Colors) -> Div {
+        // Errors only. An unchanged output is a result, not a caution, so it
+        // lives on the result status row instead of ever appearing here.
         let error = self.error.as_ref().map(|error| {
             div()
                 .w_full()
@@ -3296,20 +3519,7 @@ impl Console {
                 .rounded(px(Radius::MD))
                 .child(label(error.clone(), Type::LABEL, colors.err))
         });
-        let warning = self.warning.as_ref().map(|warning| {
-            div()
-                .w_full()
-                .px_3()
-                .py_2()
-                .bg(colors.warn_box_bg)
-                .rounded(px(Radius::MD))
-                .child(label(warning.clone(), Type::LABEL, colors.warn))
-        });
-        div()
-            .flex_col()
-            .gap(px(Space::SM))
-            .children(error)
-            .children(warning)
+        div().flex_col().gap(px(Space::SM)).children(error)
     }
 
     fn prompt_step(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
@@ -3346,13 +3556,14 @@ impl Console {
         });
 
         div()
+            .flex()
             .flex_col()
-            .gap(px(Space::LG))
+            .gap(px(Space::XL))
             .child(
                 div()
                     .flex_col()
                     .gap(px(Space::XS))
-                    .child(label("Prepare the experiment", Type::TITLE, colors.text))
+                    .child(label("Prepare the experiment", Type::TITLE, colors.text).whitespace_nowrap())
                     .child(label(
                         "Choose a local GGUF model and give it the prompt you want to study.",
                         Type::BODY,
@@ -3579,13 +3790,14 @@ impl Console {
         });
 
         div()
+            .flex()
             .flex_col()
-            .gap(px(Space::LG))
+            .gap(px(Space::XL))
             .child(
                 div()
                     .flex_col()
                     .gap(px(Space::XS))
-                    .child(label("Choose the internal change", Type::TITLE, colors.text))
+                    .child(label("Choose the internal change", Type::TITLE, colors.text).whitespace_nowrap())
                     .child(label(
                         "Start with the research question. Exact hook names remain available in Advanced controls.",
                         Type::BODY,
@@ -3616,7 +3828,7 @@ impl Console {
                             .flex()
                             .gap(px(Space::SM))
                             .child(self.operation_card(colors, "add-delta", cx))
-                            .child(div().w(relative(0.5))),
+                            .child(div().flex_1()),
                     ),
             )
             // Where and Target are settings, not objects: spacing and section
@@ -3674,32 +3886,50 @@ impl Console {
             ))
     }
 
+    /// The one-line outcome of a completed run, split the way the experiment
+    /// actually splits: did the generated text change, and did the internal
+    /// representation. An unchanged output is a result, not a caution, so
+    /// nothing here uses warning styling.
     fn result_summary(&self, colors: &Colors) -> Div {
-        match (&self.baseline, &self.intervention, &self.comparison) {
-            (Some(baseline), Some(intervention), _)
-                if baseline.text == intervention.text => div()
-                .px_3()
-                .py_2()
-                .rounded(px(Radius::MD))
-                .bg(colors.warn_box_bg)
-                .child(label(
-                    "The intervention completed successfully but did not change the generated text.",
-                    Type::LABEL,
-                    colors.warn,
-                )),
-            (Some(_), Some(_), Some(comparison)) => div()
-                .px_3()
-                .py_2()
-                .rounded(px(Radius::MD))
-                .bg(colors.accent_soft)
-                .child(label(
-                    comparison.first_token_divergence.map_or_else(
-                        || "The generated output text changed.".to_string(),
-                        |step| format!("Generated behavior diverges at decode step {step}."),
+        match (&self.baseline, &self.intervention) {
+            (Some(baseline), Some(intervention)) => {
+                let (unchanged, diverged_layer, first_step) = match &self.comparison {
+                    Some(comparison) => (
+                        comparison.generated_text_equal,
+                        comparison.landmarks.first_layer_divergence,
+                        comparison.first_token_divergence,
                     ),
-                    Type::LABEL,
-                    colors.text,
-                )),
+                    None => (baseline.text == intervention.text, None, None),
+                };
+                let (dot, line) = match (unchanged, diverged_layer) {
+                    (true, Some(layer)) => (
+                        colors.warn,
+                        format!("Output unchanged \u{00b7} internal state diverged at Layer {layer}"),
+                    ),
+                    (true, None) => (
+                        colors.text_faint,
+                        "Output unchanged \u{00b7} no internal change observed".to_string(),
+                    ),
+                    (false, _) => (
+                        colors.accent,
+                        first_step.map_or_else(
+                            || "Output changed".to_string(),
+                            |step| format!("Output changed \u{00b7} first differs at step {step}"),
+                        ),
+                    ),
+                };
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(Space::SM))
+                    .px_3()
+                    .py_2()
+                    .rounded(px(Radius::MD))
+                    .bg(colors.surface_raised)
+                    .child(status_dot(dot, false))
+                    .child(label(line, Type::SUBSECTION, colors.text))
+            }
             _ if self.busy() => div()
                 .px_3()
                 .py_2()
@@ -3728,55 +3958,107 @@ impl Console {
             return div();
         };
         let landmarks = &comparison.landmarks;
-        let first_layer = landmarks
-            .first_layer_divergence
-            .map_or_else(|| "none observed".to_string(), |layer| format!("L{layer}"));
-        let peak = match (landmarks.peak_relative_l2, landmarks.peak_layer) {
-            (Some(value), Some(layer)) => format!("{value:.6}  @ L{layer}"),
-            _ => "none observed".to_string(),
-        };
-        let stable_tail = if comparison.generated_tokens_equal {
-            "outputs identical".to_string()
+        let (text_value, text_detail) = if comparison.generated_text_equal {
+            (
+                "Unchanged".to_string(),
+                "exact token-ID match across both runs".to_string(),
+            )
         } else {
-            landmarks.stable_token_tail_step.map_or_else(
-                || "not observed".to_string(),
-                |step| format!("from step {step}"),
+            (
+                "Changed".to_string(),
+                comparison.first_token_divergence.map_or_else(
+                    || "generated text differs".to_string(),
+                    |step| format!("first differs at decode step {step}"),
+                ),
             )
         };
-        let landmark = |title: &'static str, value: String, detail: &'static str| {
+        let (first_value, first_detail) = landmarks.first_layer_divergence.map_or_else(
+            || ("None observed".to_string(), "no captured layer diverged".to_string()),
+            |layer| (format!("Layer {layer}"), "first non-zero captured layer".to_string()),
+        );
+        let (peak_value, peak_detail) = match (landmarks.peak_relative_l2, landmarks.peak_layer) {
+            (Some(value), Some(layer)) => {
+                let magnitude = if value.abs() < 0.001 {
+                    format!("{value:.2e}")
+                } else {
+                    format!("{value:.3}")
+                };
+                (format!("{magnitude} @ L{layer}"), "relative L2 difference".to_string())
+            }
+            _ => ("None observed".to_string(), "relative L2 difference".to_string()),
+        };
+        let (tail_value, tail_detail) = if comparison.generated_tokens_equal {
+            ("Identical".to_string(), "exact token-ID suffix".to_string())
+        } else {
+            landmarks.stable_token_tail_step.map_or_else(
+                || ("Not observed".to_string(), "exact token-ID suffix".to_string()),
+                |step| (format!("From step {step}"), "exact token-ID suffix".to_string()),
+            )
+        };
+        // The restore leg is the one fact that answers "can I trust this
+        // run's evidence", so it earns its color: green verified, red failed,
+        // quiet when it has not been run.
+        let (restore_value, restore_color, restore_detail) = match &self.restore {
+            Some(restore) if !restore.comparable => (
+                "Not comparable".to_string(),
+                colors.text_muted,
+                "configuration changed since the run".to_string(),
+            ),
+            Some(restore) if restore.matches => (
+                "Verified".to_string(),
+                colors.ok,
+                "bit-exact baseline replay".to_string(),
+            ),
+            Some(_) => (
+                "Differs".to_string(),
+                colors.err,
+                "restore replay differs from baseline".to_string(),
+            ),
+            None => (
+                "Not run".to_string(),
+                colors.text_faint,
+                "verify the baseline replays bit-exactly".to_string(),
+            ),
+        };
+        let landmark = |title: &'static str, value: String, detail: String, value_color: Rgba| {
             div()
                 .flex_1()
-                .min_w(px(0.0))
+                .min_w(px(150.0))
                 .flex_col()
                 .gap(px(Space::XS))
-                .child(label(title, Type::MICRO, colors.text_faint))
-                .child(mono(value, Type::LABEL, colors.text))
+                .child(label(title, Type::META, colors.text_faint))
+                .child(label(value, Type::VALUE, value_color))
                 .child(label(detail, Type::META, colors.text_muted))
         };
 
-        // Three statistics, one band of space. A bordered strip repeated the
-        // surface-under-surface pattern and put a box around numbers that
-        // were already the densest thing on the page.
+        // Five facts, one band of space, no boxes: the row is the densest
+        // reading on the page, so it stays typography and spacing only.
         div()
             .w_full()
             .flex()
+            .flex_wrap()
             .items_start()
             .gap(px(Space::XL))
             .py_1()
+            .child(landmark("Text output", text_value, text_detail, colors.text))
             .child(landmark(
                 "First internal divergence",
-                first_layer,
-                "first non-zero captured layer",
+                first_value,
+                first_detail,
+                colors.text,
             ))
             .child(landmark(
-                "Peak representation divergence",
-                peak,
-                "relative L2 difference",
+                "Peak divergence",
+                peak_value,
+                peak_detail,
+                colors.text,
             ))
+            .child(landmark("Token tail", tail_value, tail_detail, colors.text))
             .child(landmark(
-                "Stable token tail",
-                stable_tail,
-                "exact token-ID suffix",
+                "Restore",
+                restore_value,
+                restore_detail,
+                restore_color,
             ))
     }
 
@@ -3955,10 +4237,32 @@ impl Console {
                     .into_any_element()
             })
             .collect::<Vec<_>>();
-        let divergence = comparison.first_token_divergence.map_or_else(
-            || "Generated token IDs are identical.".to_string(),
-            |step| format!("Generated behavior first differs at decode step {step}."),
-        );
+        let divergence = comparison.first_token_divergence;
+        let changed = comparison
+            .tokens
+            .iter()
+            .filter(|token| token.differs)
+            .count();
+        // The verdict first, in words a beginner can act on; the decode-step
+        // arithmetic stays as the secondary line.
+        let (verdict, verdict_color, verdict_detail) = if comparison.generated_tokens_equal {
+            (
+                "Outputs match exactly",
+                colors.text,
+                format!("{count} tokens \u{00b7} token IDs identical"),
+            )
+        } else {
+            (
+                "Outputs diverge",
+                colors.accent,
+                divergence.map_or_else(
+                    || format!("{changed} of {count} tokens differ"),
+                    |step| {
+                        format!("first at step {step} \u{00b7} {changed} of {count} tokens differ")
+                    },
+                ),
+            )
+        };
         panel(
             colors,
             div()
@@ -3969,7 +4273,8 @@ impl Console {
                     Type::LABEL,
                     colors.text_faint,
                 ))
-                .child(label(divergence, Type::BODY, colors.text))
+                .child(label(verdict, Type::BODY, verdict_color))
+                .child(label(verdict_detail, Type::META, colors.text_muted))
                 .child(
                     div()
                         .flex()
@@ -3998,37 +4303,73 @@ impl Console {
         )
     }
 
-    fn raw_trace_panel(&self, colors: &Colors) -> Div {
-        let events = self.intervention.as_ref().map_or_else(Vec::new, |output| {
-            output
-                .events
-                .iter()
-                .map(|event| {
-                    mono(event.to_string(), Type::META, colors.text_muted).into_any_element()
-                })
-                .collect::<Vec<_>>()
+    fn raw_trace_panel(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let output = self.intervention.as_ref();
+        // The pretty printer re-indents the same JSON value; it does not
+        // change what is in it. The copy action copies this exact text.
+        let events: Vec<String> = output
+            .map(|output| {
+                output
+                    .events
+                    .iter()
+                    .filter_map(|event| serde_json::to_string_pretty(event).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let trace_text = events.join("\n\n");
+        let copy = (!events.is_empty()).then(|| {
+            text_button(
+                "copy-trace",
+                "Copy",
+                cx.listener(move |_console, _: &ClickEvent, _window, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(trace_text.clone()));
+                }),
+            )
         });
+        let (verified_chip, verified_color) = match &self.verification {
+            Some(verification) if verification.ok => ("Verified", colors.ok),
+            Some(_) => ("Not verified", colors.err),
+            None => ("Not checked", colors.text_faint),
+        };
+        let mut body = div().flex_col().gap(px(Space::XS));
+        if events.is_empty() {
+            body = body.child(label(
+                "No trace events were recorded for this run.",
+                Type::LABEL,
+                colors.text_faint,
+            ));
+        } else {
+            for event in &events {
+                body = body.child(mono(event.clone(), Type::META, colors.text_muted));
+            }
+        }
         panel(
             colors,
             div()
                 .flex_col()
                 .gap(px(Space::SM))
-                .child(label(
-                    "Raw intervention trace",
-                    Type::LABEL,
-                    colors.text_faint,
-                ))
-                .children(
-                    (!events.is_empty())
-                        .then(|| div().flex_col().gap(px(Space::XS)).children(events)),
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(Space::SM))
+                        .child(label(
+                            "Raw intervention trace",
+                            Type::LABEL,
+                            colors.text_faint,
+                        ))
+                        .child(chip(verified_chip, verified_color))
+                        .child(div().w_full())
+                        .children(copy),
                 )
-                .children(self.intervention.as_ref().map(|output| {
+                .children(output.map(|output| {
                     mono(
                         format!("bundle  {}", output.bundle_dir),
                         Type::META,
                         colors.text_faint,
                     )
-                })),
+                }))
+                .child(body),
         )
     }
 
@@ -4049,12 +4390,12 @@ impl Console {
                     .child(self.result_summary(colors))
                     .child(self.result_landmarks(colors))
                     .child(self.paired_outputs(colors, cx))
-                    .child(self.layer_chart_panel(colors, 190.0, cx))
+                    .child(self.layer_chart_panel(colors, 210.0, cx))
                     .into_any_element(),
                 ResultView::Layers => div()
                     .flex_col()
                     .gap(px(Space::MD))
-                    .child(self.layer_chart_panel(colors, 350.0, cx))
+                    .child(self.layer_chart_panel(colors, 380.0, cx))
                     .into_any_element(),
                 ResultView::Tokens => div()
                     .flex_col()
@@ -4065,7 +4406,7 @@ impl Console {
                 ResultView::Trace => div()
                     .flex_col()
                     .gap(px(Space::MD))
-                    .child(self.raw_trace_panel(colors))
+                    .child(self.raw_trace_panel(colors, cx))
                     .child(self.verification_panel(colors))
                     .into_any_element(),
             }
@@ -4077,14 +4418,18 @@ impl Console {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_end()
                     .child(
                         div()
                             .flex_1()
-                            .min_w_0()
+                            // The title never wraps: it keeps its natural
+                            // width and the action buttons drop below it
+                            // when the row is too narrow for both.
+                            .min_w(px(340.0))
                             .flex_col()
                             .gap(px(Space::XS))
-                            .child(label("Review and compare", Type::TITLE, colors.text))
+                            .child(label("Review and compare", Type::TITLE, colors.text).whitespace_nowrap())
                             .child(label(
                                 "The baseline and intervention use the same prompt and deterministic settings.",
                                 Type::BODY,
@@ -4092,6 +4437,27 @@ impl Console {
                             )),
                     )
                     .gap(px(Space::MD))
+                    // The branch loop, one click after a run: replay the
+                    // exact configuration, or duplicate it and change one
+                    // field. Quiet text commands; the bottom bar stays the
+                    // primary runner.
+                    .when(has_results, |header| {
+                        header
+                            .child(text_button(
+                                "review-rerun",
+                                "Rerun",
+                                cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                    console.rerun(cx);
+                                }),
+                            ))
+                            .child(text_button(
+                                "review-duplicate",
+                                "Duplicate",
+                                cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                    console.duplicate_experiment(cx);
+                                }),
+                            ))
+                    })
                     .when(self.last_config.is_some(), |header| {
                         header.child(
                             div()
@@ -4116,7 +4482,7 @@ impl Console {
                         )
                     }),
             )
-            .when(has_results, |page| page.child(self.result_tabs(colors, cx)))
+            .when(has_results, |page| page.child(div().pt(px(Space::SM)).child(self.result_tabs(colors, cx))))
             .child(result_body)
             .when(has_results && self.result_view != ResultView::Trace, |page| {
                 page.child(self.verification_panel(colors))
@@ -4240,7 +4606,7 @@ impl Console {
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Model", Type::META, colors.text_faint))
-                    .child(label(model_name, Type::LABEL, colors.text))
+                    .child(label(model_name, Type::BODY, colors.text))
                     .child(match &self.session {
                         Some(session) => mono(
                             format!(
@@ -4270,16 +4636,15 @@ impl Console {
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Target", Type::META, colors.text_faint))
-                    .child(multiline(&target, Type::META, colors.text, FONT_SANS_NAME)),
+                    .child(multiline(&target, Type::LABEL, colors.text, FONT_SANS_NAME)),
             )
             .child(
                 div()
                     .flex_col()
                     .gap(px(Space::XS))
                     .child(label("Intervention", Type::META, colors.text_faint))
-                    .child(label(intervention, Type::LABEL, colors.accent)),
+                    .child(label(intervention, Type::BODY, colors.accent)),
             )
-            .child(rule_h(colors))
             .child(
                 div()
                     .flex_col()
@@ -4329,7 +4694,7 @@ impl Console {
                             .flex_col()
                             .gap(px(Space::XS))
                             .child(label(active_metric_label, Type::META, colors.text_faint))
-                            .child(mono(format!("layer {}", metric.layer), 10.0, colors.text))
+                            .child(mono(format!("layer {}", metric.layer), Type::LABEL, colors.text))
                             .child(mono(
                                 metric.relative_l2_difference.map_or_else(
                                     || "relative L2  —".to_string(),
@@ -4451,7 +4816,7 @@ impl Console {
         });
         let divergence_note = self.comparison.as_ref().map(|comparison| {
             if comparison.generated_tokens_equal {
-                "token IDs match across both runs".to_string()
+                "Text output unchanged".to_string()
             } else if title == "Baseline" {
                 comparison.first_token_divergence.map_or_else(
                     || "generated token sequence changed".to_string(),
@@ -4498,7 +4863,7 @@ impl Console {
                             .rounded(px(Radius::MD))
                             .child(multiline(
                                 &display_text,
-                                Type::BODY,
+                                Type::OUTPUT,
                                 colors.text,
                                 FONT_ARABIC_NAME,
                             )),
@@ -4684,23 +5049,33 @@ impl Console {
     }
 
     fn statusbar(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        // One quiet line. Storage failures outrank everything else here (a run
+        // history the user believes was saved but was not is the worst silent
+        // state this app can reach), then validation, then the run state.
+        let (store_line, store_color) = match &self.store_error {
+            Some(error) => (Some(error.clone()), colors.err),
+            None => (None, colors.text_faint),
+        };
         // Home, Models, Runs and Settings have no experiment to advance, so the
         // status line reports the surface instead of offering a run button that
         // would do nothing sensible.
         if self.view != View::Experiment {
+            let (text, color) = store_line
+                .map(|text| (text, store_color))
+                .unwrap_or_else(|| (self.view.hint().to_string(), colors.text_faint));
             return div()
                 .flex()
                 .flex_row()
                 .items_center()
                 .gap(px(Space::MD))
                 .px_4()
-                .h(px(36.0))
+                .h(px(32.0))
                 .w_full()
                 .bg(colors.canvas)
                 .border_t_1()
                 .border_color(colors.border)
                 .child(status_dot(colors.ok, false))
-                .child(label(self.view.hint(), Type::META, colors.text_faint))
+                .child(label(text, Type::META, color))
                 .child(div().w_full());
         }
         let (dot, status_text) = match self.status {
@@ -4709,7 +5084,20 @@ impl Console {
             Status::Running => (colors.busy, "Running baseline and intervention…"),
             Status::Restoring => (colors.busy, "Checking exact restoration…"),
         };
-        let validation_error = self.validation_error();
+        let (line, line_color) = if let Some((text, color)) = store_line.map(|t| (t, store_color))
+        {
+            (text, color)
+        } else if let Some(error) = self.validation_error() {
+            (error, colors.warn)
+        } else {
+            (
+                match self.status {
+                    Status::Idle => "Ready · baseline + intervention · seed 0".to_string(),
+                    _ => status_text.to_string(),
+                },
+                colors.text,
+            )
+        };
         let action_enabled = self.action_enabled();
         let action_label = match self.status {
             Status::Preparing => "Loading model…",
@@ -4729,26 +5117,17 @@ impl Console {
             .items_center()
             .gap(px(Space::MD))
             .px(px(Space::LG))
-            .h(px(48.0))
+            .h(px(theme::scaled(42.0)))
             .w_full()
             .bg(colors.canvas)
             .border_t_1()
             .border_color(colors.border)
             .child(status_dot(dot, self.busy()))
-            .child(
-                div()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label(status_text, Type::LABEL, colors.text))
-                    .child(label(
-                        validation_error.unwrap_or_else(|| {
-                            "Deterministic baseline + intervention pair · seed 0".to_string()
-                        }),
-                        Type::META,
-                        colors.text_faint,
-                    )),
-            )
-            .child(div().w_full())
+            .child(div().min_w(px(0.0)).flex_1().overflow_hidden().child(label(
+                line,
+                Type::LABEL,
+                line_color,
+            )))
             // Named for the platform: the binding accepts Control and Command
             // alike, but the hint should read the way the keyboard does.
             .child(label(
@@ -4760,7 +5139,7 @@ impl Console {
                 Type::META,
                 colors.text_faint,
             ))
-            .child(div().w(px(230.0)).child(btn_primary(
+            .child(div().w(px(theme::scaled(230.0))).flex_none().child(btn_primary(
                 colors,
                 action_label,
                 action_enabled.then(|| {
@@ -4773,8 +5152,19 @@ impl Console {
     }
 }
 
+/// Window widths below which the inspector, then the sidebar, fold away.
+const INSPECTOR_MIN_WINDOW: f32 = 1200.0;
+const SIDEBAR_MIN_WINDOW: f32 = 960.0;
+
 impl Render for Console {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Narrow windows give up chrome in a fixed order -- inspector first,
+        // then the sidebar -- so the workspace keeps the room its headings
+        // need. The stored flags are untouched: widening the window brings
+        // both panes back exactly as the user left them.
+        let width = f32::from(window.viewport_size().width);
+        let show_inspector = self.inspector_open && width >= INSPECTOR_MIN_WINDOW;
+        let show_sidebar = self.sidebar_open && width >= SIDEBAR_MIN_WINDOW;
         let colors = self.colors();
         let topbar = self.topbar(&colors, cx);
         let statusbar = self.statusbar(&colors, cx);
@@ -4785,7 +5175,7 @@ impl Render for Console {
         let content: AnyElement = match self.view {
             View::Home => self.home_view(&colors, cx).into_any_element(),
             View::Models => self.models_view(&colors, cx).into_any_element(),
-            View::Runs => self.runs_view(&colors, _window, cx).into_any_element(),
+            View::Runs => self.runs_view(&colors, window, cx).into_any_element(),
             View::Settings => self.settings_view(&colors, cx).into_any_element(),
             View::Experiment => {
                 let inspector = self.advanced_inspector(&colors, cx);
@@ -4819,7 +5209,7 @@ impl Render for Console {
                             .child(div().w_full()),
                     )
                     .child(self.main_panel(&colors, cx));
-                if self.inspector_open {
+                if show_inspector {
                     // The inspector is an aside beside the workspace, not a
                     // band below it: the row is the thing that places them.
                     //
@@ -4847,7 +5237,7 @@ impl Render for Console {
                                 // no test to catch it. A no-op outside the
                                 // `test-support` feature.
                                 .test_support()
-                                .w(px(300.0))
+                                .w(px(312.0))
                                 .flex_none()
                                 // `flex_none` alone was not enough: the row
                                 // still took the shortfall out of the aside, and
@@ -4878,7 +5268,7 @@ impl Render for Console {
             .w_full()
             .flex_1()
             .min_h(px(0.0))
-            .when(self.sidebar_open, |row| {
+            .when(show_sidebar, |row| {
                 row.child(self.nav_rail(&colors, cx))
             })
             .child(content);
@@ -4912,6 +5302,21 @@ fn short_id(hash: &str) -> String {
     } else {
         hash.to_string()
     }
+}
+
+/// The shortcut hint a palette command carries, when it has one. Parsed from
+/// the same spelling the keybindings use, so the hint cannot drift from the
+/// binding it advertises.
+fn palette_shortcut(command: Command) -> Option<Kbd> {
+    let stroke = match command {
+        Command::NewExperiment => "cmd-n",
+        Command::RerunExperiment => "cmd-r",
+        Command::RunExperiment => "cmd-enter",
+        Command::ToggleSidebar => "cmd-b",
+        Command::ToggleInspector => "cmd-shift-i",
+        _ => return None,
+    };
+    Some(Kbd::new(Keystroke::parse(stroke).ok()?))
 }
 
 fn fmt_ms(ms: f64) -> String {
@@ -5204,6 +5609,21 @@ fn seed_store() -> AppStore {
             verified: row.verified,
             pinned: row.pinned,
             prompt: "\u{0627}\u{0643}\u{062a}\u{0628} \u{062c}\u{0645}\u{0644}\u{0629}".to_string(),
+            // Only recent rows carry a configuration: the Reuse action must
+            // be shown and hidden in the same render.
+            config: (index == 0).then(|| app_store::RecordConfig {
+                model_path: format!("/models/{}.gguf", row.model),
+                execution: "reference".to_string(),
+                site: "after-mlp".to_string(),
+                layer: row.layer.map(|layer| layer.to_string()).unwrap_or_default(),
+                op: "scale".to_string(),
+                value: "0.5".to_string(),
+                source: "live".to_string(),
+                source_layer: String::new(),
+                token: "prompt-final".to_string(),
+                span: String::new(),
+                max_tokens: "48".to_string(),
+            }),
         });
         store.touch_model(
             &format!("/models/{}.gguf", row.model),
@@ -5340,7 +5760,6 @@ mod tests {
         assert_ne!(dark.err, light.err);
         assert_ne!(dark.warn, light.warn);
         assert_ne!(dark.err_box_bg, light.err_box_bg);
-        assert_ne!(dark.warn_box_bg, light.warn_box_bg);
     }
 
     #[test]
@@ -5800,7 +6219,21 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
             .unwrap();
     });
     let mut real_replies: Option<(WorkerReply, WorkerReply)> = None;
-    for (name, width, height) in [("standard", 1180., 720.), ("minimum", 980., 620.)] {
+    // `EMBER_GUI_TEST_WINDOW=1728x1092` renders one window at that logical
+    // size instead of the two defaults -- for previewing the console at a
+    // demo machine's full-screen size without touching the visual tests.
+    let sizes: Vec<(&'static str, f32, f32)> = std::env::var("EMBER_GUI_TEST_WINDOW")
+        .ok()
+        .and_then(|spec| {
+            let (width, height) = spec.split_once('x')?;
+            Some(vec![(
+                "display",
+                width.trim().parse().ok()?,
+                height.trim().parse().ok()?,
+            )])
+        })
+        .unwrap_or_else(|| vec![("standard", 1180., 720.), ("minimum", 980., 620.)]);
+    for (name, width, height) in sizes {
         let (tx, _worker) = mpsc::channel();
         let (reply, rx) = mpsc::channel();
         let mut console = None;
@@ -5978,6 +6411,36 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
                         )))?;
                 }
             }
+            // Presentation mode over the results, once per window size.
+            for result in [ResultView::Overview, ResultView::Layers] {
+                context.update_window(handle.into(), |_, window, cx| {
+                    console.update(cx, |console, cx| {
+                        console.appearance = AppearanceMode::Dark;
+                        console.result_view = result;
+                        if console.presentation.is_none() {
+                            console.toggle_presentation(cx);
+                        }
+                    });
+                    window.draw(cx).clear(cx);
+                })?;
+                context.run_until_parked();
+                context.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })?;
+                context
+                    .capture_screenshot(handle.into())?
+                    .save(directory.join(format!(
+                        "{name}-presentation-{}.png",
+                        result.label().replace(' ', "-")
+                    )))?;
+            }
+            context.update_window(handle.into(), |_, _, cx| {
+                console.update(cx, |console, cx| {
+                    if console.presentation.is_some() {
+                        console.toggle_presentation(cx);
+                    }
+                });
+            })?;
         }
     }
     Ok(())
