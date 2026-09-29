@@ -378,3 +378,22 @@ The menu bar (Ember, Edit, Experiment, View, Help) routes to the same console
 methods as the command palette and the key handler. Shortcut hints are not
 shown in the menus: the shortcuts are handled by the console's key handler, not
 by action key bindings, and binding both would fire each twice.
+
+## The workspace (repeated experiments)
+
+Experiments is one page, not a wizard. Setup (model, prompt, generation length,
+the change, where, target) is a pane on the left and is always editable; the
+results are on the right. **Run** lives at the bottom of the setup pane and on
+Cmd+Enter. This suits the real loop -- change one thing, run, compare, tweak,
+run again -- and a second run on an already-loaded model takes about a second.
+
+- A result whose settings have since been edited says so (**Settings changed
+  since this result**), and the breadcrumb reads "Settings changed".
+- **Pin as reference** keeps a result. The next run is then shown beside it: a
+  small table (change, text output, first divergence, peak divergence, and the
+  percentage change in peak) on Overview and Layers, and the pinned series drawn
+  as a dashed line behind the new one on the chart. A run reopened from Runs can
+  be pinned too.
+- Before the first run the results side is an empty state with the examples.
+- Narrow windows fold the sidebar away below 1240pt and the inspector below
+  1560pt so the two panes keep room; the saved preferences are untouched.

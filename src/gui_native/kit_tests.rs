@@ -57,7 +57,7 @@ async fn page_bottom_is_reachable_by_scrolling(cx: &mut TestAppContext) {
         std::time::Duration::from_secs(2),
         |window, _| {
             window
-                .try_find(SharedString::from("workspace-scroll"))
+                .try_find(SharedString::from("setup-scroll"))
                 .is_some()
         },
     )
@@ -66,7 +66,7 @@ async fn page_bottom_is_reachable_by_scrolling(cx: &mut TestAppContext) {
     cx.update_window(handle.into(), |_, window, cx| {
         for _ in 0..40 {
             window.scroll(
-                SharedString::from("workspace-scroll"),
+                SharedString::from("setup-scroll"),
                 gpui_kit::ScrollDelta::Pixels(gpui_kit::point(
                     gpui_kit::px(0.0),
                     gpui_kit::px(-400.0),
@@ -85,7 +85,7 @@ async fn page_bottom_is_reachable_by_scrolling(cx: &mut TestAppContext) {
                 .find(SharedString::from("generation-length:24"))
                 .bounds();
             let action = window
-                .find(SharedString::from("btn:Continue: Intervention"))
+                .find(SharedString::from("setup-run"))
                 .bounds();
             let bottom: f32 = (control.origin.y + control.size.height).into();
             let top: f32 = action.origin.y.into();
@@ -189,13 +189,16 @@ fn primary_action_is_gated_for_both_mouse_and_keyboard(cx: &mut TestAppContext) 
     assert!(idle.0, "an idle console must allow the primary action");
     assert!(!idle.1, "an idle console must not report busy");
 
-    let step_before = idle.2;
+    // The workspace has no steps to advance: an eligible action runs, which
+    // with no model loaded starts by preparing one.
     cx.update(|cx| console.update(cx, |console, _| console.advance_or_run()));
-    let step_after = cx.update(|cx| console.read(cx).step);
-    assert_ne!(
-        step_before, step_after,
-        "an eligible action must advance the workspace"
+    let status_after = cx.update(|cx| console.read(cx).status);
+    assert_eq!(
+        status_after,
+        super::Status::Preparing,
+        "an eligible action must start the run"
     );
+    cx.update(|cx| console.update(cx, |console, _| console.status = super::Status::Idle));
 
     // Busy: a run is in flight, so the button is disabled and the
     // shortcut must be refused rather than advancing the step anyway.
@@ -237,6 +240,7 @@ fn populated_chart_registers_handlers_during_paint(cx: &mut TestAppContext) {
                     maximum_absolute_difference: Some(1.0),
                     exact: false,
                 }]),
+                None,
                 Some(8),
                 None,
                 None,
@@ -547,6 +551,54 @@ async fn menu_commands_reach_the_console(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+async fn editing_a_setting_marks_the_result_stale_and_a_result_can_be_pinned(
+    cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        cx.text_system()
+            .add_fonts(vec![
+                Cow::Borrowed(super::FONT_SANS),
+                Cow::Borrowed(super::FONT_MONO),
+                Cow::Borrowed(super::FONT_ARABIC),
+            ])
+            .unwrap();
+    });
+    let (tx, _worker_rx) = mpsc::channel();
+    let (_reply_tx, reply_rx) = mpsc::channel();
+    let mut view = None;
+    let handle = cx.add_window(|window, cx| {
+        let console =
+            cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(reply_rx)), false, window, cx));
+        view = Some(console.clone());
+        Root::new(console, window, cx)
+    });
+    let console = view.unwrap();
+    cx.update_window(handle.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        console.update(cx, |console, cx| {
+            console.show_sample(cx);
+            // Treat it as a live result of these settings.
+            console.sample = false;
+            assert!(!console.results_stale(), "a fresh result matches its settings");
+            console.layer = "9".into();
+            assert!(console.results_stale(), "editing a setting must mark the result stale");
+            console.layer = "8".into();
+            assert!(!console.results_stale(), "restoring the setting clears it");
+
+            assert!(console.reference.is_none());
+            console.pin_reference(cx);
+            let reference = console.reference.as_ref().expect("pinned");
+            assert!(reference.label.contains("Change strength"));
+            assert!(!reference.layers.is_empty());
+            console.clear_reference(cx);
+            assert!(console.reference.is_none());
+        });
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 async fn sample_result_opens_review_and_copies_markdown(cx: &mut TestAppContext) {
     cx.update(|cx| {
         gpui_kit::init(cx);
@@ -637,9 +689,7 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
     cx.update_window(handle.into(), |_, window, cx| {
         window.draw(cx).clear(cx);
         window.click(SharedString::from("nav:experiments"), cx);
-        window.click(SharedString::from("step:intervention"), cx);
-        assert_eq!(console.read(cx).step, WorkspaceStep::Intervention);
-        window.click(SharedString::from("operation-card:zero"), cx);
+        console.update(cx, |console, cx| console.select_combo(super::ComboId::Op, "zero", cx));
         assert_eq!(console.read(cx).op, "zero");
         console.update(cx, |console, cx| {
             console.apply_preset(Preset::ArabicMorphology, cx)
@@ -651,7 +701,6 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
     })
     .unwrap();
     cx.update_window(handle.into(), |_, window, cx| {
-        window.click(SharedString::from("step:prompt"), cx);
         let input = console.read(cx).inputs.prompt.clone();
         input.update(cx, |input, cx| input.focus_for_test(window, cx));
         window.press(
@@ -680,7 +729,6 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
     cx.update_window(handle.into(), |_, window, cx| {
         assert_ne!(console.read(cx).prompt, "مرحبا Ember\nاختبار");
         window.click(SharedString::from("nav:experiments"), cx);
-        window.click(SharedString::from("step:intervention"), cx);
         // The advanced controls live in the inspector, and the inspector
         // starts closed -- so this has to open the inspector first. This
         // test used to find `advanced-toggle` without doing that, which
@@ -723,11 +771,10 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
     cx.run_until_parked();
     cx.update_window(handle.into(), |_, window, cx| {
             assert_eq!(console.read(cx).site, "before-logits");
-            window.click(SharedString::from("step:results"), cx);
-            window.click(SharedString::from("btn:Run experiment"), cx);
+            window.click(SharedString::from("setup-run"), cx);
             assert_eq!(console.read(cx).status, super::Status::Preparing);
             assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(path) if path == "fixture.gguf"));
-            let loading = SharedString::from("btn:Loading model…");
+            let loading = SharedString::from("setup-run");
             assert!(window.find(loading.clone()).visible());
             window.click(loading, cx);
             assert!(worker_rx.try_recv().is_err(), "disabled run must not submit another job");
@@ -736,7 +783,7 @@ async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppCont
             window.render_frame(cx);
             assert_eq!(console.read(cx).status, super::Status::Idle);
             assert_eq!(console.read(cx).error.as_deref(), Some("fixture load failure"));
-            window.click(SharedString::from("btn:Run experiment"), cx);
+            window.click(SharedString::from("setup-run"), cx);
             assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(_)));
         }).unwrap();
 }

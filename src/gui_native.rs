@@ -66,6 +66,7 @@ mod runs_table;
 mod store_writer;
 mod theme;
 mod views;
+mod workspace;
 mod worker;
 
 use components::*;
@@ -81,6 +82,7 @@ use menu::{app_menus, register_menu_actions};
 use palette::Command;
 use runs_table::{fmt_bytes, quant_of, relative_time, truncate_path_start, RunsDelegate};
 use theme::{AppearanceMode, Colors, Radius, Space, Type};
+use workspace::Reference;
 use worker::{spawn_worker, WorkerMsg, WorkerReply};
 
 // ---------------------------------------------------------------------------
@@ -141,17 +143,6 @@ fn operation_label(operation: &str) -> &'static str {
         "interpolate" => "Blend representations",
         "add-delta" => "Add a learned difference",
         _ => "Custom intervention",
-    }
-}
-
-fn operation_hint(operation: &str) -> &'static str {
-    match operation {
-        "zero" => "Set the selected representation to zero",
-        "scale" => "Make a representation weaker or stronger",
-        "replace" => "Substitute a representation captured earlier",
-        "interpolate" => "Mix the current and captured representations",
-        "add-delta" => "Apply the difference from a captured layer",
-        _ => "Configure an exact internal change",
     }
 }
 
@@ -418,22 +409,6 @@ impl WorkspaceStep {
             Self::Review => "3",
         }
     }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Prompt => "Prompt",
-            Self::Intervention => "Intervention",
-            Self::Review => "Review & results",
-        }
-    }
-
-    fn hint(self) -> &'static str {
-        match self {
-            Self::Prompt => "Model and prompt",
-            Self::Intervention => "Internal change",
-            Self::Review => "Evidence and results",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -506,6 +481,10 @@ struct Console {
     /// The result summary was just copied; shown on the button until the
     /// user moves on.
     copied: bool,
+    /// A result pinned to compare later runs against.
+    reference: Option<Reference>,
+    /// The compact examples list in the setup pane.
+    examples_open: bool,
     sidebar_open: bool,
     /// Presentation mode, and the panes it hid so leaving restores them.
     presentation: Option<(bool, bool)>,
@@ -760,6 +739,8 @@ impl Console {
             inspector_fits: true,
             sample: false,
             copied: false,
+            reference: None,
+            examples_open: false,
             saved_run: None,
             inspector_open: if cfg!(feature = "gui-tests") {
                 false
@@ -877,11 +858,12 @@ impl Console {
         if !self.action_enabled() {
             return;
         }
-        match self.step {
-            WorkspaceStep::Prompt => self.step = WorkspaceStep::Intervention,
-            WorkspaceStep::Intervention => self.step = WorkspaceStep::Review,
-            WorkspaceStep::Review => self.run(),
-        }
+        self.run();
+    }
+
+    /// Run with the settings on screen. Shared by the setup pane's button.
+    fn run_now(&mut self) {
+        self.advance_or_run();
     }
 
     fn validation_error(&self) -> Option<String> {
@@ -1460,22 +1442,6 @@ impl Console {
             Command::GoModels => self.goto(View::Models, cx),
             Command::GoRuns => self.goto(View::Runs, cx),
             Command::GoSettings => self.goto(View::Settings, cx),
-            Command::GoPrompt => {
-                self.goto(View::Experiment, cx);
-                self.step = WorkspaceStep::Prompt;
-            }
-            Command::GoIntervention => {
-                self.goto(View::Experiment, cx);
-                self.step = WorkspaceStep::Intervention;
-            }
-            Command::GoReview => {
-                self.goto(View::Experiment, cx);
-                self.step = WorkspaceStep::Review;
-            }
-            Command::EditIntervention => {
-                self.goto(View::Experiment, cx);
-                self.step = WorkspaceStep::Intervention;
-            }
             Command::ToggleInspector => self.toggle_inspector(cx),
             Command::ToggleSidebar => self.toggle_sidebar(cx),
             Command::ToggleTheme => self.cycle_appearance(cx),
@@ -1749,29 +1715,15 @@ impl Console {
                 "4" => Some(ResultView::Trace),
                 _ => None,
             };
-            // On a finished review the number keys address the result views;
-            // anywhere else they are the three workflow steps, matching the
-            // order the stepper shows.
+            // With a finished result on screen the number keys address its
+            // views: Overview, Layers, Tokens, Raw trace.
             if let Some(view) = result_view
-                && self.step == WorkspaceStep::Review
+                && self.view == View::Experiment
                 && self.comparison.is_some()
             {
                 self.result_view = view;
                 cx.notify();
                 return;
-            }
-            if !shift {
-                let step = match key {
-                    "1" => Some(WorkspaceStep::Prompt),
-                    "2" => Some(WorkspaceStep::Intervention),
-                    "3" => Some(WorkspaceStep::Review),
-                    _ => None,
-                };
-                if let Some(step) = step {
-                    self.step = step;
-                    cx.notify();
-                    return;
-                }
             }
         }
         if matches!(key, "enter" | "return") && cmd {

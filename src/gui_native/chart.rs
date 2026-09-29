@@ -14,6 +14,7 @@ use std::sync::Arc;
 struct ChartPaint {
     grid: Vec<Path<Pixels>>,
     series: Option<Path<Pixels>>,
+    reference: Option<Path<Pixels>>,
     intervention: Option<Path<Pixels>>,
     points: Vec<(usize, Point<Pixels>)>,
 }
@@ -49,6 +50,9 @@ fn readout_metric_label(value: f64) -> String {
 pub(super) fn layer_divergence_chart(
     entity: Entity<Console>,
     metrics: Arc<[LayerMetric]>,
+    // A pinned earlier result, drawn as a quiet second line so a change can be
+    // judged against something.
+    reference: Option<Arc<[LayerMetric]>>,
     intervention_layer: Option<usize>,
     selected_layer: Option<usize>,
     hovered_layer: Option<usize>,
@@ -60,9 +64,12 @@ pub(super) fn layer_divergence_chart(
     let y_max = nice_max(
         metrics
             .iter()
+            .chain(reference.iter().flat_map(|reference| reference.iter()))
             .filter_map(|metric| metric.relative_l2_difference)
             .fold(0.0f64, f64::max),
     );
+    let has_reference = reference.is_some();
+    let reference_for_geometry = reference.clone();
     let active = hovered_layer
         .or(selected_layer)
         .and_then(|layer| metrics.iter().find(|metric| metric.layer == layer));
@@ -109,6 +116,7 @@ pub(super) fn layer_divergence_chart(
     // marker names the layer the user chose, it does not warn about it.
     let marker_color = Hsla::from(colors.accent).opacity(0.82);
     let point_color = colors.accent;
+    let reference_color = Hsla::from(colors.text_muted).opacity(0.85);
     let selected_color = colors.text;
     let metrics_for_geometry = metrics.clone();
     let metrics_for_mouse = metrics.clone();
@@ -169,9 +177,26 @@ pub(super) fn layer_divergence_chart(
                     builder.build().ok()
                 });
 
+            let reference = reference_for_geometry.as_ref().and_then(|reference| {
+                let mut builder = PathBuilder::stroke(px(1.5)).dash_array(&[px(2.0), px(3.0)]);
+                let mut count = 0;
+                for metric in reference.iter() {
+                    if let Some(value) = metric.relative_l2_difference {
+                        let point = point(x_for(metric.layer), y_for(value));
+                        if count == 0 {
+                            builder.move_to(point);
+                        } else {
+                            builder.line_to(point);
+                        }
+                        count += 1;
+                    }
+                }
+                (count >= 2).then(|| builder.build().ok()).flatten()
+            });
             ChartPaint {
                 grid,
                 series,
+                reference,
                 intervention,
                 points,
             }
@@ -223,6 +248,9 @@ pub(super) fn layer_divergence_chart(
             }
             if let Some(path) = paint.intervention {
                 window.paint_path(path, marker_color);
+            }
+            if let Some(path) = paint.reference {
+                window.paint_path(path, reference_color);
             }
             if let Some(path) = paint.series {
                 window.paint_path(path, line_color);
@@ -291,6 +319,9 @@ pub(super) fn layer_divergence_chart(
                     },
                 ))
                 .child(div().w_full())
+                .children(has_reference.then(|| {
+                    mono("dashed: pinned reference   ", 13.0, colors.text_muted)
+                }))
                 .children(intervention_layer.map(|layer| {
                     mono(
                         format!("Intervention \u{00b7} L{layer}"),

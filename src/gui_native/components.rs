@@ -68,12 +68,6 @@ pub(super) fn section_label(colors: &Colors, label_text: &'static str) -> Div {
     label(label_text, Type::LABEL, colors.text_faint)
 }
 
-/// A card heading: one step up from a field label, so a panel's title reads
-/// as the name of the group rather than as another faint caption.
-pub(super) fn card_title(colors: &Colors, title: &'static str) -> Div {
-    label(title, Type::SUBSECTION, colors.text)
-}
-
 pub(super) fn field(colors: &Colors, title: &'static str, control: impl IntoElement) -> Div {
     div()
         .flex()
@@ -154,22 +148,6 @@ pub(super) fn text_button(
         .label(label_text)
         .tooltip(label_text)
         .on_click(on_click)
-}
-
-pub(super) fn btn_primary(
-    _colors: &Colors,
-    label_text: &str,
-    on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-) -> Button {
-    let button = Button::new(SharedString::from(format!("btn:{label_text}")))
-        .primary()
-        .w_full()
-        .label(label_text.to_string())
-        .disabled(on_click.is_none());
-    match on_click {
-        Some(callback) => button.on_click(callback),
-        None => button,
-    }
 }
 
 pub(super) fn btn_secondary(

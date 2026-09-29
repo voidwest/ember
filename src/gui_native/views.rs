@@ -102,7 +102,7 @@ impl Console {
             )
     }
 
-    fn picker(
+    pub(super) fn picker(
         &self,
         _colors: &Colors,
         _id: &'static str,
@@ -183,13 +183,24 @@ impl Console {
                     .items_center()
                     .gap(px(Space::SM))
                     .child(label(self.view.label(), Type::LABEL, colors.text_faint))
+                    // The breadcrumb names the state of the work, not a step:
+                    // the workspace has none.
                     .when(self.view == View::Experiment, |row| {
+                        let state = if self.busy() {
+                            "Running"
+                        } else if self.saved_run.is_some() {
+                            "Saved run"
+                        } else if self.sample {
+                            "Sample result"
+                        } else if self.results_stale() {
+                            "Settings changed"
+                        } else if self.baseline.is_some() {
+                            "Results"
+                        } else {
+                            "New"
+                        };
                         row.child(label("/", Type::LABEL, colors.border_strong))
-                            .child(label(
-                                truncate_chars(self.step.label(), 28),
-                                Type::LABEL,
-                                colors.text_muted,
-                            ))
+                            .child(label(state, Type::LABEL, colors.text_muted))
                     }),
             )
             .child(
@@ -367,33 +378,6 @@ impl Console {
         row
     }
 
-    /// Workflow steps: Prompt, Intervention, Review.
-    fn stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let tabs: Vec<(&'static str, &'static str, String)> = WorkspaceStep::ALL
-            .iter()
-            .map(|step| {
-                (
-                    step.key(),
-                    step.label(),
-                    format!(
-                        "Step {} of 3: {}. {}",
-                        step.number(),
-                        step.label(),
-                        step.hint()
-                    ),
-                )
-            })
-            .collect();
-        let active = WorkspaceStep::ALL
-            .iter()
-            .position(|step| *step == self.step)
-            .unwrap_or(0);
-        div()
-            .w_full()
-            .px_5()
-            .pt_4()
-            .child(self.tab_row(colors, cx, "step", &tabs, active))
-    }
 
     /// Home: a landing surface with something to do, not a form in waiting.
     fn section_header(&self, colors: &Colors, title: &'static str, hint: &str) -> Div {
@@ -682,10 +666,14 @@ impl Console {
             self.intervention = Some(intervention);
             self.comparison = Some(comparison);
         }
-        let page = match self.step {
-            WorkspaceStep::Prompt => self.prompt_step(colors, cx).into_any_element(),
-            WorkspaceStep::Intervention => self.intervention_step(colors, cx).into_any_element(),
-            WorkspaceStep::Review => self.review_step(colors, cx).into_any_element(),
+        // The results column. Same content the Review step used to hold; the
+        // difference is that it now sits beside the setup instead of behind a
+        // step, and shows an empty state before the first run.
+        let has_results = self.baseline.is_some() && self.intervention.is_some();
+        let results = if has_results || self.busy() {
+            self.review_step(colors, cx).into_any_element()
+        } else {
+            self.results_empty(colors, cx).into_any_element()
         };
 
         div()
@@ -694,13 +682,8 @@ impl Console {
             .flex_row()
             .flex_1()
             .min_w(px(0.0))
-            // Not `h_full()`: the parent column also holds the stepper, and
-            // `height: 100%` overrides the flex-basis `flex_1` sets -- the same
-            // trap as the inspector's width. The workspace came out one
-            // stepper-height too tall, so the bottom of every page (the
-            // generation-length control on Prompt) was clipped and could not
-            // be scrolled into view. `min_h(0)` lets it shrink to what is left.
             .min_h(px(0.0))
+            .child(self.setup_pane(colors, cx))
             .child(
                 div()
                     .id("workspace-scroll")
@@ -710,41 +693,26 @@ impl Console {
                     .flex_1()
                     .min_w(px(0.0))
                     .h_full()
-                    // Vertical scroll only. The page's min-content width --
-                    // long mono identifiers, a two-pane result row -- was
-                    // propagating up through the scroll container, past the
-                    // column's `min_w(0)`, into the row that also holds the
-                    // 300px aside. The row overflowed and the aside was the one
-                    // that got squeezed, which is why it rendered at ~118px with
-                    // the model name and the advanced disclosure clipped
-                    // mid-word. Clipping here is what makes the column's
-                    // `min_w(0)` actually mean something.
+                    // Vertical scroll only: a wide page must not push the
+                    // inspector off the window (see the width tests).
                     .overflow_y_scroll()
                     .overflow_x_hidden()
-                    .px_5()
-                    .pt_1()
-                    .pb_5()
+                    .px_6()
+                    .py_5()
                     .child(
                         div()
                             .w_full()
                             .min_w(px(0.0))
-                            // Forms are read and filled top to bottom: a
-                            // bounded column keeps a one-digit field from
-                            // spanning 1700px. Results keep the full width.
-                            .when(self.step != WorkspaceStep::Review, |column| {
-                                column.max_w(px(FORM_MAX_WIDTH))
-                            })
                             .flex()
                             .flex_col()
-                            .gap(px(Space::XL))
+                            .gap(px(Space::LG))
                             .child(self.feedback_banners(colors))
-                            .child(self.experiment_pipeline(colors, cx))
-                            .child(page),
+                            .child(results),
                     ),
             )
     }
 
-    fn statusbar(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+    fn statusbar(&self, colors: &Colors, _cx: &mut Context<Self>) -> Div {
         // One quiet line. Storage failures outrank everything else here (a run
         // history the user believes was saved but was not is the worst silent
         // state this app can reach), then validation, then the run state.
@@ -793,21 +761,6 @@ impl Console {
                 colors.text,
             )
         };
-        let action_enabled = self.action_enabled();
-        let action_label = match self.status {
-            Status::Preparing => "Loading model…",
-            Status::Running => "Running experiment…",
-            Status::Restoring => "Verifying restore…",
-            Status::Idle => match self.step {
-                WorkspaceStep::Prompt => "Continue: Intervention",
-                WorkspaceStep::Intervention => "Continue: Review",
-                WorkspaceStep::Review if self.saved_run.is_some() => "Run this again",
-                WorkspaceStep::Review if self.sample => "Run this for real",
-                WorkspaceStep::Review if self.baseline.is_some() => "Run experiment again",
-                WorkspaceStep::Review => "Run experiment",
-            },
-        };
-
         div()
             .flex()
             .flex_row()
@@ -835,21 +788,6 @@ impl Console {
                 })
                 .ok()
                 .map(Kbd::new),
-            )
-            .child(
-                div()
-                    .w(px(theme::scaled(230.0)))
-                    .flex_none()
-                    .child(btn_primary(
-                        colors,
-                        action_label,
-                        action_enabled.then(|| {
-                            cx.listener(|console, _: &ClickEvent, _window, cx| {
-                                console.advance_or_run();
-                                cx.notify();
-                            })
-                        }),
-                    )),
             )
     }
 }
@@ -1627,136 +1565,16 @@ impl Console {
 
 // -- experiment steps -----------------------------------------------------
 impl Console {
-    fn pipeline_node(
-        &self,
-        colors: &Colors,
-        id: &'static str,
-        text: String,
-        accent: bool,
-        step: WorkspaceStep,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        // These are commands, not prose, so they use Button (never Link --
-        // Link is for URLs and email). Quiet ghost buttons in mono: the
-        // sentence carries the meaning, the hover state carries the
-        // affordance, and the intervention is the one segment that keeps
-        // colour because it is the thing under study.
-        Button::new(SharedString::from(format!("pipeline:{id}")))
-            .ghost()
-            .small()
-            .label(text.clone())
-            .tooltip(format!("Go to {}", step.label()))
-            .accessibility_label(format!("{}: go to {}", text, step.label()))
-            .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
-                console.step = step;
-                cx.notify();
-            }))
-            .when(accent, |button| {
-                button.text_color(colors.accent).font_family(FONT_MONO_NAME)
-            })
-    }
 
-    fn experiment_pipeline(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let context = self.visible_experiment_context();
-        let site_short = match context.site.as_str() {
-            "before-layer" => "pre",
-            "after-attention" => "attn",
-            "after-mlp" => "mlp",
-            "after-layer" => "out",
-            "before-logits" => "final norm",
-            "after-logits" => "logits",
-            _ => "site",
-        };
-        let target = if per_layer(&context.site) {
-            format!("L{} {site_short}", context.layer)
-        } else {
-            site_short.to_string()
-        };
-        let operation = match context.op.as_str() {
-            "scale" => format!("\u{d7}{}", context.value),
-            "zero" => "zero".to_string(),
-            "replace" => format!("copy L{}", context.source_layer),
-            "interpolate" => format!("blend {}", context.value),
-            "add-delta" => format!("\u{394} L{}", context.source_layer),
-            _ => context.op.clone(),
-        };
-        let sep = || label("\u{00b7}", Type::LABEL, colors.border_strong).flex_none();
-
-        // A summary of what the current form will do, not a diagram of it:
-        // one scan-friendly line. Muted words, mono values, one accent value,
-        // and the run parameters right-aligned so the line also answers
-        // "how long, how deterministic".
-        div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(Space::SM))
-            // The strip is the experiment, stated once: it sits on a surface
-            // so it reads as the page's subject rather than stray metadata.
-            .px(px(Space::MD))
-            .py(px(Space::SM))
-            .bg(colors.surface)
-            .rounded(px(Radius::LG))
-            .child(self.pipeline_node(
-                colors,
-                "baseline",
-                "unchanged baseline".to_string(),
-                false,
-                WorkspaceStep::Review,
-                cx,
-            ))
-            .child(label("\u{2192}", Type::LABEL, colors.border_strong).flex_none())
-            .child(self.pipeline_node(
-                colors,
-                "target",
-                target,
-                false,
-                WorkspaceStep::Intervention,
-                cx,
-            ))
-            .child(self.pipeline_node(
-                colors,
-                "operation",
-                operation,
-                true,
-                WorkspaceStep::Intervention,
-                cx,
-            ))
-            .child(sep())
-            .child(label(
-                token_label(&context.token),
-                Type::LABEL,
-                colors.text_faint,
-            ))
-            .child(div().flex_1())
-            .child(mono(
-                format!(
-                    "\u{2264}{} tokens \u{00b7} seed 0 \u{00b7} {}",
-                    context.max_tokens,
-                    if self.saved_run.is_some() {
-                        "saved"
-                    } else if self.sample {
-                        "sample"
-                    } else if self.baseline.is_some() && self.status == Status::Idle {
-                        "measured"
-                    } else {
-                        "planned"
-                    }
-                ),
-                Type::META,
-                colors.text_faint,
-            ))
-    }
 
     /// Starting points for a new experiment.
     ///
     /// These were in the left rail, which made them look like a mode switch.
     /// They are choices for starting work, so they belong on the Prompt step
     /// where the work starts.
-    fn presets_block(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let presets = [
+    /// The examples on offer, in the order they are shown.
+    pub(super) fn example_entries() -> Vec<(Preset, &'static str, &'static str)> {
+        vec![
             (
                 Preset::SilenceEarly,
                 "Silence an early layer",
@@ -1782,7 +1600,11 @@ impl Console {
                 "Arabic morphology",
                 "Matched spans, Arabic prompt",
             ),
-        ];
+        ]
+    }
+
+    pub(super) fn presets_block(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+        let presets = Self::example_entries();
         // Two columns, laid out as explicit rows: a wrapping flex with a fixed
         // half width left the right column short of the edge, and flex_1 let a
         // lone last tile stretch across the whole row. An odd count gets an
@@ -1809,7 +1631,7 @@ impl Console {
         grid
     }
 
-    fn preset_card(
+    pub(super) fn preset_card(
         &self,
         colors: &Colors,
         preset: Preset,
@@ -1882,7 +1704,7 @@ impl Console {
 
     /// Generation length as one segmented control: a single quiet container,
     /// the selected segment filled, no per-segment borders.
-    fn generation_control(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+    pub(super) fn generation_control(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         div()
             .w_full()
             .flex()
@@ -1896,50 +1718,6 @@ impl Console {
             .child(self.generation_option(colors, 96, "Long", cx))
     }
 
-    fn operation_card(
-        &self,
-        colors: &Colors,
-        operation: &'static str,
-        cx: &mut Context<Self>,
-    ) -> Button {
-        Button::new(SharedString::from(format!("operation-card:{operation}")))
-            // flex_1, not half the row: two 50% cards plus the gap between
-            // them were wider than the row and overhung its right edge.
-            .flex_1()
-            .min_w(px(0.0))
-            .h_auto()
-            .py(px(Space::MD))
-            .px(px(Space::MD))
-            .ghost()
-            .selected(self.op == operation)
-            // The chosen operation *is* the intervention, so it takes the
-            // accent ring -- the one place selection and accent agree.
-            .border_1()
-            .border_color(if self.op == operation {
-                colors.accent
-            } else {
-                colors.border
-            })
-            .rounded(px(Radius::MD))
-            .accessibility_label(operation_label(operation))
-            .child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label(operation_label(operation), Type::BODY, colors.text))
-                    .child(label(
-                        operation_hint(operation),
-                        Type::LABEL,
-                        colors.text_faint,
-                    )),
-            )
-            .on_click(cx.listener(move |console, _: &ClickEvent, _, cx| {
-                console.select_combo(ComboId::Op, operation, cx);
-                console.step = WorkspaceStep::Intervention;
-            }))
-    }
 
     fn feedback_banners(&self, colors: &Colors) -> Div {
         // Errors only. An unchanged output is a result, not a caution, so it
@@ -1956,162 +1734,8 @@ impl Console {
         div().flex().flex_col().gap(px(Space::SM)).children(error)
     }
 
-    fn prompt_step(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let model_status = match &self.session {
-            Some(info) => (
-                "Ready",
-                format!(
-                    "{} · {} layers · loaded in {}",
-                    info.architecture,
-                    info.n_layers,
-                    fmt_load_ms(info.load_ms)
-                ),
-                colors.ok,
-            ),
-            None => (
-                "Not loaded",
-                "The model will load automatically when you run.".to_string(),
-                colors.text_faint,
-            ),
-        };
-        let raw_path = (self.advanced_open || self.model_options.is_empty()).then(|| {
-            field(
-                colors,
-                "Model file",
-                text_input(
-                    colors,
-                    self.inputs.model.clone(),
-                    FONT_MONO_NAME,
-                    Type::BODY,
-                    None,
-                    cx,
-                ),
-            )
-        });
 
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(Space::XL))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(
-                        label("Prepare the experiment", Type::TITLE, colors.text)
-                            .whitespace_nowrap(),
-                    )
-                    .child(label(
-                        "Choose a local GGUF model and give it the prompt you want to study.",
-                        Type::BODY,
-                        colors.text_muted,
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::MD))
-                    .child(label(
-                        "Start from an example",
-                        Type::LABEL,
-                        colors.text_faint,
-                    ))
-                    .child(self.presets_block(colors, cx)),
-            )
-            .child(group(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::SM))
-                    .child(section_label(colors, "Model"))
-                    // Select, status and action on one line. They were three
-                    // stacked rows, which split one object across the page and
-                    // left the badge and the button looking like they belonged
-                    // to the fields below rather than to the model.
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(Space::SM))
-                            // A floor, not min_w(0): the picker wraps a library
-                            // Select that sizes to its content, and min_w(0)
-                            // let the whole control collapse to nothing beside
-                            // the chip and the action.
-                            .child(div().flex_1().min_w(px(200.0)).child(self.picker(
-                                colors,
-                                "model-picker",
-                                ComboId::Model,
-                                &self.model_path,
-                                &self.model_options,
-                                cx,
-                            )))
-                            .child(chip(model_status.0, model_status.2))
-                            .child(div().flex_none().child(btn_secondary(
-                                colors,
-                                if self.status == Status::Preparing {
-                                    "Loading…"
-                                } else {
-                                    "Load"
-                                },
-                                (!self.busy()).then(|| {
-                                    cx.listener(|console, _: &ClickEvent, _window, cx| {
-                                        console.load();
-                                        cx.notify();
-                                    })
-                                }),
-                            ))),
-                    )
-                    .child(label(model_status.1, Type::LABEL, colors.text_faint))
-                    .children(raw_path),
-            ))
-            .child(group(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::SM))
-                    .child(section_label(colors, "Prompt"))
-                    // The editor is the most important object on the page: it
-                    // gets the tallest region and the raised surface, with a
-                    // hairline as its only boundary.
-                    .child(text_input(
-                        colors,
-                        self.inputs.prompt.clone(),
-                        FONT_ARABIC_NAME,
-                        Type::SUBSECTION,
-                        Some(150.0),
-                        cx,
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .child(label(
-                                format!("{} characters", self.prompt.chars().count()),
-                                Type::META,
-                                colors.text_faint,
-                            ))
-                            .child(div().w_full())
-                            .child(label(
-                                "Arabic and mixed-direction text supported",
-                                Type::META,
-                                colors.text_faint,
-                            )),
-                    ),
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::SM))
-                    .child(label("Generation length", Type::LABEL, colors.text_faint))
-                    .child(self.generation_control(colors, cx)),
-            )
-    }
-
-    fn layer_stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
+    pub(super) fn layer_stepper(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         let n_layers = self.session.as_ref().map(|session| session.n_layers);
         let current = self.layer.parse::<usize>().unwrap_or(0);
         let position = n_layers.map_or("Load a model to see its layer range", |count| {
@@ -2166,197 +1790,6 @@ impl Console {
             .child(label(position, Type::LABEL, colors.text_faint))
     }
 
-    fn intervention_step(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
-        let needs_source = matches!(self.op.as_str(), "replace" | "interpolate" | "add-delta");
-        let needs_value = matches!(self.op.as_str(), "scale" | "interpolate");
-
-        let source_controls = needs_source.then(|| {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(Space::MD))
-                .child(field(
-                    colors,
-                    "Source",
-                    self.picker(
-                        colors,
-                        "source-picker",
-                        ComboId::Source,
-                        &self.source,
-                        &self.source_options,
-                        cx,
-                    ),
-                ))
-                .when(self.source == "capture", |controls| {
-                    controls.child(field(
-                        colors,
-                        "Source layer",
-                        text_input(
-                            colors,
-                            self.inputs.source_layer.clone(),
-                            FONT_MONO_NAME,
-                            Type::META,
-                            None,
-                            cx,
-                        ),
-                    ))
-                })
-        });
-        let value_control = needs_value.then(|| {
-            field(
-                colors,
-                if self.op == "interpolate" {
-                    "Blend amount (0–1)"
-                } else {
-                    "Strength"
-                },
-                text_input(
-                    colors,
-                    self.inputs.value.clone(),
-                    FONT_MONO_NAME,
-                    Type::META,
-                    None,
-                    cx,
-                ),
-            )
-        });
-        let matched_span = (self.token == "matched-span").then(|| {
-            field(
-                colors,
-                "Phrase to target",
-                text_input(
-                    colors,
-                    self.inputs.span.clone(),
-                    FONT_ARABIC_NAME,
-                    Type::META,
-                    None,
-                    cx,
-                ),
-            )
-        });
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(Space::XL))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::XS))
-                    .child(label("Choose the internal change", Type::TITLE, colors.text).whitespace_nowrap())
-                    .child(label(
-                        "Start with the research question. Exact hook names remain available in Advanced controls.",
-                        Type::BODY,
-                        colors.text_muted,
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::SM))
-                    .child(card_title(colors, "What should change?"))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(Space::SM))
-                            .child(self.operation_card(colors, "zero", cx))
-                            .child(self.operation_card(colors, "scale", cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(Space::SM))
-                            .child(self.operation_card(colors, "replace", cx))
-                            .child(self.operation_card(colors, "interpolate", cx)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(Space::SM))
-                            .child(self.operation_card(colors, "add-delta", cx))
-                            .child(div().flex_1()),
-                    )
-                    .child(
-                        div().pt(px(Space::XS)).child(label(
-                            operation_explainer(&self.op),
-                            Type::LABEL,
-                            colors.text_muted,
-                        )),
-                    ),
-            )
-            // Where and Target are settings, not objects: spacing and section
-            // labels organise them, and the kit Select keeps its own single
-            // hairline without a card boundary doubling it.
-            .child(panel(colors, group(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::MD))
-                    .child(card_title(colors, "Where"))
-                    .child(field(
-                        colors,
-                        "Location in each layer",
-                        self.picker(
-                            colors,
-                            "site-picker",
-                            ComboId::Site,
-                            &self.site,
-                            &self.site_options,
-                            cx,
-                        ),
-                    ))
-                    // The picker says "After MLP block"; this line carries the
-                    // exact frozen identifier for anyone reproducing a run.
-                    // Micro mono: present for the record, silent at a glance.
-                    .child(mono(
-                        format!("ember.hook.v1 \u{00b7} {}", site_contract_name(&self.site)),
-                        Type::MICRO,
-                        colors.text_faint,
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .flex_wrap()
-                            .items_start()
-                            .gap(px(Space::LG))
-                            .when(per_layer(&self.site), |row| {
-                                row.child(
-                                    div()
-                                        .w(px(260.0))
-                                        .flex_none()
-                                        .child(field(colors, "Layer", self.layer_stepper(colors, cx))),
-                                )
-                            })
-                            .children(value_control.map(|control| {
-                                div().w(px(200.0)).flex_none().child(control)
-                            })),
-                    )
-                    .children(source_controls),
-            )))
-            .child(panel(colors, group(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(Space::MD))
-                    .child(card_title(colors, "Target"))
-                    .child(field(
-                        colors,
-                        "Tokens to affect",
-                        self.picker(
-                            colors,
-                            "token-picker",
-                            ComboId::Token,
-                            &self.token,
-                            &self.token_options,
-                            cx,
-                        ),
-                    ))
-                    .children(matched_span),
-            )))
-    }
 
     /// What a run is doing right now, as steps. A first run loads the model
     /// before it computes anything, and a silent wait there looks like a hang.
@@ -2749,6 +2182,7 @@ impl Console {
                 .child(chart::layer_divergence_chart(
                     cx.entity(),
                     self.layer_series.clone(),
+                    self.reference.as_ref().map(|reference| reference.layers.clone()),
                     self.intervention_layer_for_result(),
                     self.selected_layer,
                     self.hovered_layer,
@@ -2993,6 +2427,7 @@ impl Console {
                     .gap(px(Space::MD))
                     .child(self.result_summary(colors))
                     .child(self.result_landmarks(colors))
+                    .children(self.reference_panel(colors, cx))
                     .child(self.paired_outputs(colors, cx))
                     .child(self.layer_chart_panel(colors, 210.0, cx))
                     .into_any_element(),
@@ -3000,6 +2435,7 @@ impl Console {
                     .flex()
                     .flex_col()
                     .gap(px(Space::MD))
+                    .children(self.reference_panel(colors, cx))
                     .child(self.layer_chart_panel(colors, 380.0, cx))
                     .into_any_element(),
                 ResultView::Tokens => div()
@@ -3038,9 +2474,9 @@ impl Console {
                             .flex()
                             .flex_col()
                             .gap(px(Space::XS))
-                            .child(label("Review and compare", Type::TITLE, colors.text).whitespace_nowrap())
+                            .child(label("Results", Type::TITLE, colors.text).whitespace_nowrap())
                             .child(label(
-                                "The baseline and intervention use the same prompt and deterministic settings.",
+                                "The baseline and your change run on the same prompt with deterministic settings.",
                                 Type::BODY,
                                 colors.text_muted,
                             )),
@@ -3068,17 +2504,17 @@ impl Console {
                     .when(has_results && (!self.sample || self.saved_run.is_some()), |header| {
                         header
                             .child(text_button(
+                                "review-pin",
+                                if self.reference.is_some() { "Re-pin reference" } else { "Pin as reference" },
+                                cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                    console.pin_reference(cx);
+                                }),
+                            ))
+                            .child(text_button(
                                 "review-rerun",
                                 "Rerun",
                                 cx.listener(|console, _: &ClickEvent, _window, cx| {
                                     console.rerun(cx);
-                                }),
-                            ))
-                            .child(text_button(
-                                "review-duplicate",
-                                "Duplicate",
-                                cx.listener(|console, _: &ClickEvent, _window, cx| {
-                                    console.duplicate_experiment(cx);
                                 }),
                             ))
                     })
@@ -3107,6 +2543,9 @@ impl Console {
                     }),
             )
             .when(self.busy(), |page| page.child(self.run_progress(colors)))
+            .when(has_results && !self.busy() && self.results_stale(), |page| {
+                page.child(self.stale_notice(colors))
+            })
             .when(has_results && self.sample, |page| {
                 page.child(
                     div()
@@ -3434,12 +2873,11 @@ fn shortcut_rows() -> Vec<(String, &'static str)> {
 
 /// Window widths below which the inspector, then the sidebar, fold away.
 /// Column width of the Prompt and Intervention forms.
-const FORM_MAX_WIDTH: f32 = 940.0;
 /// The inspector reads as a property list (name left, value right), which
 /// needs a little more room than a stacked label did.
 pub(super) const INSPECTOR_WIDTH: f32 = 344.0;
-const INSPECTOR_MIN_WINDOW: f32 = 1200.0;
-const SIDEBAR_MIN_WINDOW: f32 = 960.0;
+const INSPECTOR_MIN_WINDOW: f32 = 1560.0;
+const SIDEBAR_MIN_WINDOW: f32 = 1240.0;
 
 impl Render for Console {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3484,16 +2922,6 @@ impl Render for Console {
                     // explicit min-width it keeps its intrinsic width and shoves
                     // the inspector past the right edge of the window.
                     .min_w(px(0.0))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .w_full()
-                            .px_5()
-                            .child(self.stepper(&colors, cx))
-                            .child(div().w_full()),
-                    )
                     .child(self.main_panel(&colors, cx));
                 if show_inspector {
                     // The inspector is an aside beside the workspace, not a
@@ -3612,10 +3040,6 @@ fn fmt_tps(tps: Option<f64>) -> String {
         Some(tps) => format!("{tps:.1} tok/s"),
         None => "\u{2014}".to_string(),
     }
-}
-
-fn fmt_load_ms(ms: f64) -> String {
-    format!("{:.1} s", ms / 1000.0)
 }
 
 /// Show a file in the platform file manager, selected.

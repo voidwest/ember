@@ -478,15 +478,11 @@ pub(super) fn render_live_flow(directory: &std::path::Path, model: String) -> an
     shot(&mut context, "home")?;
     click(&mut context, "home-example")?;
     anyhow::ensure!(
-        console.read_with(&context, |c, _| c.step) == WorkspaceStep::Prompt,
-        "Try an example did not land on the Prompt step"
+        console.read_with(&context, |c, _| c.view) == View::Experiment,
+        "Try an example did not land on the workspace"
     );
-    shot(&mut context, "prompt")?;
-    click(&mut context, "btn:Continue: Intervention")?;
-    shot(&mut context, "intervention")?;
-    click(&mut context, "btn:Continue: Review")?;
-    shot(&mut context, "review-before-run")?;
-    click(&mut context, "btn:Run experiment")?;
+    shot(&mut context, "workspace-before-run")?;
+    click(&mut context, "setup-run")?;
 
     let started = std::time::Instant::now();
     let mut last = console.read_with(&context, |c, _| c.status);
@@ -557,6 +553,56 @@ pub(super) fn render_live_flow(directory: &std::path::Path, model: String) -> an
     shot(&mut context, "result-layers")?;
     click(&mut context, "result:tokens")?;
     shot(&mut context, "result-tokens")?;
+    // The repeated-experiment loop: pin this result, change one setting, see
+    // that the result now says it is stale, run again, and compare.
+    click(&mut context, "review-pin")?;
+    anyhow::ensure!(
+        console.read_with(&context, |c, _| c.reference.is_some()),
+        "Pin as reference did not pin"
+    );
+    context.update_window(handle.into(), |_, _, cx| {
+        console.update(cx, |console, cx| {
+            console.select_combo(ComboId::Op, "zero", cx);
+            console.select_combo(ComboId::Site, "after-mlp", cx);
+            console.layer = "12".into();
+            let layer = console.inputs.layer.clone();
+            console.set_input_value(layer, "12".into(), cx);
+            cx.notify();
+        });
+    })?;
+    anyhow::ensure!(
+        console.read_with(&context, |c, _| c.results_stale()),
+        "editing a setting did not mark the result stale"
+    );
+    shot(&mut context, "stale-after-edit")?;
+    click(&mut context, "setup-run")?;
+    let started_again = std::time::Instant::now();
+    loop {
+        context.advance_clock(Duration::from_millis(50));
+        context.run_until_parked();
+        std::thread::sleep(Duration::from_millis(50));
+        context.update_window(handle.into(), |_, _, cx| {
+            console.update(cx, |console, cx| {
+                if console.drain_replies(cx) {
+                    cx.notify();
+                }
+            });
+        })?;
+        let (done, error) = console.read_with(&context, |c, _| {
+            (c.status == Status::Idle && c.result_context.as_ref().is_some_and(|x| x.op == "zero"), c.error.clone())
+        });
+        if let Some(error) = error {
+            anyhow::bail!("the second run reported an error: {error}");
+        }
+        if done {
+            break;
+        }
+        anyhow::ensure!(started_again.elapsed() < Duration::from_secs(400), "second run timed out");
+    }
+    eprintln!("second run (same loaded model) finished in {:.1}s", started_again.elapsed().as_secs_f32());
+    shot(&mut context, "compare-with-reference")?;
+    click(&mut context, "result:layers")?;
+    shot(&mut context, "compare-layers")?;
     click(&mut context, &format!("nav:{}", View::Runs.key()))?;
     shot(&mut context, "runs")?;
     click(&mut context, "run-open:1")?;
@@ -743,14 +789,14 @@ pub(super) fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Resu
                         "hover-tile",
                         View::Experiment,
                         WorkspaceStep::Intervention,
-                        Some("operation-card:zero".to_string()),
+                        Some("setup-examples".to_string()),
                         0,
                     ),
                     (
                         "hover-preset",
                         View::Experiment,
                         WorkspaceStep::Prompt,
-                        Some("preset:Zero a middle layer".to_string()),
+                        Some("setup-run".to_string()),
                         0,
                     ),
                     (

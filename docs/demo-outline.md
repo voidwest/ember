@@ -33,34 +33,36 @@ thing, and see what that does." Point at *How Ember works*: Ask, Change one
 thing, Compare.
 
 **2. Ask (30s) -- Try an example**
-Click **Try an example**. It loads *Silence an early layer* and lands on Prompt.
-Point out the prompt ("The capital of France is") and the model. Say the baseline
-is the untouched model.
+Click **Try an example**. It loads *Silence an early layer* into the workspace:
+the setup is on the left, the results will land on the right. Point at the prompt
+("The capital of France is") and the model. The baseline is the untouched model.
 
-**3. Change one thing (45s) -- Intervention**
-Continue. The chosen tile has the orange ring and the sentence under it says what
-it does: multiply an activation by the strength. Show the *Where* panel: layer 6,
-the layer's output, strength 0.0. "We are turning one layer's contribution to
-zero, at one position."
+**3. Change one thing (45s) -- Setup**
+Read the *Change* section aloud: scale layer 6's output to zero at the last
+prompt token. The sentence under it says what the change does. Everything you
+would want to tweak is on this one pane; nothing is behind a step.
 
-**4. Run and compare (60s) -- Review**
-Continue, then run (Cmd+Enter). Narrate the progress steps: load, run baseline
-and intervention, compare. When it lands:
+**4. Run and compare (60s) -- Results**
+Press **Run experiment** (Cmd+Enter). Narrate the progress steps: load, run
+baseline and intervention, compare. When it lands:
 - Read the verdict: *Output changed, first differs at step 1*.
 - Baseline vs Intervention side by side: the model stopped answering the
   question and started describing fog.
-- Hover a term (*Peak divergence*, *First internal divergence*) to show the
-  plain-language definitions.
+- Hover a term (*Peak divergence*, *First internal divergence*) for the
+  plain-language definition.
 
 **5. Where inside the model (45s) -- Layers**
-Open the Layers tab. The dashed line is the layer you touched; nothing before it
-moves, and everything after it does. "This is the evidence: the change begins
-exactly where we made it and never recovers."
+Open the Layers tab. The dashed vertical line is the layer you touched; nothing
+before it moves, and everything after it does.
 
-**6. The contrast (60s) -- Duplicate**
-Click **Duplicate**, go to Intervention, choose *Remove information*, set the
-location to *After MLP block* and the layer to 12, run again. The words do not
-change, yet the Layers chart still shows internal divergence. "Same idea, a
+**6. The contrast, and the point of the tool (75s) -- Pin and compare**
+Click **Pin as reference**. Now change one thing in the setup: *Change* to
+*Remove information*, *Where* to *After MLP block*, layer 12. Note that the
+results immediately say **Settings changed since this result**. Press **Run
+again**. Because the model is already loaded it takes about a second. The
+*Compared with pinned reference* panel shows both runs side by side (about
+-63% peak divergence), the words are unchanged this time, and the Layers chart
+draws the pinned run as a dashed line behind the new one. "Same idea, a
 different place: the model absorbs it. Where you intervene is the whole story."
 
 **7. Take it with you (15s) -- Copy summary**

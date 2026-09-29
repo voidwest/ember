@@ -65,12 +65,13 @@ not a reproduction of a paper result or a promise of cross-machine bit identity.
 ## the experiment console
 
 Ember ships a native desktop console (`ember gui`) for running the same kind of
-intervention without writing a spec. Pick a model, write a prompt, change one
-thing inside the model, and compare against the untouched baseline.
+intervention without writing a spec. Setup is on the left and results on the
+right; change one thing, run again, and pin an earlier result to compare the next
+run against it. A result says when the settings have moved on since it was made.
 
-![Ember result overview: the output changed and the internal divergence begins at layer 7](docs/assets/gui/results-overview.png)
+![Ember workspace: setup on the left, results on the right, with a pinned earlier run compared against the current one](docs/assets/gui/results-overview.png)
 
-![Layer-by-layer divergence chart with the intervention layer marked](docs/assets/gui/results-layers.png)
+![Layer-by-layer divergence with the pinned reference drawn as a dashed line behind the current run](docs/assets/gui/results-layers.png)
 
 Silencing an early layer's output at the last prompt token turned "Paris. The
 Eiffel Tower is located in Paris…" into "covered in a thick layer of fog…" on

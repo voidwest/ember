@@ -23,17 +23,13 @@ pub(super) enum Command {
     ToggleSidebar,
     ToggleTheme,
     TogglePresentation,
-    GoPrompt,
-    GoIntervention,
-    GoReview,
-    EditIntervention,
 }
 
 impl Command {
     /// Catalog order: creation first, then navigation, then view toggles,
     /// then the experiment flow -- the order a new user discovers in and a
     /// regular user stops reading.
-    pub(super) const ALL: [Command; 18] = [
+    pub(super) const ALL: [Command; 14] = [
         Command::NewExperiment,
         Command::LoadModel,
         Command::RunExperiment,
@@ -44,10 +40,6 @@ impl Command {
         Command::GoModels,
         Command::GoRuns,
         Command::GoSettings,
-        Command::GoPrompt,
-        Command::GoIntervention,
-        Command::GoReview,
-        Command::EditIntervention,
         Command::ToggleInspector,
         Command::ToggleSidebar,
         Command::ToggleTheme,
@@ -66,10 +58,6 @@ impl Command {
             Command::GoModels => "Go to Models",
             Command::GoRuns => "Go to Runs",
             Command::GoSettings => "Go to Settings",
-            Command::GoPrompt => "Go to Prompt",
-            Command::GoIntervention => "Go to Intervention",
-            Command::GoReview => "Go to Review & results",
-            Command::EditIntervention => "Edit intervention",
             Command::ToggleInspector => "Toggle inspector",
             Command::ToggleSidebar => "Toggle sidebar",
             Command::ToggleTheme => "Toggle theme",
@@ -90,10 +78,6 @@ impl Command {
             Command::GoModels => "Local models and their state",
             Command::GoRuns => "Every run from this session",
             Command::GoSettings => "Appearance and defaults",
-            Command::GoPrompt => "Step 1: model and prompt",
-            Command::GoIntervention => "Step 2: internal change",
-            Command::GoReview => "Step 3: evidence and results",
-            Command::EditIntervention => "Change layer, strength or location",
             Command::ToggleInspector => "Show or hide the context inspector",
             Command::ToggleSidebar => "Show or hide the navigation sidebar",
             Command::ToggleTheme => "Cycle system, dark, light",
