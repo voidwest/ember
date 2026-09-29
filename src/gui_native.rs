@@ -6417,6 +6417,57 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
             context.update_window(handle.into(), |_, _, cx| {
                 console.update(cx, |console, _| console.palette_open = false);
             })?;
+            // Interaction states: hover and keyboard focus are invisible in
+            // the resting-state scenes, and they are where a console reads as
+            // polished or as a form.
+            {
+                use gpui_kit::test::TestWindowExt as _;
+                let hover_nav = format!("nav:{}", View::Models.key());
+                for (state, view, step, hover, tabs) in [
+                    ("hover-nav", View::Home, WorkspaceStep::Prompt, Some(hover_nav), 0),
+                    (
+                        "hover-tile",
+                        View::Experiment,
+                        WorkspaceStep::Intervention,
+                        Some("operation-card:zero".to_string()),
+                        0,
+                    ),
+                    (
+                        "hover-preset",
+                        View::Experiment,
+                        WorkspaceStep::Prompt,
+                        Some("preset:Zero a middle layer".to_string()),
+                        0,
+                    ),
+                    ("focus-tab", View::Experiment, WorkspaceStep::Prompt, None, 3),
+                ] {
+                    context.update_window(handle.into(), |_, window, cx| {
+                        console.update(cx, |console, cx| {
+                            console.appearance = mode;
+                            console.view = view;
+                            console.step = step;
+                            console.inspector_open = false;
+                            console.sync_kit_theme(cx);
+                            cx.notify();
+                        });
+                        window.draw(cx).clear(cx);
+                        if let Some(id) = &hover {
+                            window.hover(SharedString::from(id.clone()), cx);
+                        }
+                        for _ in 0..tabs {
+                            window.press("tab", cx);
+                        }
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context.run_until_parked();
+                    context.update_window(handle.into(), |_, window, cx| {
+                        window.draw(cx).clear(cx);
+                    })?;
+                    context
+                        .capture_screenshot(handle.into())?
+                        .save(directory.join(format!("{name}-{appearance}-state-{state}.png")))?;
+                }
+            }
         }
         if let Ok(model) = std::env::var("EMBER_GUI_TEST_MODEL") {
             let config = context.update_window(handle.into(), |_, _, cx| {
