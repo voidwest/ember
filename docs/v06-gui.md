@@ -350,3 +350,8 @@ and virtual-window interaction tests do not establish VoiceOver compatibility.
   defaults on and paints when focused). The offscreen renderer cannot move
   keyboard focus, so the ring has been confirmed in the kit source, not in a
   screenshot.
+- Runs keeps each run's comparison (both outputs, the per-layer numbers, the
+  token pairs and the landmarks) beside its configuration, so **Open** reopens
+  it on Review without a model. Runs recorded before results were kept load
+  fine and simply have no Open. Per-side timings are not kept, so a reopened run
+  shows none rather than an invented split.

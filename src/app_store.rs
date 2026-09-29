@@ -55,8 +55,40 @@ pub struct RecordConfig {
     pub max_tokens: String,
 }
 
+/// One layer's divergence in a saved result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordLayer {
+    pub layer: usize,
+    pub relative_l2: Option<f64>,
+    pub cosine: Option<f64>,
+}
+
+/// One generated position in a saved result.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordToken {
+    pub position: usize,
+    pub baseline: Option<String>,
+    pub intervention: Option<String>,
+    pub differs: bool,
+}
+
+/// What a finished run showed, kept so History can reopen the comparison and
+/// not just list that it happened. Optional and defaulted on [`RunRecord`], so
+/// stores written before it existed still load; those rows simply have no Open.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RecordResult {
+    pub baseline_text: String,
+    pub intervention_text: String,
+    pub layers: Vec<RecordLayer>,
+    pub tokens: Vec<RecordToken>,
+    pub first_layer_divergence: Option<usize>,
+    pub peak_layer: Option<usize>,
+    pub peak_relative_l2: Option<f64>,
+    pub tokens_equal: bool,
+}
+
 /// One completed run, as a record rather than a line of history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunRecord {
     /// Monotonic per-store counter, assigned when the run completed.
     pub number: u64,
@@ -93,6 +125,10 @@ pub struct RunRecord {
     /// records written before branching existed.
     #[serde(default)]
     pub config: Option<RecordConfig>,
+    /// The comparison the run produced, so it can be reopened from History.
+    /// Absent on records written before results were kept.
+    #[serde(default)]
+    pub result: Option<RecordResult>,
 }
 
 impl RunRecord {
@@ -134,7 +170,7 @@ pub struct Draft {
 
 /// The whole file. `schema` is the compatibility anchor; `schema_version` is
 /// retained for symmetry with the trace format.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppStore {
     pub schema: String,
     pub schema_version: u32,
@@ -342,6 +378,7 @@ mod tests {
             pinned,
             prompt: "اكتب جملة قصيرة عن المدينة المنورة".into(),
             config: None,
+            result: None,
         }
     }
 
@@ -386,6 +423,36 @@ mod tests {
         let store = load(path).expect("a pre-configuration store still loads");
         assert_eq!(store.runs.len(), 1);
         assert!(store.runs[0].config.is_none());
+        assert!(
+            store.runs[0].result.is_none(),
+            "a record from before results were kept has no result, and loads"
+        );
+    }
+
+    #[test]
+    fn a_kept_result_survives_a_write_and_read() {
+        let path = temp_path("result-roundtrip");
+        let mut store = AppStore::default();
+        let mut run = run(1, 1_700_000_000, false);
+        run.result = Some(RecordResult {
+            baseline_text: "Paris.".into(),
+            intervention_text: "fog".into(),
+            layers: vec![RecordLayer { layer: 7, relative_l2: Some(1.25), cosine: None }],
+            tokens: vec![RecordToken {
+                position: 1,
+                baseline: Some("Paris".into()),
+                intervention: Some("fog".into()),
+                differs: true,
+            }],
+            first_layer_divergence: Some(7),
+            peak_layer: Some(7),
+            peak_relative_l2: Some(1.25),
+            tokens_equal: false,
+        });
+        store.push_run(run.clone());
+        store.write(path.clone()).expect("write");
+        let loaded = load(path).expect("read");
+        assert_eq!(loaded.runs[0].result, run.result);
     }
 
     #[test]

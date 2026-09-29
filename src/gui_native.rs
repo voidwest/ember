@@ -581,7 +581,7 @@ impl TableDelegate for RunsDelegate {
             6 => Column::new(run_col::WHEN, "When").width(px(80.0)),
             // Wide enough for Reuse + Pin + Delete, the fullest lane a row
             // can carry.
-            _ => Column::new(run_col::ACTIONS, "").width(px(192.0)),
+            _ => Column::new(run_col::ACTIONS, "").width(px(264.0)),
         };
         // Every data column sorts: `sortable` is a flagless builder, and a
         // history you cannot re-order is a log file. The action lane does not.
@@ -649,6 +649,24 @@ impl TableDelegate for RunsDelegate {
                 .map(|config| (config, run.prompt.clone(), self.console.clone()));
             let console = self.console.clone();
             let mut lane = div().flex().flex_row().gap(px(Space::SM));
+            // Open appears only where the run kept its result.
+            if run.result.is_some() && run.config.is_some() {
+                let console = self.console.clone();
+                lane = lane.child(
+                    Button::new(SharedString::from(format!("run-open:{number}")))
+                        .ghost()
+                        .compact()
+                        .label("Open")
+                        .tooltip("Reopen this run's comparison")
+                        .on_click(move |_, _, cx| {
+                            if let Some(console) = console.as_ref() {
+                                let _ = console.update(cx, |console, cx| {
+                                    console.open_run(number, cx);
+                                });
+                            }
+                        }),
+                );
+            }
             if let Some((config, prompt, console)) = reuse {
                 lane = lane.child(
                     Button::new(SharedString::from(format!("run-reuse:{number}")))
@@ -987,6 +1005,9 @@ struct Console {
     inspector_fits: bool,
     /// The Review page is showing the built-in illustrative sample, not a run.
     sample: bool,
+    /// Which saved run the Review page is showing, when it is one from
+    /// History rather than a live result.
+    saved_run: Option<u64>,
     /// The result summary was just copied; shown on the button until the
     /// user moves on.
     copied: bool,
@@ -1226,6 +1247,7 @@ impl Console {
             inspector_fits: true,
             sample: false,
             copied: false,
+            saved_run: None,
             inspector_open: if cfg!(feature = "gui-tests") {
                 false
             } else {
@@ -1446,7 +1468,9 @@ impl Console {
                 format!(
                     "\u{2264}{} tokens \u{00b7} seed 0 \u{00b7} {}",
                     context.max_tokens,
-                    if self.sample {
+                    if self.saved_run.is_some() {
+                        "saved"
+                    } else if self.sample {
                         "sample"
                     } else if self.baseline.is_some() && self.status == Status::Idle {
                         "measured"
@@ -1467,6 +1491,7 @@ impl Console {
 
     fn send_run(&mut self, cfg: RunConfig) {
         self.sample = false;
+        self.saved_run = None;
         self.status = Status::Running;
         self.step = WorkspaceStep::Review;
         self.pending_context = Some(self.form_values());
@@ -1528,6 +1553,7 @@ impl Console {
                 WorkerReply::RunDone(result) => match *result {
                     Ok(bundle) => {
                         self.sample = false;
+                        self.saved_run = None;
                         self.copied = false;
                         self.result_context = self.pending_context.take();
                         self.baseline = Some(bundle.baseline.clone());
@@ -1591,6 +1617,7 @@ impl Console {
                                 span: self.span.clone(),
                                 max_tokens: self.max_tokens.clone(),
                             }),
+                            result: Some(record_result(&bundle)),
                         });
                         self.store.touch_model(&self.model_path, now);
                         // The state that produced this run is the resume point.
@@ -1789,7 +1816,9 @@ impl Console {
         );
         let mut out = String::new();
         out.push_str("# Ember experiment\n\n");
-        if self.sample {
+        if let Some(number) = self.saved_run {
+            out.push_str(&format!("> Run #{number}, reopened from history.\n\n"));
+        } else if self.sample {
             out.push_str("> Sample result: illustrative data, not a measurement.\n\n");
         }
         out.push_str(&format!("- **Model:** {}\n", model_display_name(&context.model_path)));
@@ -1839,25 +1868,114 @@ impl Console {
     /// anything. It is labelled as illustrative on the page, and the first
     /// real run replaces it.
     fn show_sample(&mut self, cx: &mut Context<Self>) {
-        let (baseline, intervention, comparison, values) = sample_result();
-        let model_path = self.model_path.clone();
-        self.apply_form_values(
-            FormValues {
-                model_path,
-                ..values.clone()
+        let (baseline, intervention, comparison, mut values) = sample_result();
+        values.model_path = self.model_path.clone();
+        self.show_result(baseline, intervention, comparison, values, None, cx);
+    }
+
+    /// Reopen a run from History. Only records that kept their result can be
+    /// opened; the Runs table shows Open on exactly those.
+    fn open_run(&mut self, number: u64, cx: &mut Context<Self>) {
+        let Some(record) = self.store.runs.iter().find(|run| run.number == number).cloned() else {
+            return;
+        };
+        let (Some(result), Some(config)) = (record.result.clone(), record.config.clone()) else {
+            return;
+        };
+        let output = |text: String, tokens: Option<u32>| RunOutput {
+            text,
+            generated_token_ids: (1..=tokens.unwrap_or(0)).collect(),
+            generated_token_texts: Vec::new(),
+            prompt_tokens: 0,
+            generated_tokens: tokens.unwrap_or(0) as usize,
+            bundle_dir: "history".to_string(),
+            semantic_hash: "0000000000000000".to_string(),
+            payload_hash: "00000000".to_string(),
+            // History keeps one total for the pair, not per-side timings, so
+            // none is shown rather than a made-up split (see output_panel).
+            wall_ms: 0.0,
+            decode_tps: None,
+            events: Vec::new(),
+        };
+        let baseline = output(result.baseline_text.clone(), record.baseline_tokens);
+        let intervention = output(result.intervention_text.clone(), record.intervention_tokens);
+        let comparison = ExperimentComparison {
+            layers: result
+                .layers
+                .iter()
+                .map(|layer| crate::gui::LayerMetric {
+                    layer: layer.layer,
+                    relative_l2_difference: layer.relative_l2,
+                    cosine_distance: layer.cosine,
+                    maximum_absolute_difference: None,
+                    exact: layer.relative_l2 == Some(0.0),
+                })
+                .collect(),
+            tokens: result
+                .tokens
+                .iter()
+                .map(|token| crate::gui::TokenMetric {
+                    position: token.position,
+                    baseline_token_id: None,
+                    intervention_token_id: None,
+                    baseline_text: token.baseline.clone(),
+                    intervention_text: token.intervention.clone(),
+                    differs: token.differs,
+                })
+                .collect(),
+            first_token_divergence: record.diverged_at_step.map(|step| step as usize),
+            generated_tokens_equal: result.tokens_equal,
+            generated_text_equal: record.outputs_equal,
+            landmarks: crate::gui::DivergenceLandmarks {
+                first_layer_divergence: result.first_layer_divergence,
+                peak_layer: result.peak_layer,
+                peak_relative_l2: result.peak_relative_l2,
+                stable_token_tail_step: None,
             },
-            cx,
-        );
+            layer_token_grid: None,
+        };
+        let values = FormValues {
+            model_path: config.model_path,
+            prompt: record.prompt,
+            max_tokens: config.max_tokens,
+            execution: config.execution,
+            site: config.site,
+            layer: config.layer,
+            op: config.op,
+            value: config.value,
+            source: config.source,
+            source_layer: config.source_layer,
+            token: config.token,
+            span: config.span,
+        };
+        self.show_result(baseline, intervention, comparison, values, Some(number), cx);
+    }
+
+    /// Put a finished comparison on the Review page without running anything.
+    /// Shared by the sample and by History; `saved_run` says which it is.
+    fn show_result(
+        &mut self,
+        baseline: RunOutput,
+        intervention: RunOutput,
+        comparison: ExperimentComparison,
+        values: FormValues,
+        saved_run: Option<u64>,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_form_values(values.clone(), cx);
         self.layer_series = Arc::from(comparison.layers.clone());
+        let selected = comparison.landmarks.peak_layer.or(comparison.landmarks.first_layer_divergence);
         self.baseline = Some(baseline);
         self.intervention = Some(intervention);
         self.comparison = Some(comparison);
         self.result_context = Some(values);
         self.verification = None;
         self.restore = None;
-        self.selected_layer = Some(8);
+        self.selected_layer = selected;
         self.result_view = ResultView::Overview;
         self.sample = true;
+        self.saved_run = saved_run;
+        self.copied = false;
         self.goto(View::Experiment, cx);
         self.step = WorkspaceStep::Review;
         cx.notify();
@@ -4904,7 +5022,9 @@ impl Console {
                             }),
                         ))
                     })
-                    .when(has_results && !self.sample, |header| {
+                    // A sample offers neither; a run reopened from History offers
+                    // both, since the banner says Duplicate branches from it.
+                    .when(has_results && (!self.sample || self.saved_run.is_some()), |header| {
                         header
                             .child(text_button(
                                 "review-rerun",
@@ -4959,9 +5079,19 @@ impl Console {
                         .border_l_2()
                         .border_color(colors.accent)
                         .bg(colors.accent_soft)
-                        .child(label("Sample result", Type::LABEL, colors.accent))
                         .child(label(
-                            "Illustrative data, so you can see what a finished comparison looks like. Run your own experiment and it replaces this.",
+                            match self.saved_run {
+                                Some(number) => format!("Saved run #{number}"),
+                                None => "Sample result".to_string(),
+                            },
+                            Type::LABEL,
+                            colors.accent,
+                        ))
+                        .child(label(
+                            match self.saved_run {
+                                Some(_) => "Reopened from your history. Duplicate branches from it, or run it again to check it still reproduces.",
+                                None => "Illustrative data, so you can see what a finished comparison looks like. Run your own experiment and it replaces this.",
+                            },
                             Type::LABEL,
                             colors.text,
                         )),
@@ -5394,12 +5524,16 @@ impl Console {
                                 move |window, cx| Tooltip::new(detail.clone()).build(window, cx)
                             })
                             .child(mono(
-                                format!(
-                                    "{} tok  ·  {}  ·  {}",
-                                    out.generated_tokens,
-                                    fmt_ms(out.wall_ms),
-                                    fmt_tps(out.decode_tps)
-                                ),
+                                if out.bundle_dir == "history" {
+                                    format!("{} tok  ·  saved", out.generated_tokens)
+                                } else {
+                                    format!(
+                                        "{} tok  ·  {}  ·  {}",
+                                        out.generated_tokens,
+                                        fmt_ms(out.wall_ms),
+                                        fmt_tps(out.decode_tps)
+                                    )
+                                },
                                 Type::META,
                                 colors.text_faint,
                             )),
@@ -5594,6 +5728,7 @@ impl Console {
             Status::Idle => match self.step {
                 WorkspaceStep::Prompt => "Continue: Intervention",
                 WorkspaceStep::Intervention => "Continue: Review",
+                WorkspaceStep::Review if self.saved_run.is_some() => "Run this again",
                 WorkspaceStep::Review if self.sample => "Run this for real",
                 WorkspaceStep::Review if self.baseline.is_some() => "Run experiment again",
                 WorkspaceStep::Review => "Run experiment",
@@ -6138,6 +6273,22 @@ fn seed_store() -> AppStore {
             verified: row.verified,
             pinned: row.pinned,
             prompt: "\u{0627}\u{0643}\u{062a}\u{0628} \u{062c}\u{0645}\u{0644}\u{0629}".to_string(),
+            result: (index <= 1).then(|| app_store::RecordResult {
+                baseline_text: "Paris. The Eiffel Tower is located in Paris.".to_string(),
+                intervention_text: "covered in a thick layer of fog.".to_string(),
+                layers: (0..16)
+                    .map(|layer| app_store::RecordLayer {
+                        layer,
+                        relative_l2: Some(if layer < 7 { 0.0 } else { 1.1 }),
+                        cosine: Some(if layer < 7 { 0.0 } else { 0.9 }),
+                    })
+                    .collect(),
+                tokens: Vec::new(),
+                first_layer_divergence: Some(7),
+                peak_layer: Some(10),
+                peak_relative_l2: Some(1.187),
+                tokens_equal: false,
+            }),
             // Only recent rows carry a configuration: the Reuse action must
             // be shown and hidden in the same render.
             config: (index == 0).then(|| app_store::RecordConfig {
@@ -6184,6 +6335,38 @@ fn seed_store() -> AppStore {
 #[cfg(not(feature = "gui-tests"))]
 fn seed_store() -> AppStore {
     AppStore::default()
+}
+
+/// What a finished run showed, in the shape History stores.
+fn record_result(bundle: &crate::gui::RunBundle) -> app_store::RecordResult {
+    let comparison = &bundle.comparison;
+    app_store::RecordResult {
+        baseline_text: bundle.baseline.text.clone(),
+        intervention_text: bundle.intervention.text.clone(),
+        layers: comparison
+            .layers
+            .iter()
+            .map(|metric| app_store::RecordLayer {
+                layer: metric.layer,
+                relative_l2: metric.relative_l2_difference,
+                cosine: metric.cosine_distance,
+            })
+            .collect(),
+        tokens: comparison
+            .tokens
+            .iter()
+            .map(|token| app_store::RecordToken {
+                position: token.position,
+                baseline: token.baseline_text.clone(),
+                intervention: token.intervention_text.clone(),
+                differs: token.differs,
+            })
+            .collect(),
+        first_layer_divergence: comparison.landmarks.first_layer_divergence,
+        peak_layer: comparison.landmarks.peak_layer,
+        peak_relative_l2: comparison.landmarks.peak_relative_l2,
+        tokens_equal: comparison.generated_tokens_equal,
+    }
 }
 
 /// The built-in sample: what a finished comparison looks like. The numbers
@@ -6685,6 +6868,76 @@ mod kit_tests {
     }
 
     #[gpui_kit::test]
+    async fn opening_a_saved_run_reopens_its_comparison(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.text_system()
+                .add_fonts(vec![
+                    Cow::Borrowed(FONT_SANS),
+                    Cow::Borrowed(FONT_MONO),
+                    Cow::Borrowed(FONT_ARABIC),
+                ])
+                .unwrap();
+        });
+        let (tx, _worker_rx) = mpsc::channel();
+        let (_reply_tx, reply_rx) = mpsc::channel();
+        let mut view = None;
+        let handle = cx.add_window(|window, cx| {
+            let console =
+                cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(reply_rx)), false, window, cx));
+            view = Some(console.clone());
+            Root::new(console, window, cx)
+        });
+        let console = view.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            console.update(cx, |console, cx| {
+                let mut run = super::seed_store().runs[0].clone();
+                run.number = 77;
+                run.result = Some(super::app_store::RecordResult {
+                    baseline_text: "Paris.".into(),
+                    intervention_text: "fog".into(),
+                    layers: vec![super::app_store::RecordLayer {
+                        layer: 7,
+                        relative_l2: Some(1.25),
+                        cosine: Some(0.5),
+                    }],
+                    tokens: Vec::new(),
+                    first_layer_divergence: Some(7),
+                    peak_layer: Some(7),
+                    peak_relative_l2: Some(1.25),
+                    tokens_equal: false,
+                });
+                run.config = Some(super::app_store::RecordConfig {
+                    model_path: "fixture.gguf".into(),
+                    execution: "reference".into(),
+                    site: "after-layer".into(),
+                    layer: "6".into(),
+                    op: "scale".into(),
+                    value: "0.0".into(),
+                    source: "capture".into(),
+                    source_layer: "0".into(),
+                    token: "prompt-final".into(),
+                    span: String::new(),
+                    max_tokens: "24".into(),
+                });
+                console.store.push_run(run);
+                console.open_run(77, cx);
+            });
+            let console = console.read(cx);
+            assert_eq!(console.saved_run, Some(77));
+            assert!(console.sample, "a reopened run is not a live result");
+            assert_eq!(console.step, WorkspaceStep::Review);
+            assert_eq!(console.layer_series.len(), 1);
+            assert_eq!(console.selected_layer, Some(7));
+            assert_eq!(console.layer, "6");
+            let markdown = console.result_markdown().expect("a reopened run can be copied");
+            assert!(markdown.contains("Run #77, reopened from history"));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
     async fn sample_result_opens_review_and_copies_markdown(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
@@ -7116,6 +7369,12 @@ fn render_live_flow(directory: &std::path::Path, model: String) -> anyhow::Resul
     shot(&mut context, "result-tokens")?;
     click(&mut context, &format!("nav:{}", View::Runs.key()))?;
     shot(&mut context, "runs")?;
+    click(&mut context, "run-open:1")?;
+    anyhow::ensure!(
+        console.read_with(&context, |c, _| c.saved_run) == Some(1),
+        "Open on the saved run did not reopen it"
+    );
+    shot(&mut context, "reopened-from-history")?;
     click(&mut context, &format!("nav:{}", View::Home.key()))?;
     shot(&mut context, "home-after")?;
     let draft = console.read_with(&context, |c, _| c.store.draft.is_some());
