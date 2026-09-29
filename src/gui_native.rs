@@ -868,7 +868,7 @@ impl Inputs {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct FormValues {
     model_path: String,
     prompt: String,
@@ -2614,6 +2614,14 @@ impl Console {
             return;
         }
         let values = self.form_values();
+        // A form identical to the run that just finished has nothing left to
+        // resume -- the run record already holds it, and Reuse reopens it.
+        // Keeping a draft anyway made Home offer "Continue where you left
+        // off" for an experiment the user had just completed.
+        if self.result_context.as_ref() == Some(&values) {
+            self.store.draft = None;
+            return;
+        }
         let revision = self
             .store
             .draft
@@ -3273,6 +3281,26 @@ impl Console {
                             )
                             .child(mono(store_path, Type::MICRO, colors.text_faint)),
                     ),
+            ))
+            .child(group(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(Space::MD))
+                    .child(section_label(colors, "Keyboard"))
+                    .children(shortcut_rows().into_iter().map(|(keys, what)| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(Space::LG))
+                            .child(div().w(px(320.0)).flex_none().child(label(
+                                what,
+                                Type::BODY,
+                                colors.text,
+                            )))
+                            .child(mono(keys, Type::META, colors.text_muted))
+                    })),
             ))
     }
 
@@ -4302,13 +4330,26 @@ impl Console {
             ),
         };
         let landmark = |title: &'static str, value: String, detail: String, value_color: Rgba| {
+            // Hovering a term explains it: the numbers are the point of the
+            // page, and their names are the part a newcomer cannot guess.
+            let meaning = match title {
+                "Text output" => "Whether the words the model wrote are identical with and without your change.",
+                "First internal divergence" => "The earliest layer where the model's internal activations differ from the baseline run.",
+                "Peak divergence" => "The largest difference at any layer, as relative L2: how big the change is compared with the activation itself. 0 means identical.",
+                "Token tail" => "Whether the generated token IDs match exactly from some step to the end.",
+                _ => "Replays the baseline after the intervention to prove the model can be restored bit for bit.",
+            };
             div()
                 .flex_1()
                 .min_w(px(150.0))
                 .flex()
                 .flex_col()
                 .gap(px(Space::XS))
-                .child(label(title, Type::META, colors.text_faint))
+                .child(
+                    label(title, Type::META, colors.text_faint)
+                        .id(ElementId::Name(SharedString::from(format!("landmark:{title}"))))
+                        .tooltip(move |window, cx| Tooltip::new(meaning).build(window, cx)),
+                )
                 .child(label(value, Type::VALUE, value_color))
                 .child(label(detail, Type::META, colors.text_muted))
         };
@@ -5560,6 +5601,22 @@ impl Console {
     }
 }
 
+/// The keyboard shortcuts, in one place so Settings cannot drift from the
+/// bindings in the key handler and the palette.
+fn shortcut_rows() -> Vec<(String, &'static str)> {
+    let cmd = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+    vec![
+        (format!("{cmd}+K"), "Command palette"),
+        (format!("{cmd}+Enter"), "Continue, or run the experiment"),
+        (format!("{cmd}+N"), "New experiment"),
+        (format!("{cmd}+R"), "Rerun the last run"),
+        (format!("{cmd}+1 / 2 / 3"), "Prompt / Intervention / Review"),
+        (format!("{cmd}+1 - 4 on Review"), "Overview / Layers / Tokens / Raw trace"),
+        (format!("{cmd}+B"), "Show or hide the sidebar"),
+        (format!("{cmd}+Shift+I"), "Show or hide the inspector"),
+    ]
+}
+
 /// Window widths below which the inspector, then the sidebar, fold away.
 /// Column width of the Prompt and Intervention forms.
 const FORM_MAX_WIDTH: f32 = 940.0;
@@ -5783,6 +5840,15 @@ pub(crate) fn run_gui_command(
 ) -> anyhow::Result<()> {
     #[cfg(all(target_os = "macos", feature = "gui-tests"))]
     if let Some(directory) = &_args.render_test_dir {
+        // EMBER_GUI_TEST_LIVE drives the real console end to end with a real
+        // worker and model instead of rendering fixtures. Run it with
+        // XDG_CONFIG_HOME pointing at a scratch directory: it writes history.
+        if let (Some(model), true) = (
+            std::env::var_os("EMBER_GUI_TEST_LIVE"),
+            std::env::var_os("XDG_CONFIG_HOME").is_some(),
+        ) {
+            return render_live_flow(directory, model.to_string_lossy().into_owned());
+        }
         return render_test_artifacts(directory);
     }
     let (worker_tx, reply_rx) = spawn_worker(k_strategy, k_allow_fallback);
@@ -6756,6 +6822,151 @@ mod kit_tests {
             assert!(matches!(worker_rx.try_recv().unwrap(), super::WorkerMsg::Prepare(_)));
         }).unwrap();
     }
+}
+
+
+/// The first-run path, end to end: Home, an example, the three steps, a real
+/// run on a real model with a live worker, then the result, Copy summary and
+/// Runs. A frame is saved whenever the run's status changes, so the progress
+/// steps are seen as they advance rather than inferred.
+#[cfg(all(target_os = "macos", feature = "gui-tests"))]
+fn render_live_flow(directory: &std::path::Path, model: String) -> anyhow::Result<()> {
+    use gpui_kit::test::TestWindowExt as _;
+    std::fs::create_dir_all(directory)?;
+    let platform = gpui_kit::platform::current_platform(true);
+    let mut context = HeadlessAppContext::with_platform(
+        platform.text_system(),
+        Arc::new(icons::Assets),
+        gpui_kit::platform::current_headless_renderer,
+    );
+    context.update(|cx| {
+        gpui_kit::init(cx);
+        cx.text_system()
+            .add_fonts(vec![
+                Cow::Borrowed(FONT_SANS),
+                Cow::Borrowed(FONT_MONO),
+                Cow::Borrowed(FONT_ARABIC),
+            ])
+            .unwrap();
+    });
+    let (tx, rx) = spawn_worker(ember::quant_k::KStrategy::Auto, false);
+    let mut console = None;
+    let handle = context.open_window(size(px(1728.), px(1092.)), |window, cx| {
+        let view = cx.new(|cx| Console::new(tx, rx, true, window, cx));
+        console = Some(view.clone());
+        cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+    })?;
+    let console = console.unwrap();
+    let mut frame = 0usize;
+    let mut shot = |context: &mut HeadlessAppContext, tag: &str| -> anyhow::Result<()> {
+        context.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })?;
+        context.run_until_parked();
+        context.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })?;
+        frame += 1;
+        context
+            .capture_screenshot(handle.into())?
+            .save(directory.join(format!("live-{frame:02}-{tag}.png")))?;
+        Ok(())
+    };
+    let click = |context: &mut HeadlessAppContext, id: &str| -> anyhow::Result<()> {
+        let id = SharedString::from(id.to_string());
+        context.update_window(handle.into(), |_, window, cx| window.click(id, cx))?;
+        Ok(())
+    };
+    context.update_window(handle.into(), |_, _, cx| {
+        console.update(cx, |console, cx| {
+            console.appearance = AppearanceMode::Dark;
+            console.model_path = model.clone();
+            console
+                .inputs
+                .model
+                .update(cx, |input, cx| input.set_value(model.clone(), cx));
+            console.sync_kit_theme(cx);
+            cx.notify();
+        });
+    })?;
+    shot(&mut context, "home")?;
+    click(&mut context, "home-example")?;
+    anyhow::ensure!(
+        console.read_with(&context, |c, _| c.step) == WorkspaceStep::Prompt,
+        "Try an example did not land on the Prompt step"
+    );
+    context.update_window(handle.into(), |_, _, cx| {
+        console.update(cx, |console, cx| {
+            console.prompt = "The capital of France is".into();
+            console.max_tokens = "8".into();
+            let prompt = console.inputs.prompt.clone();
+            console.set_input_value(prompt, "The capital of France is".into(), cx);
+        });
+    })?;
+    shot(&mut context, "prompt")?;
+    click(&mut context, "btn:Continue: Intervention")?;
+    shot(&mut context, "intervention")?;
+    click(&mut context, "btn:Continue: Review")?;
+    shot(&mut context, "review-before-run")?;
+    click(&mut context, "btn:Run experiment")?;
+
+    let started = std::time::Instant::now();
+    let mut last = console.read_with(&context, |c, _| c.status);
+    shot(&mut context, &format!("run-{last:?}").to_lowercase())?;
+    let mut ticks = 0u32;
+    loop {
+        context.advance_clock(Duration::from_millis(50));
+        context.run_until_parked();
+        std::thread::sleep(Duration::from_millis(50));
+        context.update_window(handle.into(), |_, _, cx| {
+            console.update(cx, |console, cx| {
+                if console.drain_replies(cx) {
+                    cx.notify();
+                }
+            });
+        })?;
+        let (status, done, error) = console.read_with(&context, |c, _| {
+            (c.status, c.baseline.is_some() && c.status == Status::Idle, c.error.clone())
+        });
+        ticks += 1;
+        if status != last {
+            shot(&mut context, &format!("run-{status:?}").to_lowercase())?;
+            last = status;
+        } else if ticks % 40 == 0 && status != Status::Idle {
+            shot(&mut context, &format!("run-{status:?}-still").to_lowercase())?;
+        }
+        if let Some(error) = error {
+            anyhow::bail!("the run reported an error: {error}");
+        }
+        if done {
+            break;
+        }
+        anyhow::ensure!(started.elapsed() < Duration::from_secs(400), "run timed out");
+    }
+    eprintln!("live run finished in {:.1}s", started.elapsed().as_secs_f32());
+    shot(&mut context, "result-overview")?;
+    click(&mut context, "review-copy")?;
+    let copied = context.update(|cx| cx.read_from_clipboard()).and_then(|item| item.text());
+    eprintln!(
+        "copied summary: {}",
+        copied.as_deref().map_or("NOTHING".to_string(), |text| format!("{} bytes", text.len()))
+    );
+    if let Some(text) = &copied {
+        std::fs::write(directory.join("copied-summary.md"), text)?;
+    }
+    shot(&mut context, "result-copied")?;
+    click(&mut context, "result:layers")?;
+    shot(&mut context, "result-layers")?;
+    click(&mut context, "result:tokens")?;
+    shot(&mut context, "result-tokens")?;
+    click(&mut context, &format!("nav:{}", View::Runs.key()))?;
+    shot(&mut context, "runs")?;
+    click(&mut context, &format!("nav:{}", View::Home.key()))?;
+    shot(&mut context, "home-after")?;
+    let draft = console.read_with(&context, |c, _| c.store.draft.is_some());
+    eprintln!("draft after a completed run: {}", if draft { "PRESENT (unexpected)" } else { "none" });
+    anyhow::ensure!(!draft, "a finished run left a draft to resume");
+    Ok(())
 }
 
 /// Offscreen test scenes use the production Console render tree, CoreText, and
