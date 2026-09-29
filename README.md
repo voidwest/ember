@@ -2,7 +2,7 @@
 
 # ember
 
-[![rust](https://img.shields.io/badge/rust-1.92-blue)](https://www.rust-lang.org)
+[![rust](https://img.shields.io/badge/rust-1.92_headless_%C2%B7_1.98.1_GUI-blue)](https://www.rust-lang.org)
 [![ci](https://github.com/voidwest/ember/actions/workflows/ci.yml/badge.svg)](https://github.com/voidwest/ember/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -22,12 +22,16 @@ Other execution paths have different [validation coverage](docs/validation.md).
 ## five-minute workflow
 
 Fetch the pinned model with `scripts/download_models.sh research-example`
-and obtain the matching tokenizer described in the
-[example instructions](examples/experiments/README.md). Put both in the repository
-root. Ember does not download them automatically. Build once, then capture
-and verify a run (build and download time are additional):
+and put it in the repository root; Ember does not download models
+automatically. The matching `tokenizer.json` is already checked in there (the
+[example instructions](examples/experiments/README.md) say where it comes
+from). Build once, then capture and verify a run (build and download time are
+additional):
 
 ```bash
+# Inside the checkout, rust-toolchain.toml selects Rust 1.98.1, which the
+# default GUI feature needs. A headless build on Rust 1.92 needs
+# --no-default-features.
 cargo build --release
 
 target/release/ember experiment validate \
@@ -152,5 +156,8 @@ These are optional extensions and separate research tracks around the CLI instru
 ## citation and license
 
 See [CITATION.cff](CITATION.cff) and the [MIT license](LICENSE).
+The MIT license covers the code. The Arabic research data derived from UD
+Arabic-PADT under `data/arabic_morph_real/` is CC BY-NC-SA 3.0; see its
+[notice](data/arabic_morph_real/NOTICE.md).
 
 The actionable [road to 1.0](docs/road-to-1.0.md) tracks release gates and the GPUI Kit console migration.

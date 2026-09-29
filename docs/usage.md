@@ -37,12 +37,12 @@ The run writes the frozen Ember artifact contract under
 `runs/qwen3_word_probe_smoke/`: `manifest.json`, `samples.jsonl`,
 `tokenization.jsonl`, `positions.jsonl`, per-layer `layers/layer_XXXX.npy`
 files, `checksums.json`, and `report.json`. See
-[docs/artifact_contract.md](docs/artifact_contract.md).
+[docs/artifact_contract.md](artifact_contract.md).
 
 Validate a single artifact run with `cargo run -- validate-run <run-dir>`.
 Backend-to-backend comparisons use `validate-backends`, and external parity
 audits use `gguf-parity-tools`; see
-[docs/backend_validation.md](docs/backend_validation.md).
+[docs/backend_validation.md](backend_validation.md).
 
 `llama-cpp` config validation is wired, but hidden-state extraction still needs
 the external patched/custom llama.cpp binary integration. That backend must
@@ -83,7 +83,7 @@ same-input attention/logit plus independent greedy diagnostics when model,
 tokenizer, architecture, and a continuation horizon are supplied. It does not
 create a transformed snapshot or mapper. Full schema, strict compatibility,
 off-by-one continuation semantics, safety limits, and command examples are in
-[docs/kv-snapshots.md](docs/kv-snapshots.md).
+[docs/kv-snapshots.md](kv-snapshots.md).
 
 ### flags
 
@@ -155,8 +155,8 @@ ember compare-artifacts --left runs/a/manifest.json --right runs/b/manifest.json
 
 Capture is a run-level facility that rides alongside the single experiment
 (or runs alone); patching is one built-in experiment. Both are documented in
-[docs/activation-artifacts.md](docs/activation-artifacts.md) and
-[docs/activation-patching.md](docs/activation-patching.md). The complete
+[docs/activation-artifacts.md](activation-artifacts.md) and
+[docs/activation-patching.md](activation-patching.md). The complete
 capture -> intervene -> compare -> patch -> restore workflow is
 `scripts/research_example_capture_patch.sh`, which enforces the frozen
 restoration criterion: a patched run's captured logits must be bit-identical
@@ -205,10 +205,10 @@ experiment per run. Active experiments do not currently participate in
 probes, hidden-state extraction, logits/layer dumps, demos, or benchmark
 subcommands. Dynamic third-party plugin loading and multiple simultaneous
 experiments are intentionally unsupported. See
-[docs/activation-artifacts.md](docs/activation-artifacts.md) and
-[docs/activation-patching.md](docs/activation-patching.md) for the v0.2
+[docs/activation-artifacts.md](activation-artifacts.md) and
+[docs/activation-patching.md](activation-patching.md) for the v0.2
 artifact schema, hook lifecycle, mutation boundaries, and guarantees;
-[docs/experiments.md](docs/experiments.md) documents the v0.5 workflow.
+[docs/experiments.md](experiments.md) documents the v0.5 workflow.
 
 ### decode benchmark
 
@@ -271,8 +271,8 @@ powerprofilesctl set balanced
 
 Repeat both commands with clean binaries from revisions A and B in
 counterbalanced order. See
-[the cleanup validation report](docs/cleanup-audit-validation.md) and
-[the packed Q8 note](docs/q8-packed-gate-up.md) for complete protocols,
+[the cleanup validation report](cleanup-audit-validation.md) and
+[the packed Q8 note](q8-packed-gate-up.md) for complete protocols,
 correctness gates, raw-shape operator commands, and external llama.cpp
 reference numbers.
 

@@ -43,7 +43,7 @@ TSV with fields such as `word`, `diac`, `lex`, `root`, `pattern`,
 `root_heldout`, `abstract_pattern_heldout`, `concrete_pattern_heldout`,
 `root_pattern_heldout`, or `lemma_heldout`.
 
-See [docs/dataset_pipeline.md](docs/dataset_pipeline.md) for the full input
+See [docs/dataset_pipeline.md](dataset_pipeline.md) for the full input
 format, output schemas, split guarantees, CLI commands, and validation reports.
 
 
