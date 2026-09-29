@@ -3818,23 +3818,36 @@ impl Console {
                 "Matched spans, Arabic prompt",
             ),
         ];
-        // Wrapping two-column grid, not one row: four w_full cards in a row
-        // overflowed the workspace and the trailing cards were unreachable.
-        // Ghost, not outlined: a preset is a shortcut, not an object, so it
-        // borrows space and hover only.
-        div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .gap(px(Space::SM))
-            .children(presets.into_iter().map(|(preset, title, hint)| {
+        // Two columns, laid out as explicit rows: a wrapping flex with a fixed
+        // half width left the right column short of the edge, and flex_1 let a
+        // lone last tile stretch across the whole row. An odd count gets an
+        // empty spacer instead.
+        let mut tiles: Vec<AnyElement> = presets
+            .into_iter()
+            .map(|(preset, title, hint)| {
                 div()
-                    // Half the row, not flex_1: with an odd number of examples
-                    // the last one stretched across the whole width.
-                    .w(relative(0.49))
-                    .min_w(px(300.0))
+                    .flex_1()
+                    .min_w(px(0.0))
                     .child(self.preset_card(colors, preset, title, hint, cx))
-            }))
+                    .into_any_element()
+            })
+            .collect();
+        if tiles.len() % 2 == 1 {
+            tiles.push(div().flex_1().into_any_element());
+        }
+        let mut grid = div().flex().flex_col().gap(px(Space::SM));
+        while !tiles.is_empty() {
+            let rest = tiles.split_off(2);
+            let row = std::mem::replace(&mut tiles, rest);
+            grid = grid.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(Space::SM))
+                    .children(row),
+            );
+        }
+        grid
     }
 
     fn preset_card(
@@ -7696,6 +7709,7 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
                         0,
                     ),
                     ("focus-tab", View::Experiment, WorkspaceStep::Prompt, None, 3),
+                    ("focus-click", View::Experiment, WorkspaceStep::Prompt, Some("generation-length:24".to_string()), 0),
                 ] {
                     context.update_window(handle.into(), |_, window, cx| {
                         console.update(cx, |console, cx| {
@@ -7708,7 +7722,13 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
                         });
                         window.draw(cx).clear(cx);
                         if let Some(id) = &hover {
-                            window.hover(SharedString::from(id.clone()), cx);
+                            if state == "focus-click" {
+                                // A click focuses the button; the kit paints
+                                // its ring whenever it holds focus.
+                                window.click(SharedString::from(id.clone()), cx);
+                            } else {
+                                window.hover(SharedString::from(id.clone()), cx);
+                            }
                         }
                         for _ in 0..tabs {
                             if let Ok(stroke) = Keystroke::parse("tab") {
