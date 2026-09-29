@@ -47,6 +47,9 @@ impl AppearanceMode {
     }
 
     pub(super) fn persist(self) {
+        if cfg!(test) {
+            return;
+        }
         let path = settings_path();
         let Some(parent) = path.parent() else {
             return;
@@ -91,6 +94,10 @@ pub(super) fn load_flag(key: &str) -> Option<bool> {
 }
 
 pub(super) fn persist_flag(key: &str, value: bool) {
+    // See Console::persist: unit tests must not write real settings.
+    if cfg!(test) {
+        return;
+    }
     let path = flag_path(key);
     if let Some(parent) = path.parent()
         && std::fs::create_dir_all(parent).is_ok()

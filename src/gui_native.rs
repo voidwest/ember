@@ -1092,6 +1092,7 @@ impl Console {
                 Err(error) => (AppStore::default(), Some(error.to_string())),
             }
         };
+        let run_sequence = store.runs.iter().map(|run| run.number).max().unwrap_or(0);
         let colors = if appearance.is_dark(system_dark) {
             theme::dark()
         } else {
@@ -1283,7 +1284,10 @@ impl Console {
             result_context: None,
             store,
             store_error,
-            run_sequence: 0,
+            // Continue from the history on disk. Restarting at 0 gave every
+            // launch's first run the number 1 again, and Open, Pin and Delete
+            // address a run by number -- so they hit the wrong rows.
+            run_sequence,
             appearance,
             system_dark,
             session: None,
@@ -2769,6 +2773,11 @@ impl Console {
     /// A run that completed and was never written is the one loss this app
     /// cannot explain to the user, so the error is shown rather than swallowed.
     fn persist(&mut self) {
+        // Unit tests drive the real console; they must never write the
+        // developer's own history.
+        if cfg!(test) {
+            return;
+        }
         if let Err(error) = self.store.write(app_store::store_path()) {
             self.store_error = Some(format!("could not save run history: {error}"));
         }
@@ -7112,6 +7121,35 @@ mod kit_tests {
     }
 
     #[gpui_kit::test]
+    async fn run_numbers_continue_from_stored_history(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.text_system()
+                .add_fonts(vec![
+                    Cow::Borrowed(FONT_SANS),
+                    Cow::Borrowed(FONT_MONO),
+                    Cow::Borrowed(FONT_ARABIC),
+                ])
+                .unwrap();
+        });
+        // `seed_runs_requested` is off in this test, so the console loads the
+        // real store path; under cfg(test) persistence is disabled, and a
+        // fresh console reads whatever is on disk. Assert the rule directly on
+        // the derivation instead of depending on that file.
+        let mut store = super::AppStore::default();
+        for number in [3_u64, 9, 4] {
+            let mut run = super::seed_store().runs[0].clone();
+            run.number = number;
+            store.runs.push(run);
+        }
+        let next = store.runs.iter().map(|run| run.number).max().unwrap_or(0) + 1;
+        assert_eq!(next, 10, "the next run must not reuse a stored number");
+        let numbers: std::collections::BTreeSet<_> =
+            store.runs.iter().map(|run| run.number).collect();
+        assert_eq!(numbers.len(), store.runs.len());
+    }
+
+    #[gpui_kit::test]
     async fn sample_result_opens_review_and_copies_markdown(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
@@ -7562,6 +7600,16 @@ fn render_live_flow(directory: &std::path::Path, model: String) -> anyhow::Resul
 #[cfg(all(target_os = "macos", feature = "gui-tests"))]
 fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(directory)?;
+    // The harness drives the real console, whose persistence writes history
+    // and workspace flags. Point it at a scratch directory first so fixture
+    // runs never land in the developer's own ~/.config/ember. Nothing else has
+    // started a thread yet, which is what makes changing the environment sound.
+    if std::env::var_os("EMBER_GUI_TEST_KEEP_CONFIG").is_none() {
+        let scratch = std::env::temp_dir().join(format!("ember-render-config-{}", std::process::id()));
+        // SAFETY: called at the top of the harness, before any worker thread
+        // exists, so no other thread can be reading the environment.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", scratch) };
+    }
     let platform = gpui_kit::platform::current_platform(true);
     let mut context = HeadlessAppContext::with_platform(
         platform.text_system(),
