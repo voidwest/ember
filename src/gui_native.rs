@@ -3159,6 +3159,13 @@ impl Console {
                 ),
             ))
             .child(body)
+            .when(row_count > 0, |page| {
+                page.child(label(
+                    "Reuse loads a run's settings into a new experiment. Pin keeps a run at the top of the list.",
+                    Type::LABEL,
+                    colors.text_faint,
+                ))
+            })
     }
 
     /// One segment of the theme segmented control on the Settings page.
@@ -3870,7 +3877,6 @@ impl Console {
                     .flex()
                     .flex_col()
                     .gap(px(Space::MD))
-                    .mb_5()
                     .child(label("Start from an example", Type::LABEL, colors.text_faint))
                     .child(self.presets_block(colors, cx)),
             )
@@ -3935,7 +3941,7 @@ impl Console {
                         self.inputs.prompt.clone(),
                         FONT_ARABIC_NAME,
                         Type::SUBSECTION,
-                        Some(220.0),
+                        Some(150.0),
                         cx,
                     ))
                     .child(
@@ -5306,7 +5312,7 @@ impl Console {
                                 "output-scroll:{title}"
                             ))))
                             .flex_1()
-                            .min_h(px(150.0))
+                            .min_h(px(88.0))
                             .max_h(px(420.0))
                             .overflow_y_scroll()
                             .w_full()
@@ -5389,7 +5395,7 @@ impl Console {
             .flex_col()
             .w(relative(0.5))
             .min_w(px(0.0))
-            .min_h(px(220.0))
+            .min_h(px(150.0))
             .overflow_hidden()
             .rounded(px(Radius::LG))
             .border_1()
