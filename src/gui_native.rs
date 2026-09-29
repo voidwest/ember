@@ -457,6 +457,7 @@ impl WorkspaceStep {
 
 #[derive(Debug, Clone, Copy)]
 enum Preset {
+    SilenceEarly,
     ZeroMiddle,
     ScaleLate,
     CopyEarlier,
@@ -2192,6 +2193,23 @@ impl Console {
                 self.site = "after-mlp".to_string();
                 self.layer = layers.map_or(8, |count| count / 2).to_string();
             }
+            Preset::SilenceEarly => {
+                // Found by probing a real 16-layer model: silencing an early
+                // layer's output at the last prompt token makes the answer
+                // drift completely ("Paris..." becomes talk of fog and quiet
+                // streets), where zeroing a middle MLP changes nothing at all.
+                // The prompt is set too, so the example reads the same on a
+                // machine whose form still holds the Arabic default.
+                self.op = "scale".to_string();
+                self.site = "after-layer".to_string();
+                self.value = "0.0".to_string();
+                self.token = "prompt-final".to_string();
+                self.prompt = "The capital of France is".to_string();
+                // Short: the effect shows within a couple of dozen tokens,
+                // and a live demo should not wait on a long generation.
+                self.max_tokens = "24".to_string();
+                self.layer = layers.map_or(6, |count| count * 3 / 8).to_string();
+            }
             Preset::ScaleLate => {
                 self.op = "scale".to_string();
                 self.site = "after-mlp".to_string();
@@ -3356,7 +3374,7 @@ impl Console {
         });
         let example = cx.listener(|console, _: &ClickEvent, _, cx| {
             console.goto(View::Experiment, cx);
-            console.apply_preset(Preset::ZeroMiddle, cx);
+            console.apply_preset(Preset::SilenceEarly, cx);
             console.step = WorkspaceStep::Prompt;
             cx.notify();
         });
@@ -3639,6 +3657,11 @@ impl Console {
     fn presets_block(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         let presets = [
             (
+                Preset::SilenceEarly,
+                "Silence an early layer",
+                "Watch the answer drift",
+            ),
+            (
                 Preset::ZeroMiddle,
                 "Zero a middle layer",
                 "Causal ablation, cleanly scoped",
@@ -3670,8 +3693,10 @@ impl Console {
             .gap(px(Space::SM))
             .children(presets.into_iter().map(|(preset, title, hint)| {
                 div()
-                    .flex_1()
-                    .min_w(px(420.0))
+                    // Half the row, not flex_1: with an odd number of examples
+                    // the last one stretched across the whole width.
+                    .w(relative(0.49))
+                    .min_w(px(300.0))
                     .child(self.preset_card(colors, preset, title, hint, cx))
             }))
     }
@@ -5861,6 +5886,15 @@ pub(crate) fn run_gui_command(
         // EMBER_GUI_TEST_LIVE drives the real console end to end with a real
         // worker and model instead of rendering fixtures. Run it with
         // XDG_CONFIG_HOME pointing at a scratch directory: it writes history.
+        // EMBER_GUI_TEST_PROBE=<model> runs a batch of configurations on one
+        // loaded model and prints which ones change the generated text -- for
+        // choosing a demo experiment with a visible effect.
+        if let (Some(model), true) = (
+            std::env::var_os("EMBER_GUI_TEST_PROBE"),
+            std::env::var_os("XDG_CONFIG_HOME").is_some(),
+        ) {
+            return probe_examples(model.to_string_lossy().into_owned());
+        }
         if let (Some(model), true) = (
             std::env::var_os("EMBER_GUI_TEST_LIVE"),
             std::env::var_os("XDG_CONFIG_HOME").is_some(),
@@ -6844,6 +6878,116 @@ mod kit_tests {
 }
 
 
+
+/// Run a batch of interventions on one loaded model and report which change
+/// the words. Output is plain text on stderr; nothing is rendered or saved.
+#[cfg(all(target_os = "macos", feature = "gui-tests"))]
+fn probe_examples(model: String) -> anyhow::Result<()> {
+    let platform = gpui_kit::platform::current_platform(true);
+    let mut context = HeadlessAppContext::with_platform(
+        platform.text_system(),
+        Arc::new(icons::Assets),
+        gpui_kit::platform::current_headless_renderer,
+    );
+    context.update(|cx| {
+        gpui_kit::init(cx);
+        cx.text_system()
+            .add_fonts(vec![
+                Cow::Borrowed(FONT_SANS),
+                Cow::Borrowed(FONT_MONO),
+                Cow::Borrowed(FONT_ARABIC),
+            ])
+            .unwrap();
+    });
+    let (tx, rx) = spawn_worker(ember::quant_k::KStrategy::Auto, false);
+    let mut console = None;
+    let handle = context.open_window(size(px(1200.), px(800.)), |window, cx| {
+        let view = cx.new(|cx| Console::new(tx, rx, true, window, cx));
+        console = Some(view.clone());
+        cx.new(|cx| gpui_kit::component::Root::new(view, window, cx))
+    })?;
+    let console = console.unwrap();
+    let prompt = std::env::var("EMBER_GUI_TEST_PROMPT")
+        .unwrap_or_else(|_| "The capital of France is".to_string());
+    // (op, site, layer, value)
+    let configs: Vec<(&str, &str, &str, &str)> = vec![
+        ("zero", "after-layer", "15", "1.0"),
+        ("zero", "after-layer", "14", "1.0"),
+        ("zero", "after-layer", "12", "1.0"),
+        ("zero", "after-layer", "8", "1.0"),
+        ("zero", "after-mlp", "12", "1.0"),
+        ("scale", "after-layer", "14", "8.0"),
+        ("scale", "after-layer", "10", "4.0"),
+        ("scale", "after-mlp", "12", "10.0"),
+        ("scale", "after-mlp", "8", "-2.0"),
+        ("scale", "after-layer", "6", "0.0"),
+    ];
+    for (op, site, layer, value) in configs {
+        context.update_window(handle.into(), |_, _, cx| {
+            console.update(cx, |console, cx| {
+                console.model_path = model.clone();
+                console
+                    .inputs
+                    .model
+                    .update(cx, |input, cx| input.set_value(model.clone(), cx));
+                console.op = op.into();
+                console.site = site.into();
+                console.layer = layer.into();
+                console.value = value.into();
+                console.token = "prompt-final".into();
+                    console.prompt = prompt.clone();
+                for (input, text) in [
+                    (console.inputs.layer.clone(), layer.to_string()),
+                    (console.inputs.value.clone(), value.to_string()),
+                    (console.inputs.prompt.clone(), prompt.clone()),
+                ] {
+                    console.set_input_value(input, text, cx);
+                }
+                console.comparison = None;
+                console.baseline = None;
+                console.error = None;
+                console.run();
+            });
+        })?;
+        let started = std::time::Instant::now();
+        loop {
+            context.advance_clock(Duration::from_millis(50));
+            context.run_until_parked();
+            std::thread::sleep(Duration::from_millis(50));
+            context.update_window(handle.into(), |_, _, cx| {
+                console.update(cx, |console, cx| {
+                    console.drain_replies(cx);
+                });
+            })?;
+            let (done, error) = console.read_with(&context, |c, _| {
+                (c.comparison.is_some() && c.status == Status::Idle, c.error.clone())
+            });
+            if let Some(error) = error {
+                eprintln!("PROBE {op} {site} L{layer} x{value}: ERROR {error}");
+                break;
+            }
+            if done {
+                let line = console.read_with(&context, |c, _| {
+                    let comparison = c.comparison.as_ref().unwrap();
+                    format!(
+                        "changed={} first_step={:?} peak={:?}@{:?}\n    base: {:?}\n    intv: {:?}",
+                        !comparison.generated_text_equal,
+                        comparison.first_token_divergence,
+                        comparison.landmarks.peak_relative_l2,
+                        comparison.landmarks.peak_layer,
+                        c.baseline.as_ref().map(|b| b.text.trim().chars().take(70).collect::<String>()),
+                        c.intervention.as_ref().map(|b| b.text.trim().chars().take(70).collect::<String>()),
+                    )
+                });
+                eprintln!("PROBE {op} {site} L{layer} x{value}: {line}");
+                break;
+            }
+            anyhow::ensure!(started.elapsed() < Duration::from_secs(300), "probe run timed out");
+        }
+    }
+    Ok(())
+}
+
 /// The first-run path, end to end: Home, an example, the three steps, a real
 /// run on a real model with a live worker, then the result, Copy summary and
 /// Runs. A frame is saved whenever the run's status changes, so the progress
@@ -6914,14 +7058,6 @@ fn render_live_flow(directory: &std::path::Path, model: String) -> anyhow::Resul
         console.read_with(&context, |c, _| c.step) == WorkspaceStep::Prompt,
         "Try an example did not land on the Prompt step"
     );
-    context.update_window(handle.into(), |_, _, cx| {
-        console.update(cx, |console, cx| {
-            console.prompt = "The capital of France is".into();
-            console.max_tokens = "8".into();
-            let prompt = console.inputs.prompt.clone();
-            console.set_input_value(prompt, "The capital of France is".into(), cx);
-        });
-    })?;
     shot(&mut context, "prompt")?;
     click(&mut context, "btn:Continue: Intervention")?;
     shot(&mut context, "intervention")?;
