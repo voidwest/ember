@@ -329,3 +329,24 @@ builds with `gui-tests`; it is not part of the release CLI contract.
 Desktop accessibility inspection remains unverified: the macOS window starts,
 but the inspection tool times out when querying Ember. Offscreen render checks
 and virtual-window interaction tests do not establish VoiceOver compatibility.
+
+## First-run and presentation aids
+
+- **Home** carries a three-step "How Ember works", a **Try an example** button
+  (offered only when no draft is waiting to be resumed) and **See a sample
+  result**.
+- The sample result opens Review with a finished comparison and needs no model.
+  Its numbers are illustrative -- shaped like a real Llama-3.2-1B run of
+  "scale x0.5 at layer 8" -- and the page says so. It is never written to run
+  history or saved as a draft, and the first real run replaces it.
+- **Presentation mode** (command palette) scales text by 1.18, hides the sidebar
+  and inspector, and restores both on exit. Pane toggles made while presenting
+  are not persisted.
+- Narrow windows fold the inspector away below 1200pt and the sidebar below
+  960pt without changing the saved preferences.
+- On macOS the Arabic face is the system Geeza Pro: the bundled Noto Naskh
+  renders its dots detached under this text stack.
+- Keyboard focus rings come from the kit's Button (`focus_ring_enabled`
+  defaults on and paints when focused). The offscreen renderer cannot move
+  keyboard focus, so the ring has been confirmed in the kit source, not in a
+  screenshot.

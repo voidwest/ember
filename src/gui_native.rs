@@ -984,6 +984,8 @@ struct Console {
     inspector_open: bool,
     /// Whether the window is wide enough to show the inspector this frame.
     inspector_fits: bool,
+    /// The Review page is showing the built-in illustrative sample, not a run.
+    sample: bool,
     sidebar_open: bool,
     /// Presentation mode, and the panes it hid so leaving restores them.
     presentation: Option<(bool, bool)>,
@@ -1218,6 +1220,7 @@ impl Console {
             // their last state across launches -- under gui-tests the files
             // are ignored so the fixtures stay deterministic.
             inspector_fits: true,
+            sample: false,
             inspector_open: if cfg!(feature = "gui-tests") {
                 false
             } else {
@@ -1438,7 +1441,9 @@ impl Console {
                 format!(
                     "\u{2264}{} tokens \u{00b7} seed 0 \u{00b7} {}",
                     context.max_tokens,
-                    if self.baseline.is_some() && self.status == Status::Idle {
+                    if self.sample {
+                        "sample"
+                    } else if self.baseline.is_some() && self.status == Status::Idle {
                         "measured"
                     } else {
                         "planned"
@@ -1456,6 +1461,7 @@ impl Console {
     }
 
     fn send_run(&mut self, cfg: RunConfig) {
+        self.sample = false;
         self.status = Status::Running;
         self.step = WorkspaceStep::Review;
         self.pending_context = Some(self.form_values());
@@ -1516,6 +1522,7 @@ impl Console {
                 },
                 WorkerReply::RunDone(result) => match *result {
                     Ok(bundle) => {
+                        self.sample = false;
                         self.result_context = self.pending_context.take();
                         self.baseline = Some(bundle.baseline.clone());
                         self.intervention = Some(bundle.intervention.clone());
@@ -1760,6 +1767,35 @@ impl Console {
         if self.presentation.is_none() {
             theme::persist_flag("sidebar", self.sidebar_open);
         }
+        cx.notify();
+    }
+
+    /// Open Review on the built-in sample: a finished comparison a newcomer
+    /// (or a demo with no model on the machine) can read without running
+    /// anything. It is labelled as illustrative on the page, and the first
+    /// real run replaces it.
+    fn show_sample(&mut self, cx: &mut Context<Self>) {
+        let (baseline, intervention, comparison, values) = sample_result();
+        let model_path = self.model_path.clone();
+        self.apply_form_values(
+            FormValues {
+                model_path,
+                ..values.clone()
+            },
+            cx,
+        );
+        self.layer_series = Arc::from(comparison.layers.clone());
+        self.baseline = Some(baseline);
+        self.intervention = Some(intervention);
+        self.comparison = Some(comparison);
+        self.result_context = Some(values);
+        self.verification = None;
+        self.restore = None;
+        self.selected_layer = Some(8);
+        self.result_view = ResultView::Overview;
+        self.sample = true;
+        self.goto(View::Experiment, cx);
+        self.step = WorkspaceStep::Review;
         cx.notify();
     }
 
@@ -2510,6 +2546,10 @@ impl Console {
 
     /// Snapshot the current form as the resume point.
     fn save_draft(&mut self) {
+        // The sample rewrites the form; it must not become a draft to resume.
+        if self.sample {
+            return;
+        }
         let values = self.form_values();
         let revision = self
             .store
@@ -3187,6 +3227,9 @@ impl Console {
         let resume = cx.listener(|console, _: &ClickEvent, _, cx| {
             console.restore_draft(cx);
         });
+        let sample = cx.listener(|console, _: &ClickEvent, _, cx| {
+            console.show_sample(cx);
+        });
         let example = cx.listener(|console, _: &ClickEvent, _, cx| {
             console.goto(View::Experiment, cx);
             console.apply_preset(Preset::ZeroMiddle, cx);
@@ -3446,6 +3489,13 @@ impl Console {
                             .accessibility_label("Try a ready-made example experiment")
                             .on_click(example)
                     }))
+                    .child(
+                        Button::new("home-sample")
+                            .label("See a sample result")
+                            .tooltip("Read a finished comparison without running anything")
+                            .accessibility_label("Open a sample result")
+                            .on_click(sample),
+                    )
                     .child(
                         Button::new("home-models")
                             .label("Manage models")
@@ -4628,7 +4678,7 @@ impl Console {
                     // exact configuration, or duplicate it and change one
                     // field. Quiet text commands; the bottom bar stays the
                     // primary runner.
-                    .when(has_results, |header| {
+                    .when(has_results && !self.sample, |header| {
                         header
                             .child(text_button(
                                 "review-rerun",
@@ -4669,6 +4719,25 @@ impl Console {
                         )
                     }),
             )
+            .when(has_results && self.sample, |page| {
+                page.child(
+                    div()
+                        .w_full()
+                        .flex()
+                        .flex_col()
+                        .gap(px(Space::XS))
+                        .px(px(Space::MD))
+                        .py(px(Space::SM))
+                        .rounded(px(Radius::MD))
+                        .bg(colors.accent_soft)
+                        .child(label("Sample result", Type::LABEL, colors.accent))
+                        .child(label(
+                            "Illustrative data, so you can see what a finished comparison looks like. Run your own experiment and it replaces this.",
+                            Type::LABEL,
+                            colors.text,
+                        )),
+                )
+            })
             .when(has_results, |page| page.child(div().pt(px(Space::SM)).child(self.result_tabs(colors, cx))))
             .child(result_body)
             .when(has_results && self.result_view != ResultView::Trace, |page| {
@@ -5316,6 +5385,7 @@ impl Console {
             Status::Idle => match self.step {
                 WorkspaceStep::Prompt => "Continue: Intervention",
                 WorkspaceStep::Intervention => "Continue: Review",
+                WorkspaceStep::Review if self.sample => "Run this for real",
                 WorkspaceStep::Review if self.baseline.is_some() => "Run experiment again",
                 WorkspaceStep::Review => "Run experiment",
             },
@@ -5868,6 +5938,100 @@ fn seed_store() -> AppStore {
 #[cfg(not(feature = "gui-tests"))]
 fn seed_store() -> AppStore {
     AppStore::default()
+}
+
+/// The built-in sample: what a finished comparison looks like. The numbers
+/// are illustrative -- shaped like a real Llama-3.2-1B run of "scale x0.5 at
+/// layer 8" -- and the page says so; nothing here claims to be a measurement.
+fn sample_result() -> (RunOutput, RunOutput, ExperimentComparison, FormValues) {
+    let text = " Paris. The city is known for its art, its food and its history.";
+    let make = |wall_ms: f64| RunOutput {
+        text: text.to_string(),
+        generated_token_ids: (1..=16).collect(),
+        generated_token_texts: vec![String::new(); 16],
+        prompt_tokens: 6,
+        generated_tokens: 16,
+        bundle_dir: "sample".to_string(),
+        semantic_hash: "0000000000000000".to_string(),
+        payload_hash: "00000000".to_string(),
+        wall_ms,
+        decode_tps: Some(16.0 / (wall_ms / 1000.0)),
+        events: Vec::new(),
+    };
+    let series: [(f64, f64); 16] = [
+        (0.0, 0.0),
+        (0.0, 0.0),
+        (0.0, 0.0),
+        (0.0, 0.0),
+        (0.0, 0.0),
+        (0.0, 0.0),
+        (0.0, 0.0),
+        (0.0, 0.0),
+        (0.296, 0.045),
+        (0.245, 0.031),
+        (0.207, 0.024),
+        (0.158, 0.015),
+        (0.150, 0.013),
+        (0.138, 0.011),
+        (0.141, 0.011),
+        (0.141, 0.011),
+    ];
+    let layers = series
+        .iter()
+        .enumerate()
+        .map(|(layer, (l2, cosine))| crate::gui::LayerMetric {
+            layer,
+            relative_l2_difference: Some(*l2),
+            cosine_distance: Some(*cosine),
+            maximum_absolute_difference: None,
+            exact: *l2 == 0.0,
+        })
+        .collect();
+    let pieces = [
+        " Paris", ".", " The", " city", " is", " known", " for", " its", " art", ",", " its",
+        " food", " and", " its", " history", ".",
+    ];
+    let tokens = pieces
+        .iter()
+        .enumerate()
+        .map(|(index, piece)| crate::gui::TokenMetric {
+            position: index + 1,
+            baseline_token_id: Some(index as u32 + 1),
+            intervention_token_id: Some(index as u32 + 1),
+            baseline_text: Some((*piece).to_string()),
+            intervention_text: Some((*piece).to_string()),
+            differs: false,
+        })
+        .collect();
+    let comparison = ExperimentComparison {
+        layers,
+        tokens,
+        first_token_divergence: None,
+        generated_tokens_equal: true,
+        generated_text_equal: true,
+        landmarks: crate::gui::DivergenceLandmarks {
+            first_layer_divergence: Some(8),
+            peak_layer: Some(8),
+            peak_relative_l2: Some(0.296),
+            stable_token_tail_step: None,
+        },
+        layer_token_grid: None,
+    };
+    let values = FormValues {
+        model_path: String::new(),
+        prompt: "The capital of France is".to_string(),
+        max_tokens: "24".to_string(),
+        execution: "reference".to_string(),
+        site: "after-mlp".to_string(),
+        layer: "8".to_string(),
+        op: "scale".to_string(),
+        value: "0.5".to_string(),
+        source: "capture".to_string(),
+        source_layer: "0".to_string(),
+        token: "prompt-final".to_string(),
+        span: String::new(),
+    };
+    (make(1_180.0), make(1_240.0), comparison, values)
 }
 
 /// A finished comparison, for reviewing the Review page at real density.
@@ -6577,7 +6741,10 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
                             window.hover(SharedString::from(id.clone()), cx);
                         }
                         for _ in 0..tabs {
-                            window.press("tab", cx);
+                            if let Ok(stroke) = Keystroke::parse("tab") {
+                                window.dispatch_keystroke(stroke, cx);
+                            }
+                            window.draw(cx).clear(cx);
                         }
                         window.draw(cx).clear(cx);
                     })?;
@@ -6591,6 +6758,46 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
                 }
             }
         }
+        // The built-in sample result, which needs no model.
+        for (appearance, mode) in [
+            ("light", AppearanceMode::Light),
+            ("dark", AppearanceMode::Dark),
+        ] {
+            for result in [ResultView::Overview, ResultView::Layers, ResultView::Tokens] {
+                context.update_window(handle.into(), |_, window, cx| {
+                    console.update(cx, |console, cx| {
+                        console.appearance = mode;
+                        console.inspector_open = true;
+                        if !console.sample {
+                            console.show_sample(cx);
+                        }
+                        console.result_view = result;
+                        console.sync_kit_theme(cx);
+                    });
+                    window.draw(cx).clear(cx);
+                })?;
+                context.run_until_parked();
+                context.update_window(handle.into(), |_, window, cx| {
+                    window.draw(cx).clear(cx);
+                })?;
+                context
+                    .capture_screenshot(handle.into())?
+                    .save(directory.join(format!(
+                        "{name}-{appearance}-sample-{}.png",
+                        result.label().replace(' ', "-")
+                    )))?;
+            }
+        }
+        context.update_window(handle.into(), |_, _, cx| {
+            console.update(cx, |console, _| {
+                console.sample = false;
+                console.baseline = None;
+                console.intervention = None;
+                console.comparison = None;
+                console.layer_series = Arc::from([]);
+                console.result_context = None;
+            });
+        })?;
         if let Ok(model) = std::env::var("EMBER_GUI_TEST_MODEL") {
             let config = context.update_window(handle.into(), |_, _, cx| {
                 console.update(cx, |console, _| {
