@@ -355,3 +355,26 @@ and virtual-window interaction tests do not establish VoiceOver compatibility.
   it on Review without a model. Runs recorded before results were kept load
   fine and simply have no Open. Per-side timings are not kept, so a reopened run
   shows none rather than an invented split.
+
+## Packaging on macOS
+
+`scripts/bundle-macos.sh` builds the release binary and wraps it as
+`target/bundle/Ember.app` with an icon, an `Info.plist` and a small launcher, so
+the app gets a Dock icon and the menu bar reads "Ember" instead of "ember".
+
+```sh
+scripts/bundle-macos.sh
+open target/bundle/Ember.app
+```
+
+Ember finds `.gguf` files by scanning the folder it starts in, and a Finder
+launch starts in `/`, so the launcher starts in `$EMBER_MODELS_DIR` if set and
+otherwise in the checkout the bundle was built from. The icon is drawn by
+`scripts/make_icon.py` (standard library only) and stored as
+`assets/macos/Ember.icns`. The bundle is unsigned; Gatekeeper will ask on first
+open on another machine.
+
+The menu bar (Ember, Edit, Experiment, View, Help) routes to the same console
+methods as the command palette and the key handler. Shortcut hints are not
+shown in the menus: the shortcuts are handled by the console's key handler, not
+by action key bindings, and binding both would fire each twice.
