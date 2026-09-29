@@ -173,6 +173,26 @@ impl AppStore {
         ordered
     }
 
+    /// Delete one run by its number. A history you cannot prune is a log you
+    /// eventually stop opening; `false` simply means the row was already gone.
+    pub fn remove_run(&mut self, number: u64) -> bool {
+        let before = self.runs.len();
+        self.runs.retain(|run| run.number != number);
+        before != self.runs.len()
+    }
+
+    /// Flip a run's pinned state. Ordering reads `pinned` on every render, so
+    /// this is the whole feature; `false` means no such run.
+    pub fn toggle_pin(&mut self, number: u64) -> bool {
+        match self.runs.iter_mut().find(|run| run.number == number) {
+            Some(run) => {
+                run.pinned = !run.pinned;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Serialise with the schema stamped, ready for [`write`].
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut stamped = self.clone();

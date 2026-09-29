@@ -32,9 +32,9 @@ impl AppearanceMode {
 
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::System => "SYSTEM",
-            Self::Dark => "DARK",
-            Self::Light => "LIGHT",
+            Self::System => "System",
+            Self::Dark => "Dark",
+            Self::Light => "Light",
         }
     }
 
@@ -75,6 +75,30 @@ fn settings_path() -> PathBuf {
     std::env::temp_dir().join("ember-native-console-theme")
 }
 
+/// A one-word persisted workspace flag, one file per key, beside the theme
+/// setting. The inspector and sidebar remember their state across launches --
+/// a workspace that resets itself is a demo, not a tool.
+fn flag_path(key: &str) -> PathBuf {
+    let mut path = settings_path();
+    path.set_file_name(format!("native-console-{key}"));
+    path
+}
+
+pub(super) fn load_flag(key: &str) -> Option<bool> {
+    std::fs::read_to_string(flag_path(key))
+        .ok()
+        .map(|value| value.trim() == "true")
+}
+
+pub(super) fn persist_flag(key: &str, value: bool) {
+    let path = flag_path(key);
+    if let Some(parent) = path.parent()
+        && std::fs::create_dir_all(parent).is_ok()
+    {
+        let _ = std::fs::write(path, if value { "true" } else { "false" });
+    }
+}
+
 /// Semantic colors. Layout code names the role it needs instead of selecting
 /// an arbitrary shade, so light mode can be designed independently.
 #[derive(Clone, Copy)]
@@ -83,6 +107,13 @@ pub(super) struct Colors {
     pub sidebar: Rgba,
     pub surface: Rgba,
     pub surface_raised: Rgba,
+    /// One luminance step above `surface`: the hover state for quiet rows,
+    /// tabs and toolbar controls. Never used for resting surfaces.
+    pub surface_hover: Rgba,
+    /// The selected-row fill for navigation, tabs and segmented choices.
+    /// Deliberately neutral -- selection is position, not emphasis, so the
+    /// accent stays reserved for the intervention and the primary action.
+    pub selection: Rgba,
     pub text: Rgba,
     pub text_muted: Rgba,
     pub text_faint: Rgba,
@@ -95,9 +126,7 @@ pub(super) struct Colors {
     pub warn: Rgba,
     pub busy: Rgba,
     pub err_box_bg: Rgba,
-    pub err_box_border: Rgba,
     pub warn_box_bg: Rgba,
-    pub warn_box_border: Rgba,
 }
 
 pub(super) fn light() -> Colors {
@@ -110,6 +139,8 @@ pub(super) fn light() -> Colors {
         sidebar: rgb(0xf5f3f1),
         surface: rgb(0xfdfdfc),
         surface_raised: rgb(0xffffff),
+        surface_hover: rgb(0xf1efeb),
+        selection: rgb(0xe9e5df),
         text: rgb(0x2e2c29),
         text_muted: rgb(0x6b6862),
         // Faint is the smallest metadata text in the UI, so it is held to the
@@ -125,9 +156,7 @@ pub(super) fn light() -> Colors {
         warn: rgb(0x8a6410),
         busy: rgb(0x9c3f70),
         err_box_bg: rgb(0xfbeceb),
-        err_box_border: rgb(0xe3bdb8),
         warn_box_bg: rgb(0xf8f2e2),
-        warn_box_border: rgb(0xddc78f),
     }
 }
 
@@ -142,6 +171,8 @@ pub(super) fn dark() -> Colors {
         sidebar: rgb(0x141312),
         surface: rgb(0x1a1917),
         surface_raised: rgb(0x232120),
+        surface_hover: rgb(0x211f1d),
+        selection: rgb(0x262320),
         text: rgb(0xe6e2dc),
         text_muted: rgb(0xa8a29a),
         // Held to 4.5:1 on the raised surface too, which is where the old
@@ -156,9 +187,7 @@ pub(super) fn dark() -> Colors {
         warn: rgb(0xd8a94a),
         busy: rgb(0xdb6a9c),
         err_box_bg: rgb(0x2b1d1a),
-        err_box_border: rgb(0x5c3830),
         warn_box_bg: rgb(0x2a251a),
-        warn_box_border: rgb(0x584a2e),
     }
 }
 
@@ -172,7 +201,7 @@ pub(super) struct Type;
 
 impl Type {
     /// Page title. Large enough to anchor a screen, not a hero.
-    pub(super) const TITLE: f32 = 24.0;
+    pub(super) const TITLE: f32 = 28.0;
     /// Section title within a page.
     pub(super) const SECTION: f32 = 17.0;
     /// Sub-heading / card title.

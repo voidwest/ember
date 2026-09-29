@@ -4,7 +4,7 @@ use super::input::TextInput;
 use super::theme::{Colors, Radius, Space, Type};
 use gpui_kit::component::{
     button::{Button, ButtonVariants},
-    Disableable, Icon, Sizable,
+    Disableable, Sizable,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -59,18 +59,7 @@ pub(super) fn multiline(content: &str, size: f32, color: Rgba, font: &'static st
 }
 
 pub(super) fn section_label(colors: &Colors, label_text: &'static str) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap_2()
-        .child(
-            div()
-                .w(px(2.0))
-                .h(px(14.0))
-                .bg(colors.border_strong)
-                .rounded_full(),
-        )
-        .child(label(label_text, Type::LABEL, colors.text_faint))
+    label(label_text, Type::LABEL, colors.text_faint)
 }
 
 pub(super) fn field(colors: &Colors, title: &'static str, control: impl IntoElement) -> Div {
@@ -106,26 +95,21 @@ pub(super) fn rule_h(colors: &Colors) -> Div {
     div().w_full().h(px(1.0)).bg(colors.border)
 }
 
+/// A status pill. Sentence case, tinted fill, no border: the full radius and
+/// the tint are what say "state", and a ring around a pill is one edge too
+/// many. Reserved for genuine states -- never a section label or a filter.
 pub(super) fn chip(label_text: &str, color: Rgba) -> Div {
     let hsla = Hsla::from(color);
     div()
         .px_2()
-        .py_1()
+        .py(px(2.0))
         .bg(hsla.opacity(0.13))
-        .border_1()
-        .border_color(hsla.opacity(0.40))
-        .rounded(px(Radius::SM))
-        .child(label(label_text.to_string(), 10.0, color))
+        .rounded_full()
+        .child(label(label_text.to_string(), 11.0, color))
 }
 
 pub(super) fn status_dot(color: Rgba, busy: bool) -> AnyElement {
-    let hsla = Hsla::from(color);
-    let dot = div()
-        .size(px(8.0))
-        .bg(color)
-        .border_1()
-        .border_color(hsla.opacity(0.45))
-        .rounded_full();
+    let dot = div().size(px(8.0)).bg(color).rounded_full();
     if busy {
         dot.with_animation(
             "busy-status-pulse",
@@ -138,32 +122,30 @@ pub(super) fn status_dot(color: Rgba, busy: bool) -> AnyElement {
     }
 }
 
-pub(super) fn icon_button(
-    _colors: &Colors,
-    icon_path: &'static str,
-    accessible_label: &'static str,
+/// A quiet text command. Replaces the icon buttons: the chrome of this
+/// console is typography, so a one-word label beats a glyph everywhere the
+/// action is not already obvious from its row.
+pub(super) fn text_button(
+    id: impl Into<SharedString>,
+    label_text: &'static str,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Button {
-    Button::new(SharedString::from(format!(
-        "icon-button:{accessible_label}"
-    )))
-    .ghost()
-    .small()
-    .icon(Icon::default().path(icon_path))
-    .tooltip(accessible_label)
-    .on_click(on_click)
+    Button::new(id.into())
+        .ghost()
+        .small()
+        .label(label_text)
+        .tooltip(label_text)
+        .on_click(on_click)
 }
 
 pub(super) fn btn_primary(
     _colors: &Colors,
-    icon_path: &'static str,
     label_text: &str,
     on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
 ) -> Button {
     let button = Button::new(SharedString::from(format!("btn:{label_text}")))
         .primary()
         .w_full()
-        .icon(Icon::default().path(icon_path))
         .label(label_text.to_string())
         .disabled(on_click.is_none());
     match on_click {
@@ -174,13 +156,11 @@ pub(super) fn btn_primary(
 
 pub(super) fn btn_secondary(
     _colors: &Colors,
-    icon_path: &'static str,
     label_text: &str,
     on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
 ) -> Button {
     let button = Button::new(SharedString::from(format!("btn:{label_text}")))
         .w_full()
-        .icon(Icon::default().path(icon_path))
         .label(label_text.to_string())
         .disabled(on_click.is_none());
     match on_click {

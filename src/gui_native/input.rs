@@ -15,6 +15,7 @@ pub(super) enum InputId {
     Span,
     MaxTokens,
     Prompt,
+    PaletteQuery,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum InputKind {
@@ -90,6 +91,12 @@ impl TextInput {
     }
     #[cfg(all(test, feature = "gui-tests"))]
     pub(super) fn focus_for_test(&self, window: &mut Window, cx: &mut App) {
+        self.focus(window, cx);
+    }
+
+    /// Give this control keyboard focus. Used when the command palette opens
+    /// so typing lands in its query field immediately.
+    pub(super) fn focus(&self, window: &mut Window, cx: &mut App) {
         let handle = match &self.control {
             Control::Line(state) => state.read(cx).focus_handle(cx),
             Control::Paragraph(state) => state.read(cx).focus_handle(cx),
