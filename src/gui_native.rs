@@ -119,6 +119,19 @@ fn operation_hint(operation: &str) -> &'static str {
     }
 }
 
+/// What the chosen change does, in a sentence a first-year student can act on.
+/// The hint on the card says what the option is; this says what will happen.
+fn operation_explainer(operation: &str) -> &'static str {
+    match operation {
+        "zero" => "Erases the model's activation at this point, as if that part of the computation had produced nothing. If the answer breaks, that part mattered.",
+        "scale" => "Multiplies the activation by the strength. 1.0 changes nothing, 0.5 halves it, 0 removes it, and above 1 amplifies it.",
+        "replace" => "Swaps the activation for one the model produced at another layer, to test whether that information is interchangeable.",
+        "interpolate" => "Blends the current activation with a captured one. 0 keeps the original, 1 replaces it completely.",
+        "add-delta" => "Adds the difference between two captured activations, nudging the model in the direction that difference points.",
+        _ => "Configure an exact internal change.",
+    }
+}
+
 /// Plain-language name for a hook site.
 ///
 /// The exact contract names stay available in Advanced controls, but the
@@ -1686,6 +1699,18 @@ impl Console {
         theme.radius = px(Radius::MD);
         theme.radius_lg = px(Radius::LG);
         theme.colors.border = colors.border.into();
+        // Ghost buttons, tabs, nav rows and tiles hover to the kit's accent
+        // token. Left at its default the shift was a single shade -- present
+        // but not noticeable -- so it is set from the console's own palette:
+        // a clear step above the selected-row fill, still neutral (the orange
+        // stays reserved for the intervention and the primary action).
+        let hover: Hsla = if self.appearance.is_dark(self.system_dark) {
+            rgb(0x34302c).into()
+        } else {
+            rgb(0xddd7cd).into()
+        };
+        theme.colors.accent = hover;
+        theme.colors.accent_foreground = colors.text.into();
         theme.primary = colors.accent.into();
         theme.primary_hover = colors.accent.into();
         theme.primary_active = colors.accent.into();
@@ -3142,6 +3167,52 @@ impl Console {
         let resume = cx.listener(|console, _: &ClickEvent, _, cx| {
             console.restore_draft(cx);
         });
+        let example = cx.listener(|console, _: &ClickEvent, _, cx| {
+            console.goto(View::Experiment, cx);
+            console.apply_preset(Preset::ZeroMiddle, cx);
+            console.step = WorkspaceStep::Prompt;
+            cx.notify();
+        });
+        // Ember's whole method in three sentences. No dashboard, no fake
+        // numbers: just the model a newcomer needs before the first click.
+        let how_step = |number: &'static str, title: &'static str, body: &'static str| {
+            div()
+                .flex_1()
+                .min_w(px(240.0))
+                .flex()
+                .flex_col()
+                .gap(px(Space::XS))
+                .child(label(number, Type::META, colors.accent))
+                .child(label(title, Type::BODY, colors.text))
+                .child(label(body, Type::LABEL, colors.text_muted))
+        };
+        let how_it_works = div()
+            .flex()
+            .flex_col()
+            .gap(px(Space::MD))
+            .child(label("How Ember works", Type::LABEL, colors.text_faint))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(Space::XL))
+                    .child(how_step(
+                        "1",
+                        "Ask",
+                        "Pick a local model and write a prompt. Ember runs it once, untouched, as the baseline.",
+                    ))
+                    .child(how_step(
+                        "2",
+                        "Change one thing",
+                        "Choose a spot inside the model and zero, scale or swap what it computes there.",
+                    ))
+                    .child(how_step(
+                        "3",
+                        "Compare",
+                        "Ember reruns with your change and shows whether the answer moved, and where inside the model it began.",
+                    )),
+            );
 
         // The draft section is the honest version of "continue where you left
         // off": it exists only when there is something to resume, and it names
@@ -3180,8 +3251,7 @@ impl Console {
                         .h_auto()
                         .py(px(Space::MD))
                         .px(px(Space::MD))
-                        .bg(colors.surface)
-                        .border_1()
+                                    .border_1()
                         .border_color(colors.border)
                         .rounded(px(Radius::LG))
                         .accessibility_label("Resume the saved experiment")
@@ -3347,12 +3417,20 @@ impl Console {
                             .on_click(start),
                     )
                     .child(
+                        Button::new("home-example")
+                            .label("Try an example")
+                            .tooltip("Load a ready-made experiment and step through it")
+                            .accessibility_label("Try a ready-made example experiment")
+                            .on_click(example),
+                    )
+                    .child(
                         Button::new("home-models")
                             .label("Manage models")
                             .on_click(models),
                     ),
             )
             .children(draft_section)
+            .child(how_it_works)
             .child(recent)
     }
 
@@ -3416,7 +3494,6 @@ impl Console {
             .compact()
             .py(px(Space::SM))
             .px(px(Space::MD))
-            .bg(colors.surface)
             .border_1()
             .border_color(colors.border)
             .rounded(px(Radius::MD))
@@ -3507,7 +3584,6 @@ impl Console {
             .selected(self.op == operation)
             // The chosen operation *is* the intervention, so it takes the
             // accent ring -- the one place selection and accent agree.
-            .bg(colors.surface)
             .border_1()
             .border_color(if self.op == operation {
                 colors.accent
@@ -3605,7 +3681,7 @@ impl Console {
                     .flex_col()
                     .gap(px(Space::MD))
                     .mb_5()
-                    .child(label("Presets", Type::LABEL, colors.text_faint))
+                    .child(label("Start from an example", Type::LABEL, colors.text_faint))
                     .child(self.presets_block(colors, cx)),
             )
             .child(group(
@@ -3865,6 +3941,13 @@ impl Console {
                             .gap(px(Space::SM))
                             .child(self.operation_card(colors, "add-delta", cx))
                             .child(div().flex_1()),
+                    )
+                    .child(
+                        div().pt(px(Space::XS)).child(label(
+                            operation_explainer(&self.op),
+                            Type::LABEL,
+                            colors.text_muted,
+                        )),
                     ),
             )
             // Where and Target are settings, not objects: spacing and section
@@ -3971,17 +4054,32 @@ impl Console {
                         ),
                     ),
                 };
+                // The verdict says what happened; the sentence under it says
+                // what that means, because a result nobody can interpret is
+                // just a number.
+                let meaning = match (unchanged, diverged_layer) {
+                    (true, Some(_)) => "The intervention disturbed the model's internal state, but the words it wrote came out the same. The change was absorbed before it reached the output.",
+                    (true, None) => "Nothing measurable changed. Try a stronger change, or an earlier layer, to see an effect.",
+                    (false, _) => "The intervention changed what the model wrote. The Layers tab shows where inside the model that change began.",
+                };
                 div()
                     .flex()
-                    .flex_row()
-                    .items_center()
+                    .flex_col()
                     .gap(px(Space::SM))
-                    .px_3()
-                    .py_2()
-                    .rounded(px(Radius::MD))
-                    .bg(colors.surface_raised)
-                    .child(status_dot(dot, false))
-                    .child(label(line, Type::SUBSECTION, colors.text))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(Space::SM))
+                            .px_3()
+                            .py_2()
+                            .rounded(px(Radius::MD))
+                            .bg(colors.surface_raised)
+                            .child(status_dot(dot, false))
+                            .child(label(line, Type::SUBSECTION, colors.text)),
+                    )
+                    .child(div().px_3().child(label(meaning, Type::LABEL, colors.text_muted)))
             }
             _ if self.busy() => div()
                 .px_3()
