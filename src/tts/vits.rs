@@ -2130,15 +2130,24 @@ fn ct_of(rows: &[f32], c: usize, t: usize) -> Vec<f32> {
     rows_to_ct(rows, c, t)
 }
 
+/// The MMS Arabic VITS GGUF used by the ignored layout probes below:
+/// `EMBER_VITS_GGUF`, or `~/ember-work/mms-tts/ara.vits.gguf`.
+#[cfg(test)]
+fn probe_model_path() -> std::path::PathBuf {
+    std::env::var_os("EMBER_VITS_GGUF")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            let home = std::env::var_os("HOME").unwrap_or_default();
+            std::path::Path::new(&home).join("ember-work/mms-tts/ara.vits.gguf")
+        })
+}
+
 #[cfg(test)]
 mod shape_probe {
     #[test]
     #[ignore]
     fn probe() {
-        let mut l = crate::loader::load_gguf(std::path::Path::new(
-            "/home/west/ember-work/mms-tts/ara.vits.gguf",
-        ))
-        .unwrap();
+        let mut l = crate::loader::load_gguf(super::probe_model_path()).unwrap();
         let t = l.take_f32("v.flow0.wn.in0.w").unwrap();
         println!("raw {:?}", t.shape());
     }
@@ -2161,10 +2170,7 @@ mod forensic {
     #[test]
     #[ignore]
     fn q_layout_probe() {
-        let mut l = crate::loader::load_gguf(std::path::Path::new(
-            "/home/west/ember-work/mms-tts/ara.vits.gguf",
-        ))
-        .unwrap();
+        let mut l = crate::loader::load_gguf(super::probe_model_path()).unwrap();
 
         let _ = l.metadata.get("vits.vocab");
         let w_hf = crate::tts::wavtokenizer::gguf_to_hf(&l.take_f32("v.layer.0.attn.q.w").unwrap());

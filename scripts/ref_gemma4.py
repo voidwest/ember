@@ -19,6 +19,7 @@ cos >= 0.999 through all 35 blocks (see scripts/gemma4_forensics.py).
 """
 import json
 import os
+from pathlib import Path
 import struct
 import sys
 
@@ -32,7 +33,11 @@ from transformers.models.gemma4.modeling_gemma4 import (
     Gemma4TextModel,
 )
 
-SRC = "/home/west/ember-work/gemma4-src"
+# Sources and outputs outside the repo live under EMBER_WORK (default
+# ~/ember-work).
+WORK = Path(os.environ.get("EMBER_WORK", Path.home() / "ember-work"))
+
+SRC = f"{WORK}/gemma4-src"
 
 
 
@@ -53,7 +58,7 @@ def assign(root, path, tensor):
 
 def main() -> None:
     prompt = sys.argv[1] if len(sys.argv) > 1 else "Hello"
-    out_dir = sys.argv[2] if len(sys.argv) > 2 else "/home/west/ember-work/ref_gemma4"
+    out_dir = sys.argv[2] if len(sys.argv) > 2 else f"{WORK}/ref_gemma4"
     os.makedirs(out_dir, exist_ok=True)
 
     tok = AutoTokenizer.from_pretrained(SRC)

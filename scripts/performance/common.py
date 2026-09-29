@@ -2,7 +2,7 @@
 import json, os, subprocess, sys, time, hashlib
 from pathlib import Path
 
-REPO = Path("/home/west/ember")
+REPO = Path(__file__).resolve().parents[2]
 BIN = REPO / "target" / "release" / "ember"
 PROMPT = "في الجملة التالية، الكلمة المميزة هي: كِتَاب. اشرح معناها."
 TOKENIZER = REPO / "tokenizer.json"

@@ -23,6 +23,7 @@ weights ember consumes (converted GGUFs come from the same safetensors).
 """
 import json
 import os
+from pathlib import Path
 import sys
 
 import numpy as np
@@ -36,8 +37,12 @@ from transformers.models.whisper.feature_extraction_whisper import (
     WhisperFeatureExtractor,
 )
 
-MODEL_DIR = "/home/west/ember-work/llama32"
-ULTRAVOX_SAFETENSORS = "/home/west/ember-work/ultravox/model.safetensors"
+# Sources and outputs outside the repo live under EMBER_WORK (default
+# ~/ember-work).
+WORK = Path(os.environ.get("EMBER_WORK", Path.home() / "ember-work"))
+
+MODEL_DIR = f"{WORK}/llama32"
+ULTRAVOX_SAFETENSORS = f"{WORK}/ultravox/model.safetensors"
 FE_ID = "openai/whisper-large-v3-turbo"
 
 DATE = "01 Jan 2026"

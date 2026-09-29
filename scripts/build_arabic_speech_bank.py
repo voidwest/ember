@@ -19,15 +19,20 @@ gitignored like all research data.
 import hashlib
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf  # noqa: F401  (via librosa dependency of datasets)
 
-ROOT = Path("/home/west/ember")
+ROOT = Path(__file__).resolve().parents[1]
 BANK = ROOT / "research" / "banks" / "arabic_speech_001"
-JFK = Path("/home/west/luminal/examples/whisper/assets/jfk.wav")
+JFK = Path(
+    os.environ.get(
+        "EMBER_JFK_WAV", Path.home() / "luminal/examples/whisper/assets/jfk.wav"
+    )
+)
 
 TARGETS = [
     # FLEURS publishes a single Arabic config (Egyptian-accented read MSA);

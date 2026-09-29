@@ -8,17 +8,21 @@ workload, stage timings).
 Usage: python scripts/bench_phase5.py --group audio --out results.jsonl
 """
 import argparse, json, os, subprocess, sys, time
+from pathlib import Path
 
-ROOT = "/home/west/ember"
+# Paths default to this checkout and to ~/ember-work (models and sources that
+# live outside the repo); set EMBER_WORK to point elsewhere.
+WORK = Path(os.environ.get("EMBER_WORK", Path.home() / "ember-work"))
+ROOT = str(Path(__file__).resolve().parents[1])
 E = f"{ROOT}/target/release/ember"
 ENV = {
-    "TEXT": "/home/west/ember/Llama-3.2-1B-Instruct-Q8_0.gguf",
-    "AUDIO": "/home/west/ember-work/ultravox/audio-f32.gguf",
-    "TOK": "/home/west/.cache/huggingface/hub/models--unsloth--Llama-3.2-1B/snapshots/9535bd9b1d1dea6acafbdc4813b728796aeb28da/tokenizer.json",
-    "TTS": "/home/west/ember-work/tts/outetts-gguf/OuteTTS-0.2-500M-Q8_0.gguf",
-    "TTSTOK": "/home/west/ember-work/tts/outetts-hf/tokenizer.json",
-    "CODEC": "/home/west/ember-work/tts/wavtokenizer-decoder-f32.gguf",
-    "VITS": "/home/west/ember-work/mms-tts/ara.vits.gguf",
+    "TEXT": f"{ROOT}/Llama-3.2-1B-Instruct-Q8_0.gguf",
+    "AUDIO": f"{WORK}/ultravox/audio-f32.gguf",
+    "TOK": f"{Path.home()}/.cache/huggingface/hub/models--unsloth--Llama-3.2-1B/snapshots/9535bd9b1d1dea6acafbdc4813b728796aeb28da/tokenizer.json",
+    "TTS": f"{WORK}/tts/outetts-gguf/OuteTTS-0.2-500M-Q8_0.gguf",
+    "TTSTOK": f"{WORK}/tts/outetts-hf/tokenizer.json",
+    "CODEC": f"{WORK}/tts/wavtokenizer-decoder-f32.gguf",
+    "VITS": f"{WORK}/mms-tts/ara.vits.gguf",
 }
 BANK = f"{ROOT}/research/banks/arabic_speech_001"
 

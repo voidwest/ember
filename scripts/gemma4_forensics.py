@@ -13,13 +13,19 @@ a real ember-side misinterpretation, not floating-point drift.
 """
 import json
 import os
+from pathlib import Path
 import sys
 
 import numpy as np
 import torch
 
-SRC = "/home/west/ember-work/gemma4-src"
-GGUF = "/home/west/ember/models/gemma-4-E2B-it.Q8_0.gguf"
+# Sources and outputs outside the repo live under EMBER_WORK (default
+# ~/ember-work).
+ROOT = Path(__file__).resolve().parents[1]
+WORK = Path(os.environ.get("EMBER_WORK", Path.home() / "ember-work"))
+
+SRC = f"{WORK}/gemma4-src"
+GGUF = f"{ROOT}/models/gemma-4-E2B-it.Q8_0.gguf"
 IDS = [2, 9259]  # BOS + "Hello" (matches the ember --dump-layers run)
 EPS = 1e-6
 
@@ -154,7 +160,7 @@ def attention(q, k, v, scale, sliding_window=None, total_len=None):
 
 
 def main():
-    out_dir = sys.argv[1] if len(sys.argv) > 1 else "/home/west/ember-work/gemma_forensics"
+    out_dir = sys.argv[1] if len(sys.argv) > 1 else f"{WORK}/gemma_forensics"
     os.makedirs(out_dir, exist_ok=True)
 
     from transformers import AutoTokenizer
