@@ -986,6 +986,9 @@ struct Console {
     inspector_fits: bool,
     /// The Review page is showing the built-in illustrative sample, not a run.
     sample: bool,
+    /// The result summary was just copied; shown on the button until the
+    /// user moves on.
+    copied: bool,
     sidebar_open: bool,
     /// Presentation mode, and the panes it hid so leaving restores them.
     presentation: Option<(bool, bool)>,
@@ -1221,6 +1224,7 @@ impl Console {
             // are ignored so the fixtures stay deterministic.
             inspector_fits: true,
             sample: false,
+            copied: false,
             inspector_open: if cfg!(feature = "gui-tests") {
                 false
             } else {
@@ -1523,6 +1527,7 @@ impl Console {
                 WorkerReply::RunDone(result) => match *result {
                     Ok(bundle) => {
                         self.sample = false;
+                        self.copied = false;
                         self.result_context = self.pending_context.take();
                         self.baseline = Some(bundle.baseline.clone());
                         self.intervention = Some(bundle.intervention.clone());
@@ -1768,6 +1773,64 @@ impl Console {
             theme::persist_flag("sidebar", self.sidebar_open);
         }
         cx.notify();
+    }
+
+    /// The finished comparison as Markdown, for a slide, a lab notebook or a
+    /// message: what was asked, what was changed, what happened, and the
+    /// per-layer numbers. Everything is read from what is on screen, so the
+    /// copy can never disagree with the page.
+    fn result_markdown(&self) -> Option<String> {
+        let (baseline, intervention, comparison, context) = (
+            self.baseline.as_ref()?,
+            self.intervention.as_ref()?,
+            self.comparison.as_ref()?,
+            self.result_context.as_ref()?,
+        );
+        let mut out = String::new();
+        out.push_str("# Ember experiment\n\n");
+        if self.sample {
+            out.push_str("> Sample result: illustrative data, not a measurement.\n\n");
+        }
+        out.push_str(&format!("- **Model:** {}\n", model_display_name(&context.model_path)));
+        out.push_str(&format!("- **Prompt:** {}\n", context.prompt.trim()));
+        out.push_str(&format!(
+            "- **Change:** {} at layer {} ({}), affecting {}\n",
+            operation_label(&context.op),
+            context.layer,
+            site_label(&context.site),
+            token_label(&context.token),
+        ));
+        out.push_str(&format!("- **Generation:** up to {} tokens, seed 0\n\n", context.max_tokens));
+        out.push_str("## Result\n\n");
+        out.push_str(&format!(
+            "- **Text output:** {}\n",
+            if comparison.generated_text_equal { "unchanged" } else { "changed" }
+        ));
+        if let Some(layer) = comparison.landmarks.first_layer_divergence {
+            out.push_str(&format!("- **First internal divergence:** layer {layer}\n"));
+        }
+        if let (Some(value), Some(layer)) =
+            (comparison.landmarks.peak_relative_l2, comparison.landmarks.peak_layer)
+        {
+            out.push_str(&format!("- **Peak divergence:** {value:.3} (relative L2) at layer {layer}\n"));
+        }
+        out.push_str(&format!("\n**Baseline:** {}\n\n", baseline.text.trim()));
+        out.push_str(&format!("**Intervention:** {}\n", intervention.text.trim()));
+        if !self.layer_series.is_empty() {
+            out.push_str("\n## Divergence by layer\n\n| layer | relative L2 | cosine distance |\n|---|---|---|\n");
+            for metric in self.layer_series.iter() {
+                let cell = |value: Option<f64>| {
+                    value.map_or_else(|| "n/a".to_string(), |value| format!("{value:.4}"))
+                };
+                out.push_str(&format!(
+                    "| {} | {} | {} |\n",
+                    metric.layer,
+                    cell(metric.relative_l2_difference),
+                    cell(metric.cosine_distance)
+                ));
+            }
+        }
+        Some(out)
     }
 
     /// Open Review on the built-in sample: a finished comparison a newcomer
@@ -2721,6 +2784,7 @@ impl Console {
         } else if let Some(view) = ResultView::ALL.iter().find(|view| view.key() == key) {
             self.result_view = *view;
         }
+        self.copied = false;
     }
 
     /// Workflow steps: Prompt, Intervention, Review.
@@ -4154,16 +4218,9 @@ impl Console {
                     )
                     .child(div().px_3().child(label(meaning, Type::LABEL, colors.text_muted)))
             }
-            _ if self.busy() => div()
-                .px_3()
-                .py_2()
-                .rounded(px(Radius::MD))
-                .bg(colors.accent_soft)
-                .child(label(
-                    "The model is running both the baseline and intervention. Results will appear here.",
-                    Type::LABEL,
-                    colors.text_muted,
-                )),
+            // While a run is in flight the progress steps say so; see
+            // `run_progress`.
+            _ if self.busy() => div(),
             _ => div()
                 .px_3()
                 .py_2()
@@ -4603,6 +4660,63 @@ impl Console {
         )
     }
 
+    /// What a run is doing right now, as steps. A first run loads the model
+    /// before it computes anything, and a silent wait there looks like a hang.
+    fn run_progress(&self, colors: &Colors) -> Div {
+        // (label, state) with state 0 = pending, 1 = active, 2 = done
+        let steps: Vec<(&'static str, u8)> = match self.status {
+            Status::Preparing => vec![
+                ("Load the model", 1),
+                ("Run the baseline and the intervention", 0),
+                ("Compare the results", 0),
+            ],
+            Status::Running => vec![
+                ("Load the model", 2),
+                ("Run the baseline and the intervention", 1),
+                ("Compare the results", 0),
+            ],
+            Status::Restoring => vec![("Replay the baseline and check it matches exactly", 1)],
+            Status::Idle => Vec::new(),
+        };
+        let note = match self.status {
+            Status::Preparing => "The first run loads the model, so it takes longer. Later runs start straight away.",
+            Status::Running => "Ember is running your prompt twice, once untouched and once with your change.",
+            _ => "",
+        };
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(Space::SM))
+            .px(px(Space::MD))
+            .py(px(Space::MD))
+            .rounded(px(Radius::MD))
+            .bg(colors.accent_soft)
+            .children(steps.into_iter().map(|(text, state)| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(Space::SM))
+                    .child(status_dot(
+                        match state {
+                            2 => colors.ok,
+                            1 => colors.busy,
+                            _ => colors.border_strong,
+                        },
+                        state == 1,
+                    ))
+                    .child(label(
+                        text,
+                        Type::BODY,
+                        if state == 0 { colors.text_faint } else { colors.text },
+                    ))
+            }))
+            .when(!note.is_empty(), |panel| {
+                panel.child(label(note, Type::LABEL, colors.text_muted))
+            })
+    }
+
     fn review_step(&self, colors: &Colors, cx: &mut Context<Self>) -> Div {
         let has_results = self.baseline.is_some() && self.intervention.is_some();
         let result_body = if !has_results {
@@ -4678,6 +4792,19 @@ impl Console {
                     // exact configuration, or duplicate it and change one
                     // field. Quiet text commands; the bottom bar stays the
                     // primary runner.
+                    .when(has_results, |header| {
+                        header.child(text_button(
+                            "review-copy",
+                            if self.copied { "Copied" } else { "Copy summary" },
+                            cx.listener(|console, _: &ClickEvent, _window, cx| {
+                                if let Some(markdown) = console.result_markdown() {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(markdown));
+                                    console.copied = true;
+                                    cx.notify();
+                                }
+                            }),
+                        ))
+                    })
                     .when(has_results && !self.sample, |header| {
                         header
                             .child(text_button(
@@ -4719,6 +4846,7 @@ impl Console {
                         )
                     }),
             )
+            .when(self.busy(), |page| page.child(self.run_progress(colors)))
             .when(has_results && self.sample, |page| {
                 page.child(
                     div()
@@ -6438,6 +6566,62 @@ mod kit_tests {
     }
 
     #[gpui_kit::test]
+    async fn sample_result_opens_review_and_copies_markdown(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            cx.text_system()
+                .add_fonts(vec![
+                    Cow::Borrowed(FONT_SANS),
+                    Cow::Borrowed(FONT_MONO),
+                    Cow::Borrowed(FONT_ARABIC),
+                ])
+                .unwrap();
+        });
+        let (tx, _worker_rx) = mpsc::channel();
+        let (_reply_tx, reply_rx) = mpsc::channel();
+        let mut view = None;
+        let handle = cx.add_window(|window, cx| {
+            let console =
+                cx.new(|cx| Console::new(tx, Arc::new(Mutex::new(reply_rx)), false, window, cx));
+            view = Some(console.clone());
+            Root::new(console, window, cx)
+        });
+        let console = view.unwrap();
+        cx.update_window(handle.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.click(SharedString::from("home-sample"), cx);
+            {
+                let console = console.read(cx);
+                assert!(console.sample, "the sample flag marks illustrative data");
+                assert_eq!(console.step, WorkspaceStep::Review);
+                assert!(console.baseline.is_some() && console.comparison.is_some());
+            }
+            window.render_frame(cx);
+            window.click(SharedString::from("review-copy"), cx);
+            assert!(console.read(cx).copied);
+        })
+        .unwrap();
+        let copied = cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .expect("the summary is on the clipboard");
+        assert!(copied.starts_with("# Ember experiment"));
+        assert!(copied.contains("Sample result"), "a sample must say so in the copy");
+        assert!(copied.contains("| 8 | 0.2960 | 0.0450 |"));
+        assert!(copied.contains("First internal divergence:** layer 8"));
+        // A real run must not inherit the sample's label or leave it copied.
+        cx.update_window(handle.into(), |_, _, cx| {
+            console.update(cx, |console, _| {
+                console.send_run(
+                    crate::gui::parse_run_request(&console.build_run_request().unwrap()).unwrap(),
+                );
+                assert!(!console.sample);
+            });
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
     async fn kit_navigation_and_presets_update_experiment_state(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
@@ -6758,6 +6942,30 @@ fn render_test_artifacts(directory: &std::path::Path) -> anyhow::Result<()> {
                 }
             }
         }
+        // A run in flight: the progress steps a first-time user waits on.
+        for (label_name, status) in [("loading", Status::Preparing), ("running", Status::Running)] {
+            context.update_window(handle.into(), |_, window, cx| {
+                console.update(cx, |console, cx| {
+                    console.appearance = AppearanceMode::Dark;
+                    console.view = View::Experiment;
+                    console.step = WorkspaceStep::Review;
+                    console.inspector_open = false;
+                    console.status = status;
+                    console.sync_kit_theme(cx);
+                });
+                window.draw(cx).clear(cx);
+            })?;
+            context.run_until_parked();
+            context.update_window(handle.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+            })?;
+            context
+                .capture_screenshot(handle.into())?
+                .save(directory.join(format!("{name}-progress-{label_name}.png")))?;
+        }
+        context.update_window(handle.into(), |_, _, cx| {
+            console.update(cx, |console, _| console.status = Status::Idle);
+        })?;
         // The built-in sample result, which needs no model.
         for (appearance, mode) in [
             ("light", AppearanceMode::Light),
